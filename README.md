@@ -1,62 +1,189 @@
+<div align="center">
+
 # JobCtrl
 
-JobCtrl helps you **find jobs worth applying to, judge them against your real
-profile, tailor audited materials, and apply — safely and entirely on your own
-machine.** Your profile, job database, generated resumes and cover letters,
-browser state, and logs stay on your computer; nothing leaves it except the
-specific steps you configure and run.
+**Find the right jobs, prove the fit, and apply — from one local, auditable
+mission control.**
 
-Work moves through a focused pipeline:
+JobCtrl discovers jobs, scores them against your real profile, tailors
+truthful materials you review, and helps you apply with guardrails — while
+your profile, job database, generated resumes, browser state, and logs stay
+on your machine.
 
-```text
-discover -> apply
+[![TypeScript CI](https://github.com/ebarti/JobCtrl/actions/workflows/typescript.yml/badge.svg)](https://github.com/ebarti/JobCtrl/actions/workflows/typescript.yml)
+[![Release Privacy Gate](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml/badge.svg)](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB)
+![Node 20.19+](https://img.shields.io/badge/node-20.19%2B-339933)
+
+<img src="docs/assets/screenshots/dashboard.png" alt="JobCtrl dashboard with pipeline, spend, and review queues (synthetic data)" width="880" />
+
+*Every screenshot in this repo is generated from synthetic sample data —
+no real people, resumes, or applications.*
+
+</div>
+
+---
+
+## Why JobCtrl
+
+| 🔒 Yours, locally | 🧾 Proof, not vibes | 🛡️ Guarded apply |
+| --- | --- | --- |
+| One SQLite database and generated files under `~/.jobctrl/`. No account, no hosted backend. Nothing leaves your machine by default. | Every score has a per-requirement evidence ledger; every resume bullet traces to your profile; fabrication gates fail closed. | Dry runs submit nothing. Live submission needs an explicit approval bound to the exact reviewed materials — and never submits twice. |
+
+Job-search tools tend to hand you either loose scripts or a black box that
+takes the wheel. JobCtrl runs the whole pipeline — **discover → enrich →
+score → tailor → review → apply** — as crash-resumable local workflows with
+a daily spend ceiling, and shows its work at every step.
+
+## Get Started
+
+**One line** — checks your tools, clones to `~/JobCtrl`, and walks you through
+the rest:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ebarti/JobCtrl/main/scripts/get | bash
 ```
 
-Discovery finds and enriches jobs, scores them against your candidate profile,
-and prepares tailored materials when a job is eligible. Apply is a separate,
-supervised step because it can drive browser automation and submit applications.
+**Homebrew** — installs the toolchain and a global `jobctrl` launcher:
+
+```bash
+brew install ebarti/tap/jobctrl && jobctrl bootstrap
+```
+
+> Published to [`ebarti/homebrew-tap`](https://github.com/ebarti/homebrew-tap)
+> from the canonical formula at `packaging/homebrew/Formula/jobctrl.rb` — also
+> installable straight from a checkout with
+> `brew install --formula packaging/homebrew/Formula/jobctrl.rb --HEAD`.
+
+Then initialize, check, and run:
+
+```bash
+uv --project workers/automation run jobctrl init
+uv --project workers/automation run jobctrl doctor
+pnpm dev        # full local stack — open http://127.0.0.1:5173
+```
+
+`jobctrl setup` (run for you by the installer) detects vendor auth, persists
+the enabled employer-analysis legs, and finishes with `doctor`.
+
+<details>
+<summary><b>Manual install & requirements</b> (clone it yourself)</summary>
+
+```bash
+git clone https://github.com/ebarti/JobCtrl.git
+cd JobCtrl
+pnpm install:interactive     # guided system checks + Node/Python deps + Playwright Chromium
+uv --project workers/automation run jobctrl setup
+```
+
+Requirements: Python 3.11+, Node.js 20.19+ (pnpm via Corepack), uv, Temporal
+CLI, Chrome/Chromium, Playwright Chromium, Poppler (`pdftoppm`), and an LLM
+provider key or local LLM endpoint (plus vendor auth for any enabled
+employer-analysis ensemble legs). `pnpm dev:setup` is the non-interactive
+dependency sync for provisioned machines.
+
+Playwright Chromium is installed per Python virtualenv; a bare `uv sync` or a
+fresh git worktree needs `uv --project workers/automation run playwright
+install chromium` (set `PLAYWRIGHT_SKIP_BROWSER_GC=1` when installing from
+another checkout that shares the browser cache). `jobctrl doctor` validates
+the browser and the worker refuses to start without it
+(`JOBCTRL_SKIP_BROWSER_PREFLIGHT=1` overrides for non-browser workers).
+
+</details>
+
+Full first-run guide: [docs/user/getting-started.md](docs/user/getting-started.md).
+
+## Screenshots
+
+| | |
+| --- | --- |
+| [<img src="docs/assets/screenshots/jobs.png" alt="Jobs table with fit scores, stages, and filters (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) | [<img src="docs/assets/screenshots/apply-review.png" alt="Apply Review editing a tailored resume with audit evidence (synthetic data)" width="440" />](docs/assets/screenshots/apply-review.png) |
+| **Jobs** — scored, filterable, every score inspectable | **Apply Review** — edit and approve the exact resume that ships |
+| [<img src="docs/assets/screenshots/job-detail.png" alt="Job detail with requirement-level fit evidence (synthetic data)" width="440" />](docs/assets/screenshots/job-detail.png) | [<img src="docs/assets/screenshots/runs.png" alt="Runs page with durable workflow history (synthetic data)" width="440" />](docs/assets/screenshots/runs.png) |
+| **Job detail** — requirement-by-requirement fit evidence | **Runs** — durable workflows you can watch, retry, and audit |
+
+Full tour with captions: [Product Tour](docs/user/screenshots.md).
+Documentation screenshots must be generated from synthetic data — refresh
+them with `pnpm docs:screenshots`
+([how it works](docs/local-development.md)).
+
+## How It Compares
+
+The short version of [the full, source-cited comparison](docs/comparison.md):
+
+| Capability | The usual trade-off | JobCtrl |
+| --- | --- | --- |
+| **Data ownership** | Your search lives in someone else's cloud | Local SQLite + files under your home directory; no account |
+| **Outbound data** | Unclear what's sent where | Nothing leaves by default; every egress path is opt-in and documented |
+| **Scoring** | A match % you can't inspect | Deterministic 1–10 policy with a per-requirement evidence ledger |
+| **Materials** | Generated text you have to fact-check | Every bullet traces to your profile; fabrication gates fail closed |
+| **Submission** | Auto-submit you can't stop, or copy-paste you must repeat | Dry-run default; explicit approval bound to reviewed materials; at-most-once submission |
+| **Third parties** | Workarounds that fight site protections | Honest User-Agent, robots.txt honored, no CAPTCHA/paywall/login bypass |
+| **Reliability** | A crash loses the run | Crash-resumable Temporal workflows with full run history |
+| **Cost** | Surprise API bills | Daily spend ceiling with preflight checks and visible usage |
 
 ## What It Does
 
-- Discover jobs from configured searches and supported source registries.
+- Discover jobs from configured searches and supported source registries,
+  driven by your target roles, locations, and seniority — recording which
+  source each job came from.
 - Optionally reconcile a local Temporal Schedule for discovery; it is disabled
   by default and uses the configured cron only after you enable it.
-- Enrich postings with full descriptions, canonical posting URLs, and apply URLs.
+- Enrich postings with full descriptions, canonical posting URLs, and apply
+  URLs.
+- Fetch politely: every discovery/enrichment request routes through one
+  gateway that honors `robots.txt`, paces each host, bounds each run's request
+  budget, and sends an honest `User-Agent` that never impersonates a browser
+  (details in [Local Data And Safety](#local-data-and-safety)).
 - Capture a current browser job page through the optional local browser
   extension, which feeds the existing manual-capture import path.
-- Score jobs as an applicant-side triage aid with auditable evidence.
+- Score jobs as an applicant-side triage aid with auditable evidence — never
+  employer-side screening.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts.
 - Review and edit generated resumes in Apply Review before approval.
 - Inspect the evidence map to see which profile achievements and skills are
   reused in generated materials, requirement-fit decisions, and recorded gaps.
 - Generate stored interview prep for a selected job from grounded JobCtrl
-  data, with evidence links and gap drills kept inspectable before the interview.
-- Edit resume PDF style templates in Preferences, choose a default template, and
-  override the template per job without modifying candidate profile data.
+  data, with evidence links and gap drills kept inspectable before the
+  interview.
+- Edit resume PDF style templates in Preferences, choose a default template,
+  and override the template per job without modifying candidate profile data.
 - Track pipeline state, failures, retries, workflow runs, artifacts, and apply
   history in a local web UI.
 - Keep recruiter, hiring-manager, and referrer contact records per company or
-  application, each fact carrying its provenance (where it came from), with CSV
-  import. Draft truthful, reviewable outreach messages under the same
-  anti-fabrication gates as your resumes, then **you** send them yourself and
-  **log the send** (date + channel) — the only way a thread is marked sent.
-  Schedule surfaced-only follow-up reminders (a conservative, editable suggested
-  date). JobCtrl never sends anything to your contacts — it drafts, previews,
-  and records only, with no send transport of any kind.
+  application, each fact carrying its provenance, with CSV import. Draft
+  truthful, reviewable outreach messages under the same anti-fabrication gates
+  as your resumes, then **you** send them yourself and **log the send** (date
+  + channel) — the only way a thread is marked sent. Follow-up reminders are
+  surfaced-only suggestions. JobCtrl never sends anything to your contacts —
+  it drafts, previews, and records only, with no send transport of any kind.
 - Optionally run browser-based apply automation, starting with dry runs.
 
-Auto-apply is powerful and must be treated as an explicit submission tool. It is
-off by default (`autoApply: false`), so no standing apply loop is kept running
-unless you opt in. When `autoApply: true`, a worker maintains one continuous
-Apply workflow, visible in Runs as the standing apply loop. With the default
+Auto-apply is powerful and must be treated as an explicit submission tool. It
+is off by default (`autoApply: false`), so no standing apply loop runs unless
+you opt in. When `autoApply: true`, a worker maintains one continuous Apply
+workflow, visible in Runs as the standing apply loop. With the default
 approval gate still on (`applyApprovalRequired: true`), that loop only submits
-jobs already approved in Apply Review and parks the rest for review. If you turn
-the approval gate off in Preferences, the settings form shows a persistent
-warning because the standing loop may submit eligible prepared jobs
-autonomously, still bounded by minimum fit score, the daily spend ceiling,
-at-most-once submit intent tracking, CAPTCHA fail-closed behavior, and the
-dry-run guard when a dry-run apply path is used. Use dry-run paths and narrow
-targets before allowing live submission.
+jobs already approved in Apply Review and parks the rest for review. If you
+turn the approval gate off in Preferences, the settings form shows a
+persistent warning because the standing loop may submit eligible prepared
+jobs autonomously — still bounded by minimum fit score, the daily spend
+ceiling, at-most-once submit intent tracking, CAPTCHA fail-closed behavior,
+and the dry-run guard when a dry-run apply path is used. Use dry-run paths
+and narrow targets before allowing live submission.
+
+### Browser Extension Capture And Autofill
+
+The optional Manifest V3 extension is a local capture and assist surface:
+build with `pnpm extension:build`, load `dist/extension/` unpacked, and pair
+it with the token shown in JobCtrl Settings. **Save job** captures the active
+page over loopback into the manual-capture importer (same dedupe, snapshots,
+quarantine, and source provenance as any user-mediated capture), with a
+bounded offline queue when the stack is down. On supported ATS pages,
+**Review autofill** shows deterministic, profile-sourced field suggestions —
+you choose what to fill. The extension does not generate free-text answers
+and has no submission path.
 
 ## Responsible Use
 
@@ -66,185 +193,108 @@ employers, accounts, provider APIs, and third-party sites as live operations:
 - Live apply automation can submit real applications to real employers. Keep
   `autoApply` off until you intentionally want a standing loop, keep
   `applyApprovalRequired` on unless you intentionally want autonomous submit,
-  rehearse with dry runs, and target one job or site at a time until you trust
-  the behavior.
+  rehearse with dry runs, and target one job or site at a time until you
+  trust the behavior.
 - Email-based application sending is also a live employer submission. JobCtrl
   sends only through its owned Gmail connector after a dry-run records the
   recipient and attachment candidate and Apply Review approves that exact
   binding; the path requires Gmail `gmail.send` and otherwise fails closed.
-- Browser automation can type non-secret profile fields. For regular job-site
-  password fields, the apply agent can call a local credential tool that reads
-  the stored profile password and types it into the focused field without
-  returning the value to the model; if the tool is unavailable, login fails
-  closed for operator handling.
+- Browser automation can type non-secret profile fields. For job-site
+  password fields, the apply agent calls a local credential tool that types
+  the stored password into the focused field without returning the value to
+  the model; if the tool is unavailable, login fails closed.
 - CAPTCHA solving is available only through the owned local solver tool for
-  supported widgets. Image/audio, unsupported, or unconfigured challenges fail
-  closed. Do not solve challenges manually, switch to stealth browsers, or
-  bypass bot controls.
-- Scraping and source access can violate site terms. Default discovery options
-  include LinkedIn and Indeed; disable any source you are not allowed to query
-  automatically.
-- The local API is intended for loopback use. Ordinary web and CLI callers use
-  the loopback boundary; browser-extension API routes additionally require a
-  local capability token shown in Settings and stored under `~/.jobctrl/`. Do
-  not bind the API to a network interface or tunnel it unless you accept
-  exposing private profile, job, and artifact data.
-- LLM work can spend money and send job, profile, and generated-material text to
-  configured providers. `dailyBudgetUsd` caps new spendful workflows locally,
-  but it is an estimate rather than the provider bill.
+  supported widgets. Image/audio, unsupported, or unconfigured challenges
+  fail closed. Do not solve challenges manually, switch to stealth browsers,
+  or bypass bot controls.
+- Scraping and source access can violate site terms. Default discovery
+  options include LinkedIn and Indeed; disable any source you are not allowed
+  to query automatically.
+- The local API is intended for loopback use. Browser-extension routes
+  additionally require a local capability token shown in Settings and stored
+  under `~/.jobctrl/`. Do not bind the API to a network interface or tunnel
+  it unless you accept exposing private profile, job, and artifact data.
+- LLM work can spend money and send job, profile, and generated-material text
+  to configured providers. `dailyBudgetUsd` caps new spendful workflows
+  locally, but it is an estimate rather than the provider bill.
 - Interview prep is stored pre-interview material only. You can record
-  post-interview reflection notes against an accepted prep generation, but do
-  not use JobCtrl as a live interview assistant; it has no transcript,
-  microphone, streaming, websocket, or real-time answer surface.
+  post-interview reflections against an accepted prep generation, but JobCtrl
+  is not a live interview assistant; it has no transcript, microphone,
+  streaming, websocket, or real-time answer surface.
 - Profiles, generated materials, browser state, logs, SQLite databases, and
-  local worker state are sensitive local artifacts. Public bug reports,
-  screenshots, and reproduction cases should use synthetic data only; `pnpm
-  qa:seed` creates a disposable synthetic workspace for that purpose.
+  local worker state are sensitive local artifacts. Public bug reports and
+  screenshots should use synthetic data only; `pnpm qa:seed` creates a
+  disposable synthetic workspace for that purpose.
+
+## What Leaves Your Machine
+
+Nothing leaves your machine by default. Privacy-sensitive content leaves only
+when you deliberately run a step that needs an outside service, and each path
+is opt-in and configuration-gated:
+
+- **LLM providers** — scoring, employer analysis, resume tailoring, and
+  cover-letter generation (job text, your profile evidence, and generated
+  material text).
+- **The apply agent's model** — the apply prompt during apply or dry-run
+  (your profile summary and the tailored materials). The prompt never
+  includes profile passwords or CAPTCHA-provider keys; password typing uses a
+  local credential tool that never returns the secret to the model.
+- **Job boards, ATS APIs, and posting pages** — discovery and enrichment
+  fetches.
+- **Gmail** — verification-code and application-outcome lookups, plus
+  approved email application sends, only if you authenticate the connector.
+  Raw email bodies stay local; outgoing sends require the `gmail.send` scope.
+- **Google Maps** — address autocomplete, only if you set
+  `VITE_GOOGLE_MAPS_API_KEY`.
+- **CAPTCHA solving** — supported widgets are handled only through the owned
+  local solver tool when configured; no solver key travels through the model
+  prompt.
+- **Langfuse / OpenTelemetry** — traces, only when you configure it
+  (`LANGFUSE_DISABLE=1` opts out even with credentials present).
+
+The apply prompt is the largest single batch of personal data that can leave.
+Full per-call breakdown:
+[Security → What Leaves Your Machine](docs/user/security.md#what-leaves-your-machine);
+storage-and-privacy inventory:
+[docs/user/data-and-safety.md](docs/user/data-and-safety.md).
 
 ## Current vs Roadmap
 
-Everything in [What It Does](#what-it-does) above is **shipped and runs on your
-machine today**. Work that is planned but **not built yet** — desktop packaging,
-workspace export/import, and any hosted or multi-user deployment (accounts,
-billing, managed browsers, object storage, cloud sync) — lives in
-[ROADMAP.md](ROADMAP.md) and is never presented as current here. Nothing above
-the roadmap boundary depends on a hosted service.
-
-## Current System
-
-JobCtrl has three local runtime components:
-
-- `apps/api`: local TypeScript/Fastify API for read models, profile/settings,
-  structured actions, artifacts, and worker dispatch.
-- `apps/web`: React/Vite app using TanStack Router, Query, and Form, a shared
-  filterable data grid, and SSE-backed cache invalidation.
-- `workers/automation`: Python automation engine, CLI, Temporal worker,
-  discovery, scoring, materials, PDF rendering, and apply automation.
-
-SQLite and local files are the source of truth. Hosted accounts, billing,
-managed browsers, object storage, and SaaS deployment stay out of local mode; see
-[ROADMAP.md](ROADMAP.md).
-
-## Quick Start
-
-Requirements:
-
-- Python 3.11+
-- Node.js 20.19+
-- pnpm through Corepack
-- uv
-- Temporal CLI with `temporal server start-dev`
-- Playwright Chromium for HTML/CSS PDF rendering
-- Chrome or Chromium for browser automation
-- Poppler (`pdftoppm` on `PATH`) for PDF page previews
-- an LLM provider key or local LLM endpoint for scoring/materials, plus
-  vendor auth for any enabled employer-analysis ensemble legs
-
-Install and run:
-
-```bash
-git clone https://github.com/ebarti/JobCtrl.git
-cd JobCtrl
-pnpm install:interactive
-uv --project workers/automation run jobctrl setup
-uv --project workers/automation run jobctrl init
-uv --project workers/automation run jobctrl doctor
-pnpm dev
-```
-
-`pnpm install:interactive` checks local system tools, offers guided installs
-when Homebrew is available, installs the Node and Python dependencies, and
-installs the Playwright Chromium browsers used by web tests and PDF rendering.
-It then hands off to `jobctrl setup` to detect vendor auth, persist enabled
-employer-analysis legs, and run `doctor`.
-For an already provisioned machine or CI-style setup, `pnpm dev:setup` remains
-the non-interactive Node + Python dependency sync.
-
-Playwright Chromium is installed per Python virtualenv, and both discovery
-scraping and HTML/CSS PDF rendering need it. `pnpm install:interactive` installs
-it for you, but `pnpm dev:setup`, a bare `uv sync`, or a fresh git worktree does
-not — run `uv --project workers/automation run playwright install chromium` in
-that checkout before starting the worker. Multiple git worktrees share the
-`~/Library/Caches/ms-playwright` cache, so running `playwright install` from a
-checkout on a newer Playwright version can garbage-collect the browser revision
-an older worktree still needs; set `PLAYWRIGHT_SKIP_BROWSER_GC=1` when
-installing from another checkout to keep both. `jobctrl doctor` validates the
-browser, and the worker refuses to start without it (set
-`JOBCTRL_SKIP_BROWSER_PREFLIGHT=1` to override, e.g. for a worker that runs
-only non-browser activities).
-
-`pnpm dev` starts the full local stack in the foreground: Temporal dev server,
-TypeScript API, Vite web app, and Python worker. Keep the terminal open while
-using the app and stop it with Ctrl-C.
-
-### Browser Extension Capture And Autofill
-
-The optional Manifest V3 browser extension is a local capture and assist
-surface. Build it with:
-
-```bash
-pnpm extension:build
-```
-
-Load `dist/extension/` as an unpacked extension in Chrome/Chromium developer
-mode, then open JobCtrl Settings and copy the browser-extension pairing token
-into the extension popup.
-
-Clicking **Save job** captures the active http(s) page URL and visible text,
-posts it over loopback to `/v1/extension/captures`, and reuses the existing
-manual-capture importer so dedupe, snapshots, quarantine, and source provenance
-remain identical to other user-mediated captures. If the local stack is down,
-the extension stores a bounded local queue in extension storage and retries
-after the next successful save.
-
-On supported ATS application pages, **Review autofill** fetches a whitelisted
-profile snapshot over loopback and shows deterministic field suggestions with
-their profile source. You choose which values to fill. The extension does not
-generate free-text answers and has no submission path.
-
-Commands that start work (`jobctrl run`, per-stage commands, `jobctrl
-apply`, `jobctrl action profile_import`, and `jobctrl
-compensation-refresh`) start Temporal workflows and wait on their handles. They require a reachable Temporal server plus a running JobCtrl
-worker: use `pnpm dev`, or start `temporal server start-dev` and
-`uv --project workers/automation run jobctrl worker` yourself. They do not
-fall back to the old in-process pipeline path.
-
-For the full first-run guide, see
-[docs/user/getting-started.md](docs/user/getting-started.md).
+Everything in [What It Does](#what-it-does) above is **shipped and runs on
+your machine today**. Work that is planned but **not built yet** — desktop
+packaging, workspace export/import, and any hosted or multi-user deployment
+(accounts, billing, managed browsers, object storage, cloud sync) — lives in
+[ROADMAP.md](ROADMAP.md) and is never presented as current here. Nothing
+above the roadmap boundary depends on a hosted service.
 
 ## Local Data And Safety
 
-By default, JobCtrl writes local data under:
+By default, JobCtrl writes local data under `~/.jobctrl/`:
 
-```text
-~/.jobctrl/
-```
-
-Important local files include:
-
-- `jobctrl.db`: local SQLite database with profile, jobs, events,
+- `jobctrl.db` — local SQLite database with profile, jobs, events,
   projections, settings, and artifact metadata.
-- `.env`: provider keys and local runtime settings.
-- `tailored_resumes/`, `cover_letters/`, `logs/`: generated artifacts and logs.
-- `chrome-workers/`, `apply-workers/`: local browser/apply worker state.
-- `codex_home/`: isolated Codex SDK home when apply/review agents need it.
-- `backups/`: timestamped database snapshots written by `jobctrl backup`.
+- `.env` — provider keys and local runtime settings.
+- `tailored_resumes/`, `cover_letters/`, `logs/` — generated artifacts and
+  logs.
+- `chrome-workers/`, `apply-workers/` — local browser/apply worker state.
+- `codex_home/` — isolated Codex SDK home when apply/review agents need it.
+- `backups/` — timestamped database snapshots written by `jobctrl backup`.
 
-The daily digest is local-only. `jobctrl digest` and the Dashboard digest read
-from `jobctrl.db` without sending notifications or advancing review state;
-only the explicit Dashboard acknowledge action or `jobctrl digest
---acknowledge` updates the `digest_state` watermark.
+The daily digest is local-only: `jobctrl digest` and the Dashboard panel read
+from `jobctrl.db` without sending notifications; only the explicit
+acknowledge action advances the `digest_state` watermark.
 
-Never commit profiles, API keys, generated resumes, cover letters, PDFs, browser
-profiles, logs, SQLite databases, screenshots containing real data, or local
-worker state. See [docs/user/data-and-safety.md](docs/user/data-and-safety.md)
-and [SECURITY.md](SECURITY.md).
+Never commit profiles, API keys, generated resumes, cover letters, PDFs,
+browser profiles, logs, SQLite databases, screenshots containing real data,
+or local worker state. See
+[docs/user/data-and-safety.md](docs/user/data-and-safety.md) and
+[SECURITY.md](SECURITY.md).
 
-Discovery and enrichment fetch politely: every request runs through one gateway
-that honors `robots.txt` — failing closed on an inconclusive fetch (`5xx` or
-timeout) but failing open with a warning when the host has no robots endpoint at
-all (DNS failure or refused connection) — paces each host, bounds each run's
-request budget, and sends an honest `User-Agent`
+Discovery and enrichment fetch politely: every request runs through one
+gateway that honors `robots.txt` — failing closed on an inconclusive fetch
+(`5xx` or timeout) but failing open with a warning when the host has no
+robots endpoint at all (DNS failure or refused connection) — paces each host,
+bounds each run's request budget, and sends an honest `User-Agent`
 (`JobCtrl/<version> (+<repo url>)`) that never impersonates a browser. Review
 or override that identity before crawling real sites via
 `JOBCTRL_CRAWL_UA_PRODUCT` / `JOBCTRL_CRAWL_UA_CONTACT`
@@ -252,99 +302,94 @@ or override that identity before crawling real sites via
 `jobctrl doctor` prints the effective value. JobCtrl never bypasses login,
 paywall, CAPTCHA, rate-limit, or bot-control gates.
 
-### What Leaves Your Machine
-
-Nothing leaves your machine by default. Privacy-sensitive content leaves only
-when you deliberately run a step that needs an outside service, and each path is
-opt-in and configuration-gated:
-
-- **LLM providers** — scoring, employer analysis, resume tailoring, and
-  cover-letter generation (job text, your profile evidence, and generated
-  material text).
-- **The apply agent's model** — the apply prompt during apply or dry-run (your
-  profile summary and the tailored materials). The prompt does not include
-  profile passwords or CAPTCHA-provider keys; password typing uses a local
-  credential tool that never returns the secret to the model.
-- **Job boards, ATS APIs, and posting pages** — discovery and enrichment
-  fetches.
-- **Gmail** — verification-code and application-outcome lookups, plus approved
-  email application sends, only if you authenticate the connector. Raw email
-  bodies stay local; outgoing sends require the `gmail.send` scope.
-- **Google Maps** — address autocomplete, only if you set
-  `VITE_GOOGLE_MAPS_API_KEY`.
-- **CAPTCHA solving** — supported widgets are handled only through the owned
-  local solver tool when configured; no CAPTCHA-provider key or solver token is
-  sent through the model prompt.
-- **Langfuse / OpenTelemetry** — traces, only when you configure it
-  (`LANGFUSE_DISABLE=1` opts out even with credentials present).
-
-The apply prompt is the largest single batch of personal data that can leave. For
-the full per-call breakdown of what is sent and when, see
-[Security → What Leaves Your Machine](docs/user/security.md#what-leaves-your-machine);
-for the storage-and-privacy inventory, see
-[docs/user/data-and-safety.md](docs/user/data-and-safety.md).
-
 ### Back Up And Restore
 
-All product state lives in `jobctrl.db`. Take a consistent snapshot at any
-time — even while the app is running — with:
+All product state lives in `jobctrl.db`. Snapshot it any time — even while
+the app runs:
 
 ```bash
 uv --project workers/automation run jobctrl backup
 ```
 
-This writes `~/.jobctrl/backups/jobctrl-<timestamp>.db` using SQLite
-`VACUUM INTO`, prints the path, and never deletes anything. Pass `--output
-<path>` to choose a specific file or target directory.
+This writes `~/.jobctrl/backups/jobctrl-<timestamp>.db` via SQLite
+`VACUUM INTO` and never deletes anything (`--output <path>` to choose a
+target).
 
-To restore, stop the app (Ctrl-C on `pnpm dev`), clear any stale WAL sidecars,
-then copy a backup over the live database:
+<details>
+<summary><b>Restore steps</b></summary>
+
+Stop the app (Ctrl-C on `pnpm dev`), clear stale WAL sidecars, and copy a
+backup over the live database:
 
 ```bash
 rm -f ~/.jobctrl/jobctrl.db-wal ~/.jobctrl/jobctrl.db-shm
 cp ~/.jobctrl/backups/jobctrl-<timestamp>.db ~/.jobctrl/jobctrl.db
 ```
 
-Always restore the whole file — never hand-import individual tables from a
-backup. The read-model's projection watermark only ever moves forward, so a
-partial reconstruction can leave it ahead of the restored `job_events` and stall
-projection refresh; if you ever rebuild the database piecemeal, delete the
-`operations_projections` watermark row afterwards so the projections rebuild from
-scratch:
+Always restore the whole file — never hand-import individual tables. The
+read-model's projection watermark only moves forward; if you ever rebuild the
+database piecemeal, delete the watermark row so projections rebuild:
 
 ```bash
 sqlite3 ~/.jobctrl/jobctrl.db \
   "DELETE FROM event_watermarks WHERE projection_name = 'operations_projections';"
 ```
 
+</details>
+
 ## Normal Flow
 
 1. Create or import a candidate profile.
-2. Configure target roles, locations, work models, and application preferences.
+2. Configure target roles, locations, work models, and application
+   preferences.
 3. Run Discover from the UI or CLI, optionally targeting a single source from
    the Pipelines tab when you want a lighter retry.
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
-5. Open Evidence from the main nav, Profile, or a job detail drawer to inspect
-   which profile evidence backs generated materials and requirement-fit gaps.
-6. Generate or inspect materials and stored interview prep for promising jobs.
-7. Use Apply Review to edit/approve the resume, review comments, and compare a
-   rendered draft against the accepted artifact before approval.
-8. Run apply dry-runs before approving any real browser submission; the default
-   live path requires an `approve_submit` decision in Apply Review before the
-   backend claim can proceed. If you enable Auto apply, Runs shows the standing
-   loop; with approval still required it parks unapproved jobs for review, and
-   with approval disabled it may submit eligible jobs autonomously.
-9. Track progress in Dashboard, Analytics, Jobs, Runs, Artifacts, Evidence, Apply Review,
-   and Debug.
+5. Open Evidence from the main nav, Profile, or a job detail drawer to
+   inspect which profile evidence backs generated materials and
+   requirement-fit gaps.
+6. Generate or inspect materials and stored interview prep for promising
+   jobs.
+7. Use Apply Review to edit/approve the resume, review comments, and compare
+   a rendered draft against the accepted artifact before approval.
+8. Run apply dry-runs before approving any real browser submission; the
+   default live path requires an `approve_submit` decision in Apply Review
+   before the backend claim can proceed. If you enable Auto apply, Runs shows
+   the standing loop; with approval still required it parks unapproved jobs
+   for review, and with approval disabled it may submit eligible jobs
+   autonomously.
+9. Track progress in Dashboard, Analytics, Jobs, Runs, Artifacts, Evidence,
+   Apply Review, and Debug.
 
-See [docs/user/normal-flows.md](docs/user/normal-flows.md) for commands and
-expected state transitions.
+Commands and expected state transitions:
+[docs/user/normal-flows.md](docs/user/normal-flows.md).
+
+## Under The Hood
+
+Three local runtime components, with SQLite and local files as the source of
+truth:
+
+- `apps/api` — local TypeScript/Fastify API for read models, profile and
+  settings, structured actions, artifacts, and worker dispatch.
+- `apps/web` — React/Vite app on TanStack Router/Query/Form with SSE-backed
+  cache invalidation.
+- `workers/automation` — Python automation engine, CLI, and Temporal worker:
+  discovery, scoring, materials, PDF rendering, apply automation.
+
+Commands that start work (`jobctrl run`, per-stage commands, `jobctrl job
+<url>`, `jobctrl apply`, `jobctrl action profile_import`,
+`jobctrl compensation-refresh`) start Temporal workflows and require a
+reachable Temporal server plus a running JobCtrl worker — `pnpm dev` provides
+both. Architecture deep dives: [system architecture](docs/architecture/index.md)
+and the [pipeline walkthrough](docs/architecture/pipeline/index.md).
 
 ## CLI Reference
 
-All commands run as `uv --project workers/automation run jobctrl <command>`.
-Work-starting commands need the Temporal dev server plus a running worker
-(`pnpm dev` provides both).
+All commands run as `uv --project workers/automation run jobctrl <command>`
+(or through the Homebrew launcher as plain `jobctrl <command>`).
+
+<details>
+<summary><b>Command table</b></summary>
 
 | Command | What it does |
 | --- | --- |
@@ -366,115 +411,76 @@ Work-starting commands need the Temporal dev server plus a running worker
 | `migrate-resume-html` | Convert/refresh approved resume PDFs onto the HTML/CSS renderer. |
 | `gmail-auth` | Authenticate the Gmail connector for verification, outcome lookup, and approved email application sends. |
 
+</details>
+
 ## Configuration
 
-Configuration comes from three places:
+Configuration comes from the local SQLite profile/settings database,
+environment variables (`~/.jobctrl/.env`, repo `.env`, or the shell), and
+package-shipped source registries. Start with [.env.example](.env.example);
+full reference: [docs/user/configuration.md](docs/user/configuration.md).
 
-- the local SQLite profile/settings database;
-- environment variables in `~/.jobctrl/.env`, repo `.env`, or an explicit
-  shell environment;
-- package-shipped source registries under `workers/automation/src/jobctrl/config/`.
+<details>
+<summary><b>Common variables</b></summary>
 
-Start with [.env.example](.env.example), then read the full reference in
-[docs/user/configuration.md](docs/user/configuration.md).
-
-Common variables:
-
-- `JOBCTRL_DIR`: override the local app directory.
-- `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL`: configure general LLM access.
-- `ANTHROPIC_API_KEY` or local Claude credentials: authenticate the Claude
-  employer-analysis leg.
-- `CODEX_HOME/auth.json`: authenticates the Codex employer-analysis leg; a bare
+- `JOBCTRL_DIR` — override the local app directory.
+- `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL` — general LLM access.
+- `ANTHROPIC_API_KEY` or local Claude credentials — Claude employer-analysis
+  leg.
+- `CODEX_HOME/auth.json` — Codex employer-analysis leg; a bare
   `OPENAI_API_KEY` must be enrolled with `codex login --with-api-key` or
   `jobctrl setup`.
-- `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex ADC env: authenticate the
-  Antigravity/Gemini employer-analysis leg.
-- `JOBCTRL_ANALYSIS_LEGS`: comma-separated enabled analysis legs when setup
+- `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex ADC env — Antigravity/Gemini
+  employer-analysis leg.
+- `JOBCTRL_ANALYSIS_LEGS` — comma-separated enabled analysis legs when setup
   intentionally skips an unauthenticated leg.
-- `LLM_MODEL`: choose the default model for the configured provider.
-- `VITE_GOOGLE_MAPS_API_KEY`: optional address search in the Profile form.
-- `CHROME_PATH`: override Chrome/Chromium detection.
-- `JOBCTRL_RESUME_RENDERER=latex_pdf`: opt into the LaTeX resume compatibility
-  renderer. The default is HTML/CSS printed by Playwright.
-- `PLAYWRIGHT_SKIP_BROWSER_GC=1`: keep other worktrees' Playwright browsers when
-  running `playwright install` from this checkout (they share the
-  `~/Library/Caches/ms-playwright` cache).
-- `JOBCTRL_SKIP_BROWSER_PREFLIGHT=1`: skip the worker's startup Playwright
-  Chromium check (for a worker that runs only non-browser activities).
-- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`: optional
-  OpenTelemetry/Langfuse export. Set `LANGFUSE_DISABLE=1` to opt out.
+- `LLM_MODEL` — default model for the configured provider.
+- `VITE_GOOGLE_MAPS_API_KEY` — optional address search in the Profile form.
+- `CHROME_PATH` — override Chrome/Chromium detection.
+- `JOBCTRL_RESUME_RENDERER=latex_pdf` — opt into the LaTeX compatibility
+  renderer (default is HTML/CSS printed by Playwright).
+- `PLAYWRIGHT_SKIP_BROWSER_GC=1` — keep other worktrees' Playwright browsers
+  when running `playwright install` from this checkout.
+- `JOBCTRL_SKIP_BROWSER_PREFLIGHT=1` — skip the worker's startup Chromium
+  check (workers running only non-browser activities).
+- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` —
+  optional OpenTelemetry/Langfuse export; `LANGFUSE_DISABLE=1` opts out.
 
-Discovery scheduling is controlled by the discovery runtime settings stored in
-SQLite. `scheduling_enabled` defaults to `false`; `schedule_cron` defaults to
-`0 7 * * *` and is interpreted by the local Temporal dev server. When disabled,
-worker startup deletes any existing local discovery schedule instead of running
-background discovery.
+</details>
 
-LLM spend is tracked locally in SQLite from the existing LLM usage capture
-points. `dailyBudgetUsd` defaults to `25`; set it to `0` in Preferences to make
-the local budget unlimited. Workflows that spend LLM tokens run a budget
-preflight before starting their heavy activity, and the health surface shows
-today's estimated spend against the configured budget.
+Discovery scheduling is stored in SQLite: `scheduling_enabled` defaults to
+`false`; `schedule_cron` defaults to `0 7 * * *` and only runs after you
+enable it. LLM spend is tracked locally; `dailyBudgetUsd` defaults to `25`
+(`0` = unlimited), spendful workflows run a budget preflight, and the health
+surface shows today's estimated spend.
 
 ## Development
 
 ```bash
-pnpm install:interactive
-pnpm check
-pnpm test
-uv --project workers/automation run --extra dev python -m build workers/automation
-git diff --check
+pnpm install:interactive   # or: scripts/install
+pnpm check                 # cross-stack typecheck + lint
+pnpm test                  # API + web build + Python tests
 ```
 
-Useful focused commands:
-
-```bash
-pnpm api:check
-pnpm api:test
-pnpm web:check
-pnpm web:build
-pnpm web:test
-pnpm web:e2e
-pnpm scripts:test
-pnpm extension:check
-pnpm extension:test
-pnpm extension:e2e
-uv --project workers/automation run --extra dev pytest -q
-```
-
-For contributor workflow, see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Screenshots
-
-Documentation screenshots must be generated from synthetic data. Use:
-
-```bash
-pnpm docs:screenshots
-```
-
-![Dashboard with synthetic data](docs/assets/screenshots/dashboard.png)
-
-![Apply Review with synthetic data](docs/assets/screenshots/apply-review.png)
-
-The Documentation Screenshots section of
-[docs/local-development.md](docs/local-development.md)
-explains the disposable database, routes, and refresh process.
+Focused commands (`pnpm api:test`, `pnpm web:test`, `pnpm web:e2e`,
+`pnpm extension:test`, `uv --project workers/automation run --extra dev
+pytest -q`, …) are listed in
+[docs/local-development.md](docs/local-development.md). Contributor
+workflow: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
-- [docs/user/](docs/user/): end-user setup, configuration, normal flows, safety,
-  and screenshot references.
-- [docs/developer/](docs/developer/): contributor onboarding and architecture
-  reading path.
-- [docs/architecture/](docs/architecture/index.md): system architecture — runtime
-  boundaries, observability, storage, scoring, materials audit, and read model.
-- [docs/architecture/pipeline/](docs/architecture/pipeline/index.md):
-  stage-by-stage pipeline sequence and class diagrams.
-- [docs/local-reliability-qa.md](docs/local-reliability-qa.md): regression
+- [docs/user/](docs/user/) — setup, product tour, configuration, normal
+  flows, data & safety, security model.
+- [docs/developer/](docs/developer/) — contributor onboarding and
+  architecture reading path.
+- [docs/architecture/](docs/architecture/index.md) — runtime boundaries,
+  pipeline, storage, scoring, materials audit, read model, observability.
+- [docs/local-reliability-qa.md](docs/local-reliability-qa.md) — regression
   matrix and QA gates.
-- [docs/decisions.md](docs/decisions.md): accepted architecture decisions.
-- [docs/backlog.md](docs/backlog.md): detailed engineering backlog.
-- [docs/plans/](docs/plans/): proposal and implementation records.
+- [docs/decisions.md](docs/decisions.md) — accepted architecture decisions.
+- [docs/backlog.md](docs/backlog.md) · [docs/plans/](docs/plans/) — backlog
+  and implementation records.
 
 ## License
 

@@ -5,10 +5,11 @@ pageClass: jh-user-guide-page
 # Getting Started
 
 JobCtrl runs entirely on your own computer. This guide takes you from an
-empty machine to the app open in your browser. Today that means **installing
-from source** — there is no packaged installer yet, so setup is
-developer-shaped even though daily use is not. It is local-first: your data
-stays on your machine unless you explicitly configure an external provider.
+empty machine to the app open in your browser. The app runs from a source
+checkout you own, but you do not have to assemble it by hand: a **one-line
+bootstrap** (or the **Homebrew launcher**) clones it and walks you through a
+guided install. It is local-first: your data stays on your machine unless you
+explicitly configure an external provider.
 
 ::: tip Want to see the product first?
 The [Product Tour](screenshots.md) walks through every screen with captioned,
@@ -55,6 +56,30 @@ downloads. Each line says what the tool is for.
 :::
 
 ## 2. Install Dependencies
+
+The fastest path is the bootstrap script — it clones the repository to
+`~/JobCtrl` (override with `JOBCTRL_HOME` or `--dir`) and runs the same
+guided installer described below:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ebarti/JobCtrl/main/scripts/get | bash
+```
+
+Homebrew users can install the toolchain plus a global `jobctrl` launcher
+instead, then bootstrap through it:
+
+```bash
+brew install ebarti/tap/jobctrl
+jobctrl bootstrap
+```
+
+The launcher proxies every CLI command (`jobctrl doctor`, `jobctrl dev`, …)
+into the checkout, so you can skip the long `uv --project …` prefixes shown
+in this guide. The tap is published together with the first public release;
+from an existing checkout, `brew install --formula
+packaging/homebrew/Formula/jobctrl.rb --HEAD` installs the same launcher.
+
+Or do the same steps by hand:
 
 ```bash
 git clone https://github.com/ebarti/JobCtrl.git

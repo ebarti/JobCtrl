@@ -82,37 +82,57 @@ to the rename train / post-rename launch assets (R7b).
   the workflow stays green. If a bad build shipped, redeploy the previous
   `docs-site-dist` artifact.
 
-### 9.3 — Repository-rename redirect (owner-only; RENAME-GATED — deferred to R7b)
+### 9.3 — Repository-rename redirect (owner-only; rename landed 2026-07-07)
 
-> **Deferred.** This step runs only after the pre-publication rename train
+> **Update 2026-07-07.** The rename train
 > ([`docs/plans/implemented/2026-07-05-rename-jobctrl-plan.md`](plans/implemented/2026-07-05-rename-jobctrl-plan.md))
-> merges. It is **out of scope for R7a** and is not prepared or executed here.
+> has merged and the repository is `ebarti/JobCtrl`; `REPO_URL` already points
+> at it. What remains is verifying the old-URL redirects at the visibility
+> flip.
 
-- **Action (for reference).** After the GitHub repository rename, verify GitHub's
-  automatic old-URL redirects resolve; update the absolute `REPO_URL` in
-  `docs/.vitepress/config.ts` and any absolute repo links/badges; re-run
-  `pnpm docs:build`.
+- **Action.** After the visibility flip, verify GitHub's
+  automatic old-URL redirects resolve; `REPO_URL` in
+  `docs/.vitepress/config.ts` and the README badges already point at
+  `ebarti/JobCtrl`; re-run `pnpm docs:build` if any link needed fixing.
 - **Rollback (for reference).** Rename back (GitHub reserves the prior name);
   revert the `REPO_URL`/link edits.
 
-### 9.4 — Release tagging (owner-only; RENAME-GATED — deferred to R7b)
+### 9.4 — Release tagging (owner-only; rename landed 2026-07-07, mechanics ready)
 
-> **Deferred.** Runs only after the PyPI/distribution rename in the rename train.
-> **Out of scope for R7a**; not prepared or executed here.
+> **Update 2026-07-07.** The distribution is renamed (`pyproject` name
+> `jobctrl`) and the tag trigger (`push: tags: v*`) is restored in
+> `.github/workflows/publish.yml`; `release_check` enforces both. The "Publish
+> to PyPI" workflow remains `disabled_manually` on GitHub as the safety catch.
 
-- **Action (for reference).** Restore the tag trigger in
-  `.github/workflows/publish.yml` (currently `workflow_dispatch`-only per OSS
-  spec W0.5), gated on the release-check workflow passing, then tag the first
-  release; the build produces the renamed sdist/wheel.
-- **Rollback (for reference).** Delete the tag; if a bad artifact published to
-  PyPI, yank it. Keep the trigger `workflow_dispatch`-only until the rename train
-  is confirmed.
+- **Action.** Confirm the `jobctrl` PyPI name is held, re-enable the "Publish
+  to PyPI" workflow, then tag the first public release; the tag build is gated
+  on the release-check workflow passing.
+- **Rollback.** Delete the tag; if a bad artifact published to PyPI, yank it;
+  re-disable the workflow.
+
+### 9.5 — Homebrew tap publication (owner-only; new 2026-07-07)
+
+The formula's canonical copy lives in-repo at
+`packaging/homebrew/Formula/jobctrl.rb` (head-only spec until the first
+tag). The tap repository `ebarti/homebrew-tap` already exists (it ships
+`claude-notifier` and `skills`), and `Formula/jobctrl.rb` is committed in the
+owner's local tap clone (`~/Github/homebrew-tap`, commit `d76b052`) —
+**unpushed**, so nothing is published yet. At release:
+
+- **Action.** Push the tap commit (`git -C ~/Github/homebrew-tap push`); at
+  the first public tag, add the stable `url` (tag tarball) and its `sha256`
+  to both copies, re-run `brew style`/`brew audit --formula`, push the tap
+  update, and verify `brew install ebarti/tap/jobctrl` end to end. The
+  README's Get Started section already documents the tap command.
+- **Rollback.** Revert or delete `Formula/jobctrl.rb` in the tap; the
+  README's script and manual paths are unaffected.
 
 ## Status summary
 
-| Step | Owner-only | Rename-gated | R7a status |
+| Step | Owner-only | Rename-gated | Status |
 | --- | --- | --- | --- |
 | 9.1 Visibility flip | Yes | No | Prepared + verifiable; owner executes |
 | 9.2 Docs-site deploy | Yes | No | Prepared + verifiable; owner executes |
-| 9.3 Rename redirect | Yes | **Yes** | Deferred to rename train / R7b |
-| 9.4 Release tagging | Yes | **Yes** | Deferred to rename train / R7b |
+| 9.3 Rename redirect | Yes | Landed 2026-07-07 | Redirect verify at flip; owner executes |
+| 9.4 Release tagging | Yes | Landed 2026-07-07 | Mechanics ready; owner re-enables + tags |
+| 9.5 Homebrew tap | Yes | No | Formula in-repo + staged in local tap clone; owner pushes + pins stable spec at first tag |
