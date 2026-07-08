@@ -26,22 +26,26 @@ export function DashboardView() {
       {message ? <div className="banner">{message}</div> : null}
       {outcomesError ? <div className="banner">{outcomesError}</div> : null}
       {summary ? (
-        <div className="dashboard-grid">
-          <ConversionPanel summary={summary} />
-          <DigestPanel />
+        <div className="dashboard-stack">
+          <div className="dashboard-ops">
+            <ConversionPanel summary={summary} />
+            <DigestPanel />
+            <SourceHealthCard summary={summary} />
+          </div>
           <Funnel summary={summary} />
-          <SourceHealthCard summary={summary} />
-          <ApplyRunsCard summary={summary} />
-          <section className="card">
-            <CardHeader
-              title="Outcome suggestions"
-              meta={outcomes.data ? `${pendingSuggestions.length} pending` : "loading"}
-            />
-            {outcomes.isFetching && !outcomes.data ? (
-              <Empty title="Loading outcome suggestions." />
-            ) : null}
-            {outcomes.data ? <OutcomeSuggestionsPanel suggestions={pendingSuggestions} /> : null}
-          </section>
+          <div className="dashboard-tail">
+            <ApplyRunsCard summary={summary} />
+            <section className="card">
+              <CardHeader
+                title="Outcome suggestions"
+                meta={outcomes.data ? `${pendingSuggestions.length} pending` : "loading"}
+              />
+              {outcomes.isFetching && !outcomes.data ? (
+                <Empty title="Loading outcome suggestions." />
+              ) : null}
+              {outcomes.data ? <OutcomeSuggestionsPanel suggestions={pendingSuggestions} /> : null}
+            </section>
+          </div>
         </div>
       ) : (
         <Empty title={isLoading ? "Loading dashboard." : "No dashboard data."} />

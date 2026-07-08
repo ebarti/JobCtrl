@@ -523,14 +523,23 @@ input[type="radio"] {
   }
 }
 
-.dashboard-grid {
+.dashboard-stack {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(340px, 0.8fr);
   gap: 18px;
 }
 
-.span-2 {
-  grid-row: span 2;
+.dashboard-ops {
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.dashboard-tail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
 }
 
 .card {
@@ -1053,10 +1062,6 @@ input[type="radio"] {
 
 .legend > span {
   white-space: nowrap;
-}
-
-.dashboard-grid > .conversion-panel {
-  grid-column: 1 / -1;
 }
 
 .digest-panel {
@@ -7147,7 +7152,8 @@ input[type="radio"] {
 
 @media (max-width: 1000px) {
   .kpis,
-  .dashboard-grid,
+  .dashboard-ops,
+  .dashboard-tail,
   .discovery-control-grid,
   .field-grid,
   .runtime-summary,
