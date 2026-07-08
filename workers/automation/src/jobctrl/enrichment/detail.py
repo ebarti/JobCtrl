@@ -31,7 +31,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from playwright.sync_api import sync_playwright
 
@@ -163,9 +163,27 @@ def set_proxy(proxy_str: str | None) -> None:
 
 
 def _is_linkedin_job(site: str | None, url: str) -> bool:
-    site_text = str(site or "").strip().lower()
-    url_text = str(url or "").strip().lower()
-    return site_text == "linkedin" or "linkedin.com/jobs/" in url_text
+    url_text = str(url or "").strip()
+    if not url_text:
+        return False
+
+    # Source labels are hints only. The authenticated LinkedIn profile boundary
+    # is selected from the parsed URL itself so URL paths/fragments cannot opt in.
+    source_is_linkedin = str(site or "").strip().lower() == "linkedin"
+    if not source_is_linkedin and "linkedin" not in url_text.lower():
+        return False
+
+    try:
+        parsed = urlparse(url_text)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if hostname != "linkedin.com" and not hostname.endswith(".linkedin.com"):
+        return False
+    path = parsed.path.lower()
+    return path == "/jobs" or path.startswith("/jobs/")
 
 
 # -- URL resolution ----------------------------------------------------------
@@ -947,7 +965,11 @@ def scrape_site_batch(
         with sync_playwright() as p:
             browser = None
             resolver: LinkedInApplyUrlResolver | None = None
-            if linkedin_apply_resolver_enabled() and _is_linkedin_job(site, jobs[0][0]):
+            authenticated_page = None
+            anonymous_page = None
+            if linkedin_apply_resolver_enabled() and any(
+                _is_linkedin_job(site, job[0]) for job in jobs
+            ):
                 # Owner-scoped authenticated context: present the real logged-in
                 # browser identity (user_agent=None), never the bot UA, matching
                 # _default_linkedin_apply_resolver_factory (D1/D3, see module top).
@@ -958,10 +980,10 @@ def scrape_site_batch(
                 )
                 try:
                     resolver.start()
-                    page = resolver.new_page()
+                    authenticated_page = resolver.new_page()
                     log.info(
                         "LinkedIn authenticated browser enabled for %d enrichment job(s)",
-                        len(jobs),
+                        sum(1 for job in jobs if _is_linkedin_job(site, job[0])),
                     )
                 except Exception as exc:  # noqa: BLE001 - fallback to static browser
                     log.warning(
@@ -970,38 +992,52 @@ def scrape_site_batch(
                     )
                     resolver.close()
                     resolver = None
-                    page = None
-            else:
-                page = None
 
-            # The authenticated LinkedIn context is the owner's logged-in session,
-            # so robots.txt is an owner decision there (D1/D3) — pace + budget it,
-            # but do not enforce an anonymous robots verdict on the owner's own
-            # account. Every other (anonymous) batch honors robots. This gateway
-            # also resolves the honest UA for the anonymous context below, so the
-            # identity robots is evaluated with is exactly the identity the fetch
-            # presents (never an import-time constant, so an owner UA override
-            # reaches the browser).
-            if resolver is not None:
-                batch_gateway: PolitenessGateway = PolitenessGateway(
-                    robots=_OwnerAuthenticatedRobots(),
-                    rate_limiter=get_shared_rate_limiter(),
+            # The authenticated LinkedIn context is the owner's logged-in
+            # session, so robots.txt is an owner decision there (D1/D3) — pace +
+            # budget it, but do not enforce an anonymous robots verdict on the
+            # owner's own LinkedIn account. Anonymous rows keep the normal
+            # gateway and never share the authenticated browser/profile.
+            owner_authenticated_session: PolitenessSession | None = None
+            if resolver is not None and authenticated_page is not None:
+                owner_authenticated_session = _enrichment_session(
+                    PolitenessGateway(
+                        robots=_OwnerAuthenticatedRobots(),
+                        rate_limiter=get_shared_rate_limiter(),
+                    ),
+                    run_budget,
+                    conn,
+                    site=site,
                 )
-            else:
-                batch_gateway = gateway or PolitenessGateway()
+            anonymous_gateway = gateway or PolitenessGateway()
+            anonymous_session = _enrichment_session(
+                anonymous_gateway,
+                run_budget,
+                conn,
+                site=site,
+            )
 
-            if page is None:
+            def _ensure_anonymous_page():
+                nonlocal browser, anonymous_page
+                if anonymous_page is not None:
+                    return anonymous_page
                 launch_opts: dict = {"headless": True}
                 if _PROXY_CONFIG is not None:
                     launch_opts["proxy"] = _PROXY_CONFIG.playwright
                 browser = p.chromium.launch(**launch_opts)
-                # Anonymous context presents the gateway's honest UA; the
-                # authenticated-LinkedIn page above keeps the owner's real
-                # browser identity (user_agent=None) and never enters here.
-                context = browser.new_context(user_agent=batch_gateway.user_agent)
-                page = context.new_page()
+                context = browser.new_context(user_agent=anonymous_gateway.user_agent)
+                anonymous_page = context.new_page()
+                return anonymous_page
 
-            session = _enrichment_session(batch_gateway, run_budget, conn, site=site)
+            def _page_and_session_for(url: str) -> tuple[object, PolitenessSession, object | None]:
+                if (
+                    resolver is not None
+                    and authenticated_page is not None
+                    and owner_authenticated_session is not None
+                    and _is_linkedin_job(site, url)
+                ):
+                    return authenticated_page, owner_authenticated_session, resolver
+                return _ensure_anonymous_page(), anonymous_session, None
 
             for i, (url, title) in enumerate(jobs):
                 if cancel_event is not None and cancel_event.is_set():
@@ -1038,6 +1074,8 @@ def scrape_site_batch(
                     )
                     conn.commit()
                     continue
+
+                page, session, active_resolver = _page_and_session_for(url)
 
                 # R10 pre-navigation gate (peek). A block folds into the lifecycle
                 # WITHOUT entering 'running' (Running->Blocked is not valid;
@@ -1092,7 +1130,7 @@ def scrape_site_batch(
                         site=site,
                         url=url,
                         cascade_result=cascade_result,
-                        resolver=resolver,
+                        resolver=active_resolver,
                         page=page,
                     )
                     stats["processed"] += 1

@@ -19,6 +19,7 @@ from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.enrichment.detail import (
     _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS,
     _apply_authenticated_linkedin_apply_url,
+    _is_linkedin_job,
     _reset_authenticated_linkedin_retry_candidates,
 )
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
@@ -130,6 +131,38 @@ def _save_failed(
         if attempt_index < attempts - 1:
             aggregate = aggregate.reset(reset_at=now)
     repo.save(aggregate)
+
+
+@pytest.mark.parametrize(
+    ("site", "url"),
+    [
+        ("linkedin", "https://www.linkedin.com/jobs/view/123"),
+        (None, "https://linkedin.com/jobs/view/123"),
+        ("LinkedIn", "https://ca.linkedin.com/jobs/apply/123"),
+    ],
+)
+def test_linkedin_job_classifier_accepts_linkedin_job_hosts(
+    site: str | None, url: str
+) -> None:
+    assert _is_linkedin_job(site, url)
+
+
+@pytest.mark.parametrize(
+    ("site", "url"),
+    [
+        (
+            "linkedin",
+            "https://mail.google.com/mail/u/0/#inbox/linkedin.com/jobs/123",
+        ),
+        (None, "https://example.com/linkedin.com/jobs/123"),
+        (None, "https://linkedin.com.evil.test/jobs/view/123"),
+        ("linkedin", "not a url linkedin.com/jobs/123"),
+    ],
+)
+def test_linkedin_job_classifier_rejects_non_linkedin_hosts(
+    site: str | None, url: str
+) -> None:
+    assert not _is_linkedin_job(site, url)
 
 
 def test_authenticated_apply_url_upgrades_partial_linkedin_enrichment() -> None:
