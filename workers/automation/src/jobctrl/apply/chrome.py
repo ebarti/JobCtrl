@@ -605,7 +605,7 @@ def _should_block_dry_run_request(
         return True
     if str(resource_type or "Other") != "Document":
         return True
-    return str(initiator_type or "") not in {"", "other"}
+    return str(initiator_type or "").strip().lower() != "other"
 
 
 def _sanitize_evidence_url(url: str) -> str:
