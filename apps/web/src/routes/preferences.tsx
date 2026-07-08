@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { ProfileEditor } from "../contexts/profile/components/ProfileEditor.js";
 import { profileKeys } from "../contexts/profile/queryKeys.js";
+import { PageHead } from "../shared/ui/page-head.js";
 
 export const Route = createFileRoute("/preferences")({
   loader: ({ context }) =>
@@ -19,5 +20,14 @@ export const Route = createFileRoute("/preferences")({
 });
 
 function PreferencesEditor() {
-  return <ProfileEditor section="preferences" />;
+  return (
+    <>
+      <PageHead
+        eyebrow="Setup"
+        title="Preferences"
+        subtitle="Search targets, tailoring, and apply configuration"
+      />
+      <ProfileEditor section="preferences" />
+    </>
+  );
 }

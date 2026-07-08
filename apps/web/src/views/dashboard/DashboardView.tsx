@@ -3,6 +3,7 @@ import { useApplicationOutcomesQuery } from "../../contexts/operations/hooks/use
 import { useDashboardSummaryQuery } from "../../contexts/operations/hooks/useDashboardSummaryQuery.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
+import { PageHead } from "../../shared/ui/page-head.js";
 import { ApplyRunsCard } from "./ApplyRunsCard.js";
 import { ConversionPanel } from "./ConversionPanel.js";
 import { DigestPanel } from "./DigestPanel.js";
@@ -20,26 +21,31 @@ export function DashboardView() {
   );
   return (
     <>
+      <PageHead eyebrow="Overview" title="Dashboard" />
       {summary ? <KpiGrid summary={summary} /> : <KpiSkeleton />}
       {message ? <div className="banner">{message}</div> : null}
       {outcomesError ? <div className="banner">{outcomesError}</div> : null}
       {summary ? (
-        <div className="dashboard-grid">
-          <ConversionPanel summary={summary} />
-          <DigestPanel />
+        <div className="dashboard-stack">
+          <div className="dashboard-ops">
+            <ConversionPanel summary={summary} />
+            <DigestPanel />
+            <SourceHealthCard summary={summary} />
+          </div>
           <Funnel summary={summary} />
-          <SourceHealthCard summary={summary} />
-          <ApplyRunsCard summary={summary} />
-          <section className="card">
-            <CardHeader
-              title="Outcome suggestions"
-              meta={outcomes.data ? `${pendingSuggestions.length} pending` : "loading"}
-            />
-            {outcomes.isFetching && !outcomes.data ? (
-              <Empty title="Loading outcome suggestions." />
-            ) : null}
-            {outcomes.data ? <OutcomeSuggestionsPanel suggestions={pendingSuggestions} /> : null}
-          </section>
+          <div className="dashboard-tail">
+            <ApplyRunsCard summary={summary} />
+            <section className="card">
+              <CardHeader
+                title="Outcome suggestions"
+                meta={outcomes.data ? `${pendingSuggestions.length} pending` : "loading"}
+              />
+              {outcomes.isFetching && !outcomes.data ? (
+                <Empty title="Loading outcome suggestions." />
+              ) : null}
+              {outcomes.data ? <OutcomeSuggestionsPanel suggestions={pendingSuggestions} /> : null}
+            </section>
+          </div>
         </div>
       ) : (
         <Empty title={isLoading ? "Loading dashboard." : "No dashboard data."} />

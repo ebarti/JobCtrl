@@ -96,7 +96,7 @@ export function ConversionPanel({ summary }: ConversionPanelProps) {
   const { totals, bySource, byBand } = summary.conversion;
   const hasOutcomes = totals.applied > 0;
   return (
-    <section className="card conversion-panel">
+    <section className="card">
       <CardHeader
         title="Conversion"
         meta={hasOutcomes ? `${totals.applied} applied` : "no outcomes yet"}

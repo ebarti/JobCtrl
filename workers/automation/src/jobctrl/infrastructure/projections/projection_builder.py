@@ -782,6 +782,7 @@ class ProjectionBuilder:
                 # to backfill.
                 pass
         dirty_jobs.update(self._stale_deleted_projection_jobs())
+        dirty_jobs.update(self._stale_stage_projection_jobs())
 
         # One-time score-audit backfill (see SCORE_AUDIT_BACKFILL): rebuild any
         # already-projected scored job whose audit columns are still NULL. This
@@ -2566,6 +2567,42 @@ class ProjectionBuilder:
                 WHERE p.tenant_id = ?
                   AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
                   AND (p.deleted_at IS NULL OR p.deleted_at != d.deleted_at)
+                """,
+                (str(self._tenant_id),),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return set()
+        return {
+            str(row["job_id"] if not isinstance(row, tuple) else row[0])
+            for row in rows
+            if (row["job_id"] if not isinstance(row, tuple) else row[0])
+        }
+
+    def _stale_stage_projection_jobs(self) -> set[str]:
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT DISTINCT s.job_url AS job_id
+                  FROM job_stage_states s
+                  JOIN jobs j
+                    ON j.url = s.job_url
+                  LEFT JOIN job_list_projections p
+                    ON p.tenant_id = ?
+                   AND p.job_id = s.job_url
+                 WHERE s.job_url IS NOT NULL
+                   AND TRIM(s.job_url) != ''
+                   AND (
+                     p.job_id IS NULL
+                     OR (
+                       s.updated_at IS NOT NULL
+                       AND TRIM(s.updated_at) != ''
+                       AND (
+                         p.last_updated_at IS NULL
+                         OR TRIM(p.last_updated_at) = ''
+                         OR julianday(s.updated_at) > COALESCE(julianday(p.last_updated_at), -1)
+                       )
+                     )
+                   )
                 """,
                 (str(self._tenant_id),),
             ).fetchall()

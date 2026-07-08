@@ -2307,7 +2307,7 @@ export function ResumeStandalonePlateEditor({
     <section className={`resume-plate-editor ${className ?? ""}`.trim()} aria-label={title} style={previewStyle}>
       <div className="resume-plate-toolbar" data-resume-editor-chrome="true">
         <b>{title}</b>
-        <span className="mono">Plate HTML/CSS editor</span>
+        <span className="toolbar-status">Plate HTML/CSS editor</span>
         <ResumeEditorToolbarControls
           disabled={!canFormat}
           onAlign={handleAlign}
@@ -2621,7 +2621,7 @@ export function ResumePlateEditor({
     <section className="resume-plate-editor" aria-label={title} data-layout-box-count={layoutBoxes.length}>
       <div className="resume-plate-toolbar" data-resume-editor-chrome="true">
         <b>{title}</b>
-        <span className="mono">Plate HTML/CSS editor</span>
+        <span className="toolbar-status">Plate HTML/CSS editor</span>
         <ResumeEditorToolbarControls
           disabled={!canFormat}
           onAlign={handleAlign}

@@ -89,7 +89,7 @@ export function Funnel({ summary }: FunnelProps) {
   const navigate = useNavigate();
   const rows = productFunnel(summary);
   return (
-    <section className="card span-2">
+    <section className="card">
       <CardHeader title="Pipeline" meta={`${summary.totals.jobs} jobs`} />
       <div className="funnel">
         {rows.map((stage, index) => (

@@ -39,7 +39,7 @@
     "extension:e2e": "corepack pnpm --filter @jobctrl/extension e2e",
     "qa:seed": "corepack pnpm --filter @jobctrl/api qa:seed",
     "qa:test": "corepack pnpm --filter @jobctrl/api qa:test",
-    "docs:screenshots": "corepack pnpm --filter @jobctrl/web e2e -- tests/docs-screenshots.spec.ts",
+    "docs:screenshots": "JOBCTRL_DOCS_SCREENSHOTS=1 corepack pnpm --filter @jobctrl/web e2e -- tests/docs-screenshots.spec.ts",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs && node scripts/check-docs-site-links.mjs",
     "docs:check:runtime": "node scripts/check-docs-site-runtime.mjs",

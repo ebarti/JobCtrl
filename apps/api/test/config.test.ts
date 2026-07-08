@@ -29,9 +29,9 @@ function seedLegacyWorkspace(home: string, token = legacyToken()): string {
   return legacyDir;
 }
 
-describe("API runtime config workspace migration", () => {
+describe("API runtime config workspace resolution", () => {
   it.each([immediateLegacyToken(), legacyToken()])(
-    "moves the default %s workspace before returning appDir/dbPath",
+    "ignores the legacy %s workspace when resolving appDir/dbPath",
     (token) => {
       const { home, cleanup } = makeHome();
       try {
@@ -42,19 +42,16 @@ describe("API runtime config workspace migration", () => {
 
         expect(config.appDir).toBe(currentDir);
         expect(config.dbPath).toBe(path.join(currentDir, "jobctrl.db"));
-        expect(fs.existsSync(legacyDir)).toBe(false);
-        expect(fs.existsSync(path.join(currentDir, ".env"))).toBe(true);
-        expect(fs.existsSync(path.join(currentDir, "gmail", "token.json"))).toBe(true);
-        expect(fs.existsSync(path.join(currentDir, "jobctrl.db"))).toBe(true);
-        expect(fs.existsSync(path.join(currentDir, "jobctrl.db-wal"))).toBe(true);
-        expect(fs.existsSync(path.join(currentDir, "jobctrl.db-shm"))).toBe(true);
+        expect(fs.existsSync(legacyDir)).toBe(true);
+        expect(fs.existsSync(path.join(currentDir, ".env"))).toBe(false);
+        expect(fs.existsSync(path.join(currentDir, "jobctrl.db"))).toBe(false);
       } finally {
         cleanup();
       }
     },
   );
 
-  it("does not move the default workspace when JOBCTRL_DIR is explicit", () => {
+  it("uses JOBCTRL_DIR without moving legacy workspaces", () => {
     const { home, cleanup } = makeHome();
     try {
       const legacyDir = seedLegacyWorkspace(home);
@@ -70,28 +67,33 @@ describe("API runtime config workspace migration", () => {
     }
   });
 
-  it("refuses to overwrite an existing current workspace", () => {
+  it("uses an existing current workspace even when a legacy workspace also exists", () => {
     const { home, cleanup } = makeHome();
     try {
-      seedLegacyWorkspace(home);
+      const legacyDir = seedLegacyWorkspace(home);
       const currentDir = path.join(home, ".jobctrl");
       fs.mkdirSync(currentDir);
       fs.writeFileSync(path.join(currentDir, "sentinel"), "keep");
 
-      expect(() => resolveApiConfig({ HOME: home })).toThrow(/refusing to move legacy workspace/);
+      const config = resolveApiConfig({ HOME: home });
+
+      expect(config.appDir).toBe(currentDir);
+      expect(fs.existsSync(legacyDir)).toBe(true);
       expect(fs.readFileSync(path.join(currentDir, "sentinel"), "utf8")).toBe("keep");
     } finally {
       cleanup();
     }
   });
 
-  it("refuses a legacy workspace that already contains new-named database files before moving it", () => {
+  it("does not inspect or mutate legacy database files during config resolution", () => {
     const { home, cleanup } = makeHome();
     try {
       const legacyDir = seedLegacyWorkspace(home, immediateLegacyToken());
       fs.writeFileSync(path.join(legacyDir, "jobctrl.db"), "new");
 
-      expect(() => resolveApiConfig({ HOME: home })).toThrow(/refusing to overwrite existing database file/);
+      const config = resolveApiConfig({ HOME: home });
+
+      expect(config.appDir).toBe(path.join(home, ".jobctrl"));
       expect(fs.existsSync(legacyDir)).toBe(true);
       expect(fs.existsSync(path.join(home, ".jobctrl"))).toBe(false);
       expect(fs.readFileSync(path.join(legacyDir, "jobctrl.db"), "utf8")).toBe("new");

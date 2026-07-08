@@ -114,6 +114,10 @@ class ApplyWorkflow:
             )
             raise
 
+        if payload.continuous and result.ok:
+            if result.applied + result.failed == 0:
+                await workflow.sleep(_APPLY_CONTINUOUS_EMPTY_POLL_DELAY)
+            workflow.continue_as_new(payload)
         await emit_workflow_outcome(
             tenant_id=payload.tenant_id,
             workflow_type="ApplyWorkflow",
@@ -124,10 +128,6 @@ class ApplyWorkflow:
             expected_app_dir=payload.expected_app_dir,
             expected_db_path=payload.expected_db_path,
         )
-        if payload.continuous:
-            if result.applied + result.failed == 0:
-                await workflow.sleep(_APPLY_CONTINUOUS_EMPTY_POLL_DELAY)
-            workflow.continue_as_new(payload)
         return result
 
     async def _run_apply(self, payload: ApplyWorkflowInput) -> ApplyWorkflowResult:

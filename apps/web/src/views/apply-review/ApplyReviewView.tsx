@@ -36,9 +36,9 @@ import { useResumeReviewDraftQuery } from "../../contexts/operations/hooks/useRe
 import { useResumeTemplatesQuery } from "../../contexts/profile/hooks/useResumeTemplatesQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
-import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
+import { PageHead } from "../../shared/ui/page-head.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../shared/ui/PdfPreviewViewer.js";
 import { JobDetailDrawer } from "../jobs/JobDetailDrawer.js";
 
@@ -50,6 +50,7 @@ type MaterialStatus = {
 
 type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
 type ApplyReviewRequirement = ApplyReviewQueueItem["position"]["idealRequirements"][number];
+type ApplyReviewShippedFit = NonNullable<ApplyReviewRequirementLedAudit["shippedFit"]>;
 type ScoreDimensionKey = "technicalFit" | "experienceFit" | "roleFit";
 type ArtifactComparisonDraftTarget = {
   readonly acceptedArtifactId: string | null;
@@ -704,6 +705,17 @@ function AuditTagGroup({
   );
 }
 
+function shippedFitFindingsLabel(shippedFit: ApplyReviewShippedFit): string {
+  const lifecycle = shippedFit.lifecycle ?? "";
+  if (lifecycle === "post_voice_shipped") {
+    return shippedFit.passed ? "Post-voice shipped findings" : "Post-voice gate findings";
+  }
+  if (lifecycle.includes("accept")) {
+    return "Post-acceptance audit findings";
+  }
+  return shippedFit.passed ? "Shipped material findings" : "Gate failure findings";
+}
+
 function BulletOverflowAudit({
   overflows,
 }: {
@@ -767,7 +779,7 @@ function RevisionAudit({
             {shippedFit.passed ? "meets revision gate" : "below revision gate"}
           </span>
           <AuditTagGroup
-            label="Post-acceptance audit findings"
+            label={shippedFitFindingsLabel(shippedFit)}
             values={shippedFit.warnings}
             tone="warn"
             formatValue={formatAuditMessage}
@@ -1326,11 +1338,12 @@ export function ApplyReviewView({
 
   return (
     <div className="apply-review-layout">
+      <PageHead
+        eyebrow="Pipeline"
+        title="Application review"
+        subtitle={`${readyCount} ready · ${preparingCount} preparing · ${repairCount} need repair`}
+      />
       <section className="card full">
-        <CardHeader
-          title="Application review"
-          meta={`${readyCount} ready · ${preparingCount} preparing · ${repairCount} need repair`}
-        />
         {queueError ? <div className="banner inline">{queueError}</div> : null}
         {queue.isFetching && !queue.data ? <Empty title="Loading review queue." /> : null}
         {queue.data && selected ? (

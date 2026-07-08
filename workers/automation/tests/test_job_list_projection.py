@@ -167,6 +167,52 @@ def test_pipeline_progress_keeps_internal_preparation_inside_discover_list_stage
     assert score_stage["state"] == "pending"
 
 
+def test_workflow_scoped_stage_event_refreshes_stale_stage_projection(conn: sqlite3.Connection) -> None:
+    url = "https://example.com/jobs/workflow-scoped-stage"
+    _seed_job(conn, url, title="Workflow Scoped Engineer")
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+
+    record_job_event(conn, url, "discover", "JobDiscovered", message="discovered")
+    conn.commit()
+    builder.refresh()
+    conn.execute(
+        "UPDATE job_list_projections SET last_updated_at = ? WHERE job_id = ?",
+        ("2026-05-04T12:00:00+00:00", url),
+    )
+
+    set_stage_state(conn, url, "discover", "succeeded", finished_at="2026-05-04T13:00:00+00:00")
+    set_stage_state(conn, url, "enrich", "succeeded", finished_at="2026-05-04T13:05:00+00:00")
+    record_job_event(
+        conn,
+        None,
+        "discover",
+        "StageCompleted",
+        message="Discovery preparation complete",
+        occurred_at="2026-05-04T13:06:00+00:00",
+    )
+    conn.commit()
+
+    refreshed = builder.refresh()
+
+    assert refreshed >= 1
+    row = conn.execute(
+        "SELECT current_stage, current_substage, current_state FROM job_list_projections WHERE job_id = ?",
+        (url,),
+    ).fetchone()
+    assert _row_value(row, "current_stage") == "discover"
+    assert _row_value(row, "current_substage") == "score"
+    assert _row_value(row, "current_state") == "pending"
+
+    detail = conn.execute(
+        "SELECT stages_json FROM job_detail_projections WHERE job_id = ?",
+        (url,),
+    ).fetchone()
+    stages = json.loads(_row_value(detail, "stages_json", "[]"))
+    assert next(stage for stage in stages if stage["stage"] == "discover")["state"] == "succeeded"
+    assert next(stage for stage in stages if stage["stage"] == "enrich")["state"] == "succeeded"
+    assert next(stage for stage in stages if stage["stage"] == "score")["state"] == "pending"
+
+
 def test_cover_progress_moves_product_stage_to_apply_when_resume_exists(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/cover-pending"
     _seed_job(conn, url, title="Cover Pending Engineer")

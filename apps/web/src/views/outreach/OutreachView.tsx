@@ -9,7 +9,7 @@ import {
   type ContactsListFilters,
 } from "../../contexts/outreach/hooks/useContactsListQuery.js";
 import type { OutreachSearch } from "../../routes/-outreach.search.js";
-import { CardHeader } from "../../shared/ui/card-header.js";
+import { PageHead } from "../../shared/ui/page-head.js";
 import { OutreachTable } from "./OutreachTable.js";
 
 function listFilters(search: OutreachSearch): ContactsListFilters {
@@ -36,17 +36,14 @@ export function OutreachView() {
 
   return (
     <>
+      <PageHead
+        eyebrow="Library"
+        title="Contacts"
+        subtitle={data ? `${data.items.length} shown` : "loading"}
+        actions={<DueFollowUpsBadge />}
+      />
       <DueFollowUpsPanel />
       <section className="card full">
-        <CardHeader
-          title="Contacts"
-          meta={
-            <>
-              {data ? `${data.items.length} shown` : "loading"}
-              <DueFollowUpsBadge />
-            </>
-          }
-        />
         {message ? <div className="banner inline">{message}</div> : null}
         <div className="toolbar">
           <label className="field compact">

@@ -190,8 +190,8 @@ async def test_apply_workflow_continuous_batch_is_bounded_and_continues_as_new(m
     async def fake_started(**_kwargs):
         return None
 
-    async def fake_outcome(**_kwargs):
-        return None
+    async def fake_outcome(**kwargs):
+        captured.setdefault("outcomes", []).append(kwargs)
 
     async def fake_sleep(delay):
         captured["sleep"] = delay
@@ -221,6 +221,7 @@ async def test_apply_workflow_continuous_batch_is_bounded_and_continues_as_new(m
         await workflow.run(ApplyWorkflowInput(tenant_id="local", continuous=True))
     assert captured["sleep"] == timedelta(seconds=30)
     assert captured["continued_payload"].continuous is True
+    assert captured.get("outcomes", []) == []
 
 
 @pytest.mark.asyncio
