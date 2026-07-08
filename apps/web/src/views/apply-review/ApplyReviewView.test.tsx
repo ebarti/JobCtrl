@@ -1381,6 +1381,44 @@ describe("<ApplyReviewView>", () => {
     expect(editor).toHaveFocus();
   });
 
+  it("adds hyperlinks to selected resume lines and saves them in the Plate draft", async () => {
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+        },
+      }),
+    });
+
+    let shadow = await findResumeShadowRoot();
+    await selectResumeLine(shadow, "Owned platform reliability improvements for incident response.");
+    await userEvent.type(screen.getByRole("textbox", { name: "Link URL" }), "portfolio.example.test");
+    await userEvent.click(screen.getByRole("button", { name: "Apply link" }));
+
+    shadow = await findResumeShadowRoot();
+    await waitFor(() =>
+      expect(
+        shadowElementWithText(shadow, "Owned platform reliability improvements for incident response.").querySelector("a"),
+      ).toHaveAttribute("href", "https://portfolio.example.test"),
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "save draft" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "save draft" }));
+    await waitFor(() => expect(screen.getByText("saved revision 1")).toBeInTheDocument());
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const revisionCall = fetchMock.mock.calls.find(([input]) => {
+      const url = typeof input === "string" || input instanceof URL ? input.toString() : input.url;
+      return url.includes("/v1/resume-review/drafts/") && url.includes("/revisions");
+    });
+    expect(revisionCall).toBeDefined();
+    const body = JSON.parse(String(revisionCall?.[1]?.body ?? "{}")) as {
+      editedText?: string;
+      plateDocument?: unknown;
+    };
+    expect(body.editedText).toContain("Owned platform reliability improvements for incident response.");
+    expect(JSON.stringify(body.plateDocument)).toContain('"href":"https://portfolio.example.test"');
+  });
+
   it("scopes resume editor font and size formatting to all lines or the selected line", async () => {
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({

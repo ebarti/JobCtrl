@@ -38,6 +38,45 @@ const DEFAULT_TENANT = "local";
 const TEXT_PREVIEW_BYTE_LIMIT = 128_000;
 const FEEDBACK_SUMMARY_LIMIT = 500;
 const DRAFT_RENDERER_METADATA_SOURCE = "resume_review_draft";
+const RESUME_PLATE_BLOCK_TAGS = new Set([
+  "article",
+  "div",
+  "h1",
+  "h2",
+  "h3",
+  "header",
+  "li",
+  "main",
+  "p",
+  "section",
+  "ul",
+]);
+const RESUME_PLATE_INLINE_TAGS = new Set(["a", "b", "em", "span", "strong", "u"]);
+
+const RESUME_EDITOR_FONT_FAMILY_STYLES: Record<string, string> = {
+  avenir: '"Avenir Next", "Avenir", "Nunito Sans", sans-serif',
+  aptos: '"Aptos", "Aptos Display", "Arial", sans-serif',
+  calibri: '"Calibri", "Aptos", "Arial", sans-serif',
+  cambria: '"Cambria", "Georgia", "Times New Roman", serif',
+  charter: '"Charter", "Bitstream Charter", "Georgia", serif',
+  garamond: '"EB Garamond", "Garamond", "Georgia", serif',
+  georgia: '"Georgia", "Times New Roman", serif',
+  helvetica: '"Helvetica Neue", "Helvetica", "Arial", sans-serif',
+  inter: '"Inter", "Aptos", "Arial", sans-serif',
+  mono: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  sans: '"Aptos", "Inter", "Arial", sans-serif',
+  serif: '"Charter", "Georgia", serif',
+  source_sans: '"Source Sans 3", "Source Sans Pro", "Aptos", "Arial", sans-serif',
+  source_serif: '"Source Serif 4", "Source Serif Pro", "Georgia", serif',
+  system: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  times: '"Times New Roman", "Times", serif',
+};
+
+const RESUME_EDITOR_LEGACY_FONT_SIZE_STYLES: Record<string, string> = {
+  heading: "14pt",
+  large: "12pt",
+  small: "9pt",
+};
 
 interface ResumeReviewDraftRow extends Record<string, unknown> {
   draft_id: string;
@@ -854,7 +893,7 @@ function persistRenderedDraftArtifacts(
   const now = new Date().toISOString();
 
   fs.writeFileSync(textPath, editedText, "utf8");
-  fs.writeFileSync(htmlPath, htmlForEditedResume(editedText), "utf8");
+  fs.writeFileSync(htmlPath, htmlForEditedResume(editedText, parseJson(revision.plate_document_json)), "utf8");
   renderPdf({ htmlPath, pdfPath });
 
   insertDynamicRow(db, "job_materials", {
@@ -1090,7 +1129,11 @@ function tableColumnSet(db: SqliteDatabase, tableName: string): string[] {
   return allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name);
 }
 
-function htmlForEditedResume(editedText: string): string {
+function htmlForEditedResume(editedText: string, plateDocument: unknown | null = null): string {
+  const plateHtml = htmlForEditedResumePlateDocument(editedText, plateDocument);
+  if (plateHtml) {
+    return editedResumeHtmlDocument(plateHtml);
+  }
   const lines = editedText
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -1156,6 +1199,158 @@ function htmlForEditedResume(editedText: string): string {
   closeList();
   if (sectionOpen) html += "</section>";
   html += "</main>";
+  return editedResumeHtmlDocument(html);
+}
+
+function htmlForEditedResumePlateDocument(editedText: string, plateDocument: unknown | null): string | null {
+  if (!Array.isArray(plateDocument)) return null;
+  const plateText = resumeTextFromPlateNodes(plateDocument);
+  if (normalizeResumeDocumentText(plateText) !== normalizeResumeDocumentText(editedText)) {
+    return null;
+  }
+  const html = plateDocument.map((node) => resumePlateNodeHtml(node)).join("");
+  return html.trim() ? html : null;
+}
+
+function normalizeResumeDocumentText(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function resumeTextFromPlateNodes(nodes: readonly unknown[]): string {
+  const lines = nodes
+    .flatMap((node) => resumeLineTextsFromPlateNode(node))
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  if (lines.length) {
+    return lines.join("\n");
+  }
+  return nodes
+    .map((node) => resumeTextFromPlateNode(node))
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function resumeTextFromPlateNode(node: unknown): string {
+  if (!isJsonRecord(node)) return "";
+  if (typeof node.text === "string") {
+    return node.text;
+  }
+  const children = Array.isArray(node.children) ? node.children : [];
+  return children
+    .map((child) => resumeTextFromPlateNode(child))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function resumeLineTextsFromPlateNode(node: unknown): string[] {
+  if (!isJsonRecord(node) || typeof node.text === "string") return [];
+  if (positiveInteger(node.lineNumber)) {
+    const text = resumeTextFromPlateNode(node).replace(/\s+/g, " ").trim();
+    return text ? [text] : [];
+  }
+  const children = Array.isArray(node.children) ? node.children : [];
+  return children.flatMap((child) => resumeLineTextsFromPlateNode(child));
+}
+
+function resumePlateNodeHtml(node: unknown): string {
+  if (!isJsonRecord(node)) return "";
+  if (typeof node.text === "string") {
+    return resumePlateTextNodeHtml(node);
+  }
+  const children = Array.isArray(node.children) ? node.children.map((child) => resumePlateNodeHtml(child)).join("") : "";
+  const tag = safeResumePlateTag(node);
+  const attrs = resumePlateNodeAttributes(node, tag);
+  return `<${tag}${attrs}>${children}</${tag}>`;
+}
+
+function resumePlateTextNodeHtml(node: Record<string, unknown>): string {
+  let html = escapeHtml(typeof node.text === "string" ? node.text : "");
+  if (node.underline === true) {
+    html = `<u>${html}</u>`;
+  }
+  if (node.italic === true) {
+    html = `<em>${html}</em>`;
+  }
+  if (node.bold === true) {
+    html = `<strong>${html}</strong>`;
+  }
+  return html;
+}
+
+function safeResumePlateTag(node: Record<string, unknown>): string {
+  const tagName = typeof node.tagName === "string" ? node.tagName.toLowerCase() : "div";
+  if (tagName === "a" && safeResumeHref(typeof node.href === "string" ? node.href : null)) return "a";
+  if (RESUME_PLATE_INLINE_TAGS.has(tagName) || RESUME_PLATE_BLOCK_TAGS.has(tagName)) return tagName;
+  return "div";
+}
+
+function resumePlateNodeAttributes(node: Record<string, unknown>, tag: string): string {
+  const attrs: string[] = [];
+  const className = safeClassName(typeof node.className === "string" ? node.className : null);
+  const lineNumber = positiveInteger(node.lineNumber);
+  const pageNumber = positiveInteger(node.pageNumber);
+  const semanticId = typeof node.semanticId === "string" ? node.semanticId.trim() : "";
+  const style = resumePlateNodeStyle(node);
+  if (className) attrs.push(`class="${escapeHtml(className)}"`);
+  if (semanticId) attrs.push(`data-resume-layout-target="${escapeHtml(semanticId)}"`);
+  if (lineNumber) attrs.push(`data-resume-line-number="${lineNumber}"`);
+  if (pageNumber) attrs.push(`data-resume-page="${pageNumber}"`);
+  if (tag === "a") {
+    const href = safeResumeHref(typeof node.href === "string" ? node.href : null);
+    if (href) attrs.push(`href="${escapeHtml(href)}"`);
+  }
+  if (style) attrs.push(`style="${escapeHtml(style)}"`);
+  return attrs.length ? ` ${attrs.join(" ")}` : "";
+}
+
+function safeClassName(value: string | null): string | null {
+  const classes = (value ?? "")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => /^[a-zA-Z0-9_-]+$/.test(token));
+  return classes.length ? [...new Set(classes)].join(" ") : null;
+}
+
+function positiveInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function resumePlateNodeStyle(node: Record<string, unknown>): string {
+  const declarations: string[] = [];
+  if (node.textAlign === "left" || node.textAlign === "center" || node.textAlign === "right") {
+    declarations.push(`text-align:${node.textAlign}`);
+  }
+  if (typeof node.fontFamily === "string" && Object.hasOwn(RESUME_EDITOR_FONT_FAMILY_STYLES, node.fontFamily)) {
+    declarations.push(`font-family:${RESUME_EDITOR_FONT_FAMILY_STYLES[node.fontFamily]}`);
+  }
+  if (typeof node.fontSize === "number" && Number.isFinite(node.fontSize) && node.fontSize > 0.5 && node.fontSize < 3) {
+    declarations.push(`font-size:${Number(node.fontSize.toFixed(2))}em`);
+  } else if (
+    typeof node.fontSize === "string" &&
+    Object.hasOwn(RESUME_EDITOR_LEGACY_FONT_SIZE_STYLES, node.fontSize)
+  ) {
+    declarations.push(`font-size:${RESUME_EDITOR_LEGACY_FONT_SIZE_STYLES[node.fontSize]}`);
+  }
+  return declarations.join(";");
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function safeResumeHref(value: string | null): string | null {
+  const href = value?.trim();
+  if (!href) return null;
+  return /^(?:https?:|mailto:|tel:)/i.test(href) ? href : null;
+}
+
+function editedResumeHtmlDocument(html: string): string {
   return `<!doctype html>
 <html lang="en">
   <head>
