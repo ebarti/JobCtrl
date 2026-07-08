@@ -266,7 +266,8 @@ pnpm docs:preview
 the built site does not resolve to a built page or asset (this catches links
 to pages relocated by `rewrites`, which VitePress's source-level dead-link
 check cannot see). Together they are the docs link-integrity gate; CI runs
-them on every pull request that touches `docs/`
+them on pushes to `main`, and maintainers can run the docs workflow manually for
+pull requests after review.
 (`.github/workflows/docs-site.yml`). Mermaid diagrams render client-side in
 the browser, so a build that passes can still contain a diagram that fails to
 parse — check edited diagrams in `pnpm docs:dev` before merging. Note that

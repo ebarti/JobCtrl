@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ebarti/JobCtrl/security/advisories/new
+    about: Report vulnerabilities privately. Do not put exploit details, secrets, logs, resumes, local paths, or generated materials in public issues.
+  - name: Contributor guide
+    url: https://github.com/ebarti/JobCtrl/blob/main/CONTRIBUTING.md
+    about: Read the development, validation, DCO sign-off, and PR workflow guidance before opening a pull request.

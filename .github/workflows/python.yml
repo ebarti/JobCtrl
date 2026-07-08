@@ -8,12 +8,6 @@ on:
       - "scripts/**"
       - "pyproject.toml"
       - ".github/workflows/python.yml"
-  pull_request:
-    paths:
-      - "workers/**"
-      - "scripts/**"
-      - "pyproject.toml"
-      - ".github/workflows/python.yml"
   workflow_dispatch:
 
 jobs:

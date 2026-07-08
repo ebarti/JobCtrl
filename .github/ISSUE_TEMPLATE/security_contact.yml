@@ -1,0 +1,29 @@
+name: Security contact request
+description: Ask for a private vulnerability reporting path without disclosing details publicly.
+title: "[Security contact]: "
+labels:
+  - "status: needs triage"
+  - "type: security-contact"
+  - "area: security"
+  - "privacy: review-needed"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include exploit details, proof-of-concept steps, secrets, logs, local paths, resumes, generated materials, database contents, or browser state in this public issue. Prefer GitHub private vulnerability reporting if it is available for this repository.
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Confirmation
+      options:
+        - label: I need a private contact path for a possible vulnerability and have not included vulnerability details in this public issue.
+          required: true
+        - label: I have not included secrets, private profile data, resumes, generated application materials, raw logs, browser profiles, SQLite databases, local paths, or exploit details.
+          required: true
+  - type: textarea
+    id: safe_summary
+    attributes:
+      label: Minimal public summary
+      description: Optional. Keep this generic, for example "local API boundary" or "browser extension". Do not include technical exploit details.
+    validations:
+      required: false
