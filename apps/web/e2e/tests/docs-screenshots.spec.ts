@@ -46,7 +46,7 @@ const surfaces: readonly ScreenshotSurface[] = [
   {
     name: "profile.png",
     path: "/profile",
-    proof: (page) => page.getByRole("heading", { name: "Profile", level: 2 }),
+    proof: (page) => page.getByRole("heading", { name: "Profile", level: 1 }),
   },
   {
     name: "discovery.png",

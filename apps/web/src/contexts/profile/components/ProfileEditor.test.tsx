@@ -43,7 +43,7 @@ describe("<ProfileEditor>", () => {
       withRouter: true,
     });
 
-    expect(await screen.findByRole("heading", { name: "Profile" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Resume data" })).toBeInTheDocument();
     expect(await screen.findByText("Baseline resume editor")).toBeInTheDocument();
     expect(await screen.findByText("Plate HTML/CSS editor")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Bold" })).toBeInTheDocument();
@@ -80,7 +80,9 @@ describe("<ProfileEditor>", () => {
       }),
     });
 
-    expect(await screen.findByRole("heading", { name: "Preferences" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Configuration & templates" }),
+    ).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Application configurations" })).toBeInTheDocument();
     expect(screen.getByLabelText("Location filter")).toHaveValue("Remote");
     expect(screen.queryByRole("heading", { name: "Target search" })).not.toBeInTheDocument();

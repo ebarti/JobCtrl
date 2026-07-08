@@ -36,7 +36,8 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
   const layoutStyle = {
     "--profile-editor-width": `${editorWidth}%`,
   } as CSSProperties;
-  const title = section === "preferences" ? "Preferences" : "Profile";
+  const cardTitle =
+    section === "preferences" ? "Configuration & templates" : "Resume data";
 
   const setWidthFromClientX = (clientX: number, persist = false) => {
     const rect = layoutRef.current?.getBoundingClientRect();
@@ -78,14 +79,8 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
     >
       <section className="card">
         <CardHeader
-          title={title}
-          meta={
-            settingsQuery.data
-              ? section === "preferences"
-                ? "application configuration"
-                : "resume data"
-              : "loading"
-          }
+          title={cardTitle}
+          meta={settingsQuery.data ? undefined : "loading"}
         />
         {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
         {section === "profile" ? (

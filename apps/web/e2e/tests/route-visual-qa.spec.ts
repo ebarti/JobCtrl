@@ -50,7 +50,7 @@ const ROUTE_SURFACES: readonly RouteSurface[] = [
   {
     path: "/profile",
     activeLink: "Profile",
-    proof: (page) => page.getByRole("heading", { name: "Profile", level: 2 }),
+    proof: (page) => page.getByRole("heading", { name: "Profile", level: 1 }),
     surface: (page) => page.locator(".card").first(),
   },
   {
@@ -425,7 +425,7 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
   await expect(page.getByRole("checkbox", { name: "LinkedIn" })).toBeVisible();
 
   await page.goto("/profile");
-  await expect(page.getByRole("heading", { name: "Profile", level: 2 })).toBeVisible({
+  await expect(page.getByRole("heading", { name: "Profile", level: 1 })).toBeVisible({
     timeout: 30_000,
   });
   await expectKeyboardFocusIndicator(
