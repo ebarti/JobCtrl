@@ -111,7 +111,7 @@ that stays red until Claude auth is present.
 | `ANTHROPIC_AUTH_TOKEN` | Alternate Claude auth token path. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Local/dev Claude subscription convenience. The distributed product path remains API/provider auth. |
 | `CLAUDE_CONFIG_DIR` | Overrides the local Claude credential directory checked for `.credentials.json`. |
-| `CODEX_HOME` | Codex home containing `auth.json`. Defaults to `~/.codex`; the JobCtrl adapter copies this auth into isolated `~/.jobctrl/codex_home`. |
+| `CODEX_HOME` | Source Codex home containing `auth.json`. Defaults to `~/.codex`; the JobCtrl adapter copies this auth into a JobCtrl-owned Codex home so app-server history does not clutter the user's Codex app, then restricts sandboxed analysis commands to that home’s `workspace/` directory. |
 | `JOBCTRL_CODEX_BIN` | Explicit Codex runtime override. The default is the pinned `openai-codex-cli-bin` bundled binary. |
 | `GOOGLE_GENAI_USE_VERTEXAI` | Set to `1` to allow the Antigravity leg to use Vertex AI ADC instead of an API key. |
 | `GOOGLE_CLOUD_PROJECT` / `GOOGLE_PROJECT_ID` / `GCLOUD_PROJECT` | Project used with Vertex AI ADC. |

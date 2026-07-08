@@ -6,13 +6,12 @@ Node sidecar, no CLI-subprocess wrapper), forcing JSON-schema-constrained
 output via ``output_schema`` on ``thread.run`` and parsing the structured
 result off ``TurnResult.final_response``.
 
-CODEX_HOME isolation: the live factory redirects the Codex SDK's ``CODEX_HOME``
-to an isolated dir under the JobCtrl runtime root (``~/.jobctrl/codex_home``)
-seeded with a copy of the user's effective ``CODEX_HOME/auth.json`` (default
-``~/.codex/auth.json``), so Codex session rollouts never land in — and pollute
-— the user's real Codex chat history. The SDK merges ``CodexConfig.env`` over
-the parent environment, so only ``CODEX_HOME`` is overridden; PATH/HOME/etc.
-are preserved.
+Codex isolation + permissions: the live factory redirects the SDK to a
+JobCtrl-owned ``CODEX_HOME`` so Codex app-server state does not pollute the
+user's normal Codex app history. Prompt-driven commands run from the dedicated
+``CODEX_HOME/workspace`` directory under a Codex permissions profile that denies
+root filesystem reads and grants only that workspace plus Codex's minimal
+runtime paths.
 
 Test-mockability (no live auth in tests — D-04): the ``AsyncCodex`` class is
 resolved through an injectable factory that defaults to a lazy import, so tests
@@ -25,8 +24,10 @@ No timeout (D-19): ``thread.run`` is awaited to completion; effort is pinned to
 
 from __future__ import annotations
 
+import os
 import shutil
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -47,71 +48,96 @@ CODEX_ANALYSIS_MODEL = "gpt-5.5"
 # OTel instrumentation scope for the Codex draft leg's generation span.
 _CODEX_SCOPE = "jobctrl.analysis.codex"
 
-# Disable Codex plugins/apps so the isolated home only ever holds JobCtrl's
-# analysis rollouts + the copied auth token (mirrors mestre's vendor lane).
-_CODEX_CONFIG_OVERRIDES = ("features.plugins=false", "features.apps=false")
-# Isolated Codex home lives under the JobCtrl runtime root, NOT ``~/.codex``.
+# Disable Codex plugins/apps and force prompt-driven commands into a minimal
+# read-only permissions profile. The profile is supplied as a TOML CLI override
+# because openai-codex==0.1.0b3 exposes only legacy Sandbox presets in its
+# public Python wrapper, while the pinned app-server runtime supports
+# default_permissions profiles.
+_CODEX_PERMISSION_PROFILE = "jobctrl-analysis-readonly"
+_CODEX_PERMISSION_PROFILE_OVERRIDE = (
+    f"permissions.{_CODEX_PERMISSION_PROFILE}="
+    '{filesystem={":root"="deny",":minimal"="read",":workspace_roots"={"."="read"}},'
+    "network={enabled=false}}"
+)
+_CODEX_CONFIG_OVERRIDES = (
+    "features.plugins=false",
+    "features.apps=false",
+    f'default_permissions="{_CODEX_PERMISSION_PROFILE}"',
+    _CODEX_PERMISSION_PROFILE_OVERRIDE,
+)
 _CODEX_HOME_DIRNAME = "codex_home"
+_CODEX_WORKSPACE_DIRNAME = "workspace"
+_CODEX_PROCESS_HOME_DIRNAME = "home"
+
+
+@dataclass(frozen=True)
+class _CodexHomeDirs:
+    codex_home: Path
+    workdir: Path
+    process_home: Path
 
 
 def _isolated_codex_home() -> Path:
-    """Return ``<JOBCTRL_DIR>/codex_home`` (config imported lazily to avoid cycles)."""
+    """Return the JobCtrl-owned Codex home used by analysis app-server sessions."""
     from jobctrl.config import APP_DIR
 
     return APP_DIR / _CODEX_HOME_DIRNAME
 
 
-def _copy_newer_file(source: Path, target: Path, *, mode: int | None = None) -> bool:
-    """Copy ``source`` to ``target`` when it is newer or ``target`` is missing.
+def _copy_codex_auth(source: Path, target: Path) -> None:
+    """Copy Codex auth into the JobCtrl-owned SDK home when a source auth exists."""
 
-    Returns ``True`` when a copy happened, ``False`` otherwise. When ``source``
-    is missing but ``target`` exists, the target is still re-chmod'd (if ``mode``
-    is given) so a stale copy keeps its locked-down permissions.
-    """
     if not source.exists():
-        if target.exists() and mode is not None:
-            target.chmod(mode)
-        return False
+        return
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     target.parent.chmod(0o700)
-    if target.exists() and target.stat().st_mtime >= source.stat().st_mtime:
-        if mode is not None:
-            target.chmod(mode)
-        return False
+    if source.resolve() == target.resolve():
+        target.chmod(0o600)
+        return
     shutil.copy2(source, target)
-    if mode is not None:
-        target.chmod(mode)
-    return True
+    target.chmod(0o600)
 
 
-def _prepare_isolated_codex_home() -> Path:
-    """Create the isolated Codex home and refresh auth from the user's real login."""
-    home = _isolated_codex_home()
-    home.mkdir(mode=0o700, parents=True, exist_ok=True)
-    home.chmod(0o700)
-    # The copied auth token is sensitive; lock it to 0600. Honor CODEX_HOME
-    # for users who enrolled Codex outside the default ~/.codex directory.
-    _copy_newer_file(codex_auth_path(), home / "auth.json", mode=0o600)
-    return home
+def _prepare_isolated_codex_home() -> _CodexHomeDirs:
+    """Create the isolated Codex home with auth outside the command workspace."""
+
+    codex_home = _isolated_codex_home()
+    codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    codex_home.chmod(0o700)
+    workdir = codex_home / _CODEX_WORKSPACE_DIRNAME
+    process_home = codex_home / _CODEX_PROCESS_HOME_DIRNAME
+    for directory in (workdir, process_home):
+        directory.mkdir(mode=0o700, exist_ok=True)
+        directory.chmod(0o700)
+    _copy_codex_auth(codex_auth_path(), codex_home / "auth.json")
+    return _CodexHomeDirs(
+        codex_home=codex_home,
+        workdir=workdir,
+        process_home=process_home,
+    )
 
 
-def _isolated_codex_env(codex_home: Path) -> dict[str, str]:
+def _isolated_codex_env(codex_home: Path, process_home: Path) -> dict[str, str]:
     """Return the minimal env override; the SDK merges this over ``os.environ``."""
-    return {"CODEX_HOME": str(codex_home)}
+
+    env = {"CODEX_HOME": str(codex_home), "HOME": str(process_home)}
+    if os.name == "nt":
+        env["USERPROFILE"] = str(process_home)
+    return env
 
 
 def _load_async_codex_factory() -> AsyncCodexFactory:
-    """Build an isolated ``AsyncCodex`` CM: redirect ``CODEX_HOME`` so Codex
-    session rollouts never land in the user's real ``~/.codex``.
+    """Build an ``AsyncCodex`` CM with a locked-down command permissions profile.
 
     Lazy-imports ``openai_codex`` so the package imports without it installed.
     """
     from openai_codex import AsyncCodex, CodexConfig  # type: ignore[import-untyped]
 
     def _make() -> Any:
-        codex_home = _prepare_isolated_codex_home()
+        dirs = _prepare_isolated_codex_home()
         config_kwargs: dict[str, Any] = {
-            "env": _isolated_codex_env(codex_home),
+            "cwd": str(dirs.workdir),
+            "env": _isolated_codex_env(dirs.codex_home, dirs.process_home),
             "config_overrides": _CODEX_CONFIG_OVERRIDES,
         }
         # Prefer the SDK-pinned bundled runtime. A system ``codex`` on PATH may
@@ -121,18 +147,6 @@ def _load_async_codex_factory() -> AsyncCodexFactory:
         return AsyncCodex(config=CodexConfig(**config_kwargs))
 
     return _make
-
-
-def _load_sandbox_read_only() -> Any:
-    """Return the read-only sandbox enum value, tolerating SDK shape drift."""
-    try:
-        from openai_codex import Sandbox  # type: ignore[import-untyped]
-    except ImportError:
-        return "read-only"
-    try:
-        return Sandbox.read_only
-    except AttributeError:
-        return Sandbox("read-only")
 
 
 class CodexAnalysisAdapter:
@@ -167,9 +181,9 @@ class CodexAnalysisAdapter:
             async with factory() as codex:  # reuses existing Codex login (D-04)
                 thread = await codex.thread_start(
                     model=self._model,
-                    # Max reasoning effort (D-18); analysis reads the JD, no FS writes.
+                    # Max reasoning effort (D-18). Command filesystem access is
+                    # governed by the configured Codex permissions profile.
                     config={"model_reasoning_effort": "high"},
-                    sandbox=_load_sandbox_read_only(),
                 )
                 result = await thread.run(
                     prompt,
