@@ -10,6 +10,8 @@ and the LLM spend preflight is the existing shared one (§5.4 — no second syst
 from __future__ import annotations
 
 import sqlite3
+import urllib.error
+from email.message import Message
 from pathlib import Path
 
 import pytest
@@ -282,6 +284,46 @@ class _BlockedSession:
         return None
 
 
+class _AllowedSession:
+    @property
+    def user_agent(self) -> str:
+        return "JobHunter/test"
+
+    def guard(self, url: str):  # noqa: ARG002
+        from contextlib import contextmanager
+
+        from jobhunter.domain.ports.politeness import PolitenessDecision, PolitenessOutcome
+
+        @contextmanager
+        def _cm():
+            yield PolitenessDecision(
+                allowed=True,
+                outcome=PolitenessOutcome.ALLOWED,
+                user_agent="JobHunter/test",
+            )
+
+        return _cm()
+
+    def note_retry_after(self, url: str, seconds: float) -> None:  # noqa: ARG002
+        return None
+
+    def record_server_rate_limit(self, url: str, seconds=None) -> None:  # noqa: ARG002
+        return None
+
+
+class _RedirectOpener:
+    def open(self, request, timeout):  # noqa: ANN001, ARG002
+        headers = Message()
+        headers["Location"] = "http://127.0.0.1:8766/v1/profile"
+        raise urllib.error.HTTPError(
+            request.full_url,
+            302,
+            "Found",
+            headers,
+            fp=None,
+        )
+
+
 def test_gateway_fetcher_returns_block_outcome_without_fetching() -> None:
     policy = ContactResearchSourcePolicy(domain_allowlist=(_HOST,))
     fetcher = GatewayContactResearchFetcher(
@@ -289,4 +331,17 @@ def test_gateway_fetcher_returns_block_outcome_without_fetching() -> None:
     )
     result = fetcher.fetch(_TEAM_URL)
     assert result.outcome == ResearchSourceOutcome.ROBOTS_DISALLOWED.value
+    assert result.text == ""
+
+
+def test_gateway_fetcher_rejects_private_redirect_target() -> None:
+    policy = ContactResearchSourcePolicy(domain_allowlist=(_HOST,))
+    fetcher = GatewayContactResearchFetcher(
+        policy=policy, session=_AllowedSession(), opener=_RedirectOpener()
+    )
+
+    result = fetcher.fetch(_TEAM_URL)
+
+    assert result.outcome == ResearchSourceOutcome.REJECTED.value
+    assert result.final_url == "http://127.0.0.1:8766/v1/profile"
     assert result.text == ""

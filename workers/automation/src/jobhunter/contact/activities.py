@@ -156,7 +156,7 @@ def _run_contact_research(
 
 def _host(url: str) -> str:
     try:
-        return (urlsplit(url).netloc or "").lower()
+        return (urlsplit(url).hostname or "").lower().rstrip(".")
     except ValueError:
         return ""
 

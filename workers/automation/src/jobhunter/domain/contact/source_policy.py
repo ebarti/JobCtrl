@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import ipaddress
+import socket
 from urllib.parse import urlsplit
 
 from jobhunter.domain.discovery.source_registry import (
@@ -93,11 +95,45 @@ def looks_protected(url: str) -> bool:
     return any(marker in text for marker in _PROTECTED_URL_MARKERS)
 
 
+_BLOCKED_HOSTNAMES: frozenset[str] = frozenset(
+    {
+        "localhost",
+        "metadata.google.internal",
+    }
+)
+
+
 def _host(url: str) -> str:
     try:
-        return (urlsplit(url).netloc or "").lower()
+        return (urlsplit(url).hostname or "").lower().rstrip(".")
     except ValueError:
         return ""
+
+
+def _is_blocked_ip_address(address: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _hostname_resolves_to_blocked_address(hostname: str) -> bool:
+    try:
+        addresses = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        # Keep the policy focused on the SSRF boundary without making source
+        # configuration depend on local DNS reachability; the fetch will fail
+        # later if the host truly cannot resolve.
+        return False
+    return any(_is_blocked_ip_address(result[4][0]) for result in addresses)
 
 
 def _is_public_web_url(url: str) -> bool:
@@ -105,7 +141,16 @@ def _is_public_web_url(url: str) -> bool:
         parts = urlsplit(url.strip())
     except ValueError:
         return False
-    return parts.scheme in {"http", "https"} and bool(parts.netloc)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        return False
+    hostname = (parts.hostname or "").lower().rstrip(".")
+    if not hostname:
+        return False
+    if hostname in _BLOCKED_HOSTNAMES or hostname.endswith(".localhost"):
+        return False
+    if _is_blocked_ip_address(hostname):
+        return False
+    return not _hostname_resolves_to_blocked_address(hostname)
 
 
 def contact_research_source_policy() -> SourcePolicy:

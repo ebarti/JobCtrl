@@ -14,19 +14,23 @@ from __future__ import annotations
 
 import logging
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from bs4 import BeautifulSoup
 
 from jobhunter.domain.contact.research import ResearchSourceOutcome
-from jobhunter.domain.contact.source_policy import ContactResearchSourcePolicy
+from jobhunter.domain.contact.source_policy import (
+    ContactResearchSourcePolicy,
+    ResearchSourceCategory,
+    ResearchSourceDecision,
+)
 from jobhunter.domain.ports.contact import ResearchPageFetch
 from jobhunter.infrastructure.network import (
     PolitenessGateway,
     PolitenessSession,
     PolitenessSourceContext,
     RunBudgetCounter,
-    build_opener,
     parse_retry_after,
 )
 
@@ -50,7 +54,7 @@ class GatewayContactResearchFetcher:
     ) -> None:
         self._policy = policy
         self._timeout = timeout
-        self._opener = opener or build_opener()
+        self._opener = opener or urllib.request.build_opener(_NoRedirectHandler())
         self._session = session or PolitenessSession(
             PolitenessGateway(),
             policy=policy.source_policy,
@@ -67,15 +71,47 @@ class GatewayContactResearchFetcher:
                 return ResearchPageFetch(outcome=decision.outcome.value)
             return self._get(url, decision.user_agent)
 
-    def _get(self, url: str, user_agent: str) -> ResearchPageFetch:
+    def _get(
+        self, url: str, user_agent: str, *, redirects_remaining: int = 5
+    ) -> ResearchPageFetch:
         request = urllib.request.Request(url, method="GET")
         request.add_header("User-Agent", user_agent)
         request.add_header("Accept", "text/html, */*;q=0.8")
         try:
             with self._opener.open(request, timeout=self._timeout) as response:
+                final_url = response.geturl()
+                final_decision = self._policy.authorize(
+                    category=ResearchSourceCategory.PUBLIC_WEB_PAGE.value, url=final_url
+                )
+                if final_decision is not ResearchSourceDecision.ALLOWED:
+                    log.warning("Contact research final URL rejected for %s -> %s", url, final_url)
+                    return ResearchPageFetch(outcome=ResearchSourceOutcome.REJECTED.value)
                 status = getattr(response, "status", None)
                 body = response.read()
         except urllib.error.HTTPError as exc:
+            if exc.code in (301, 302, 303, 307, 308):
+                if redirects_remaining <= 0:
+                    log.warning("Contact research redirect limit exceeded for %s", url)
+                    return ResearchPageFetch(
+                        outcome=ResearchSourceOutcome.REJECTED.value,
+                        final_url=url,
+                        status=exc.code,
+                    )
+                location = exc.headers.get("Location") if exc.headers else None
+                redirect_url = urllib.parse.urljoin(url, location or "")
+                decision = self._policy.authorize(
+                    category=ResearchSourceCategory.PUBLIC_WEB_PAGE.value, url=redirect_url
+                )
+                if decision is not ResearchSourceDecision.ALLOWED:
+                    log.warning("Contact research redirect rejected for %s -> %s", url, redirect_url)
+                    return ResearchPageFetch(
+                        outcome=ResearchSourceOutcome.REJECTED.value,
+                        final_url=redirect_url,
+                        status=exc.code,
+                    )
+                return self._get(
+                    redirect_url, user_agent, redirects_remaining=redirects_remaining - 1
+                )
             if exc.code in (429, 503):
                 retry_after = parse_retry_after(
                     exc.headers.get("Retry-After") if exc.headers else None
@@ -94,9 +130,14 @@ class GatewayContactResearchFetcher:
         return ResearchPageFetch(
             outcome=ResearchSourceOutcome.ALLOWED.value,
             text=_visible_text(body),
-            final_url=url,
+            final_url=final_url,
             status=int(status) if status is not None else None,
         )
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ARG002
+        return None
 
 
 def _visible_text(body: bytes) -> str:
