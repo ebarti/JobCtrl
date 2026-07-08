@@ -1473,7 +1473,7 @@ input[type="radio"] {
 
 .apply-review-selected-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 520px);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
   gap: 16px;
   align-items: start;
   padding: 12px 16px;
