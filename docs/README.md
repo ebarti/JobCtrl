@@ -8,6 +8,8 @@
   direction.
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md): contributor workflow, validation,
   documentation expectations, and PR standards.
+- [`../DESIGN.md`](../DESIGN.md): AI-readable design-system tokens, brand
+  assets, and UI generation guidance.
 - [`../SECURITY.md`](../SECURITY.md): supported security contact path and
   sensitive-data handling rules.
 - [`../CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md): community standards.
