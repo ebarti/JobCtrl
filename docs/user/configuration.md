@@ -236,12 +236,12 @@ has no send capability. Their posture:
 | `TAILOR_LLM_MODELS` | alias | Backward-compatible alias for `TAILORING_GENERATOR_MODELS`. |
 | `TAILOR_JUDGE_MODEL` | alias | Backward-compatible alias for `TAILORING_JUDGE_MODEL`. |
 | `TAILOR_JUDGE_MIN_SCORE` | alias | Backward-compatible alias for `TAILORING_JUDGE_MIN_SCORE`. |
-| `JOBCTRL_RESUME_RENDERER` | `html_pdf` | Set to `latex_pdf` only for the LaTeX resume compatibility renderer. |
-| `PDFLATEX_PATH` | auto-detected | Override `pdflatex` location when using the LaTeX compatibility renderer. |
 
 The default resume renderer is HTML/CSS printed through Playwright. Apply Review
 loads the generated HTML source so edits, comments, validation, final PDF
-rendering, and layout boxes stay tied to the same material generation.
+rendering, and layout boxes stay tied to the same material generation. Historical
+`latex_pdf` artifact rows remain readable through the artifact preview and can be
+migrated to HTML/CSS siblings, but new rendering no longer invokes a TeX engine.
 
 ## Browser Apply Automation
 

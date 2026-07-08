@@ -2,20 +2,18 @@
 
 Two adapters implement the port:
 
-  * :class:`LatexPdfAdapter` for tailored resumes (pdflatex).
   * :class:`HtmlResumePdfAdapter` for tailored resumes (HTML/CSS + Playwright).
   * :class:`PlaywrightHtmlPdfAdapter` for cover letters (Playwright).
 
 The adapters intentionally raise :class:`NotImplementedError` from the
 opposite half of the port so a mis-wired use case fails loudly. We
 exercise both halves with a fake renderer to demonstrate the port
-contract is honourable, then exercise the real LaTeX adapter against a
-minimal profile when ``pdflatex`` is available.
+contract is honourable.
 """
 
 from __future__ import annotations
 
-import shutil
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -31,19 +29,11 @@ from jobctrl.domain.ports.materials import PdfRendererPort
 from jobctrl.infrastructure.materials import html_resume_pdf
 from jobctrl.infrastructure.materials import (
     HtmlResumePdfAdapter,
-    LatexPdfAdapter,
     PlaywrightHtmlPdfAdapter,
 )
 from jobctrl.infrastructure.materials.html_resume_pdf import (
     build_resume_document,
     build_resume_html,
-)
-from jobctrl.infrastructure.materials.latex_pdf import (
-    DEFAULT_RESUME_LATEX_TEMPLATE,
-    _escape_latex,
-    _escape_latex_light,
-    build_latex,
-    validate_latex_template,
 )
 from jobctrl.infrastructure.materials.playwright_html_pdf import _build_letter_html
 
@@ -138,7 +128,7 @@ class _FakeRenderer:
             type=ArtifactType.RESUME_PDF,
             path=output_path,
             created_at=created_at,
-            render_format=RenderFormat.LATEX_PDF,
+            render_format=RenderFormat.HTML_PDF,
             size_bytes=len(b"%PDF-fake"),
         )
 
@@ -183,22 +173,16 @@ def test_fake_renderer_returns_typed_artifact(tmp_path: Path) -> None:
     )
     assert artifact.type is ArtifactType.RESUME_PDF
     assert artifact.status is ArtifactStatus.CANDIDATE
-    assert artifact.render_format is RenderFormat.LATEX_PDF
+    assert artifact.render_format is RenderFormat.HTML_PDF
 
 
 # ---------------------------------------------------------------------------
-# LatexPdfAdapter — opposite-half guard
+# Retired LaTeX adapter
 # ---------------------------------------------------------------------------
 
 
-def test_latex_adapter_refuses_cover_letter() -> None:
-    adapter = LatexPdfAdapter()
-    with pytest.raises(NotImplementedError):
-        adapter.render_cover_letter_to_pdf(
-            cover_letter_text="Dear Hiring Manager",
-            output_path="/tmp/x.pdf",
-            created_at="2024-01-01T00:00:00+00:00",
-        )
+def test_legacy_latex_renderer_module_is_absent() -> None:
+    assert importlib.util.find_spec("jobctrl.infrastructure.materials.latex_pdf") is None
 
 
 def test_html_resume_adapter_refuses_cover_letter() -> None:
@@ -220,46 +204,6 @@ def test_playwright_adapter_refuses_resume() -> None:
             output_path="/tmp/x.pdf",
             created_at="2024-01-01T00:00:00+00:00",
         )
-
-
-# ---------------------------------------------------------------------------
-# LaTeX-side helpers (parity with deleted scoring/pdf.py tests)
-# ---------------------------------------------------------------------------
-
-
-class TestLatexEscape:
-    def test_ampersand(self) -> None:
-        assert _escape_latex("R&D") == "R\\&D"
-
-    def test_percent(self) -> None:
-        assert _escape_latex("100%") == "100\\%"
-
-    def test_em_dash(self) -> None:
-        assert "---" in _escape_latex("word—word")
-
-
-class TestLatexEscapeLight:
-    def test_preserves_backslash_commands(self) -> None:
-        assert "\\texteuro" in _escape_latex_light("\\texteuro 500")
-
-    def test_ampersand(self) -> None:
-        assert _escape_latex_light("R&D") == "R\\&D"
-
-
-class TestBuildLatex:
-    def test_generates_valid_document(self) -> None:
-        latex = build_latex(_payload(), _profile())
-        assert r"\documentclass" in latex
-        assert r"\begin{document}" in latex
-        assert r"\end{document}" in latex
-        assert r"\name{Jane}{Doe}" in latex
-
-    def test_default_template_validates(self) -> None:
-        validate_latex_template(DEFAULT_RESUME_LATEX_TEMPLATE)
-
-    def test_template_requires_tokens(self) -> None:
-        with pytest.raises(ValueError, match="resume_body"):
-            validate_latex_template(r"\documentclass{article} {{ personal_data }}")
 
 
 def test_build_letter_html_wraps_paragraphs() -> None:
@@ -510,19 +454,10 @@ def _html_experience_bullets(payload: dict, profile: dict) -> list[str]:
     ]
 
 
-def _latex_experience_bullets(payload: dict, profile: dict) -> list[str]:
-    latex = build_latex(payload, profile)
-    return [
-        line.strip().removeprefix("\\item").strip()
-        for line in latex.splitlines()
-        if line.strip().startswith("\\item") and "\\textbf" not in line
-    ]
-
-
-def test_pdf_renderers_render_all_mandatory_overflow_bullets_like_txt() -> None:
+def test_html_pdf_renderer_renders_all_mandatory_overflow_bullets_like_txt() -> None:
     """Regression: a validated candidate that pins mandatory-overflow bullets must
-    ship the identical bullet set in the reviewed .txt AND in both submitted PDFs.
-    Previously the PDF renderers built their experience map without the overflow
+    ship the identical bullet set in the reviewed .txt AND in the submitted PDF.
+    Previously a PDF renderer built its experience map without the overflow
     allowance and silently trimmed the pinned bullets, so the employer received a
     weaker resume than the one the user reviewed."""
     profile = _profile()
@@ -532,12 +467,11 @@ def test_pdf_renderers_render_all_mandatory_overflow_bullets_like_txt() -> None:
     assert txt_bullets == _OVERFLOW_BULLETS  # .txt keeps all six (past the cap of 4)
 
     assert _html_experience_bullets(payload, profile) == txt_bullets
-    assert _latex_experience_bullets(payload, profile) == txt_bullets
 
 
-def test_pdf_renderers_respect_max_experience_bullets_without_overflow() -> None:
+def test_html_pdf_renderer_respects_max_experience_bullets_without_overflow() -> None:
     """Without the mandatory-overflow signal the cap still applies identically in
-    every render path: the .txt trims to ``max_experience_bullets`` and both PDFs
+    every render path: the .txt trims to ``max_experience_bullets`` and the PDF
     match it exactly (no silent divergence in either direction)."""
     profile = _profile()
     payload = _overflow_payload(mandatory=False)
@@ -546,27 +480,3 @@ def test_pdf_renderers_respect_max_experience_bullets_without_overflow() -> None
     assert txt_bullets == _OVERFLOW_BULLETS[:4]  # capped at max_experience_bullets
 
     assert _html_experience_bullets(payload, profile) == txt_bullets
-    assert _latex_experience_bullets(payload, profile) == txt_bullets
-
-
-# ---------------------------------------------------------------------------
-# End-to-end pdflatex compile (skipped when pdflatex is unavailable)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(
-    shutil.which("pdflatex") is None,
-    reason="pdflatex not installed in this environment",
-)
-def test_latex_adapter_renders_real_pdf(tmp_path: Path) -> None:
-    adapter = LatexPdfAdapter()
-    out = tmp_path / "resume.pdf"
-    artifact = adapter.render_resume_to_pdf(
-        tailored_payload=_payload(),
-        profile_dict=_profile(),
-        output_path=str(out),
-        created_at="2024-01-01T00:00:00+00:00",
-    )
-    assert out.exists()
-    assert out.read_bytes()[:5] == b"%PDF-"
-    assert artifact.size_bytes is not None and artifact.size_bytes > 0

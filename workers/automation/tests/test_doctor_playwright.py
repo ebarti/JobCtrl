@@ -1,8 +1,8 @@
-"""Doctor surfaces an always-run Playwright Chromium check.
+"""Doctor surfaces Playwright Chromium checks.
 
-Scraping needs Chromium regardless of the resume renderer, so ``doctor`` must
-report the browser even when the user opted into the LaTeX renderer. These
-tests monkeypatch the shared preflight helper so no real browser is required.
+Scraping and resume PDF rendering both use Chromium, so ``doctor`` must report
+the browser. These tests monkeypatch the shared preflight helper so no real
+browser is required.
 """
 
 from __future__ import annotations
@@ -47,20 +47,3 @@ def test_doctor_reports_playwright_chromium_missing(
     normalized = " ".join(result.output.split())
     assert _CHECK_LABEL in normalized
     assert "MISSING" in normalized
-
-
-def test_doctor_playwright_check_runs_under_latex_renderer(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The scraping browser check runs even when the resume renderer is LaTeX."""
-    monkeypatch.setenv("JOBCTRL_RESUME_RENDERER", "latex_pdf")
-    monkeypatch.setattr(
-        _CHECK_TARGET,
-        lambda: (True, "Playwright Chromium available at /opt/ms-playwright/chrome"),
-    )
-
-    result = CliRunner().invoke(app, ["doctor"])
-
-    assert result.exit_code == 0, result.output
-    normalized = " ".join(result.output.split())
-    assert _CHECK_LABEL in normalized

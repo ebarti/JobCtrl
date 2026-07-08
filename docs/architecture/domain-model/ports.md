@@ -122,7 +122,7 @@ local SQLite and hosted Postgres adapters expose the same aggregate contract.
 | **Driving** | `TailorBatchUseCase` | Batch tailor + cover + PDF for multiple jobs |
 | **Driven** | `LlmPort` | LLM for tailoring and cover letter generation |
 | **Driven** | `AnalysisDraftPort` / `AnalysisSynthesizerPort` | Employer/company analysis via the 3-SDK agent ensemble (second LLM path) |
-| **Driven** | `PdfRendererPort` | Render LaTeX or HTML to PDF |
+| **Driven** | `PdfRendererPort` | Render HTML to PDF |
 | **Driven** | `ArtifactStoragePort` | Write and register generated files |
 | **Driven** | `MaterialsRepository` | Persist MaterialsSet aggregates |
 | **Driven** | `ProfileSnapshotPort` | Read-only access to the current profile |
@@ -132,14 +132,14 @@ local SQLite and hosted Postgres adapters expose the same aggregate contract.
 |---|---|---|
 | `LlmPort` | A single `LlmAdapter`, prefix-dispatched by model spec (see Enrichment) | `CloudLlmGatewayAdapter` (shared gateway; see Enrichment) |
 | `AnalysisDraftPort` / `AnalysisSynthesizerPort` | The 3-SDK agent ensemble (`infrastructure/analysis/`): `ClaudeAnalysisAdapter`, `CodexAnalysisAdapter`, and `AntigravityAnalysisAdapter` draft employer/company analysis in parallel; `ClaudeAnalysisSynthesizer` merges them via `run_ensemble`. This is a **second LLM path**, distinct from the prefix-dispatched `LlmPort` above | Same ensemble fronted by the cloud LLM gateway, with per-tenant token metering |
-| `PdfRendererPort` | `HtmlResumePdfAdapter` (default structured resume HTML/CSS + Playwright renderer with layout boxes), `LatexPdfAdapter` (`pdflatex` compatibility renderer), `PlaywrightHtmlPdfAdapter` (cover letters) | HTML/CSS + Playwright/Chromium resume rendering; keep LaTeX/Tectonic only for compatibility if required. Cover letters: `WeasyPrintAdapter` (pure-Python HTML→PDF, no browser needed in cloud) |
+| `PdfRendererPort` | `HtmlResumePdfAdapter` (structured resume HTML/CSS + Playwright renderer with layout boxes), `PlaywrightHtmlPdfAdapter` (cover letters) | HTML/CSS + Playwright/Chromium resume rendering. Cover letters: `WeasyPrintAdapter` (pure-Python HTML→PDF, no browser needed in cloud) |
 | `ArtifactStoragePort` | `LocalFilesystemAdapter` (writes to `~/.jobctrl/tailored_resumes/`, etc.) | `S3ArtifactAdapter` (**AWS S3** with tenant-prefixed keys: `s3://jobctrl-artifacts/{tenantId}/{jobId}/`; presigned URLs for browser download; lifecycle policy for cost control) |
 | `MaterialsRepository` | `SqliteMaterialsRepository` | `PostgresMaterialsRepository` (RDS Postgres, tenant-scoped) |
 
 **Seam justification:** The `PdfRendererPort` absorbed the renderer swap:
 HTML/CSS + Playwright is the production default for resume PDFs, emits
-layout boxes for Apply Review, and keeps LaTeX as an explicitly selected
-compatibility adapter without touching materials domain logic. The
+layout boxes for Apply Review, and historical `latex_pdf` rows remain metadata
+for migration/inspection without a render adapter. The
 `ArtifactStoragePort` absorbs the local-to-cloud transition for generated files.
 
 ### 5.6 Apply Automation Context

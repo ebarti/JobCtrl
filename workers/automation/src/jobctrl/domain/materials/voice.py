@@ -10,7 +10,7 @@ rendered/PDF text (GROUND-06 / Pitfall 4). This module is the PURE half:
     contract the analysis SDK adapters emit.
   * :func:`apply_voice_to_payload` — deterministically folds the voiced prose back
     onto the SELECTED tailored payload, producing the canonical post-voice payload
-    that BOTH renderers (LaTeX + HTML) and the final audit consume. Only the
+    that the HTML renderer and the final audit consume. Only the
     mutable PROSE is voiced (executive profile + experience bullets); skill term
     lists are left untouched (they are keyword lists, not prose, and re-voicing
     them risks dropping a grounded skill).

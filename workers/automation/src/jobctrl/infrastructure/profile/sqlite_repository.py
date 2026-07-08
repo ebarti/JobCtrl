@@ -27,8 +27,8 @@ from jobctrl.domain.profile.aggregate import DEFAULT_PROFILE_ID, InvalidProfileE
 from jobctrl.domain.profile.ports import PdfParserPort, ProfileImportResult
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import TenantId
-from jobctrl.infrastructure.materials.latex_pdf import (
-    DEFAULT_RESUME_LATEX_TEMPLATE,
+from jobctrl.infrastructure.materials.resume_style import (
+    DEFAULT_RESUME_TEMPLATE_TEXT,
     normalize_resume_style,
 )
 
@@ -125,11 +125,11 @@ class SqliteProfileRepository:
         if row is None:
             return {
                 "style": normalize_resume_style(),
-                "template_text": DEFAULT_RESUME_LATEX_TEMPLATE,
+                "template_text": DEFAULT_RESUME_TEMPLATE_TEXT,
             }
         return {
             "style": _style_from_row(row),
-            "template_text": row["resume_template_text"] or DEFAULT_RESUME_LATEX_TEMPLATE,
+            "template_text": row["resume_template_text"] or DEFAULT_RESUME_TEMPLATE_TEXT,
         }
 
     # ------------------------------------------------------------------
@@ -201,7 +201,7 @@ class SqliteProfileRepository:
         profile_id = profile.profile_id or self._profile_id
         profile_dict = profile.to_dict()
         style = normalize_resume_style(rendering.get("style") if isinstance(rendering, dict) else None)
-        template_text = str(rendering.get("template_text") or DEFAULT_RESUME_LATEX_TEMPLATE)
+        template_text = str(rendering.get("template_text") or DEFAULT_RESUME_TEMPLATE_TEXT)
         now = datetime.now(timezone.utc).isoformat()
 
         with self._conn:

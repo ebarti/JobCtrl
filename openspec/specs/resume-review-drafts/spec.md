@@ -101,4 +101,4 @@ The system SHALL render the Profile page baseline resume through the same Plate 
 
 #### Scenario: Profile LaTeX path is not used
 - **WHEN** the Profile baseline resume preview is requested
-- **THEN** the system renders it through the HTML/CSS resume renderer and does not branch through `JOBCTRL_RESUME_RENDERER=latex_pdf`, `pdflatex`, or the legacy LaTeX template
+- **THEN** the system renders it through the HTML/CSS resume renderer and does not branch through `pdflatex` or the legacy LaTeX template
