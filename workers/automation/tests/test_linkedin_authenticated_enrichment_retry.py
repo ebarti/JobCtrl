@@ -19,6 +19,7 @@ from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.enrichment.detail import (
     _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS,
     _apply_authenticated_linkedin_apply_url,
+    _is_linkedin_job,
     _reset_authenticated_linkedin_retry_candidates,
 )
 from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
@@ -128,6 +129,18 @@ def _save_failed(
         if attempt_index < attempts - 1:
             aggregate = aggregate.reset(reset_at=now)
     repo.save(aggregate)
+
+
+def test_linkedin_job_detection_requires_linkedin_host() -> None:
+    assert _is_linkedin_job("linkedin", "https://www.linkedin.com/jobs/view/123")
+    assert _is_linkedin_job(None, "https://linkedin.com/jobs/view/123")
+    assert _is_linkedin_job("linkedin", "/jobs/view/123")
+
+    assert not _is_linkedin_job(
+        "linkedin", "https://mail.google.com/mail/u/0/#inbox/linkedin.com/jobs/123"
+    )
+    assert not _is_linkedin_job(None, "https://evil.example/linkedin.com/jobs/123")
+    assert not _is_linkedin_job(None, "https://notlinkedin.com/jobs/view/123")
 
 
 def test_authenticated_apply_url_upgrades_partial_linkedin_enrichment() -> None:

@@ -31,7 +31,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from playwright.sync_api import sync_playwright
 
@@ -104,8 +104,13 @@ def set_proxy(proxy_str: str | None) -> None:
 
 def _is_linkedin_job(site: str | None, url: str) -> bool:
     site_text = str(site or "").strip().lower()
-    url_text = str(url or "").strip().lower()
-    return site_text == "linkedin" or "linkedin.com/jobs/" in url_text
+    url_text = str(url or "").strip()
+    parsed = urlparse(url_text)
+    host = (parsed.hostname or "").lower()
+    path = parsed.path.rstrip("/").lower()
+    if host == "linkedin.com" or host.endswith(".linkedin.com"):
+        return path == "/jobs" or path.startswith("/jobs/")
+    return site_text == "linkedin" and not parsed.scheme and url_text.startswith("/jobs/")
 
 
 # -- URL resolution ----------------------------------------------------------
@@ -681,6 +686,15 @@ def scrape_site_batch(
         with sync_playwright() as p:
             browser = None
             resolver: LinkedInApplyUrlResolver | None = None
+            resolver_page = None
+
+            launch_opts: dict = {"headless": True}
+            if _PROXY_CONFIG is not None:
+                launch_opts["proxy"] = _PROXY_CONFIG.playwright
+            browser = p.chromium.launch(**launch_opts)
+            context = browser.new_context(user_agent=UA)
+            page = context.new_page()
+
             if linkedin_apply_resolver_enabled() and _is_linkedin_job(site, jobs[0][0]):
                 resolver = LinkedInApplyUrlResolver(
                     proxy=_PROXY_CONFIG,
@@ -689,29 +703,19 @@ def scrape_site_batch(
                 )
                 try:
                     resolver.start()
-                    page = resolver.new_page()
+                    resolver_page = resolver.new_page()
                     log.info(
-                        "LinkedIn authenticated browser enabled for %d enrichment job(s)",
+                        "LinkedIn authenticated apply resolver enabled for %d enrichment job(s)",
                         len(jobs),
                     )
                 except Exception as exc:  # noqa: BLE001 - fallback to static browser
                     log.warning(
-                        "LinkedIn authenticated browser unavailable; falling back to unauthenticated enrichment: %s",
+                        "LinkedIn authenticated apply resolver unavailable; falling back to unauthenticated enrichment: %s",
                         exc,
                     )
                     resolver.close()
                     resolver = None
-                    page = None
-            else:
-                page = None
-
-            if page is None:
-                launch_opts: dict = {"headless": True}
-                if _PROXY_CONFIG is not None:
-                    launch_opts["proxy"] = _PROXY_CONFIG.playwright
-                browser = p.chromium.launch(**launch_opts)
-                context = browser.new_context(user_agent=UA)
-                page = context.new_page()
+                    resolver_page = None
 
             for i, (url, title) in enumerate(jobs):
                 if cancel_event is not None and cancel_event.is_set():
@@ -775,7 +779,7 @@ def scrape_site_batch(
                         url=url,
                         cascade_result=cascade_result,
                         resolver=resolver,
-                        page=page,
+                        page=resolver_page,
                     )
                     stats["processed"] += 1
 
