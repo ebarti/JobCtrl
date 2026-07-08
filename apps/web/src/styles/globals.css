@@ -2887,10 +2887,16 @@ input[type="radio"] {
 }
 
 .apply-review-ideal-requirement-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  gap: 8px;
-  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.apply-review-ideal-requirement-head > b {
+  flex: 1 1 12rem;
+  min-width: 0;
 }
 
 .apply-review-ideal-requirement-head > span {
@@ -2926,14 +2932,6 @@ input[type="radio"] {
 }
 
 @media (max-width: 720px) {
-  .apply-review-ideal-requirement-head {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .apply-review-ideal-requirement-head > span {
-    justify-content: flex-start;
-  }
-
   .apply-review-requirement-fit-grid {
     grid-template-columns: minmax(0, 1fr);
   }
