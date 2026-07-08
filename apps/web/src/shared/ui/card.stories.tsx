@@ -54,7 +54,7 @@ export const DenseContent: Story = {
           ].map(([label, value]) => (
             <div key={label} className="flex items-center justify-between gap-4">
               <dt className="text-muted-foreground">{label}</dt>
-              <dd className="font-mono text-xs">{value}</dd>
+              <dd className="text-xs">{value}</dd>
             </div>
           ))}
         </dl>

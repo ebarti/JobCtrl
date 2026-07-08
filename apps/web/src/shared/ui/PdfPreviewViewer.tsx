@@ -204,7 +204,7 @@ export function PdfPreviewViewer({
     <div className="pdf-preview-viewer">
       <div className="pdf-preview-toolbar">
         <span>{title}</span>
-        <span className="mono">{state.message}</span>
+        <span className="toolbar-status">{state.message}</span>
         <a href={url} rel="noreferrer" target="_blank">
           {openLabel}
         </a>
@@ -349,7 +349,7 @@ export function PdfAuditPreviewViewer({
     <div className="pdf-preview-viewer pdf-audit-preview-viewer">
       <div className="pdf-preview-toolbar">
         <span>{title}</span>
-        <span className="mono">{state.message}</span>
+        <span className="toolbar-status">{state.message}</span>
         <a href={url} rel="noreferrer" target="_blank">
           {openLabel}
         </a>

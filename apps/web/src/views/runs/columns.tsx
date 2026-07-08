@@ -91,7 +91,7 @@ export const workflowRunColumns: Array<DataGridColumn<WorkflowRunSummary>> = [
     sortable: true,
     getFilterValue: (row) => row.finishedAt ?? "-",
     render: (row) => (
-      <span className="mono" title={formatDateTime(row.finishedAt)}>
+      <span title={formatDateTime(row.finishedAt)}>
         {row.finishedAt ? formatDateTime(row.finishedAt) : "-"}
       </span>
     ),

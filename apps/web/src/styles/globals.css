@@ -1752,7 +1752,8 @@ input[type="radio"] {
   color: #f5f5f5;
 }
 
-.resume-plate-toolbar .mono {
+.resume-plate-toolbar .toolbar-status {
+  font-size: 0.92em;
   color: #c8c8c8;
 }
 
@@ -7009,7 +7010,8 @@ input[type="radio"] {
   color: #f5f5f5;
 }
 
-.pdf-preview-toolbar .mono {
+.pdf-preview-toolbar .toolbar-status {
+  font-size: 0.92em;
   color: #c8c8c8;
 }
 
