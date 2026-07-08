@@ -176,6 +176,13 @@ export default withMermaid(
     title: "JobCtrl",
     description:
       "Local-first, AI-assisted job application pipeline: discovery, scoring, tailored materials, and supervised apply.",
+    head: [
+      ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
+      ["link", { rel: "apple-touch-icon", sizes: "180x180", href: "/apple-touch-icon.png" }],
+      ["link", { rel: "icon", type: "image/png", sizes: "512x512", href: "/assets/brand/app-icon.png" }],
+      ["meta", { property: "og:image", content: "https://jobctrl.dev/assets/brand/lockup-primary.png" }],
+      ["meta", { name: "theme-color", content: "#6d28d9" }],
+    ],
     srcExclude: ["plans/**", "incidents/**", "backlog.md", "claims-ledger.md", "delivered.md", "publish-checklist.md", "README.md"],
     cleanUrls: true,
     lastUpdated: true,
@@ -209,6 +216,8 @@ export default withMermaid(
       },
     },
     themeConfig: {
+      logo: { src: "/assets/brand/app-icon.png", alt: "JobCtrl" },
+      siteTitle: 'Job<span class="jh-site-title-accent">Ctrl</span>',
       nav: [
         { text: "Guide", link: "/user/getting-started" },
         { text: "Architecture", link: "/architecture/" },

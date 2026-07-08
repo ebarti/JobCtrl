@@ -3,8 +3,125 @@
    and letting visual explanations stay readable across breakpoints. */
 
 :root {
+  --vp-font-family-base:
+    "Plus Jakarta Sans Variable", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --vp-font-family-mono:
+    "JetBrains Mono Variable", "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  --vp-c-brand-1: #6d28d9;
+  --vp-c-brand-2: #7c3aed;
+  --vp-c-brand-3: #8b5cf6;
+  --vp-c-brand-soft: rgba(139, 92, 246, 0.16);
+  --vp-button-brand-bg: var(--vp-c-brand-1);
+  --vp-button-brand-hover-bg: var(--vp-c-brand-2);
+  --vp-button-brand-active-bg: #5b21b6;
+  --vp-button-brand-border: var(--vp-c-brand-1);
+  --vp-button-brand-hover-border: var(--vp-c-brand-2);
+  --vp-button-brand-active-border: #5b21b6;
+  --vp-home-hero-name-color: var(--vp-c-brand-1);
   --jh-doc-surface: color-mix(in oklab, var(--vp-c-bg-soft), var(--vp-c-bg) 32%);
   --jh-doc-frame: color-mix(in oklab, var(--vp-c-divider), var(--vp-c-brand-1) 18%);
+}
+
+html.dark {
+  --vp-c-brand-1: #a78bfa;
+  --vp-c-brand-2: #8b5cf6;
+  --vp-c-brand-3: #7c3aed;
+  --vp-c-brand-soft: rgba(167, 139, 250, 0.18);
+  --vp-home-hero-name-color: var(--vp-c-brand-1);
+}
+
+.VPNavBarTitle .logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.VPNavBarTitle .title span {
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.VPNavBarTitle .title .jh-site-title-accent {
+  color: var(--vp-c-brand-1);
+}
+
+.VPLocalNav .logo {
+  border-radius: 6px;
+}
+
+/* --------------------------------------------------------------------------
+   Workflow surface selector
+   -------------------------------------------------------------------------- */
+.jh-channel-selector {
+  display: flex;
+  gap: 4px;
+  margin: 28px 0 18px;
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
+.jh-channel-selector__tab {
+  position: relative;
+  min-block-size: 40px;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+  color: var(--vp-c-text-2);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.jh-channel-selector__tab:hover {
+  color: var(--vp-c-text-1);
+}
+
+.jh-channel-selector__tab[aria-selected="true"] {
+  color: var(--vp-c-text-1);
+}
+
+.jh-channel-selector__tab[aria-selected="true"]::after {
+  position: absolute;
+  right: 8px;
+  bottom: -1px;
+  left: 8px;
+  height: 2px;
+  background: var(--vp-c-brand-1);
+  content: "";
+}
+
+.jh-channel-selector__tab:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.jh-channel-panel {
+  margin: 16px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--jh-doc-frame);
+  border-radius: 8px;
+  background: var(--jh-doc-surface);
+}
+
+.jh-channel-panel > :first-child {
+  margin-top: 0;
+}
+
+.jh-channel-panel > :last-child {
+  margin-bottom: 0;
+}
+
+.jh-channel-panel[data-jh-channel-panel="cli"] {
+  display: none;
+}
+
+html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="web"] {
+  display: none;
+}
+
+html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cli"] {
+  display: block;
 }
 
 /* --------------------------------------------------------------------------
@@ -195,40 +312,39 @@
 }
 
 /* --------------------------------------------------------------------------
-   Inline mermaid: render as large as possible before zooming.
-   Mermaid caps each SVG at its intrinsic width, so small diagrams render tiny
-   and large ones shrink to the text column. Force every diagram to fill the
-   column width (SVG scales crisply, so upscaling small diagrams is lossless).
-   The text column width itself is untouched.
+   Inline mermaid: keep diagrams legible without making the page feel zoomed.
+   Diagrams render at their intrinsic size, shrink to the available viewport,
+   and remain expandable through the lightbox for close inspection.
    -------------------------------------------------------------------------- */
 .vp-doc .mermaid {
   position: relative;
-  display: flex;
-  justify-content: center;
+  display: block;
+  width: min(680px, 100%);
+  max-width: 100%;
   margin: 28px auto;
   padding: 8px;
   border: 1px solid var(--jh-doc-frame);
+  border-radius: 8px;
   background: var(--jh-doc-surface);
-  max-width: min(1040px, 100%);
   overflow: auto hidden;
+  text-align: center;
 }
 
 .vp-doc .mermaid svg {
+  display: block;
   width: 100% !important;
   max-width: 100% !important;
   height: auto !important;
+  margin-inline: auto;
 }
 
 @media (max-width: 767px) {
   .vp-doc .mermaid {
-    justify-content: flex-start;
     box-shadow: inset -18px 0 18px -20px rgba(15, 23, 42, 0.55);
   }
 
   .vp-doc .mermaid svg {
-    width: 760px !important;
-    min-width: 760px !important;
-    max-width: none !important;
+    max-width: 100% !important;
   }
 }
 
@@ -254,7 +370,6 @@
 
 /* Subtle hover hint so mermaid diagrams read as interactive. */
 .vp-doc .mermaid {
-  border-radius: 8px;
   outline: 1px solid transparent;
   transition:
     outline-color 0.15s ease,
