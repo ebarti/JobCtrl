@@ -51,6 +51,15 @@ Explicit non-goals: no behavior changes, no new/removed routes, no data-layer
 changes, no changes to contexts' hooks/mutations, no removal of density modes,
 no mobile-first rework beyond the responsive rail described in §4.
 
+**Owner constraint (2026-07-08, binding on every phase):** the mock-up is
+*directional, not a spec*. The shipped app is denser than the mock-up and
+that density is the product. **No functionality or currently-presented data
+may be reduced** in the name of visual alignment — every column, control,
+metric, panel, badge, and audit surface that exists today must still exist
+and remain reachable after the revamp. Alignment work is additive styling
+and composition only. Any conflict between "look like the mock-up" and
+"keep the data" resolves in favor of the data.
+
 ## 3. Design tokens (target)
 
 Token **names are frozen** — `token-contract.test.ts` enforces the set; we
