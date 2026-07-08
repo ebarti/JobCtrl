@@ -1018,19 +1018,18 @@ input[type="radio"] {
 
 .funnel {
   display: grid;
-  grid-template-columns: 120px minmax(180px, 1fr) minmax(260px, max-content);
-  column-gap: 14px;
-  row-gap: 2px;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 6px;
   padding: 8px 8px 12px;
 }
 
 .funnel-row {
-  grid-column: 1 / -1;
+  grid-column: 1;
   display: grid;
-  grid-template-columns: inherit;
-  grid-template-columns: subgrid;
+  grid-template-columns: minmax(96px, max-content) minmax(140px, 1fr);
   align-items: center;
-  gap: 14px;
+  gap: 6px 14px;
+  width: 100%;
   min-height: var(--jh-row-height);
   border: 0;
   border-radius: 5px;
@@ -1042,6 +1041,11 @@ input[type="radio"] {
 .funnel-row:hover,
 .data-row:hover {
   background: color-mix(in oklch, var(--primary) 4%, var(--card));
+}
+
+.funnel-row .legend {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
 }
 
 .funnel-num,
@@ -1469,7 +1473,7 @@ input[type="radio"] {
 
 .apply-review-selected-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 520px);
   gap: 16px;
   align-items: start;
   padding: 12px 16px;
@@ -1495,7 +1499,9 @@ input[type="radio"] {
 
 .apply-review-selected-actions {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
+  justify-self: end;
   justify-content: flex-end;
   gap: 8px;
 }
@@ -1528,6 +1534,11 @@ input[type="radio"] {
   color: var(--muted-foreground);
   font-size: 12px;
   text-align: end;
+}
+
+.apply-review-approval-binding > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .apply-review-audit-facts {
@@ -7233,6 +7244,11 @@ input[type="radio"] {
   .apply-review-selected-actions,
   .apply-review-selected-actions .apply-review-actions {
     justify-content: flex-start;
+  }
+
+  .apply-review-audit-facts > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
   }
 
   .stage-trigger-source-field {

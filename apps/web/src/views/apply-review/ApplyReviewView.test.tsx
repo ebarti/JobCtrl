@@ -993,11 +993,13 @@ describe("<ApplyReviewView>", () => {
     expect(auditRegion.getByText(/Must-have coverage:\s*50%/)).toBeInTheDocument();
     expect(auditRegion.getByText(/Gate-recorded coverage:\s*50%/)).toBeInTheDocument();
     expect(auditRegion.getByText("below revision gate")).toBeInTheDocument();
+    expect(auditRegion.getByText("Post-voice gate findings")).toBeInTheDocument();
     expect(
       auditRegion.getByText(
         /Shipped grounded must-have coverage 50% \(fit 5\/10\) is below the revision gate\./,
       ),
     ).toBeInTheDocument();
+    expect(auditRegion.queryByText("Post-acceptance audit findings")).not.toBeInTheDocument();
     expect(auditRegion.queryByText("judge-claimed (legacy)")).not.toBeInTheDocument();
     expect(auditRegion.queryByText(/Attempt/)).not.toBeInTheDocument();
   });
