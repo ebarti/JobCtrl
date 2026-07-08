@@ -82,7 +82,7 @@ export const workflowRunColumns: Array<DataGridColumn<WorkflowRunSummary>> = [
     sortable: true,
     getFilterValue: (row) => formatDurationMs(row.durationMs),
     render: (row) => (
-      <span className="mono">{formatDurationMs(row.durationMs)}</span>
+      <span>{formatDurationMs(row.durationMs)}</span>
     ),
   },
   {
