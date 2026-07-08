@@ -496,7 +496,7 @@ requirement. R11 guarded submission / browser-extension Phase 3 must not start.
 | Apply-safety hardening from the OSS spec is complete and merged | not-satisfied | W1.2-W1.7 are not done on the checked tree; see §9.2. |
 | Extension security review (§8) completed/published and privacy-invariant test (§7) enforced in CI | partially-satisfied | Privacy-invariant tests exist (`apps/extension/src/privacy.test.ts:13`-`:35`; `apps/extension/src/privacy.e2e.test.ts:19`-`:46`), but no completed/published extension security review was found in the merged docs. |
 | Release privacy gate green for extension package/archive | partially-satisfied | Release gate exists and runs scanner/self-test (`.github/workflows/release-check.yml:25`-`:29`); built extension privacy tests cover the dist package (`apps/extension/src/privacy.e2e.test.ts:19`-`:46`). This close-out did not independently run the extension package/archive privacy test suite; the PR verification runs the repository release scanner. |
-| Explicit owner go/no-go D-6 | not-satisfied | Browser plan D-6 remains an open owner decision (`docs/plans/2026-07-05-browser-extension-plan.md:386`). |
+| Explicit owner go/no-go D-6 | not-satisfied | Browser plan D-6 remains an open owner decision (`docs/plans/implemented/2026-07-05-browser-extension-plan.md:386`). |
 
 #### §6.2 safety-substrate status
 
@@ -522,7 +522,7 @@ requirement. R11 guarded submission / browser-extension Phase 3 must not start.
   the claims ledger itself says prompt injection is real and only limited, not
   removed (`docs/claims-ledger.md:141`).
 - **D-4 generic matcher confirmation:** the starting ATS family set and rollout
-  order remain owner-confirmed scope (`docs/plans/2026-07-05-browser-extension-plan.md:384`).
+  order remain owner-confirmed scope (`docs/plans/implemented/2026-07-05-browser-extension-plan.md:384`).
 - **Partial-submission behavior:** W1.2 remains open; current dry-run parsing can
   still convert `RESULT:APPLIED` during dry-run into `DryRunComplete`
   (`workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py:369`-`:376`).
@@ -547,23 +547,23 @@ closed it as passed on 2026-07-07, with private concern details kept off-repo.
 | Confirm W2.4 default per-lane token ceilings and spend defaults. | OSS spec checkpoint `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:162`-`:163`; W2.4 DoD `:1052`-`:1068`. |
 | Record historical-blob acceptance and live capability posture before visibility flip. | OSS spec gate `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:1124`-`:1127`. |
 | Complete final manual QA and owner-only visibility flip / first release tag. | OSS spec gate `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:1128`-`:1132`. |
-| Confirm comparison page row categories, alternative columns, maintenance cadence interval, and final sidebar label/placement; replace all alternative `TODO(owner)` placeholders only after facts are verified. | Launch-readiness plan `docs/plans/2026-07-05-launch-readiness-artifacts-plan.md:503`-`:516`; comparison placeholders `docs/comparison.md:26`-`:35`, `:44`-`:57`. |
-| Confirm the initial launch demo-asset set. | Launch-readiness plan `docs/plans/2026-07-05-launch-readiness-artifacts-plan.md:517`-`:532`. |
-| Set the Current-vs-Beta threshold and resolve the named reclassification candidates. | Launch-readiness plan `docs/plans/2026-07-05-launch-readiness-artifacts-plan.md:545`-`:554`; claims-ledger sign-off list `docs/claims-ledger.md:224`-`:237`. |
-| Name the claims-freeze sign-off owner and each Phase C publish-step owner. | Launch-readiness plan `docs/plans/2026-07-05-launch-readiness-artifacts-plan.md:555`-`:560`; claims ledger `docs/claims-ledger.md:240`-`:241`. |
+| Confirm comparison page row categories, alternative columns, maintenance cadence interval, and final sidebar label/placement; replace all alternative `TODO(owner)` placeholders only after facts are verified. | Launch-readiness plan `docs/plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md:503`-`:516`; comparison placeholders `docs/comparison.md:26`-`:35`, `:44`-`:57`. |
+| Confirm the initial launch demo-asset set. | Launch-readiness plan `docs/plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md:517`-`:532`. |
+| Set the Current-vs-Beta threshold and resolve the named reclassification candidates. | Launch-readiness plan `docs/plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md:545`-`:554`; claims-ledger sign-off list `docs/claims-ledger.md:224`-`:237`. |
+| Name the claims-freeze sign-off owner and each Phase C publish-step owner. | Launch-readiness plan `docs/plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md:555`-`:560`; claims ledger `docs/claims-ledger.md:240`-`:241`. |
 | Re-stamp the claims ledger against the final `main` SHA at actual freeze time. | Claims ledger freeze status `docs/claims-ledger.md:24`-`:38`. |
 | Confirm the claims-ledger location/publication decision. | Claims ledger owner row `docs/claims-ledger.md:222`-`:223`. |
-| Review final honest crawl user-agent contact string before real crawls. | Crawl-politeness plan `docs/plans/2026-07-05-crawl-politeness-plan.md:676`-`:697`. |
-| Decide whether per-source politeness policy editor / web knobs remain deferred or enter scope. | Crawl-politeness plan `docs/plans/2026-07-05-crawl-politeness-plan.md:737`-`:751`. |
-| Browser extension D-1: exact token model, storage, pairing UX, and whether a valid token relaxes the mutation-origin gate. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:381`. |
-| Browser extension D-2: whether unauthenticated loopback API reads stay open. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:382`. |
-| Browser extension D-3: extension provenance fields and source-id scheme. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:383`. |
-| Browser extension D-4: starting generic matcher family set and rollout order. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:384`. |
-| Browser extension D-5: offline capture queue retention policy. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:385`. |
-| Browser extension D-6: go/no-go to begin guarded-submission Phase 3 once §6.1 is satisfied. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:386`. |
-| Browser extension D-7: distribution channel and signing key ownership. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:387`. |
-| Browser extension D-8: target browser/engine for v1. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:388`. |
-| Browser extension D-9: whether to ship LLM-assisted free-text drafts or keep deterministic-only for v1. | Browser plan `docs/plans/2026-07-05-browser-extension-plan.md:389`. |
+| Review final honest crawl user-agent contact string before real crawls. | Crawl-politeness plan `docs/plans/implemented/2026-07-05-crawl-politeness-plan.md:676`-`:697`. |
+| Decide whether per-source politeness policy editor / web knobs remain deferred or enter scope. | Crawl-politeness plan `docs/plans/implemented/2026-07-05-crawl-politeness-plan.md:737`-`:751`. |
+| Browser extension D-1: exact token model, storage, pairing UX, and whether a valid token relaxes the mutation-origin gate. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:381`. |
+| Browser extension D-2: whether unauthenticated loopback API reads stay open. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:382`. |
+| Browser extension D-3: extension provenance fields and source-id scheme. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:383`. |
+| Browser extension D-4: starting generic matcher family set and rollout order. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:384`. |
+| Browser extension D-5: offline capture queue retention policy. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:385`. |
+| Browser extension D-6: go/no-go to begin guarded-submission Phase 3 once §6.1 is satisfied. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:386`. |
+| Browser extension D-7: distribution channel and signing key ownership. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:387`. |
+| Browser extension D-8: target browser/engine for v1. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:388`. |
+| Browser extension D-9: whether to ship LLM-assisted free-text drafts or keep deterministic-only for v1. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:389`. |
 | Claims-ledger `TODO(owner)` cells. | None found by `rg -n "TODO\\(owner\\)" docs/claims-ledger.md`; remaining claims-ledger owner actions are listed above instead. |
 
 ## 10. Refreshed W1 residual inventory after remediation (2026-07-06)

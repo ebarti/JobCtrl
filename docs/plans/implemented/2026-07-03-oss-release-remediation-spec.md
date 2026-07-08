@@ -1087,7 +1087,7 @@ first tag. Assemble this checklist, with links, as the final deliverable.
       recorded as non-error outcomes; no spoofed browser UA remains on any
       product fetch path. Delivered by the R10 train (PRs #297 → #315); ADR in
       `docs/decisions.md` (2026-07-06); plan
-      `docs/plans/2026-07-05-crawl-politeness-plan.md`. Check when the R10 train
+      `docs/plans/implemented/2026-07-05-crawl-politeness-plan.md`. Check when the R10 train
       is merged to `main`.
 - [x] W1.1–W1.7 merged, each with review gate `Gate: PASS` and QA gate
       `Gate: PASS` per repo process.

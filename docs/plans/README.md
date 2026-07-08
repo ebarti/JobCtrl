@@ -8,6 +8,10 @@ at the top of `docs/`.
   that has landed, been superseded by canonical docs, or been closed with a
   recorded outcome.
 
+As of 2026-07-08, every dated plan currently tracked in this directory has
+landed or been closed with a recorded outcome and lives under `implemented/`.
+Add new accepted-but-not-yet-delivered plans at the top level.
+
 When a plan is fully implemented, move it into `implemented/` with a status
 banner recording the delivery PRs and any deviations, and update the canonical
 docs to describe the delivered behavior. Delivery history lives in the git log
@@ -54,8 +58,18 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-07-03 | [Temporal Rearchitecture — Implementation Spec (P1b–P5)](implemented/2026-07-03-temporal-rearch-implementation-spec.md) | Implemented — spec #232 |
 | 2026-07-03 | [OSS Release Remediation — Implementation Spec for Codex](implemented/2026-07-03-oss-release-remediation-spec.md) | Closed by #274 inventory, then W1 restamped after #336, #337, #338, #340, #342, and #345 — W1.1-W1.7 complete; W1.8 dry-run-by-default was withdrawn by owner decision; overall release remains no-go pending non-W1 owner/release checkpoints |
 | 2026-07-05 | [OSS Release — Drive-to-Done and Completion Verification Plan](implemented/2026-07-05-oss-release-drive-to-done-plan.md) | Restamped after the W1 remediation train and W0.6 owner pass — W1 apply-safety precondition satisfied; overall R1 remains no-go pending W2.1, W2.4, and final owner/release checkpoints |
+| 2026-07-05 | [Low-Friction Install & Auth Reuse](implemented/2026-07-05-low-friction-install-plan.md) | Implemented — #254 (plan), #317, #354 |
+| 2026-07-05 | [First-Run Time-to-Value: Real-Path Measurement Discipline](implemented/2026-07-05-first-run-ttfv-plan.md) | Implemented / closed — #259 (plan), #343; Goal B withdrawn and #330 closed unmerged; desktop-packaging verdict remains pending owner-run TTFV evidence |
+| 2026-07-05 | [Streaming Pipeline Latency — Score As You Discover](implemented/2026-07-05-streaming-pipeline-latency-plan.md) | Implemented — #260 (plan), #301, #306, #311; decisions recorded in #318 |
+| 2026-07-05 | [Launch-Readiness Artifacts](implemented/2026-07-05-launch-readiness-artifacts-plan.md) | Implemented / closed — #262 (plan), #298-#305, #324, #341, #354; owner-only publish actions remain in `docs/publish-checklist.md` |
+| 2026-07-05 | [Career Evidence Map + Interview Preparation](implemented/2026-07-05-evidence-map-interview-prep-plan.md) | Implemented — #263 (plan), #276, #279, #283, #285, #293, #294 |
+| 2026-07-05 | [Application Outcome Analytics And Artifact Comparison](implemented/2026-07-05-outcome-analytics-plan.md) | Implemented — #264 (plan), #273, #280, #284, #287, #295 |
+| 2026-07-05 | [Browser Extension — Capture, Assisted Autofill, and Deferred Guarded Submission](implemented/2026-07-05-browser-extension-plan.md) | Implemented through deterministic capture/autofill — #265 (plan), #277, #281, #282; P2b free-text drafts and P3 guarded submission remain deferred |
+| 2026-07-05 | [Saved Table Views + Daily Local Digest](implemented/2026-07-05-saved-views-daily-digest-plan.md) | Implemented — #267 (plan), #288-#292 |
 | 2026-07-05 | [Contact Research And Outreach Planner](implemented/2026-07-05-outreach-planner-plan.md) | Implemented — #266 (plan), #325, #331, #332, #333, #335, #347; ADR 2026-07-06 |
 | 2026-07-05 | [Product Rename to JobCtrl](implemented/2026-07-05-rename-jobctrl-plan.md) | Implemented — #261 (plan), #349; hardening #350; #351 closeout; R0.1 updates the final public spelling to JobCtrl |
+| 2026-07-05 | [Crawl Politeness Hardening](implemented/2026-07-05-crawl-politeness-plan.md) | Implemented — #272 (plan), #297-#316; pacing-test hardening #334; ADR 2026-07-06 |
+| 2026-07-08 | [Web UI/UX Revamp — Left-Rail Shell + JobCtrl Design System](implemented/2026-07-08-web-ui-revamp-plan.md) | Implemented — #356; design-system docs follow-up continues separately in #357 |
 
 Two 2026-05-17 backlog specs (`…-add-react`, `…-add-brows`) were drafted on
 `origin/mestre/develop-*` branches and never merged to `main`; only `…-add-root`

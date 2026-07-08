@@ -1416,7 +1416,7 @@ Consequences:
   pool/semaphore is a documented follow-up if the family cap proves insufficient.
 
 Cites: R9 streaming-pipeline-latency plan
-(`docs/plans/2026-07-05-streaming-pipeline-latency-plan.md`), Phase 1.
+(`docs/plans/implemented/2026-07-05-streaming-pipeline-latency-plan.md`), Phase 1.
 
 ## 2026-07-05: Career Evidence Map Is An Operations Read Model Over Existing Facts
 
@@ -1445,7 +1445,7 @@ Consequences:
 - if the index is projected, both the Python and TypeScript builders must emit
   the same shape and parity fixtures must cover it
 
-Cites: `docs/plans/2026-07-05-evidence-map-interview-prep-plan.md` (Phase 0).
+Cites: `docs/plans/implemented/2026-07-05-evidence-map-interview-prep-plan.md` (Phase 0).
 
 ## 2026-07-05: Interview Preparation Is Grounded, Gated, Generation-Versioned Material
 
@@ -1475,7 +1475,7 @@ Consequences:
 - post-interview reflection remains an Apply outcome note, not an interview
   assistant transcript or live-session artifact
 
-Cites: `docs/plans/2026-07-05-evidence-map-interview-prep-plan.md` (Phase 0).
+Cites: `docs/plans/implemented/2026-07-05-evidence-map-interview-prep-plan.md` (Phase 0).
 
 ## 2026-07-05: Outcome Analytics Are Read-Only And Sample-Gated
 
@@ -1621,7 +1621,7 @@ Consequences:
   each `SourcePolicy` (a registry policy editor is deferred, D4)
 
 Cites: R10 crawl-politeness train (PRs #297 → #315); plan
-`docs/plans/2026-07-05-crawl-politeness-plan.md`; gate G1 in
+`docs/plans/implemented/2026-07-05-crawl-politeness-plan.md`; gate G1 in
 `docs/plans/2026-07-03-oss-release-remediation-spec.md` §5.
 
 ## 2026-07-06: Contact and Outreach Bounded Context With No Auto-Send

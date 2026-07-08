@@ -1,6 +1,6 @@
 # Application Outcome Analytics And Artifact Comparison — Implementation Plan
 
-> **Status:** Proposed. This is a planning document only; it ships no code.
+> **Status:** Implemented / archived 2026-07-08. Delivered by #264 (plan), #273 (minimum conversion sample baseline), #280 (read model), #284 (analytics view), #287 (artifact comparison), and #295 (outcome joins). Analytics remain descriptive/read-only and sample-gated.
 > **Anchors verified against `main` @ `a488e4e9`** (`fix(reliability): discover
 > fault isolation, truthful failures, honest read models`). Every path, symbol,
 > table, and column cited below was confirmed against this worktree HEAD; the

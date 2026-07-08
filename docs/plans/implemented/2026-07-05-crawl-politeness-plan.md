@@ -1,6 +1,6 @@
 # Crawl Politeness Hardening
 
-> **Status:** proposed — not started. Implementation plan only; no code in this PR.
+> **Status:** Implemented / archived 2026-07-08. Delivered by #272 (plan), #297-#316 (politeness model, gateway, routed fetch surfaces, UI, docs, config, gate closure), and #334 (pacing-test hardening).
 > **Gate:** this plan is a **pre-public-release gate** for the repository's
 > existing outbound fetch paths, and a **hard prerequisite** for any future
 > contact-research fetching. Both statements are load-bearing; see §"Gates".

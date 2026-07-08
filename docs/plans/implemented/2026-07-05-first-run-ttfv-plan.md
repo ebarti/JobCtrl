@@ -1,7 +1,7 @@
 # First-Run Time-to-Value: Real-Path Measurement Discipline
 
 - **Date:** 2026-07-05
-- **Status:** Amended 2026-07-06 — Goal B withdrawn; implementation now targets real-path measurement only.
+- **Status:** Implemented / archived 2026-07-08. Delivered by #259 (plan) and #343 (real-path measurement harness, probes, QA entry, and packaging-decision ADR scaffold). Goal B was withdrawn by owner decision and #330 was closed unmerged; the desktop-packaging verdict remains pending owner-run TTFV evidence in `docs/decisions.md`.
 - **Anchors verified against main @ a488e4e9.** Every path, symbol, command, and fixture cited below was checked against this worktree's HEAD. Per repo practice, machine-re-verify every anchor against the implementation base ref before handing any phase to an implementer. Content attributed to PR #254 is cited by PR number only; that plan is not yet on `main`.
 - **Owner-facing goal:** make the first ten and thirty minutes of a fresh JobCtrl install *provably* valuable on the real product path, measure that value on clean environments as an owner-run regression discipline, and define — with evidence, not guesswork — when a packaged desktop install becomes worth building.
 

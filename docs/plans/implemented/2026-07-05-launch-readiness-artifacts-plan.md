@@ -1,6 +1,6 @@
 # Launch-Readiness Artifacts Plan
 
-> **Status:** Proposed (plan only; no implementation in this PR).
+> **Status:** Implemented / archived 2026-07-08. Delivered by #262 (plan), #298-#305 (claims ledger, README/docs launch artifacts, demo inventory, publish checklist), #324 and #341 (claims-ledger currency passes), and #354 (post-rename launch README / install rewrite). Owner-only release actions remain governed by `docs/publish-checklist.md` and the release gate; they are not open implementation scope for this plan.
 > **Authored:** 2026-07-05.
 > **Anchors verified against main @ a488e4e9.**
 > **Audience:** implementing agents at high reasoning effort. This document
