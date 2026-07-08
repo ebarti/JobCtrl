@@ -39,7 +39,14 @@ TableFooter.displayName = "TableFooter";
 
 export const TableRow = forwardRef<HTMLTableRowElement, HTMLAttributes<HTMLTableRowElement>>(
   ({ className, ...props }, ref) => (
-    <tr ref={ref} className={cn("border-b border-border transition-colors hover:bg-muted/50", className)} {...props} />
+    <tr
+      ref={ref}
+      className={cn(
+        "border-b border-border transition-colors hover:bg-[color-mix(in_oklch,var(--primary)_4%,var(--card))] data-[state=selected]:bg-[color-mix(in_oklch,var(--primary)_8%,var(--card))]",
+        className,
+      )}
+      {...props}
+    />
   ),
 );
 TableRow.displayName = "TableRow";
@@ -49,7 +56,7 @@ export const TableHead = forwardRef<HTMLTableCellElement, ThHTMLAttributes<HTMLT
     <th
       ref={ref}
       className={cn(
-        "h-10 px-2 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0",
+        "h-10 px-2 text-left align-middle text-[10px] font-extrabold uppercase tracking-[0.08em] text-muted-foreground [&:has([role=checkbox])]:pr-0",
         className,
       )}
       {...props}

@@ -402,6 +402,11 @@ textarea:focus-visible {
   border-color: var(--ring);
 }
 
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--primary);
+}
+
 .pulse {
   margin-left: auto;
   color: var(--muted-foreground);
@@ -499,8 +504,9 @@ textarea:focus-visible {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--card);
+  box-shadow: var(--shadow-panel);
 }
 
 .card.full {
@@ -512,14 +518,16 @@ textarea:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 16px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--muted);
 }
 
 .card-hd h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .toolbar {
@@ -937,7 +945,7 @@ textarea:focus-visible {
 
 .funnel-row:hover,
 .data-row:hover {
-  background: var(--muted);
+  background: color-mix(in oklch, var(--primary) 4%, var(--card));
 }
 
 .funnel-num,
@@ -1165,26 +1173,29 @@ textarea:focus-visible {
 }
 
 .segmented {
-  min-height: 32px;
+  min-height: 30px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--card);
+  border-radius: 999px;
+  background: transparent;
   color: var(--muted-foreground);
-  padding: 0 10px;
-  font: inherit;
-  font-size: 12px;
+  padding: 0 14px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .segmented:hover,
-.segmented:focus-visible,
-.segmented.active {
+.segmented:focus-visible {
   border-color: var(--ring);
   color: var(--foreground);
 }
 
 .segmented.active {
-  background: var(--muted);
-  font-weight: 650;
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-weight: 850;
 }
 
 .analytics-select-label {
@@ -3570,11 +3581,13 @@ textarea:focus-visible {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--muted);
+  background: color-mix(in oklch, var(--muted) 55%, var(--card));
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .filterable-data-grid-table thead th.data-grid-column-resizable {
@@ -3730,7 +3743,7 @@ textarea:focus-visible {
 }
 
 .filterable-data-grid-table tbody tr.data-grid-row-activatable:hover {
-  background: var(--muted);
+  background: color-mix(in oklch, var(--primary) 4%, var(--card));
 }
 
 .filterable-data-grid-table tbody tr.data-grid-row-activatable {
@@ -3769,7 +3782,7 @@ textarea:focus-visible {
 }
 
 .filterable-data-grid-table tbody tr[aria-selected="true"] {
-  background: var(--muted);
+  background: color-mix(in oklch, var(--primary) 8%, var(--card));
 }
 
 .filterable-data-grid-table .row-check {
@@ -4348,7 +4361,7 @@ textarea:focus-visible {
 }
 
 .table-row-activatable:hover {
-  background: var(--muted);
+  background: color-mix(in oklch, var(--primary) 4%, var(--card));
 }
 
 .mini-row,
@@ -4454,11 +4467,12 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--fit-score-border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--fit-score-bg);
   box-shadow: var(--fit-score-shadow);
   color: var(--fit-score-fg);
   font-family: var(--font-mono);
+  font-weight: 800;
 }
 
 .fit.good {
@@ -4557,13 +4571,20 @@ textarea:focus-visible {
 .stage-pill {
   display: inline-flex;
   align-items: center;
-  border-radius: 4px;
+  min-height: 22px;
+  border-radius: 999px;
   background: var(--muted);
-  padding: 2px 6px;
+  padding: 2px 9px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1;
+  letter-spacing: 0.01em;
 }
 
 .tag.muted,
 .stage-pill.neutral {
+  box-shadow: inset 0 0 0 1px var(--border);
   background: color-mix(in oklch, var(--muted-foreground) 8%, var(--muted));
   color: var(--muted-foreground);
 }
