@@ -109,6 +109,12 @@ def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
     conn.commit()
 
 
+def test_unsafe_url_failure_is_permanent() -> None:
+    assert launcher_module._is_permanent_failure(
+        "failed:unsafe_url: URL host is not a public address: 127.0.0.1"
+    )
+
+
 def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> None:
     conn.execute(
         """

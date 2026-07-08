@@ -1209,6 +1209,16 @@ def gen_prompt(
     if not job:
         return None
 
+    apply_url = str(job.get("application_url") or job.get("url") or "").strip()
+    from jobctrl.infrastructure.network import validate_public_http_url
+
+    decision = validate_public_http_url(apply_url)
+    if not decision.allowed:
+        release_lock(job["url"])
+        raise ValueError(
+            f"unsafe apply target URL: {decision.reason or 'not a public HTTP(S) destination'}"
+        )
+
     snapshot = snapshot or _load_profile_snapshot()
     resume_path = job.get("tailored_resume_path")
     txt_path = Path(resume_path).with_suffix(".txt") if resume_path else None
@@ -1581,7 +1591,12 @@ PERMANENT_FAILURES: set[str] = {
     "blocked_by_cloudflare",
 }
 
-PERMANENT_PREFIXES: tuple[str, ...] = ("site_blocked", "cloudflare", "blocked_by")
+PERMANENT_PREFIXES: tuple[str, ...] = (
+    "site_blocked",
+    "cloudflare",
+    "blocked_by",
+    "unsafe_url",
+)
 
 
 def _is_permanent_failure(result: str) -> bool:
