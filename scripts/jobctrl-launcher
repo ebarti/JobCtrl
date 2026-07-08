@@ -50,7 +50,7 @@ bootstrap() {
   if [[ -x "$REPO/scripts/get" ]]; then
     exec "$REPO/scripts/get" ${1+"$@"}
   fi
-  fail "bootstrap script not found; run: curl -fsSL https://raw.githubusercontent.com/ebarti/JobCtrl/main/scripts/get | bash"
+  fail "bootstrap script not found; run: curl -fsSL https://jobctrl.dev/install.sh | bash"
 }
 
 REPO="$(resolve_repo)"

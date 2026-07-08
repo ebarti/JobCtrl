@@ -41,7 +41,7 @@
     "qa:test": "corepack pnpm --filter @jobctrl/api qa:test",
     "docs:screenshots": "JOBCTRL_DOCS_SCREENSHOTS=1 corepack pnpm --filter @jobctrl/web e2e -- tests/docs-screenshots.spec.ts",
     "docs:dev": "vitepress dev docs",
-    "docs:build": "vitepress build docs && node scripts/check-docs-site-links.mjs",
+    "docs:build": "node scripts/check-install-asset.mjs && vitepress build docs && node scripts/check-docs-site-links.mjs",
     "docs:check:runtime": "node scripts/check-docs-site-runtime.mjs",
     "docs:preview": "vitepress preview docs",
     "ttfv:real": "node scripts/ttfv-real.mjs run",
