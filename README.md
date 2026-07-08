@@ -42,7 +42,7 @@ a daily spend ceiling, and shows its work at every step.
 the rest:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ebarti/JobCtrl/main/scripts/get | bash
+curl -fsSL https://jobctrl.dev/install.sh | bash
 ```
 
 **Homebrew** — installs the toolchain and a global `jobctrl` launcher:
@@ -56,16 +56,25 @@ brew install ebarti/tap/jobctrl && jobctrl bootstrap
 > installable straight from a checkout with
 > `brew install --formula packaging/homebrew/Formula/jobctrl.rb --HEAD`.
 
-Then initialize, check, and run:
+Then choose how you want to start:
+
+```bash
+cd ~/JobCtrl
+pnpm dev        # web app — open http://127.0.0.1:5173
+```
+
+The web app can start without `jobctrl init`. If you want to use CLI workflows
+directly, create the local CLI profile and check the setup first:
 
 ```bash
 uv --project workers/automation run jobctrl init
 uv --project workers/automation run jobctrl doctor
-pnpm dev        # full local stack — open http://127.0.0.1:5173
 ```
 
-`jobctrl setup` (run for you by the installer) detects vendor auth, persists
-the enabled employer-analysis legs, and finishes with `doctor`.
+Homebrew users can start the web stack from anywhere with `jobctrl dev`, and
+can use `jobctrl init` / `jobctrl doctor` only when taking the CLI route.
+`jobctrl setup` is already run by the installer/bootstrap path; rerun it only
+when vendor auth or analysis-leg choices change.
 
 <details>
 <summary><b>Manual install & requirements</b> (clone it yourself)</summary>
@@ -92,7 +101,7 @@ the browser and the worker refuses to start without it
 
 </details>
 
-Full first-run guide: [docs/user/getting-started.md](docs/user/getting-started.md).
+Full first-run guide: [jobctrl.dev/user/getting-started](https://jobctrl.dev/user/getting-started).
 
 ## Screenshots
 
@@ -103,14 +112,14 @@ Full first-run guide: [docs/user/getting-started.md](docs/user/getting-started.m
 | [<img src="docs/assets/screenshots/job-detail.png" alt="Job detail with requirement-level fit evidence (synthetic data)" width="440" />](docs/assets/screenshots/job-detail.png) | [<img src="docs/assets/screenshots/runs.png" alt="Runs page with durable workflow history (synthetic data)" width="440" />](docs/assets/screenshots/runs.png) |
 | **Job detail** — requirement-by-requirement fit evidence | **Runs** — durable workflows you can watch, retry, and audit |
 
-Full tour with captions: [Product Tour](docs/user/screenshots.md).
+Full tour with captions: [Product Tour](https://jobctrl.dev/user/screenshots).
 Documentation screenshots must be generated from synthetic data — refresh
 them with `pnpm docs:screenshots`
-([how it works](docs/local-development.md)).
+([how it works](https://jobctrl.dev/local-development)).
 
 ## How It Compares
 
-The short version of [the full, source-cited comparison](docs/comparison.md):
+The short version of [the full, source-cited comparison](https://jobctrl.dev/comparison):
 
 | Capability | The usual trade-off | JobCtrl |
 | --- | --- | --- |
@@ -257,9 +266,9 @@ is opt-in and configuration-gated:
 
 The apply prompt is the largest single batch of personal data that can leave.
 Full per-call breakdown:
-[Security → What Leaves Your Machine](docs/user/security.md#what-leaves-your-machine);
+[Security → What Leaves Your Machine](https://jobctrl.dev/user/security#what-leaves-your-machine);
 storage-and-privacy inventory:
-[docs/user/data-and-safety.md](docs/user/data-and-safety.md).
+[Data, Privacy & Safety](https://jobctrl.dev/user/data-and-safety).
 
 ## Current vs Roadmap
 
@@ -290,7 +299,7 @@ acknowledge action advances the `digest_state` watermark.
 Never commit profiles, API keys, generated resumes, cover letters, PDFs,
 browser profiles, logs, SQLite databases, screenshots containing real data,
 or local worker state. See
-[docs/user/data-and-safety.md](docs/user/data-and-safety.md) and
+[Data, Privacy & Safety](https://jobctrl.dev/user/data-and-safety) and
 [SECURITY.md](SECURITY.md).
 
 Discovery and enrichment fetch politely: every request runs through one
@@ -301,7 +310,7 @@ bounds each run's request budget, and sends an honest `User-Agent`
 (`JobCtrl/<version> (+<repo url>)`) that never impersonates a browser. Review
 or override that identity before crawling real sites via
 `JOBCTRL_CRAWL_UA_PRODUCT` / `JOBCTRL_CRAWL_UA_CONTACT`
-([Configuration → Crawl Politeness](docs/user/configuration.md#crawl-politeness));
+([Configuration → Crawl Politeness](https://jobctrl.dev/user/configuration#crawl-politeness));
 `jobctrl doctor` prints the effective value. Direct targets, redirects, and
 Playwright subrequests must also be public HTTP(S) destinations; loopback,
 private, link-local, metadata-service, and file URLs are blocked before content
@@ -368,7 +377,7 @@ sqlite3 ~/.jobctrl/jobctrl.db \
    Apply Review, and Debug.
 
 Commands and expected state transitions:
-[docs/user/normal-flows.md](docs/user/normal-flows.md).
+[Daily Workflow](https://jobctrl.dev/user/normal-flows).
 
 ## Under The Hood
 
@@ -386,8 +395,8 @@ Commands that start work (`jobctrl run`, per-stage commands, `jobctrl job
 <url>`, `jobctrl apply`, `jobctrl action profile_import`,
 `jobctrl compensation-refresh`) start Temporal workflows and require a
 reachable Temporal server plus a running JobCtrl worker — `pnpm dev` provides
-both. Architecture deep dives: [system architecture](docs/architecture/index.md)
-and the [pipeline walkthrough](docs/architecture/pipeline/index.md).
+both. Architecture deep dives: [system architecture](https://jobctrl.dev/architecture/)
+and the [pipeline walkthrough](https://jobctrl.dev/architecture/pipeline/).
 
 ## CLI Reference
 
@@ -424,7 +433,7 @@ All commands run as `uv --project workers/automation run jobctrl <command>`
 Configuration comes from the local SQLite profile/settings database,
 environment variables (`~/.jobctrl/.env`, repo `.env`, or the shell), and
 package-shipped source registries. Start with [.env.example](.env.example);
-full reference: [docs/user/configuration.md](docs/user/configuration.md).
+full reference: [Configuration](https://jobctrl.dev/user/configuration).
 
 <details>
 <summary><b>Common variables</b></summary>
@@ -469,20 +478,20 @@ pnpm test                  # API + web build + Python tests
 Focused commands (`pnpm api:test`, `pnpm web:test`, `pnpm web:e2e`,
 `pnpm extension:test`, `uv --project workers/automation run --extra dev
 pytest -q`, …) are listed in
-[docs/local-development.md](docs/local-development.md). Contributor
+[Local Development](https://jobctrl.dev/local-development). Contributor
 workflow: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
-- [docs/user/](docs/user/) — setup, product tour, configuration, normal
+- [User Guide](https://jobctrl.dev/user/getting-started) — setup, product tour, configuration, normal
   flows, data & safety, security model.
-- [docs/developer/](docs/developer/) — contributor onboarding and
+- [Developer Guide](https://jobctrl.dev/developer/) — contributor onboarding and
   architecture reading path.
-- [docs/architecture/](docs/architecture/index.md) — runtime boundaries,
+- [System Architecture](https://jobctrl.dev/architecture/) — runtime boundaries,
   pipeline, storage, scoring, materials audit, read model, observability.
-- [docs/local-reliability-qa.md](docs/local-reliability-qa.md) — regression
+- [Reliability & QA](https://jobctrl.dev/local-reliability-qa) — regression
   matrix and QA gates.
-- [docs/decisions.md](docs/decisions.md) — accepted architecture decisions.
+- [Decisions](https://jobctrl.dev/decisions) — accepted architecture decisions.
 - [docs/backlog.md](docs/backlog.md) · [docs/plans/](docs/plans/) — backlog
   and implementation records.
 

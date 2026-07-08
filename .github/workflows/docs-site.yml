@@ -7,6 +7,8 @@ on:
       - "docs/**"
       - "package.json"
       - "pnpm-lock.yaml"
+      - "scripts/check-install-asset.mjs"
+      - "scripts/get"
       - ".github/workflows/docs-site.yml"
   workflow_dispatch:
 

@@ -9,7 +9,7 @@ ASSUME_YES=0
 DRY_RUN=0
 SKIP_SYSTEM=0
 SKIP_BROWSERS=0
-SKIP_DOCTOR=0
+SKIP_DOCTOR=1
 
 REMAINING_SYSTEM_DEPS=()
 REQUIRED_TOOL_MISSING=()
@@ -29,7 +29,8 @@ Options:
   --dry-run        Print commands without running them.
   --skip-system    Skip system dependency checks and Homebrew prompts.
   --skip-browsers  Skip Playwright Chromium browser installs.
-  --skip-doctor    Skip the final jobctrl doctor check.
+  --run-doctor     Run the final jobctrl doctor check after setup.
+  --skip-doctor    Skip the final jobctrl doctor check (default).
   -h, --help       Show this help.
 EOF
 }
@@ -300,9 +301,11 @@ print_summary() {
   cat <<'EOF'
 
 Next commands:
+  pnpm dev
+
+CLI route only:
   uv --project workers/automation run jobctrl init
   uv --project workers/automation run jobctrl doctor
-  pnpm dev
 EOF
 }
 
@@ -314,6 +317,7 @@ parse_args() {
       --dry-run) DRY_RUN=1 ;;
       --skip-system) SKIP_SYSTEM=1 ;;
       --skip-browsers) SKIP_BROWSERS=1 ;;
+      --run-doctor) SKIP_DOCTOR=0 ;;
       --skip-doctor) SKIP_DOCTOR=1 ;;
       -h|--help) usage; exit 0 ;;
       *) echo "install: unknown option '$1'" >&2; usage >&2; exit 2 ;;

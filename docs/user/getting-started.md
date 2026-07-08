@@ -60,7 +60,7 @@ The fastest path is the bootstrap script — it clones the repository to
 guided installer described below:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ebarti/JobCtrl/main/scripts/get | bash
+curl -fsSL https://jobctrl.dev/install.sh | bash
 ```
 
 Homebrew users can install the toolchain plus a global `jobctrl` launcher
@@ -85,11 +85,11 @@ cd JobCtrl
 pnpm install:interactive
 ```
 
-Downloads the project and runs the guided first-run installer: it checks your
-system tools, installs the JavaScript and Python dependencies, and downloads the
-Playwright Chromium browser. It also runs `jobctrl setup`, which detects
-Claude/Codex/Antigravity auth and persists any intentionally enabled or skipped
-analysis legs. Expect a few minutes on the first run.
+Each install path downloads the project and runs the guided first-run installer:
+it checks your system tools, installs the JavaScript and Python dependencies,
+and downloads the Playwright Chromium browser. It also runs `jobctrl setup`,
+which detects Claude/Codex/Antigravity auth and persists any intentionally
+enabled or skipped analysis legs. Expect a few minutes on the first run.
 
 If your machine already has the system tools and browsers, this non-interactive
 command is enough:
@@ -108,18 +108,34 @@ uv --project workers/automation run playwright install chromium
 
 Downloads the Chromium build that Playwright uses for PDF rendering.
 
-## 3. Create Local Configuration
+## 3. Choose Web Or CLI
+
+Most users can start with the local web app; it does not require
+`jobctrl init`. A dedicated welcome/onboarding flow can make profile and search
+setup smoother later, but initialization is not a prerequisite for opening the
+web experience.
+
+Use the CLI initialization path only when you want to drive JobCtrl through
+terminal commands such as `jobctrl run`, `jobctrl discover`, or `jobctrl job`:
 
 ```bash
 uv --project workers/automation run jobctrl init
-uv --project workers/automation run jobctrl setup
 uv --project workers/automation run jobctrl doctor
 ```
 
-The first command creates your local workspace and configuration under
-`~/.jobctrl/`. The second checks your setup and reports which features are
-available: local database, LLM provider, Temporal, browser automation, the
-Gmail connector, and telemetry.
+`jobctrl init` creates your local CLI workspace, profile, resume, and search
+configuration under `~/.jobctrl/`. `jobctrl doctor` checks which features are
+available: local database, LLM provider, Temporal, browser automation, the Gmail
+connector, and telemetry. The installer already ran `jobctrl setup`; rerun it
+later only when vendor auth or analysis-leg choices change.
+
+If you installed the Homebrew launcher, use the shorter commands from anywhere:
+
+```bash
+jobctrl dev
+jobctrl init      # CLI route only
+jobctrl doctor    # CLI route only
+```
 
 At minimum, connect one general LLM provider. Start from the example file:
 

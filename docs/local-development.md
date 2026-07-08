@@ -20,16 +20,21 @@ offers Homebrew installs for missing machine-level tools when available, then
 runs the repository dependency setup: frozen pnpm install, uv sync, and
 Playwright Chromium installs for both the web package and the Python worker. It
 then runs `jobctrl setup` to detect Claude/Codex/Antigravity auth, persist
-enabled analysis legs, and finish with `jobctrl doctor`.
+enabled analysis legs, and report whether employer analysis is ready. It does
+not run `jobctrl doctor` by default because web-first users do not need the CLI
+profile created by `jobctrl init`.
 
 `pnpm install:interactive` accepts `--yes`, `--dry-run`, `--skip-browsers`,
-`--skip-system`, and `--skip-doctor` for non-interactive or partial runs.
+`--skip-system`, `--skip-doctor`, and `--run-doctor` for non-interactive,
+partial, or CLI-diagnostic runs.
 
-`scripts/get` is the curl-able wrapper around the same installer: it clones
-(or fast-forwards) a checkout at `~/JobCtrl` (`JOBCTRL_HOME` / `--dir`
-override) and then executes `scripts/install` there, reattaching `/dev/tty`
-when run through a pipe. `scripts/jobctrl-launcher` is the global `jobctrl`
-shim installed by the Homebrew formula
+`scripts/get` is the curl-able wrapper around the same installer, published on
+the docs site as `https://jobctrl.dev/install.sh`: it clones (or fast-forwards)
+a checkout at `~/JobCtrl` (`JOBCTRL_HOME` / `--dir` override) and then executes
+`scripts/install` there, reattaching `/dev/tty` when run through a pipe.
+`docs/public/install.sh` must stay byte-for-byte identical to `scripts/get`;
+`pnpm docs:build` checks that before building the site. `scripts/jobctrl-launcher`
+is the global `jobctrl` shim installed by the Homebrew formula
 (`packaging/homebrew/Formula/jobctrl.rb`); it resolves the checkout and
 proxies `jobctrl <command>`, `jobctrl dev`, `jobctrl bootstrap`, and
 `jobctrl update`.
