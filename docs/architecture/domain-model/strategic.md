@@ -288,8 +288,7 @@ PDFs) for jobs that pass the scoring threshold.
   stuffing, stock-phrase warnings, weak seniority alignment, and missing evidence
 - Run adversarial review for high-fit jobs after normal validation and judge pass
 - Generate cover letters
-- Render documents to PDF (resume via HTML/CSS + Playwright by default, with
-  LaTeX available only as a compatibility renderer; cover letter via
+- Render documents to PDF (resume via HTML/CSS + Playwright; cover letter via
   HTML/Playwright)
 - Register generated artifacts with provenance metadata
 - Emit domain events for each material lifecycle event

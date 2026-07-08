@@ -7,8 +7,8 @@ counts as covered ONLY when it appears in a bullet backed by real profile eviden
 
   * **Never inferred from the JD** (Anti-Pattern 2 / CLAUDE.md auditability): the
     only text consulted is the provenance rows' ``generated_text`` — the byte-
-    identical rendered line both the LaTeX and HTML renderers consume (the
-    provenance builder already anchors ``generated_text`` to that line). The
+    identical rendered line the HTML renderer consumes (the provenance builder
+    already anchors ``generated_text`` to that line). The
     ``missing`` list is computed as ``analysis_keywords − covered − declared``,
     never derived from the job description and never suppressed.
   * **Never keyword-stuffed / substring-faked** (Pitfall 10): a keyword is covered

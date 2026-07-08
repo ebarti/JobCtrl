@@ -49,7 +49,6 @@ from jobctrl.infrastructure.materials.bullet_provenance_repository import (
     SqliteBulletProvenanceRepository,
 )
 from jobctrl.infrastructure.materials.html_resume_pdf import build_resume_document
-from jobctrl.infrastructure.materials.latex_pdf import build_latex
 from jobctrl.domain.tenant import LOCAL_TENANT
 
 JOB_URL = "https://example.com/senior-backend"
@@ -691,12 +690,12 @@ def test_default_all_skill_categories_still_audited_when_no_strict_subset_pinned
 
 # --------------------------------------------------------------------------
 # Cross-surface parity: the shipped skill-category subset is IDENTICAL across
-# the FOUR surfaces that each re-implement the ``required_skill_category_ids``
-# filter -- the .txt assembler, the LaTeX renderer, the HTML renderer, and the
+# the THREE surfaces that each re-implement the ``required_skill_category_ids``
+# filter -- the .txt assembler, the HTML renderer, and the
 # provenance builder. This is the skills-axis analogue of the experience-axis
-# cross-renderer parity test (PR #220); it additionally binds the provenance
-# surface so the audit trail can never claim a skills set the rendered resume
-# did not ship. Drift in ANY single surface breaks these tests.
+# renderer parity test (PR #220); it additionally binds the provenance surface
+# so the audit trail can never claim a skills set the rendered resume did not
+# ship. Drift in ANY single surface breaks these tests.
 # --------------------------------------------------------------------------
 
 
@@ -705,17 +704,6 @@ def _txt_skill_labels(profile: dict, payload: dict) -> set[str]:
     lines = ResumeAssembler().assemble_resume_text(payload, profile).splitlines()
     skills_start = lines.index("SKILLS")
     return {line.split(":", 1)[0] for line in lines[skills_start + 1 :] if ":" in line}
-
-
-def _latex_skill_labels(profile: dict, payload: dict) -> set[str]:
-    r"""Skill-category labels the LaTeX renderer ships (``\item \textbf{Label:}``)."""
-    prefix = r"\item \textbf{"
-    labels: set[str] = set()
-    for line in build_latex(payload, profile).splitlines():
-        stripped = line.strip()
-        if stripped.startswith(prefix):
-            labels.add(stripped[len(prefix) :].split(":", 1)[0])
-    return labels
 
 
 def _html_skill_labels(profile: dict, payload: dict) -> set[str]:
@@ -731,11 +719,11 @@ def _provenance_skill_labels(
     return {row.generated_text.split(":", 1)[0] for row in rows if row.section == "skills"}
 
 
-def test_all_four_surfaces_ship_the_same_pinned_skill_category_subset() -> None:
+def test_all_rendered_surfaces_ship_the_same_pinned_skill_category_subset() -> None:
     """Regression (rev-211 A4c / cross-surface auditability): the shipped-skills
-    filter (``required_skill_category_ids``) is duplicated across FOUR surfaces --
-    the .txt assembler, the LaTeX renderer, the HTML renderer, and the provenance
-    builder. With a STRICT SUBSET pinned, all four MUST ship the identical skill
+    filter (``required_skill_category_ids``) is duplicated across rendered surfaces --
+    the .txt assembler, the HTML renderer, and the provenance
+    builder. With a STRICT SUBSET pinned, all surfaces MUST ship the identical skill
     categories so the audit trail's coverage claim matches the resume the employer
     receives. Drift in any single surface (e.g. an edited renderer filter) would
     ship a skills section that diverges from what provenance/coverage audits --
@@ -749,22 +737,20 @@ def test_all_four_surfaces_ship_the_same_pinned_skill_category_subset() -> None:
     assert txt == {"Languages"}  # the pinned subset; the "Cloud" category is omitted
 
     # Every other surface ships EXACTLY the same set as the reviewed .txt.
-    assert _latex_skill_labels(profile, payload) == txt
     assert _html_skill_labels(profile, payload) == txt
     assert _provenance_skill_labels(profile, payload, analysis) == txt
 
-    # The omitted category's label leaks into NONE of the four surfaces.
+    # The omitted category's label leaks into NONE of the rendered surfaces.
     all_labels = (
         _txt_skill_labels(profile, payload)
-        | _latex_skill_labels(profile, payload)
         | _html_skill_labels(profile, payload)
         | _provenance_skill_labels(profile, payload, analysis)
     )
     assert "Cloud" not in all_labels
 
 
-def test_all_four_surfaces_ship_every_skill_category_when_unpinned() -> None:
-    """The default-all path (no ``required_skill_category_ids`` pinned): all four
+def test_all_rendered_surfaces_ship_every_skill_category_when_unpinned() -> None:
+    """The default-all path (no ``required_skill_category_ids`` pinned): all rendered
     surfaces ship EVERY skill category, so none silently drops or adds one and the
     audit trail stays aligned with the rendered resume."""
     profile = _profile_with_omitted_skill_category(required_skill_category_ids=None)
@@ -774,7 +760,6 @@ def test_all_four_surfaces_ship_every_skill_category_when_unpinned() -> None:
     txt = _txt_skill_labels(profile, payload)
     assert txt == {"Languages", "Cloud"}
 
-    assert _latex_skill_labels(profile, payload) == txt
     assert _html_skill_labels(profile, payload) == txt
     assert _provenance_skill_labels(profile, payload, analysis) == txt
 

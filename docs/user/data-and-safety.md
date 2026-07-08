@@ -41,7 +41,7 @@ Common files and directories:
 | `apply-workers/` | Apply-run worker state. |
 | `codex_home/` | Isolated SDK state used by local agent integrations when configured. |
 | `backups/` | Timestamped SQLite snapshots written by `jobctrl backup`; restore steps are in the README. |
-| `resume.txt`, `resume.pdf`, `resume_style.json`, `resume_template.tex` | Baseline resume inputs and style templates. |
+| `resume.txt`, `resume.pdf`, legacy `resume_style.json`, legacy `resume_template.tex` | Baseline resume inputs and older local style/template files that may remain from prior installs. |
 | `gmail/` | Gmail OAuth client and token (`oauth-client.json`, `token.json`). |
 | `jobctrl.db-wal`, `jobctrl.db-shm` | SQLite write-ahead sidecars; treat them as part of the database. |
 

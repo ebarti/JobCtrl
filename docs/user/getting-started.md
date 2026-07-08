@@ -47,8 +47,6 @@ downloads. Each line says what the tool is for.
   preview images shown in the app.
 
 ::: details Optional tools — skip these on a first install
-- **TeX / `pdflatex`** — only if you switch the resume renderer to
-  `JOBCTRL_RESUME_RENDERER=latex_pdf`.
 - **Google Maps API key** — enables address autocomplete in the Profile form.
 - **Gmail OAuth Desktop client** — enables read-only scans for verification
   codes and application outcomes.

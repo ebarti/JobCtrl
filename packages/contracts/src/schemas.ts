@@ -2957,7 +2957,7 @@ export interface BulletProvenanceEntry {
  *
  * Mirrors the Python ``KeywordCoverage.to_read_model()`` projection. Planned
  * keywords partition into three honestly-labeled buckets computed against the actual
- * rendered (voiced) resume text both renderers consume: ``covered`` (demonstrated —
+ * rendered (voiced) resume text the HTML renderer consumes: ``covered`` (demonstrated —
  * appears in an evidence-backed bullet), ``declared`` (rendered in a skills-section
  * line, which is the canonical profile declaration, but not demonstrated in
  * experience/evidence), and ``missing`` (rendered in no shipped line). ``coveredBy``
@@ -3138,7 +3138,7 @@ export interface ArtifactTailoringExplanation {
   // or [] when no provenance was recorded for this artifact's generation.
   bulletProvenance: BulletProvenanceEntry[];
   // Phase 3: honest generation-time keyword coverage computed against the actual
-  // rendered (voiced) resume text both renderers consume — three buckets: covered
+  // rendered (voiced) resume text the HTML renderer consumes — three buckets: covered
   // (demonstrated in an evidence-backed bullet), declared (rendered in the profile's
   // skills line but not demonstrated), missing (rendered nowhere) (GROUND-06 /
   // success criterion 4 / A6b). ``null`` when no Phase-3 coverage was recorded for

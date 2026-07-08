@@ -192,7 +192,7 @@ cloud" (circular), but measurable conditions.
 | No auth | Auth0 / Cognito JWT | Any public-facing deployment | Local loopback assumption breaks when API is remotely accessible. |
 | No billing / entitlements | Stripe + `EntitlementPort` | First paying customer | Until then, all entitlements return `Allowed`. The `EntitlementPort` exists as a no-op adapter locally. |
 | No audit log | Postgres `audit_events` + CloudWatch | First compliance requirement (SOC2, GDPR data access log) | The `AuditSink` port is a no-op locally. |
-| `pdflatex` subprocess for resume PDFs | HTML/CSS + Playwright/Chromium renderer, with LaTeX compatibility by explicit opt-in | Local default is HTML/CSS + Playwright **OR** cloud deployment requires avoiding TeX Live (4 GB, too large for containers) | `PdfRendererPort` absorbs the engine and keeps generated artifacts typed as resume PDFs. |
+| HTML/CSS + Playwright resume PDFs | Hosted browser/PDF rendering service | Multi-node deployment **OR** browser sandbox hardening requirement | `PdfRendererPort` absorbs the engine and keeps generated artifacts typed as resume PDFs. |
 
 ### 9.5 Cloud Migration Order
 

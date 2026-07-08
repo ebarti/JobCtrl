@@ -31,7 +31,7 @@ from jobctrl.scoring.tailor import (
     _tailor_one_job,
     tailor_job_by_url,
 )
-from jobctrl.infrastructure.materials import HtmlResumePdfAdapter, LatexPdfAdapter
+from jobctrl.infrastructure.materials import HtmlResumePdfAdapter
 
 
 def _insert_job(conn, *, url: str, fit_score: int = 9, tailored_resume_path=None, tailor_attempts: int = 0) -> None:
@@ -190,20 +190,10 @@ def test_tailor_job_by_url_does_not_enumerate_unrelated_pending_jobs(tmp_path, m
         close_connection(db_path)
 
 
-def test_build_pdf_renderer_defaults_to_html_resume_renderer(monkeypatch) -> None:
-    monkeypatch.delenv("JOBCTRL_RESUME_RENDERER", raising=False)
-
+def test_build_pdf_renderer_uses_html_resume_renderer() -> None:
     renderer = _build_pdf_renderer()
 
     assert isinstance(renderer, HtmlResumePdfAdapter)
-
-
-def test_build_pdf_renderer_can_use_legacy_latex_renderer(monkeypatch) -> None:
-    monkeypatch.setenv("JOBCTRL_RESUME_RENDERER", "latex_pdf")
-
-    renderer = _build_pdf_renderer()
-
-    assert isinstance(renderer, LatexPdfAdapter)
 
 
 def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(

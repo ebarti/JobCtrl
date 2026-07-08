@@ -1113,7 +1113,7 @@ def build_master_tailor_prompt(
         else ""
     )
 
-    return f"""You are tailoring a resume that is backed by a canonical LaTeX master file.
+    return f"""You are tailoring a resume that is backed by a canonical structured resume source.
 
 You are ONLY allowed to rewrite the mutable content:
 - the executive profile, if policy allows it
@@ -1434,10 +1434,10 @@ class TailorOutcome:
     error: str = ""
     # Phase 3: the FINAL payload that actually ships — the voiced payload when the
     # voice pass was accepted, else the selected pre-voice candidate. The PDF
-    # renderer MUST consume this (not the raw selected candidate) so the LaTeX/HTML
+    # renderer MUST consume this (not the raw selected candidate) so the HTML
     # PDF, the plain-text resume, the provenance ``generated_text``, and the
     # coverage audit are all computed against the SAME final canonical text
-    # (GROUND-06 / Pitfall 4 — the two render paths must not diverge).
+    # (GROUND-06 / Pitfall 4 — render paths must not diverge).
     final_payload: dict | None = None
 
 

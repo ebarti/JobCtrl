@@ -1494,7 +1494,7 @@ def test_profile_import_starts_workflow_and_can_return_draft(tmp_db: Path) -> No
                 "draft": {
                     "profile": {"personal": {"full_name": "Imported Candidate"}},
                     "style": {"font_family": "imported"},
-                    "templateText": "\\documentclass{article}",
+                    "templateText": "{{ personal_data }}\n\n{{ resume_body }}\n",
                     "source": {"filename": "resume.pdf"},
                 },
             },
@@ -1521,7 +1521,7 @@ def test_profile_import_starts_workflow_and_can_return_draft(tmp_db: Path) -> No
             "draft": {
                 "profile": {"personal": {"full_name": "Imported Candidate"}},
                 "style": {"font_family": "imported"},
-                "templateText": "\\documentclass{article}",
+                "templateText": "{{ personal_data }}\n\n{{ resume_body }}\n",
                 "source": {"filename": "resume.pdf"},
             },
         },

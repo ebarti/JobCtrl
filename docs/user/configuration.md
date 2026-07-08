@@ -236,8 +236,6 @@ has no send capability. Their posture:
 | `TAILOR_LLM_MODELS` | alias | Backward-compatible alias for `TAILORING_GENERATOR_MODELS`. |
 | `TAILOR_JUDGE_MODEL` | alias | Backward-compatible alias for `TAILORING_JUDGE_MODEL`. |
 | `TAILOR_JUDGE_MIN_SCORE` | alias | Backward-compatible alias for `TAILORING_JUDGE_MIN_SCORE`. |
-| `JOBCTRL_RESUME_RENDERER` | `html_pdf` | Set to `latex_pdf` only for the LaTeX resume compatibility renderer. |
-| `PDFLATEX_PATH` | auto-detected | Override `pdflatex` location when using the LaTeX compatibility renderer. |
 
 The default resume renderer is HTML/CSS printed through Playwright. Apply Review
 loads the generated HTML source into a rich-text editor so text, formatting, and

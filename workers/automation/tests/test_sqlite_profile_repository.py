@@ -206,7 +206,10 @@ def test_stray_profile_export_is_ignored_and_writes_stay_in_sqlite(tmp_path):
         json.dumps({"moderncv_style": "classic", "moderncv_color": "blue"}),
         encoding="utf-8",
     )
-    (tmp_path / "resume-rendering-export.tex").write_text("\\documentclass{moderncv}", encoding="utf-8")
+    (tmp_path / "resume-rendering-export.tex").write_text(
+        "{{ personal_data }}\n\n{{ resume_body }}\n",
+        encoding="utf-8",
+    )
 
     loaded = repo.load(LOCAL_TENANT)
     assert loaded is None
