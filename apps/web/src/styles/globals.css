@@ -1380,6 +1380,17 @@ input[type="radio"] {
   gap: 18px;
 }
 
+/*
+ * The runtime settings form wraps its inputs in a nested .field-grid, so the
+ * shared two-column .config-form grid would strand the save actions in an empty
+ * side cell. Stack it single-column: the inner field-grid keeps its own columns
+ * and the actions sit below it.
+ */
+.discovery-runtime-settings .config-form {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 0;
+}
+
 .apply-review-layout {
   display: flex;
   flex-direction: column;
