@@ -32,7 +32,7 @@ import {
   type SavedTableViewSnapshot,
   useSavedTableViewsStore,
 } from "../../shared/stores/saved-table-views.js";
-import { CardHeader } from "../../shared/ui/card-header.js";
+import { PageHead } from "../../shared/ui/page-head.js";
 import {
   type DataGridColumn,
   type DataGridColumnWidthsState,
@@ -667,11 +667,12 @@ export function JobsView() {
 
   return (
     <>
+      <PageHead
+        eyebrow="Pipeline"
+        title="Jobs"
+        subtitle={data ? `${data.pagination.total} total` : "loading"}
+      />
       <section className="card full">
-        <CardHeader
-          title="Jobs"
-          meta={data ? `${data.pagination.total} total` : "loading"}
-        />
         {message ? <div className="banner inline">{message}</div> : null}
         <JobBulkActions
           search={search}

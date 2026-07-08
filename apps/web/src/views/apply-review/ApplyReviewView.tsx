@@ -36,9 +36,9 @@ import { useResumeReviewDraftQuery } from "../../contexts/operations/hooks/useRe
 import { useResumeTemplatesQuery } from "../../contexts/profile/hooks/useResumeTemplatesQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
-import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
+import { PageHead } from "../../shared/ui/page-head.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../shared/ui/PdfPreviewViewer.js";
 import { JobDetailDrawer } from "../jobs/JobDetailDrawer.js";
 
@@ -1326,11 +1326,12 @@ export function ApplyReviewView({
 
   return (
     <div className="apply-review-layout">
+      <PageHead
+        eyebrow="Pipeline"
+        title="Application review"
+        subtitle={`${readyCount} ready · ${preparingCount} preparing · ${repairCount} need repair`}
+      />
       <section className="card full">
-        <CardHeader
-          title="Application review"
-          meta={`${readyCount} ready · ${preparingCount} preparing · ${repairCount} need repair`}
-        />
         {queueError ? <div className="banner inline">{queueError}</div> : null}
         {queue.isFetching && !queue.data ? <Empty title="Loading review queue." /> : null}
         {queue.data && selected ? (

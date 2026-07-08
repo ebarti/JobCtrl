@@ -431,38 +431,45 @@ input[type="radio"] {
 .kpis {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  background: var(--card);
-  border-bottom: 1px solid var(--border);
+  gap: 14px;
+  margin-bottom: 18px;
 }
 
 .kpi {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  border: 0;
-  border-right: 1px solid var(--border);
-  background: transparent;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow-panel);
   color: inherit;
   cursor: pointer;
-  padding: 14px 20px;
+  padding: 16px;
   text-align: left;
   text-decoration: none;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .kpi:hover {
-  background: var(--muted);
+  border-color: color-mix(in oklch, var(--primary) 45%, var(--border));
 }
 
 .kpi-lbl {
   color: var(--muted-foreground);
   font-size: 10px;
+  font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .kpi-val {
-  font-size: 26px;
-  font-weight: 600;
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1;
 }
 
 .kpi-delta,
@@ -603,6 +610,29 @@ input[type="radio"] {
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+.settings-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.settings-tabs .tab {
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 6px 16px;
+  text-transform: capitalize;
+}
+
+.settings-tabs .tab.on {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 1px 2px rgb(31 41 55 / 0.12);
 }
 
 .config-form,
@@ -1394,12 +1424,12 @@ input[type="radio"] {
 
 .apply-review-queue-item:hover,
 .apply-review-queue-item.selected {
-  border-color: var(--status-info);
-  background: color-mix(in srgb, var(--status-info) 8%, var(--card));
+  border-color: color-mix(in oklch, var(--primary) 40%, var(--border));
+  background: var(--accent);
 }
 
 .apply-review-queue-item.selected {
-  box-shadow: inset 3px 0 0 var(--status-info);
+  box-shadow: inset 3px 0 0 var(--primary);
 }
 
 .apply-review-queue-title {
@@ -4381,23 +4411,29 @@ input[type="radio"] {
 
 .data-row.job-header {
   min-height: 34px;
-  background: var(--muted);
+  background: color-mix(in oklch, var(--muted) 55%, var(--card));
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .data-row.job-header:hover,
 .data-row.artifact-header:hover {
-  background: var(--muted);
+  background: color-mix(in oklch, var(--muted) 55%, var(--card));
 }
 
 .data-row.artifact-header {
   min-height: 34px;
-  background: var(--muted);
+  background: color-mix(in oklch, var(--muted) 55%, var(--card));
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .table-head {
@@ -6348,6 +6384,10 @@ input[type="radio"] {
   border-color: color-mix(in oklch, var(--ring) 45%, var(--border));
   background: var(--accent);
   color: var(--accent-foreground);
+}
+
+.evidence-entry-link.selected {
+  box-shadow: inset 3px 0 0 var(--primary);
 }
 
 .evidence-entry-link > span:first-child,

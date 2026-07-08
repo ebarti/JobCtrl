@@ -3,6 +3,7 @@ import { useApplicationOutcomesQuery } from "../../contexts/operations/hooks/use
 import { useDashboardSummaryQuery } from "../../contexts/operations/hooks/useDashboardSummaryQuery.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
+import { PageHead } from "../../shared/ui/page-head.js";
 import { ApplyRunsCard } from "./ApplyRunsCard.js";
 import { ConversionPanel } from "./ConversionPanel.js";
 import { DigestPanel } from "./DigestPanel.js";
@@ -20,6 +21,7 @@ export function DashboardView() {
   );
   return (
     <>
+      <PageHead eyebrow="Overview" title="Dashboard" />
       {summary ? <KpiGrid summary={summary} /> : <KpiSkeleton />}
       {message ? <div className="banner">{message}</div> : null}
       {outcomesError ? <div className="banner">{outcomesError}</div> : null}
