@@ -511,6 +511,22 @@ test("route overlays open with seeded data and dismiss from the keyboard", async
 test("requirement-fit drawer and Apply Review cards have visual regression coverage", async ({
   page,
 }) => {
+  // macOS overlay scrollbars reserve 0 layout space, so a scroll container's
+  // inner content width flips by the ~15px scrollbar gutter run-to-run,
+  // breaking the pixel-exact requirement-fit snapshots below. Force classic
+  // (space-taking) scrollbars on the two snapshotted cards' scroll containers
+  // so `scrollbar-gutter: stable` reserves a deterministic gutter matching the
+  // committed baselines (Linux CI already renders classic scrollbars).
+  // Test-only: production keeps the native overlay scrollbar, which causes no
+  // user-facing content shift.
+  await page.addInitScript(() => {
+    const style = document.createElement("style");
+    style.textContent =
+      ".job-detail-drawer::-webkit-scrollbar,.apply-review-pane-scroll::-webkit-scrollbar{width:15px;height:15px}";
+    const attach = () => (document.head ?? document.documentElement).append(style);
+    if (document.head) attach();
+    else document.addEventListener("DOMContentLoaded", attach, { once: true });
+  });
   await page.goto(`/jobs/${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}?${JOB_FILTER_PARAMS}`);
   const drawer = page.getByRole("dialog", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 30_000 });

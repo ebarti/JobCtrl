@@ -7177,12 +7177,13 @@ input[type="radio"] {
   margin-top: 6px;
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1360px) {
   /*
-   * Between 1000px and 1280px the two workspace panes (edit + Application
-   * materials) each keep a 340px min and clip the right pane. Stack them so
-   * the review layout degrades to queue + single workspace column before it
-   * overflows; below 1000px the shell stacks the queue too.
+   * The left pane keeps a 340px min, so as the workspace narrows the right
+   * "Application materials" pane absorbs all the shrinkage and starts clipping
+   * its content once it drops below ~210px (around 1340px viewport). Stack the
+   * two panes into a single full-width column so materials review keeps usable
+   * width; below 1000px the shell stacks the queue too.
    */
   .apply-review-workspace {
     grid-template-columns: minmax(0, 1fr);
