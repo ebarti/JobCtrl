@@ -341,6 +341,7 @@ intentional.
 | `JOBCTRL_E2E_API_PORT` | E2E API port. |
 | `JOBCTRL_E2E_WEB_PORT` | E2E web port. |
 | `JOBCTRL_E2E_STUB_DISPATCH` | Routes selected dispatches through deterministic test stubs. |
+| `JOBCTRL_DOCS_SCREENSHOTS` | Opts the Playwright run into rewriting the synthetic documentation screenshots under `docs/`. |
 | `VITE_JOBCTRL_SHOW_DEVTOOLS` | Shows TanStack Router and Query devtools in local Vite dev builds. |
 | `VITE_JOBCTRL_HIDE_DEVTOOLS` | Compatibility override that hides TanStack devtools even when the show flag is set. |
 

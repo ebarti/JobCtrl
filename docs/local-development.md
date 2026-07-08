@@ -283,6 +283,11 @@ a worker heartbeat), starts the API and web app on E2E ports, and writes PNGs
 to `docs/assets/screenshots/`. No real LLM provider, job source, Gmail
 account, or browser submission is involved.
 
+The spec is opt-in: it only writes when `JOBCTRL_DOCS_SCREENSHOTS=1` is set,
+which `pnpm docs:screenshots` does for you. A bare full e2e run
+(`pnpm --filter @jobctrl/web e2e`) skips it, so QA runs never rewrite the
+committed screenshots.
+
 When running multiple worktrees, override the disposable paths and ports:
 
 ```bash
