@@ -345,7 +345,6 @@ code,
 
 .connection-spend {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -423,7 +422,6 @@ input[type="radio"] {
 .pulse {
   margin-left: auto;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -714,7 +712,6 @@ input[type="radio"] {
 .field-hint {
   min-height: 16px;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -1011,7 +1008,6 @@ input[type="radio"] {
 .stage-pill,
 .tag,
 .meta {
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -1052,7 +1048,6 @@ input[type="radio"] {
   gap: 4px 10px;
   min-width: 0;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -1109,7 +1104,6 @@ input[type="radio"] {
 
 .digest-value {
   justify-self: end;
-  font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 750;
 }
@@ -1143,7 +1137,6 @@ input[type="radio"] {
 }
 
 .conversion-stage-lbl {
-  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -1152,7 +1145,6 @@ input[type="radio"] {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -1203,7 +1195,6 @@ input[type="radio"] {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  font-family: var(--font-mono);
 }
 
 .conversion-row-metric b {
@@ -1282,7 +1273,6 @@ input[type="radio"] {
 
 .analytics-summary-strip span {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -1502,7 +1492,6 @@ input[type="radio"] {
 
 .apply-review-audit-facts dt {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -1616,7 +1605,6 @@ input[type="radio"] {
 .apply-review-audit-section h4 {
   margin: 0;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-transform: uppercase;
 }
@@ -1655,7 +1643,6 @@ input[type="radio"] {
 
 .apply-review-audit-tags > span:first-child {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -1861,7 +1848,6 @@ input[type="radio"] {
 
 .resume-plate-draft-status {
   color: #c8c8c8;
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -2200,7 +2186,6 @@ input[type="radio"] {
 
 .resume-plate-comment-head span {
   color: #111;
-  font-family: var(--font-mono);
   font-size: 10px;
 }
 
@@ -2398,7 +2383,6 @@ input[type="radio"] {
 
 .resume-pin-source-more {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 10px;
   text-transform: uppercase;
 }
@@ -2592,7 +2576,6 @@ input[type="radio"] {
 .artifact-comparison-head > span,
 .artifact-comparison-delta-head > span {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -2637,7 +2620,6 @@ input[type="radio"] {
 
 .artifact-comparison-tag-group > span {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-transform: uppercase;
 }
@@ -2827,7 +2809,6 @@ input[type="radio"] {
 .apply-review-requirement-evidence {
   margin: 6px 0 0;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -2901,7 +2882,6 @@ input[type="radio"] {
 
 .apply-review-evidence-list dt {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -2968,7 +2948,6 @@ input[type="radio"] {
 .outcome-correction-fieldset legend {
   grid-column: 1 / -1;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -3130,7 +3109,6 @@ input[type="radio"] {
   caption-side: top;
   padding: 8px 10px;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-align: right;
 }
@@ -3147,7 +3125,6 @@ input[type="radio"] {
 .source-registry-table thead th {
   background: var(--muted);
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 500;
 }
@@ -3224,13 +3201,11 @@ input[type="radio"] {
 
 .data-grid-view-title .meta {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 400;
 }
 
 .data-grid-tools button span {
-  font-family: var(--font-mono);
   font-size: 10px;
 }
 
@@ -3665,7 +3640,6 @@ input[type="radio"] {
   min-width: 0;
   background: var(--muted);
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 650;
 }
@@ -3942,7 +3916,6 @@ input[type="radio"] {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 6px;
-  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 650;
   line-height: 1.2;
@@ -4260,7 +4233,6 @@ input[type="radio"] {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -4276,7 +4248,6 @@ input[type="radio"] {
 .stage-trigger-stages legend {
   width: 100%;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -4536,7 +4507,6 @@ input[type="radio"] {
   background: var(--fit-score-bg);
   box-shadow: var(--fit-score-shadow);
   color: var(--fit-score-fg);
-  font-family: var(--font-mono);
   font-weight: 800;
 }
 
@@ -4738,7 +4708,6 @@ input[type="radio"] {
   border-bottom: 1px solid var(--border);
   padding: 9px 16px;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -4836,7 +4805,6 @@ input[type="radio"] {
 
 .job-overview-readiness-label {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-transform: uppercase;
 }
@@ -4856,7 +4824,6 @@ input[type="radio"] {
 
 .compensation-strip-label {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-transform: uppercase;
 }
@@ -5037,7 +5004,6 @@ input[type="radio"] {
 
 .job-audit-triage-kicker {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-transform: uppercase;
 }
@@ -5058,7 +5024,6 @@ input[type="radio"] {
 .job-audit-tag-group > span,
 .job-audit-fact-list dt {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -5182,7 +5147,6 @@ input[type="radio"] {
 
 .tailoring-change header span {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -5238,7 +5202,6 @@ input[type="radio"] {
 .audit-status,
 .audit-response-list > b {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -5530,7 +5493,6 @@ input[type="radio"] {
 
 .external-link {
   color: var(--status-info);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-decoration: none;
 }
@@ -5626,7 +5588,6 @@ input[type="radio"] {
 .action-panel .next-action {
   flex: 1 1 100%;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   overflow-wrap: anywhere;
 }
@@ -5833,7 +5794,6 @@ input[type="radio"] {
 .compensation-factor-list h4 {
   margin: 0;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 500;
 }
@@ -5861,7 +5821,6 @@ input[type="radio"] {
   gap: 8px;
   align-items: center;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 500;
 }
@@ -5920,7 +5879,6 @@ input[type="radio"] {
 
 .compensation-evidence-row dt {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 10px;
 }
 
@@ -6088,7 +6046,6 @@ input[type="radio"] {
 
 .apply-run-timeline-head time {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -6157,7 +6114,6 @@ input[type="radio"] {
 .job-audit-head time,
 .job-audit-actor {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -6493,7 +6449,6 @@ input[type="radio"] {
   margin-left: auto;
   color: var(--muted-foreground);
   font-style: normal;
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -6507,7 +6462,6 @@ input[type="radio"] {
   border-radius: 6px;
   background: var(--card);
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -7132,7 +7086,6 @@ input[type="radio"] {
 
 .pdf-preview-page figcaption {
   padding-top: 8px;
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -7284,7 +7237,6 @@ input[type="radio"] {
 
   .analytics-select-label span {
     color: var(--muted-foreground);
-    font-family: var(--font-mono);
     font-size: 11px;
   }
 
@@ -7411,7 +7363,6 @@ input[type="radio"] {
   border-radius: 999px;
   background: var(--popover);
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
