@@ -11,8 +11,8 @@ import type {
   EvidenceUsageRef,
 } from "../../contexts/operations/types.js";
 import type { EvidenceMapSearch } from "../../routes/-evidence-map.search.js";
-import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
+import { PageHead } from "../../shared/ui/page-head.js";
 
 function entryKindLabel(entry: EvidenceMapEntry): string {
   return entry.kind === "skill" ? "Skill" : "Achievement";
@@ -312,54 +312,57 @@ export function EvidenceMapView() {
   };
 
   return (
-    <section className="card full evidence-map-view">
-      <CardHeader
+    <>
+      <PageHead
+        eyebrow="Library"
         title="Career evidence map"
-        meta={evidenceMap.data ? `${filteredEntries.length} entries` : "loading"}
+        subtitle={evidenceMap.data ? `${filteredEntries.length} entries` : "loading"}
       />
-      {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
-      <div className="toolbar evidence-map-toolbar">
-        <label>
-          <span>Search evidence</span>
-          <input
-            value={search.q}
-            onChange={(event) => setSearch({ q: event.target.value, entry: "" })}
-            placeholder="Skill, story, metric..."
-          />
-        </label>
-        {search.job ? (
-          <Link className="tab" search={{ ...search, job: "", entry: "" }} to="/evidence-map">
-            Clear job filter
-          </Link>
-        ) : null}
-      </div>
-      <div className="evidence-map-shell">
-        <nav className="evidence-entry-list" aria-label="Evidence entries">
-          {evidenceMap.isFetching && !evidenceMap.data ? (
-            <Empty title="Loading evidence map." />
-          ) : filteredEntries.length ? (
-            <ul>
-              {filteredEntries.map((entry) => (
-                <EvidenceEntryButton
-                  entry={entry}
-                  key={entry.entryId}
-                  search={search}
-                  selected={entry.entryId === selectedEntryId}
-                />
-              ))}
-            </ul>
-          ) : (
-            <Empty title="No evidence entries match." />
-          )}
-        </nav>
-        <EvidenceDetail entry={selected} />
-        <section className="evidence-side-panel" aria-labelledby="evidence-gaps-title">
-          <h2 id="evidence-gaps-title">Gaps</h2>
-          <GapList gaps={filteredGaps} />
-          <h2>Reusable stories</h2>
-          <StoryList entries={filteredEntries} />
-        </section>
-      </div>
-    </section>
+      <section className="card full evidence-map-view">
+        {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
+        <div className="toolbar evidence-map-toolbar">
+          <label>
+            <span>Search evidence</span>
+            <input
+              value={search.q}
+              onChange={(event) => setSearch({ q: event.target.value, entry: "" })}
+              placeholder="Skill, story, metric..."
+            />
+          </label>
+          {search.job ? (
+            <Link className="tab" search={{ ...search, job: "", entry: "" }} to="/evidence-map">
+              Clear job filter
+            </Link>
+          ) : null}
+        </div>
+        <div className="evidence-map-shell">
+          <nav className="evidence-entry-list" aria-label="Evidence entries">
+            {evidenceMap.isFetching && !evidenceMap.data ? (
+              <Empty title="Loading evidence map." />
+            ) : filteredEntries.length ? (
+              <ul>
+                {filteredEntries.map((entry) => (
+                  <EvidenceEntryButton
+                    entry={entry}
+                    key={entry.entryId}
+                    search={search}
+                    selected={entry.entryId === selectedEntryId}
+                  />
+                ))}
+              </ul>
+            ) : (
+              <Empty title="No evidence entries match." />
+            )}
+          </nav>
+          <EvidenceDetail entry={selected} />
+          <section className="evidence-side-panel" aria-labelledby="evidence-gaps-title">
+            <h2 id="evidence-gaps-title">Gaps</h2>
+            <GapList gaps={filteredGaps} />
+            <h2>Reusable stories</h2>
+            <StoryList entries={filteredEntries} />
+          </section>
+        </div>
+      </section>
+    </>
   );
 }

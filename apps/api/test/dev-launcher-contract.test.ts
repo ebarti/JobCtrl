@@ -200,7 +200,7 @@ echo '{"worker":{"status":"stale"}}'
     }
   });
 
-  it("reports status without requiring default workspace migration", () => {
+  it("reports status without inspecting legacy default workspaces", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
     const home = join(tempDir, "home");
     const devDir = join(tempDir, "dev-state");
@@ -225,6 +225,69 @@ echo '{"worker":{"status":"stale"}}'
       expect(existsSync(join(home, ".jobctrl"))).toBe(true);
       expect(existsSync(join(home, legacyDirname))).toBe(true);
     } finally {
+      rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("starts without migrating or rejecting legacy default workspaces", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const home = join(tempDir, "home");
+    const devDir = join(tempDir, "dev-state");
+    const callsLog = join(tempDir, "calls.log");
+    const pidFile = join(devDir, "pids/api.pid");
+    const legacyDirname = ".job" + "ctl";
+    let apiPid: number | undefined;
+    let env: NodeJS.ProcessEnv | undefined;
+
+    try {
+      mkdirSync(join(home, ".jobctrl"), { recursive: true });
+      mkdirSync(join(home, legacyDirname), { recursive: true });
+      writeFileSync(
+        join(tempDir, "pnpm"),
+        `#!/usr/bin/env bash
+echo "fake pnpm $* jobctrl_dir=$JOBCTRL_DIR" >> "${callsLog}"
+trap 'echo "fake pnpm terminated $$" >> "${callsLog}"; exit 0' TERM INT
+while true; do sleep 1; done
+`,
+      );
+      chmodSync(join(tempDir, "pnpm"), 0o755);
+
+      env = {
+        ...process.env,
+        HOME: home,
+        PATH: `${tempDir}:${process.env.PATH ?? ""}`,
+        JOBCTRL_DEV_DIR: devDir,
+        JOBCTRL_DIR: undefined,
+        JOBCTRL_STOP_WAIT_TICKS: "10",
+        JOBCTRL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
+      };
+
+      const output = execFileSync(devScript, ["start", "api"], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env,
+      });
+      apiPid = await waitForPidFile(pidFile);
+      await waitForFileText(
+        callsLog,
+        `fake pnpm --filter @jobctrl/api dev jobctrl_dir=${join(home, ".jobctrl")}`,
+      );
+
+      expect(output).toContain("api: started");
+      expect(processExists(apiPid)).toBe(true);
+      expect(existsSync(join(home, ".jobctrl"))).toBe(true);
+      expect(existsSync(join(home, legacyDirname))).toBe(true);
+    } finally {
+      if (env) {
+        try {
+          execFileSync(devScript, ["stop", "api"], { cwd: repoRoot, env });
+        } catch {
+          // The process may already be stopped if the start assertion failed.
+        }
+      }
+      if (apiPid !== undefined && processExists(apiPid)) {
+        process.kill(apiPid, "SIGKILL");
+      }
       rmSync(tempDir, { force: true, recursive: true });
     }
   });

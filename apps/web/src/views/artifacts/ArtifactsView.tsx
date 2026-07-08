@@ -8,7 +8,7 @@ import {
   ARTIFACT_SORT_FIELDS_TUPLE,
   type ArtifactsSearch,
 } from "../../routes/-artifacts.search.js";
-import { CardHeader } from "../../shared/ui/card-header.js";
+import { PageHead } from "../../shared/ui/page-head.js";
 import { ArtifactFilterBar } from "./ArtifactFilterBar.js";
 import { ArtifactsTable } from "./ArtifactsTable.js";
 
@@ -67,11 +67,12 @@ export function ArtifactsView() {
 
   return (
     <>
+      <PageHead
+        eyebrow="Library"
+        title="Artifacts"
+        subtitle={data ? `${data.pagination.total} total` : "loading"}
+      />
       <section className="card full">
-        <CardHeader
-          title="Artifacts"
-          meta={data ? `${data.pagination.total} total` : "loading"}
-        />
         {message ? <div className="banner inline">{message}</div> : null}
         <ArtifactFilterBar search={search} />
         <ArtifactsTable

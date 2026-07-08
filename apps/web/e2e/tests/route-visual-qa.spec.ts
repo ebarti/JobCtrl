@@ -1,4 +1,11 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import type { ApplyReviewQueueResponse } from "@jobctrl/contracts";
+
+import {
+  makeApplyAudit,
+  sampleApplyReviewQueue,
+  sampleResumeTemplateListResponse,
+} from "../../src/test/fixtures/projections.js";
 
 type Density = "compact" | "regular" | "comfy";
 
@@ -50,7 +57,7 @@ const ROUTE_SURFACES: readonly RouteSurface[] = [
   {
     path: "/profile",
     activeLink: "Profile",
-    proof: (page) => page.getByRole("heading", { name: "Profile" }),
+    proof: (page) => page.getByRole("heading", { name: "Profile", level: 1 }),
     surface: (page) => page.locator(".card").first(),
   },
   {
@@ -89,6 +96,121 @@ const DENSITY_ROUTES = [
 const REQUIREMENT_FIT_JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
 const JOB_FILTER_PARAMS = "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
 const PRIMARY_REQUIREMENT_TEXT = "Lead platform reliability improvements across critical services.";
+
+function failedTailoringQueue(): ApplyReviewQueueResponse {
+  const base = sampleApplyReviewQueue.items[0]!;
+  return {
+    ok: true,
+    items: [
+      {
+        ...base,
+        title: "Director of Engineering & Platform",
+        company: "CHAMP Cargosystems",
+        source: "linkedin",
+        fitScore: 9,
+        currentStage: "discover",
+        currentState: "failed",
+        applicationUrl: "https://www.linkedin.com/jobs/view/4436454338",
+        materials: {
+          hasResume: false,
+          hasCoverLetter: false,
+          hasPdf: false,
+          ready: false,
+        },
+        applyAudit: makeApplyAudit({
+          state: "repair",
+          label: "tailor failed",
+          summary: "tailoring ended with status failed validation Review evidence is still available.",
+          reviewEvidenceAvailable: true,
+          missingPrerequisites: [
+            {
+              code: "missing_resume",
+              label: "Tailored resume missing",
+              detail: "The tailored resume has not been generated yet.",
+              severity: "warning",
+              source: "materials.resume",
+            },
+            {
+              code: "missing_resume_pdf",
+              label: "Submit-ready PDF missing",
+              detail: "The submit-ready PDF cannot exist until a tailored resume is available.",
+              severity: "warning",
+              source: "materials.pdf",
+            },
+            {
+              code: "missing_profile_attestations",
+              label: "Profile attestations incomplete",
+              detail:
+                "Application attestations missing: age_18_plus, background_check_consent, felony_conviction, previously_worked_at_employer.",
+              severity: "warning",
+              source: "profile_attestations",
+            },
+          ],
+          hardBlockers: [
+            {
+              code: "stage_not_ready",
+              label: "tailor failed",
+              detail: "tailoring ended with status failed validation",
+              severity: "blocking",
+              source: "stage_state",
+            },
+          ],
+          sources: [
+            {
+              kind: "application_url",
+              label: "Application target",
+              status: "present",
+              detail: "Application target is available.",
+            },
+            {
+              kind: "materials.resume",
+              label: "Tailored resume",
+              status: "missing",
+              detail: "Tailored resume is not available yet.",
+            },
+            {
+              kind: "materials.pdf",
+              label: "Submit-ready PDF",
+              status: "missing",
+              detail: "Submit-ready resume PDF is not available yet.",
+            },
+            {
+              kind: "stage_state",
+              label: "Pipeline state",
+              status: "present",
+              detail: "tailor is failed.",
+            },
+          ],
+        }),
+        materialsPreview: {
+          ...base.materialsPreview,
+          materialsGeneration: null,
+          resumeText: null,
+          resumeTextArtifactId: null,
+          resumePdfArtifactId: null,
+          resumePdfLayoutBoxes: [],
+          coverLetterText: null,
+          requirementLedAudit: null,
+        },
+      },
+    ],
+  };
+}
+
+async function installFailedTailoringApplyReviewRoutes(page: Page): Promise<void> {
+  await page.route("**/v1/apply/review-queue", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(failedTailoringQueue()),
+    });
+  });
+  await page.route("**/v1/resume-templates", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(sampleResumeTemplateListResponse),
+    });
+  });
+}
 
 function expectPainted(value: string, label: string): void {
   expect(value, `${label} should not be empty`).not.toBe("");
@@ -307,6 +429,48 @@ async function expectTableRowsVisible(
   expect(rowBox?.height ?? 0, `${label} row height`).toBeGreaterThan(0);
 }
 
+async function expectDashboardFunnelContained(page: Page): Promise<void> {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/dashboard");
+  const pipelineCard = page
+    .locator(".card")
+    .filter({ has: page.getByRole("heading", { name: "Pipeline" }) });
+  await expect(pipelineCard).toBeVisible({ timeout: 30_000 });
+
+  const layout = await pipelineCard.evaluate((card) => {
+    const cardRect = card.getBoundingClientRect();
+    const rows = [...card.querySelectorAll(".funnel-row")].map((row) => {
+      const rowRect = row.getBoundingClientRect();
+      const legend = row.querySelector(".legend");
+      const legendRect = legend?.getBoundingClientRect() ?? rowRect;
+      return {
+        rowRight: rowRect.right,
+        legendRight: legendRect.right,
+        legendHeight: legendRect.height,
+      };
+    });
+    return {
+      cardRight: cardRect.right,
+      rows,
+      scrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: document.documentElement.clientWidth,
+    };
+  });
+
+  for (const [index, row] of layout.rows.entries()) {
+    expect(row.rowRight, `Pipeline row ${index + 1} should fit in card`).toBeLessThanOrEqual(
+      layout.cardRight + 1,
+    );
+    expect(row.legendRight, `Pipeline legend ${index + 1} should fit in card`).toBeLessThanOrEqual(
+      layout.cardRight + 1,
+    );
+    expect(row.legendHeight, `Pipeline legend ${index + 1} should remain compact`).toBeLessThan(48);
+  }
+  expect(layout.scrollWidth, "Dashboard should not create horizontal overflow").toBeLessThanOrEqual(
+    layout.viewportWidth + 1,
+  );
+}
+
 test("representative routes stay painted in light and dark themes", async ({
   page,
 }) => {
@@ -315,6 +479,7 @@ test("representative routes stay painted in light and dark themes", async ({
   for (const route of ROUTE_SURFACES) {
     await expectShellForRoute(page, route);
   }
+  await expectDashboardFunnelContained(page);
 
   await page.goto("/dashboard");
   await page.getByRole("button", { name: /Switch to dark theme/i }).click();
@@ -425,7 +590,7 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
   await expect(page.getByRole("checkbox", { name: "LinkedIn" })).toBeVisible();
 
   await page.goto("/profile");
-  await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible({
+  await expect(page.getByRole("heading", { name: "Profile", level: 1 })).toBeVisible({
     timeout: 30_000,
   });
   await expectKeyboardFocusIndicator(
@@ -508,9 +673,69 @@ test("route overlays open with seeded data and dismiss from the keyboard", async
   );
 });
 
+test("Apply Review failed-tailoring facts remain readable in the selected header", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1666, height: 900 });
+  await installFailedTailoringApplyReviewRoutes(page);
+  await page.goto("/apply-review");
+
+  const selectedHeader = page.locator(".apply-review-selected-head");
+  await expect(selectedHeader).toBeVisible({ timeout: 30_000 });
+  await expect(selectedHeader).toContainText("Tailored resume missing");
+  await expect(selectedHeader).toContainText("tailor failed");
+
+  const layout = await selectedHeader.evaluate((element) => {
+    const context = element.querySelector(".apply-review-selected-context");
+    const actions = element.querySelector(".apply-review-selected-actions");
+    const factValues = [...element.querySelectorAll(".apply-review-audit-facts dd")].map((node) =>
+      node.getBoundingClientRect(),
+    );
+    const tags = [...element.querySelectorAll(".apply-review-audit-facts .tag")].map((node) =>
+      node.getBoundingClientRect(),
+    );
+    return {
+      actionWidth: actions?.getBoundingClientRect().width ?? 0,
+      contextWidth: context?.getBoundingClientRect().width ?? 0,
+      headerHeight: element.getBoundingClientRect().height,
+      maxTagHeight: Math.max(...tags.map((rect) => rect.height)),
+      minFactValueWidth: Math.min(...factValues.map((rect) => rect.width)),
+      minTagWidth: Math.min(...tags.map((rect) => rect.width)),
+      scrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: document.documentElement.clientWidth,
+    };
+  });
+
+  expect(layout.contextWidth, "audit context should have real horizontal space").toBeGreaterThan(600);
+  expect(layout.actionWidth, "approval metadata should stay capped").toBeLessThanOrEqual(540);
+  expect(layout.minFactValueWidth, "audit fact values should not collapse").toBeGreaterThan(500);
+  expect(layout.minTagWidth, "audit chips should not wrap letter-by-letter").toBeGreaterThan(250);
+  expect(layout.maxTagHeight, "audit chips should remain compact").toBeLessThan(60);
+  expect(layout.headerHeight, "selected header should not stretch into a tall blank page").toBeLessThan(420);
+  expect(layout.scrollWidth, "route should not create horizontal overflow").toBeLessThanOrEqual(
+    layout.viewportWidth + 1,
+  );
+});
+
 test("requirement-fit drawer and Apply Review cards have visual regression coverage", async ({
   page,
 }) => {
+  // macOS overlay scrollbars reserve 0 layout space, so a scroll container's
+  // inner content width flips by the ~15px scrollbar gutter run-to-run,
+  // breaking the pixel-exact requirement-fit snapshots below. Force classic
+  // (space-taking) scrollbars on the two snapshotted cards' scroll containers
+  // so `scrollbar-gutter: stable` reserves a deterministic gutter matching the
+  // committed baselines (Linux CI already renders classic scrollbars).
+  // Test-only: production keeps the native overlay scrollbar, which causes no
+  // user-facing content shift.
+  await page.addInitScript(() => {
+    const style = document.createElement("style");
+    style.textContent =
+      ".job-detail-drawer::-webkit-scrollbar,.apply-review-pane-scroll::-webkit-scrollbar{width:15px;height:15px}";
+    const attach = () => (document.head ?? document.documentElement).append(style);
+    if (document.head) attach();
+    else document.addEventListener("DOMContentLoaded", attach, { once: true });
+  });
   await page.goto(`/jobs/${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}?${JOB_FILTER_PARAMS}`);
   const drawer = page.getByRole("dialog", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 30_000 });

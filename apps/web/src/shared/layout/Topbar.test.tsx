@@ -18,13 +18,16 @@ import { Topbar } from "./Topbar.js";
 
 const ROUTES = [
   "/dashboard",
+  "/analytics",
   "/apply-review",
   "/jobs",
   "/pipelines",
   "/discovery",
+  "/artifacts",
+  "/evidence-map",
+  "/outreach",
   "/runs",
   "/debug",
-  "/artifacts",
   "/profile",
   "/preferences",
   "/settings",
@@ -64,31 +67,30 @@ describe("<Topbar>", () => {
     useUiPreferencesStore.setState({ theme: "light", density: "regular" });
   });
 
-  it("renders the existing navigation labels and density options", async () => {
+  it("renders the search, density control, and no inline navigation rail", async () => {
     renderTopbar();
 
-    await waitFor(() => expect(screen.getByRole("navigation", { name: "Main navigation" })).toBeInTheDocument());
-    for (const label of [
-      "Dashboard",
-      "Apply review",
-      "Jobs",
-      "Pipelines",
-      "Discovery",
-      "Runs",
-      "Debug",
-      "Artifacts",
-      "Profile",
-      "Preferences",
-      "Settings",
-    ]) {
-      expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
-    }
+    expect(await screen.findByRole("textbox", { name: "Global search" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Main navigation" })).not.toBeInTheDocument();
 
     const density = screen.getByRole("combobox", { name: "Row density" });
     expect(density).toHaveDisplayValue("regular");
     expect(screen.getByRole("option", { name: "compact" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "regular" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "comfy" })).toBeInTheDocument();
+  });
+
+  it("opens the responsive navigation sheet with the grouped nav links", async () => {
+    const user = userEvent.setup();
+    renderTopbar();
+
+    await user.click(await screen.findByRole("button", { name: "Open navigation" }));
+
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    for (const label of ["Dashboard", "Apply review", "Jobs", "Contacts", "Settings"]) {
+      expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
+    }
+    expect(nav).toBeInTheDocument();
   });
 
   it("keeps global search Enter navigation scoped to non-empty trimmed queries", async () => {

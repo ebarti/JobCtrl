@@ -6,7 +6,7 @@ import {
   type AnalyticsDimension,
   type AnalyticsSearch,
 } from "../../routes/-analytics.search.js";
-import { CardHeader } from "../../shared/ui/card-header.js";
+import { PageHead } from "../../shared/ui/page-head.js";
 import { DimensionBreakdownPanel } from "./DimensionBreakdownPanel.js";
 import { SmallSampleNotice } from "./SmallSampleNotice.js";
 
@@ -55,90 +55,93 @@ export function AnalyticsView() {
   };
 
   return (
-    <section className="card full analytics-view">
-      <CardHeader
+    <>
+      <PageHead
+        eyebrow="Overview"
         title="Outcome analytics"
-        meta={analytics ? `${applied} applied` : "loading"}
+        subtitle={analytics ? `${applied} applied` : "loading"}
       />
-      {message ? <div className="banner inline">{message}</div> : null}
-      <div className="analytics-toolbar" role="group" aria-label="Outcome analytics dimension">
-        {DIMENSION_OPTIONS.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            className={option.value === dimension ? "segmented active" : "segmented"}
-            aria-pressed={option.value === dimension}
-            onClick={() => setDimension(option.value)}
-          >
-            {option.label}
-          </button>
-        ))}
-        <label className="analytics-select-label">
-          <span>Dimension</span>
-          <select
-            className="select"
-            value={dimension}
-            onChange={(event) => {
-              const next = event.target.value;
-              if (isAnalyticsDimension(next)) setDimension(next);
-            }}
-          >
-            {DIMENSION_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="analytics-summary-strip">
-        <div>
-          <span>Applied</span>
-          <b>{analytics?.totals.applied ?? "-"}</b>
+      <section className="card full analytics-view">
+        {message ? <div className="banner inline">{message}</div> : null}
+        <div className="analytics-toolbar" role="group" aria-label="Outcome analytics dimension">
+          {DIMENSION_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={option.value === dimension ? "segmented active" : "segmented"}
+              aria-pressed={option.value === dimension}
+              onClick={() => setDimension(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+          <label className="analytics-select-label">
+            <span>Dimension</span>
+            <select
+              className="select"
+              value={dimension}
+              onChange={(event) => {
+                const next = event.target.value;
+                if (isAnalyticsDimension(next)) setDimension(next);
+              }}
+            >
+              {DIMENSION_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
-        <div>
-          <span>Replies</span>
-          <b>{analytics?.totals.reply ?? "-"}</b>
+        <div className="analytics-summary-strip">
+          <div>
+            <span>Applied</span>
+            <b>{analytics?.totals.applied ?? "-"}</b>
+          </div>
+          <div>
+            <span>Replies</span>
+            <b>{analytics?.totals.reply ?? "-"}</b>
+          </div>
+          <div>
+            <span>Interviews</span>
+            <b>{analytics?.totals.interview ?? "-"}</b>
+          </div>
+          <div>
+            <span>Offers</span>
+            <b>{analytics?.totals.offer ?? "-"}</b>
+          </div>
+          <div>
+            <span>Median response</span>
+            <b>
+              {analytics
+                ? formatDuration(
+                    analytics.timeToResponse.medianMinutes,
+                    analytics.timeToResponse.n,
+                    analytics.minSample,
+                  )
+                : "-"}
+            </b>
+          </div>
+          <div>
+            <span>Suggestions accepted</span>
+            <b>
+              {analytics
+                ? formatAcceptance(
+                    analytics.suggestionAccuracy.acceptanceRate,
+                    analytics.suggestionAccuracy.n,
+                    analytics.minSample,
+                  )
+                : "-"}
+            </b>
+          </div>
         </div>
-        <div>
-          <span>Interviews</span>
-          <b>{analytics?.totals.interview ?? "-"}</b>
-        </div>
-        <div>
-          <span>Offers</span>
-          <b>{analytics?.totals.offer ?? "-"}</b>
-        </div>
-        <div>
-          <span>Median response</span>
-          <b>
-            {analytics
-              ? formatDuration(
-                  analytics.timeToResponse.medianMinutes,
-                  analytics.timeToResponse.n,
-                  analytics.minSample,
-                )
-              : "-"}
-          </b>
-        </div>
-        <div>
-          <span>Suggestions accepted</span>
-          <b>
-            {analytics
-              ? formatAcceptance(
-                  analytics.suggestionAccuracy.acceptanceRate,
-                  analytics.suggestionAccuracy.n,
-                  analytics.minSample,
-                )
-              : "-"}
-          </b>
-        </div>
-      </div>
-      <SmallSampleNotice {...(analytics ? { minSample: analytics.minSample } : {})} />
-      <DimensionBreakdownPanel
-        analytics={analytics}
-        dimension={dimension}
-        loading={analyticsQuery.isFetching}
-      />
-    </section>
+        <SmallSampleNotice {...(analytics ? { minSample: analytics.minSample } : {})} />
+        <DimensionBreakdownPanel
+          analytics={analytics}
+          dimension={dimension}
+          loading={analyticsQuery.isFetching}
+        />
+      </section>
+    </>
   );
 }

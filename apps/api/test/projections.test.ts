@@ -1136,7 +1136,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       seedSchema(dbPath);
       const db = new Database(dbPath);
       const insertStage = db.prepare(
-        "INSERT INTO job_stage_states (job_url, stage, state, updated_at, finished_at) VALUES (?, ?, ?, ?, ?)",
+        `INSERT INTO job_stage_states (job_url, stage, state, updated_at, finished_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(job_url, stage) DO UPDATE SET
+           state = excluded.state,
+           updated_at = excluded.updated_at,
+           finished_at = excluded.finished_at`,
       );
       insertStage.run(
         "https://example.com/jobs/event-driven",
@@ -1186,6 +1191,92 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         );
       } finally {
         await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("refreshes stale stage projections after workflow-scoped stage events", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    const jobUrl = "https://example.com/jobs/event-driven";
+    try {
+      seedSchema(dbPath);
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const baseline = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(baseline.statusCode, baseline.body).toBe(200);
+        const item = baseline.json().items.find((job: { jobKey: string }) => job.jobKey === jobUrl);
+        expect(item).toMatchObject({
+          currentStage: "discover",
+          currentSubstage: "enrich",
+          currentState: "pending",
+        });
+      } finally {
+        await app.close();
+      }
+
+      const db = new Database(dbPath);
+      const insertStage = db.prepare(
+        `INSERT INTO job_stage_states (job_url, stage, state, updated_at, finished_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(job_url, stage) DO UPDATE SET
+           state = excluded.state,
+           updated_at = excluded.updated_at,
+           finished_at = excluded.finished_at`,
+      );
+      insertStage.run(jobUrl, "discover", "succeeded", "2026-05-04T13:00:00+00:00", "2026-05-04T13:00:00+00:00");
+      insertStage.run(jobUrl, "enrich", "succeeded", "2026-05-04T13:05:00+00:00", "2026-05-04T13:05:00+00:00");
+      insertStage.run(jobUrl, "score", "pending", "2026-05-04T13:10:00+00:00", null);
+      db.prepare("UPDATE job_list_projections SET last_updated_at = ? WHERE tenant_id = ? AND job_id = ?").run(
+        "2026-05-04T12:00:00+00:00",
+        "local",
+        jobUrl,
+      );
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageCompleted",
+        "info",
+        "Discovery preparation complete",
+        "2026-05-04T13:06:00+00:00",
+        "{}",
+      );
+      db.close();
+
+      const refreshedApp = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const listRes = await refreshedApp.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(listRes.statusCode, listRes.body).toBe(200);
+        const item = listRes.json().items.find((job: { jobKey: string }) => job.jobKey === jobUrl);
+        expect(item).toMatchObject({
+          currentStage: "discover",
+          currentSubstage: "score",
+          currentState: "pending",
+        });
+
+        const detailRes = await refreshedApp.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent(jobUrl)}`,
+        });
+        expect(detailRes.statusCode, detailRes.body).toBe(200);
+        expect(detailRes.json().stages).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ stage: "discover", state: "succeeded" }),
+            expect.objectContaining({ stage: "enrich", state: "succeeded" }),
+            expect.objectContaining({ stage: "score", state: "pending" }),
+          ]),
+        );
+      } finally {
+        await refreshedApp.close();
       }
     } finally {
       cleanup();

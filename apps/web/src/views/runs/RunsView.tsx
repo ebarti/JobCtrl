@@ -9,7 +9,7 @@ import { useMemo } from "react";
 import { useWorkflowRunsListQuery } from "../../contexts/operations/hooks/useWorkflowRunsListQuery.js";
 import type { WorkflowRunsListInput } from "../../contexts/operations/types.js";
 import type { RunsSearch } from "../../routes/-runs.search.js";
-import { CardHeader } from "../../shared/ui/card-header.js";
+import { PageHead } from "../../shared/ui/page-head.js";
 import { RunsFilterBar } from "./RunsFilterBar.js";
 import { RunsTable } from "./RunsTable.js";
 
@@ -71,11 +71,12 @@ export function RunsView() {
 
   return (
     <>
+      <PageHead
+        eyebrow="Activity"
+        title="Workflow runs"
+        subtitle={data ? `${data.pagination.total} total` : "loading"}
+      />
       <section className="card full">
-        <CardHeader
-          title="Workflow runs"
-          meta={data ? `${data.pagination.total} total` : "loading"}
-        />
         {message ? <div className="banner inline">{message}</div> : null}
         <RunsFilterBar
           status={search.status}

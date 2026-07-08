@@ -10,7 +10,7 @@ export function ArtifactTypeBadge({ artifactType }: ArtifactTypeBadgeProps): JSX
   return (
     <span className="artifact-type" data-artifact-type={artifactType}>
       <span className="tag muted">{artifactKindLabel(artifactType)}</span>
-      <span className="mono">{artifactFormatLabel(artifactType)}</span>
+      <span>{artifactFormatLabel(artifactType)}</span>
     </span>
   );
 }

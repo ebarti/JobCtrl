@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import "@fontsource-variable/plus-jakarta-sans";
 @import "@fontsource-variable/jetbrains-mono";
 @import "./tokens.css";
 
@@ -18,6 +18,17 @@
     color: var(--foreground);
     font-family: var(--font-sans);
     font-size: 13px;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    letter-spacing: -0.03em;
   }
 
   button,
@@ -44,6 +55,226 @@ code,
   font-size: 0.92em;
 }
 
+.app-shell {
+  display: grid;
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--background);
+}
+
+.main-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.side-rail {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 12px;
+  background: var(--sidebar);
+  backdrop-filter: blur(12px);
+  border-right: 1px solid var(--sidebar-border);
+  overflow-y: auto;
+  z-index: 30;
+}
+
+.side-rail__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 8px;
+  border-radius: calc(var(--radius) * 0.8);
+  color: var(--sidebar-foreground);
+  text-decoration: none;
+}
+
+.side-rail__brand:hover {
+  background: color-mix(in oklch, var(--accent) 55%, transparent);
+}
+
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brand-lockup__text {
+  display: inline-flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.brand-mark-svg {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+}
+
+.side-rail__wordmark {
+  font-family: var(--font-heading);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+}
+
+.side-rail__wordmark-accent {
+  color: var(--primary);
+}
+
+.side-rail__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 12px;
+}
+
+.side-rail__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.side-rail__group + .side-rail__group {
+  margin-top: 16px;
+}
+
+.side-rail__group-label {
+  padding: 0 12px 4px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.side-rail__link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: calc(var(--radius) * 0.8);
+  background: transparent;
+  color: var(--sidebar-foreground);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.side-rail__link:hover {
+  background: color-mix(in oklch, var(--accent) 55%, transparent);
+  color: var(--accent-foreground);
+}
+
+.side-rail__link.on {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-weight: 650;
+}
+
+.side-rail__link.on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--primary);
+}
+
+.side-rail__icon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+}
+
+.side-rail__spacer {
+  flex: 1 1 auto;
+  min-height: 12px;
+}
+
+.side-rail__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--sidebar-border);
+  border-radius: calc(var(--radius) * 0.8);
+  background: color-mix(in oklch, var(--card) 60%, transparent);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.side-rail__status-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 22%, transparent);
+}
+
+.side-rail__tagline {
+  margin: 2px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+@media (max-width: 1180px) {
+  .app-shell {
+    grid-template-columns: var(--rail-width-collapsed) minmax(0, 1fr);
+  }
+
+  .side-rail {
+    padding: 16px 10px;
+  }
+
+  .side-rail__group-label,
+  .side-rail__label,
+  .side-rail__wordmark,
+  .side-rail__footer-text {
+    display: none;
+  }
+
+  .side-rail__link {
+    justify-content: center;
+    padding: 8px;
+  }
+
+  .side-rail__brand {
+    justify-content: center;
+  }
+
+  .side-rail__footer {
+    justify-content: center;
+    padding: 10px;
+  }
+}
+
+@media (max-width: 820px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side-rail {
+    display: none;
+  }
+}
+
 .topbar {
   position: sticky;
   top: 0;
@@ -52,60 +283,54 @@ code,
   flex-wrap: wrap;
   min-inline-size: 0;
   align-items: center;
-  gap: 8px 16px;
-  padding: 12px 24px;
+  gap: 8px 12px;
+  min-height: var(--topbar-height);
+  padding: 10px 24px;
   background: color-mix(in oklch, var(--card) 96%, transparent);
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
   color: var(--foreground);
 }
 
-.brand {
-  display: inline-flex;
-  min-height: 34px;
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  border-radius: calc(var(--radius) * 0.8);
-  background: transparent;
-  color: var(--foreground);
-  font-weight: 600;
-  padding: 4px 6px;
-  text-decoration: none;
+.topbar__hamburger {
+  display: none;
 }
 
-.brand:hover {
-  background: var(--accent);
-  color: var(--accent-foreground);
+@media (max-width: 820px) {
+  .topbar__hamburger {
+    display: inline-flex;
+  }
 }
 
-.brand-mark {
-  display: inline-flex;
-  width: 18px;
-  height: 18px;
-  align-items: center;
-  justify-content: center;
-  border-radius: calc(var(--radius) * 0.6);
-  background: var(--primary);
-  color: var(--primary-foreground);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.nav {
+.sheet-nav {
   display: flex;
-  flex: 1 1 520px;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 4px;
-  max-inline-size: 100%;
-  min-inline-size: 0;
+  margin-top: 8px;
+}
+
+.sheet-nav .side-rail__link {
+  color: var(--foreground);
+  justify-content: flex-start;
+  padding: 7px 12px;
+}
+
+/*
+ * The <=1180px collapse hides rail labels for the icon-only rail, but the
+ * mobile sheet reuses the same markup and needs the full grouped, labelled
+ * nav. Re-show the labels within the sheet scope (higher specificity wins
+ * over the media-query rule regardless of source order).
+ */
+.sheet-nav .side-rail__group-label,
+.sheet-nav .side-rail__label {
+  display: revert;
 }
 
 .global-search {
-  min-width: 280px;
+  min-width: 240px;
   max-width: 560px;
   flex: 1 1 320px;
-  min-height: 34px;
+  min-height: 36px;
 }
 
 .connection-pill-group {
@@ -120,7 +345,6 @@ code,
 
 .connection-spend {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -144,8 +368,6 @@ code,
   font-size: 12px;
 }
 
-.nav a,
-.nav button,
 .tab {
   border: 0;
   border-radius: calc(var(--radius) * 0.8);
@@ -160,18 +382,12 @@ code,
   text-decoration: none;
 }
 
-.nav a:hover,
-.nav a.on,
-.nav button:hover,
-.nav button.on,
 .tab:hover,
 .tab.on {
   background: var(--accent);
   color: var(--accent-foreground);
 }
 
-.nav a.on,
-.nav button.on,
 .tab.on {
   box-shadow: inset 0 0 0 1px var(--border);
 }
@@ -198,10 +414,14 @@ textarea:focus-visible {
   border-color: var(--ring);
 }
 
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--primary);
+}
+
 .pulse {
   margin-left: auto;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -222,57 +442,23 @@ textarea:focus-visible {
 .kpis {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  background: var(--card);
-  border-bottom: 1px solid var(--border);
+  gap: 14px;
+  margin-bottom: 18px;
 }
 
-.kpi {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  border: 0;
-  border-right: 1px solid var(--border);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  padding: 14px 20px;
-  text-align: left;
-  text-decoration: none;
-}
-
-.kpi:hover {
-  background: var(--muted);
-}
-
-.kpi-lbl {
-  color: var(--muted-foreground);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.kpi-val {
-  font-size: 26px;
-  font-weight: 600;
-}
-
-.kpi-delta,
 .meta,
 .muted {
   color: var(--muted-foreground);
 }
 
-.tone-alert .kpi-val,
 .danger {
   color: var(--destructive);
 }
 
-.tone-warn .kpi-val,
 .warn {
   color: var(--warning);
 }
 
-.tone-ok .kpi-val,
 .ok {
   color: var(--success);
 }
@@ -281,22 +467,88 @@ textarea:focus-visible {
   padding: 18px 24px 80px;
 }
 
-.dashboard-grid {
+.eyebrow {
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.page-head-text {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(340px, 0.8fr);
+  gap: 4px;
+  min-width: 0;
+}
+
+.page-head h1 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.page-head-subtitle {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.page-head-actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .page-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .page-head-actions {
+    justify-content: flex-start;
+  }
+}
+
+.dashboard-stack {
+  display: grid;
   gap: 18px;
 }
 
-.span-2 {
-  grid-row: span 2;
+.dashboard-ops {
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.dashboard-tail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
 }
 
 .card {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--card);
+  box-shadow: var(--shadow-panel);
 }
 
 .card.full {
@@ -308,14 +560,16 @@ textarea:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 16px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--muted);
 }
 
 .card-hd h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .toolbar {
@@ -335,6 +589,29 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+.settings-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.settings-tabs .tab {
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 6px 16px;
+  text-transform: capitalize;
+}
+
+.settings-tabs .tab.on {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 1px 2px rgb(31 41 55 / 0.12);
 }
 
 .config-form,
@@ -444,7 +721,6 @@ textarea:focus-visible {
 .field-hint {
   min-height: 16px;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -661,6 +937,37 @@ textarea:focus-visible {
   flex-direction: column;
 }
 
+.privacy-box {
+  border: 1px solid color-mix(in oklch, var(--primary) 34%, var(--border));
+  border-radius: var(--radius);
+  background: linear-gradient(
+    135deg,
+    var(--card) 0%,
+    color-mix(in oklch, var(--primary) 7%, var(--card)) 100%
+  );
+  padding: 16px 18px;
+}
+
+.privacy-box h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.privacy-box-copy {
+  margin: 0 0 12px;
+  max-width: 72ch;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.privacy-box-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .credential-row,
 .credential-row-form {
   display: grid;
@@ -684,6 +991,7 @@ textarea:focus-visible {
 
 .bulk-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid var(--border);
@@ -710,19 +1018,18 @@ textarea:focus-visible {
 
 .funnel {
   display: grid;
-  grid-template-columns: 120px minmax(180px, 1fr) minmax(260px, max-content);
-  column-gap: 14px;
-  row-gap: 2px;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 6px;
   padding: 8px 8px 12px;
 }
 
 .funnel-row {
-  grid-column: 1 / -1;
+  grid-column: 1;
   display: grid;
-  grid-template-columns: inherit;
-  grid-template-columns: subgrid;
+  grid-template-columns: minmax(96px, max-content) minmax(140px, 1fr);
   align-items: center;
-  gap: 14px;
+  gap: 6px 14px;
+  width: 100%;
   min-height: var(--jh-row-height);
   border: 0;
   border-radius: 5px;
@@ -733,14 +1040,18 @@ textarea:focus-visible {
 
 .funnel-row:hover,
 .data-row:hover {
-  background: var(--muted);
+  background: color-mix(in oklch, var(--primary) 4%, var(--card));
+}
+
+.funnel-row .legend {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
 }
 
 .funnel-num,
 .stage-pill,
 .tag,
 .meta {
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -781,16 +1092,11 @@ textarea:focus-visible {
   gap: 4px 10px;
   min-width: 0;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
 .legend > span {
   white-space: nowrap;
-}
-
-.dashboard-grid > .conversion-panel {
-  grid-column: 1 / -1;
 }
 
 .digest-panel {
@@ -838,7 +1144,6 @@ textarea:focus-visible {
 
 .digest-value {
   justify-self: end;
-  font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 750;
 }
@@ -872,7 +1177,6 @@ textarea:focus-visible {
 }
 
 .conversion-stage-lbl {
-  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -881,7 +1185,6 @@ textarea:focus-visible {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -932,7 +1235,6 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  font-family: var(--font-mono);
 }
 
 .conversion-row-metric b {
@@ -961,26 +1263,29 @@ textarea:focus-visible {
 }
 
 .segmented {
-  min-height: 32px;
+  min-height: 30px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--card);
+  border-radius: 999px;
+  background: transparent;
   color: var(--muted-foreground);
-  padding: 0 10px;
-  font: inherit;
-  font-size: 12px;
+  padding: 0 14px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .segmented:hover,
-.segmented:focus-visible,
-.segmented.active {
+.segmented:focus-visible {
   border-color: var(--ring);
   color: var(--foreground);
 }
 
 .segmented.active {
-  background: var(--muted);
-  font-weight: 650;
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-weight: 850;
 }
 
 .analytics-select-label {
@@ -996,10 +1301,11 @@ textarea:focus-visible {
 
 .analytics-summary-strip > div {
   display: grid;
-  gap: 4px;
+  gap: 6px;
+  align-content: start;
   min-width: 0;
   border-right: 1px solid var(--border);
-  padding: 12px 16px;
+  padding: 14px 16px 16px;
 }
 
 .analytics-summary-strip > div:last-child {
@@ -1008,12 +1314,17 @@ textarea:focus-visible {
 
 .analytics-summary-strip span {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .analytics-summary-strip b {
-  font-size: 18px;
+  font-size: 26px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.03em;
 }
 
 .analytics-caption {
@@ -1073,6 +1384,17 @@ textarea:focus-visible {
   gap: 18px;
 }
 
+/*
+ * The runtime settings form wraps its inputs in a nested .field-grid, so the
+ * shared two-column .config-form grid would strand the save actions in an empty
+ * side cell. Stack it single-column: the inner field-grid keeps its own columns
+ * and the actions sit below it.
+ */
+.discovery-runtime-settings .config-form {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 0;
+}
+
 .apply-review-layout {
   display: flex;
   flex-direction: column;
@@ -1123,12 +1445,12 @@ textarea:focus-visible {
 
 .apply-review-queue-item:hover,
 .apply-review-queue-item.selected {
-  border-color: var(--status-info);
-  background: color-mix(in srgb, var(--status-info) 8%, var(--card));
+  border-color: color-mix(in oklch, var(--primary) 40%, var(--border));
+  background: var(--accent);
 }
 
 .apply-review-queue-item.selected {
-  box-shadow: inset 3px 0 0 var(--status-info);
+  box-shadow: inset 3px 0 0 var(--primary);
 }
 
 .apply-review-queue-title {
@@ -1151,7 +1473,7 @@ textarea:focus-visible {
 
 .apply-review-selected-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
   gap: 16px;
   align-items: start;
   padding: 12px 16px;
@@ -1177,7 +1499,9 @@ textarea:focus-visible {
 
 .apply-review-selected-actions {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
+  justify-self: end;
   justify-content: flex-end;
   gap: 8px;
 }
@@ -1212,6 +1536,11 @@ textarea:focus-visible {
   text-align: end;
 }
 
+.apply-review-approval-binding > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .apply-review-audit-facts {
   display: grid;
   flex-basis: 100%;
@@ -1228,7 +1557,6 @@ textarea:focus-visible {
 
 .apply-review-audit-facts dt {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -1342,7 +1670,6 @@ textarea:focus-visible {
 .apply-review-audit-section h4 {
   margin: 0;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-transform: uppercase;
 }
@@ -1381,7 +1708,6 @@ textarea:focus-visible {
 
 .apply-review-audit-tags > span:first-child {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -1491,7 +1817,8 @@ textarea:focus-visible {
   color: #f5f5f5;
 }
 
-.resume-plate-toolbar .mono {
+.resume-plate-toolbar .toolbar-status {
+  font-size: 0.92em;
   color: #c8c8c8;
 }
 
@@ -1587,7 +1914,6 @@ textarea:focus-visible {
 
 .resume-plate-draft-status {
   color: #c8c8c8;
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -1926,7 +2252,6 @@ textarea:focus-visible {
 
 .resume-plate-comment-head span {
   color: #111;
-  font-family: var(--font-mono);
   font-size: 10px;
 }
 
@@ -2124,7 +2449,6 @@ textarea:focus-visible {
 
 .resume-pin-source-more {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 10px;
   text-transform: uppercase;
 }
@@ -2318,7 +2642,6 @@ textarea:focus-visible {
 .artifact-comparison-head > span,
 .artifact-comparison-delta-head > span {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -2363,7 +2686,6 @@ textarea:focus-visible {
 
 .artifact-comparison-tag-group > span {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-transform: uppercase;
 }
@@ -2553,7 +2875,6 @@ textarea:focus-visible {
 .apply-review-requirement-evidence {
   margin: 6px 0 0;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -2566,10 +2887,16 @@ textarea:focus-visible {
 }
 
 .apply-review-ideal-requirement-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  gap: 8px;
-  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.apply-review-ideal-requirement-head > b {
+  flex: 1 1 12rem;
+  min-width: 0;
 }
 
 .apply-review-ideal-requirement-head > span {
@@ -2605,14 +2932,6 @@ textarea:focus-visible {
 }
 
 @media (max-width: 720px) {
-  .apply-review-ideal-requirement-head {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .apply-review-ideal-requirement-head > span {
-    justify-content: flex-start;
-  }
-
   .apply-review-requirement-fit-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2627,7 +2946,6 @@ textarea:focus-visible {
 
 .apply-review-evidence-list dt {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -2694,7 +3012,6 @@ textarea:focus-visible {
 .outcome-correction-fieldset legend {
   grid-column: 1 / -1;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -2856,7 +3173,6 @@ textarea:focus-visible {
   caption-side: top;
   padding: 8px 10px;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-align: right;
 }
@@ -2873,7 +3189,6 @@ textarea:focus-visible {
 .source-registry-table thead th {
   background: var(--muted);
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 500;
 }
@@ -2950,13 +3265,11 @@ textarea:focus-visible {
 
 .data-grid-view-title .meta {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 400;
 }
 
 .data-grid-tools button span {
-  font-family: var(--font-mono);
   font-size: 10px;
 }
 
@@ -3346,7 +3659,7 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--border);
   padding: 8px 10px;
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
   white-space: nowrap;
 }
 
@@ -3366,11 +3679,13 @@ textarea:focus-visible {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--muted);
+  background: color-mix(in oklch, var(--muted) 55%, var(--card));
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .filterable-data-grid-table thead th.data-grid-column-resizable {
@@ -3389,7 +3704,6 @@ textarea:focus-visible {
   min-width: 0;
   background: var(--muted);
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 650;
 }
@@ -3526,7 +3840,7 @@ textarea:focus-visible {
 }
 
 .filterable-data-grid-table tbody tr.data-grid-row-activatable:hover {
-  background: var(--muted);
+  background: color-mix(in oklch, var(--primary) 4%, var(--card));
 }
 
 .filterable-data-grid-table tbody tr.data-grid-row-activatable {
@@ -3565,7 +3879,7 @@ textarea:focus-visible {
 }
 
 .filterable-data-grid-table tbody tr[aria-selected="true"] {
-  background: var(--muted);
+  background: color-mix(in oklch, var(--primary) 8%, var(--card));
 }
 
 .filterable-data-grid-table .row-check {
@@ -3666,7 +3980,6 @@ textarea:focus-visible {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 6px;
-  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 650;
   line-height: 1.2;
@@ -3984,7 +4297,6 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -4000,7 +4312,6 @@ textarea:focus-visible {
 .stage-trigger-stages legend {
   width: 100%;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -4108,23 +4419,29 @@ textarea:focus-visible {
 
 .data-row.job-header {
   min-height: 34px;
-  background: var(--muted);
+  background: color-mix(in oklch, var(--muted) 55%, var(--card));
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .data-row.job-header:hover,
 .data-row.artifact-header:hover {
-  background: var(--muted);
+  background: color-mix(in oklch, var(--muted) 55%, var(--card));
 }
 
 .data-row.artifact-header {
   min-height: 34px;
-  background: var(--muted);
+  background: color-mix(in oklch, var(--muted) 55%, var(--card));
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .table-head {
@@ -4144,7 +4461,7 @@ textarea:focus-visible {
 }
 
 .table-row-activatable:hover {
-  background: var(--muted);
+  background: color-mix(in oklch, var(--primary) 4%, var(--card));
 }
 
 .mini-row,
@@ -4250,11 +4567,11 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--fit-score-border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--fit-score-bg);
   box-shadow: var(--fit-score-shadow);
   color: var(--fit-score-fg);
-  font-family: var(--font-mono);
+  font-weight: 800;
 }
 
 .fit.good {
@@ -4353,13 +4670,20 @@ textarea:focus-visible {
 .stage-pill {
   display: inline-flex;
   align-items: center;
-  border-radius: 4px;
+  min-height: 22px;
+  border-radius: 999px;
   background: var(--muted);
-  padding: 2px 6px;
+  padding: 2px 9px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1;
+  letter-spacing: 0.01em;
 }
 
 .tag.muted,
 .stage-pill.neutral {
+  box-shadow: inset 0 0 0 1px var(--border);
   background: color-mix(in oklch, var(--muted-foreground) 8%, var(--muted));
   color: var(--muted-foreground);
 }
@@ -4448,7 +4772,6 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--border);
   padding: 9px 16px;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -4546,7 +4869,6 @@ textarea:focus-visible {
 
 .job-overview-readiness-label {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-transform: uppercase;
 }
@@ -4566,7 +4888,6 @@ textarea:focus-visible {
 
 .compensation-strip-label {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-transform: uppercase;
 }
@@ -4747,7 +5068,6 @@ textarea:focus-visible {
 
 .job-audit-triage-kicker {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-transform: uppercase;
 }
@@ -4768,7 +5088,6 @@ textarea:focus-visible {
 .job-audit-tag-group > span,
 .job-audit-fact-list dt {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -4892,7 +5211,6 @@ textarea:focus-visible {
 
 .tailoring-change header span {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -4948,7 +5266,6 @@ textarea:focus-visible {
 .audit-status,
 .audit-response-list > b {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -5240,7 +5557,6 @@ textarea:focus-visible {
 
 .external-link {
   color: var(--status-info);
-  font-family: var(--font-mono);
   font-size: 11px;
   text-decoration: none;
 }
@@ -5336,7 +5652,6 @@ textarea:focus-visible {
 .action-panel .next-action {
   flex: 1 1 100%;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   overflow-wrap: anywhere;
 }
@@ -5543,7 +5858,6 @@ textarea:focus-visible {
 .compensation-factor-list h4 {
   margin: 0;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 500;
 }
@@ -5571,7 +5885,6 @@ textarea:focus-visible {
   gap: 8px;
   align-items: center;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 500;
 }
@@ -5630,7 +5943,6 @@ textarea:focus-visible {
 
 .compensation-evidence-row dt {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 10px;
 }
 
@@ -5798,7 +6110,6 @@ textarea:focus-visible {
 
 .apply-run-timeline-head time {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -5867,7 +6178,6 @@ textarea:focus-visible {
 .job-audit-head time,
 .job-audit-actor {
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -6069,6 +6379,10 @@ textarea:focus-visible {
   color: var(--accent-foreground);
 }
 
+.evidence-entry-link.selected {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
 .evidence-entry-link > span:first-child,
 .evidence-usage-link > span:first-child {
   display: grid;
@@ -6199,7 +6513,6 @@ textarea:focus-visible {
   margin-left: auto;
   color: var(--muted-foreground);
   font-style: normal;
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -6213,7 +6526,6 @@ textarea:focus-visible {
   border-radius: 6px;
   background: var(--card);
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -6761,7 +7073,8 @@ textarea:focus-visible {
   color: #f5f5f5;
 }
 
-.pdf-preview-toolbar .mono {
+.pdf-preview-toolbar .toolbar-status {
+  font-size: 0.92em;
   color: #c8c8c8;
 }
 
@@ -6838,7 +7151,6 @@ textarea:focus-visible {
 
 .pdf-preview-page figcaption {
   padding-top: 8px;
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -6883,9 +7195,23 @@ textarea:focus-visible {
   margin-top: 6px;
 }
 
+@media (max-width: 1360px) {
+  /*
+   * The left pane keeps a 340px min, so as the workspace narrows the right
+   * "Application materials" pane absorbs all the shrinkage and starts clipping
+   * its content once it drops below ~210px (around 1340px viewport). Stack the
+   * two panes into a single full-width column so materials review keeps usable
+   * width; below 1000px the shell stacks the queue too.
+   */
+  .apply-review-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 1000px) {
   .kpis,
-  .dashboard-grid,
+  .dashboard-ops,
+  .dashboard-tail,
   .discovery-control-grid,
   .field-grid,
   .runtime-summary,
@@ -6916,6 +7242,11 @@ textarea:focus-visible {
   .apply-review-selected-actions,
   .apply-review-selected-actions .apply-review-actions {
     justify-content: flex-start;
+  }
+
+  .apply-review-audit-facts > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
   }
 
   .stage-trigger-source-field {
@@ -6977,7 +7308,6 @@ textarea:focus-visible {
 
   .analytics-select-label span {
     color: var(--muted-foreground);
-    font-family: var(--font-mono);
     font-size: 11px;
   }
 
@@ -7094,12 +7424,6 @@ textarea:focus-visible {
   }
 }
 
-.app-shell {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-}
-
 .connection-pill {
   display: inline-flex;
   min-height: 28px;
@@ -7110,7 +7434,6 @@ textarea:focus-visible {
   border-radius: 999px;
   background: var(--popover);
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 11px;
 }
 

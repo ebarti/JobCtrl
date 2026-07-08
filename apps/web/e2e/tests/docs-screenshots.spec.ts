@@ -46,7 +46,7 @@ const surfaces: readonly ScreenshotSurface[] = [
   {
     name: "profile.png",
     path: "/profile",
-    proof: (page) => page.getByRole("heading", { name: "Profile" }),
+    proof: (page) => page.getByRole("heading", { name: "Profile", level: 1 }),
   },
   {
     name: "discovery.png",
@@ -99,6 +99,10 @@ async function capture(page: Page, name: string): Promise<void> {
 test("capture public documentation screenshots from synthetic seed data", async ({
   page,
 }) => {
+  test.skip(
+    process.env.JOBCTRL_DOCS_SCREENSHOTS !== "1",
+    "Rewrites docs/assets/screenshots — opt in via JOBCTRL_DOCS_SCREENSHOTS=1 (pnpm docs:screenshots sets it).",
+  );
   for (const surface of surfaces) {
     await page.goto(surface.path);
     await waitForRoute(page, surface.proof(page));

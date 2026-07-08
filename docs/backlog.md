@@ -69,6 +69,11 @@ frontend adapters remain deferred until the local product is solid.
   event handler still returns `invalidate(...)` entries. Per-event
   `setQueryData` patches are the next step for jobs / artifacts / dashboard
   lists so live updates do not lose scroll position or trigger spinners.
+- Dead `pdfCandidates[0]` references in
+  `apps/api/src/application-feedback.ts` (~2028–2035, reviewer informational
+  2026-07-08, pre-existing): the failed-audit return branch is only reached
+  when `pdfCandidates` is empty, so those reads are dead. Remove on the next
+  application-feedback touch.
 
 ### Worker Reliability
 
@@ -174,6 +179,18 @@ Out of scope for the local stack (tracked under
 
 ### UI Quality
 
+- Apply-review attestations callout spacing at ~1280px (QA Low, 2026-07-08,
+  pre-existing before the UI revamp): the orange "attestations missing"
+  prerequisites callout abuts the Approve buttons in the selected header at
+  ~1280px with the rail expanded; clean at 900 and 1440, no overflow.
+  Cosmetic gap polish only.
+- The e2e QA seed has no apply-review item with `shippedFit`, so the
+  lifecycle-aware audit labels ported from PR #355 ("Post-voice gate
+  findings", "Post-acceptance audit findings", …) render in no browser or
+  visual e2e — coverage is unit-only
+  (`apps/web/src/views/apply-review/ApplyReviewView.test.tsx`). Add a seeded
+  item with `shippedFit` + `lifecycle` to `apps/api/test/qa-seed.ts`; note
+  this will require refreshing the apply-review visual baselines.
 - Extend saved table views to the Discovery source registry. The R8 Jobs-table
   delivery covers named views for column visibility, column order, widths, sort
   order, filters, row density, grouping, and semantic color rules with a table

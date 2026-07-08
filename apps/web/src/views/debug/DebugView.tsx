@@ -9,7 +9,7 @@ import { useMemo } from "react";
 import { useActivityListQuery } from "../../contexts/operations/hooks/useActivityListQuery.js";
 import type { ActivityListInput } from "../../contexts/operations/types.js";
 import type { DebugSearch } from "../../routes/-debug.search.js";
-import { CardHeader } from "../../shared/ui/card-header.js";
+import { PageHead } from "../../shared/ui/page-head.js";
 import { DebugActivityTable } from "./DebugActivityTable.js";
 import { DebugFilterBar } from "./DebugFilterBar.js";
 
@@ -64,11 +64,12 @@ export function DebugView() {
 
   return (
     <>
+      <PageHead
+        eyebrow="Activity"
+        title="Debug"
+        subtitle={data ? `${data.pagination.total} activity events` : "loading"}
+      />
       <section className="card full">
-        <CardHeader
-          title="Debug"
-          meta={data ? `${data.pagination.total} activity events` : "loading"}
-        />
         {message ? <div className="banner inline">{message}</div> : null}
         <DebugFilterBar search={search} onChange={setSearch} />
         <DebugActivityTable

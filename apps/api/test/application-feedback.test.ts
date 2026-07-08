@@ -992,6 +992,119 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("surfaces rejected failed-validation requirement audit when no approved resume exists", async () => {
+    const metadata = requirementLedAuditMetadata();
+    metadata.post_generation_fit = {
+      fit_score: {
+        score: 4,
+        must_have_coverage: 0.3333,
+        covered_requirement_ids: ["r1"],
+        uncovered_requirement_ids: ["r2"],
+        claimed_only_requirement_ids: ["r2"],
+        prioritized_fixes: ["r2: Improve developer experience and incident-response practices."],
+        review_blockers: [],
+        coverage_basis: "grounded_shipped_text_v1",
+      },
+      revision_decision: {
+        threshold_failed: true,
+        should_revise: false,
+        review_blocked: false,
+        enhancement_allowed: true,
+        reason: "fit_score_and_must_have_coverage_below_threshold",
+        attempt: 4,
+        max_revision_attempts: 1,
+        prioritized_fixes: ["r2: Improve developer experience and incident-response practices."],
+        review_blockers: [],
+      },
+    };
+    metadata.post_generation_fit_final = {
+      lifecycle: "post_voice_shipped",
+      fit_score: {
+        score: 4,
+        must_have_coverage: 0.3333,
+        covered_requirement_ids: ["r1"],
+        uncovered_requirement_ids: ["r2"],
+        claimed_only_requirement_ids: ["r2"],
+        prioritized_fixes: ["r2: Improve developer experience and incident-response practices."],
+        review_blockers: [],
+        coverage_basis: "grounded_shipped_text_v1",
+      },
+      gate_thresholds: { min_fit_score: 8, must_have_coverage: 0.85 },
+      passed: false,
+      warnings: ["Shipped grounded must-have coverage 33% (fit 4/10) is below the revision gate."],
+    };
+
+    const db = new Database(options.dbPath);
+    db.prepare("UPDATE jobs SET tailored_resume_path = NULL WHERE url = ?").run(READY_JOB);
+    db.prepare(
+      `UPDATE job_stage_states
+          SET state = 'failed',
+              error_code = 'FAILED_VALIDATION',
+              error_message = 'Tailoring ended with status failed_validation'
+        WHERE job_url = ?
+          AND stage = 'tailor'`,
+    ).run(READY_JOB);
+    db.prepare(
+      `UPDATE job_stage_states
+          SET state = 'blocked',
+              error_code = 'BLOCKED',
+              error_message = 'Materials are not ready.'
+        WHERE job_url = ?
+          AND stage = 'apply'`,
+    ).run(READY_JOB);
+    db.prepare(
+      `UPDATE job_materials_artifacts
+          SET status = 'rejected',
+              metadata_json = ?
+        WHERE job_url = ?
+          AND artifact_id = 'apply-ready-resume-text'`,
+    ).run(JSON.stringify(metadata), READY_JOB);
+    db.prepare(
+      `UPDATE job_materials_artifacts
+          SET status = 'rejected'
+        WHERE job_url = ?
+          AND artifact_id = 'apply-ready-resume-pdf'`,
+    ).run(READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const item = queueItem(response.json(), READY_JOB);
+    expect(item?.materials).toMatchObject({
+      hasResume: false,
+      hasPdf: false,
+      ready: false,
+    });
+    expect(item?.materialsPreview).toMatchObject({
+      materialsGeneration: 1,
+      resumeText: null,
+      resumeTextArtifactId: null,
+      resumePdfArtifactId: null,
+    });
+    expect(item?.materialsPreview.requirementLedAudit?.revision).toMatchObject({
+      score: 4,
+      mustHaveCoverage: 0.3333,
+      thresholdFailed: true,
+      reason: "fit_score_and_must_have_coverage_below_threshold",
+      attempt: 4,
+      maxRevisionAttempts: 1,
+      coverageBasis: "grounded_shipped_text_v1",
+    });
+    expect(item?.materialsPreview.requirementLedAudit?.shippedFit).toMatchObject({
+      lifecycle: "post_voice_shipped",
+      score: 4,
+      mustHaveCoverage: 0.3333,
+      passed: false,
+      coverageBasis: "grounded_shipped_text_v1",
+    });
+    expect(JSON.stringify(item?.materialsPreview.requirementLedAudit)).not.toContain("RAW PROMPT SECRET");
+    expect(JSON.stringify(item?.materialsPreview.requirementLedAudit)).not.toContain("FULL PROFILE SECRET");
+
+    await app.close();
+  });
+
   it("labels legacy judge-claimed coverage basis and omits the shipped grounded fit", async () => {
     const db = new Database(options.dbPath);
     db.prepare(

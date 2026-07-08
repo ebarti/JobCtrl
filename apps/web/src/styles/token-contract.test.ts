@@ -122,10 +122,10 @@ describe("shadcn token contract", () => {
       expect(matches.length, `expected light and dark definitions for token ${token}`).toBeGreaterThanOrEqual(2);
     }
 
-    expect(tokensCss, "expected the preset medium radius token").toContain("--radius: 0.625rem;");
-    expect(tokensCss, "expected light sky primary value").toContain("--primary: oklch(0.5 0.134 242.749);");
-    expect(tokensCss, "expected dark sky primary value").toContain("--primary: oklch(0.443 0.11 240.79);");
-    expect(tokensCss, "expected amber chart token").toContain("--chart-1: oklch(0.879 0.169 91.605);");
+    expect(tokensCss, "expected the mock-up 8px radius token").toContain("--radius: 0.5rem;");
+    expect(tokensCss, "expected light violet primary value").toContain("--primary: oklch(0.541 0.281 293.009);");
+    expect(tokensCss, "expected dark violet primary value").toContain("--primary: oklch(0.702 0.183 293.541);");
+    expect(tokensCss, "expected violet-ramp chart token").toContain("--chart-1: oklch(0.541 0.281 293.009);");
   });
 
   it("maps tokens through Tailwind CSS-first theme variables", () => {
@@ -189,7 +189,10 @@ describe("shadcn token contract", () => {
 
     expect(packageJson.dependencies.shadcn, "expected shadcn dependency").toBe("4.11.0");
     expect(packageJson.dependencies["tw-animate-css"], "expected Tailwind v4 animation dependency").toBe("1.4.0");
-    expect(packageJson.dependencies["@fontsource-variable/geist"], "expected Geist font dependency").toBe("5.2.9");
+    expect(
+      packageJson.dependencies["@fontsource-variable/plus-jakarta-sans"],
+      "expected Plus Jakarta Sans font dependency",
+    ).toBe("5.2.8");
     expect(
       packageJson.dependencies["@fontsource-variable/jetbrains-mono"],
       "expected JetBrains Mono font dependency",
