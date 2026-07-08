@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import ipaddress
 from urllib.parse import urlsplit
 
 from jobctrl.domain.discovery.source_registry import (
@@ -86,6 +87,13 @@ _PROTECTED_URL_MARKERS: tuple[str, ...] = (
     "/auth",
 )
 
+_BLOCKED_HOSTNAMES: frozenset[str] = frozenset(
+    {
+        "localhost",
+        "metadata.google.internal",
+    }
+)
+
 
 def looks_protected(url: str) -> bool:
     """Return True when a URL looks login-walled/paywalled/bot-protected."""
@@ -95,9 +103,34 @@ def looks_protected(url: str) -> bool:
 
 def _host(url: str) -> str:
     try:
-        return (urlsplit(url).netloc or "").lower()
+        return (urlsplit(url).hostname or "").lower().rstrip(".")
     except ValueError:
         return ""
+
+
+def _allowlist_host(value: str) -> str:
+    text = (value or "").strip().lower().rstrip(".")
+    if not text:
+        return ""
+    try:
+        return (urlsplit(f"//{text}").hostname or text).lower().rstrip(".")
+    except ValueError:
+        return text
+
+
+def _is_blocked_ip_literal(hostname: str) -> bool:
+    try:
+        return not ipaddress.ip_address(hostname).is_global
+    except ValueError:
+        return False
+
+
+def _is_blocked_hostname(hostname: str) -> bool:
+    return (
+        hostname in _BLOCKED_HOSTNAMES
+        or hostname.endswith(".localhost")
+        or _is_blocked_ip_literal(hostname)
+    )
 
 
 def _is_public_web_url(url: str) -> bool:
@@ -105,7 +138,10 @@ def _is_public_web_url(url: str) -> bool:
         parts = urlsplit(url.strip())
     except ValueError:
         return False
-    return parts.scheme in {"http", "https"} and bool(parts.netloc)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        return False
+    hostname = (parts.hostname or "").lower().rstrip(".")
+    return bool(hostname) and not _is_blocked_hostname(hostname)
 
 
 def contact_research_source_policy() -> SourcePolicy:
@@ -163,8 +199,13 @@ class ContactResearchSourcePolicy:
         host = _host(url)
         if not host:
             return False
-        return any(
-            host == domain or host.endswith("." + domain) for domain in self.domain_allowlist
+        return any(host == domain or host.endswith("." + domain) for domain in self._domain_allowlist())
+
+    def _domain_allowlist(self) -> tuple[str, ...]:
+        return tuple(
+            domain
+            for domain in (_allowlist_host(value) for value in self.domain_allowlist)
+            if domain
         )
 
     def authorize(self, *, category: str, url: str = "") -> ResearchSourceDecision:

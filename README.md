@@ -233,14 +233,17 @@ when you deliberately run a step that needs an outside service, and each path
 is opt-in and configuration-gated:
 
 - **LLM providers** — scoring, employer analysis, resume tailoring, and
-  cover-letter generation (job text, your profile evidence, and generated
-  material text).
+  cover-letter generation, plus contact-research extraction for opted-in public
+  pages (job text, your profile evidence, generated material text, and fetched
+  public page text for that research run).
 - **The apply agent's model** — the apply prompt during apply or dry-run
   (your profile summary and the tailored materials). The prompt never
   includes profile passwords or CAPTCHA-provider keys; password typing uses a
   local credential tool that never returns the secret to the model.
-- **Job boards, ATS APIs, and posting pages** — discovery and enrichment
-  fetches.
+- **Job boards, ATS APIs, posting pages, and contact-research public pages** —
+  discovery, enrichment, and supervised contact-research fetches. Contact
+  research rejects loopback, private-network, link-local, and metadata URLs or
+  redirects before page text can enter the LLM extraction prompt.
 - **Gmail** — verification-code and application-outcome lookups, plus
   approved email application sends, only if you authenticate the connector.
   Raw email bodies stay local; outgoing sends require the `gmail.send` scope.
