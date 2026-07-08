@@ -90,10 +90,11 @@ have; a red flag is a high score whose evidence you cannot personally back.
 ![JobCtrl Apply Review with tailored resume preview, requirement evidence, and approval controls](../assets/screenshots/apply-review.png)
 
 Apply Review is where you check and edit an application before it goes anywhere.
-It pairs the tailored resume preview with the job's requirements and the original
-posting, alongside JobCtrl's own line comments. You can edit the resume, reply
-to comments, and — only after saving and validating — approve a dry run or a real
-submission.
+The tailored resume surface is a rich-text editor, so you can change text,
+formatting, and hyperlinks before rendering the replacement PDF. It pairs that
+editor with the job's requirements and the original posting, alongside JobCtrl's
+own line comments. You can reply to comments and — only after saving and
+validating — approve a dry run or a real submission.
 
 **What to do here:** edit until the resume reads right and stays truthful,
 rehearse with a dry run, and approve the submission when you are satisfied.

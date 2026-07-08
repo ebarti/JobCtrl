@@ -99,7 +99,7 @@ Full first-run guide: [docs/user/getting-started.md](docs/user/getting-started.m
 | | |
 | --- | --- |
 | [<img src="docs/assets/screenshots/jobs.png" alt="Jobs table with fit scores, stages, and filters (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) | [<img src="docs/assets/screenshots/apply-review.png" alt="Apply Review editing a tailored resume with audit evidence (synthetic data)" width="440" />](docs/assets/screenshots/apply-review.png) |
-| **Jobs** — scored, filterable, every score inspectable | **Apply Review** — edit and approve the exact resume that ships |
+| **Jobs** — scored, filterable, every score inspectable | **Apply Review** — rich-text edit and approve the exact resume that ships |
 | [<img src="docs/assets/screenshots/job-detail.png" alt="Job detail with requirement-level fit evidence (synthetic data)" width="440" />](docs/assets/screenshots/job-detail.png) | [<img src="docs/assets/screenshots/runs.png" alt="Runs page with durable workflow history (synthetic data)" width="440" />](docs/assets/screenshots/runs.png) |
 | **Job detail** — requirement-by-requirement fit evidence | **Runs** — durable workflows you can watch, retry, and audit |
 
@@ -141,7 +141,9 @@ The short version of [the full, source-cited comparison](docs/comparison.md):
 - Score jobs as an applicant-side triage aid with auditable evidence — never
   employer-side screening.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts.
-- Review and edit generated resumes in Apply Review before approval.
+- Review generated resumes in Apply Review as editable rich-text documents:
+  change text and formatting, add hyperlinks, save a draft, render the
+  replacement PDF, and approve only the exact reviewed artifact.
 - Inspect the evidence map to see which profile achievements and skills are
   reused in generated materials, requirement-fit decisions, and recorded gaps.
 - Generate stored interview prep for a selected job from grounded JobCtrl
@@ -356,8 +358,9 @@ sqlite3 ~/.jobctrl/jobctrl.db \
    requirement-fit gaps.
 6. Generate or inspect materials and stored interview prep for promising
    jobs.
-7. Use Apply Review to edit/approve the resume, review comments, and compare
-   a rendered draft against the accepted artifact before approval.
+7. Use Apply Review's rich-text resume editor to edit text, formatting, and
+   hyperlinks, review comments, and compare a rendered draft against the
+   accepted artifact before approval.
 8. Run apply dry-runs before approving any real browser submission; the
    default live path requires an `approve_submit` decision in Apply Review
    before the backend claim can proceed. If you enable Auto apply, Runs shows

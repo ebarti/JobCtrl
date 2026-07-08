@@ -644,6 +644,129 @@ describe("resume review draft API", () => {
     await app.close();
   });
 
+  it("renders safe hyperlinks from a matching Plate editor document", async () => {
+    const app = buildApp(options);
+    const createResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(JOB_KEY)}/resume-review/draft`,
+      payload: {},
+    });
+    const draftId = createResponse.json().draft.draftId as string;
+    const editedText = [
+      "Jordan Example",
+      "principal@example.com | Portfolio",
+      "Experience",
+      "Led reliability work across services.",
+      "Skills",
+      "TypeScript, Python",
+    ].join("\n");
+    const saveResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
+      payload: {
+        editedText,
+        plateDocument: [
+          {
+            type: "resume_block",
+            tagName: "main",
+            className: "resume-page",
+            children: [
+              {
+                type: "resume_block",
+                tagName: "h1",
+                className: "resume-name",
+                lineNumber: 1,
+                pageNumber: 1,
+                semanticId: "edited:line:1",
+                children: [{ text: "Jordan Example" }],
+              },
+              {
+                type: "resume_block",
+                tagName: "p",
+                className: "resume-contact",
+                lineNumber: 2,
+                pageNumber: 1,
+                semanticId: "edited:line:2",
+                children: [
+                  { text: "principal@example.com | " },
+                  {
+                    type: "resume_inline",
+                    tagName: "a",
+                    href: "https://portfolio.example.test",
+                    children: [{ text: "Portfolio" }],
+                  },
+                ],
+              },
+              {
+                type: "resume_block",
+                tagName: "h2",
+                className: "resume-section-title",
+                lineNumber: 3,
+                pageNumber: 1,
+                semanticId: "edited:line:3",
+                children: [{ text: "Experience" }],
+              },
+              {
+                type: "resume_block",
+                tagName: "p",
+                className: "resume-line",
+                lineNumber: 4,
+                pageNumber: 1,
+                semanticId: "edited:line:4",
+                children: [{ text: "Led reliability work across services." }],
+              },
+              {
+                type: "resume_block",
+                tagName: "h2",
+                className: "resume-section-title",
+                lineNumber: 5,
+                pageNumber: 1,
+                semanticId: "edited:line:5",
+                children: [{ text: "Skills" }],
+              },
+              {
+                type: "resume_block",
+                tagName: "p",
+                className: "resume-line",
+                lineNumber: 6,
+                pageNumber: 1,
+                semanticId: "edited:line:6",
+                children: [{ text: "TypeScript, Python" }],
+              },
+            ],
+          },
+        ],
+        editDeltas: [],
+      },
+    });
+    expect(saveResponse.statusCode, saveResponse.body).toBe(200);
+    const revisionId = saveResponse.json().revision.revisionId as string;
+
+    const renderResponse = await app.inject({
+      method: "POST",
+      url: `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
+      payload: { draftRevisionId: revisionId },
+    });
+    expect(renderResponse.statusCode, renderResponse.body).toBe(200);
+    const body = renderResponse.json();
+    const renderedHtml = fs.readFileSync(renderedPdfInputs[0]!.htmlPath, "utf8");
+    expect(renderedHtml).toContain('href="https://portfolio.example.test"');
+    expect(renderedHtml).toContain(">Portfolio</a>");
+    expect(renderedHtml).not.toContain("javascript:");
+
+    const db = new Database(options.dbPath);
+    try {
+      const replacementText = db
+        .prepare("SELECT path FROM job_materials_artifacts WHERE artifact_id = ?")
+        .get(body.artifacts.resumeText.artifactId) as { path: string } | undefined;
+      expect(fs.readFileSync(replacementText?.path ?? "", "utf8")).toBe(editedText);
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
   it("renders every line of a long edited resume into the promoted PDF without truncation", async () => {
     const app = buildApp(options);
     const createResponse = await app.inject({

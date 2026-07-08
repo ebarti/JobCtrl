@@ -167,16 +167,18 @@ real-time interview participation.
 
 ## 8. Review And Edit The Resume
 
-Apply Review opens the generated resume in an in-browser editor. The editor keeps
-the final PDF link, the source behind each line, risk flags, JobCtrl's line
-comments, and your draft together.
+Apply Review opens the generated resume in an in-browser rich-text editor, not a
+static preview. You can edit the resume text, adjust formatting, and add or
+remove hyperlinks before rendering a replacement PDF. The editor keeps the final
+PDF link, the source behind each line, risk flags, JobCtrl's line comments, and
+your draft together.
 
 ![JobCtrl Apply Review with tailored resume preview, requirement evidence, and approval controls](../assets/screenshots/apply-review.png)
 *Apply Review pairs requirement evidence and the verbatim job post with the tailored resume preview, JobCtrl line comments, and approve or dry-run controls.*
 
 Typical review actions:
 
-- edit the generated resume text or formatting;
+- edit the generated resume text, formatting, and hyperlinks;
 - reply to JobCtrl line comments;
 - save or autosave a draft revision;
 - validate and render an edited draft into replacement artifacts;

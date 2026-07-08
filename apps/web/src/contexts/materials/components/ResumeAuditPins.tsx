@@ -17,6 +17,8 @@ import {
   IconAlignRight,
   IconBold,
   IconItalic,
+  IconLink,
+  IconUnlink,
   IconUnderline,
 } from "@tabler/icons-react";
 import type { Descendant, TElement, Value } from "platejs";
@@ -171,7 +173,9 @@ type ResumeEditorFontSize = number | ResumeEditorLegacyFontSize;
 
 interface ResumeEditorFormattingApi {
   readonly align: (value: ResumeEditorTextAlign) => void;
+  readonly clearLink: () => void;
   readonly focus: () => void;
+  readonly setLink: (href: string) => void;
   readonly setFontFamily: (value: ResumeEditorFontFamily) => void;
   readonly setFontSize: (value: ResumeEditorFontSize) => void;
   readonly toggleBold: () => void;
@@ -946,6 +950,20 @@ function safeResumeHref(value: string | null): string | undefined {
   return /^(?:https?:|mailto:|tel:)/i.test(href) ? href : undefined;
 }
 
+function normalizeResumeHrefInput(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const explicit = safeResumeHref(trimmed);
+  if (explicit) return explicit;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    return `mailto:${trimmed}`;
+  }
+  if (/^(?:www\.|[a-z0-9-]+(?:\.[a-z0-9-]+)+)(?:[/?#].*)?$/i.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+  return null;
+}
+
 function resumePlateValueFromHtml(html: string): Value {
   if (typeof DOMParser === "undefined") {
     return [{ type: "resume_block", tagName: "main", className: "resume-page", children: [{ text: "" }] }];
@@ -987,11 +1005,27 @@ function resumeTextFromPlateNode(node: Descendant): string {
 }
 
 function resumeTextFromPlateValue(value: Value): string {
+  const lines = value
+    .flatMap(resumeLineTextsFromPlateNode)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  if (lines.length) {
+    return lines.join("\n");
+  }
   return value
     .map(resumeTextFromPlateNode)
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .join("\n");
+}
+
+function resumeLineTextsFromPlateNode(node: Descendant): string[] {
+  if ("text" in node) return [];
+  if (typeof node.lineNumber === "number") {
+    const text = resumeTextFromPlateNode(node).replace(/\s+/g, " ").trim();
+    return text ? [text] : [];
+  }
+  return node.children.flatMap(resumeLineTextsFromPlateNode);
 }
 
 function resumePlateValueSignature(value: Value | null): string {
@@ -1808,7 +1842,9 @@ type ResumeFormattingEditor = PlateEditor & {
   readonly tf: PlateEditor["tf"] & {
     readonly bold?: { readonly toggle: () => void };
     readonly italic?: { readonly toggle: () => void };
+    readonly unwrapNodes?: (options?: Record<string, unknown>) => void;
     readonly underline?: { readonly toggle: () => void };
+    readonly wrapNodes?: (element: ResumePlateDomElement, options?: Record<string, unknown>) => void;
   };
 };
 
@@ -1820,6 +1856,39 @@ function toggleEditorMark(editor: PlateEditor, mark: "bold" | "italic" | "underl
   const typedEditor = formattingEditor(editor);
   typedEditor.tf.focus();
   typedEditor.tf[mark]?.toggle();
+}
+
+function isResumeLinkElement(node: unknown): boolean {
+  return isRecord(node) && node.type === "resume_inline" && node.tagName === "a";
+}
+
+function setEditorLink(editor: PlateEditor, href: string): void {
+  const typedEditor = formattingEditor(editor);
+  typedEditor.tf.focus();
+  typedEditor.tf.unwrapNodes?.({
+    match: isResumeLinkElement,
+    split: true,
+  });
+  typedEditor.tf.wrapNodes?.(
+    {
+      type: "resume_inline",
+      tagName: "a",
+      href,
+      children: [],
+    },
+    {
+      split: true,
+    },
+  );
+}
+
+function clearEditorLink(editor: PlateEditor): void {
+  const typedEditor = formattingEditor(editor);
+  typedEditor.tf.focus();
+  typedEditor.tf.unwrapNodes?.({
+    match: isResumeLinkElement,
+    split: true,
+  });
 }
 
 function resumeBlockLineNumber(node: unknown): number | null {
@@ -1845,6 +1914,67 @@ function resumeBlockMatchesLineSelection(node: unknown, selection: PdfAuditLineS
   }
   const selectionText = normalizeResumeLine(selection.resumeLineText || selection.text);
   return Boolean(selectionText) && resumeBlockText(node) === selectionText;
+}
+
+function unwrapResumeLinks(children: readonly Descendant[]): Descendant[] {
+  return children.flatMap((child): Descendant[] => {
+    if ("text" in child) return [child];
+    const childElement = child as ResumePlateDomElement;
+    if (childElement.type === "resume_inline" && childElement.tagName === "a") {
+      return unwrapResumeLinks(childElement.children);
+    }
+    return [
+      {
+        ...child,
+        children: unwrapResumeLinks(childElement.children),
+      },
+    ];
+  });
+}
+
+function wrapResumeChildrenInLink(children: readonly Descendant[], href: string): Descendant[] {
+  const unwrapped = unwrapResumeLinks(children);
+  if (!unwrapped.length) return unwrapped;
+  return [
+    {
+      type: "resume_inline",
+      tagName: "a",
+      href,
+      children: unwrapped,
+    },
+  ];
+}
+
+function linkResumePlateDescendant(
+  node: Descendant,
+  selectedLine: PdfAuditLineSelection | null | undefined,
+  href: string | null,
+  changed: { value: boolean },
+): Descendant {
+  if ("text" in node) return node;
+  const element = node as ResumePlateDomElement;
+  if (resumeBlockMatchesLineSelection(element, selectedLine)) {
+    changed.value = true;
+    return {
+      ...node,
+      children: href ? wrapResumeChildrenInLink(element.children, href) : unwrapResumeLinks(element.children),
+    };
+  }
+  return {
+    ...node,
+    children: element.children.map((child) => linkResumePlateDescendant(child, selectedLine, href, changed)),
+  };
+}
+
+function linkSelectedResumeLine(
+  value: Value | null,
+  selectedLine: PdfAuditLineSelection | null | undefined,
+  href: string | null,
+): Value | null {
+  if (!value || !selectedLine) return null;
+  const changed = { value: false };
+  const nextValue = value.map((node) => linkResumePlateDescendant(node, selectedLine, href, changed));
+  return changed.value ? normalizeResumePlateValue(nextValue as Value) : null;
 }
 
 function shouldKeepResumeLineSelection(target: EventTarget | null): boolean {
@@ -1893,23 +2023,31 @@ function keepEditorSelection(event: MouseEvent<HTMLButtonElement>): void {
 function ResumeEditorToolbarControls({
   disabled,
   onAlign,
+  onClearLink,
   onFontFamily,
   onFontSize,
+  onSetLink,
   onToggleBold,
   onToggleItalic,
   onToggleUnderline,
 }: {
   readonly disabled: boolean;
   readonly onAlign: (value: ResumeEditorTextAlign) => void;
+  readonly onClearLink: () => void;
   readonly onFontFamily: (value: ResumeEditorFontFamily) => void;
   readonly onFontSize: (value: ResumeEditorFontSize) => void;
+  readonly onSetLink: (href: string) => void;
   readonly onToggleBold: () => void;
   readonly onToggleItalic: () => void;
   readonly onToggleUnderline: () => void;
 }): JSX.Element {
   const fontFamilyId = useId();
   const fontSizeId = useId();
+  const linkInputId = useId();
+  const linkErrorId = useId();
   const [fontSizeScale, setFontSizeScale] = useState(String(RESUME_EDITOR_DEFAULT_SIZE_SCALE));
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkError, setLinkError] = useState<string | null>(null);
   const applyFontSizeScale = useCallback(
     (rawValue: string) => {
       const value = Number(rawValue);
@@ -1937,6 +2075,20 @@ function ResumeEditorToolbarControls({
     }
     setFontSizeScale(String(Number(value.toFixed(2))));
   }, [fontSizeScale, onFontSize]);
+  const applyLink = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const href = normalizeResumeHrefInput(linkUrl);
+      if (!href) {
+        setLinkError("Use http, https, mailto, tel, or a plain domain/email.");
+        return;
+      }
+      setLinkError(null);
+      setLinkUrl(href);
+      onSetLink(href);
+    },
+    [linkUrl, onSetLink],
+  );
   return (
     <div className="resume-format-toolbar" aria-label="Resume formatting controls" data-resume-editor-chrome="true">
       <div className="resume-format-button-group" aria-label="Text style">
@@ -1974,6 +2126,57 @@ function ResumeEditorToolbarControls({
           <IconUnderline aria-hidden="true" size={16} stroke={2.2} />
         </button>
       </div>
+      <form className="resume-link-control" aria-label="Hyperlink" onSubmit={applyLink}>
+        <label className="resume-format-select" htmlFor={linkInputId}>
+          <span>Link</span>
+          <input
+            aria-describedby={linkError ? linkErrorId : undefined}
+            aria-invalid={linkError ? "true" : undefined}
+            aria-label="Link URL"
+            disabled={disabled}
+            id={linkInputId}
+            inputMode="url"
+            placeholder="example.com"
+            type="text"
+            value={linkUrl}
+            onChange={(event: ChangeEvent<HTMLInputElement>) => {
+              setLinkUrl(event.currentTarget.value);
+              setLinkError(null);
+            }}
+          />
+        </label>
+        <div className="resume-format-button-group" aria-label="Hyperlink actions">
+          <button
+            aria-label="Apply link"
+            className="resume-format-button"
+            disabled={disabled || !linkUrl.trim()}
+            title="Apply link to selected text or selected resume line"
+            type="submit"
+            onMouseDown={keepEditorSelection}
+          >
+            <IconLink aria-hidden="true" size={16} stroke={2.2} />
+          </button>
+          <button
+            aria-label="Remove link"
+            className="resume-format-button"
+            disabled={disabled}
+            title="Remove link from selected text or selected resume line"
+            type="button"
+            onClick={() => {
+              setLinkError(null);
+              onClearLink();
+            }}
+            onMouseDown={keepEditorSelection}
+          >
+            <IconUnlink aria-hidden="true" size={16} stroke={2.2} />
+          </button>
+        </div>
+        {linkError ? (
+          <span className="resume-link-error" id={linkErrorId} role="status">
+            {linkError}
+          </span>
+        ) : null}
+      </form>
       <label className="resume-format-select" htmlFor={fontFamilyId}>
         <span>Font</span>
         <select
@@ -2106,7 +2309,9 @@ function ResumePlateDocument({
   useEffect(() => {
     onFormattingApiChange?.({
       align: (value) => applyEditorBlockStyle(editor, { textAlign: value }, selectedLine),
+      clearLink: () => clearEditorLink(editor),
       focus: () => editor.tf.focus(),
+      setLink: (href) => setEditorLink(editor, href),
       setFontFamily: (value) =>
         applyEditorBlockStyle(editor, { fontFamily: value === "resume" ? null : value }, selectedLine),
       setFontSize: (value) =>
@@ -2250,6 +2455,7 @@ export function ResumeStandalonePlateEditor({
   const [currentPlateValue, setCurrentPlateValue] = useState<Value | null>(initialPlateValue);
   const [selectedLine, setSelectedLine] = useState<PdfAuditLineSelection | null>(null);
   const [resetVersion, setResetVersion] = useState(0);
+  const [editorVersion, setEditorVersion] = useState(0);
   const formattingApiRef = useRef<ResumeEditorFormattingApi | null>(null);
   const [formattingApiReady, setFormattingApiReady] = useState(false);
 
@@ -2269,7 +2475,7 @@ export function ResumeStandalonePlateEditor({
   );
   const dirty = Boolean(currentPlateValue && currentSignature !== initialSignature);
   const canFormat = formattingApiReady && Boolean(currentPlateValue);
-  const documentKey = `standalone:${htmlUrl ?? "no-html"}:${transformKey ?? "base"}:${resetVersion}`;
+  const documentKey = `standalone:${htmlUrl ?? "no-html"}:${transformKey ?? "base"}:${resetVersion}:${editorVersion}`;
   const handleFormattingApiChange = useCallback((api: ResumeEditorFormattingApi | null) => {
     formattingApiRef.current = api;
     setFormattingApiReady(Boolean(api));
@@ -2283,6 +2489,27 @@ export function ResumeStandalonePlateEditor({
   const handleToggleBold = useCallback(() => formattingApiRef.current?.toggleBold(), []);
   const handleToggleItalic = useCallback(() => formattingApiRef.current?.toggleItalic(), []);
   const handleToggleUnderline = useCallback(() => formattingApiRef.current?.toggleUnderline(), []);
+  const handleSetLink = useCallback(
+    (href: string) => {
+      const linkedValue = linkSelectedResumeLine(currentPlateValue, selectedLine, href);
+      if (linkedValue) {
+        setCurrentPlateValue(linkedValue);
+        setEditorVersion((currentVersion) => currentVersion + 1);
+        return;
+      }
+      formattingApiRef.current?.setLink(href);
+    },
+    [currentPlateValue, selectedLine],
+  );
+  const handleClearLink = useCallback(() => {
+    const linkedValue = linkSelectedResumeLine(currentPlateValue, selectedLine, null);
+    if (linkedValue) {
+      setCurrentPlateValue(linkedValue);
+      setEditorVersion((currentVersion) => currentVersion + 1);
+      return;
+    }
+    formattingApiRef.current?.clearLink();
+  }, [currentPlateValue, selectedLine]);
   const handleAlign = useCallback((value: ResumeEditorTextAlign) => formattingApiRef.current?.align(value), []);
   const handleFontFamily = useCallback(
     (value: ResumeEditorFontFamily) => formattingApiRef.current?.setFontFamily(value),
@@ -2311,8 +2538,10 @@ export function ResumeStandalonePlateEditor({
         <ResumeEditorToolbarControls
           disabled={!canFormat}
           onAlign={handleAlign}
+          onClearLink={handleClearLink}
           onFontFamily={handleFontFamily}
           onFontSize={handleFontSize}
+          onSetLink={handleSetLink}
           onToggleBold={handleToggleBold}
           onToggleItalic={handleToggleItalic}
           onToggleUnderline={handleToggleUnderline}
@@ -2338,7 +2567,7 @@ export function ResumeStandalonePlateEditor({
           >
             <ResumePlateDocument
               documentKey={documentKey}
-              initialValue={initialPlateValue}
+              initialValue={currentPlateValue}
               layoutBoxes={layoutBoxes}
               lines={htmlLines}
               onClearLineSelection={handleClearLineSelection}
@@ -2420,6 +2649,7 @@ export function ResumePlateEditor({
   const userClearedSelection = useRef(false);
   const initializedSelectionDocumentKey = useRef<string | null>(null);
   const [formattingApiReady, setFormattingApiReady] = useState(false);
+  const [editorVersion, setEditorVersion] = useState(0);
   const initialPlateValue = useMemo<Value | null>(() => {
     const savedValue = draft?.latestRevision?.plateDocument;
     if (isPlateValue(savedValue)) {
@@ -2445,7 +2675,7 @@ export function ResumePlateEditor({
     () => resumePlateValueSignature(currentPlateValue),
     [currentPlateValue],
   );
-  const documentKey = `${artifactId}:${draft?.draftId ?? "no-draft"}:${htmlUrl ?? "no-html"}`;
+  const documentKey = `${artifactId}:${draft?.draftId ?? "no-draft"}:${htmlUrl ?? "no-html"}:${editorVersion}`;
   const canFormat = formattingApiReady && Boolean(currentPlateValue);
   const draftDirty = Boolean(currentPlateValue && currentDraftSignature !== initialDraftSignature);
   const hasSavedRevision = Boolean(draft?.latestRevision);
@@ -2545,6 +2775,27 @@ export function ResumePlateEditor({
   const handleToggleBold = useCallback(() => formattingApiRef.current?.toggleBold(), []);
   const handleToggleItalic = useCallback(() => formattingApiRef.current?.toggleItalic(), []);
   const handleToggleUnderline = useCallback(() => formattingApiRef.current?.toggleUnderline(), []);
+  const handleSetLink = useCallback(
+    (href: string) => {
+      const linkedValue = linkSelectedResumeLine(currentPlateValue, selectedLine, href);
+      if (linkedValue) {
+        setCurrentPlateValue(linkedValue);
+        setEditorVersion((currentVersion) => currentVersion + 1);
+        return;
+      }
+      formattingApiRef.current?.setLink(href);
+    },
+    [currentPlateValue, selectedLine],
+  );
+  const handleClearLink = useCallback(() => {
+    const linkedValue = linkSelectedResumeLine(currentPlateValue, selectedLine, null);
+    if (linkedValue) {
+      setCurrentPlateValue(linkedValue);
+      setEditorVersion((currentVersion) => currentVersion + 1);
+      return;
+    }
+    formattingApiRef.current?.clearLink();
+  }, [currentPlateValue, selectedLine]);
   const handleAlign = useCallback((value: ResumeEditorTextAlign) => formattingApiRef.current?.align(value), []);
   const handleFontFamily = useCallback(
     (value: ResumeEditorFontFamily) => formattingApiRef.current?.setFontFamily(value),
@@ -2625,8 +2876,10 @@ export function ResumePlateEditor({
         <ResumeEditorToolbarControls
           disabled={!canFormat}
           onAlign={handleAlign}
+          onClearLink={handleClearLink}
           onFontFamily={handleFontFamily}
           onFontSize={handleFontSize}
+          onSetLink={handleSetLink}
           onToggleBold={handleToggleBold}
           onToggleItalic={handleToggleItalic}
           onToggleUnderline={handleToggleUnderline}
@@ -2685,7 +2938,7 @@ export function ResumePlateEditor({
           >
             <ResumePlateDocument
               documentKey={documentKey}
-              initialValue={initialPlateValue}
+              initialValue={currentPlateValue}
               layoutBoxes={layoutBoxes}
               lines={plateLines}
               onClearLineSelection={handleClearLineSelection}

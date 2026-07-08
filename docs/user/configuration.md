@@ -238,10 +238,9 @@ has no send capability. Their posture:
 | `TAILOR_JUDGE_MIN_SCORE` | alias | Backward-compatible alias for `TAILORING_JUDGE_MIN_SCORE`. |
 
 The default resume renderer is HTML/CSS printed through Playwright. Apply Review
-loads the generated HTML source so edits, comments, validation, final PDF
-rendering, and layout boxes stay tied to the same material generation. Historical
-`latex_pdf` artifact rows remain readable through the artifact preview and can be
-migrated to HTML/CSS siblings, but new rendering no longer invokes a TeX engine.
+loads the generated HTML source into a rich-text editor so text, formatting, and
+hyperlink edits, comments, validation, final PDF rendering, and layout boxes stay
+tied to the same material generation.
 
 ## Browser Apply Automation
 
