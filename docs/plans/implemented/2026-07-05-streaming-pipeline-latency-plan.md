@@ -1,6 +1,6 @@
 # Streaming Pipeline Latency — Score As You Discover
 
-- **Status:** Proposed (not started)
+- **Status:** Implemented / archived 2026-07-08. Delivered by #260 (plan), #301 (per-family streaming fan-out), #306 (per-job preparation handoff), #311 (gated parallel source families), and #318 (decision-resolution record). The parallel-family cap remains default-sequential unless configured.
 - **Authored:** 2026-07-05
 - **Owning bounded contexts:** Discovery (orchestration), Enrichment, Scoring, Materials, Pipeline/Operations (read model + progress)
 - **Anchors verified against `main` @ `a488e4e9`**

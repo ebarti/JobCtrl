@@ -1,6 +1,8 @@
 # Career Evidence Map + Interview Preparation Implementation Plan
 
-> **Status:** Proposed — not yet implemented. This document specifies two coupled
+> **Status:** Implemented / archived 2026-07-08. Delivered by #263 (plan), #276 (contracts), #279 (projection), #283 (evidence-map UI), #285 (interview-prep generation), #293 (prep surface), and #294 (reflections). Live/in-session interview assistance remains out of scope.
+>
+> This document specifies two coupled
 > capabilities delivered as gated phases (the evidence map lands first; it feeds
 > preparation). It is a design/architecture plan, not a line-by-line script:
 > implementers are capable agents at high reasoning effort. Specify objectives,

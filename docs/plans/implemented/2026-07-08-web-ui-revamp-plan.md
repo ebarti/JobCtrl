@@ -1,6 +1,6 @@
 # Web UI/UX Revamp — Left-Rail Shell + JobCtrl Design System
 
-- **Status:** In progress (this PR implements the plan end to end)
+- **Status:** Implemented / archived 2026-07-08. Delivered end-to-end by #356. Follow-up design-system documentation continues separately in #357 and is not blocking this plan archive.
 - **Branch:** `feat/ui-revamp`
 - **Date:** 2026-07-08
 - **Owner ask:** adopt a friendlier, more polished UX modeled on the JobCtrl

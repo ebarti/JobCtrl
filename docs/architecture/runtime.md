@@ -317,7 +317,7 @@ choke point in `infrastructure/network/`:
   (budget + pacing), since that library owns its internal transport.
 
 The plan and phase-by-phase surface inventory live in
-`docs/plans/2026-07-05-crawl-politeness-plan.md`; the ADR is in
+`docs/plans/implemented/2026-07-05-crawl-politeness-plan.md`; the ADR is in
 [`docs/decisions.md`](../decisions.md).
 
 ## Workflow Orchestration (Local Temporal)

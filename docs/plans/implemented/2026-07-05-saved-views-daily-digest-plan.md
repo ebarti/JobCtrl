@@ -1,6 +1,8 @@
 # Saved Table Views + Daily Local Digest Implementation Plan
 
-> **Status:** Proposed (not implemented). Two operator-productivity features
+> **Status:** Implemented / archived 2026-07-08. Delivered by #267 (plan) and #288-#292 (saved jobs table views, grouping/rules, digest read model, dashboard acknowledge flow, and `jobctrl digest`). Digest delivery remains local-only and explicitly acknowledged.
+>
+> Two operator-productivity features
 > planned together because both are read-side, local-first, and both compose
 > the existing Jobs table / dashboard surfaces.
 

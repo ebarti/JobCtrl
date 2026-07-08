@@ -6,7 +6,7 @@
 > user documentation.
 >
 > Implements Phase C of
-> [`docs/plans/2026-07-05-launch-readiness-artifacts-plan.md`](plans/2026-07-05-launch-readiness-artifacts-plan.md)
+> [`docs/plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md`](plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md)
 > §9.
 
 ## Purpose and boundary

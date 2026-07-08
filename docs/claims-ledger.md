@@ -6,7 +6,7 @@
 > artifact, not user documentation.
 >
 > Implements Phase A / GATE G1 of
-> [`docs/plans/2026-07-05-launch-readiness-artifacts-plan.md`](plans/2026-07-05-launch-readiness-artifacts-plan.md)
+> [`docs/plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md`](plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md)
 > §5. No listed document in `CLAUDE.md` owns "public claim provenance," so this
 > new doc is justified under the "avoid new docs unless nothing owns it" rule.
 

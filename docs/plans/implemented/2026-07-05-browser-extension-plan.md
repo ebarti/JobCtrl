@@ -1,6 +1,6 @@
 # Browser Extension — Capture, Assisted Autofill, and Deferred Guarded Submission
 
-> **Status:** Proposed. Not started. Three explicitly gated phases; on merge of this plan only Phase 0 (substrate) and Phase 1 (capture) are greenlightable. Phases 2 and 3 are gated on prior phases and on owner go/no-go.
+> **Status:** Implemented / archived 2026-07-08. Delivered by #265 (plan), #277 (local capability-token substrate), #281 (capture ingest), and #282 (deterministic autofill). Free-text answer drafting (P2b) and guarded submission (P3) remain intentionally deferred; the shipped extension has no submission path.
 > **Audience:** implementing agents (high reasoning effort) and the repository owner (gate decisions).
 > **Anchors verified against main @ `a488e4e9`.** Line numbers in this document are hints captured 2026-07-05 and WILL drift — locate every anchor by **symbol name** (grep/ripgrep). If a named symbol does not exist, STOP and report; do not create a lookalike.
 > **Style:** additive and local-first. Net-new surface under `apps/extension/`; no existing code path is deleted or replaced. Browser submission is never the default and never automatic.

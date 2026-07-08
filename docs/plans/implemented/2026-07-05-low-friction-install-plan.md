@@ -1,7 +1,7 @@
 # Low-Friction Install & Auth Reuse Plan
 
 - **Date:** 2026-07-05
-- **Status:** Proposed — plan only, nothing implemented.
+- **Status:** Implemented / archived 2026-07-08. Delivered by #254 (plan), #317 (vendor-auth setup, setup probes, and auth reuse), and #354 (one-line bootstrap, Homebrew formula, global launcher, and launch README updates).
 - **Anchors:** All file/line references verified against `main @ ab73ea84`. Per repo practice, machine-re-verify every anchor against the implementation base ref before handing any phase to an implementer.
 - **Goal:** One-command setup that works across as many environments as the underlying tools permit, reusing whatever vendor auth is already present on the machine (Claude login/key, Codex login/key, Gemini key), and prompting only for what is genuinely missing.
 
