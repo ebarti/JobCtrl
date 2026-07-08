@@ -130,9 +130,12 @@ that safety does not depend on the agent choosing not to click submit:
 
 - it tells the agent not to click the final Submit/Apply button; and
 - it installs a guard inside the browser itself — over the Chrome DevTools
-  Protocol — that blocks every network request that would leave your machine
-  (`POST`, `PUT`, and `PATCH` to any non-loopback address) and overrides form
-  submits. Even a misbehaving agent physically cannot submit a form through the
+  Protocol — that blocks mutating requests, form submits, WebSocket/beacon
+  channels, and script-initiated document navigation or subresource
+  `GET`/`HEAD` requests that could carry filled profile data out through an
+  iframe, image, fetch, or similar page-controlled channel. Ordinary document
+  navigation remains available so the rehearsal can still reach the application
+  page. Even a misbehaving agent physically cannot submit a form through the
   browser during a dry run.
 
 Dry-run submits nothing, so it does not require an approval decision.

@@ -380,6 +380,7 @@ class _DryRunCdpGuard:
         self._seen: set[str] = set()
         self._blocked: list[dict[str, str]] = []
         self._blocked_keys: set[tuple[str, str, str, str]] = set()
+        self._request_initiators: dict[str, str] = {}
         self._lock = threading.Lock()
 
     def start(self) -> None:
@@ -452,6 +453,18 @@ class _DryRunCdpGuard:
             "blocked_requests": blocked,
         }
 
+    def record_request_initiator(self, request_id: str, initiator_type: str) -> None:
+        if not request_id:
+            return
+        with self._lock:
+            self._request_initiators[request_id] = (initiator_type or "")[:40]
+
+    def request_initiator(self, request_id: str) -> str:
+        if not request_id:
+            return ""
+        with self._lock:
+            return self._request_initiators.pop(request_id, "")
+
 
 def _cdp_json(port: int, path: str) -> object:
     try:
@@ -517,15 +530,24 @@ def _run_dry_run_page_session(ws_url: str, guard: _DryRunCdpGuard) -> None:
                     resource_type="WebSocket",
                 )
                 continue
+            if method_name == "Network.requestWillBeSent":
+                _record_request_initiator(message, guard)
+                continue
             if method_name != "Fetch.requestPaused":
                 continue
             params = message.get("params") or {}
             request = params.get("request") or {}
             request_id = params.get("requestId")
+            network_id = str(params.get("networkId") or "")
             method = str(request.get("method") or "GET").upper()
             url = str(request.get("url") or "")
             resource_type = str(params.get("resourceType") or "Other")
-            if request_id and _should_block_dry_run_request(method):
+            initiator_type = guard.request_initiator(network_id)
+            if request_id and _should_block_dry_run_request(
+                method,
+                resource_type=resource_type,
+                initiator_type=initiator_type,
+            ):
                 guard.record_blocked_request(
                     channel="network",
                     method=method,
@@ -562,8 +584,28 @@ def _record_binding_call(message: dict, guard: _DryRunCdpGuard) -> None:
     )
 
 
-def _should_block_dry_run_request(method: str) -> bool:
-    return str(method or "GET").upper() not in {"GET", "HEAD"}
+def _record_request_initiator(message: dict, guard: _DryRunCdpGuard) -> None:
+    params = message.get("params") or {}
+    request_id = str(params.get("requestId") or "")
+    initiator = params.get("initiator") or {}
+    initiator_type = ""
+    if isinstance(initiator, dict):
+        initiator_type = str(initiator.get("type") or "")
+    guard.record_request_initiator(request_id, initiator_type)
+
+
+def _should_block_dry_run_request(
+    method: str,
+    *,
+    resource_type: str = "Other",
+    initiator_type: str = "",
+) -> bool:
+    method_name = str(method or "GET").upper()
+    if method_name not in {"GET", "HEAD"}:
+        return True
+    if str(resource_type or "Other") != "Document":
+        return True
+    return str(initiator_type or "").strip().lower() != "other"
 
 
 def _sanitize_evidence_url(url: str) -> str:
@@ -580,7 +622,17 @@ def _sanitize_evidence_url(url: str) -> str:
 
 
 def _dry_run_coverage(blocked: tuple[dict[str, str], ...]) -> str:
-    partial_resources = {"Document", "Fetch", "XHR", "WebSocket"}
+    partial_resources = {
+        "Document",
+        "EventSource",
+        "Fetch",
+        "Font",
+        "Image",
+        "Media",
+        "Script",
+        "WebSocket",
+        "XHR",
+    }
     partial_channels = {"form_submit", "form_request_submit", "WebSocket"}
     for item in blocked:
         if item.get("resource_type") in partial_resources:
