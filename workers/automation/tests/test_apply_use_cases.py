@@ -67,6 +67,14 @@ class _FakeBrowser:
         pass
 
 
+class _ExplodingBrowser:
+    def launch(self, _config):
+        raise AssertionError("unsafe URL must be blocked before browser launch")
+
+    def cleanup(self, _session):
+        raise AssertionError("cleanup should not run when launch is blocked")
+
+
 class _FakeAgent:
     def __init__(self, *, result):
         self.result = result
@@ -125,6 +133,10 @@ def repo():
     return _InMemoryApplyRunRepository()
 
 
+def _allow_apply_target(_url: str) -> bool:
+    return True
+
+
 def _build_use_case(repo, *, agent_result=None, publisher=None) -> SubmitApplicationUseCase:
     return SubmitApplicationUseCase(
         repository=repo,
@@ -141,6 +153,7 @@ def _build_use_case(repo, *, agent_result=None, publisher=None) -> SubmitApplica
             mcp_config_factory=lambda port: {"port": port}
         ),
         publisher=publisher,
+        url_safety_checker=_allow_apply_target,
     )
 
 
@@ -153,6 +166,11 @@ def _ready_job():
         "site": "ExampleCo",
         "fit_score": 9,
     }
+
+
+class _ExplodingPromptBuilder:
+    def build(self, **_kwargs):
+        raise AssertionError("unsafe URL must be blocked before prompt build")
 
 
 def _stub_legacy_prompt(monkeypatch):
@@ -190,6 +208,35 @@ def test_happy_path_marks_run_succeeded(monkeypatch, repo):
     event_types = [e.event_type for e in loaded.events]
     assert "Tool" in event_types
     assert "AgentResult" in event_types
+
+
+def test_execute_allows_public_ip_application_url_to_reach_agent(monkeypatch, repo):
+    _stub_legacy_prompt(monkeypatch)
+    agent = _FakeAgent(
+        result=AgentResult(
+            submission_result=Applied(applied_at="t9", verification_confidence=1.0),
+            duration_ms=100,
+        )
+    )
+    use_case = SubmitApplicationUseCase(
+        repository=repo,
+        browser_port=_FakeBrowser(),
+        agent_port=agent,
+        eligibility_checker=ApplyEligibilityChecker(max_attempts=3),
+        prompt_builder=ApplyPromptBuilder(
+            mcp_config_factory=lambda port: {"port": port}
+        ),
+    )
+
+    outcome = use_case.execute(
+        job={**_ready_job(), "application_url": "https://93.184.216.34/apply"},
+        snapshot=_FakeSnapshot(),
+        worker_id=1,
+        cdp_port=9222,
+    )
+
+    assert outcome.apply_run.is_succeeded
+    assert agent.calls == 1
 
 
 def test_dry_run_returns_dry_run_complete_variant(monkeypatch, repo):
@@ -287,6 +334,7 @@ def test_execute_keeps_upload_files_after_local_chrome_launch(
         prompt_builder=ApplyPromptBuilder(
             mcp_config_factory=lambda port: {"port": port}
         ),
+        url_safety_checker=_allow_apply_target,
     )
 
     outcome = use_case.execute(
@@ -326,6 +374,40 @@ def test_eligibility_accepts_posting_url_without_direct_application_url(monkeypa
 
     assert outcome.skipped is False
     assert outcome.apply_run.status == "dry_run_complete"
+
+
+def test_execute_blocks_private_network_application_url_before_agent(repo):
+    agent = _FakeAgent(
+        result=AgentResult(
+            submission_result=Applied(applied_at="t9", verification_confidence=1.0),
+            duration_ms=100,
+        )
+    )
+    use_case = SubmitApplicationUseCase(
+        repository=repo,
+        browser_port=_ExplodingBrowser(),
+        agent_port=agent,
+        eligibility_checker=ApplyEligibilityChecker(max_attempts=3),
+        prompt_builder=_ExplodingPromptBuilder(),
+    )
+    job = {
+        **_ready_job(),
+        "application_url": "http://127.0.0.1:8080/internal-ats",
+    }
+
+    outcome = use_case.execute(
+        job=job,
+        snapshot=_FakeSnapshot(),
+        worker_id=1,
+        cdp_port=9222,
+    )
+
+    assert outcome.skipped is False
+    assert outcome.submission_result is not None
+    assert isinstance(outcome.submission_result, Failed)
+    assert outcome.submission_result.retryable is False
+    assert outcome.submission_result.error.startswith("unsafe_url:")
+    assert agent.calls == 0
 
 
 def test_eligibility_requires_some_apply_target_url():

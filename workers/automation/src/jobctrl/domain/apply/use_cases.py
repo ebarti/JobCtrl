@@ -93,6 +93,12 @@ class SubmitApplicationOutcome:
     skip_reason: str = ""
 
 
+@dataclass(frozen=True)
+class _ApplyTargetUrlSafety:
+    ok: bool
+    reason: str = ""
+
+
 # ---------------------------------------------------------------------------
 # SubmitApplicationUseCase
 # ---------------------------------------------------------------------------
@@ -119,6 +125,7 @@ class SubmitApplicationUseCase:
         publisher: EventPublisher | None = None,
         saga: ApplySaga | None = None,
         timeout_seconds: int | None = None,
+        url_safety_checker: Callable[[str], Any] | None = None,
     ) -> None:
         self._repository = repository
         self._browser = browser_port
@@ -127,6 +134,7 @@ class SubmitApplicationUseCase:
         self._prompt_builder = prompt_builder
         self._publisher = publisher
         self._timeout_seconds = timeout_seconds
+        self._url_safety_checker = url_safety_checker or _default_url_safety_checker
         self._saga = saga or ApplySaga(
             browser_port=browser_port,
             agent_port=agent_port,
@@ -190,7 +198,46 @@ class SubmitApplicationUseCase:
                 skip_reason=eligibility.reason,
             )
 
-        # 2. Construct the aggregate in the starting state
+        # 2. Apply target URL safety check — fail closed before prompt
+        # construction so the agent never receives a private-network target.
+        apply_target_url = _apply_target_url(job)
+        safety = _check_apply_target_url(
+            apply_target_url,
+            checker=self._url_safety_checker,
+        )
+        if not safety.ok:
+            reason = safety.reason or "apply target URL is not a public HTTP(S) destination"
+            log.warning(
+                "SubmitApplicationUseCase: blocking unsafe apply target for job %s: %s",
+                job.get("url"),
+                reason,
+            )
+            run_id = run_id or new_apply_run_id()
+            started_at = _utc_now()
+            apply_run = _blocked_aggregate(
+                tenant_id=tenant_id,
+                job_id=JobId(str(job.get("url") or "")),
+                run_id=run_id,
+                reason=reason,
+                blocked_url=apply_target_url,
+                started_at=started_at,
+                dry_run=dry_run,
+                headless=headless,
+                attempts=max(attempts, 1),
+                model=model,
+                worker_id=worker_id,
+            )
+            self._repository.save(apply_run)
+            self._publish_event_records(apply_run)
+            if apply_run.submission_result is not None:
+                self._publish_failed(apply_run, apply_run.submission_result)
+            return SubmitApplicationOutcome(
+                apply_run=apply_run,
+                ok=False,
+                submission_result=apply_run.submission_result,
+            )
+
+        # 3. Construct the aggregate in the starting state
         run_id = run_id or new_apply_run_id()
         job_id = JobId(str(job.get("url") or ""))
         apply_run = ApplyRun.start(
@@ -205,10 +252,10 @@ class SubmitApplicationUseCase:
             attempts=max(attempts, 1),
         )
 
-        # 3. Publish ApplyRunStarted (per §6.7)
+        # 4. Publish ApplyRunStarted (per §6.7)
         self._publish_started(apply_run)
 
-        # 4. Render prompt + browser config
+        # 5. Render prompt + browser config
         tailored_resume = _read_tailored_resume_text(job)
         prompt = self._prompt_builder.build(
             job=job,
@@ -227,7 +274,7 @@ class SubmitApplicationUseCase:
             dry_run=dry_run,
         )
 
-        # 5. Drive the saga — it persists the aggregate at every step
+        # 6. Drive the saga — it persists the aggregate at every step
         outcome: SagaOutcome = self._saga.run(
             apply_run=apply_run,
             browser_config=browser_config,
@@ -240,7 +287,7 @@ class SubmitApplicationUseCase:
             email_application_context=_email_application_context(job, snapshot),
         )
 
-        # 6. Publish per-event records + final result
+        # 7. Publish per-event records + final result
         self._publish_event_records(outcome.apply_run)
         if (
             outcome.apply_run.is_succeeded
@@ -360,6 +407,80 @@ def _result_payload(result: SubmissionResult) -> dict[str, Any]:
             value = getattr(result, attr)
             payload[attr] = list(value) if isinstance(value, tuple) else value
     return payload
+
+
+def _default_url_safety_checker(url: str) -> Any:
+    from jobctrl.infrastructure.network import validate_public_http_url
+
+    return validate_public_http_url(url)
+
+
+def _apply_target_url(job: Mapping[str, Any]) -> str:
+    return (
+        str(job.get("application_url") or "").strip()
+        or str(job.get("url") or "").strip()
+    )
+
+
+def _check_apply_target_url(
+    url: str,
+    *,
+    checker: Callable[[str], Any],
+) -> _ApplyTargetUrlSafety:
+    try:
+        decision = checker(url)
+    except Exception as exc:  # noqa: BLE001 - safety checks fail closed
+        return _ApplyTargetUrlSafety(
+            ok=False,
+            reason=f"URL safety check failed: {exc}",
+        )
+
+    allowed = bool(getattr(decision, "allowed", decision))
+    reason = str(getattr(decision, "reason", "") or "")
+    return _ApplyTargetUrlSafety(ok=allowed, reason=reason)
+
+
+def _blocked_aggregate(
+    *,
+    tenant_id: TenantId,
+    job_id: JobId,
+    run_id: ApplyRunId,
+    reason: str,
+    blocked_url: str,
+    started_at: str,
+    dry_run: bool,
+    headless: bool,
+    attempts: int,
+    model: str,
+    worker_id: int,
+) -> ApplyRun:
+    run = ApplyRun.start(
+        tenant_id=tenant_id,
+        run_id=run_id,
+        job_id=job_id,
+        started_at=started_at,
+        worker_id=worker_id,
+        model=model,
+        dry_run=dry_run,
+        headless=headless,
+        attempts=attempts,
+    )
+    run = run.record_event(
+        event_type="UnsafeApplyTargetBlocked",
+        occurred_at=started_at,
+        level="warn",
+        message="blocked unsafe apply target URL",
+        payload={
+            "blocked_url": blocked_url,
+            "reason": reason,
+            "security_outcome": "unsafe_url",
+        },
+    )
+    return run.complete(
+        result=Failed(error=f"unsafe_url: {reason}", retryable=False),
+        finished_at=started_at,
+        duration_ms=0,
+    )
 
 
 def _skipped_aggregate(
