@@ -138,7 +138,7 @@ flowchart TB
   TT["TooltipProvider (Radix)"]
   TS["ToasterProvider"]
   App["App<br/>(RouterProvider — TanStack Router file-based routes)"]
-  Shell["AppShell<br/>(Topbar, NavBar, ConnectionStatusPill, Toaster)"]
+  Shell["AppShell<br/>(SideRail, Topbar, ConnectionStatusPill, Toaster)"]
   Routes["routes/* → views/*"]
 
   Main --> PP --> TP --> QC --> ES --> TH --> DN --> TT --> TS --> App --> Shell --> Routes

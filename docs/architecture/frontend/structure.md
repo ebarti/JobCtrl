@@ -197,8 +197,9 @@ apps/web/
 │   │   │   └── copyable-command.tsx        # `<CopyableCommand command={...} />` — preserves the "copyable CLI commands" affordance per docs/decisions.md (2026-05-03)
 │   │   ├── layout/
 │   │   │   ├── AppShell.tsx
-│   │   │   ├── Topbar.tsx                  # global job search → /jobs?q
-│   │   │   ├── NavBar.tsx                   # 14 nav destinations
+│   │   │   ├── Topbar.tsx                  # slim bar: global job search → /jobs?q, density/theme, connection pill
+│   │   │   ├── SideRail.tsx                 # 14 nav destinations in 5 rail groups (icons ≤1180px; sheet ≤820px)
+│   │   │   ├── BrandMark.tsx                # JobCtrl logo mark
 │   │   │   ├── ConnectionStatusPill.tsx     # SSE status + events-paused + LLM-spend line
 │   │   │   └── ThemeToggle.tsx
 │   │   ├── providers/                      # EventStreamProvider is NOT here — it lives in contexts/operations/providers/
