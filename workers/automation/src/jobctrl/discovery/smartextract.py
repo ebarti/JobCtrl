@@ -49,7 +49,9 @@ from jobctrl.infrastructure.network import (
     PolitenessGateway,
     PolitenessSession,
     PolitenessSourceContext,
+    PublicHttpUrlRouteGuard,
     RunBudgetCounter,
+    validate_public_http_url,
 )
 from jobctrl.infrastructure.discovery.location_filter import (
     configured_location_filters,
@@ -379,15 +381,8 @@ def _normalize_job_url(url: object, source_url: str | None = None) -> str | None
 # -- Page intelligence collector ---------------------------------------------
 
 
-def collect_page_intelligence(
-    url: str, headless: bool = True, *, session: PolitenessSession | None = None
-) -> dict:
-    """Load a page with Playwright and collect every signal a scraping engineer
-    would look at in DevTools. Returns a structured intelligence report.
-
-    R10: the navigation is politeness-gated. A robots-deny / budget-exhaustion
-    performs zero navigation and returns the empty intelligence report."""
-    intel: dict = {
+def _empty_page_intelligence(url: str) -> dict:
+    return {
         "url": url,
         "json_ld": [],
         "api_responses": [],
@@ -396,6 +391,18 @@ def collect_page_intelligence(
         "dom_stats": {},
         "card_candidates": [],
     }
+
+
+def collect_page_intelligence(
+    url: str, headless: bool = True, *, session: PolitenessSession | None = None
+) -> dict:
+    """Load a page with Playwright and collect every signal a scraping engineer
+    would look at in DevTools. Returns a structured intelligence report.
+
+    R10: the navigation is public-destination checked and politeness-gated. A
+    robots-deny, unsafe destination, or budget-exhaustion performs zero
+    navigation and returns the empty intelligence report."""
+    intel: dict = _empty_page_intelligence(url)
 
     captured_responses: list[dict] = []
 
@@ -422,141 +429,184 @@ def collect_page_intelligence(
             except Exception:
                 pass
 
+    initial_safety = validate_public_http_url(url)
+    if not initial_safety.allowed:
+        log.warning("smart-extract: unsafe navigation skipped %s: %s", url, initial_safety.reason)
+        return intel
+
     session = session or _smart_extract_session()
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
-        # Present the gateway-resolved honest UA (the same identity robots is
-        # evaluated with in session.guard below), never an import-time constant —
-        # so an owner UA override reaches the browser fetch.
-        page = browser.new_page(user_agent=session.user_agent)
-        page.on("response", on_response)
+        try:
+            # Present the gateway-resolved honest UA (the same identity robots is
+            # evaluated with in session.guard below), never an import-time constant —
+            # so an owner UA override reaches the browser fetch.
+            page = browser.new_page(user_agent=session.user_agent)
+            route_guard = PublicHttpUrlRouteGuard(page).install()
+            page.on("response", on_response)
 
-        with session.guard(url) as decision:
-            if not decision.allowed:
-                log.warning(
-                    "smart-extract: navigation skipped by politeness gate %s: %s",
-                    url,
-                    decision.reason,
-                )
-                browser.close()
-                return intel
-            page.goto(url, timeout=60000)
-            page.wait_for_load_state("networkidle")
-
-        intel["page_title"] = page.title()
-
-        # 1. JSON-LD
-        for el in page.query_selector_all('script[type="application/ld+json"]'):
             try:
-                data = json.loads(el.inner_text())
-                intel["json_ld"].append(data)
-            except Exception:
-                pass
+                with session.guard(url) as decision:
+                    if not decision.allowed:
+                        log.warning(
+                            "smart-extract: navigation skipped by politeness gate %s: %s",
+                            url,
+                            decision.reason,
+                        )
+                        return intel
+                    try:
+                        page.goto(url, timeout=60000)
+                        page.wait_for_load_state("networkidle")
+                    except Exception:
+                        if route_guard.blocked:
+                            log.warning(
+                                "smart-extract: unsafe navigation blocked %s: %s",
+                                route_guard.blocked_url or url,
+                                route_guard.blocked_reason,
+                            )
+                            return intel
+                        raise
 
-        # 2. __NEXT_DATA__
-        next_data = page.query_selector("script#__NEXT_DATA__")
-        if next_data:
-            try:
-                intel["next_data"] = json.loads(next_data.inner_text())
-            except Exception:
-                pass
+                if route_guard.blocked:
+                    log.warning(
+                        "smart-extract: unsafe navigation blocked %s: %s",
+                        route_guard.blocked_url or url,
+                        route_guard.blocked_reason,
+                    )
+                    return _empty_page_intelligence(url)
 
-        # 3. data-testid attributes
-        intel["data_testids"] = page.evaluate("""
-            () => {
-                const els = document.querySelectorAll('[data-testid]');
-                const results = [];
-                els.forEach(el => {
-                    results.push({
-                        testid: el.getAttribute('data-testid'),
-                        tag: el.tagName.toLowerCase(),
-                        text: el.innerText?.slice(0, 80) || ''
+                final_safety = validate_public_http_url(str(getattr(page, "url", "") or ""))
+                if not final_safety.allowed:
+                    log.warning(
+                        "smart-extract: unsafe final URL skipped %s: %s",
+                        getattr(page, "url", ""),
+                        final_safety.reason,
+                    )
+                    return _empty_page_intelligence(url)
+
+                intel["page_title"] = page.title()
+
+                # 1. JSON-LD
+                for el in page.query_selector_all('script[type="application/ld+json"]'):
+                    try:
+                        data = json.loads(el.inner_text())
+                        intel["json_ld"].append(data)
+                    except Exception:
+                        pass
+
+                # 2. __NEXT_DATA__
+                next_data = page.query_selector("script#__NEXT_DATA__")
+                if next_data:
+                    try:
+                        intel["next_data"] = json.loads(next_data.inner_text())
+                    except Exception:
+                        pass
+
+                # 3. data-testid attributes
+                intel["data_testids"] = page.evaluate("""
+                () => {
+                    const els = document.querySelectorAll('[data-testid]');
+                    const results = [];
+                    els.forEach(el => {
+                        results.push({
+                            testid: el.getAttribute('data-testid'),
+                            tag: el.tagName.toLowerCase(),
+                            text: el.innerText?.slice(0, 80) || ''
+                        });
                     });
-                });
-                return results.slice(0, 50);
-            }
-        """)
-
-        # 4. DOM stats
-        intel["dom_stats"] = page.evaluate("""
-            () => {
-                const body = document.body;
-                return {
-                    total_elements: body.querySelectorAll('*').length,
-                    links: body.querySelectorAll('a[href]').length,
-                    headings: body.querySelectorAll('h1,h2,h3,h4').length,
-                    lists: body.querySelectorAll('ul,ol').length,
-                    tables: body.querySelectorAll('table').length,
-                    articles: body.querySelectorAll('article').length,
-                    has_data_ids: body.querySelectorAll('[data-id]').length,
-                };
-            }
-        """)
-
-        # 5. Find repeating card-like elements
-        intel["card_candidates"] = page.evaluate("""
-            () => {
-                const candidates = [];
-                const allParents = document.querySelectorAll('*');
-
-                for (const parent of allParents) {
-                    const children = Array.from(parent.children);
-                    if (children.length < 3) continue;
-
-                    const tagCounts = {};
-                    children.forEach(c => {
-                        const key = c.tagName;
-                        tagCounts[key] = (tagCounts[key] || 0) + 1;
-                    });
-
-                    const dominant = Object.entries(tagCounts).sort((a,b) => b[1]-a[1])[0];
-                    if (!dominant || dominant[1] < 3) continue;
-
-                    const repeatingChildren = children.filter(c => c.tagName === dominant[0]);
-                    const withText = repeatingChildren.filter(c => c.innerText?.trim().length > 20);
-                    if (withText.length < 3) continue;
-
-                    const withLinks = withText.filter(c => c.querySelector('a[href]'));
-                    const score = withLinks.length * 2 + withText.length;
-
-                    const parentId = parent.id ? '#' + parent.id : '';
-                    const parentClasses = Array.from(parent.classList).filter(c => c.length < 30).slice(0, 3).join('.');
-                    const parentTag = parent.tagName.toLowerCase();
-                    const parentSelector = parentTag + (parentId || (parentClasses ? '.' + parentClasses : ''));
-
-                    const childTag = dominant[0].toLowerCase();
-                    const sampleChild = withText[0];
-                    const childClasses = Array.from(sampleChild.classList).filter(c => c.length < 30).slice(0, 3).join('.');
-                    const childSelector = childTag + (childClasses ? '.' + childClasses : '');
-
-                    const examples = withText.slice(0, 3).map(c => {
-                        const clone = c.cloneNode(true);
-                        clone.querySelectorAll('script,style,svg,noscript').forEach(el => el.remove());
-                        const html = clone.outerHTML;
-                        return html.length > 5000 ? html.slice(0, 5000) + '...' : html;
-                    });
-
-                    candidates.push({
-                        parent_selector: parentSelector,
-                        child_selector: childSelector,
-                        child_tag: childTag,
-                        total_children: repeatingChildren.length,
-                        with_text: withText.length,
-                        with_links: withLinks.length,
-                        score: score,
-                        examples: examples,
-                    });
+                    return results.slice(0, 50);
                 }
+            """)
 
-                candidates.sort((a,b) => b.score - a.score);
-                return candidates.slice(0, 3);
-            }
-        """)
+                # 4. DOM stats
+                intel["dom_stats"] = page.evaluate("""
+                () => {
+                    const body = document.body;
+                    return {
+                        total_elements: body.querySelectorAll('*').length,
+                        links: body.querySelectorAll('a[href]').length,
+                        headings: body.querySelectorAll('h1,h2,h3,h4').length,
+                        lists: body.querySelectorAll('ul,ol').length,
+                        tables: body.querySelectorAll('table').length,
+                        articles: body.querySelectorAll('article').length,
+                        has_data_ids: body.querySelectorAll('[data-id]').length,
+                    };
+                }
+            """)
 
-        # Capture full rendered HTML
-        intel["full_html"] = page.content()
+                # 5. Find repeating card-like elements
+                intel["card_candidates"] = page.evaluate("""
+                () => {
+                    const candidates = [];
+                    const allParents = document.querySelectorAll('*');
 
-        browser.close()
+                    for (const parent of allParents) {
+                        const children = Array.from(parent.children);
+                        if (children.length < 3) continue;
+
+                        const tagCounts = {};
+                        children.forEach(c => {
+                            const key = c.tagName;
+                            tagCounts[key] = (tagCounts[key] || 0) + 1;
+                        });
+
+                        const dominant = Object.entries(tagCounts).sort((a,b) => b[1]-a[1])[0];
+                        if (!dominant || dominant[1] < 3) continue;
+
+                        const repeatingChildren = children.filter(c => c.tagName === dominant[0]);
+                        const withText = repeatingChildren.filter(c => c.innerText?.trim().length > 20);
+                        if (withText.length < 3) continue;
+
+                        const withLinks = withText.filter(c => c.querySelector('a[href]'));
+                        const score = withLinks.length * 2 + withText.length;
+
+                        const parentId = parent.id ? '#' + parent.id : '';
+                        const parentClasses = Array.from(parent.classList).filter(c => c.length < 30).slice(0, 3).join('.');
+                        const parentTag = parent.tagName.toLowerCase();
+                        const parentSelector = parentTag + (parentId || (parentClasses ? '.' + parentClasses : ''));
+
+                        const childTag = dominant[0].toLowerCase();
+                        const sampleChild = withText[0];
+                        const childClasses = Array.from(sampleChild.classList).filter(c => c.length < 30).slice(0, 3).join('.');
+                        const childSelector = childTag + (childClasses ? '.' + childClasses : '');
+
+                        const examples = withText.slice(0, 3).map(c => {
+                            const clone = c.cloneNode(true);
+                            clone.querySelectorAll('script,style,svg,noscript').forEach(el => el.remove());
+                            const html = clone.outerHTML;
+                            return html.length > 5000 ? html.slice(0, 5000) + '...' : html;
+                        });
+
+                        candidates.push({
+                            parent_selector: parentSelector,
+                            child_selector: childSelector,
+                            child_tag: childTag,
+                            total_children: repeatingChildren.length,
+                            with_text: withText.length,
+                            with_links: withLinks.length,
+                            score: score,
+                            examples: examples,
+                        });
+                    }
+
+                    candidates.sort((a,b) => b.score - a.score);
+                    return candidates.slice(0, 3);
+                }
+            """)
+
+                # Capture full rendered HTML
+                intel["full_html"] = page.content()
+                if route_guard.blocked:
+                    log.warning(
+                        "smart-extract: unsafe navigation blocked %s: %s",
+                        route_guard.blocked_url or url,
+                        route_guard.blocked_reason,
+                    )
+                    return _empty_page_intelligence(url)
+            finally:
+                route_guard.close()
+        finally:
+            browser.close()
 
     # Process API responses
     for resp in captured_responses:

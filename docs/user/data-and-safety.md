@@ -112,11 +112,14 @@ honors `robots.txt` (failing closed on an inconclusive fetch — a `5xx` or time
 DNS failure or refused connection), paces requests per host, bounds each run's
 request budget, and stamps a single honest
 `User-Agent` — `JobCtrl/<version> (+<repo url>)` by default, never a spoofed
-browser. Blocked fetches become recorded outcomes (robots-disallowed /
-rate-limited / budget-exhausted), visible per source in the Source Health card,
-not scrape errors. See [Security → Crawl Politeness](security.md#crawl-politeness)
-for the full posture and [Configuration → Crawl Politeness](configuration.md#crawl-politeness)
-to review or override the user-agent.
+browser. Direct targets, redirects, and Playwright subrequests must be public
+HTTP(S) destinations; loopback, private, link-local, metadata-service, and file
+URLs are blocked before content extraction or LLM enrichment. Blocked fetches
+become recorded outcomes (robots-disallowed / rate-limited / budget-exhausted /
+unsafe-url), not scrape errors. See
+[Security → Crawl Politeness](security.md#crawl-politeness) for the full posture
+and [Configuration → Crawl Politeness](configuration.md#crawl-politeness) to
+review or override the user-agent.
 
 ## Responsible Use Boundaries
 

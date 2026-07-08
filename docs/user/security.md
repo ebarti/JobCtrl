@@ -190,20 +190,26 @@ navigations alike — routes through one crawl-politeness gateway. It:
   can override the product token and contact via
   [configuration](configuration.md#crawl-politeness); review it before real
   crawls.
+- **Rejects non-public destinations** before content extraction: direct targets,
+  redirects, and Playwright subrequests must be public HTTP(S) destinations.
+  Loopback, private, link-local, metadata-service, and file URLs are blocked
+  before page content can feed enrichment or LLM-assisted extraction.
 - **Paces requests per host** (a minimum interval + a concurrency cap) and
   **bounds each run's request budget**, so parallel crawls cannot hammer a host.
   A server `Retry-After` is honored but clamped, so a hostile header cannot
   freeze a worker.
 
 A blocked fetch is recorded as a first-class **outcome** — robots-disallowed,
-rate-limited, or budget-exhausted — never a scrape error, and is surfaced per
-source in the Source Health card (`SourcePolitenessBadges`) and discovery
-controls. Broad job boards fetched through `python-jobspy` own their internal
-per-board transport, so JobCtrl cannot robots-gate those individual requests;
-it applies budget + pacing at its own invocation boundary, and `jobctrl
-doctor` discloses when broad boards are active. The authenticated LinkedIn path
-uses your own logged-in browser session and presents its real browser identity —
-an owner-scoped exception that is still rate- and budget-limited.
+rate-limited, budget-exhausted, or unsafe-url — never a scrape error. Politeness
+blocks are surfaced per source in the Source Health card
+(`SourcePolitenessBadges`) and discovery controls; unsafe enrichment URLs are
+non-retryable detail failures. Broad job boards fetched through `python-jobspy`
+own their internal per-board transport, so JobCtrl cannot robots-gate those
+individual requests; it applies budget + pacing at its own invocation boundary,
+and `jobctrl doctor` discloses when broad boards are active. The authenticated
+LinkedIn path uses your own logged-in browser session and presents its real
+browser identity — an owner-scoped exception that is still rate- and
+budget-limited.
 
 ## Credentials
 
