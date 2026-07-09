@@ -107,7 +107,21 @@ class ApplyToolsMcpServer:
         approved_url = self._approved_application_url.strip()
         if not approved_url:
             raise ValueError("upload_artifact approved application URL is not configured")
-        upload_result = self._uploader(self._cdp_endpoint, artifact, approved_url)
+        try:
+            upload_result = self._uploader(self._cdp_endpoint, artifact, approved_url)
+        except _UploadDestinationRejected as exc:
+            _record_artifact_upload(
+                self._upload_dir,
+                {
+                    "kind": kind,
+                    "filename": artifact.name,
+                    "status": "blocked",
+                    "destination_url": exc.destination_url,
+                    "approved_origin": _url_origin(exc.approved_application_url),
+                    "reason": str(exc),
+                },
+            )
+            raise
         destination_url = _upload_destination_url(upload_result)
         _record_artifact_upload(
             self._upload_dir,
@@ -198,6 +212,13 @@ class ApplyToolsMcpServer:
 
     def _tools(self) -> list[dict[str, Any]]:
         return _tools(captcha_configured=bool(self._captcha_key_resolver()))
+
+
+class _UploadDestinationRejected(RuntimeError):
+    def __init__(self, message: str, *, destination_url: str, approved_application_url: str) -> None:
+        super().__init__(message)
+        self.destination_url = destination_url
+        self.approved_application_url = approved_application_url
 
 
 def _tools(*, captcha_configured: bool | None = None) -> list[dict[str, Any]]:
@@ -474,111 +495,149 @@ def _upload_file_to_current_input(cdp_endpoint: str, path: Path, approved_applic
                     raise RuntimeError(str(message["error"]))
                 return message
 
-    marker = f"jobctrl-upload-{uuid.uuid4().hex}"
+    object_group = f"jobctrl-upload-{uuid.uuid4().hex}"
     try:
         response(send("DOM.enable"))
-        state = response(
+        selection = response(
             send(
                 "Runtime.evaluate",
                 {
-                    "returnByValue": True,
-                    "expression": _upload_input_guard_expression(marker),
+                    "objectGroup": object_group,
+                    "returnByValue": False,
+                    "expression": _upload_input_guard_expression(),
                 },
             )
         )
-        guard = state.get("result", {}).get("result", {}).get("value") or {}
-        if not isinstance(guard, dict):
+        selection_object_id = str(selection.get("result", {}).get("result", {}).get("objectId") or "")
+        if not selection_object_id:
             raise RuntimeError("could not inspect current upload destination")
+        guard = _runtime_object_properties(response(send("Runtime.getProperties", {"objectId": selection_object_id})))
         destination_url = str(guard.get("href") or "")
         _assert_approved_upload_destination(destination_url, approved_application_url)
         if not guard.get("ok"):
-            reason = str(guard.get("reason") or "no visible file input is currently available")
+            reason = str(guard.get("reason") or "no file input is currently available")
             raise RuntimeError(reason)
-        root = response(send("DOM.getDocument", {"depth": 1}))
-        root_id = root.get("result", {}).get("root", {}).get("nodeId")
-        if not root_id:
-            raise RuntimeError("could not inspect current page DOM")
-        query = response(
+        input_object_id = str(guard.get("input_object_id") or "")
+        if not input_object_id:
+            raise RuntimeError("selected file input is no longer available")
+        current_state = response(
             send(
-                "DOM.querySelector",
+                "Runtime.callFunctionOn",
                 {
-                    "nodeId": root_id,
-                    "selector": f'input[type=file][data-jobctrl-upload-target="{marker}"]',
+                    "objectId": input_object_id,
+                    "returnByValue": True,
+                    "functionDeclaration": _upload_input_verification_expression(),
                 },
             )
         )
-        node_id = query.get("result", {}).get("nodeId")
+        current_guard = current_state.get("result", {}).get("result", {}).get("value") or {}
+        if not isinstance(current_guard, dict):
+            raise RuntimeError("could not verify current upload destination")
+        destination_url = str(current_guard.get("href") or "")
+        _assert_approved_upload_destination(destination_url, approved_application_url)
+        if not current_guard.get("ok"):
+            reason = str(current_guard.get("reason") or "selected file input is no longer available")
+            raise RuntimeError(reason)
+        node = response(send("DOM.requestNode", {"objectId": input_object_id}))
+        node_id = node.get("result", {}).get("nodeId")
         if not node_id:
             raise RuntimeError("selected file input is no longer available")
         response(send("DOM.setFileInputFiles", {"nodeId": node_id, "files": [str(path)]}))
         return {"destination_url": destination_url}
     finally:
         try:
-            response(
-                send(
-                    "Runtime.evaluate",
-                    {"expression": _clear_upload_input_marker_expression(marker)},
-                )
-            )
+            response(send("Runtime.releaseObjectGroup", {"objectGroup": object_group}))
         except Exception:  # noqa: BLE001 - marker cleanup must not mask upload errors
             pass
         ws.close()
 
 
-def _upload_input_guard_expression(marker: str) -> str:
-    escaped_marker = json.dumps(marker)
-    return f"""
-(() => {{
-  const marker = {escaped_marker};
-  const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
-  const isVisible = (input) => {{
+def _runtime_object_properties(message: dict[str, Any]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for prop in message.get("result", {}).get("result", []):
+        if not isinstance(prop, dict):
+            continue
+        name = str(prop.get("name") or "")
+        value = prop.get("value") or {}
+        if not isinstance(value, dict) or not name:
+            continue
+        if name == "input" and value.get("objectId"):
+            values["input_object_id"] = value["objectId"]
+        elif "value" in value:
+            values[name] = value["value"]
+    return values
+
+
+def _upload_input_guard_expression() -> str:
+    return """
+(() => {
+  const inputs = Array.from(document.querySelectorAll('input[type="file"]'))
+    .filter((input) => !input.disabled);
+  const isVisible = (input) => {
     const style = window.getComputedStyle(input);
     const rect = input.getBoundingClientRect();
-    return !input.disabled &&
-      style.display !== "none" &&
+    return style.display !== "none" &&
       style.visibility !== "hidden" &&
       Number(style.opacity || "1") > 0 &&
       rect.width > 0 &&
       rect.height > 0;
-  }};
+  };
   const visible = inputs.filter(isVisible);
-  if (visible.length === 0) {{
-    return {{
+  if (inputs.length === 0) {
+    return {
       ok: false,
       href: window.location.href,
-      reason: "no visible file input is currently available"
-    }};
-  }}
-  let selected = visible[0];
-  if (visible.length > 1) {{
+      reason: "no file input is currently available"
+    };
+  }
+  let selected = null;
+  if (visible.length === 1) {
+    selected = visible[0];
+  } else if (visible.length > 1) {
     const active = document.activeElement;
     if (!(active instanceof HTMLInputElement) ||
         (active.getAttribute("type") || "").toLowerCase() !== "file" ||
-        !visible.includes(active)) {{
-      return {{
+        !visible.includes(active)) {
+      return {
         ok: false,
         href: window.location.href,
         reason: "multiple visible file inputs are available; click the intended upload control first"
-      }};
-    }}
+      };
+    }
     selected = active;
-  }}
-  selected.setAttribute("data-jobctrl-upload-target", marker);
-  return {{ok: true, href: window.location.href}};
-}})()
+  } else if (inputs.length === 1) {
+    selected = inputs[0];
+  } else {
+    return {
+      ok: false,
+      href: window.location.href,
+      reason: "multiple file inputs are available; click the intended upload control first"
+    };
+  }
+  return {ok: true, href: window.location.href, input: selected};
+})()
 """
 
 
-def _clear_upload_input_marker_expression(marker: str) -> str:
-    escaped_marker = json.dumps(marker)
-    return f"""
-(() => {{
-  const input = document.querySelector(`[data-jobctrl-upload-target=${{CSS.escape({escaped_marker})}}]`);
-  if (input) {{
-    input.removeAttribute("data-jobctrl-upload-target");
-  }}
-  return true;
-}})()
+def _upload_input_verification_expression() -> str:
+    return """
+function() {
+  const input = this;
+  const href = input && input.ownerDocument && input.ownerDocument.defaultView
+    ? input.ownerDocument.defaultView.location.href
+    : window.location.href;
+  if (!(input instanceof HTMLInputElement) ||
+      (input.getAttribute("type") || "").toLowerCase() !== "file") {
+    return {ok: false, href, reason: "selected file input is no longer available"};
+  }
+  if (input.ownerDocument !== document || input.ownerDocument.defaultView !== window) {
+    return {ok: false, href, reason: "selected file input is no longer on the current page"};
+  }
+  if (input.disabled) {
+    return {ok: false, href, reason: "selected file input is disabled"};
+  }
+  return {ok: true, href};
+}
 """
 
 
@@ -594,9 +653,17 @@ def _assert_approved_upload_destination(destination_url: str, approved_applicati
     if not approved_origin:
         raise ValueError("upload_artifact approved application URL is invalid")
     if not destination_origin:
-        raise RuntimeError("current upload destination is not an HTTP(S) page")
+        raise _UploadDestinationRejected(
+            "current upload destination is not an HTTP(S) page",
+            destination_url=destination_url,
+            approved_application_url=approved_application_url,
+        )
     if destination_origin != approved_origin:
-        raise RuntimeError("current upload destination does not match the approved application origin")
+        raise _UploadDestinationRejected(
+            "current upload destination does not match the approved application origin",
+            destination_url=destination_url,
+            approved_application_url=approved_application_url,
+        )
 
 
 def _url_origin(value: str) -> str:

@@ -154,6 +154,8 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(monkeypatch, t
     assert "Do not open Gmail in the browser" in rendered
     assert 'type_credential(kind="job_site_password")' in rendered
     assert "RESULT:LOGIN_ISSUE" in rendered
+    assert "Do not upload into hidden controls" not in rendered
+    assert "Never call upload_artifact on any page that is not the approved application destination" in rendered
 
 
 def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_context(monkeypatch, tmp_path):

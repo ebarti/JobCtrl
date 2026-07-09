@@ -11,7 +11,9 @@ from jobctrl.infrastructure.apply_tools.mcp_server import (
     ApplyToolsMcpServer,
     CaptchaChallenge,
     CaptchaSolveResult,
+    _UploadDestinationRejected,
     _captcha_api_key,
+    _upload_input_guard_expression,
     _upload_file_to_current_input,
     _profile_credential,
 )
@@ -67,6 +69,42 @@ def test_upload_artifact_resolves_reviewed_resume_without_model_path(tmp_path):
         "kind": "resume",
         "filename": "Candidate_Resume.pdf",
         "destination_url": "https://apply.example.com/job",
+    }
+
+
+def test_upload_artifact_records_blocked_cross_origin_attempt(tmp_path):
+    upload_dir = tmp_path / "upload"
+    upload_dir.mkdir()
+    resume = upload_dir / "Candidate_Resume.pdf"
+    resume.write_bytes(b"%PDF")
+
+    def rejected_upload(_endpoint, _path, approved_url):
+        raise _UploadDestinationRejected(
+            "current upload destination does not match the approved application origin",
+            destination_url="https://attacker.example/upload",
+            approved_application_url=approved_url,
+        )
+
+    server = ApplyToolsMcpServer(
+        upload_dir=upload_dir,
+        cdp_endpoint="http://localhost:9222",
+        approved_application_url="https://apply.example.com/job",
+        uploader=rejected_upload,
+    )
+
+    response = _call(server, "upload_artifact", {"kind": "resume"})
+
+    assert response["error"]["code"] == -32000
+    assert "approved application origin" in response["error"]["message"]
+    audit_event = json.loads((upload_dir / "artifact_upload_events.jsonl").read_text(encoding="utf-8"))
+    assert audit_event["event_type"] == "ApplyArtifactUpload"
+    assert audit_event["payload"] == {
+        "approved_origin": "https://apply.example.com:443",
+        "destination_url": "https://attacker.example/upload",
+        "filename": "Candidate_Resume.pdf",
+        "kind": "resume",
+        "reason": "current upload destination does not match the approved application origin",
+        "status": "blocked",
     }
 
 
@@ -173,18 +211,18 @@ def test_upload_file_to_current_input_refuses_cross_origin_page(monkeypatch, tmp
     fake_ws = _FakeWebSocket(
         [
             {"id": 1, "result": {}},
+            {"id": 2, "result": {"result": {"objectId": "selection-1"}}},
             {
-                "id": 2,
+                "id": 3,
                 "result": {
-                    "result": {
-                        "value": {
-                            "ok": True,
-                            "href": "https://attacker.example/upload",
-                        }
-                    }
+                    "result": [
+                        {"name": "ok", "value": {"value": True}},
+                        {"name": "href", "value": {"value": "https://attacker.example/upload"}},
+                        {"name": "input", "value": {"objectId": "input-1"}},
+                    ]
                 },
             },
-            {"id": 3, "result": {"result": {"value": True}}},
+            {"id": 4, "result": {}},
         ]
     )
     monkeypatch.setattr(
@@ -226,8 +264,19 @@ def test_upload_file_to_current_input_uploads_visible_same_origin_input(monkeypa
     fake_ws = _FakeWebSocket(
         [
             {"id": 1, "result": {}},
+            {"id": 2, "result": {"result": {"objectId": "selection-1"}}},
             {
-                "id": 2,
+                "id": 3,
+                "result": {
+                    "result": [
+                        {"name": "ok", "value": {"value": True}},
+                        {"name": "href", "value": {"value": "https://apply.example.com/job/form"}},
+                        {"name": "input", "value": {"objectId": "input-1"}},
+                    ]
+                },
+            },
+            {
+                "id": 4,
                 "result": {
                     "result": {
                         "value": {
@@ -237,10 +286,9 @@ def test_upload_file_to_current_input_uploads_visible_same_origin_input(monkeypa
                     }
                 },
             },
-            {"id": 3, "result": {"root": {"nodeId": 1}}},
-            {"id": 4, "result": {"nodeId": 7}},
-            {"id": 5, "result": {}},
-            {"id": 6, "result": {"result": {"value": True}}},
+            {"id": 5, "result": {"nodeId": 7}},
+            {"id": 6, "result": {}},
+            {"id": 7, "result": {}},
         ]
     )
     monkeypatch.setattr(
@@ -272,6 +320,15 @@ def test_upload_file_to_current_input_uploads_visible_same_origin_input(monkeypa
     assert len(set_files) == 1
     assert set_files[0]["params"]["nodeId"] == 7
     assert set_files[0]["params"]["files"] == [str(artifact)]
+
+
+def test_upload_input_guard_allows_sole_hidden_enabled_file_input():
+    expression = _upload_input_guard_expression()
+
+    assert "visible.length === 1" in expression
+    assert "} else if (inputs.length === 1) {" in expression
+    assert "multiple file inputs are available" in expression
+    assert "no visible file input is currently available" not in expression
 
 
 def test_type_credential_resolves_password_from_profile_db(monkeypatch, tmp_path):

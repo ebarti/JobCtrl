@@ -489,7 +489,7 @@ RESULT:FAILED:reason -- any other failure (brief reason)
 == FORM TRICKS ==
 - Popup/new window opened? browser_tabs action "list" to see all tabs. browser_tabs action "select" with the tab index to switch. ALWAYS check for new tabs after clicking login/apply/sign-in buttons.
 - "Upload your resume" pre-fill page: This is NOT the application form yet. Click "Select file" or the upload area, then call upload_artifact(kind="resume"). Wait for parsing to finish. Then click Next/Continue to reach the actual form.
-- File upload not working? Try: (1) browser_click the visible upload button/area or "Select file" control, (2) upload_artifact with the required artifact kind. Do not upload into hidden controls or any page that is not the approved application destination.
+- File upload not working? Try: (1) browser_click the visible upload button/area or "Select file" control, (2) upload_artifact with the required artifact kind. Never call upload_artifact on any page that is not the approved application destination.
 - Dropdown won't fill? browser_click to open it, then browser_click the option.
 - Checkbox won't check via fill_form? Use browser_click on it instead. Snapshot to verify.
 - Phone field with country prefix: just type digits {phone_digits}
