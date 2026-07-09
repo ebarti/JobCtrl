@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from jobctrl.apply import chrome
+from jobctrl.infrastructure.network import PublicUrlDecision
 
 
 class _HostileEmployerHandler(BaseHTTPRequestHandler):
@@ -102,6 +103,7 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkey
         return profile
 
     monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
+    monkeypatch.setattr(chrome, "validate_public_http_url", lambda _url: PublicUrlDecision(True))
     try:
         dry_port = _free_port()
         dry_proc = chrome.launch_chrome(
@@ -205,6 +207,174 @@ def test_dry_run_request_policy_blocks_all_mutating_methods():
         )
         is False
     )
+
+
+def test_launch_chrome_installs_public_destination_guard_for_live_runs(tmp_path, monkeypatch):
+    calls: list[tuple[str, int]] = []
+
+    class _FakeProcess:
+        pid = 4242
+
+        def poll(self) -> None:
+            return None
+
+    def setup_profile(worker_id: int) -> Path:
+        profile = tmp_path / f"profile-{worker_id}"
+        (profile / "Default").mkdir(parents=True, exist_ok=True)
+        return profile
+
+    monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
+    monkeypatch.setattr(chrome, "_kill_on_port", lambda _port: None)
+    monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
+    monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
+    monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
+    monkeypatch.setattr(chrome.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        chrome,
+        "install_public_destination_cdp_guard",
+        lambda port: calls.append(("public", port)),
+    )
+    monkeypatch.setattr(
+        chrome,
+        "install_dry_run_cdp_guard",
+        lambda port: calls.append(("dry_run", port)),
+    )
+
+    chrome.launch_chrome(worker_id=903, port=9555, headless=True, dry_run=False)
+
+    assert calls == [("public", 9555)]
+
+
+def test_launch_chrome_uses_combined_dry_run_guard_for_dry_runs(tmp_path, monkeypatch):
+    calls: list[tuple[str, int]] = []
+
+    class _FakeProcess:
+        pid = 4343
+
+        def poll(self) -> None:
+            return None
+
+    def setup_profile(worker_id: int) -> Path:
+        profile = tmp_path / f"profile-{worker_id}"
+        (profile / "Default").mkdir(parents=True, exist_ok=True)
+        return profile
+
+    monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
+    monkeypatch.setattr(chrome, "_kill_on_port", lambda _port: None)
+    monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
+    monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
+    monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
+    monkeypatch.setattr(chrome.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        chrome,
+        "install_public_destination_cdp_guard",
+        lambda port: calls.append(("public", port)),
+    )
+    monkeypatch.setattr(
+        chrome,
+        "install_dry_run_cdp_guard",
+        lambda port: calls.append(("dry_run", port)),
+    )
+
+    chrome.launch_chrome(worker_id=904, port=9666, headless=True, dry_run=True)
+
+    assert calls == [("dry_run", 9666)]
+    assert chrome._DryRunCdpGuard(port=1).enforce_dry_run is True
+    assert chrome._PublicDestinationCdpGuard(port=1).enforce_dry_run is False
+
+
+def test_public_destination_cdp_guard_fails_loopback_requests(monkeypatch):
+    websocket = pytest.importorskip("websocket")
+    sent: list[dict] = []
+
+    class _FakeWebSocket:
+        def __init__(self) -> None:
+            self._delivered = False
+
+        def send(self, payload: str) -> None:
+            sent.append(json.loads(payload))
+
+        def recv(self) -> str:
+            if self._delivered:
+                raise RuntimeError("end test session")
+            self._delivered = True
+            return json.dumps(
+                {
+                    "method": "Fetch.requestPaused",
+                    "params": {
+                        "requestId": "intercept-1",
+                        "networkId": "network-1",
+                        "resourceType": "Document",
+                        "request": {
+                            "method": "GET",
+                            "url": "http://127.0.0.1:8766/v1/profile",
+                        },
+                    },
+                }
+            )
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(websocket, "create_connection", lambda *_args, **_kwargs: _FakeWebSocket())
+
+    guard = chrome._PublicDestinationCdpGuard(port=1)
+    chrome._run_apply_page_session("ws://example.invalid/devtools/page/1", guard)
+
+    assert {
+        "id": 4,
+        "method": "Fetch.failRequest",
+        "params": {"requestId": "intercept-1", "errorReason": "BlockedByClient"},
+    } in sent
+    assert all(message.get("method") != "Fetch.continueRequest" for message in sent)
+    assert guard.evidence()["blocked_channels"] == ("public_destination:GET",)
+
+
+def test_public_destination_cdp_guard_continues_public_requests(monkeypatch):
+    websocket = pytest.importorskip("websocket")
+    sent: list[dict] = []
+
+    class _FakeWebSocket:
+        def __init__(self) -> None:
+            self._delivered = False
+
+        def send(self, payload: str) -> None:
+            sent.append(json.loads(payload))
+
+        def recv(self) -> str:
+            if self._delivered:
+                raise RuntimeError("end test session")
+            self._delivered = True
+            return json.dumps(
+                {
+                    "method": "Fetch.requestPaused",
+                    "params": {
+                        "requestId": "intercept-2",
+                        "networkId": "network-2",
+                        "resourceType": "Document",
+                        "request": {
+                            "method": "GET",
+                            "url": "https://careers.example.com/apply",
+                        },
+                    },
+                }
+            )
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(websocket, "create_connection", lambda *_args, **_kwargs: _FakeWebSocket())
+    monkeypatch.setattr(chrome, "validate_public_http_url", lambda _url: PublicUrlDecision(True))
+
+    guard = chrome._PublicDestinationCdpGuard(port=1)
+    chrome._run_apply_page_session("ws://example.invalid/devtools/page/2", guard)
+
+    assert {
+        "id": 4,
+        "method": "Fetch.continueRequest",
+        "params": {"requestId": "intercept-2"},
+    } in sent
+    assert all(message.get("method") != "Fetch.failRequest" for message in sent)
 
 
 def test_dry_run_guard_evidence_records_sanitized_submission_channels():
