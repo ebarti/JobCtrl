@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from jobctrl import config
+from jobctrl.infrastructure.network import validate_public_http_url
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ _chrome_procs: dict[int, subprocess.Popen] = {}
 _chrome_lock = threading.Lock()
 _dry_run_guards: dict[int, "_DryRunCdpGuard"] = {}
 _dry_run_guards_lock = threading.Lock()
+_public_destination_guards: dict[int, "_PublicDestinationCdpGuard"] = {}
+_public_destination_guards_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +254,8 @@ def launch_chrome(worker_id: int, port: int | None = None,
     time.sleep(3)
     if dry_run:
         install_dry_run_cdp_guard(port)
+    else:
+        install_public_destination_cdp_guard(port)
     logger.info("[worker-%d] Chrome started on port %d (pid %d)",
                 worker_id, port, proc.pid)
     return proc
@@ -353,10 +358,19 @@ _FORM_SUBMIT_GUARD_SOURCE = """
 
 
 def install_dry_run_cdp_guard(port: int) -> "_DryRunCdpGuard":
-    """Install a CDP dry-run guard on Chrome pages for this worker."""
+    """Install the public-destination + dry-run CDP guard for this worker."""
     guard = _DryRunCdpGuard(port)
     with _dry_run_guards_lock:
         _dry_run_guards[int(port)] = guard
+    guard.start()
+    return guard
+
+
+def install_public_destination_cdp_guard(port: int) -> "_PublicDestinationCdpGuard":
+    """Install the live apply public-destination guard on Chrome pages."""
+    guard = _PublicDestinationCdpGuard(port)
+    with _public_destination_guards_lock:
+        _public_destination_guards[int(port)] = guard
     guard.start()
     return guard
 
@@ -374,20 +388,25 @@ def get_dry_run_cdp_guard_evidence(port: int) -> dict[str, object]:
     return guard.evidence()
 
 
-class _DryRunCdpGuard:
-    def __init__(self, port: int) -> None:
+class _ApplyCdpGuard:
+    def __init__(self, port: int, *, enforce_dry_run: bool) -> None:
         self._port = int(port)
+        self._enforce_dry_run = enforce_dry_run
         self._seen: set[str] = set()
         self._blocked: list[dict[str, str]] = []
         self._blocked_keys: set[tuple[str, str, str, str]] = set()
         self._request_initiators: dict[str, str] = {}
         self._lock = threading.Lock()
 
+    @property
+    def enforce_dry_run(self) -> bool:
+        return self._enforce_dry_run
+
     def start(self) -> None:
         self._attach_existing_targets()
         watcher = threading.Thread(
             target=self._watch_targets,
-            name=f"apply-cdp-dry-run-{self._port}",
+            name=f"apply-cdp-guard-{self._port}",
             daemon=True,
         )
         watcher.start()
@@ -410,7 +429,7 @@ class _DryRunCdpGuard:
                     continue
                 self._seen.add(target_id)
             thread = threading.Thread(
-                target=_run_dry_run_page_session,
+                target=_run_apply_page_session,
                 args=(ws_url, self),
                 name=f"apply-cdp-page-{target_id[:8]}",
                 daemon=True,
@@ -466,6 +485,16 @@ class _DryRunCdpGuard:
             return self._request_initiators.pop(request_id, "")
 
 
+class _DryRunCdpGuard(_ApplyCdpGuard):
+    def __init__(self, port: int) -> None:
+        super().__init__(port, enforce_dry_run=True)
+
+
+class _PublicDestinationCdpGuard(_ApplyCdpGuard):
+    def __init__(self, port: int) -> None:
+        super().__init__(port, enforce_dry_run=False)
+
+
 def _cdp_json(port: int, path: str) -> object:
     try:
         with urlopen(f"http://127.0.0.1:{port}{path}", timeout=2) as response:
@@ -475,11 +504,11 @@ def _cdp_json(port: int, path: str) -> object:
         return []
 
 
-def _run_dry_run_page_session(ws_url: str, guard: _DryRunCdpGuard) -> None:
+def _run_apply_page_session(ws_url: str, guard: _ApplyCdpGuard) -> None:
     try:
         import websocket
     except Exception:
-        logger.exception("websocket-client is required for apply dry-run CDP enforcement")
+        logger.exception("websocket-client is required for apply CDP enforcement")
         return
     try:
         ws = websocket.create_connection(ws_url, timeout=2, suppress_origin=True)
@@ -496,9 +525,10 @@ def _run_dry_run_page_session(ws_url: str, guard: _DryRunCdpGuard) -> None:
     try:
         send("Page.enable")
         send("Network.enable")
-        send("Runtime.enable")
-        send("Runtime.addBinding", {"name": "jobctrlDryRunBlocked"})
-        send("Page.addScriptToEvaluateOnNewDocument", {"source": _FORM_SUBMIT_GUARD_SOURCE})
+        if guard.enforce_dry_run:
+            send("Runtime.enable")
+            send("Runtime.addBinding", {"name": "jobctrlDryRunBlocked"})
+            send("Page.addScriptToEvaluateOnNewDocument", {"source": _FORM_SUBMIT_GUARD_SOURCE})
         send(
             "Fetch.enable",
             {
@@ -510,7 +540,8 @@ def _run_dry_run_page_session(ws_url: str, guard: _DryRunCdpGuard) -> None:
                 ]
             },
         )
-        send("Runtime.evaluate", {"expression": _FORM_SUBMIT_GUARD_SOURCE})
+        if guard.enforce_dry_run:
+            send("Runtime.evaluate", {"expression": _FORM_SUBMIT_GUARD_SOURCE})
         while True:
             try:
                 raw_message = ws.recv()
@@ -518,10 +549,10 @@ def _run_dry_run_page_session(ws_url: str, guard: _DryRunCdpGuard) -> None:
                 continue
             message = json.loads(raw_message)
             method_name = message.get("method")
-            if method_name == "Runtime.bindingCalled":
+            if guard.enforce_dry_run and method_name == "Runtime.bindingCalled":
                 _record_binding_call(message, guard)
                 continue
-            if method_name == "Network.webSocketCreated":
+            if guard.enforce_dry_run and method_name == "Network.webSocketCreated":
                 params = message.get("params") or {}
                 guard.record_blocked_request(
                     channel="WebSocket",
@@ -531,7 +562,8 @@ def _run_dry_run_page_session(ws_url: str, guard: _DryRunCdpGuard) -> None:
                 )
                 continue
             if method_name == "Network.requestWillBeSent":
-                _record_request_initiator(message, guard)
+                if guard.enforce_dry_run:
+                    _record_request_initiator(message, guard)
                 continue
             if method_name != "Fetch.requestPaused":
                 continue
@@ -543,7 +575,16 @@ def _run_dry_run_page_session(ws_url: str, guard: _DryRunCdpGuard) -> None:
             url = str(request.get("url") or "")
             resource_type = str(params.get("resourceType") or "Other")
             initiator_type = guard.request_initiator(network_id)
-            if request_id and _should_block_dry_run_request(
+            public_decision = validate_public_http_url(url)
+            if request_id and not public_decision.allowed:
+                guard.record_blocked_request(
+                    channel="public_destination",
+                    method=method,
+                    url=url,
+                    resource_type=resource_type,
+                )
+                send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
+            elif request_id and guard.enforce_dry_run and _should_block_dry_run_request(
                 method,
                 resource_type=resource_type,
                 initiator_type=initiator_type,
