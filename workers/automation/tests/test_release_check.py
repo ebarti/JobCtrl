@@ -170,6 +170,166 @@ def test_publish_tag_trigger_is_required_after_rename(tmp_path: Path) -> None:
     assert any("tag publishing is disabled" in finding for finding in result.findings)
 
 
+def test_homebrew_formula_requires_tap_sync_workflow(tmp_path: Path) -> None:
+    _write(
+        tmp_path / release_check.HOMEBREW_FORMULA_PATH,
+        'class Jobctrl < Formula\n  depends_on "corepack"\nend\n',
+    )
+
+    findings = release_check._homebrew_sync_findings(tmp_path)
+
+    assert findings == [
+        ".github/workflows/sync-homebrew-tap.yml: canonical Homebrew formula has no tap synchronization workflow"
+    ]
+
+
+def test_homebrew_tap_sync_workflow_must_cover_main_and_releases(tmp_path: Path) -> None:
+    _write(
+        tmp_path / release_check.HOMEBREW_FORMULA_PATH,
+        'class Jobctrl < Formula\n  depends_on "corepack"\nend\n',
+    )
+    _write(
+        tmp_path / release_check.HOMEBREW_SYNC_WORKFLOW_PATH,
+        """
+        on:
+          push:
+            branches: ["main"]
+          release:
+            types: [published]
+        jobs:
+          sync:
+            steps:
+              - run: python3 scripts/release_check.py --strict-prompt
+              - uses: actions/checkout@v4
+                with:
+                  repository: ebarti/homebrew-tap
+                  ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+              - run: install packaging/homebrew/Formula/jobctrl.rb homebrew-tap/Formula/jobctrl.rb
+              - run: git status --short --untracked-files=all -- Formula/jobctrl.rb
+        """,
+    )
+
+    assert release_check._homebrew_sync_findings(tmp_path) == []
+
+
+def test_homebrew_tap_sync_workflow_must_detect_an_untracked_formula(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path / release_check.HOMEBREW_FORMULA_PATH,
+        'class Jobctrl < Formula\n  depends_on "corepack"\nend\n',
+    )
+    _write(
+        tmp_path / release_check.HOMEBREW_SYNC_WORKFLOW_PATH,
+        """
+        on:
+          push:
+            branches: ["main"]
+          release:
+            types: [published]
+        jobs:
+          sync:
+            steps:
+              - run: python3 scripts/release_check.py --strict-prompt
+              - uses: actions/checkout@v4
+                with:
+                  repository: ebarti/homebrew-tap
+                  ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+              - run: install packaging/homebrew/Formula/jobctrl.rb homebrew-tap/Formula/jobctrl.rb
+        """,
+    )
+
+    assert any(
+        "does not detect an absent or untracked tap formula" in finding
+        for finding in release_check._homebrew_sync_findings(tmp_path)
+    )
+
+
+def test_homebrew_formula_must_install_corepack(tmp_path: Path) -> None:
+    _write(
+        tmp_path / release_check.HOMEBREW_FORMULA_PATH,
+        'class Jobctrl < Formula\n  depends_on "node"\nend\n',
+    )
+    _write(
+        tmp_path / release_check.HOMEBREW_SYNC_WORKFLOW_PATH,
+        """
+        on:
+          push:
+            branches: ["main"]
+          release:
+            types: [published]
+        jobs:
+          sync:
+            steps:
+              - run: python3 scripts/release_check.py --strict-prompt
+              - uses: actions/checkout@v4
+                with:
+                  repository: ebarti/homebrew-tap
+                  ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+              - run: install packaging/homebrew/Formula/jobctrl.rb homebrew-tap/Formula/jobctrl.rb
+              - run: git status --short --untracked-files=all -- Formula/jobctrl.rb
+        """,
+    )
+
+    assert release_check._homebrew_sync_findings(tmp_path) == [
+        "packaging/homebrew/Formula/jobctrl.rb: does not install Corepack required by the launcher and installer"
+    ]
+
+
+def test_homebrew_tap_sync_gates_before_loading_publish_credentials(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path / release_check.HOMEBREW_FORMULA_PATH,
+        'class Jobctrl < Formula\n  depends_on "corepack"\nend\n',
+    )
+    _write(
+        tmp_path / release_check.HOMEBREW_SYNC_WORKFLOW_PATH,
+        """
+        on:
+          push:
+            branches: ["main"]
+          release:
+            types: [published]
+        jobs:
+          sync:
+            steps:
+              - uses: actions/checkout@v4
+                with:
+                  repository: ebarti/homebrew-tap
+                  ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+              - run: python3 scripts/release_check.py --strict-prompt
+              - run: install packaging/homebrew/Formula/jobctrl.rb homebrew-tap/Formula/jobctrl.rb
+              - run: git status --short --untracked-files=all -- Formula/jobctrl.rb
+        """,
+    )
+
+    assert any(
+        "loads tap credentials before the strict release privacy gate" in finding
+        for finding in release_check._homebrew_sync_findings(tmp_path)
+    )
+
+
+def test_publish_workflow_scans_built_archives_before_upload() -> None:
+    workflow = (release_check.ROOT / ".github/workflows/publish.yml").read_text(
+        encoding="utf-8"
+    )
+
+    build = workflow.index("python -m build workers/automation")
+    scan = workflow.index("python3 scripts/release_check.py --strict-prompt")
+    publish = workflow.index("uses: pypa/gh-action-pypi-publish@release/v1")
+
+    assert build < scan < publish
+
+
+def test_release_privacy_workflow_enforces_strict_prompt_gate() -> None:
+    workflow = (
+        release_check.ROOT / ".github/workflows/release-check.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "python3 scripts/release_check.py --strict-prompt" in workflow
+
+
 def test_old_product_name_gate_blocks_shipping_surfaces(tmp_path: Path) -> None:
     old_names = ("Job" + "Hunter", "Job" + "Ctl")
     _write(

@@ -81,10 +81,16 @@ import {
   resumeTemplateStateForArtifact,
   resumeTemplateStateForJob,
 } from "./resume-templates.js";
+import { readWorkerHealth } from "./worker-health.js";
 
 const DEFAULT_TENANT = "local";
 const DEFAULT_PROFILE_ID = "default";
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"] as const satisfies readonly ActiveState[];
+// Dashboard presentation policy: only old running rows are candidates for
+// "stuck", and only while the worker itself is unavailable. The threshold is
+// exposed in the response so the UI can state the exact rule.
+const DASHBOARD_STUCK_AFTER_SECONDS = 150;
+const DASHBOARD_STUCK_ITEM_LIMIT = 8;
 
 const DEFAULT_MAX_ATTEMPTS: Record<Stage, number> = {
   discover: 1,
@@ -384,6 +390,7 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
   const dashboard = dashboardRow ?? defaultDashboardRow();
   const operationalMetrics = buildOperationalMetrics(db);
   const todayMetrics = dashboardTodayMetrics(db);
+  const work = dashboardWorkSummary(db);
   return {
     ok: true,
     generatedAt: dashboard.generated_at || new Date().toISOString(),
@@ -397,6 +404,7 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
       appliedToday: todayMetrics.appliedToday,
       dryRuns: Number(dashboard.dry_runs ?? 0),
     },
+    work,
     funnel: parseFunnel(dashboard.funnel_json),
     conversion: buildConversionSummary(dashboard.outcome_conversion_json),
     activity: recentActivity(db),
@@ -406,6 +414,98 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
     applyRuns: recentApplyRuns(db),
     preparation: buildPreparationSummary(db, DEFAULT_TENANT),
   };
+}
+
+interface DashboardWorkRow extends Record<string, unknown> {
+  job_id: string;
+  title: string;
+  employer: string;
+  current_stage: string;
+  current_substage: string;
+  current_state: string;
+  stage_started_at: string | null;
+  stage_updated_at: string | null;
+}
+
+function dashboardWorkSummary(db: SqliteDatabase): DashboardSummary["work"] {
+  const empty: DashboardSummary["work"] = {
+    active: 0,
+    stuck: 0,
+    stuckAfterSeconds: DASHBOARD_STUCK_AFTER_SECONDS,
+    stuckItems: [],
+  };
+  if (!tableExists(db, "job_list_projections")) return empty;
+
+  const activeFilter = jobSqlFilter(db, digestBaseJobQuery());
+  const hasStageState = tableExists(db, "job_stage_states");
+  const stageColumns = hasStageState
+    ? "stage_state.started_at AS stage_started_at, stage_state.updated_at AS stage_updated_at"
+    : "NULL AS stage_started_at, NULL AS stage_updated_at";
+  const stageJoin = hasStageState
+    ? `LEFT JOIN job_stage_states AS stage_state
+         ON stage_state.job_url = job_list_projections.job_id
+        AND stage_state.stage = job_list_projections.current_substage`
+    : "";
+  const rows = allRows<DashboardWorkRow>(
+    db,
+    `SELECT job_id, title, employer, current_stage, current_substage, current_state,
+            ${stageColumns}
+       FROM job_list_projections
+       ${stageJoin}
+       ${activeFilter.where}
+        AND current_state IN ('queued', 'running')`,
+    activeFilter.params,
+  );
+
+  const nowMs = Date.now();
+  const cutoffMs = nowMs - DASHBOARD_STUCK_AFTER_SECONDS * 1_000;
+  const workerUnavailable = dashboardWorkerUnavailable(db, nowMs);
+  const stuckRows: DashboardWorkRow[] = [];
+  let active = 0;
+  for (const row of rows) {
+    if (
+      row.current_state === "running" &&
+      hasStageState &&
+      workerUnavailable &&
+      dashboardWorkTimestampMs(row.stage_updated_at ?? row.stage_started_at) <= cutoffMs
+    ) {
+      stuckRows.push(row);
+    } else {
+      active += 1;
+    }
+  }
+
+  stuckRows.sort(
+    (left, right) =>
+      dashboardWorkTimestampMs(left.stage_updated_at ?? left.stage_started_at) -
+      dashboardWorkTimestampMs(right.stage_updated_at ?? right.stage_started_at),
+  );
+  return {
+    active,
+    stuck: stuckRows.length,
+    stuckAfterSeconds: DASHBOARD_STUCK_AFTER_SECONDS,
+    stuckItems: stuckRows.slice(0, DASHBOARD_STUCK_ITEM_LIMIT).map((row) => ({
+      jobKey: row.job_id,
+      title: row.title || "Untitled",
+      company: row.employer || "Unknown company",
+      stage: isStage(row.current_substage)
+        ? row.current_substage
+        : isStage(row.current_stage)
+          ? row.current_stage
+          : "discover",
+      updatedAt: row.stage_updated_at ?? row.stage_started_at,
+    })),
+  };
+}
+
+function dashboardWorkTimestampMs(value: string | null): number {
+  if (!value) return Number.NEGATIVE_INFINITY;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+}
+
+function dashboardWorkerUnavailable(db: SqliteDatabase, nowMs: number): boolean {
+  return readWorkerHealth(db.name, new Date(nowMs)).status !== "healthy";
 }
 
 export function buildOutcomeAnalyticsSummary(db: SqliteDatabase): OutcomeAnalyticsSummary {

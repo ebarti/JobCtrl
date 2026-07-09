@@ -8,16 +8,15 @@ interface StoryA11yConfig {
   readonly config?: { readonly rules?: ReadonlyArray<{ readonly id: string; readonly enabled?: boolean }> };
 }
 
-// Per docs/frontend-target.md §10.7, the bar for forms / dialogs is "no
-// critical violations". `includedImpacts` constrains the axe report so a
-// failing serious/critical finding fails the CI step while moderate and
-// minor noise stays informational.
+// Per docs/architecture/frontend/testing.md §10.7, the bar is "no critical
+// or serious violations". `includedImpacts` constrains the axe report so a
+// failing serious/critical finding fails the CI step while moderate and minor
+// noise stays informational.
 //
-// Stories that surface known production-code a11y bugs from earlier
-// phases (e.g., role="row" divs in DataTable, missing aria-label on a
-// raw <select>, icon-only close buttons inside Radix Dialog/Sheet/Drawer
-// primitives) opt out by setting `parameters: { a11y: { test: "off" } }`
-// — those defects are tracked separately and out of Phase 7 scope.
+// A story may use either supported escape hatch (`a11y.test: "off"` or
+// `a11y.disable: true`) only for a pre-existing production defect with a
+// matching entry in docs/backlog.md. The backlog, not this policy comment,
+// owns the live deferral inventory.
 const config: TestRunnerConfig = {
   async preVisit(page) {
     await injectAxe(page);

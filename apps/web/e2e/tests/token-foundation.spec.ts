@@ -211,6 +211,22 @@ async function expectNoDocumentInlineOverflow(page: Page): Promise<void> {
   );
 }
 
+async function expectArtifactPdfPreviewRendered(page: Page): Promise<void> {
+  const preview = page.getByRole("region", { name: "Artifact PDF preview" });
+  await expect(preview).toBeVisible({ timeout: 30_000 });
+  await expect(preview.getByText("1 page", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(preview.getByText("Preview failed", { exact: true })).toHaveCount(0);
+
+  const pageImage = preview.locator(".pdf-preview-page img");
+  await expect(pageImage).toHaveCount(1);
+  await expect(pageImage).toBeVisible();
+  await expect
+    .poll(() => pageImage.evaluate((element) => (element as HTMLImageElement).naturalWidth), {
+      message: "artifact PDF preview page should load real image pixels",
+    })
+    .toBeGreaterThan(0);
+}
+
 async function expectShellChromePainted(page: Page, route: string, activeLink: string): Promise<void> {
   await page.goto(route);
 
@@ -320,7 +336,7 @@ test("shell chrome stays readable on Phase 8 route surfaces", async ({ page }) =
   await expectShellChromePainted(page, "/apply-review", "Apply review");
   await expectShellChromePainted(page, "/artifacts/2", "Artifacts");
   await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Artifact PDF preview" })).toBeVisible();
+  await expectArtifactPdfPreviewRendered(page);
   await expect(page.getByRole("link", { name: "open PDF" })).toBeVisible();
 
   await page.goto("/jobs");
@@ -332,7 +348,7 @@ test("shell chrome stays readable on Phase 8 route surfaces", async ({ page }) =
   await expectShellChromePainted(page, "/pipelines", "Pipelines");
   await expectShellChromePainted(page, "/artifacts/2", "Artifacts");
   await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Artifact PDF preview" })).toBeVisible();
+  await expectArtifactPdfPreviewRendered(page);
   await expect(page.getByRole("link", { name: "open PDF" })).toBeVisible();
 });
 

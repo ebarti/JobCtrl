@@ -106,25 +106,30 @@ to the rename train / post-rename launch assets (R7b).
 > to PyPI" workflow remains `disabled_manually` on GitHub as the safety catch.
 
 - **Action.** Confirm the `jobctrl` PyPI name is held, re-enable the "Publish
-  to PyPI" workflow, then tag the first public release; the tag build is gated
-  on the release-check workflow passing.
+  to PyPI" workflow, then tag the first public release. The publish job builds
+  the wheel and source archive first, runs the strict-prompt release scanner
+  against both the checkout and those exact archives, and only then uploads
+  them; the separate strict release-check workflow remains the pre-tag
+  repository gate.
 - **Rollback.** Delete the tag; if a bad artifact published to PyPI, yank it;
   re-disable the workflow.
 
-### 9.5 — Homebrew tap publication (owner-only; new 2026-07-07)
+### 9.5 — Homebrew tap publication (automated; updated 2026-07-09)
 
 The formula's canonical copy lives in-repo at
 `packaging/homebrew/Formula/jobctrl.rb` (head-only spec until the first
-tag). The tap repository `ebarti/homebrew-tap` already exists (it ships
-`claude-notifier` and `skills`), and `Formula/jobctrl.rb` is committed in the
-owner's local tap clone (`~/Github/homebrew-tap`, commit `d76b052`) —
-**unpushed**, so nothing is published yet. At release:
+tag). The tap repository `ebarti/homebrew-tap` already exists and publishes
+`Formula/jobctrl.rb`. `.github/workflows/sync-homebrew-tap.yml` checks out the
+tap with a write-scoped deploy key and copies the canonical formula there on
+every canonical-formula change to `main`, every published GitHub release, and
+manual dispatch. The workflow validates Ruby syntax and byte equality before
+committing, and makes no commit when the tap is already current.
 
-- **Action.** Push the tap commit (`git -C ~/Github/homebrew-tap push`); at
-  the first public tag, add the stable `url` (tag tarball) and its `sha256`
-  to both copies, re-run `brew style`/`brew audit --formula`, push the tap
-  update, and verify `brew install ebarti/tap/jobctrl` end to end. The
-  README's Get Started section already documents the tap command.
+- **Action.** At the first public tag, add the stable `url` (tag tarball) and
+  its `sha256` to the canonical in-repo formula, run `brew style` and
+  `brew audit --formula`, merge the change, and verify
+  `brew install ebarti/tap/jobctrl` end to end. The sync workflow publishes
+  that exact update to the tap; do not edit the tap copy by hand.
 - **Rollback.** Revert or delete `Formula/jobctrl.rb` in the tap; the
   README's script and manual paths are unaffected.
 
@@ -136,4 +141,4 @@ owner's local tap clone (`~/Github/homebrew-tap`, commit `d76b052`) —
 | 9.2 Docs-site deploy | Yes | No | Prepared + verifiable; owner executes |
 | 9.3 Rename redirect | Yes | Landed 2026-07-07 | Redirect verify at flip; owner executes |
 | 9.4 Release tagging | Yes | Landed 2026-07-07 | Mechanics ready; owner re-enables + tags |
-| 9.5 Homebrew tap | Yes | No | Formula in-repo + staged in local tap clone; owner pushes + pins stable spec at first tag |
+| 9.5 Homebrew tap | First stable tag only | No | Head formula published; automated exact-copy sync configured; stable spec + install verification remain for first tag |

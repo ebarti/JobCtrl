@@ -13,7 +13,7 @@ already-running stack, but must not run the real baseline unattended.
 ## Stop Conditions
 
 T0 is the instant the wrapper starts the first install command,
-`corepack pnpm install:interactive`.
+`scripts/install`.
 
 TTFV-1 stops when both conditions are true:
 
@@ -91,7 +91,7 @@ node scripts/ttfv-real.mjs summarize \
 
 The summary command passes only when all inputs are gateable full-run records:
 default install/init/stack commands, T0 captured on
-`corepack pnpm install:interactive`, default discovery-inclusive work command,
+`scripts/install`, default discovery-inclusive work command,
 proof that the measured job was absent from the all-state baseline and carries
 `discoveredAt >= T0`, hashed real discovery-source proof, same-job proof for
 both stop conditions, non-CI execution, and successful API/UI/PDF evidence.

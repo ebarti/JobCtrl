@@ -4,61 +4,93 @@ pageClass: jh-user-guide-page
 
 # How JobCtrl Compares
 
-This page compares JobCtrl's **approach** to common job-search-tool
-capabilities against other approaches, one neutral capability category at a time.
+JobCtrl, [Career-Ops](https://github.com/santifer/career-ops), and
+[AI Job Search](https://github.com/MadsLorentzen/ai-job-search) address the same
+broad problem, but they are built for different operating styles. This is a
+capability comparison, not a quality ranking.
 
-::: warning Scaffold — alternative columns are not yet published
-This is the comparison **structure and rules only**. It deliberately names **no
-external product or company**. The "Alternative approach" columns are
-placeholders for the maintainer to fill, privately and one at a time, only after
-verifying each fact against that approach's own public documentation (see
-[How this page is maintained](#how-this-page-is-maintained)). Until a cell is
-verified it stays a `TODO(owner)` placeholder rather than a speculative claim.
-:::
-
-The **JobCtrl** column states only shipped, `Current` behavior; each cell cites
-the claim-ledger IDs (`CL-0xx`) that back it. Those IDs are governed in the
-repository-only claims ledger (`docs/claims-ledger.md`), and each maps to a
-user-facing page linked from the capability category on the left.
+- **Present** means the capability is supported by first-party documentation and
+  implementation artifacts in the cited snapshot. It does not mean this review
+  executed or benchmarked the upstream project.
+- **Partial** means the project covers a useful part of the capability, or uses
+  a narrower workflow.
+- **Not evidenced** means no matching capability was found in the cited public
+  snapshot. It does not mean the project could not add one or that a user could
+  not build it through customization.
 
 ## Capability comparison
 
-| Capability category | JobCtrl | Alternative approach A | Alternative approach B |
+The clearest product-surface difference is the user interface: JobCtrl's web app
+is its supported operator surface, Career-Ops' web UI is a recent opt-in alpha,
+and AI Job Search has no graphical interface in the reviewed snapshot.
+
+### JobCtrl's supported web UI
+
+[![JobCtrl dashboard showing pipeline progress, job counts, source health, and apply runs](assets/screenshots/dashboard.png)](user/screenshots.md)
+
+The screenshot uses synthetic sample data. Open the [Product Tour](user/screenshots.md)
+for the complete Profile → Discovery → Pipeline → Jobs → Apply Review → Runs
+workflow, including the evidence-rich job detail and resume editing surfaces.
+
+| Capability | JobCtrl | Career-Ops | AI Job Search |
 | --- | --- | --- | --- |
-| **Data ownership** — where your profile, jobs, and materials live | Local-first: one SQLite database and generated files under your home directory; no hosted backend and no account (`CL-060`, `CL-061`). Data at rest is not encrypted — protection is your OS account (`CL-066`). See [Data, Privacy & Safety](user/data-and-safety.md). | `TODO(owner)` | `TODO(owner)` |
-| **Outbound data** — what leaves your machine, and when | Nothing leaves by default; each egress path (LLM, apply-agent prompt, job boards, read-only Gmail, Maps, CAPTCHA, telemetry) is opt-in and configuration-gated (`CL-061`, `CL-062`, `CL-065`). See [Security → What Leaves Your Machine](user/security.md#what-leaves-your-machine). | `TODO(owner)` | `TODO(owner)` |
-| **Scoring transparency** — how fit is decided and explained | A deterministic, versioned policy scores fit 1–10 from structured evidence, with a per-requirement ledger explaining each score; scoring is an applicant-side triage aid, not a hiring decision (`CL-010`, `CL-011`, `CL-012`). See [Scoring](architecture/scoring.md). | `TODO(owner)` | `TODO(owner)` |
-| **Materials integrity** — how tailored resumes stay truthful | Every bullet traces to its source evidence; deterministic fabrication gates block invented facts and fail closed; keyword coverage is computed against the actual rendered resume text (`CL-020`, `CL-021`, `CL-022`). See [Tailoring Contract](architecture/tailoring.md). | `TODO(owner)` | `TODO(owner)` |
-| **Apply supervision** — what stands between a job and a submission | Live submission requires an explicit approval bound to the reviewed materials, profile, and URL plus matching dry-run evidence, enforced in the worker claim transaction; dry runs submit nothing (browser-level guard); no application is submitted twice (`CL-030`, `CL-031`, `CL-033`, `CL-034`). See [Security → Approval And Control Gates](user/security.md#approval-and-control-gates). | `TODO(owner)` | `TODO(owner)` |
-| **Third-party boundaries** — what the tool refuses to do | Never submits, runs destructive actions, or bypasses CAPTCHA / paywall / login / rate-limit / bot controls without explicit authorization; the apply agent stops on SSO, declines permission prompts, and never enters payment details (`CL-035`). See [Security → No Third-Party Bypass](user/security.md#no-third-party-bypass). | `TODO(owner)` | `TODO(owner)` |
-| **Reliability** — how long-running work survives crashes | Every stage runs as a durable Temporal workflow with heartbeats and classified retries; the Runs page shows every run with a deep link into the workflow engine (`CL-050`, `CL-051`). See [Runtime Boundaries](architecture/runtime.md). | `TODO(owner)` | `TODO(owner)` |
-| **Cost control** — how automated LLM spend is bounded | A configurable daily spend ceiling runs a budget preflight before each spendful workflow and stops it at the ceiling; today's estimated spend is visible on the health surface (`CL-040`, `CL-041`). It is an estimate, not the provider bill. See [Configuration → LLM spend](user/configuration.md). | `TODO(owner)` | `TODO(owner)` |
+| **Primary experience** | **Present.** A local product composed of a React client, TypeScript API, Python worker, Temporal workflows, and a supporting CLI. See [Runtime Boundaries](architecture/runtime.md). | **Present.** A file-first system whose Markdown modes run through several AI coding CLIs, with standalone evaluators for narrower paths. These surfaces are not feature-equivalent: the pinned headless OpenAI-compatible path stops after evaluation, before tailoring/PDF generation ([open issue #1669](https://github.com/santifer/career-ops/issues/1669)). [Architecture](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/ARCHITECTURE.md#L30-L70) | **Present, intentionally narrow.** A Claude Code command-and-skill framework with Python/Bun utilities and LaTeX output. The maintainer declined in-tree OpenCode support to avoid duplicated workflow sources ([issue #45](https://github.com/MadsLorentzen/ai-job-search/issues/45)); PDF/LaTeX is the only verified first-class document path ([issue #47](https://github.com/MadsLorentzen/ai-job-search/issues/47)). [Source](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/README.md#L24-L52) |
+| **Graphical user interface** | **Present — supported product surface.** The React/Vite SPA is the main control plane, not an optional viewer. It provides Profile, Discovery, Pipelines, Dashboard, Jobs and job-detail audit, Apply Review with rich-text resume editing, Runs, Artifacts, Evidence, Analytics, Outreach, Preferences, and Debug views, with API mutations and SSE-driven refresh. See the screenshot-backed [Product Tour](user/screenshots.md) and [Frontend Architecture](architecture/frontend/index.md). | **Partial — recent alpha.** The long-standing UI is a Go terminal dashboard. The optional Next.js web UI first landed on **2026-07-02**, six days before the pinned snapshot, and its own README says to expect rough edges. It can view and write the core files across Pipeline, Explore, Apply, Today, Analytics, CV, and Config, but an open alpha defect can resolve a tracker row to the wrong report and application URL ([issue #1623](https://github.com/santifer/career-ops/issues/1623)). [Alpha README](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/web/README.md#L1-L43), [introduction commit](https://github.com/santifer/career-ops/commit/1791dc4e3a14aeb10decd852c927bb636aefe00d) | **Not evidenced.** The reviewed snapshot exposes Claude Code commands, local files, and generated documents; no graphical application or dashboard implementation was found. [Repository structure](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/README.md#L132-L193) |
+| **Job discovery** | **Present.** Configured sources feed a durable discovery and preparation pipeline; optional scheduling is off until enabled, and manual browser capture is also supported. See [Pipeline Operations](architecture/pipeline/operations.md) and [Daily Workflow](user/normal-flows.md#configure-discovery). | **Present, with a current metadata gap.** A zero-token scanner reads open, no-auth ATS APIs and feeds, with 21 provider modules and optional liveness verification. At this snapshot, provider posting dates are dropped before `pipeline.md` and scan history, so freshness cannot be carried forward without another fetch ([open issue #1578](https://github.com/santifer/career-ops/issues/1578)). [Architecture](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/ARCHITECTURE.md#L46-L52), [provider count and verification](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/README.md#L321-L342) | **Present.** `/scrape` searches and deduplicates listings. Four shipped portals focus on Denmark; LinkedIn and FreeHire provide broader starting points, and `/add-portal` scaffolds a market-specific integration in the user's fork. The previously missing `/scrape` command wiring is fixed in this snapshot ([issue #68](https://github.com/MadsLorentzen/ai-job-search/issues/68)); FreeHire is an external best-effort service with no SLA and a self-host option ([issue #62](https://github.com/MadsLorentzen/ai-job-search/issues/62)). [Source](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/README.md#L263-L278) |
+| **Fit evaluation** | **Present.** An LLM-produced 1–10 fit score is governed by a versioned rubric; the stored result includes criteria, requirement-level evidence, gaps, blockers, confidence, and model/prompt trace metadata. See [Scoring](architecture/scoring.md#scoring-fit-assessment). | **Present.** The AI produces a structured 1–5 evaluation. The per-job workflow maps requirements to exact CV lines, records gaps, and saves the result as a report. [Scoring source](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/modes/_shared.md#L35-L61), [evidence mapping](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/modes/oferta.md#L65-L81) | **Present.** The AI scores technical skills, experience, behavioral fit, and career alignment with fixed weights, while location acts as a gate; strengths and gaps accompany the score. [Source](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/.claude/skills/job-application-assistant/04-job-evaluation.md#L102-L151) |
+| **Tailored documents** | **Present.** JobCtrl generates reviewable resume, cover-letter, HTML, and PDF artifacts for a selected job. See [Tailoring Contract](architecture/tailoring.md). | **Present.** Career-Ops generates tailored CV/PDF and cover-letter artifacts through its agent-driven modes. [Source](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/README.md#L98-L114) | **Present.** `/apply` drafts a LaTeX CV and cover letter, sends both through a second-agent review, and compiles them to PDF. [Source](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/README.md#L196-L217) |
+| **Grounding and output validation** | **Present.** Resume bullets carry source provenance; deterministic fabrication and claim-grounding gates can reject a candidate; keyword coverage is checked against rendered output. See [Tailoring Contract](architecture/tailoring.md). | **Partial.** Prompts restrict claims to named local sources, require exact CV evidence, and forbid invented metrics or skills. Enforcement is instruction- and review-based: the pinned snapshot has neither a fail-closed CV fact/faithfulness gate nor a final generated-CV keyword-coverage checker ([open issues #1411](https://github.com/santifer/career-ops/issues/1411) and [#1285](https://github.com/santifer/career-ops/issues/1285)). [Prompt rules](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/modes/_shared.md#L11-L31), [PDF rules](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/modes/pdf.md#L65-L72) | **Partial.** The drafter-reviewer instructions reject unsupported suggestions and require profile-grounded claims; PDF layout, ATS text extraction, and keyword coverage are also checked. These are agent instructions and document checks, not a deterministic source-to-claim provenance gate. One fork user reported that the reviewer and anti-fabrication rules caught real stretches, but that is useful field evidence rather than a guarantee ([issue #19](https://github.com/MadsLorentzen/ai-job-search/issues/19)). [Review rules](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/.claude/commands/apply.md#L152-L174), [PDF and ATS checks](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/.claude/commands/apply.md#L178-L255) |
+| **Local data and external processing** | **Present.** The database, configuration, generated files, logs, and browser state are local. Selected workflows send the necessary content to configured LLMs, job sources, Gmail, CAPTCHA, Maps, or telemetry services. Local data is not encrypted. See [Data, Privacy & Safety](user/data-and-safety.md#local-data) and [What Leaves Your Machine](user/security.md#what-leaves-your-machine). | **Present.** Human-readable Markdown/YAML/TSV files are canonical and a SQLite index is derived; no hosted account is required. Content sent for AI processing goes directly to the provider chosen through the user's CLI, while a local-model path is available. [Sources](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/ARCHITECTURE.md#L5-L24), [provider boundary](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/README.md#L420-L427) | **Present.** Profile sources, generated LaTeX/PDFs, a CSV tracker, and per-application archives live in the user's fork and personal outputs are gitignored. Claude Code and explicit web-research steps process the content needed by the workflow. [Sources](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/README.md#L132-L193), [gitignore](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/.gitignore#L21-L68) |
+| **Application assistance and submission boundary** | **Present.** Browser and approved Gmail paths can submit applications. A dry run cannot submit, and the default approval gate binds live submission to reviewed materials, profile version, URL, and matching evidence; users can explicitly disable that approval requirement. See [Approval And Control Gates](user/security.md#approval-and-control-gates). | **Present.** The apply assistant can fill supported ATS form fields, but the user reviews the form and clicks Submit; the tool states that it never submits. [Source](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/docs/APPLY_AUTOFILL.md#L1-L7) | **Partial.** `/apply` evaluates the role and prepares reviewed CV and cover-letter files. The snapshot documents user submission followed by `/outcome`; it does not evidence browser-form filling or submission. [Source](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/.claude/commands/apply.md#L263-L284) |
+| **Post-application and coaching** | **Present.** JobCtrl records outcomes and supports grounded, stored interview preparation **in Beta** (truthfulness gates are shipped; output quality lacks real-user validation), contact research, outreach drafts, and follow-up reminders; it is not a live interview assistant and does not send outreach. See [Daily Workflow](user/normal-flows.md) and [Responsible Use Boundaries](user/data-and-safety.md#responsible-use-boundaries). | **Partial.** Interview story banks and preparation, company/contact research, and negotiation scripts are present. A structured per-application outcome archive and calibration loop remain proposed rather than shipped ([open issues #1722](https://github.com/santifer/career-ops/issues/1722) and [#1724](https://github.com/santifer/career-ops/issues/1724)). [Current features](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/README.md#L98-L114) | **Present, with a handoff gap.** `/outcome` archives results and feeds future calibration; `/interview` builds stage-specific preparation, while `/upskill` turns recurring gaps into a learning plan. The current `/apply` completion message does not tell users that `/interview` exists ([open issue #108](https://github.com/MadsLorentzen/ai-job-search/issues/108)). [Source](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/README.md#L118-L128) |
+| **Interruption and recovery** | **Present.** Long-running work uses Temporal histories, retries, heartbeats, and stable workflow identities; ambiguous apply results park for human verification instead of risking a duplicate. See [Runtime Boundaries](architecture/runtime.md) and [Applications Submit At Most Once](user/security.md#applications-submit-at-most-once). | **Partial.** Canonical files, integrity tools, and resumable batch flags preserve some progress, but there is no durable workflow engine. The pinned snapshot also has open defects in updater migration, tracker numbering, and report analytics ([#1706](https://github.com/santifer/career-ops/issues/1706), [#1704](https://github.com/santifer/career-ops/issues/1704), [#1679](https://github.com/santifer/career-ops/issues/1679)). [Architecture](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/ARCHITECTURE.md#L54-L64), [batch recovery](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/docs/RUNNING_ON_A_BUDGET.md#L104-L127) | **Not evidenced.** The command workflow writes final artifacts and outcome history, but the snapshot does not document checkpointed resumption or durable retry for an interrupted `/apply` run. [Workflow source](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/.claude/commands/apply.md#L1-L11) |
+| **LLM cost controls** | **Present.** A configurable daily estimated-spend ceiling runs a preflight before spendful workflows and exposes the estimate in health status; it is not provider billing truth. See [Daily LLM Spend Ceiling](user/security.md#daily-llm-spend-ceiling). | **Partial.** Users can choose hosted or local models and cap, dry-run, or resume batch work, but there is no application-wide dollar ledger or ceiling. The pinned API evaluators resend an uncached static prompt, and Claude Code loads duplicated project instructions ([open issues #1709](https://github.com/santifer/career-ops/issues/1709) and [#1713](https://github.com/santifer/career-ops/issues/1713)). Earlier user reports also led to a bounded-research fix after one role evaluation recursively consumed tens of millions of tokens ([fixed issue #1235](https://github.com/santifer/career-ops/issues/1235)). [Budget options](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/docs/RUNNING_ON_A_BUDGET.md#L1-L13) | **Not evidenced.** The workflow includes token-efficiency instructions, but it has no application-level budget or spend ledger. One user reported roughly 17% of a Claude session for a full `/apply`; the maintainer's later changes improved reviewer dispatch but were described as probably token-neutral end to end because PDF inspection spends the savings ([issue #2](https://github.com/MadsLorentzen/ai-job-search/issues/2)). [Sources](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/README.md#L46-L52), [workflow](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/.claude/commands/apply.md#L7-L11) |
+| **Open-source license** | **Present.** [AGPL-3.0-only](https://github.com/ebarti/JobCtrl/blob/15356b39790e8396d1892573f2810d2ebf7fb359/LICENSE). | **Present.** [MIT](https://github.com/santifer/career-ops/blob/e9bacc484185f56cec210ea821bf1774e989acea/LICENSE). | **Present.** [MIT](https://github.com/MadsLorentzen/ai-job-search/blob/fea59fd8df52082d2a564fe82bdebe587f335d58/LICENSE). |
 
-## How this page is maintained
+## Which operating style fits?
 
-This comparison rots unless it is re-verified. Two rules keep it honest:
+- **JobCtrl** is aimed at users who want a structured local application with a
+  persistent database, visible audit records, durable automation, and optional
+  supervised submission. That comes with the largest local runtime footprint.
+- **Career-Ops** is aimed at users who prefer human-readable files, want to use
+  their choice of AI coding CLI, and want the system to help fill applications
+  while keeping the final submit click manual.
+- **AI Job Search** is aimed at users who already work in Claude Code and accept
+  a full LaTeX toolchain in exchange for a tightly specified drafter-reviewer and
+  PDF/ATS-check workflow. Its shipped search integrations are Denmark-centered,
+  with two broader sources and a generator for other markets.
 
-- **Facts-verified-before-publish.** No comparative cell about an external
-  approach is published without (a) a recorded verification date and (b) a dated
-  link to that approach's **own public documentation** (README, docs site, or
-  official page). No cell asserts a claim from memory, marketing copy, or a
-  third-party summary. Every JobCtrl-column cell cites a frozen `Current`
-  claim-ledger row. Any alternative cell that is not yet verified stays a
-  `TODO(owner)` placeholder (or an HTML-commented draft) — never a speculative
-  claim.
-- **No disparagement.** Alternative entries are neutral, factual descriptions of
-  a published approach, with the source and check date recorded. No unverifiable
-  or comparative-superlative claims.
+## Method and limitations
 
-**Maintenance cadence.** Re-verify every JobCtrl-column cell against the claims
-ledger, and every published alternative cell against its cited source, on each
-release and at minimum **quarterly**. `TODO(owner)`: confirm the interval and
-the sidebar label/placement (plan §11.3). Record the last full re-verification
-date here at publish time: **last verified: `TODO(owner)`**.
+This page was last verified on **2026-07-09** against these exact snapshots:
 
-When you add or change an alternative column, record its entries in this format
-inside the cell so the check date travels with the claim:
+| Project | Default-branch snapshot |
+| --- | --- |
+| JobCtrl | [`15356b39790e8396d1892573f2810d2ebf7fb359`](https://github.com/ebarti/JobCtrl/tree/15356b39790e8396d1892573f2810d2ebf7fb359) |
+| Career-Ops | [`e9bacc484185f56cec210ea821bf1774e989acea`](https://github.com/santifer/career-ops/tree/e9bacc484185f56cec210ea821bf1774e989acea) |
+| AI Job Search | [`fea59fd8df52082d2a564fe82bdebe587f335d58`](https://github.com/MadsLorentzen/ai-job-search/tree/fea59fd8df52082d2a564fe82bdebe587f335d58) |
 
-```text
-<neutral factual statement> (source: <url>, verified <YYYY-MM-DD>)
-```
+Primary evidence came from first-party repository documentation, prompts,
+configuration, code, and repository issue threads. The issue pass inventoried
+every open Career-Ops issue, reviewed a risk-focused sample of its open and
+closed threads, and reviewed every AI Job Search issue on **2026-07-09**.
+User-authored reports were treated as field evidence, not proof of universal
+behavior.
+An issue was treated as a current limitation only when it matched the pinned code
+or a maintainer confirmed the behavior; an open fix pull request was not treated
+as shipped, and a closed defect fixed before the snapshot was not carried forward
+as current. Issue text was not accepted verbatim: for example, AI Job Search
+[issue #106](https://github.com/MadsLorentzen/ai-job-search/issues/106) still says
+`search_company` has zero tests, while the pinned snapshot already contains
+`SearchCompanyTests`; only the remaining direct `match_score` coverage gap is
+current, and it is too narrow to affect this product-level table.
+
+The projects were not benchmarked against the same jobs, profiles, models, or
+machines, so this page makes no claim about output quality, speed, reliability
+rates, or cost in practice. It is also not a security review, legal review, or
+certification that automated access complies with every job site's terms.
+
+Re-verify this page for every JobCtrl release and at least quarterly. Comparative
+claims should remain pinned to exact upstream commits; if a capability cannot be
+confirmed from a current primary source, mark it **Not evidenced** rather than
+inferring it from a project name or marketing copy.

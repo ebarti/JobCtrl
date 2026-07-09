@@ -11,6 +11,7 @@ describe("useDashboardSummaryQuery", () => {
     const { result } = renderHookWithProviders(() => useDashboardSummaryQuery());
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.totals.jobs).toBeGreaterThan(0);
+    expect(result.current.data?.work).toMatchObject({ active: 2, stuck: 1 });
     expect(result.current.data?.funnel.length).toBeGreaterThan(0);
     expect(result.current.data?.applyRuns[0]?.runId).toBe("run-1");
   });

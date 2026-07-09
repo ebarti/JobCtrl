@@ -7,20 +7,33 @@ credentials, so contributions need to preserve privacy and local safety first.
 ## Development Setup
 
 ```bash
-pnpm dev:setup
-uv --project workers/automation run jobctrl doctor
-pnpm dev
+scripts/install
+corepack pnpm dev
 ```
 
+`scripts/install` is the clean-machine setup path: it checks the required
+system tools, offers to install missing Homebrew dependencies (including the
+standalone Corepack package required by current Homebrew Node), syncs Node and
+Python packages, and installs the Playwright browsers. When Corepack is already
+available, `corepack pnpm install:interactive` invokes the same script. Use
+`dev:setup` only when those system tools and browsers are already installed.
 The full local stack runs in the foreground and starts Temporal, the TypeScript
 API, the Vite web app, and the Python worker. Keep that terminal open while
 using the app.
 
+The web app does not require a CLI profile. When contributing to CLI workflows,
+initialize one and run the diagnostic explicitly:
+
+```bash
+uv --project workers/automation run jobctrl init
+uv --project workers/automation run jobctrl doctor
+```
+
 Use a disposable workspace for destructive or screenshot-oriented testing:
 
 ```bash
-pnpm qa:seed -- /tmp/jobctrl-qa
-JOBCTRL_DIR=/tmp/jobctrl-qa pnpm dev
+corepack pnpm qa:seed /tmp/jobctrl-qa
+JOBCTRL_DIR=/tmp/jobctrl-qa corepack pnpm dev
 ```
 
 ## Pull Requests
@@ -63,8 +76,8 @@ git rebase --signoff origin/main
 Run the narrowest useful checks while iterating. Before opening a PR, prefer:
 
 ```bash
-pnpm check
-pnpm test
+corepack pnpm check
+corepack pnpm test
 uv --project workers/automation run --extra dev python -m build workers/automation
 git diff --check
 ```

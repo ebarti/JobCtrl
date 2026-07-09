@@ -48,6 +48,12 @@ export const Empty: Story = {
               appliedToday: 0,
               dryRuns: 0,
             },
+            work: {
+              active: 0,
+              stuck: 0,
+              stuckAfterSeconds: 150,
+              stuckItems: [],
+            },
             funnel: [],
             conversion: {
               totals: {

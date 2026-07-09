@@ -1,0 +1,62 @@
+name: Sync Homebrew Tap
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "packaging/homebrew/Formula/jobctrl.rb"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-homebrew-tap
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Publish canonical formula
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out JobCtrl
+        uses: actions/checkout@v4
+
+      - name: Run strict release privacy gate
+        run: python3 scripts/release_check.py --strict-prompt
+
+      - name: Check out Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: ebarti/homebrew-tap
+          path: homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+
+      - name: Validate and synchronize formula
+        run: |
+          set -euo pipefail
+          ruby -c packaging/homebrew/Formula/jobctrl.rb
+          install -m 0644 \
+            packaging/homebrew/Formula/jobctrl.rb \
+            homebrew-tap/Formula/jobctrl.rb
+          cmp \
+            packaging/homebrew/Formula/jobctrl.rb \
+            homebrew-tap/Formula/jobctrl.rb
+          git -C homebrew-tap diff --check
+
+      - name: Commit synchronized formula
+        working-directory: homebrew-tap
+        run: |
+          set -euo pipefail
+          if [[ -z "$(git status --short --untracked-files=all -- Formula/jobctrl.rb)" ]]; then
+            echo "Formula/jobctrl.rb already matches the canonical JobCtrl formula."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/jobctrl.rb
+          git commit -m "chore: sync JobCtrl formula (${GITHUB_REF_NAME})"
+          git push origin HEAD:main

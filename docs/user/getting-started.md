@@ -35,7 +35,8 @@ downloads. Each line says what the tool is for.
 - **Node.js 20.19 or newer** — the JavaScript runtime behind the TypeScript API
   and the web app.
 - **pnpm, via Corepack** — installs the project's JavaScript dependencies.
-  Corepack ships with Node, so there is nothing extra to install.
+  Some current Node distributions, including Homebrew Node, do not bundle
+  Corepack; the guided installer can offer `brew install corepack` when needed.
 - **uv** — a fast installer and environment manager for Python.
 - **Temporal CLI** — runs a local Temporal (the workflow engine) with
   `temporal server start-dev`.
@@ -48,8 +49,8 @@ downloads. Each line says what the tool is for.
 
 ::: details Optional tools — skip these on a first install
 - **Google Maps API key** — enables address autocomplete in the Profile form.
-- **Gmail OAuth Desktop client** — enables read-only scans for verification
-  codes and application outcomes.
+- **Gmail OAuth Desktop client** — enables bounded verification-code and
+  application-outcome lookups plus approval-bound application sends.
 - **CAPTCHA-solving key** — only for auto-apply runs that explicitly opt into it.
 :::
 
@@ -67,14 +68,14 @@ Homebrew users can install the toolchain plus a global `jobctrl` launcher
 instead, then bootstrap through it:
 
 ```bash
-brew install ebarti/tap/jobctrl
+brew install ebarti/tap/jobctrl --HEAD
 jobctrl bootstrap
 ```
 
 The launcher proxies every CLI command (`jobctrl doctor`, `jobctrl dev`, …)
 into the checkout, so you can skip the long `uv --project …` prefixes shown
-in this guide. The tap is published together with the first public release;
-from an existing checkout, `brew install --formula
+in this guide. The public formula is beta and HEAD-only until the first tagged
+formula is published. From an existing checkout, `brew install --formula
 packaging/homebrew/Formula/jobctrl.rb --HEAD` installs the same launcher.
 
 Or do the same steps by hand:
@@ -82,7 +83,7 @@ Or do the same steps by hand:
 ```bash
 git clone https://github.com/ebarti/JobCtrl.git
 cd JobCtrl
-pnpm install:interactive
+scripts/install
 ```
 
 Each install path downloads the project and runs the guided first-run installer:
@@ -95,7 +96,7 @@ If your machine already has the system tools and browsers, this non-interactive
 command is enough:
 
 ```bash
-pnpm dev:setup
+corepack pnpm dev:setup
 ```
 
 Syncs the JavaScript and Python dependencies without the guided system checks.
@@ -222,7 +223,7 @@ Use a throwaway workspace when testing risky flows, taking screenshots, or
 preparing a bug report — never your real `~/.jobctrl` data.
 
 ```bash
-pnpm qa:seed -- /tmp/jobctrl-qa
+corepack pnpm qa:seed /tmp/jobctrl-qa
 JOBCTRL_DIR=/tmp/jobctrl-qa pnpm dev
 ```
 

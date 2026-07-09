@@ -11,20 +11,22 @@ code and need the commands that prove it still works.
 ## Install
 
 ```bash
-pnpm install:interactive
+scripts/install
 ```
 
-`pnpm install:interactive` is the first-run path for new contributors. It
-checks for Node.js, Corepack, uv, the Temporal CLI, Chrome/Chromium, and Poppler,
-offers Homebrew installs for missing machine-level tools when available, then
-runs the repository dependency setup: frozen pnpm install, uv sync, and
-Playwright Chromium installs for both the web package and the Python worker. It
-then runs `jobctrl setup` to detect Claude/Codex/Antigravity auth, persist
-enabled analysis legs, and report whether employer analysis is ready. It does
-not run `jobctrl doctor` by default because web-first users do not need the CLI
-profile created by `jobctrl init`.
+`scripts/install` is the first-run path for new contributors. It checks for
+Node.js, Corepack, uv, the Temporal CLI, Chrome/Chromium, and Poppler, offers
+Homebrew installs for missing machine-level tools when available, then runs the
+repository dependency setup: frozen pnpm install, uv sync, and Playwright
+Chromium installs for both the web package and the Python worker. This direct
+entry point can install a missing standalone Corepack package; once Corepack is
+available, `corepack pnpm install:interactive` invokes the same script. It then
+runs `jobctrl setup` to detect Claude/Codex/Antigravity auth, persist enabled
+analysis legs, and report whether employer analysis is ready. It does not run
+`jobctrl doctor` by default because web-first users do not need the CLI profile
+created by `jobctrl init`.
 
-`pnpm install:interactive` accepts `--yes`, `--dry-run`, `--skip-browsers`,
+`scripts/install` accepts `--yes`, `--dry-run`, `--skip-browsers`,
 `--skip-system`, `--skip-doctor`, and `--run-doctor` for non-interactive,
 partial, or CLI-diagnostic runs.
 
@@ -43,12 +45,12 @@ For machines that already have the system tools and browsers installed, use the
 non-interactive dependency sync:
 
 ```bash
-pnpm dev:setup
+corepack pnpm dev:setup
 ```
 
-`pnpm dev:setup` installs the Node workspace dependencies and runs
+`corepack pnpm dev:setup` installs the Node workspace dependencies and runs
 `uv --project workers/automation sync --extra dev`, which installs the Python
-Python worker, `python-jobspy`, JobSpy's locked transitive dependencies, and
+worker, `python-jobspy`, JobSpy's locked transitive dependencies, and
 the Python dev tools used by local checks. It does not install Temporal,
 Chrome/Chromium, Poppler, or Playwright browser binaries.
 
@@ -166,7 +168,7 @@ pnpm ttfv:summary -- "$HOME/.jobctrl/measurements/ttfv-real-run-"*.json
 
 Use `node scripts/ttfv-real.mjs run ...` directly on a clean checkout before
 dependencies are installed; the wrapper records T0 immediately before it starts
-`corepack pnpm install:interactive`, captures a pre-work `/v1/jobs` baseline,
+`scripts/install`, captures a pre-work `/v1/jobs` baseline,
 across all job visibility states, and starts the real path with
 `jobctrl run discover score tailor --limit 1 --workers 1`. The summary gate
 accepts only full clean-run records with all-state baseline absence,

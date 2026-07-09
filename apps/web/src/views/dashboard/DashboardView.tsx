@@ -1,21 +1,38 @@
 import { OutcomeSuggestionsPanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
 import { useApplicationOutcomesQuery } from "../../contexts/operations/hooks/useApplicationOutcomesQuery.js";
 import { useDashboardSummaryQuery } from "../../contexts/operations/hooks/useDashboardSummaryQuery.js";
+import { useWorkflowRunsListQuery } from "../../contexts/operations/hooks/useWorkflowRunsListQuery.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { PageHead } from "../../shared/ui/page-head.js";
+import { ActiveRunsCard } from "./ActiveRunsCard.js";
 import { ApplyRunsCard } from "./ApplyRunsCard.js";
 import { ConversionPanel } from "./ConversionPanel.js";
 import { DigestPanel } from "./DigestPanel.js";
 import { Funnel } from "./Funnel.js";
 import { KpiGrid, KpiSkeleton } from "./KpiGrid.js";
+import { RecentActivityCard } from "./RecentActivityCard.js";
 import { SourceHealthCard } from "./SourceHealthCard.js";
+import { WorkStatusCard } from "./WorkStatusCard.js";
+import { IN_PROGRESS_RUNS_INPUT, mergeActiveRuns, STARTING_RUNS_INPUT } from "./active-runs.js";
 
 export function DashboardView() {
   const { data: summary, isLoading, error } = useDashboardSummaryQuery();
   const outcomes = useApplicationOutcomesQuery();
+  const startingRuns = useWorkflowRunsListQuery(STARTING_RUNS_INPUT);
+  const inProgressRuns = useWorkflowRunsListQuery(IN_PROGRESS_RUNS_INPUT);
   const message = error instanceof Error ? error.message : null;
   const outcomesError = outcomes.error instanceof Error ? outcomes.error.message : null;
+  const activeRunsError =
+    startingRuns.error instanceof Error
+      ? startingRuns.error.message
+      : inProgressRuns.error instanceof Error
+        ? inProgressRuns.error.message
+        : null;
+  const activeRuns = mergeActiveRuns(
+    startingRuns.data?.items ?? [],
+    inProgressRuns.data?.items ?? [],
+  );
   const pendingSuggestions = (outcomes.data?.suggestions ?? []).filter(
     (suggestion) => suggestion.status === "pending",
   );
@@ -34,8 +51,15 @@ export function DashboardView() {
           </div>
           <Funnel summary={summary} />
           <div className="dashboard-tail">
+            <WorkStatusCard summary={summary} />
+            <ActiveRunsCard
+              runs={activeRuns}
+              loading={startingRuns.isLoading || inProgressRuns.isLoading}
+              error={activeRunsError}
+            />
+            <RecentActivityCard summary={summary} />
             <ApplyRunsCard summary={summary} />
-            <section className="card">
+            <section className="card col-span-full">
               <CardHeader
                 title="Outcome suggestions"
                 meta={outcomes.data ? `${pendingSuggestions.length} pending` : "loading"}

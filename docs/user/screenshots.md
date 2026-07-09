@@ -50,15 +50,17 @@ runs so you can judge the results before scaling up.
 
 ## The Dashboard
 
-![JobCtrl dashboard showing pipeline progress, job counts, and apply runs](../assets/screenshots/dashboard.png)
+![JobCtrl dashboard showing pipeline progress, job counts, work status, activity, and workflow runs](../assets/screenshots/dashboard.png)
 
 The dashboard is your home base. It summarizes pipeline progress, how many jobs
-sit at each stage, the health of your job sources, and your most recent apply
-runs. Check here first to see what happened while a run was working.
+sit at each stage, the health of your job sources, current and stuck work,
+active workflow runs, recent activity, and recent apply history. Check here
+first to see what happened while a run was working.
 
-**What to check here:** whether your sources are healthy and where jobs are
-piling up between stages. An unhealthy source is the usual reason a Discover
-run comes back thin — fix it before running more.
+**What to check here:** whether any work has stopped updating, which workflows
+are still active, whether your sources are healthy, and where jobs are piling
+up between stages. An unhealthy source is the usual reason a Discover run
+comes back thin — fix it before running more.
 
 ## The Jobs Table
 

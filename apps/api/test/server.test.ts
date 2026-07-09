@@ -1203,6 +1203,102 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("classifies current running work as active or stuck from canonical stage timestamps", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "UPDATE job_stage_states SET state = 'running', updated_at = ? WHERE job_url = ? AND stage = 'score'",
+      ).run("2999-01-01T00:00:00Z", "https://example.com/jobs/failed-score");
+      db.prepare(
+        "UPDATE job_stage_states SET state = 'running', updated_at = ? WHERE job_url = ? AND stage = 'tailor'",
+      ).run("2020-01-01T00:00:00Z", "https://example.com/jobs/blocked-tailor");
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const missingWorkerResponse = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(missingWorkerResponse.statusCode, missingWorkerResponse.body).toBe(200);
+      expect(missingWorkerResponse.json().work).toMatchObject({
+        active: 1,
+        stuck: 1,
+      });
+
+      insertWorkerHeartbeat(options.dbPath, {
+        workerId: "dashboard-worker",
+        appDir: tempDir,
+        dbPath: options.dbPath,
+        lastSeenAt: new Date().toISOString(),
+      });
+      const healthyWorkerResponse = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(healthyWorkerResponse.statusCode, healthyWorkerResponse.body).toBe(200);
+      expect(healthyWorkerResponse.json().work).toMatchObject({
+        active: 2,
+        stuck: 0,
+        stuckItems: [],
+      });
+
+      const mismatchedHeartbeatDb = new Database(options.dbPath);
+      try {
+        mismatchedHeartbeatDb
+          .prepare("UPDATE worker_runtime_heartbeats SET app_dir = ?")
+          .run(`${tempDir}-other`);
+      } finally {
+        mismatchedHeartbeatDb.close();
+      }
+      const mismatchedWorkerResponse = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(mismatchedWorkerResponse.statusCode, mismatchedWorkerResponse.body).toBe(200);
+      expect(mismatchedWorkerResponse.json().work).toMatchObject({
+        active: 1,
+        stuck: 1,
+      });
+
+      const invalidHeartbeatDb = new Database(options.dbPath);
+      try {
+        invalidHeartbeatDb
+          .prepare("UPDATE worker_runtime_heartbeats SET app_dir = ?, last_seen_at = ?")
+          .run(tempDir, "not-a-timestamp");
+      } finally {
+        invalidHeartbeatDb.close();
+      }
+      const invalidWorkerResponse = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(invalidWorkerResponse.statusCode, invalidWorkerResponse.body).toBe(200);
+      expect(invalidWorkerResponse.json().work).toMatchObject({
+        active: 1,
+        stuck: 1,
+      });
+
+      const staleHeartbeatDb = new Database(options.dbPath);
+      try {
+        staleHeartbeatDb
+          .prepare("UPDATE worker_runtime_heartbeats SET last_seen_at = ?")
+          .run("2020-01-01T00:00:00Z");
+      } finally {
+        staleHeartbeatDb.close();
+      }
+      const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().work).toEqual({
+        active: 1,
+        stuck: 1,
+        stuckAfterSeconds: 150,
+        stuckItems: [
+          {
+            jobKey: "https://example.com/jobs/blocked-tailor",
+            title: "Frontend Engineer",
+            company: "Acme",
+            stage: "tailor",
+            updatedAt: "2020-01-01T00:00:00Z",
+          },
+        ],
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("returns the latest pipeline progress snapshot from durable events", async () => {
     const db = new Database(options.dbPath);
     try {

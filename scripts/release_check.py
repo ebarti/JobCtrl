@@ -131,6 +131,8 @@ PLACEHOLDER_PREFIXES = (
 
 PROMPT_PATH = Path("workers/automation/src/jobctrl/apply/prompt.py")
 TARGET_DISTRIBUTION_NAME = "jobctrl"
+HOMEBREW_FORMULA_PATH = Path("packaging/homebrew/Formula/jobctrl.rb")
+HOMEBREW_SYNC_WORKFLOW_PATH = Path(".github/workflows/sync-homebrew-tap.yml")
 OLD_PRODUCT_NAME_RE = re.compile(r"jobhunter|jobctl", re.IGNORECASE)
 OLD_PRODUCT_NAME_ALLOWLIST = (
     Path("docs/plans/implemented"),
@@ -364,6 +366,50 @@ def scan_structural_checks(root: Path, tracked: Iterable[Path]) -> list[str]:
     if distribution_name == TARGET_DISTRIBUTION_NAME and not _publish_has_tag_trigger(root):
         findings.append(
             ".github/workflows/publish.yml: tag publishing is disabled after the rename train"
+        )
+    findings.extend(_homebrew_sync_findings(root))
+    return findings
+
+
+def _homebrew_sync_findings(root: Path) -> list[str]:
+    if not (root / HOMEBREW_FORMULA_PATH).is_file():
+        return []
+    formula = (root / HOMEBREW_FORMULA_PATH).read_text(encoding="utf-8")
+    findings = []
+    if 'depends_on "corepack"' not in formula:
+        findings.append(
+            f"{HOMEBREW_FORMULA_PATH}: does not install Corepack required by the launcher and installer"
+        )
+    try:
+        workflow = (root / HOMEBREW_SYNC_WORKFLOW_PATH).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return findings + [
+            f"{HOMEBREW_SYNC_WORKFLOW_PATH}: canonical Homebrew formula has no tap synchronization workflow"
+        ]
+
+    required_markers = {
+        'branches: ["main"]': "does not synchronize canonical formula changes from main",
+        'types: [published]': "does not synchronize published releases",
+        'repository: ebarti/homebrew-tap': "does not target ebarti/homebrew-tap",
+        'ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}': "does not use the write-scoped tap deploy key",
+        "packaging/homebrew/Formula/jobctrl.rb": "does not read the canonical formula path",
+        "homebrew-tap/Formula/jobctrl.rb": "does not write the tap formula path",
+        "git status --short --untracked-files=all -- Formula/jobctrl.rb": "does not detect an absent or untracked tap formula",
+    }
+    findings.extend(
+        f"{HOMEBREW_SYNC_WORKFLOW_PATH}: {message}"
+        for marker, message in required_markers.items()
+        if marker not in workflow
+    )
+    strict_gate = workflow.find("python3 scripts/release_check.py --strict-prompt")
+    tap_checkout = workflow.find("repository: ebarti/homebrew-tap")
+    if strict_gate < 0:
+        findings.append(
+            f"{HOMEBREW_SYNC_WORKFLOW_PATH}: does not run the strict release privacy gate"
+        )
+    elif tap_checkout >= 0 and strict_gate > tap_checkout:
+        findings.append(
+            f"{HOMEBREW_SYNC_WORKFLOW_PATH}: loads tap credentials before the strict release privacy gate"
         )
     return findings
 

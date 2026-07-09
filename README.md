@@ -45,10 +45,11 @@ the rest:
 curl -fsSL https://jobctrl.dev/install.sh | bash
 ```
 
-**Homebrew** — installs the toolchain and a global `jobctrl` launcher:
+**Homebrew (beta, HEAD-only until the first tagged formula)** — installs the
+toolchain and a global `jobctrl` launcher:
 
 ```bash
-brew install ebarti/tap/jobctrl && jobctrl bootstrap
+brew install ebarti/tap/jobctrl --HEAD && jobctrl bootstrap
 ```
 
 > Published to [`ebarti/homebrew-tap`](https://github.com/ebarti/homebrew-tap)
@@ -82,14 +83,14 @@ when vendor auth or analysis-leg choices change.
 ```bash
 git clone https://github.com/ebarti/JobCtrl.git
 cd JobCtrl
-pnpm install:interactive     # guided system checks + Node/Python deps + Playwright Chromium
+scripts/install  # guided system checks + Node/Python deps + Playwright Chromium
 uv --project workers/automation run jobctrl setup
 ```
 
 Requirements: Python 3.11+, Node.js 20.19+ (pnpm via Corepack), uv, Temporal
 CLI, Chrome/Chromium, Playwright Chromium, Poppler (`pdftoppm`), and an LLM
 provider key or local LLM endpoint (plus vendor auth for any enabled
-employer-analysis ensemble legs). `pnpm dev:setup` is the non-interactive
+employer-analysis ensemble legs). `corepack pnpm dev:setup` is the non-interactive
 dependency sync for provisioned machines.
 
 Playwright Chromium is installed per Python virtualenv; a bare `uv sync` or a
@@ -155,9 +156,10 @@ The short version of [the full, source-cited comparison](https://jobctrl.dev/com
   replacement PDF, and approve only the exact reviewed artifact.
 - Inspect the evidence map to see which profile achievements and skills are
   reused in generated materials, requirement-fit decisions, and recorded gaps.
-- Generate stored interview prep for a selected job from grounded JobCtrl
-  data, with evidence links and gap drills kept inspectable before the
-  interview.
+- Generate stored interview prep **(Beta)** for a selected job from grounded
+  JobCtrl data, with evidence links and gap drills kept inspectable before the
+  interview. Its truthfulness gates are shipped, but output quality has not yet
+  been validated through real-user usage.
 - Edit resume PDF style templates in Preferences, choose a default template,
   and override the template per job without modifying candidate profile data.
 - Track pipeline state, failures, retries, workflow runs, artifacts, and apply
@@ -231,7 +233,8 @@ employers, accounts, provider APIs, and third-party sites as live operations:
 - LLM work can spend money and send job, profile, and generated-material text
   to configured providers. `dailyBudgetUsd` caps new spendful workflows
   locally, but it is an estimate rather than the provider bill.
-- Interview prep is stored pre-interview material only. You can record
+- Beta interview prep is stored pre-interview material only; its output quality
+  has not yet been validated through real-user usage. You can record
   post-interview reflections against an accepted prep generation, but JobCtrl
   is not a live interview assistant; it has no transcript, microphone,
   streaming, websocket, or real-time answer surface.
@@ -371,8 +374,8 @@ sqlite3 ~/.jobctrl/jobctrl.db \
 5. Open Evidence from the main nav, Profile, or a job detail drawer to
    inspect which profile evidence backs generated materials and
    requirement-fit gaps.
-6. Generate or inspect materials and stored interview prep for promising
-   jobs.
+6. Generate or inspect materials and Beta stored interview prep for promising
+   jobs; review it carefully because output quality lacks real-user validation.
 7. Use Apply Review's rich-text resume editor to edit text, formatting, and
    hyperlinks, review comments, and compare a rendered draft against the
    accepted artifact before approval.
@@ -480,7 +483,7 @@ surface shows today's estimated spend.
 ## Development
 
 ```bash
-pnpm install:interactive   # or: scripts/install
+scripts/install            # or: corepack pnpm install:interactive when Corepack exists
 pnpm check                 # cross-stack typecheck + lint
 pnpm test                  # API + web build + Python tests
 ```

@@ -28,6 +28,36 @@ const QA_NOW = "2026-05-04T12:00:00+00:00";
 const QA_PLATFORM_JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
 const QA_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
 
+export function createQaPdfBytes(title: string): Buffer {
+  const safeTitle = title
+    .replaceAll("\\", "\\\\")
+    .replaceAll("(", "\\(")
+    .replaceAll(")", "\\)")
+    .replace(/[^\x20-\x7e]/g, "?")
+    .slice(0, 120);
+  const pageContent = `BT\n/F1 18 Tf\n72 720 Td\n(${safeTitle}) Tj\nET\n`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${Buffer.byteLength(pageContent, "ascii")} >>\nstream\n${pageContent}endstream`,
+  ];
+
+  let pdf = "%PDF-1.4\n% JobCtrl synthetic QA fixture\n";
+  const offsets: number[] = [];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(pdf, "ascii"));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+
+  const xrefOffset = Buffer.byteLength(pdf, "ascii");
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(pdf, "ascii");
+}
+
 const QA_PROFILE = {
   schema_version: 2,
   personal: {
@@ -183,10 +213,10 @@ export function seedQaDatabase(dbPath: string): void {
   const coverTxt = path.join(artifactDir, "gitlab-platform-cover.txt");
   const coverPdf = path.join(artifactDir, "gitlab-platform-cover.pdf");
   fs.writeFileSync(resumeTxt, "QA tailored resume");
-  fs.writeFileSync(resumePdf, "%PDF-1.4\n% QA resume\n");
+  fs.writeFileSync(resumePdf, createQaPdfBytes("QA tailored resume"));
   fs.writeFileSync(resumeHtml, QA_RESUME_HTML);
   fs.writeFileSync(coverTxt, "QA cover letter");
-  fs.writeFileSync(coverPdf, "%PDF-1.4\n% QA cover\n");
+  fs.writeFileSync(coverPdf, createQaPdfBytes("QA cover letter"));
 
   const db = new Database(dbPath);
   db.exec(`

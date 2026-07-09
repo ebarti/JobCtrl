@@ -27,7 +27,7 @@ Use `pnpm dev` for the full local development stack. It stops previously tracked
 
 Known local commands:
 
-- First-run setup: `pnpm install:interactive` (guided system checks + Node/Python dependencies + Playwright Chromium) or `pnpm dev:setup` (non-interactive dependency sync), then `uv --project workers/automation run jobctrl init` and `uv --project workers/automation run jobctrl doctor`.
+- First-run setup: `scripts/install` (guided system checks, including standalone Corepack remediation, plus Node/Python dependencies and Playwright Chromium) or `pnpm dev:setup` (non-interactive dependency sync for already-provisioned machines), then `uv --project workers/automation run jobctrl init` and `uv --project workers/automation run jobctrl doctor`.
 - Python CLI: `uv --project workers/automation run jobctrl doctor`, `uv --project workers/automation run jobctrl run`, or targeted `uv --project workers/automation run jobctrl <command>` after dependencies are installed. The full command tree (per-stage runs, `job <url>`, `backup`, `gmail-auth`, `migrate-resume-html`, …) is documented in `README.md` and `docs/user/`. Work-starting commands start Temporal workflows and require the Temporal dev server plus a running JobCtrl worker.
 - Full local stack: `pnpm dev` (attached foreground supervisor; preferred for agents and annotation).
 - Detached local stack: `pnpm dev:start`, then `pnpm dev:status`, `pnpm dev:logs <name>`, and `pnpm dev:stop`.

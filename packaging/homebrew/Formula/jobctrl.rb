@@ -3,8 +3,8 @@
 # Homebrew formula for the JobCtrl launcher.
 #
 # Canonical home of this file is packaging/homebrew/Formula/jobctrl.rb in the
-# JobCtrl repository; the ebarti/homebrew-tap copy is published from here at
-# release time (see docs/publish-checklist.md, step 9.5).
+# JobCtrl repository; .github/workflows/sync-homebrew-tap.yml publishes exact
+# copies to ebarti/homebrew-tap (see docs/publish-checklist.md, step 9.5).
 #
 # Until the first public tag exists, install straight from a checkout:
 #   brew install --formula packaging/homebrew/Formula/jobctrl.rb --HEAD
@@ -18,6 +18,7 @@ class Jobctrl < Formula
   #   sha256 "<sha256 of that tarball>"
   head "https://github.com/ebarti/JobCtrl.git", branch: "main"
 
+  depends_on "corepack"
   depends_on "git"
   depends_on "node"
   depends_on "poppler"

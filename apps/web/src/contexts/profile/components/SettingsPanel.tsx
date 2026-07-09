@@ -38,6 +38,7 @@ function ExtensionPairingSummary() {
   const tokenQuery = useExtensionCapabilityTokenQuery();
   const rotateToken = useRotateExtensionCapabilityTokenMutation();
   const [message, setMessage] = useState("");
+  const [copyWarning, setCopyWarning] = useState("");
   const token = tokenQuery.data?.token ?? "";
   const tokenPath = tokenQuery.data?.tokenPath ?? "";
 
@@ -45,6 +46,7 @@ function ExtensionPairingSummary() {
     if (!token) {
       return;
     }
+    setCopyWarning("");
     try {
       await clipboard.write(token);
       setMessage("token copied");
@@ -54,12 +56,22 @@ function ExtensionPairingSummary() {
   }
 
   async function rotate() {
+    setCopyWarning("");
+    let response: Awaited<ReturnType<typeof rotateToken.mutateAsync>>;
     try {
-      const response = await rotateToken.mutateAsync();
-      setMessage("token rotated");
-      await clipboard.write(response.token);
+      response = await rotateToken.mutateAsync();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "rotation failed");
+      return;
+    }
+
+    setMessage("token rotated");
+    try {
+      await clipboard.write(response.token);
+    } catch {
+      setCopyWarning(
+        "Token rotated, but automatic copy was unavailable. Use copy token to try again.",
+      );
     }
   }
 
@@ -102,6 +114,11 @@ function ExtensionPairingSummary() {
         {message ? (
           <div className="status-line" role="status">
             {message}
+          </div>
+        ) : null}
+        {copyWarning ? (
+          <div className="banner inline" role="alert">
+            {copyWarning}
           </div>
         ) : null}
       </div>
