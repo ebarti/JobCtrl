@@ -264,6 +264,10 @@ def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> Non
     assert apply_tools["args"] == ["-m", "jobctrl.infrastructure.apply_tools.mcp_server"]
     assert apply_tools["env"]["JOBCTRL_APPLY_CDP_ENDPOINT"] == "http://localhost:9222"
     assert apply_tools["env"]["JOBCTRL_APPLY_APPROVED_APPLICATION_URL"] == "https://apply.example.com/job"
+    assert (
+        apply_tools["env"]["JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS"]
+        == "https://apply.example.com"
+    )
     assert apply_tools["env"]["JOBCTRL_APPLY_UPLOAD_DIR"] == "/tmp/worker-0"
     assert "JOBCTRL_APPLY_PROFILE_DB_PATH" in apply_tools["env"]
     assert "CAPSOLVER_API_KEY" not in apply_tools["env"]

@@ -7,6 +7,7 @@ import os
 import sqlite3
 import sys
 import uuid
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ class ApplyToolsMcpServer:
         uploader: Any | None = None,
         credential_resolver: Any | None = None,
         credential_typer: Any | None = None,
+        allowed_credential_origins: Iterable[str] | None = None,
         captcha_key_resolver: Any | None = None,
         captcha_solver: Any | None = None,
         captcha_injector: Any | None = None,
@@ -57,6 +59,11 @@ class ApplyToolsMcpServer:
         self._uploader = uploader or _upload_file_to_current_input
         self._credential_resolver = credential_resolver or _profile_credential
         self._credential_typer = credential_typer or _type_credential_into_active_field
+        self._allowed_credential_origins = _normalize_allowed_origins(
+            allowed_credential_origins
+            if allowed_credential_origins is not None
+            else _credential_origins_from_env()
+        )
         self._captcha_key_resolver = captcha_key_resolver or _captcha_api_key
         self._captcha_solver = captcha_solver or _solve_with_capsolver
         self._captcha_injector = captcha_injector or _inject_captcha_token
@@ -145,10 +152,16 @@ class ApplyToolsMcpServer:
 
     def _call_type_credential(self, args: dict[str, Any]) -> dict[str, Any]:
         kind = str(args.get("kind") or "")
+        if not self._allowed_credential_origins:
+            raise ValueError("credential origin policy is not configured")
         credential = self._credential_resolver(kind)
         if not credential:
             raise ValueError(f"{kind or 'credential'} is not configured")
-        self._credential_typer(self._cdp_endpoint, credential)
+        self._credential_typer(
+            self._cdp_endpoint,
+            credential,
+            self._allowed_credential_origins,
+        )
         return {
             "content": [
                 {
@@ -325,6 +338,42 @@ def _solve_with_capsolver(api_key: str, challenge: CaptchaChallenge) -> CaptchaS
     return solve_with_capsolver(api_key, challenge)
 
 
+def _credential_origins_from_env() -> tuple[str, ...]:
+    raw = os.environ.get("JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS", "")
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _normalize_allowed_origins(origins: Iterable[str]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for origin in origins:
+        value = _origin_from_url(str(origin))
+        if value and value not in seen:
+            normalized.append(value)
+            seen.add(value)
+    return tuple(normalized)
+
+
+def _origin_from_url(value: str) -> str | None:
+    try:
+        parsed = urlparse(value.strip())
+    except Exception:
+        return None
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    host = parsed.hostname.lower()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    default_port = 443 if scheme == "https" else 80
+    port_suffix = "" if port is None or port == default_port else f":{port}"
+    return f"{scheme}://{host}{port_suffix}"
+
+
 def _captcha_challenge_from_args(args: dict[str, Any]) -> CaptchaChallenge:
     kind = str(args.get("kind") or "")
     sitekey = str(args.get("sitekey") or "")
@@ -389,7 +438,14 @@ def _inject_captcha_token(cdp_endpoint: str, challenge: CaptchaChallenge, token:
     )
 
 
-def _type_credential_into_active_field(cdp_endpoint: str, credential: str) -> None:
+def _type_credential_into_active_field(
+    cdp_endpoint: str,
+    credential: str,
+    allowed_origins: Iterable[str],
+) -> None:
+    origin_policy = _normalize_allowed_origins(allowed_origins)
+    if not origin_policy:
+        raise RuntimeError("credential origin policy is not configured")
     ws_url = _first_page_ws_url(cdp_endpoint)
     try:
         import websocket
@@ -429,7 +485,8 @@ def _type_credential_into_active_field(cdp_endpoint: str, credential: str) -> No
   const name = (el.getAttribute("name") || "").toLowerCase();
   const id = (el.getAttribute("id") || "").toLowerCase();
   return {
-    ok: type === "password" || autocomplete.includes("password") ||
+    origin: window.location.origin,
+    fieldOk: type === "password" || autocomplete.includes("password") ||
       name.includes("password") || id.includes("password")
   };
 })()
@@ -438,7 +495,9 @@ def _type_credential_into_active_field(cdp_endpoint: str, credential: str) -> No
             )
         )
         active = guard.get("result", {}).get("result", {}).get("value") or {}
-        if not active.get("ok"):
+        if str(active.get("origin") or "") not in origin_policy:
+            raise RuntimeError("stored credential is not approved for this page origin")
+        if not active.get("fieldOk"):
             raise RuntimeError("active element is not a password credential field")
         response(send("Input.insertText", {"text": credential}))
     finally:

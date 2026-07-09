@@ -232,6 +232,9 @@ def _default_mcp_config(
     apply_tools_env = {
         "JOBCTRL_APPLY_CDP_ENDPOINT": f"http://localhost:{cdp_port}",
         "JOBCTRL_APPLY_APPROVED_APPLICATION_URL": application_url,
+        "JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS": ",".join(
+            _credential_origins(application_url)
+        ),
         "JOBCTRL_APPLY_PROFILE_DB_PATH": str(_config.DB_PATH),
         "JOBCTRL_APPLY_UPLOAD_DIR": upload_root,
     }
@@ -279,6 +282,26 @@ def _verification_sender_domains(application_url: str) -> tuple[str, ...]:
     if len(labels) >= 2:
         return (".".join(labels[-2:]),)
     return (hostname,)
+
+
+def _credential_origins(application_url: str) -> tuple[str, ...]:
+    try:
+        parsed = urlparse(application_url)
+    except Exception:
+        return ()
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"} or not parsed.hostname:
+        return ()
+    host = parsed.hostname.lower()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    try:
+        port = parsed.port
+    except ValueError:
+        return ()
+    default_port = 443 if scheme == "https" else 80
+    port_suffix = "" if port is None or port == default_port else f":{port}"
+    return (f"{scheme}://{host}{port_suffix}",)
 
 
 __all__ = [
