@@ -83,9 +83,7 @@ class ApplyEligibilityChecker:
 
     def __init__(self, *, max_attempts: int) -> None:
         if not isinstance(max_attempts, int) or max_attempts <= 0:
-            raise ValueError(
-                "ApplyEligibilityChecker.max_attempts must be a positive int"
-            )
+            raise ValueError("ApplyEligibilityChecker.max_attempts must be a positive int")
         self._max_attempts = max_attempts
 
     @property
@@ -98,10 +96,7 @@ class ApplyEligibilityChecker:
         job: Mapping[str, Any],
         attempts: int = 0,
     ) -> EligibilityResult:
-        apply_target_url = (
-            (job.get("application_url") or "").strip()
-            or (job.get("url") or "").strip()
-        )
+        apply_target_url = (job.get("application_url") or "").strip() or (job.get("url") or "").strip()
         if not apply_target_url:
             return EligibilityResult(ok=False, reason="missing_apply_target_url")
 
@@ -233,12 +228,10 @@ def _default_mcp_config(
 
     application_url = str((job or {}).get("application_url") or (job or {}).get("url") or "")
     personal = snapshot.personal if snapshot is not None else {}
-    upload_root = str(
-        upload_dir
-        or (_config.APPLY_WORKER_DIR / "current")
-    )
+    upload_root = str(upload_dir or (_config.APPLY_WORKER_DIR / "current"))
     apply_tools_env = {
         "JOBCTRL_APPLY_CDP_ENDPOINT": f"http://localhost:{cdp_port}",
+        "JOBCTRL_APPLY_APPROVED_APPLICATION_URL": application_url,
         "JOBCTRL_APPLY_PROFILE_DB_PATH": str(_config.DB_PATH),
         "JOBCTRL_APPLY_UPLOAD_DIR": upload_root,
     }
@@ -259,9 +252,7 @@ def _default_mcp_config(
                 "command": sys.executable,
                 "args": ["-m", "jobctrl.infrastructure.gmail.mcp_server"],
                 "env": {
-                    "JOBCTRL_GMAIL_ALLOWED_DOMAINS": ",".join(
-                        _verification_sender_domains(application_url)
-                    ),
+                    "JOBCTRL_GMAIL_ALLOWED_DOMAINS": ",".join(_verification_sender_domains(application_url)),
                     "JOBCTRL_GMAIL_AFTER_MS": str(int(time.time() * 1000)),
                     "JOBCTRL_GMAIL_TO_EMAIL": str(personal.get("email") or ""),
                     "JOBCTRL_GMAIL_TOKEN_PATH": str(_config.get_gmail_mcp_credentials_path()),

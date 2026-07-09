@@ -210,7 +210,7 @@ def _build_screening_section(profile: dict) -> str:
     return f"""== SCREENING QUESTIONS (be strategic) ==
 Hard facts -> answer truthfully from the profile. No guessing. This includes:
   - Location/relocation: lives in {city}, cannot relocate
-  - Work authorization: {work_auth.get('legally_authorized_to_work', 'see profile')}
+  - Work authorization: {work_auth.get("legally_authorized_to_work", "see profile")}
   - Citizenship, clearance, licenses, certifications: answer from profile only
   - Criminal/background: answer from profile only
   - Age, felony/criminal-history, background-check consent, and prior-employer attestations: answer only when the APPLICANT PROFILE has an explicit Application Attestations value. If required and missing, output RESULT:FAILED:missing_profile_data:<field>.
@@ -240,9 +240,11 @@ def _build_hard_rules(profile: dict) -> str:
     if permit_type:
         work_auth_rule = f"Work auth: {permit_type}. Sponsorship needed: {sponsorship}."
 
-    name_rule = f'Name: Legal name = {full_name}.'
+    name_rule = f"Name: Legal name = {full_name}."
     if preferred_name and preferred_name != full_name.split()[0]:
-        name_rule += f' Preferred name = {preferred_name}. Use "{display_name}" unless a field specifically says "legal name".'
+        name_rule += (
+            f' Preferred name = {preferred_name}. Use "{display_name}" unless a field specifically says "legal name".'
+        )
 
     return f"""== HARD RULES (never break these) ==
 1. Never lie about: citizenship, work authorization, criminal history, education credentials, security clearance, licenses.
@@ -274,11 +276,7 @@ def _build_email_verification_section(profile: dict) -> str:
     personal = profile["personal"]
     email = personal.get("email", "")
     gmail_ok, gmail_note = config.gmail_mcp_auth_status()
-    auth_line = (
-        "Gmail connector auth: available."
-        if gmail_ok
-        else f"Gmail connector auth: unavailable ({gmail_note})."
-    )
+    auth_line = "Gmail connector auth: available." if gmail_ok else f"Gmail connector auth: unavailable ({gmail_note})."
 
     return f"""== EMAIL VERIFICATION ==
 {auth_line}
@@ -292,12 +290,15 @@ Do not open Gmail in the browser.
 If Gmail connector tools are unavailable or unauthenticated, do not wait for manual help. Output RESULT:LOGIN_ISSUE and stop."""
 
 
-def build_prompt(job: dict, tailored_resume: str,
-                 cover_letter: str | None = None,
-                 dry_run: bool = False,
-                 snapshot: ProfileSnapshot | None = None,
-                 search_config: dict | None = None,
-                 upload_dir: str | os.PathLike[str] | None = None) -> str:
+def build_prompt(
+    job: dict,
+    tailored_resume: str,
+    cover_letter: str | None = None,
+    dry_run: bool = False,
+    snapshot: ProfileSnapshot | None = None,
+    search_config: dict | None = None,
+    upload_dir: str | os.PathLike[str] | None = None,
+) -> str:
     """Build the full instruction prompt for the apply agent.
 
     Args:
@@ -318,6 +319,7 @@ def build_prompt(job: dict, tailored_resume: str,
     if snapshot is None:
         from jobctrl.infrastructure.profile import get_profile_repository
         from jobctrl.domain.tenant import LOCAL_TENANT
+
         snapshot = get_profile_repository().load_snapshot(LOCAL_TENANT)
     if search_config is None:
         search_config = config.load_search_config()
@@ -380,9 +382,7 @@ def build_prompt(job: dict, tailored_resume: str,
     else:
         cl_display = cover_letter_text
     cover_letter_artifact = (
-        'reviewed artifact available through upload_artifact(kind="cover_letter")'
-        if cl_upload_path
-        else "N/A"
+        'reviewed artifact available through upload_artifact(kind="cover_letter")' if cl_upload_path else "N/A"
     )
 
     # Phone digits only (for fields with country prefix)
@@ -390,6 +390,7 @@ def build_prompt(job: dict, tailored_resume: str,
 
     # SSO domains the agent cannot sign into (loaded from config/sites.yaml)
     from jobctrl.config import load_blocked_sso
+
     blocked_sso = load_blocked_sso()
 
     # Dry-run: override submit instruction
@@ -401,10 +402,10 @@ def build_prompt(job: dict, tailored_resume: str,
     prompt = f"""You are an autonomous job application agent. Your ONE mission: get this candidate an interview. You have all the information and tools. Think strategically. Act decisively. Submit the application.
 
 == JOB ==
-URL: {job.get('application_url') or job['url']}
-Title: {job['title']}
-Company: {job.get('site', 'Unknown')}
-Fit Score: {job.get('fit_score', 'N/A')}/10
+URL: {job.get("application_url") or job["url"]}
+Title: {job["title"]}
+Company: {job.get("site", "Unknown")}
+Fit Score: {job.get("fit_score", "N/A")}/10
 
 == FILES ==
 Resume: reviewed artifact available through upload_artifact(kind="resume")
@@ -450,7 +451,7 @@ If something unexpected happens and these instructions don't cover it, figure it
    - Output RESULT:EMAIL_ONLY:<address> using only the email address visible on the page, then stop. Do not draft, send, or claim an email application was submitted.
    After clicking Apply: browser_snapshot. Many sites trigger CAPTCHAs right after the Apply click; if one appears, follow the CAPTCHA section and stop.
 5. Login wall?
-   5a. FIRST: check the URL. If you landed on {', '.join(blocked_sso)}, or any SSO/OAuth page -> STOP. Output RESULT:FAILED:sso_required. Do NOT try to sign in to Google/Microsoft/SSO.
+   5a. FIRST: check the URL. If you landed on {", ".join(blocked_sso)}, or any SSO/OAuth page -> STOP. Output RESULT:FAILED:sso_required. Do NOT try to sign in to Google/Microsoft/SSO.
    5b. Check for popups. Run browser_tabs action "list". If a new tab/window appeared (login popup), switch to it with browser_tabs action "select". Check the URL there too -- if it's SSO -> RESULT:FAILED:sso_required.
    5c. Regular login form (employer's own site)? You may enter the profile email address if requested. If a password is required, focus the password field and call type_credential(kind="job_site_password"). Never ask for, print, or type the password yourself; if the tool fails, output RESULT:LOGIN_ISSUE and stop.
    5d. After clicking Login/Sign-in: if a CAPTCHA appears, follow the CAPTCHA section and stop.
@@ -488,11 +489,11 @@ RESULT:FAILED:reason -- any other failure (brief reason)
 == FORM TRICKS ==
 - Popup/new window opened? browser_tabs action "list" to see all tabs. browser_tabs action "select" with the tab index to switch. ALWAYS check for new tabs after clicking login/apply/sign-in buttons.
 - "Upload your resume" pre-fill page: This is NOT the application form yet. Click "Select file" or the upload area, then call upload_artifact(kind="resume"). Wait for parsing to finish. Then click Next/Continue to reach the actual form.
-- File upload not working? Try: (1) browser_click the upload button/area, (2) upload_artifact with the required artifact kind. If still failing, look for a hidden file input or a "Select file" link and click that first.
+- File upload not working? Try: (1) browser_click the visible upload button/area or "Select file" control, (2) upload_artifact with the required artifact kind. Never call upload_artifact on any page that is not the approved application destination.
 - Dropdown won't fill? browser_click to open it, then browser_click the option.
 - Checkbox won't check via fill_form? Use browser_click on it instead. Snapshot to verify.
 - Phone field with country prefix: just type digits {phone_digits}
-- Date fields: {datetime.now().strftime('%m/%d/%Y')}
+- Date fields: {datetime.now().strftime("%m/%d/%Y")}
 - Validation errors after submit? Take BOTH snapshot AND screenshot. Snapshot shows text errors, screenshot shows red-highlighted fields. Fix all, retry.
 - Honeypot fields (hidden, "leave blank"): skip them.
 - Format-sensitive fields: read the placeholder text, match it exactly.

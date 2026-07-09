@@ -6,6 +6,8 @@ import json
 import os
 import sqlite3
 import sys
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -36,6 +38,7 @@ class ApplyToolsMcpServer:
         *,
         upload_dir: str | os.PathLike[str] | None = None,
         cdp_endpoint: str | None = None,
+        approved_application_url: str | None = None,
         uploader: Any | None = None,
         credential_resolver: Any | None = None,
         credential_typer: Any | None = None,
@@ -46,6 +49,11 @@ class ApplyToolsMcpServer:
         raw_upload_dir = upload_dir or os.environ.get("JOBCTRL_APPLY_UPLOAD_DIR")
         self._upload_dir = Path(raw_upload_dir).expanduser() if raw_upload_dir else None
         self._cdp_endpoint = cdp_endpoint or os.environ.get("JOBCTRL_APPLY_CDP_ENDPOINT", "")
+        self._approved_application_url = (
+            approved_application_url
+            if approved_application_url is not None
+            else os.environ.get("JOBCTRL_APPLY_APPROVED_APPLICATION_URL", "")
+        )
         self._uploader = uploader or _upload_file_to_current_input
         self._credential_resolver = credential_resolver or _profile_credential
         self._credential_typer = credential_typer or _type_credential_into_active_field
@@ -96,15 +104,41 @@ class ApplyToolsMcpServer:
     def _call_upload_artifact(self, args: dict[str, Any]) -> dict[str, Any]:
         kind = str(args.get("kind") or "")
         artifact = self._resolve_artifact(kind)
-        self._uploader(self._cdp_endpoint, artifact)
+        approved_url = self._approved_application_url.strip()
+        if not approved_url:
+            raise ValueError("upload_artifact approved application URL is not configured")
+        try:
+            upload_result = self._uploader(self._cdp_endpoint, artifact, approved_url)
+        except _UploadDestinationRejected as exc:
+            _record_artifact_upload(
+                self._upload_dir,
+                {
+                    "kind": kind,
+                    "filename": artifact.name,
+                    "status": "blocked",
+                    "destination_url": exc.destination_url,
+                    "approved_origin": _url_origin(exc.approved_application_url),
+                    "reason": str(exc),
+                },
+            )
+            raise
+        destination_url = _upload_destination_url(upload_result)
+        _record_artifact_upload(
+            self._upload_dir,
+            {
+                "kind": kind,
+                "filename": artifact.name,
+                "destination_url": destination_url,
+            },
+        )
+        payload = {"ok": True, "kind": kind, "filename": artifact.name}
+        if destination_url:
+            payload["destination_url"] = destination_url
         return {
             "content": [
                 {
                     "type": "text",
-                    "text": json.dumps(
-                        {"ok": True, "kind": kind, "filename": artifact.name},
-                        ensure_ascii=False,
-                    ),
+                    "text": json.dumps(payload, ensure_ascii=False),
                 }
             ]
         }
@@ -178,6 +212,13 @@ class ApplyToolsMcpServer:
 
     def _tools(self) -> list[dict[str, Any]]:
         return _tools(captcha_configured=bool(self._captcha_key_resolver()))
+
+
+class _UploadDestinationRejected(RuntimeError):
+    def __init__(self, message: str, *, destination_url: str, approved_application_url: str) -> None:
+        super().__init__(message)
+        self.destination_url = destination_url
+        self.approved_application_url = approved_application_url
 
 
 def _tools(*, captcha_configured: bool | None = None) -> list[dict[str, Any]]:
@@ -309,9 +350,20 @@ def _record_captcha_usage(upload_dir: Path | None, payload: dict[str, Any]) -> N
         fh.write(json.dumps(event, sort_keys=True) + "\n")
 
 
-def _inject_captcha_token(
-    cdp_endpoint: str, challenge: CaptchaChallenge, token: str
-) -> None:
+def _record_artifact_upload(upload_dir: Path | None, payload: dict[str, Any]) -> None:
+    if upload_dir is None:
+        return
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    event = {
+        "event_type": "ApplyArtifactUpload",
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+        "payload": payload,
+    }
+    with (upload_dir / "artifact_upload_events.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, sort_keys=True) + "\n")
+
+
+def _inject_captcha_token(cdp_endpoint: str, challenge: CaptchaChallenge, token: str) -> None:
     escaped = json.dumps(token)
     _evaluate_on_page(
         cdp_endpoint,
@@ -420,7 +472,7 @@ def _evaluate_on_page(cdp_endpoint: str, expression: str) -> Any:
         ws.close()
 
 
-def _upload_file_to_current_input(cdp_endpoint: str, path: Path) -> None:
+def _upload_file_to_current_input(cdp_endpoint: str, path: Path, approved_application_url: str) -> dict[str, str]:
     ws_url = _first_page_ws_url(cdp_endpoint)
     try:
         import websocket
@@ -443,21 +495,189 @@ def _upload_file_to_current_input(cdp_endpoint: str, path: Path) -> None:
                     raise RuntimeError(str(message["error"]))
                 return message
 
+    object_group = f"jobctrl-upload-{uuid.uuid4().hex}"
     try:
         response(send("DOM.enable"))
-        root = response(send("DOM.getDocument", {"depth": 1}))
-        root_id = root.get("result", {}).get("root", {}).get("nodeId")
-        if not root_id:
-            raise RuntimeError("could not inspect current page DOM")
-        query = response(
-            send("DOM.querySelector", {"nodeId": root_id, "selector": "input[type=file]"})
+        selection = response(
+            send(
+                "Runtime.evaluate",
+                {
+                    "objectGroup": object_group,
+                    "returnByValue": False,
+                    "expression": _upload_input_guard_expression(),
+                },
+            )
         )
-        node_id = query.get("result", {}).get("nodeId")
+        selection_object_id = str(selection.get("result", {}).get("result", {}).get("objectId") or "")
+        if not selection_object_id:
+            raise RuntimeError("could not inspect current upload destination")
+        guard = _runtime_object_properties(response(send("Runtime.getProperties", {"objectId": selection_object_id})))
+        destination_url = str(guard.get("href") or "")
+        _assert_approved_upload_destination(destination_url, approved_application_url)
+        if not guard.get("ok"):
+            reason = str(guard.get("reason") or "no file input is currently available")
+            raise RuntimeError(reason)
+        input_object_id = str(guard.get("input_object_id") or "")
+        if not input_object_id:
+            raise RuntimeError("selected file input is no longer available")
+        current_state = response(
+            send(
+                "Runtime.callFunctionOn",
+                {
+                    "objectId": input_object_id,
+                    "returnByValue": True,
+                    "functionDeclaration": _upload_input_verification_expression(),
+                },
+            )
+        )
+        current_guard = current_state.get("result", {}).get("result", {}).get("value") or {}
+        if not isinstance(current_guard, dict):
+            raise RuntimeError("could not verify current upload destination")
+        destination_url = str(current_guard.get("href") or "")
+        _assert_approved_upload_destination(destination_url, approved_application_url)
+        if not current_guard.get("ok"):
+            reason = str(current_guard.get("reason") or "selected file input is no longer available")
+            raise RuntimeError(reason)
+        node = response(send("DOM.requestNode", {"objectId": input_object_id}))
+        node_id = node.get("result", {}).get("nodeId")
         if not node_id:
-            raise RuntimeError("no file input is currently available")
+            raise RuntimeError("selected file input is no longer available")
         response(send("DOM.setFileInputFiles", {"nodeId": node_id, "files": [str(path)]}))
+        return {"destination_url": destination_url}
     finally:
+        try:
+            response(send("Runtime.releaseObjectGroup", {"objectGroup": object_group}))
+        except Exception:  # noqa: BLE001 - marker cleanup must not mask upload errors
+            pass
         ws.close()
+
+
+def _runtime_object_properties(message: dict[str, Any]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for prop in message.get("result", {}).get("result", []):
+        if not isinstance(prop, dict):
+            continue
+        name = str(prop.get("name") or "")
+        value = prop.get("value") or {}
+        if not isinstance(value, dict) or not name:
+            continue
+        if name == "input" and value.get("objectId"):
+            values["input_object_id"] = value["objectId"]
+        elif "value" in value:
+            values[name] = value["value"]
+    return values
+
+
+def _upload_input_guard_expression() -> str:
+    return """
+(() => {
+  const inputs = Array.from(document.querySelectorAll('input[type="file"]'))
+    .filter((input) => !input.disabled);
+  const isVisible = (input) => {
+    const style = window.getComputedStyle(input);
+    const rect = input.getBoundingClientRect();
+    return style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      Number(style.opacity || "1") > 0 &&
+      rect.width > 0 &&
+      rect.height > 0;
+  };
+  const visible = inputs.filter(isVisible);
+  if (inputs.length === 0) {
+    return {
+      ok: false,
+      href: window.location.href,
+      reason: "no file input is currently available"
+    };
+  }
+  let selected = null;
+  if (visible.length === 1) {
+    selected = visible[0];
+  } else if (visible.length > 1) {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLInputElement) ||
+        (active.getAttribute("type") || "").toLowerCase() !== "file" ||
+        !visible.includes(active)) {
+      return {
+        ok: false,
+        href: window.location.href,
+        reason: "multiple visible file inputs are available; click the intended upload control first"
+      };
+    }
+    selected = active;
+  } else if (inputs.length === 1) {
+    selected = inputs[0];
+  } else {
+    return {
+      ok: false,
+      href: window.location.href,
+      reason: "multiple file inputs are available; click the intended upload control first"
+    };
+  }
+  return {ok: true, href: window.location.href, input: selected};
+})()
+"""
+
+
+def _upload_input_verification_expression() -> str:
+    return """
+function() {
+  const input = this;
+  const href = input && input.ownerDocument && input.ownerDocument.defaultView
+    ? input.ownerDocument.defaultView.location.href
+    : window.location.href;
+  if (!(input instanceof HTMLInputElement) ||
+      (input.getAttribute("type") || "").toLowerCase() !== "file") {
+    return {ok: false, href, reason: "selected file input is no longer available"};
+  }
+  if (input.ownerDocument !== document || input.ownerDocument.defaultView !== window) {
+    return {ok: false, href, reason: "selected file input is no longer on the current page"};
+  }
+  if (input.disabled) {
+    return {ok: false, href, reason: "selected file input is disabled"};
+  }
+  return {ok: true, href};
+}
+"""
+
+
+def _upload_destination_url(result: Any) -> str:
+    if isinstance(result, dict):
+        return str(result.get("destination_url") or "")
+    return ""
+
+
+def _assert_approved_upload_destination(destination_url: str, approved_application_url: str) -> None:
+    destination_origin = _url_origin(destination_url)
+    approved_origin = _url_origin(approved_application_url)
+    if not approved_origin:
+        raise ValueError("upload_artifact approved application URL is invalid")
+    if not destination_origin:
+        raise _UploadDestinationRejected(
+            "current upload destination is not an HTTP(S) page",
+            destination_url=destination_url,
+            approved_application_url=approved_application_url,
+        )
+    if destination_origin != approved_origin:
+        raise _UploadDestinationRejected(
+            "current upload destination does not match the approved application origin",
+            destination_url=destination_url,
+            approved_application_url=approved_application_url,
+        )
+
+
+def _url_origin(value: str) -> str:
+    try:
+        parsed = urlparse(value.strip())
+        port = parsed.port
+    except ValueError:
+        return ""
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return ""
+    scheme = parsed.scheme.lower()
+    host = parsed.hostname.rstrip(".").lower()
+    effective_port = port or (443 if scheme == "https" else 80)
+    return f"{scheme}://{host}:{effective_port}"
 
 
 def _first_page_ws_url(cdp_endpoint: str) -> str:
