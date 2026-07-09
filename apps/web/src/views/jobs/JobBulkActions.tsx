@@ -3,6 +3,17 @@ import { RetailorCurrentPolicyButton } from "../../contexts/materials/components
 import { RescoreCurrentPolicyButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
+import { ToggleGroup, ToggleGroupItem } from "../../shared/ui/toggle-group.js";
+
+const JOB_VIEWS = [
+  { label: "active", value: "active" },
+  { label: "closed", value: "closed" },
+  { label: "deleted", value: "deleted" },
+  { label: "hidden", value: "hidden" },
+] as const satisfies readonly {
+  label: string;
+  value: JobsSearch["deleted"];
+}[];
 
 export interface JobBulkActionsProps {
   search: JobsSearch;
@@ -63,43 +74,33 @@ export function JobBulkActions({
   const primaryLabel = hidden
     ? "unhide selected"
     : restoring
-      ? "restore selected"
+      ? "restore"
       : "delete selected";
   return (
     <div className="bulk-bar">
-      <div className="tabs">
-        <button
-          className={`tab ${search.deleted === "active" ? "on" : ""}`}
-          type="button"
-          onClick={() => onSetDeleted("active")}
-        >
-          active jobs
-        </button>
-        <button
-          className={`tab ${closed ? "on" : ""}`}
-          type="button"
-          onClick={() => onSetDeleted("closed")}
-        >
-          closed jobs
-        </button>
-        <button
-          className={`tab ${restoring ? "on" : ""}`}
-          type="button"
-          onClick={() => onSetDeleted("deleted")}
-        >
-          deleted jobs
-        </button>
-        <button
-          className={`tab ${hidden ? "on" : ""}`}
-          type="button"
-          onClick={() => onSetDeleted("hidden")}
-        >
-          hidden jobs
-        </button>
-      </div>
-      <span className="meta">
-        {selectedCount ? `${selectedCount} selected` : "select jobs to manage"}
-      </span>
+      <ToggleGroup
+        aria-label="Job views"
+        className="job-view-switcher max-w-full flex-wrap"
+        size="sm"
+        spacing={1}
+        type="single"
+        value={search.deleted}
+        variant="outline"
+        onValueChange={(value) => {
+          if (value) {
+            onSetDeleted(value as JobsSearch["deleted"]);
+          }
+        }}
+      >
+        {JOB_VIEWS.map((view) => (
+          <ToggleGroupItem key={view.value} value={view.value}>
+            {view.label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      {selectedCount ? (
+        <span className="meta">{selectedCount} selected</span>
+      ) : null}
       <button
         className="tab"
         type="button"
@@ -189,25 +190,28 @@ export function JobBulkActions({
       ) : null}
       {!hidden ? (
         <button
+          aria-label="hide selected"
           className="tab danger-action"
           type="button"
           disabled={!selectedCount || loading}
           onClick={onHideSelected}
         >
-          hide selected
+          hide
         </button>
       ) : null}
       {restoring || hidden ? (
         <button
+          aria-label="permanently delete selected"
           className="tab danger-action"
           type="button"
           disabled={!selectedCount || loading}
           onClick={onPermanentlyDeleteSelected}
         >
-          delete permanently selected
+          permanently delete
         </button>
       ) : null}
       <button
+        aria-label={restoring ? "restore selected" : undefined}
         className={`tab ${restoring || hidden ? "on" : "danger-action"}`}
         type="button"
         disabled={!selectedCount || loading}

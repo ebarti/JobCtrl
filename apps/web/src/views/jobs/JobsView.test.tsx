@@ -1036,13 +1036,13 @@ describe("<JobsView> bulk delete integration", () => {
     await waitFor(
       () =>
         expect(
-          screen.getByRole("button", { name: /hidden jobs/i }),
+          screen.getByRole("radio", { name: /^hidden$/i }),
         ).toBeInTheDocument(),
       {
         timeout: 5_000,
       },
     );
-    await user.click(screen.getByRole("button", { name: /hidden jobs/i }));
+    await user.click(screen.getByRole("radio", { name: /^hidden$/i }));
     await waitFor(
       () => expect(screen.getByText(/Acme Corp/i)).toBeInTheDocument(),
       {
@@ -1093,13 +1093,13 @@ describe("<JobsView> bulk delete integration", () => {
     await waitFor(
       () =>
         expect(
-          screen.getByRole("button", { name: /deleted jobs/i }),
+          screen.getByRole("radio", { name: /^deleted$/i }),
         ).toBeInTheDocument(),
       {
         timeout: 5_000,
       },
     );
-    await user.click(screen.getByRole("button", { name: /deleted jobs/i }));
+    await user.click(screen.getByRole("radio", { name: /^deleted$/i }));
     await waitFor(
       () => expect(screen.getByText(/Acme Corp/i)).toBeInTheDocument(),
       {
@@ -1121,7 +1121,7 @@ describe("<JobsView> bulk delete integration", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: /delete permanently selected/i }),
+      screen.getByRole("button", { name: /permanently delete selected/i }),
     );
 
     await waitFor(() => expect(calls.length).toBe(1));
