@@ -15,7 +15,7 @@ const SHARED = {
   securityLevel: "loose",
   theme: "base",
   flowchart: {
-    curve: "basis",
+    curve: "linear",
     nodeSpacing: 45,
     rankSpacing: 55,
     padding: 14,

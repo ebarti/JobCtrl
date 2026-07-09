@@ -161,6 +161,47 @@ try {
     console.log("ok    /user/screenshots visual width");
   }
 
+  await page.goto(`http://127.0.0.1:${port}/user/normal-flows`, { waitUntil: "networkidle" });
+  await page.waitForFunction(() => document.querySelectorAll(".mermaid svg").length >= 1, { timeout: 15000 });
+  const desktopLoopDiagram = await page.locator(".vp-doc .mermaid").first().boundingBox();
+  if (
+    !desktopLoopDiagram ||
+    desktopLoopDiagram.width < 320 ||
+    desktopLoopDiagram.width > 820 ||
+    desktopLoopDiagram.height > 560
+  ) {
+    fail(
+      `/user/normal-flows: desktop diagram is mis-sized (${desktopLoopDiagram?.width ?? 0}x${
+        desktopLoopDiagram?.height ?? 0
+      }px)`,
+    );
+  } else {
+    console.log("ok    /user/normal-flows desktop diagram size");
+  }
+  const webPanelVisible = await page.locator('[data-jh-channel-panel="web"]').first().isVisible();
+  const cliPanelInitiallyVisible = await page.locator('[data-jh-channel-panel="cli"]').first().isVisible();
+  const webScreenshotsVisible = await page
+    .locator('[data-jh-channel-panel="web"] img')
+    .evaluateAll((imgs) => imgs.some((img) => img.getClientRects().length > 0));
+  if (!webPanelVisible || cliPanelInitiallyVisible || !webScreenshotsVisible) {
+    fail("/user/normal-flows: workflow selector does not default to Web app");
+  }
+  await page.locator('[data-jh-channel-tab="cli"]').click();
+  await page.waitForFunction(() => document.documentElement.dataset.jhWorkflowSurface === "cli");
+  const cliSelected = await page.locator('[data-jh-channel-tab="cli"]').getAttribute("aria-selected");
+  const cliCommandVisible = await page.locator("text=jobctrl run discover").first().isVisible();
+  const webPanelAfterCli = await page.locator('[data-jh-channel-panel="web"]').first().isVisible();
+  const cliVisibleScreenshots = await page
+    .locator(".vp-doc img")
+    .evaluateAll((imgs) => imgs.filter((img) => img.getClientRects().length > 0).length);
+  if (cliSelected !== "true" || !cliCommandVisible || webPanelAfterCli || cliVisibleScreenshots > 0) {
+    fail("/user/normal-flows: CLI workflow selector does not reveal CLI content");
+  } else {
+    console.log("ok    /user/normal-flows workflow selector");
+  }
+  await page.locator('[data-jh-channel-tab="web"]').click();
+  await page.waitForFunction(() => document.documentElement.dataset.jhWorkflowSurface === "web");
+
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto(`http://127.0.0.1:${port}/user/screenshots`, { waitUntil: "networkidle" });
   const mobileTourImage = await page.locator(".vp-doc img").first().boundingBox();
@@ -178,19 +219,28 @@ try {
     console.log("ok    /user/screenshots mobile menu");
   }
 
-  await page.goto(`http://127.0.0.1:${port}/architecture/`, { waitUntil: "networkidle" });
+  await page.goto(`http://127.0.0.1:${port}/user/normal-flows`, { waitUntil: "networkidle" });
   await page.waitForFunction(() => document.querySelectorAll(".mermaid svg").length >= 1, { timeout: 15000 });
-  const mobileDiagram = await page.locator(".mermaid svg").first().boundingBox();
-  if (!mobileDiagram || mobileDiagram.width < 700) {
-    fail(`/architecture mobile: inline diagram is still a tiny thumbnail (${mobileDiagram?.width ?? 0}px)`);
+  const mobileDiagram = await page.locator(".vp-doc .mermaid").first().boundingBox();
+  if (
+    !mobileDiagram ||
+    mobileDiagram.width > MOBILE_VIEWPORT.width - 24 ||
+    mobileDiagram.width < 260 ||
+    mobileDiagram.height > 420
+  ) {
+    fail(
+      `/user/normal-flows mobile: inline diagram is mis-sized (${mobileDiagram?.width ?? 0}x${
+        mobileDiagram?.height ?? 0
+      }px)`,
+    );
   }
   await page.locator(".vp-doc .mermaid").first().click();
   await page.waitForSelector(".jh-lightbox", { state: "visible", timeout: 5000 });
   const lightboxContent = await page.locator(".jh-lightbox__content").boundingBox();
-  if (!lightboxContent || lightboxContent.width < 700) {
-    fail(`/architecture mobile: expanded diagram opens too small (${lightboxContent?.width ?? 0}px)`);
+  if (!lightboxContent || lightboxContent.width > MOBILE_VIEWPORT.width || lightboxContent.height > MOBILE_VIEWPORT.height) {
+    fail(`/user/normal-flows mobile: expanded diagram does not start fitted (${JSON.stringify(lightboxContent)})`);
   } else {
-    console.log("ok    /architecture mobile diagram");
+    console.log("ok    /user/normal-flows mobile diagram");
   }
   await page.locator('.jh-lightbox button[aria-label="Close"]').click();
 

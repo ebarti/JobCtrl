@@ -23,24 +23,28 @@ let renderToken = 0;
 
 async function renderChart() {
   const token = ++renderToken;
-  const { default: mermaid } = await import("mermaid");
-  const dark = document.documentElement.classList.contains("dark");
-  // initialize() fully resets config each call, so palette switches are clean.
-  mermaid.initialize(structuredClone(dark ? MERMAID_DARK : MERMAID_LIGHT));
-  const code = decodeURIComponent(props.graph);
-  const { svg: svgCode } = await mermaid.render(props.id, code);
-  if (token !== renderToken) return; // a newer render superseded this one
-  // Salt forces v-html to re-apply when mermaid re-renders into an identical
-  // string after a theme toggle removed the node out of Vue's sight.
-  const salt = Math.random().toString(36).slice(2, 9);
-  svg.value = `${svgCode}<span style="display:none">${salt}</span>`;
+  try {
+    const { default: mermaid } = await import("mermaid");
+    const dark = document.documentElement.classList.contains("dark");
+    // initialize() fully resets config each call, so palette switches are clean.
+    mermaid.initialize(structuredClone(dark ? MERMAID_DARK : MERMAID_LIGHT));
+    const code = decodeURIComponent(props.graph);
+    const rendered = await mermaid.mermaidAPI.render(props.id, code);
+    if (token !== renderToken) return; // a newer render superseded this one
+    // Salt forces v-html to re-apply when mermaid re-renders into an identical
+    // string after a theme toggle removed the node out of Vue's sight.
+    const salt = Math.random().toString(36).slice(2, 9);
+    svg.value = `${rendered.svg}<span style="display:none">${salt}</span>`;
+  } catch (error) {
+    console.error("JobCtrl docs Mermaid render failed", error);
+  }
 }
 
 onMounted(async () => {
   // Re-render when the html element's attributes change (the appearance
   // toggle flips the `dark` class) — same trigger the stock component uses.
   observer = new MutationObserver(() => void renderChart());
-  observer.observe(document.documentElement, { attributes: true });
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
   await renderChart();
 });
 

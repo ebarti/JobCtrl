@@ -10,17 +10,15 @@ available for maintenance and diagnostics. For a screen-by-screen walkthrough of
 each page below, see the [Product Tour](screenshots.md).
 
 ```mermaid
-flowchart TD
+flowchart LR
   subgraph Setup["One-time setup"]
-    Profile["Create your profile"] --> Configure["Configure discovery targets"]
+    Profile["Create your<br/>profile"] --> Configure["Configure<br/>discovery"]
   end
-  subgraph Loop["The daily loop"]
-    Discover["Discover finds, scores, and<br/>prepares materials for jobs"]
-    Review["You review jobs and scores"]
-    ApplyReview["You edit and approve<br/>materials in Apply Review"]
-    DryRun["A dry run rehearses<br/>the application"]
-    Submit["You approve the<br/>live submission"]
-    Discover --> Review --> ApplyReview --> DryRun --> Submit
+  subgraph Loop["Daily loop"]
+    Discover["Discover<br/>finds and prepares"] --> Review["Review<br/>jobs and scores"]
+    Review --> ApplyReview["Edit and approve<br/>materials"]
+    ApplyReview --> DryRun["Rehearse with<br/>a dry run"]
+    DryRun --> Submit["Approve live<br/>submission"]
     Submit -. "next batch" .-> Discover
   end
   Configure --> Discover
@@ -36,7 +34,11 @@ loop repeats. Under the hood, Discover runs Enrich, Score, and Materials for
 each eligible job. Live submission approval is bound to the current materials,
 profile version, application URL, and dry-run evidence.*
 
+<WorkflowSurfaceSelector />
+
 ## 1. Build The Candidate Profile
+
+<WorkflowSurfacePanel surface="web">
 
 Use the Profile page or the resume import flow to create structured profile data.
 The profile includes personal details, work authorization, experience,
@@ -47,10 +49,34 @@ scores and tailors against.
 Profile and settings forms autosave after a short delay. The explicit Save
 buttons use the same save path.
 
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="cli">
+
+Use the CLI route only when you want terminal workflows. Initialize and check the
+local workspace first:
+
+```bash
+uv --project workers/automation run jobctrl init
+uv --project workers/automation run jobctrl doctor
+```
+
+`jobctrl init` creates the local CLI workspace, starter profile, resume, and
+search configuration under `~/.jobctrl/`. The web app remains the full editor
+for structured profile fields and resume review.
+
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="web">
+
 ![JobCtrl Profile page with personal information, resume baseline, experience, and skills](../assets/screenshots/profile.png)
 *The Profile page collects personal information, resume baseline, experience, skills, and voluntary equal-opportunity (EEO) fields alongside the baseline resume editor.*
 
+</WorkflowSurfacePanel>
+
 ## 2. Configure Discovery
+
+<WorkflowSurfacePanel surface="web">
 
 Use the Discovery page to set:
 
@@ -68,27 +94,60 @@ Target locations are validated before they can drive discovery. Discovery uses
 exact and broader recall role queries, then filters and scores the results
 downstream.
 
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="cli">
+
+For CLI workflows, review configuration and runtime readiness before starting
+work:
+
+```bash
+uv --project workers/automation run jobctrl doctor
+```
+
+Discovery targets and automation preferences are normally edited in the
+Discovery page and stored locally. Environment-backed settings, such as provider
+credentials and crawl politeness controls, are covered in
+[Configuration](configuration.md).
+
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="web">
+
 ![JobCtrl Discovery page with target search, seniority floors, job boards, and source registry](../assets/screenshots/discovery.png)
 *The Discovery page configures target search, seniority floors, locations and work models, minimum fit score, job boards, and the source registry.*
 
+</WorkflowSurfacePanel>
+
 ## 3. Run Discover
 
-From the web app, open the Pipelines page and start `Discover`. From the command
-line:
+<WorkflowSurfacePanel surface="web">
+
+Open the Pipelines page, choose the `Discover` tab, set the run limit, worker
+count, source, and dry-run mode, then start the run.
+
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="cli">
+
+Start the same Discover workflow from the terminal:
 
 ```bash
 uv --project workers/automation run jobctrl run discover
 ```
 
-Starts a Discover run from the terminal — the same workflow the Pipelines page
-starts.
+Per-stage commands (`jobctrl enrich`, `score`, `tailor`, `cover`) and the
+single-job path (`jobctrl job <url> --dry-run`) start the same underlying
+workflows when you want a narrower run.
+
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="web">
 
 ![JobCtrl Pipelines page configuring a Discover run with dry-run enabled](../assets/screenshots/pipelines.png)
 *The Pipelines page starts a Discover run with limit, worker count, and a dry-run toggle.*
 
-Per-stage commands (`jobctrl enrich`, `score`, `tailor`, `cover`) and the
-single-job path (`jobctrl job <url> --dry-run`) start the same underlying
-workflows when you want a narrower run.
+</WorkflowSurfacePanel>
 
 Discover owns the preparation path:
 
@@ -104,12 +163,35 @@ user-facing preparation stage is Discover.
 
 ## 4. Review Jobs
 
+<WorkflowSurfacePanel surface="web">
+
 The Jobs view supports filters, sorting, pagination, deep links, deleted and
 hidden views, fit-score ranges, stage state, source provenance, compensation
 evidence, and job detail drawers.
 
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="cli">
+
+Use the CLI to inspect workflow health, then review the jobs themselves in the
+web app:
+
+```bash
+uv --project workers/automation run jobctrl status
+uv --project workers/automation run jobctrl runs --failed-only
+```
+
+The Jobs table and job detail drawer are the review surfaces for score evidence,
+source provenance, artifacts, readiness, and per-job actions.
+
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="web">
+
 ![JobCtrl Jobs table with fit scores, companies, and triage actions](../assets/screenshots/jobs.png)
 *The Jobs table ranks discovered jobs by fit score with filters, compensation columns, and bulk triage actions.*
+
+</WorkflowSurfacePanel>
 
 Use the job detail drawer to inspect:
 
@@ -120,13 +202,19 @@ Use the job detail drawer to inspect:
 - generated artifacts;
 - apply readiness and blockers.
 
+<WorkflowSurfacePanel surface="web">
+
 ![JobCtrl job detail drawer showing score, requirement fit, keywords, and compensation](../assets/screenshots/job-detail.png)
 *The job detail drawer shows the audit triage: ranking, requirement fit, matched and transferable requirements, keywords, and compensation evidence.*
+
+</WorkflowSurfacePanel>
 
 Failed preparation work can be retried per job or in bulk without automatically
 starting apply automation.
 
 ## 5. Inspect The Evidence Map
+
+<WorkflowSurfacePanel surface="web">
 
 Open Evidence from the main navigation, the Profile page, or a job detail
 drawer. The Evidence map shows the canonical profile achievements and declared
@@ -135,10 +223,38 @@ keyword coverage, and recorded gaps. Links in the usage lists return to the
 owning artifact or job detail so you can audit the source before editing profile
 evidence or re-running materials.
 
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="cli">
+
+The Evidence map is a web app audit surface. Use the CLI to check run health,
+then inspect evidence usage and gaps in the Evidence view.
+
+</WorkflowSurfacePanel>
+
 ## 6. Generate And Inspect Materials
+
+<WorkflowSurfacePanel surface="web">
 
 Eligible jobs receive tailored resumes and cover letters during Discover. You can
 also generate materials for a single job from the job detail drawer.
+
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="cli">
+
+Run a narrower material-generation path from the terminal when you do not want a
+full Discover run:
+
+```bash
+uv --project workers/automation run jobctrl tailor
+uv --project workers/automation run jobctrl cover
+```
+
+Inspect the generated records, validation, and accepted artifact history in the
+web app before using anything.
+
+</WorkflowSurfacePanel>
 
 Generated material records are kept as audit history. Re-generation does not
 destroy the accepted material already in use; a replacement becomes active only
@@ -146,10 +262,22 @@ after it validates and you approve it.
 
 ## 7. Generate Interview Prep
 
+<WorkflowSurfacePanel surface="web">
+
 From a job detail drawer, use "generate interview prep" when you want stored
 pre-interview notes for that job. Prep is generated only after you ask for it and
 uses JobCtrl's grounded data: profile evidence, requirement fit, accepted
 materials, employer analysis, and evidence-map usage.
+
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="cli">
+
+Interview prep is initiated from the job detail drawer so the generated notes
+stay tied to the selected job, accepted materials, and visible evidence links.
+Use the CLI only for workflow status checks around the run.
+
+</WorkflowSurfacePanel>
 
 The drawer shows the latest accepted prep as themes, STAR-story drafts, gap
 drills, and company notes. Each item keeps its evidence IDs, requirement IDs, and
@@ -167,14 +295,30 @@ real-time interview participation.
 
 ## 8. Review And Edit The Resume
 
+<WorkflowSurfacePanel surface="web">
+
 Apply Review opens the generated resume in an in-browser rich-text editor, not a
 static preview. You can edit the resume text, adjust formatting, and add or
 remove hyperlinks before rendering a replacement PDF. The editor keeps the final
 PDF link, the source behind each line, risk flags, JobCtrl's line comments, and
 your draft together.
 
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="cli">
+
+The resume review editor is a web app surface. Use CLI commands to generate or
+check workflow progress, but edit, validate, render, compare, and approve
+resumes in Apply Review.
+
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="web">
+
 ![JobCtrl Apply Review with tailored resume preview, requirement evidence, and approval controls](../assets/screenshots/apply-review.png)
 *Apply Review pairs requirement evidence and the verbatim job post with the tailored resume preview, JobCtrl line comments, and approve or dry-run controls.*
+
+</WorkflowSurfacePanel>
 
 Typical review actions:
 
@@ -193,6 +337,16 @@ artifact.
 
 Apply automation can submit real applications, so start with dry runs:
 
+<WorkflowSurfacePanel surface="web">
+
+Use Apply Review to run and inspect a dry run before approving any live
+submission. The approval card shows whether the dry run was complete, partial,
+or blocked.
+
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="cli">
+
 ```bash
 uv --project workers/automation run jobctrl apply --dry-run --limit 1
 uv --project workers/automation run jobctrl apply --url https://example.com/job/123 --dry-run
@@ -201,6 +355,8 @@ uv --project workers/automation run jobctrl apply --url https://example.com/job/
 The first dry-runs Apply for one eligible job; the second dry-runs a specific job
 by URL. A dry run never submits — it shows what would happen without sending
 anything.
+
+</WorkflowSurfacePanel>
 
 Auto apply is separate from a one-off dry run. When the Discovery automation
 setting `autoApply` is on, a running worker keeps one continuous Apply workflow
@@ -221,18 +377,7 @@ the [Security](security.md) page.
 
 ## 10. Inspect Progress
 
-Useful command-line checks:
-
-```bash
-uv --project workers/automation run jobctrl status
-uv --project workers/automation run jobctrl digest
-uv --project workers/automation run jobctrl runs
-uv --project workers/automation run jobctrl runs --failed-only
-```
-
-These print your pipeline status, show the local daily digest, list all workflow
-runs, and list only failed runs, respectively. The digest is read-only unless
-you pass `--acknowledge`, which marks the displayed digest as reviewed.
+<WorkflowSurfacePanel surface="web">
 
 Useful web app views:
 
@@ -248,10 +393,33 @@ Useful web app views:
 - Apply Review for approval and resume edits.
 - Debug for event-level inspection.
 
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="cli">
+
+```bash
+uv --project workers/automation run jobctrl status
+uv --project workers/automation run jobctrl digest
+uv --project workers/automation run jobctrl runs
+uv --project workers/automation run jobctrl runs --failed-only
+```
+
+These print your pipeline status, show the local daily digest, list all workflow
+runs, and list only failed runs, respectively. The digest is read-only unless
+you pass `--acknowledge`, which marks the displayed digest as reviewed.
+
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="web">
+
 ![JobCtrl Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
 *The Runs page lists workflow runs with status, mode, timing, and a link into the web interface of Temporal, the workflow engine.*
 
+</WorkflowSurfacePanel>
+
 ## 11. Keep Contacts (Optional)
+
+<WorkflowSurfacePanel surface="web">
 
 Keep contact records for the people behind an application — a recruiter, hiring
 manager, or referrer — attached to a company or a specific job:
@@ -317,3 +485,13 @@ never sends anything to a contact — there is no email, message, or outreach se
 transport of any kind, drafts terminate at copy/export, a thread only becomes
 "sent" through a send you log yourself, and contact, research, draft, send, or
 follow-up data never affects scoring or apply decisions.
+
+</WorkflowSurfacePanel>
+
+<WorkflowSurfacePanel surface="cli">
+
+Contacts, supervised contact research, outreach drafts, send logs, and
+follow-up reminders are web app workflows. The CLI can check overall status, but
+it does not send messages or replace the review surfaces.
+
+</WorkflowSurfacePanel>

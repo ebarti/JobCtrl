@@ -324,7 +324,8 @@ function openLightbox(trigger: Trigger): void {
   const initialScale = (): number => {
     const st = stageSize();
     const readableScale = Math.min(1, READABLE_START_WIDTH / size.w);
-    if (st.w < 640 || trigger.kind === "svg") {
+    if (st.w < 640) return fitScale();
+    if (trigger.kind === "svg") {
       return Math.max(fitScale(), readableScale);
     }
     return fitScale();
