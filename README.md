@@ -120,18 +120,19 @@ them with `pnpm docs:screenshots`
 
 ## How It Compares
 
-The short version of [the full, source-cited comparison](https://jobctrl.dev/comparison):
+The projects solve a similar problem through different operating models. This
+summary is pinned to reviewed snapshots; the
+[full comparison](https://jobctrl.dev/comparison) includes source links, issue
+evidence, qualifications, and the complete capability matrix.
 
-| Capability | The usual trade-off | JobCtrl |
-| --- | --- | --- |
-| **Data ownership** | Your search lives in someone else's cloud | Local SQLite + files under your home directory; no account |
-| **Outbound data** | Unclear what's sent where | Nothing leaves by default; every egress path is opt-in and documented |
-| **Scoring** | A match % you can't inspect | Deterministic 1–10 policy with a per-requirement evidence ledger |
-| **Materials** | Generated text you have to fact-check | Every bullet traces to your profile; fabrication gates fail closed |
-| **Submission** | Auto-submit you can't stop, or copy-paste you must repeat | Dry-run default; explicit approval bound to reviewed materials; at-most-once submission |
-| **Third parties** | Workarounds that fight site protections | Honest User-Agent, robots.txt honored, no CAPTCHA/paywall/login bypass |
-| **Reliability** | A crash loses the run | Crash-resumable Temporal workflows with full run history |
-| **Cost** | Surprise API bills | Daily spend ceiling with preflight checks and visible usage |
+| Capability | JobCtrl | Career-Ops | AI Job Search |
+| --- | --- | --- | --- |
+| **Primary surface** | Web app + local API/worker; supporting CLI | Files + AI coding CLIs; terminal dashboard | Claude Code commands/skills + local utilities |
+| **Graphical UI** | **Supported product surface** | **Partial:** optional Next.js alpha | **Not evidenced** in the reviewed snapshot |
+| **Tailored documents** | Resume, cover letter, HTML, and PDF | CV/PDF and cover letter | LaTeX CV, cover letter, and PDF |
+| **Submission boundary** | Dry run + guarded browser/Gmail paths; approval on by default | Form autofill; the user clicks Submit | Reviewed documents; the user submits |
+| **Interrupted work** | Temporal history, retries, and stable workflow identities | File integrity + resumable batch flags; no workflow engine | No checkpointed apply resumption evidenced |
+| **Application-level cost control** | Daily estimated-spend ceiling | Model choice + batch cap, dry run, and resume controls | Token-efficiency instructions; no app-level budget evidenced |
 
 ## What It Does
 
