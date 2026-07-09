@@ -16,6 +16,7 @@ from jobctrl.domain.compensation import (
 from jobctrl.infrastructure.compensation import (
     SqliteMarketCompensationRepository,
     SqlitePostedCompensationRepository,
+    load_default_reported_compensation_observations,
     load_euro_top_tech_observations,
     load_reported_compensation_observations,
 )
@@ -458,6 +459,92 @@ def test_importer_loads_levels_and_glassdoor_observations(tmp_path: Path) -> Non
     assert observations[1].minimum_amount == 125_000
     assert observations[1].maximum_amount == 125_000
     assert observations[1].source_url == "https://www.glassdoor.com/Salary/Acme-AI-Senior-Platform-Engineer-Salaries.htm"
+
+
+def test_user_source_settings_enable_levels_feed_without_process_policy_env(
+    tmp_path: Path,
+) -> None:
+    levels_path = tmp_path / "levels.json"
+    levels_path.write_text(
+        json.dumps(
+            [
+                {
+                    "company": "Acme AI",
+                    "role": "Senior Platform Engineer",
+                    "amount": 125000,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings_path = tmp_path / "dashboard.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "compensation_sources": {
+                    "levels_fyi": {
+                        "enabled": True,
+                        "access_mode": "licensed_data_feed",
+                        "europe_coverage_confirmed": True,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_default_reported_compensation_observations(
+        include_eurotoptech=False,
+        env={"JOBCTRL_LEVELS_FYI_OBSERVATIONS_PATH": str(levels_path)},
+        settings_path=settings_path,
+    )
+
+    assert loaded.levels_fyi_count == 1
+    assert [observation.source_id for observation in loaded.observations] == ["levels_fyi"]
+
+
+def test_user_source_settings_can_disable_an_environment_configured_feed(
+    tmp_path: Path,
+) -> None:
+    glassdoor_path = tmp_path / "glassdoor.json"
+    glassdoor_path.write_text(
+        json.dumps(
+            [
+                {
+                    "company": "Acme AI",
+                    "role": "Senior Platform Engineer",
+                    "amount": 125000,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings_path = tmp_path / "dashboard.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "compensation_sources": {
+                    "glassdoor": {
+                        "enabled": False,
+                        "access_mode": "written_permission",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_default_reported_compensation_observations(
+        include_eurotoptech=False,
+        env={
+            "JOBCTRL_GLASSDOOR_ACCESS_MODE": "written_permission",
+            "JOBCTRL_GLASSDOOR_OBSERVATIONS_PATH": str(glassdoor_path),
+        },
+        settings_path=settings_path,
+    )
+
+    assert loaded.glassdoor_count == 0
+    assert loaded.observations == ()
 
 
 def test_importer_loads_euro_top_tech_public_data(monkeypatch: pytest.MonkeyPatch) -> None:

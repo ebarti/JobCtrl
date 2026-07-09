@@ -453,7 +453,9 @@ own. It contributes:
   `infrastructure/compensation/`;
 - the `CompensationFactsUpdated` domain event (emitted inline and folded into
   the read model by Operations);
-- source adapters gated by access-mode configuration (see
+- source adapters gated by the user's persisted source preference and its
+  permitted access prerequisites, with environment variables retained as a
+  compatibility fallback until a preference exists (see
   `docs/user/configuration.md`, "Compensation Sources").
 
 **What it does NOT own:** Job identity, scoring, or materials. It supplies

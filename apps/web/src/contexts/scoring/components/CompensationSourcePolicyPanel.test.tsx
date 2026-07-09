@@ -1,5 +1,6 @@
 import { axe } from "jest-axe";
 import { screen, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { CompensationSourceRegistryResponse } from "../../operations/types.js";
@@ -25,6 +26,7 @@ function policyResponse(): CompensationSourceRegistryResponse {
         supportedFields: ["base_salary", "total_compensation", "sample_count", "freshness", "attribution"],
         disabledReason: null,
         configured: true,
+        control: { kind: "fixed", enabled: true },
         coverage: {
           geography: "import_file",
           regions: ["Europe"],
@@ -46,6 +48,7 @@ function policyResponse(): CompensationSourceRegistryResponse {
         supportedFields: ["total_compensation", "sample_count", "freshness", "attribution"],
         disabledReason: null,
         configured: true,
+        control: { kind: "fixed", enabled: true },
         coverage: {
           geography: "public_dataset",
           regions: ["Europe"],
@@ -69,6 +72,18 @@ function policyResponse(): CompensationSourceRegistryResponse {
         supportedFields: [],
         disabledReason: "Requires licensed Levels.fyi access mode and explicit Europe coverage confirmation.",
         configured: false,
+        control: {
+          kind: "user_preference",
+          enabled: false,
+          accessMode: null,
+          allowedAccessModes: [
+            "licensed_api",
+            "licensed_data_feed",
+            "enterprise_mcp",
+          ],
+          europeCoverageRequired: true,
+          europeCoverageConfirmed: false,
+        },
         coverage: {
           geography: "licensed_provider_configured",
           regions: [],
@@ -92,6 +107,14 @@ function policyResponse(): CompensationSourceRegistryResponse {
         supportedFields: [],
         disabledReason: "Requires Glassdoor partner API access or written permission.",
         configured: false,
+        control: {
+          kind: "user_preference",
+          enabled: false,
+          accessMode: null,
+          allowedAccessModes: ["partner_api", "written_permission"],
+          europeCoverageRequired: false,
+          europeCoverageConfirmed: false,
+        },
         coverage: {
           geography: "licensed_provider_configured",
           regions: [],
@@ -139,6 +162,56 @@ describe("<CompensationSourcePolicyPanel>", () => {
     expect(table).toHaveTextContent("Glassdoor");
     expect(table).toHaveTextContent("Requires Glassdoor partner API access or written permission.");
     expect(table).toHaveTextContent("none until permitted");
+  });
+
+  it("offers user-controlled enablement for Levels.fyi and Glassdoor", async () => {
+    renderWithProviders(<CompensationSourcePolicyPanel />, {
+      ports: buildTestPorts({
+        api: { compensationSources: vi.fn(async () => policyResponse()) },
+      }),
+    });
+
+    expect(
+      await screen.findByRole("switch", { name: "Enable Levels.fyi" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Levels.fyi access mode" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("switch", { name: "Confirm Levels.fyi Europe coverage" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Enable Glassdoor" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Glassdoor access mode" }),
+    ).toBeInTheDocument();
+  });
+
+  it("persists a Levels.fyi coverage preference through the API port", async () => {
+    const user = userEvent.setup();
+    const updateCompensationSourcePolicy = vi.fn(async () => policyResponse());
+    renderWithProviders(<CompensationSourcePolicyPanel />, {
+      ports: buildTestPorts({
+        api: {
+          compensationSources: vi.fn(async () => policyResponse()),
+          updateCompensationSourcePolicy,
+        },
+      }),
+    });
+
+    await user.click(
+      await screen.findByRole("switch", {
+        name: "Confirm Levels.fyi Europe coverage",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(updateCompensationSourcePolicy).toHaveBeenCalledWith({
+        sourceId: "levels_fyi",
+        enabled: false,
+        accessMode: null,
+        europeCoverageConfirmed: true,
+      }),
+    );
   });
 
   it("renders loading and error states", async () => {

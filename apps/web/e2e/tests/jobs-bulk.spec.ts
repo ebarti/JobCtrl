@@ -15,6 +15,7 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
   await expect(page.getByText(/Director of Platform Engineering/i)).toBeVisible({
     timeout: 30_000,
   });
+  await expect(page.getByText(/select jobs to manage/i)).toHaveCount(0);
 
   const rowCheckboxes = page.locator(ROW_CHECKBOX_SELECTOR);
   await expect(rowCheckboxes.first()).toBeVisible({ timeout: 30_000 });
@@ -28,9 +29,11 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
   await expect(page.getByText(new RegExp(`${rowsToSelect} selected`))).toBeVisible();
 
   await page.getByRole("button", { name: /delete selected/i }).click();
-  await expect(page.getByText(/select jobs to manage/i)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: /delete selected/i })).toBeDisabled({
+    timeout: 15_000,
+  });
 
-  await page.getByRole("button", { name: /deleted jobs/i }).click();
+  await page.getByRole("radio", { name: /^deleted$/i }).click();
   await expect(page).toHaveURL(/deleted=deleted/);
 
   const deletedRowCheckboxes = page.locator(ROW_CHECKBOX_SELECTOR);
@@ -41,5 +44,7 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
     await deletedRowCheckboxes.nth(i).check();
   }
   await page.getByRole("button", { name: /restore selected/i }).click();
-  await expect(page.getByText(/select jobs to manage/i)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: /restore selected/i })).toBeDisabled({
+    timeout: 15_000,
+  });
 });

@@ -117,6 +117,7 @@ const sampleCompensationSourcePolicy = {
       supportedFields: ["base_salary", "total_compensation", "sample_count", "freshness", "attribution"],
       disabledReason: null,
       configured: true,
+      control: { kind: "fixed", enabled: true },
       coverage: {
         geography: "import_file",
         regions: ["Europe"],
@@ -138,6 +139,7 @@ const sampleCompensationSourcePolicy = {
       supportedFields: ["total_compensation", "sample_count", "freshness", "attribution"],
       disabledReason: null,
       configured: true,
+      control: { kind: "fixed", enabled: true },
       coverage: {
         geography: "public_dataset",
         regions: ["Europe"],
@@ -159,6 +161,18 @@ const sampleCompensationSourcePolicy = {
       supportedFields: [],
       disabledReason: "Requires licensed Levels.fyi access mode and explicit Europe coverage confirmation.",
       configured: false,
+      control: {
+        kind: "user_preference",
+        enabled: false,
+        accessMode: null,
+        allowedAccessModes: [
+          "licensed_api",
+          "licensed_data_feed",
+          "enterprise_mcp",
+        ],
+        europeCoverageRequired: true,
+        europeCoverageConfirmed: false,
+      },
       coverage: {
         geography: "licensed_provider_configured",
         regions: [],
@@ -180,6 +194,14 @@ const sampleCompensationSourcePolicy = {
       supportedFields: [],
       disabledReason: "Requires Glassdoor partner API access or written permission.",
       configured: false,
+      control: {
+        kind: "user_preference",
+        enabled: false,
+        accessMode: null,
+        allowedAccessModes: ["partner_api", "written_permission"],
+        europeCoverageRequired: false,
+        europeCoverageConfirmed: false,
+      },
       coverage: {
         geography: "licensed_provider_configured",
         regions: [],
@@ -262,6 +284,38 @@ export const handlers = [
   ),
   http.get("*/v1/discovery/settings", () => HttpResponse.json(sampleDiscoverySettingsResponse)),
   http.get("*/v1/compensation/sources", () => HttpResponse.json(sampleCompensationSourcePolicy)),
+  http.patch("*/v1/compensation/sources", async ({ request }) => {
+    const body = (await request.json()) as {
+      sourceId: "levels_fyi" | "glassdoor";
+      enabled: boolean;
+      accessMode: string | null;
+      europeCoverageConfirmed?: boolean;
+    };
+    const ready =
+      body.enabled &&
+      body.accessMode !== null &&
+      (body.sourceId !== "levels_fyi" || body.europeCoverageConfirmed === true);
+    return HttpResponse.json({
+      ...sampleCompensationSourcePolicy,
+      sources: sampleCompensationSourcePolicy.sources.map((source) =>
+        source.sourceId === body.sourceId
+          ? {
+              ...source,
+              accessMode: body.accessMode ?? "unavailable_until_permitted",
+              availability: ready ? "available" : "unavailable",
+              configured: ready,
+              control: {
+                ...source.control,
+                enabled: body.enabled,
+                accessMode: body.accessMode,
+                europeCoverageConfirmed:
+                  body.europeCoverageConfirmed ?? false,
+              },
+            }
+          : source,
+      ),
+    });
+  }),
   http.patch("*/v1/discovery/settings", async ({ request }) => {
     const body = (await request.json()) as Partial<typeof sampleDiscoverySettingsResponse.settings>;
     return HttpResponse.json({

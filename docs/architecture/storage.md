@@ -65,7 +65,10 @@ stage states, events, artifacts, normalized Candidate Profile data, profile
 rendering settings/template text, run visibility, apply-review decisions,
 application outcomes, linked email evidence, and outcome suggestions. The
 projection tables (above) are also stored here. Dashboard settings remain
-file-backed until their own storage migration.
+file-backed until their own storage migration. The dashboard settings file also
+owns the safe Levels.fyi and Glassdoor enablement, access-basis, and coverage
+preferences; credentials, feed contents, and provider payloads do not belong in
+that file.
 The `digest_state` projection table stores the local daily digest review
 watermark; passive Dashboard and CLI reads do not update it, and only explicit
 acknowledge actions advance it.

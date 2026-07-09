@@ -534,7 +534,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("issues and rotates a local extension capability token only for CLI and same-origin settings callers", async () => {
+  it("issues and rotates a local extension capability token only for CLI and trusted Settings callers", async () => {
     const app = buildApp(options);
     try {
       const first = await app.inject({
@@ -551,16 +551,16 @@ describe("local TypeScript API", () => {
         expect(fs.statSync(firstBody.tokenPath).mode & 0o777).toBe(0o600);
       }
 
-      const sameOriginSettingsRead = await app.inject({
+      const trustedSettingsRead = await app.inject({
         method: "GET",
         url: "/v1/extension/pairing-token",
         headers: {
           origin: "http://127.0.0.1:5173",
-          "sec-fetch-site": "same-origin",
+          "sec-fetch-site": "same-site",
         },
       });
-      expect(sameOriginSettingsRead.statusCode, sameOriginSettingsRead.body).toBe(200);
-      expect((sameOriginSettingsRead.json() as { token: string }).token).toBe(firstBody.token);
+      expect(trustedSettingsRead.statusCode, trustedSettingsRead.body).toBe(200);
+      expect((trustedSettingsRead.json() as { token: string }).token).toBe(firstBody.token);
 
       const loopbackWebRead = await app.inject({
         method: "GET",
@@ -598,7 +598,7 @@ describe("local TypeScript API", () => {
         url: "/v1/extension/pairing-token/rotate",
         headers: {
           origin: "http://127.0.0.1:5173",
-          "sec-fetch-site": "same-origin",
+          "sec-fetch-site": "same-site",
         },
       });
       expect(rotated.statusCode, rotated.body).toBe(200);

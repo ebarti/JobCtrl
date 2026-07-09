@@ -1,36 +1,107 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import type {
   CompensationSourceAccessMode,
+  CompensationSourcePolicyUpdateRequest,
   CompensationSourcePolicySummary,
   CompensationSourceRegistryResponse,
   CompensationSupportedField,
 } from "./contracts.js";
+import {
+  GLASSDOOR_COMPENSATION_ACCESS_MODES,
+  LEVELS_FYI_COMPENSATION_ACCESS_MODES,
+} from "./contracts.js";
 
 type EnvLike = Readonly<Record<string, string | undefined>>;
 
-const LEVELS_ACCESS_MODES = new Set<CompensationSourceAccessMode>([
-  "licensed_api",
-  "licensed_data_feed",
-  "enterprise_mcp",
-]);
-const GLASSDOOR_ACCESS_MODES = new Set<CompensationSourceAccessMode>([
-  "partner_api",
-  "written_permission",
-]);
+interface StoredCompensationSourcePreference {
+  enabled: boolean;
+  accessMode: CompensationSourceAccessMode | null;
+  europeCoverageConfirmed: boolean;
+}
+
+interface CompensationSourcePreferences {
+  levels_fyi?: StoredCompensationSourcePreference;
+  glassdoor?: StoredCompensationSourcePreference;
+}
+
+const LEVELS_ACCESS_MODES = new Set<CompensationSourceAccessMode>(
+  LEVELS_FYI_COMPENSATION_ACCESS_MODES,
+);
+const GLASSDOOR_ACCESS_MODES = new Set<CompensationSourceAccessMode>(
+  GLASSDOOR_COMPENSATION_ACCESS_MODES,
+);
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 
 export function listCompensationSources(
   env: EnvLike = process.env,
+  preferences: CompensationSourcePreferences = {},
 ): CompensationSourceRegistryResponse {
   return {
     ok: true,
     sources: [
       postedSalarySource(),
-      levelsSource(env),
-      glassdoorSource(env),
+      levelsSource(env, preferences.levels_fyi),
+      glassdoorSource(env, preferences.glassdoor),
       manualReportedCompensationSource(),
       euroTopTechSource(),
     ],
   };
+}
+
+export class CompensationSourcePolicyInputError extends Error {}
+
+export function readCompensationSourcePreferences(
+  settingsPath: string,
+): CompensationSourcePreferences {
+  const settings = readSettingsObject(settingsPath, false);
+  const rawSources = isRecord(settings["compensation_sources"])
+    ? settings["compensation_sources"]
+    : {};
+  const levels = parseStoredPreference(
+    rawSources["levels_fyi"],
+    LEVELS_ACCESS_MODES,
+    true,
+  );
+  const glassdoor = parseStoredPreference(
+    rawSources["glassdoor"],
+    GLASSDOOR_ACCESS_MODES,
+    false,
+  );
+  return {
+    ...(levels ? { levels_fyi: levels } : {}),
+    ...(glassdoor ? { glassdoor } : {}),
+  };
+}
+
+export function updateCompensationSourcePolicy(
+  settingsPath: string,
+  request: CompensationSourcePolicyUpdateRequest,
+  env: EnvLike = process.env,
+): CompensationSourceRegistryResponse {
+  const settings = readSettingsObject(settingsPath, true);
+  const currentSources = isRecord(settings["compensation_sources"])
+    ? settings["compensation_sources"]
+    : {};
+  const nextSources: Record<string, unknown> = { ...currentSources };
+  nextSources[request.sourceId] =
+    request.sourceId === "levels_fyi"
+      ? {
+          enabled: request.enabled,
+          access_mode: request.accessMode,
+          europe_coverage_confirmed: request.europeCoverageConfirmed,
+        }
+      : {
+          enabled: request.enabled,
+          access_mode: request.accessMode,
+        };
+  settings["compensation_sources"] = nextSources;
+  writeSettingsObject(settingsPath, settings);
+  return listCompensationSources(
+    env,
+    readCompensationSourcePreferences(settingsPath),
+  );
 }
 
 function postedSalarySource(): CompensationSourcePolicySummary {
@@ -48,6 +119,7 @@ function postedSalarySource(): CompensationSourcePolicySummary {
     supportedFields: ["posted_range", "freshness", "attribution"],
     disabledReason: null,
     configured: true,
+    control: { kind: "fixed", enabled: true },
     coverage: {
       geography: "posting",
       regions: ["Europe"],
@@ -57,12 +129,28 @@ function postedSalarySource(): CompensationSourcePolicySummary {
   };
 }
 
-function levelsSource(env: EnvLike): CompensationSourcePolicySummary {
-  const accessMode = normalizeAccessMode(env["JOBCTRL_LEVELS_FYI_ACCESS_MODE"]);
+function levelsSource(
+  env: EnvLike,
+  preference: StoredCompensationSourcePreference | undefined,
+): CompensationSourcePolicySummary {
+  const environmentAccessMode = normalizeAccessMode(
+    env["JOBCTRL_LEVELS_FYI_ACCESS_MODE"],
+  );
+  const accessMode = preference ? preference.accessMode : environmentAccessMode;
+  const enabled = preference?.enabled ?? Boolean(environmentAccessMode);
   const accessPermitted = accessMode ? LEVELS_ACCESS_MODES.has(accessMode) : false;
-  const europeCoverageConfirmed = isTrue(env["JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE"]);
-  const available = accessPermitted && europeCoverageConfirmed;
-  const disabledReason = levelsDisabledReason(accessMode, accessPermitted, europeCoverageConfirmed);
+  const europeCoverageConfirmed =
+    preference?.europeCoverageConfirmed ??
+    isTrue(env["JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE"]);
+  const available = enabled && accessPermitted && europeCoverageConfirmed;
+  const disabledReason =
+    preference && !enabled
+      ? "Disabled by the user in Compensation sources settings."
+      : levelsDisabledReason(
+          accessMode,
+          accessPermitted,
+          europeCoverageConfirmed,
+        );
   const reportedAccessMode: CompensationSourceAccessMode =
     accessPermitted && accessMode ? accessMode : "unavailable_until_permitted";
 
@@ -72,7 +160,7 @@ function levelsSource(env: EnvLike): CompensationSourcePolicySummary {
     sourceType: "reported_compensation",
     accessMode: reportedAccessMode,
     availability: available ? "available" : "unavailable",
-    licenseStatus: available ? "permitted" : "requires_license",
+    licenseStatus: accessPermitted ? "permitted" : "requires_license",
     termsUrl: "https://www.levels.fyi/offerings/data/",
     sourceUrl: "https://www.levels.fyi/",
     freshnessPolicy: available
@@ -84,6 +172,14 @@ function levelsSource(env: EnvLike): CompensationSourcePolicySummary {
     supportedFields: available ? licensedBenchmarkFields() : [],
     disabledReason,
     configured: available,
+    control: {
+      kind: "user_preference",
+      enabled,
+      accessMode: accessPermitted && accessMode ? accessMode : null,
+      allowedAccessModes: [...LEVELS_FYI_COMPENSATION_ACCESS_MODES],
+      europeCoverageRequired: true,
+      europeCoverageConfirmed,
+    },
     coverage: {
       geography: "licensed_provider_configured",
       regions: europeCoverageConfirmed ? ["Europe"] : [],
@@ -97,12 +193,25 @@ function levelsSource(env: EnvLike): CompensationSourcePolicySummary {
   };
 }
 
-function glassdoorSource(env: EnvLike): CompensationSourcePolicySummary {
-  const accessMode = normalizeAccessMode(env["JOBCTRL_GLASSDOOR_ACCESS_MODE"]);
-  const available = accessMode ? GLASSDOOR_ACCESS_MODES.has(accessMode) : false;
-  const disabledReason = glassdoorDisabledReason(accessMode, available);
+function glassdoorSource(
+  env: EnvLike,
+  preference: StoredCompensationSourcePreference | undefined,
+): CompensationSourcePolicySummary {
+  const environmentAccessMode = normalizeAccessMode(
+    env["JOBCTRL_GLASSDOOR_ACCESS_MODE"],
+  );
+  const accessMode = preference ? preference.accessMode : environmentAccessMode;
+  const enabled = preference?.enabled ?? Boolean(environmentAccessMode);
+  const accessPermitted = accessMode
+    ? GLASSDOOR_ACCESS_MODES.has(accessMode)
+    : false;
+  const available = enabled && accessPermitted;
+  const disabledReason =
+    preference && !enabled
+      ? "Disabled by the user in Compensation sources settings."
+      : glassdoorDisabledReason(accessMode, accessPermitted);
   const reportedAccessMode: CompensationSourceAccessMode =
-    available && accessMode ? accessMode : "unavailable_until_permitted";
+    accessPermitted && accessMode ? accessMode : "unavailable_until_permitted";
 
   return {
     sourceId: "glassdoor",
@@ -110,7 +219,7 @@ function glassdoorSource(env: EnvLike): CompensationSourcePolicySummary {
     sourceType: "reported_compensation",
     accessMode: reportedAccessMode,
     availability: available ? "available" : "unavailable",
-    licenseStatus: available ? "permitted" : "requires_permission",
+    licenseStatus: accessPermitted ? "permitted" : "requires_permission",
     termsUrl: "https://www.glassdoor.com/about/terms/",
     sourceUrl: "https://www.glassdoor.com/",
     freshnessPolicy: available
@@ -122,6 +231,14 @@ function glassdoorSource(env: EnvLike): CompensationSourcePolicySummary {
     supportedFields: available ? licensedBenchmarkFields() : [],
     disabledReason,
     configured: available,
+    control: {
+      kind: "user_preference",
+      enabled,
+      accessMode: accessPermitted && accessMode ? accessMode : null,
+      allowedAccessModes: [...GLASSDOOR_COMPENSATION_ACCESS_MODES],
+      europeCoverageRequired: false,
+      europeCoverageConfirmed: false,
+    },
     coverage: {
       geography: "licensed_provider_configured",
       regions: available ? ["configured agreement scope"] : [],
@@ -150,6 +267,7 @@ function manualReportedCompensationSource(): CompensationSourcePolicySummary {
     supportedFields: licensedBenchmarkFields(),
     disabledReason: null,
     configured: true,
+    control: { kind: "fixed", enabled: true },
     coverage: {
       geography: "import_file",
       regions: ["Europe", "configured import scope"],
@@ -174,6 +292,7 @@ function euroTopTechSource(): CompensationSourcePolicySummary {
     supportedFields: ["total_compensation", "sample_count", "freshness", "attribution"],
     disabledReason: null,
     configured: true,
+    control: { kind: "fixed", enabled: true },
     coverage: {
       geography: "public_dataset",
       regions: ["Europe"],
@@ -219,6 +338,87 @@ function isCompensationSourceAccessMode(value: string): value is CompensationSou
 
 function isTrue(value: string | undefined): boolean {
   return TRUE_VALUES.has(value?.trim().toLowerCase() ?? "");
+}
+
+function parseStoredPreference(
+  value: unknown,
+  permittedModes: ReadonlySet<CompensationSourceAccessMode>,
+  hasEuropeCoverage: boolean,
+): StoredCompensationSourcePreference | null {
+  if (!isRecord(value) || typeof value["enabled"] !== "boolean") {
+    return null;
+  }
+  const rawAccessMode = normalizeAccessMode(
+    stringValue(value["access_mode"] ?? value["accessMode"]),
+  );
+  return {
+    enabled: value["enabled"],
+    accessMode:
+      rawAccessMode && permittedModes.has(rawAccessMode)
+        ? rawAccessMode
+        : null,
+    europeCoverageConfirmed: hasEuropeCoverage
+      ? booleanValue(
+          value["europe_coverage_confirmed"] ??
+            value["europeCoverageConfirmed"],
+        )
+      : false,
+  };
+}
+
+function readSettingsObject(
+  settingsPath: string,
+  strict: boolean,
+): Record<string, unknown> {
+  if (!fs.existsSync(settingsPath)) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as unknown;
+    if (isRecord(parsed)) {
+      return parsed;
+    }
+  } catch (error) {
+    if (strict) {
+      const message =
+        error instanceof Error ? error.message : "Invalid settings JSON.";
+      throw new CompensationSourcePolicyInputError(message);
+    }
+    return {};
+  }
+  if (strict) {
+    throw new CompensationSourcePolicyInputError(
+      `${path.basename(settingsPath)} must contain a JSON object.`,
+    );
+  }
+  return {};
+}
+
+function writeSettingsObject(
+  settingsPath: string,
+  settings: Record<string, unknown>,
+): void {
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  fs.writeFileSync(
+    settingsPath,
+    `${JSON.stringify(settings, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function booleanValue(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return isTrue(stringValue(value));
 }
 
 function levelsDisabledReason(

@@ -45,6 +45,7 @@ import type {
   BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
   BulkRetailorCurrentPolicyRequest,
   CancelJobActionRequest,
+  CompensationSourcePolicyUpdateRequest,
   CompensationSourceRegistryResponse,
   CredentialKey,
   CorrectScoreRequest,
@@ -262,6 +263,12 @@ export class JobCtrlApiClient {
 
   compensationSources(): Promise<CompensationSourceRegistryResponse> {
     return this.get("/v1/compensation/sources");
+  }
+
+  updateCompensationSourcePolicy(
+    body: CompensationSourcePolicyUpdateRequest,
+  ): Promise<CompensationSourceRegistryResponse> {
+    return this.patch("/v1/compensation/sources", body);
   }
 
   postedCompensationFact(jobKey: string): Promise<PostedCompensationFactResponse> {

@@ -11,5 +11,6 @@ export function useExtensionCapabilityTokenQuery(): UseQueryResult<ExtensionCapa
   return useQuery({
     queryKey: profileKeys.extensionPairing(tenantId),
     queryFn: () => api.extensionCapabilityToken(),
+    meta: { suppressGlobalErrorToast: true },
   });
 }

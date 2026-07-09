@@ -262,8 +262,12 @@ deterministic local facts derived from configured reported compensation feeds fo
 Euro Top Tech, Levels.fyi, Glassdoor, or manual imports, or from employer-posted
 salary facts already captured by JobCtrl.
 Euro Top Tech rows are treated as public community-reported EUR/year total
-compensation observations; Levels.fyi and Glassdoor rows are loaded only when a
-permitted source-policy mode and feed path or URL are configured.
+compensation observations. Levels.fyi and Glassdoor rows are loaded only when
+the user-enabled source preference, permitted access basis, and feed path or URL
+are configured; Levels.fyi also requires explicit Europe coverage confirmation.
+The API and worker read the same file-backed preference. Once present, that
+preference overrides the legacy environment gate, including when the user has
+explicitly disabled the source.
 Employer-posted market rows are labeled as job posting salary text and remain
 low confidence when they are based on a single posting or extrapolated fallback
 tier. These rows store explicit estimate

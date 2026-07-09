@@ -1,5 +1,5 @@
 import type { ActionRunResponse } from "@jobctrl/contracts";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -44,6 +44,65 @@ afterEach(() => {
 });
 
 describe("<JobBulkActions>", () => {
+  it("separates job views from row actions and uses concise action labels", () => {
+    renderWithProviders(
+      <JobBulkActions
+        search={{ ...baseSearch, deleted: "deleted" }}
+        selectedCount={2}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
+      />,
+    );
+
+    const viewSwitcher = screen.getByRole("radiogroup", { name: "Job views" });
+    expect(viewSwitcher).toHaveClass("job-view-switcher");
+    expect(viewSwitcher).toHaveAttribute("data-variant", "outline");
+    expect(within(viewSwitcher).getByRole("radio", { name: "deleted" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(within(viewSwitcher).getByRole("radio", { name: "active" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "hide selected" })).toHaveTextContent(/^hide$/);
+    expect(
+      screen.getByRole("button", { name: "permanently delete selected" }),
+    ).toHaveTextContent(/^permanently delete$/);
+    expect(screen.getByRole("button", { name: "restore selected" })).toHaveTextContent(
+      /^restore$/,
+    );
+  });
+
+  it("omits the redundant selection instruction when nothing is selected", () => {
+    renderWithProviders(
+      <JobBulkActions
+        search={baseSearch}
+        selectedCount={0}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
+      />,
+    );
+
+    expect(screen.queryByText("select jobs to manage")).not.toBeInTheDocument();
+  });
+
   it("invokes onMutateSelected when the danger button is clicked", async () => {
     const user = userEvent.setup();
     const onMutate = vi.fn();
@@ -305,11 +364,11 @@ describe("<JobBulkActions>", () => {
         onPermanentlyDeleteSelected={onPermanentDelete}
       />,
     );
-    await user.click(screen.getByRole("button", { name: /delete permanently selected/i }));
+    await user.click(screen.getByRole("button", { name: /permanently delete selected/i }));
     expect(onPermanentDelete).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onSetDeleted when switching tabs", async () => {
+  it("calls onSetDeleted when switching views", async () => {
     const user = userEvent.setup();
     const onSet = vi.fn();
     renderWithProviders(
@@ -328,11 +387,11 @@ describe("<JobBulkActions>", () => {
         onPermanentlyDeleteSelected={() => {}}
       />,
     );
-    await user.click(screen.getByRole("button", { name: /closed jobs/i }));
+    await user.click(screen.getByRole("radio", { name: /^closed$/i }));
     expect(onSet).toHaveBeenCalledWith("closed");
-    await user.click(screen.getByRole("button", { name: /deleted jobs/i }));
+    await user.click(screen.getByRole("radio", { name: /^deleted$/i }));
     expect(onSet).toHaveBeenCalledWith("deleted");
-    await user.click(screen.getByRole("button", { name: /hidden jobs/i }));
+    await user.click(screen.getByRole("radio", { name: /^hidden$/i }));
     expect(onSet).toHaveBeenCalledWith("hidden");
   });
 

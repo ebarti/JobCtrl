@@ -9,12 +9,14 @@ import { buildApp } from "../src/server.js";
 
 function withTempApp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-compensation-sources-"));
+  const settingsPath = path.join(dir, "dashboard.json");
   const app = buildApp({
     dbPath: path.join(dir, "jobs.db"),
-    settingsPath: path.join(dir, "dashboard.json"),
+    settingsPath,
   });
   return {
     app,
+    settingsPath,
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
   };
 }
@@ -42,11 +44,12 @@ function collectKeys(value: unknown, keys = new Set<string>()): Set<string> {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 
 describe("compensation source policy", () => {
-  it("serves a read-only registry of safe compensation source policy fields", async () => {
+  it("serves a registry of safe compensation source policy fields", async () => {
     const { app, cleanup } = withTempApp();
     try {
       const response = await app.inject({ method: "GET", url: "/v1/compensation/sources" });
@@ -162,6 +165,143 @@ describe("compensation source policy", () => {
       configured: true,
       disabledReason: null,
     });
+  });
+
+  it("persists user-owned Levels.fyi and Glassdoor source settings", async () => {
+    const { app, settingsPath, cleanup } = withTempApp();
+    try {
+      const levelsResponse = await app.inject({
+        method: "PATCH",
+        url: "/v1/compensation/sources",
+        payload: {
+          sourceId: "levels_fyi",
+          enabled: true,
+          accessMode: "licensed_data_feed",
+          europeCoverageConfirmed: true,
+        },
+      });
+      expect(levelsResponse.statusCode, levelsResponse.body).toBe(200);
+      expect(source(levelsResponse.json(), "levels_fyi")).toMatchObject({
+        availability: "available",
+        configured: true,
+        control: {
+          kind: "user_preference",
+          enabled: true,
+          accessMode: "licensed_data_feed",
+          europeCoverageConfirmed: true,
+        },
+      });
+
+      const glassdoorResponse = await app.inject({
+        method: "PATCH",
+        url: "/v1/compensation/sources",
+        payload: {
+          sourceId: "glassdoor",
+          enabled: true,
+          accessMode: "written_permission",
+        },
+      });
+      expect(glassdoorResponse.statusCode, glassdoorResponse.body).toBe(200);
+      expect(source(glassdoorResponse.json(), "glassdoor")).toMatchObject({
+        availability: "available",
+        configured: true,
+        control: {
+          kind: "user_preference",
+          enabled: true,
+          accessMode: "written_permission",
+        },
+      });
+
+      const readbackResponse = await app.inject({
+        method: "GET",
+        url: "/v1/compensation/sources",
+      });
+      expect(readbackResponse.statusCode, readbackResponse.body).toBe(200);
+      expect(source(readbackResponse.json(), "levels_fyi")).toMatchObject({
+        configured: true,
+        control: {
+          enabled: true,
+          accessMode: "licensed_data_feed",
+          europeCoverageConfirmed: true,
+        },
+      });
+      expect(source(readbackResponse.json(), "glassdoor")).toMatchObject({
+        configured: true,
+        control: {
+          enabled: true,
+          accessMode: "written_permission",
+        },
+      });
+
+      expect(JSON.parse(fs.readFileSync(settingsPath, "utf8"))).toMatchObject({
+        compensation_sources: {
+          levels_fyi: {
+            enabled: true,
+            access_mode: "licensed_data_feed",
+            europe_coverage_confirmed: true,
+          },
+          glassdoor: {
+            enabled: true,
+            access_mode: "written_permission",
+          },
+        },
+      });
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("rejects enabling a licensed source without its access prerequisites", async () => {
+    const { app, cleanup } = withTempApp();
+    try {
+      const response = await app.inject({
+        method: "PATCH",
+        url: "/v1/compensation/sources",
+        payload: {
+          sourceId: "levels_fyi",
+          enabled: true,
+          accessMode: null,
+          europeCoverageConfirmed: false,
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(400);
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("keeps an explicit user disable authoritative over legacy environment access", async () => {
+    vi.stubEnv("JOBCTRL_GLASSDOOR_ACCESS_MODE", "partner_api");
+    const { app, cleanup } = withTempApp();
+    try {
+      const response = await app.inject({
+        method: "PATCH",
+        url: "/v1/compensation/sources",
+        payload: {
+          sourceId: "glassdoor",
+          enabled: false,
+          accessMode: null,
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(source(response.json(), "glassdoor")).toMatchObject({
+        accessMode: "unavailable_until_permitted",
+        availability: "unavailable",
+        configured: false,
+        licenseStatus: "requires_permission",
+        control: {
+          enabled: false,
+          accessMode: null,
+        },
+      });
+    } finally {
+      await app.close();
+      cleanup();
+    }
   });
 
   it("does not expose credentials, raw provider payloads, local paths, or scraped salary data", () => {
