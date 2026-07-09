@@ -8,7 +8,7 @@ import { renderWithProviders } from "../../test/render.js";
 import { DashboardView } from "./DashboardView.js";
 
 describe("DashboardView", () => {
-  it("does not render pipeline action controls", async () => {
+  it("renders the BR-007 operations surfaces without pipeline action controls", async () => {
     renderWithProviders(<DashboardView />);
 
     const loading = screen.queryByText("Loading dashboard.");
@@ -18,10 +18,31 @@ describe("DashboardView", () => {
 
     expect(screen.queryByRole("heading", { name: "Pipeline actions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Discovery controls" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Recent activity")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Work status" })).toBeInTheDocument();
+    expect(screen.getByText("Active work")).toBeInTheDocument();
+    expect(screen.getByText("Stuck work")).toBeInTheDocument();
+    expect(screen.getByText("worker unavailable · stale over 2m 30s")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Active runs" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recent activity" })).toBeInTheDocument();
+    expect(screen.getByText("Job scored 8/10")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Daily digest" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Outcome suggestions" })).toBeInTheDocument();
     expect(screen.getByText("Recruiter reply indicates an interview request.")).toBeInTheDocument();
+  });
+
+  it("surfaces workflow-run read failures inside the active-runs card", async () => {
+    server.use(
+      http.get("*/v1/workflow-runs", () =>
+        new HttpResponse(JSON.stringify({ ok: false, error: "runs unavailable" }), {
+          status: 503,
+        }),
+      ),
+    );
+
+    renderWithProviders(<DashboardView />);
+
+    expect(await screen.findByRole("heading", { name: "Active runs" })).toBeInTheDocument();
+    expect(await screen.findByText(/JobCtrl API request failed: 503/i)).toBeInTheDocument();
   });
 
   it("shows a loading state before the summary resolves, then renders the conversion panel", async () => {

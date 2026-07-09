@@ -46,7 +46,8 @@ const surfaces: readonly ScreenshotSurface[] = [
   {
     name: "profile.png",
     path: "/profile",
-    proof: (page) => page.getByRole("heading", { name: "Profile", level: 1 }),
+    proof: (page) =>
+      page.locator('[aria-label="Editable baseline resume page"]'),
   },
   {
     name: "discovery.png",

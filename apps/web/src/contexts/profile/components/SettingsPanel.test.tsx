@@ -72,4 +72,42 @@ describe("<SettingsPanel>", () => {
     );
     expect(await screen.findByRole("status")).toHaveTextContent("token rotated");
   });
+
+  it("keeps a successful rotation visible when automatic clipboard copy is denied", async () => {
+    const user = userEvent.setup();
+    const rotated = {
+      ...sampleExtensionCapabilityTokenResponse,
+      token: "jh_ext_rotated_token_123456789012345678901234567",
+      created: true,
+    };
+    let currentToken = sampleExtensionCapabilityTokenResponse;
+    const ports = buildTestPorts({
+      api: {
+        settings: vi.fn(async () => sampleSettingsResponse),
+        health: vi.fn(async () => sampleHealthResponse),
+        extensionCapabilityToken: vi.fn(async () => currentToken),
+        rotateExtensionCapabilityToken: vi.fn(async () => {
+          currentToken = rotated;
+          return rotated;
+        }),
+      },
+    });
+    vi.spyOn(ports.clipboard, "write").mockRejectedValue(
+      new Error("clipboard permission denied"),
+    );
+
+    renderWithProviders(<SettingsPanel />, { ports });
+
+    await user.click(
+      await screen.findByRole("button", { name: "rotate token" }),
+    );
+
+    expect(await screen.findByRole("status")).toHaveTextContent("token rotated");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Token rotated, but automatic copy was unavailable. Use copy token to try again.",
+    );
+    expect(screen.getByLabelText("Extension capability token")).toHaveValue(
+      "jh_ext_rotated_token_123456789012345678901234567",
+    );
+  });
 });

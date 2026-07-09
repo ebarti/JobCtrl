@@ -343,6 +343,12 @@ code,
   margin-left: auto;
 }
 
+.connection-pill-group:has(.connection-banner) {
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  min-inline-size: 0;
+}
+
 .connection-spend {
   color: var(--muted-foreground);
   font-size: 11px;
@@ -354,11 +360,9 @@ code,
 }
 
 .connection-banner {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  width: max-content;
-  max-width: min(420px, 90vw);
+  position: static;
+  flex: 0 1 420px;
+  max-inline-size: 100%;
   padding: 8px 12px;
   border: 1px solid var(--destructive);
   border-radius: calc(var(--radius) * 0.8);

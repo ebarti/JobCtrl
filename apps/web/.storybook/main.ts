@@ -31,8 +31,9 @@ const config: StorybookConfig = {
     }
     return viteConfig;
   },
-  // Visual regression (Chromatic, Loki) is named in docs/frontend-target.md
-  // §10.5 / §9 as the next evolution but is intentionally not wired here.
+  // Visual regression (Chromatic, Loki) is named in
+  // docs/architecture/frontend/testing.md §10.5 and docs/backlog.md as the
+  // next evolution but is intentionally not wired here.
   // Both are a one-line CI hook over a `storybook build` artefact when the
   // user wants to opt in.
 };

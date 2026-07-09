@@ -96,7 +96,7 @@ letters.
 Depending on configuration, JobCtrl can call:
 
 - LLM providers for scoring, employer analysis, tailoring, cover letters, and
-  stored interview prep;
+  Beta stored interview prep whose output quality lacks real-user validation;
 - job boards, ATS APIs, or public posting pages for discovery and enrichment;
 - Gmail APIs for verification-code or outcome feedback flows, plus approved
   email application sends when the dry-run candidate and Apply Review approval
@@ -166,8 +166,10 @@ These boundaries are the operator's responsibility:
 - **AI spend:** LLM calls can cost money. The local `dailyBudgetUsd` ceiling
   gates new spendful workflows, but it is an estimate and does not replace your
   provider-side billing controls.
-- **Interview prep:** JobCtrl can generate stored pre-interview notes for a
-  job from grounded profile/job/material evidence. Post-interview reflection
+- **Interview prep (Beta):** JobCtrl can generate stored pre-interview notes for
+  a job from grounded profile/job/material evidence. Its truthfulness gates are
+  shipped, but output quality has not yet been validated through real-user
+  usage. Post-interview reflection
   notes can be linked to an accepted prep generation, but they stay local manual
   outcome notes. JobCtrl is not a live interview assistant and has no
   transcript upload, microphone input, streaming, websocket, in-session state, or
@@ -240,7 +242,10 @@ Use synthetic data only. Do not include:
 `pnpm qa:seed` creates a disposable synthetic workspace that is safe for
 screenshots and bug reproduction.
 
-`scripts/release_check.py` is the enforcement gate behind these rules: CI runs
-it on every push and pull request to scan the tree for real-profile needles,
-secrets, prompt tripwires, blocked file types, and blocked distribution paths
-before anything is published.
+`scripts/release_check.py` is the enforcement gate behind these rules. CI runs
+it automatically on every push to `main` and during release publication to scan
+the tree for real-profile needles, secrets, prompt tripwires, blocked file
+types, and blocked distribution paths before anything is published. Public
+pull requests intentionally do not run heavyweight CI automatically;
+maintainers run the scanner locally or through the manual workflow after review
+and before merge.

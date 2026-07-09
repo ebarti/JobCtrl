@@ -55,13 +55,6 @@ frontend adapters remain deferred until the local product is solid.
 
 ### Frontend/API Parity
 
-- BR-007 is partially unmet on the operations dashboard (2026-07-04
-  requirements audit): no "stuck" work bucket exists anywhere in the web app,
-  and the recent-activity feed renders on the Debug view while
-  `DashboardView.tsx` never consumes the `summary.activity` payload the API
-  already returns. Fix is product work — add the stuck bucket and move the
-  activity feed onto the dashboard; do not reword the requirement to match
-  the current UI.
 - Extend targeted row patching beyond the single `ApplyRunEventRecorded`
   handler. The SSE pipeline and invalidation router are live, and
   `ApplyRunEventRecorded` is the only handler that returns a
@@ -349,10 +342,11 @@ no dual-mount, no compatibility shim.
 
 ## Frontend Accessibility Backlog (Phase 7 Deferrals)
 
-No Storybook stories currently defer the a11y bar. The Phase 7 deferrals
-were burned down on 2026-07-06; new production accessibility defects must be
-fixed in the owning component or recorded here with the story path and a
-concrete follow-up.
+No Storybook stories under `apps/web/src/` currently set
+`parameters.a11y.test = "off"` or `parameters.a11y.disable = true`. The Phase 7
+deferrals were burned down on 2026-07-06; new production accessibility defects
+must be fixed in the owning component or recorded here with the story path,
+affected production file, defect type, and a concrete follow-up.
 
 ## Frontend Tooling + CI Backlog (Phase 1–8 Deferrals)
 

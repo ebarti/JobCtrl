@@ -124,8 +124,8 @@ const preview: Preview = {
       // Storybook 9+ a11y addon: "error" turns critical/serious axe
       // violations into a red badge on the toolbar AND fails CI when
       // run via `storybook test` or the addon-vitest integration.
-      // Per docs/frontend-target.md §10.7, the bar is "no critical
-      // violations" for input-bearing surfaces.
+      // Per docs/architecture/frontend/testing.md §10.7, the bar is "no
+      // critical or serious violations" for input-bearing surfaces.
       test: "error",
       config: {
         rules: [

@@ -39,11 +39,11 @@ function validRecord(overrides = {}) {
       requiredRuns: overrides.requiredRuns ?? 3,
     },
     t0: {
-      command: "corepack pnpm install:interactive",
+      command: "scripts/install",
       startedAt: "2026-07-06T00:00:00.000Z",
     },
     phases: [
-      { name: "install", command: "corepack pnpm install:interactive", exitCode: 0 },
+      { name: "install", command: "scripts/install", exitCode: 0 },
       { name: "workspace_init", command: "uv --project workers/automation run jobctrl init", exitCode: 0 },
       { name: "stack_start", command: "corepack pnpm dev", status: "healthy" },
       {

@@ -10,6 +10,12 @@ test("Dashboard renders KPIs, click 'Jobs' KPI navigates to /jobs and row count 
   await expect(page.getByRole("heading", { name: "Daily digest" })).toBeVisible();
   await expect(page.getByRole("link", { name: /New matches/i })).toBeVisible();
   await expect(page.getByRole("button", { name: /mark reviewed/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Work status" })).toBeVisible();
+  await expect(page.getByText("No stuck work.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Active runs" })).toBeVisible();
+  await expect(page.getByText("No active workflow runs.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recent activity" })).toBeVisible();
+  await expect(page.getByText("Apply workflow completed")).toBeVisible();
 
   const jobsValueText = await jobsKpi.locator('[data-slot="stat-value"]').innerText();
   const totalJobs = Number.parseInt(jobsValueText.trim(), 10);

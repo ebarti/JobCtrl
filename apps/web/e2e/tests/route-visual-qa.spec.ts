@@ -296,6 +296,22 @@ async function expectNoDocumentInlineOverflow(page: Page): Promise<void> {
   ).toBeLessThanOrEqual(layout.clientWidth + 1);
 }
 
+async function expectArtifactPdfPreviewRendered(page: Page): Promise<void> {
+  const preview = page.getByRole("region", { name: "Artifact PDF preview" });
+  await expect(preview).toBeVisible({ timeout: 30_000 });
+  await expect(preview.getByText("1 page", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(preview.getByText("Preview failed", { exact: true })).toHaveCount(0);
+
+  const pageImage = preview.locator(".pdf-preview-page img");
+  await expect(pageImage).toHaveCount(1);
+  await expect(pageImage).toBeVisible();
+  await expect
+    .poll(() => pageImage.evaluate((element) => (element as HTMLImageElement).naturalWidth), {
+      message: "artifact PDF preview page should load real image pixels",
+    })
+    .toBeGreaterThan(0);
+}
+
 async function hasVisibleFocusIndicator(locator: Locator): Promise<boolean> {
   const focus = await locator.evaluate((element) => {
     const style = getComputedStyle(element);
@@ -633,9 +649,7 @@ test("route overlays open with seeded data and dismiss from the keyboard", async
   await page.goto("/artifacts/2");
   const artifactDialog = page.getByRole("dialog", { name: "Artifact details" });
   await expect(artifactDialog).toBeVisible({ timeout: 30_000 });
-  await expect(
-    page.getByRole("region", { name: "Artifact PDF preview" }),
-  ).toBeVisible();
+  await expectArtifactPdfPreviewRendered(page);
   await expectKeyboardFocusIndicator(
     page,
     page.getByRole("button", { name: /Close artifact details/i }),

@@ -25,11 +25,11 @@ jobs:
       - name: Install build tools
         run: pip install build
 
-      - name: Run release check
-        run: python3 scripts/release_check.py
-
       - name: Build package
         run: python -m build workers/automation
+
+      - name: Scan source and built distributions
+        run: python3 scripts/release_check.py --strict-prompt
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

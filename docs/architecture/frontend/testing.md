@@ -8,11 +8,11 @@ accessibility (a11y), and Playwright end-to-end (E2E). Part of the
 in, or which checks run in CI versus locally.
 
 The frontend ships a pyramid that matches the architecture's seams. Today
-it comprises roughly **145 colocated `*.test.ts(x)`** under `apps/web/src`
-(66 `.test.ts` + 79 `.test.tsx`, of which **12** are colocated
-`*.a11y.test.tsx`), **9 type-level `*.test-d.ts`** under `apps/web/test/types`,
-**12 Playwright `*.spec.ts`** under `apps/web/e2e`, and **~88
-`*.stories.tsx`** Storybook stories.
+it comprises **220 colocated `*.test.ts(x)`** under `apps/web/src`
+(100 `.test.ts` + 120 `.test.tsx`, of which **29** are colocated
+`*.a11y.test.tsx`), **11 type-level `*.test-d.ts`** under `apps/web/test/types`,
+**18 Playwright `*.spec.ts`** under `apps/web/e2e/tests`, and **112
+`*.stories.tsx`** Storybook story files.
 
 ### 10.1 The Pyramid
 
@@ -96,11 +96,13 @@ custom `EventStreamPort` mock injected through `<PortsProvider />`.
 
 ### 10.4 End-to-End Tests (Playwright)
 
-The suite has **12** spec files under `apps/web/e2e/tests/` today:
-`dashboard`, `jobs-drawer`, `jobs-bulk`, `dry-run`, `materials`,
-`profile-edit`, `wizard`, `runs`, `settings`, plus `route-visual-qa`,
-`token-foundation`, and `docs-screenshots` (the last drives the
-screenshots embedded in the docs). Representative critical flows:
+The suite has **18** spec files under `apps/web/e2e/tests/` today:
+`analytics`, `artifact-comparison`, `dashboard`, `dry-run`, `evidence-map`,
+`interview-prep`, `jobs-bulk`, `jobs-drawer`, `materials`,
+`mobile-connection-banner`, `outreach`, `profile-edit`, `runs`, `settings`,
+`token-foundation`, `wizard`, plus `route-visual-qa` and `docs-screenshots`
+(the last drives the screenshots embedded in the docs). Representative
+critical flows:
 
 1. **Dashboard load** → KPIs render → click a KPI → navigate to filtered
    jobs view → row count matches.
@@ -127,7 +129,8 @@ test interacts with the rendered web app at `http://127.0.0.1:5173`.
 
 ### 10.5 Storybook (Component-Driven Development)
 
-~88 colocated `*.stories.tsx` today. Stories serve three audiences:
+The frontend has **112** colocated `*.stories.tsx` files today. Stories serve
+three audiences:
 
 - **Developers** — visual playground while building.
 - **Designers** — review surface without booting the full app.
@@ -144,7 +147,7 @@ existing stories.
 
 ### 10.6 Type-Level Tests
 
-Beyond the workspace typecheck, the frontend runs **9 `*.test-d.ts`** files
+Beyond the workspace typecheck, the frontend runs **11 `*.test-d.ts`** files
 under `apps/web/test/types` via Vitest's `typecheck` mode (separate config
 `vitest.types.config.ts`, invoked by `pnpm --filter @jobctrl/web test-d`).
 There is no `tsd` dependency; assertions use Vitest `expectTypeOf`.
@@ -158,14 +161,14 @@ There is no `tsd` dependency; assertions use Vitest `expectTypeOf`.
 
 ### 10.7 Accessibility Spot Checks
 
-Accessibility is enforced on two surfaces. Colocated `*.a11y.test.tsx`
-files (12 today) run axe against components with user input (forms,
-dialogs, tables). Storybook's a11y addon enforces **zero critical and
-serious axe violations** across stories; a story that exercises a
-pre-existing production defect may set `parameters.a11y.test = "off"`, but
-only with a matching entry in the "Frontend Accessibility Backlog" in
-`docs/backlog.md` (10 such deferrals are recorded there today, matching the
-10 stories in code).
+Accessibility is enforced on two surfaces. Colocated `*.a11y.test.tsx` files
+under `apps/web/src/` run axe against input-bearing components and other
+high-risk surfaces; the current source-derived inventory lives in
+`docs/local-reliability-qa.md`. Storybook's a11y addon enforces **zero critical
+and serious axe violations** across stories. A story that exercises a
+pre-existing production defect may set `parameters.a11y.test = "off"` only
+with a matching entry in the "Frontend Accessibility Backlog" in
+`docs/backlog.md`, which owns the live deferral inventory.
 
 ### 10.8 What We Do NOT Test
 

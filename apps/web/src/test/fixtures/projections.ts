@@ -1098,6 +1098,20 @@ export const sampleDashboardSummary: DashboardSummary = {
     appliedToday: 1,
     dryRuns: 2,
   },
+  work: {
+    active: 2,
+    stuck: 1,
+    stuckAfterSeconds: 150,
+    stuckItems: [
+      {
+        jobKey: sampleSecondaryJob.jobKey,
+        title: sampleSecondaryJob.title,
+        company: sampleSecondaryJob.company,
+        stage: "score",
+        updatedAt: "2026-05-06T07:00:00Z",
+      },
+    ],
+  },
   preparation: {
     currentScoringPolicyVersion: 2,
     currentTailoringPolicyVersion: 2,

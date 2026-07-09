@@ -260,7 +260,13 @@ Generated material records are kept as audit history. Re-generation does not
 destroy the accepted material already in use; a replacement becomes active only
 after it validates and you approve it.
 
-## 7. Generate Interview Prep
+## 7. Generate Interview Prep (Beta)
+
+::: warning Beta maturity boundary
+The grounding and fabrication gates are shipped, but interview-prep output
+quality has not yet been validated through real-user usage. Review every note
+against its linked evidence before relying on it.
+:::
 
 <WorkflowSurfacePanel surface="web">
 

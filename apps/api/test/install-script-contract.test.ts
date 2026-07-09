@@ -1,5 +1,6 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,5 +39,41 @@ describe("interactive install script contract", () => {
     expect(output).toContain("uv --project workers/automation sync --extra dev");
     expect(output).toContain("corepack pnpm --filter @jobctrl/web exec playwright install chromium");
     expect(output).toContain("uv --project workers/automation run playwright install chromium");
+  });
+
+  it("offers the standalone Homebrew Corepack package when Node has no Corepack", () => {
+    const fakeBin = mkdtempSync(join(tmpdir(), "jobctrl-install-"));
+    const node = join(fakeBin, "node");
+    const brew = join(fakeBin, "brew");
+    writeFileSync(node, "#!/bin/sh\nprintf '22.0.0\\n'\n", "utf8");
+    writeFileSync(brew, "#!/bin/sh\nexit 0\n", "utf8");
+    chmodSync(node, 0o755);
+    chmodSync(brew, 0o755);
+
+    try {
+      const result = spawnSync(
+        installScript,
+        ["--dry-run", "--yes", "--skip-browsers", "--skip-doctor"],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            CHROME_PATH: "/bin/true",
+            PATH: `${fakeBin}:/usr/bin:/bin`,
+          },
+        },
+      );
+      const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.status).toBe(1);
+      expect(output).toContain("Install Corepack with Homebrew now? yes");
+      expect(output).toContain("+ brew install corepack");
+      expect(output).toContain(
+        "Corepack - install Corepack directly or with Homebrew (brew install corepack)",
+      );
+    } finally {
+      rmSync(fakeBin, { recursive: true, force: true });
+    }
   });
 });

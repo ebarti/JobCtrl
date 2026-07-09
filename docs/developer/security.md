@@ -318,7 +318,8 @@ archives — for:
 
 It also scans for apply-prompt tripwires: CapSolver key interpolation,
 hardcoded attestation defaults, and profile-password interpolation. The default
-CI mode keeps these as compatibility warnings, while the release gate also runs
+local mode keeps these as compatibility warnings for investigations, while both
+the main/manual privacy workflow and the post-build publication gate run
 `--strict-prompt`, where any of those tripwires is a failure. Treat a passing
 release check as necessary but not sufficient, and do not add real profile data
 to a fixture just because the scrubber is green today.

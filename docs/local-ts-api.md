@@ -277,7 +277,16 @@ web dashboard uses for source health. The same response also includes
 `operationalMetrics`, sourced from `operational_attempt_metrics`, plus
 per-source operational/scrape/retryable failure counts. These counters use
 structured stage/source/apply attempt rows, not label math over free-text event
-messages.
+messages. Its `work` object classifies current queued/running job-stage work
+from canonical `job_stage_states`: `active` counts queued work plus running work
+not classified as stuck, while `stuck` and the bounded `stuckItems[]` list
+identify running stages whose `updated_at`/`started_at` timestamp is older than
+150 seconds while canonical worker health is missing, stale (including an
+invalid timestamp), or mismatched to the API runtime. The 45-second heartbeat
+threshold comes from the worker-health check; the 150-second stage-age threshold
+is an explicit dashboard presentation policy returned as `stuckAfterSeconds`.
+Requiring both stage age and unhealthy worker state keeps a healthy long-running
+activity from being mislabeled as stuck.
 
 Each `sourceHealth[]` entry also carries an additive `politeness` object with
 per-source crawl-politeness outcome counts recorded by the R10 politeness
@@ -1082,9 +1091,10 @@ a JSON-RPC error response.)
 `GET /v1/dashboard/summary` includes a bounded recent `activity[]` slice with
 `activity[].eventType` so the web app can render started, completed, and failed
 stage states from backend events instead of local button state alone. The
-top-level Debug tab uses `GET /v1/debug/activity` for the full activity log as a
-paginated, sortable table; this keeps Dashboard lightweight without imposing an
-event-history cap.
+Dashboard renders a bounded subset of those events alongside active runs from
+the unified `/v1/workflow-runs` read model. The top-level Debug tab uses
+`GET /v1/debug/activity` for the full activity log as a paginated, sortable
+table; this keeps Dashboard lightweight without imposing an event-history cap.
 
 ## Settings And Credentials
 

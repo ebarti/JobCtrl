@@ -2561,6 +2561,24 @@ export interface OutcomeAnalyticsSummary {
   suggestionAccuracy: OutcomeAnalyticsSuggestionAccuracy;
 }
 
+export interface DashboardStuckWorkItem {
+  jobKey: string;
+  title: string;
+  company: string;
+  stage: Stage;
+  updatedAt: string | null;
+}
+
+export interface DashboardWorkSummary {
+  /** Queued work plus running work that is not classified as stuck. */
+  active: number;
+  /** Running work past `stuckAfterSeconds` while the worker is unavailable. */
+  stuck: number;
+  stuckAfterSeconds: number;
+  /** Oldest stuck items first; bounded for the dashboard surface. */
+  stuckItems: DashboardStuckWorkItem[];
+}
+
 export interface DashboardSummary {
   ok: true;
   generatedAt: string;
@@ -2574,6 +2592,7 @@ export interface DashboardSummary {
     appliedToday: number;
     dryRuns: number;
   };
+  work: DashboardWorkSummary;
   preparation?: PreparationSummary;
   funnel: Array<{
     stage: Stage;
