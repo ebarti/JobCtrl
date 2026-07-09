@@ -298,7 +298,7 @@ const APPLY_REVIEW_PRECONDITION_ERRORS = new Set([
 ]);
 const TRUSTED_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "none"]);
 const LOOPBACK_ORIGIN_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "same-site", "none"]);
-const FIRST_PARTY_PAIRING_SEC_FETCH_SITE_VALUES = new Set(["same-origin"]);
+const FIRST_PARTY_PAIRING_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "same-site"]);
 const EXTENSION_API_PREFIX = "/v1/extension/";
 const EXTENSION_PAIRING_TOKEN_PATH = "/v1/extension/pairing-token";
 const EXTENSION_PAIRING_TOKEN_ROTATE_PATH = "/v1/extension/pairing-token/rotate";

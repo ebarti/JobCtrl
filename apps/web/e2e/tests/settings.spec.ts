@@ -21,3 +21,18 @@ test("Settings update: change apply concurrency -> save -> reload -> persisted",
   await page.reload();
   await expect(page.getByLabel("Apply concurrency")).toHaveValue(newValue, { timeout: 30_000 });
 });
+
+test("Settings pairing: trusted split-port app loads and rotates the extension token", async ({ page }) => {
+  await page.goto("/settings");
+
+  const tokenField = page.getByLabel("Extension capability token");
+  await expect(tokenField).not.toHaveValue("", { timeout: 30_000 });
+  await expect(page.getByText("JobCtrl API request failed: 403 Forbidden", { exact: true })).toHaveCount(0);
+
+  const initialToken = await tokenField.inputValue();
+  await page.getByRole("button", { name: "rotate token" }).click();
+
+  await expect(page.getByRole("status")).toHaveText("token rotated", { timeout: 30_000 });
+  await expect.poll(() => tokenField.inputValue()).not.toBe(initialToken);
+  await expect(page.getByText("JobCtrl API request failed: 403 Forbidden", { exact: true })).toHaveCount(0);
+});
