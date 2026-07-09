@@ -9,10 +9,12 @@ import os
 import re
 import sqlite3
 import urllib.parse
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from jobctrl.config import APP_DIR
 from jobctrl.database import ensure_market_compensation_tables
 from jobctrl.domain.discovery.source_registry import (
     RobotsPolicy,
@@ -559,6 +561,7 @@ def load_default_reported_compensation_observations(
     include_eurotoptech: bool = True,
     eurotoptech_max_pages: int = 10,
     env: dict[str, str] | None = None,
+    settings_path: Path | str | None = None,
     gateway: PolitenessGateway | None = None,
     recorder_conn: sqlite3.Connection | None = None,
     run_id: str | None = None,
@@ -572,7 +575,10 @@ def load_default_reported_compensation_observations(
     ``recorder_conn`` is supplied.
     """
 
-    source_env = env if env is not None else os.environ
+    source_env = _compensation_source_environment(
+        env if env is not None else os.environ,
+        settings_path=settings_path,
+    )
     active_gateway = gateway if gateway is not None else PolitenessGateway()
     observations: list[ReportedCompensationObservation] = []
     local = _load_optional_observation_ref(
@@ -651,6 +657,80 @@ def load_default_reported_compensation_observations(
         glassdoor_count=len(glassdoor),
         euro_top_tech_count=len(eurotoptech),
     )
+
+
+def _compensation_source_environment(
+    env: Mapping[str, str],
+    *,
+    settings_path: Path | str | None,
+) -> dict[str, str]:
+    """Apply persisted user source preferences over compatibility env gates."""
+
+    effective = dict(env)
+    resolved_settings_path = Path(
+        settings_path
+        or effective.get("JOBCTRL_DASHBOARD_CONFIG_PATH")
+        or APP_DIR / "dashboard.json"
+    )
+    preferences = _read_compensation_source_preferences(resolved_settings_path)
+    _apply_compensation_source_preference(
+        effective,
+        preferences.get("levels_fyi"),
+        access_var="JOBCTRL_LEVELS_FYI_ACCESS_MODE",
+        coverage_var="JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE",
+    )
+    _apply_compensation_source_preference(
+        effective,
+        preferences.get("glassdoor"),
+        access_var="JOBCTRL_GLASSDOOR_ACCESS_MODE",
+    )
+    return effective
+
+
+def _read_compensation_source_preferences(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.exists():
+        return {}
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    raw_sources = parsed.get("compensation_sources")
+    if not isinstance(raw_sources, dict):
+        raw_sources = parsed.get("compensationSources")
+    if not isinstance(raw_sources, dict):
+        return {}
+    return {
+        str(source_id): value
+        for source_id, value in raw_sources.items()
+        if isinstance(value, dict)
+    }
+
+
+def _apply_compensation_source_preference(
+    env: dict[str, str],
+    preference: dict[str, Any] | None,
+    *,
+    access_var: str,
+    coverage_var: str | None = None,
+) -> None:
+    if preference is None or not isinstance(preference.get("enabled"), bool):
+        return
+    if not preference["enabled"]:
+        env[access_var] = ""
+        if coverage_var is not None:
+            env[coverage_var] = "false"
+        return
+
+    access_mode = preference.get("access_mode", preference.get("accessMode"))
+    env[access_var] = str(access_mode or "").strip()
+    if coverage_var is not None:
+        coverage = preference.get(
+            "europe_coverage_confirmed",
+            preference.get("europeCoverageConfirmed", False),
+        )
+        env[coverage_var] = "true" if coverage is True else "false"
 
 
 def _load_reported_compensation_payload(

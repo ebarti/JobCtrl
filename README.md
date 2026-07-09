@@ -363,7 +363,8 @@ sqlite3 ~/.jobctrl/jobctrl.db \
 
 1. Create or import a candidate profile.
 2. Configure target roles, locations, work models, and application
-   preferences.
+   preferences. In Settings, opt into Levels.fyi or Glassdoor compensation
+   feeds only when you have the matching licensed or permitted access.
 3. Run Discover from the UI or CLI, optionally targeting a single source from
    the Pipelines tab when you want a lighter retry.
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
@@ -438,10 +439,11 @@ All commands run as `uv --project workers/automation run jobctrl <command>`
 
 ## Configuration
 
-Configuration comes from the local SQLite profile/settings database,
-environment variables (`~/.jobctrl/.env`, repo `.env`, or the shell), and
-package-shipped source registries. Start with [.env.example](.env.example);
-full reference: [Configuration](https://jobctrl.dev/user/configuration).
+Configuration comes from local profile/settings stores, environment variables
+(`~/.jobctrl/.env`, repo `.env`, or the shell), and package-shipped source
+registries. Compensation-source opt-ins are managed from Settings and stored
+locally. Start with [.env.example](.env.example); full reference:
+[Configuration](https://jobctrl.dev/user/configuration).
 
 <details>
 <summary><b>Common variables</b></summary>

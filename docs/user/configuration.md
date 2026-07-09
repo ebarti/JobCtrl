@@ -307,12 +307,26 @@ or logs.
 
 ## Compensation Sources
 
+Settings > General > Compensation sources lets you opt into Levels.fyi and
+Glassdoor at your discretion. Choose the access basis you actually have,
+confirm Europe coverage for Levels.fyi, and then enable the source. The choice
+is stored locally in `dashboard.json` and is consumed by both the TypeScript API
+and the Python compensation refresh worker. Once you save a source preference,
+it overrides the compatibility environment-variable gate for that source;
+before that, the environment variables below remain the fallback.
+
+Enabling a source does not obtain a license, create permission, bypass provider
+controls, or scrape a provider website. You must still supply an authorized
+JSON or CSV feed using the corresponding path or URL variable. Turning the
+source off in Settings prevents the worker from loading that feed even when an
+access-mode environment variable is present.
+
 | Variable | What it does |
 | --- | --- |
-| `JOBCTRL_LEVELS_FYI_ACCESS_MODE` | Enables configured licensed Levels.fyi rows only when the mode permits the source. |
-| `JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE` | Marks configured Levels.fyi evidence as Europe-capable. |
+| `JOBCTRL_LEVELS_FYI_ACCESS_MODE` | Compatibility fallback for the Levels.fyi access basis until an explicit Settings preference exists. |
+| `JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE` | Compatibility fallback for explicit Levels.fyi Europe coverage confirmation. |
 | `JOBCTRL_LEVELS_FYI_OBSERVATIONS_PATH` / `JOBCTRL_LEVELS_FYI_OBSERVATIONS_URL` | JSON or CSV observations feed. |
-| `JOBCTRL_GLASSDOOR_ACCESS_MODE` | Enables configured Glassdoor rows only when access is permitted. |
+| `JOBCTRL_GLASSDOOR_ACCESS_MODE` | Compatibility fallback for the Glassdoor access basis until an explicit Settings preference exists. |
 | `JOBCTRL_GLASSDOOR_OBSERVATIONS_PATH` / `JOBCTRL_GLASSDOOR_OBSERVATIONS_URL` | JSON or CSV observations feed. |
 
 Provider payloads and restricted datasets should never be committed.

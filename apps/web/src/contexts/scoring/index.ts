@@ -2,6 +2,7 @@ export { scoringKeys } from "./queryKeys.js";
 
 export { useCorrectScoreMutation } from "./hooks/useCorrectScoreMutation.js";
 export { useResetStaleScoresForRescoreMutation } from "./hooks/useResetStaleScoresForRescoreMutation.js";
+export { useUpdateCompensationSourcePolicyMutation } from "./hooks/useUpdateCompensationSourcePolicyMutation.js";
 export {
   useRescoreCurrentPolicyMutation,
   useRescoreJobMutation,

@@ -25,6 +25,7 @@ import {
   BulkRescoreJobsNotOnCurrentScoringPolicyRequestSchema,
   BulkRetailorCurrentPolicyRequestSchema,
   CancelJobActionRequestSchema,
+  CompensationSourcePolicyUpdateRequestSchema,
   CorrectScoreRequestSchema,
   PIPELINE_ACTION_JOB_KEY,
   type PipelineStageRunResponse,
@@ -136,7 +137,12 @@ import {
   recordApplyReviewDecision,
   recordManualApplicationOutcome,
 } from "./application-feedback.js";
-import { listCompensationSources } from "./compensation-source-policy.js";
+import {
+  CompensationSourcePolicyInputError,
+  listCompensationSources,
+  readCompensationSourcePreferences,
+  updateCompensationSourcePolicy,
+} from "./compensation-source-policy.js";
 import { databaseExists, openDatabase } from "./db.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
@@ -543,7 +549,40 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => readDiscoverySettings(db)),
   );
 
-  app.get("/v1/compensation/sources", async () => listCompensationSources());
+  app.get("/v1/compensation/sources", async () =>
+    listCompensationSources(
+      process.env,
+      readCompensationSourcePreferences(options.settingsPath),
+    ),
+  );
+
+  app.patch("/v1/compensation/sources", async (request, reply) => {
+    const body = parseBody(
+      reply,
+      CompensationSourcePolicyUpdateRequestSchema,
+      request.body ?? {},
+    );
+    if (!body) {
+      return undefined;
+    }
+    try {
+      return updateCompensationSourcePolicy(
+        options.settingsPath,
+        body,
+        process.env,
+      );
+    } catch (error) {
+      if (error instanceof CompensationSourcePolicyInputError) {
+        void reply.code(400);
+        return {
+          ok: false,
+          error: "invalid_compensation_source_settings",
+          message: error.message,
+        };
+      }
+      throw error;
+    }
+  });
 
   app.patch("/v1/discovery/settings", async (request, reply) => {
     const body = parseBody(reply, DiscoverySettingsUpdateRequestSchema, request.body ?? {});

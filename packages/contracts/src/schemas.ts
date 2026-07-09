@@ -3393,6 +3393,21 @@ export const COMPENSATION_SOURCE_ACCESS_MODES = [
 ] as const;
 export type CompensationSourceAccessMode = (typeof COMPENSATION_SOURCE_ACCESS_MODES)[number];
 
+export const LEVELS_FYI_COMPENSATION_ACCESS_MODES = [
+  "licensed_api",
+  "licensed_data_feed",
+  "enterprise_mcp",
+] as const satisfies readonly CompensationSourceAccessMode[];
+export type LevelsFyiCompensationAccessMode =
+  (typeof LEVELS_FYI_COMPENSATION_ACCESS_MODES)[number];
+
+export const GLASSDOOR_COMPENSATION_ACCESS_MODES = [
+  "partner_api",
+  "written_permission",
+] as const satisfies readonly CompensationSourceAccessMode[];
+export type GlassdoorCompensationAccessMode =
+  (typeof GLASSDOOR_COMPENSATION_ACCESS_MODES)[number];
+
 export const COMPENSATION_SOURCE_AVAILABILITY = ["available", "unavailable"] as const;
 export type CompensationSourceAvailability = (typeof COMPENSATION_SOURCE_AVAILABILITY)[number];
 
@@ -3426,6 +3441,24 @@ export interface CompensationSourceCoverage {
   notes: string;
 }
 
+export interface FixedCompensationSourceControl {
+  kind: "fixed";
+  enabled: true;
+}
+
+export interface UserCompensationSourceControl {
+  kind: "user_preference";
+  enabled: boolean;
+  accessMode: CompensationSourceAccessMode | null;
+  allowedAccessModes: CompensationSourceAccessMode[];
+  europeCoverageRequired: boolean;
+  europeCoverageConfirmed: boolean;
+}
+
+export type CompensationSourceControl =
+  | FixedCompensationSourceControl
+  | UserCompensationSourceControl;
+
 export interface CompensationSourcePolicySummary {
   sourceId: string;
   displayName: string;
@@ -3440,6 +3473,7 @@ export interface CompensationSourcePolicySummary {
   supportedFields: CompensationSupportedField[];
   disabledReason: string | null;
   configured: boolean;
+  control: CompensationSourceControl;
   coverage: CompensationSourceCoverage;
   notes: string[];
 }
@@ -3448,6 +3482,48 @@ export interface CompensationSourceRegistryResponse {
   ok: true;
   sources: CompensationSourcePolicySummary[];
 }
+
+export const CompensationSourcePolicyUpdateRequestSchema = z
+  .discriminatedUnion("sourceId", [
+    z
+      .object({
+        sourceId: z.literal("levels_fyi"),
+        enabled: z.boolean(),
+        accessMode: z.enum(LEVELS_FYI_COMPENSATION_ACCESS_MODES).nullable(),
+        europeCoverageConfirmed: z.boolean(),
+      })
+      .strict(),
+    z
+      .object({
+        sourceId: z.literal("glassdoor"),
+        enabled: z.boolean(),
+        accessMode: z.enum(GLASSDOOR_COMPENSATION_ACCESS_MODES).nullable(),
+      })
+      .strict(),
+  ])
+  .superRefine((value, context) => {
+    if (value.enabled && value.accessMode === null) {
+      context.addIssue({
+        code: "custom",
+        message: "Choose the permitted access mode before enabling this source.",
+        path: ["accessMode"],
+      });
+    }
+    if (
+      value.sourceId === "levels_fyi" &&
+      value.enabled &&
+      !value.europeCoverageConfirmed
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Confirm Europe coverage before enabling Levels.fyi.",
+        path: ["europeCoverageConfirmed"],
+      });
+    }
+  });
+export type CompensationSourcePolicyUpdateRequest = z.infer<
+  typeof CompensationSourcePolicyUpdateRequestSchema
+>;
 
 export const DiscoverySettingsUpdateRequestSchema = z
   .object({

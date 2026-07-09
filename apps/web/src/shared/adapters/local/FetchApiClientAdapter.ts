@@ -63,6 +63,11 @@ export class FetchApiClientAdapter implements ApiClientPort {
   compensationSources() {
     return this.client.compensationSources();
   }
+  updateCompensationSourcePolicy(
+    body: Parameters<JobCtrlApiClient["updateCompensationSourcePolicy"]>[0],
+  ) {
+    return this.client.updateCompensationSourcePolicy(body);
+  }
   discoveryLocatorCandidates() {
     return this.client.discoveryLocatorCandidates();
   }
