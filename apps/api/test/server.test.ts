@@ -1044,6 +1044,22 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("rejects spoofed loopback Host headers from non-loopback peers", async () => {
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/profile",
+        headers: { host: "127.0.0.1:8766" },
+        remoteAddress: "203.0.113.10",
+      });
+      expect(response.statusCode, response.body).toBe(403);
+      expect(response.json()).toMatchObject({ ok: false, error: "forbidden_remote_client" });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("rejects DNS-rebinding Host headers that embed a loopback label in a foreign name", async () => {
     const app = buildApp(options);
     const rebindingHosts = [
@@ -1116,6 +1132,24 @@ describe("local TypeScript API", () => {
       for (const host of ["localhost", "localhost:8766", "127.0.0.1", "127.0.0.1:8766", "[::1]", "[::1]:8766"]) {
         const response = await app.inject({ method: "GET", url: "/v1/health", headers: { host } });
         expect(response.statusCode, `${host}: ${response.body}`).toBe(200);
+        expect(response.json()).toMatchObject({ ok: true });
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("allows loopback peer addresses with loopback Host headers", async () => {
+    const app = buildApp(options);
+    try {
+      for (const remoteAddress of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) {
+        const response = await app.inject({
+          method: "GET",
+          url: "/v1/health",
+          headers: { host: "127.0.0.1:8766" },
+          remoteAddress,
+        });
+        expect(response.statusCode, `${remoteAddress}: ${response.body}`).toBe(200);
         expect(response.json()).toMatchObject({ ok: true });
       }
     } finally {

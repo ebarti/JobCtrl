@@ -233,6 +233,7 @@ import {
 } from "./resume-templates.js";
 import {
   isLoopbackHostHeader,
+  isLoopbackPeerAddress,
   isTrustedMutationSource,
   LOCAL_CORS_ALLOWED_HEADERS,
   LOCAL_CORS_METHODS,
@@ -367,6 +368,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         ok: false,
         error: "forbidden_host",
         message: "Requests must target a loopback host (127.0.0.1, localhost, or [::1]).",
+      });
+    }
+    if (!isLoopbackPeerAddress(request.ip || request.raw.socket.remoteAddress)) {
+      return reply.code(403).send({
+        ok: false,
+        error: "forbidden_remote_client",
+        message: "Requests must originate from a loopback network address.",
       });
     }
     if (!UNSAFE_METHODS.has(request.method)) {

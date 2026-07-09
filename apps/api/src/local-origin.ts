@@ -24,6 +24,25 @@ export function isLoopbackHostHeader(hostHeader: string | string[] | undefined):
   );
 }
 
+export function isLoopbackPeerAddress(peerAddress: string | undefined): boolean {
+  const normalized = peerAddress?.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+  if (normalized.startsWith("::ffff:")) {
+    return isLoopbackPeerAddress(normalized.slice("::ffff:".length));
+  }
+  const octets = normalized.split(".");
+  return (
+    octets.length === 4 &&
+    octets.every((octet) => /^\d{1,3}$/.test(octet) && Number.parseInt(octet, 10) <= 255) &&
+    Number.parseInt(octets[0] ?? "", 10) === 127
+  );
+}
+
 export function isTrustedMutationSource(
   originHeader: string | string[] | undefined,
   refererHeader: string | string[] | undefined,
