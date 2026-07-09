@@ -54,9 +54,7 @@ class _FakeSnapshot:
 
 @pytest.fixture()
 def builder():
-    return ApplyPromptBuilder(
-        mcp_config_factory=lambda port: {"playwright": {"port": port}}
-    )
+    return ApplyPromptBuilder(mcp_config_factory=lambda port: {"playwright": {"port": port}})
 
 
 def test_build_returns_apply_prompt(monkeypatch, builder):
@@ -106,9 +104,7 @@ def test_build_passes_dry_run_through_to_legacy_builder(monkeypatch, builder):
     assert seen["upload_dir"] == "/tmp/worker-0"
 
 
-def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(
-    monkeypatch, tmp_path
-):
+def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(monkeypatch, tmp_path):
     worker_dir = tmp_path / "worker-0"
     materials_dir = tmp_path / "materials"
     materials_dir.mkdir()
@@ -160,9 +156,7 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(
     assert "RESULT:LOGIN_ISSUE" in rendered
 
 
-def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_context(
-    monkeypatch, tmp_path
-):
+def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_context(monkeypatch, tmp_path):
     worker_dir = tmp_path / "worker-0"
     materials_dir = tmp_path / "materials"
     materials_dir.mkdir()
@@ -267,6 +261,7 @@ def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> Non
     assert apply_tools["command"] == sys.executable
     assert apply_tools["args"] == ["-m", "jobctrl.infrastructure.apply_tools.mcp_server"]
     assert apply_tools["env"]["JOBCTRL_APPLY_CDP_ENDPOINT"] == "http://localhost:9222"
+    assert apply_tools["env"]["JOBCTRL_APPLY_APPROVED_APPLICATION_URL"] == "https://apply.example.com/job"
     assert apply_tools["env"]["JOBCTRL_APPLY_UPLOAD_DIR"] == "/tmp/worker-0"
     assert "JOBCTRL_APPLY_PROFILE_DB_PATH" in apply_tools["env"]
     assert "CAPSOLVER_API_KEY" not in apply_tools["env"]
