@@ -291,6 +291,7 @@ const APPLY_REVIEW_PRECONDITION_ERRORS = new Set([
 ]);
 const TRUSTED_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "none"]);
 const LOOPBACK_ORIGIN_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "same-site", "none"]);
+const FIRST_PARTY_PAIRING_SEC_FETCH_SITE_VALUES = new Set(["same-origin"]);
 const EXTENSION_API_PREFIX = "/v1/extension/";
 const EXTENSION_PAIRING_TOKEN_PATH = "/v1/extension/pairing-token";
 const EXTENSION_PAIRING_TOKEN_ROTATE_PATH = "/v1/extension/pairing-token/rotate";
@@ -411,9 +412,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   }));
 
   app.get(EXTENSION_PAIRING_TOKEN_PATH, async (request, reply) => {
-    if (resolveExtensionCorsOrigin(request.headers.origin)) {
+    if (!isTrustedExtensionPairingRequest(request)) {
       void reply.code(403);
-      return { ok: false, error: "extension_origin_not_allowed" };
+      return { ok: false, error: "untrusted_extension_pairing_request" };
     }
     const token = ensureLocalCapabilityToken(appDir);
     void reply.header("cache-control", "no-store");
@@ -426,9 +427,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   });
 
   app.post(EXTENSION_PAIRING_TOKEN_ROTATE_PATH, async (request, reply) => {
-    if (resolveExtensionCorsOrigin(request.headers.origin)) {
+    if (!isTrustedExtensionPairingRequest(request)) {
       void reply.code(403);
-      return { ok: false, error: "extension_origin_not_allowed" };
+      return { ok: false, error: "untrusted_extension_pairing_request" };
     }
     const token = rotateLocalCapabilityToken(appDir);
     void reply.header("cache-control", "no-store");
@@ -2706,6 +2707,29 @@ function isAuthorizedExtensionApiRequest(request: FastifyRequest, appDir: string
   return isAuthorizedLocalCapabilityToken(request.headers.authorization, appDir);
 }
 
+function isTrustedExtensionPairingRequest(request: FastifyRequest): boolean {
+  if (resolveExtensionCorsOrigin(request.headers.origin)) {
+    return false;
+  }
+  const hasBrowserOriginMetadata =
+    hasRequestHeader(request.headers.origin) || hasRequestHeader(request.headers.referer);
+  if (!hasBrowserOriginMetadata) {
+    return true;
+  }
+  return (
+    isTrustedMutationSource(request.headers.origin, request.headers.referer) &&
+    isFirstPartyPairingFetch(request.headers["sec-fetch-site"])
+  );
+}
+
+function isFirstPartyPairingFetch(secFetchSiteHeader: string | string[] | undefined): boolean {
+  const values = requestHeaderValues(secFetchSiteHeader);
+  return (
+    values.length > 0 &&
+    values.every((value) => FIRST_PARTY_PAIRING_SEC_FETCH_SITE_VALUES.has(value.trim()))
+  );
+}
+
 function rejectInvalidExtensionToken(request: FastifyRequest, reply: FastifyReply): FastifyReply | undefined {
   if (!isExtensionAuthenticatedApiPath(request.url)) {
     return undefined;
@@ -3633,15 +3657,15 @@ function isTrustedSecFetchSite(
   secFetchSiteHeader: string | string[] | undefined,
   options: { allowLoopbackSameSite?: boolean } = {},
 ): boolean {
-  const values = Array.isArray(secFetchSiteHeader)
-    ? secFetchSiteHeader
-    : secFetchSiteHeader
-      ? [secFetchSiteHeader]
-      : [];
+  const values = requestHeaderValues(secFetchSiteHeader);
   const trustedValues = options.allowLoopbackSameSite
     ? LOOPBACK_ORIGIN_SEC_FETCH_SITE_VALUES
     : TRUSTED_SEC_FETCH_SITE_VALUES;
   return values.length === 0 || values.every((value) => trustedValues.has(value.trim()));
+}
+
+function requestHeaderValues(header: string | string[] | undefined): string[] {
+  return Array.isArray(header) ? header : header ? [header] : [];
 }
 
 function hasRequestHeader(header: string | string[] | undefined): boolean {

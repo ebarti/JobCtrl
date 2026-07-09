@@ -534,13 +534,12 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("issues and rotates a local extension capability token from loopback settings callers", async () => {
+  it("issues and rotates a local extension capability token only for CLI and same-origin settings callers", async () => {
     const app = buildApp(options);
     try {
       const first = await app.inject({
         method: "GET",
         url: "/v1/extension/pairing-token",
-        headers: { origin: "http://127.0.0.1:5173" },
       });
       expect(first.statusCode, first.body).toBe(200);
       expect(first.headers["cache-control"]).toBe("no-store");
@@ -552,6 +551,39 @@ describe("local TypeScript API", () => {
         expect(fs.statSync(firstBody.tokenPath).mode & 0o777).toBe(0o600);
       }
 
+      const sameOriginSettingsRead = await app.inject({
+        method: "GET",
+        url: "/v1/extension/pairing-token",
+        headers: {
+          origin: "http://127.0.0.1:5173",
+          "sec-fetch-site": "same-origin",
+        },
+      });
+      expect(sameOriginSettingsRead.statusCode, sameOriginSettingsRead.body).toBe(200);
+      expect((sameOriginSettingsRead.json() as { token: string }).token).toBe(firstBody.token);
+
+      const loopbackWebRead = await app.inject({
+        method: "GET",
+        url: "/v1/extension/pairing-token",
+        headers: {
+          origin: "http://127.0.0.1:9999",
+          "sec-fetch-site": "same-site",
+        },
+      });
+      expect(loopbackWebRead.statusCode, loopbackWebRead.body).toBe(403);
+      expect(loopbackWebRead.json()).toMatchObject({ ok: false, error: "untrusted_extension_pairing_request" });
+
+      const loopbackWebReadWithoutFetchMetadata = await app.inject({
+        method: "GET",
+        url: "/v1/extension/pairing-token",
+        headers: { origin: "http://localhost:9999" },
+      });
+      expect(loopbackWebReadWithoutFetchMetadata.statusCode, loopbackWebReadWithoutFetchMetadata.body).toBe(403);
+      expect(loopbackWebReadWithoutFetchMetadata.json()).toMatchObject({
+        ok: false,
+        error: "untrusted_extension_pairing_request",
+      });
+
       const extensionRead = await app.inject({
         method: "GET",
         url: "/v1/extension/pairing-token",
@@ -559,16 +591,32 @@ describe("local TypeScript API", () => {
       });
       expect(extensionRead.statusCode, extensionRead.body).toBe(403);
       expect(extensionRead.headers["access-control-allow-origin"]).toBeUndefined();
+      expect(extensionRead.json()).toMatchObject({ ok: false, error: "untrusted_extension_pairing_request" });
 
       const rotated = await app.inject({
         method: "POST",
         url: "/v1/extension/pairing-token/rotate",
-        headers: { origin: "http://127.0.0.1:5173" },
+        headers: {
+          origin: "http://127.0.0.1:5173",
+          "sec-fetch-site": "same-origin",
+        },
       });
       expect(rotated.statusCode, rotated.body).toBe(200);
       const rotatedBody = rotated.json() as { token: string; tokenPath: string };
       expect(rotatedBody.tokenPath).toBe(firstBody.tokenPath);
       expect(rotatedBody.token).not.toBe(firstBody.token);
+      expect(fs.readFileSync(rotatedBody.tokenPath, "utf8").trim()).toBe(rotatedBody.token);
+
+      const loopbackWebRotate = await app.inject({
+        method: "POST",
+        url: "/v1/extension/pairing-token/rotate",
+        headers: {
+          origin: "http://127.0.0.1:9999",
+          "sec-fetch-site": "same-site",
+        },
+      });
+      expect(loopbackWebRotate.statusCode, loopbackWebRotate.body).toBe(403);
+      expect(loopbackWebRotate.json()).toMatchObject({ ok: false, error: "untrusted_extension_pairing_request" });
       expect(fs.readFileSync(rotatedBody.tokenPath, "utf8").trim()).toBe(rotatedBody.token);
     } finally {
       await app.close();
