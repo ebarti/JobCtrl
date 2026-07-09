@@ -142,6 +142,30 @@ def test_save_and_load_round_trips_profile_through_relational_rows(tmp_path):
     assert [event.event_type for event in events] == ["ProfileUpdated"]
 
 
+def test_save_rederives_materialized_achievement_evidence_when_bullets_change(tmp_path):
+    repo, _, _ = _new_repo(tmp_path)
+
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, _valid_profile()))
+    loaded = repo.load(LOCAL_TENANT)
+    assert loaded is not None
+    updated = loaded.to_dict()
+    updated["resume"]["experience_entries"][0]["bullets"] = [
+        "Built APIs.",
+        "Reduced incidents 55%.",
+    ]
+
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, updated))
+
+    refreshed = repo.load(LOCAL_TENANT)
+    assert refreshed is not None
+    refreshed_entry = refreshed.to_dict()["resume"]["experience_entries"][0]
+    assert [item["source_text"] for item in refreshed_entry["achievement_evidence"]] == [
+        "Built APIs.",
+        "Reduced incidents 55%.",
+    ]
+    assert refreshed_entry["achievement_evidence"][1]["metrics"] == ["55%"]
+
+
 def test_save_and_load_preserves_achievement_evidence_and_tailoring_controls(tmp_path):
     repo, conn, _ = _new_repo(tmp_path)
     raw = _valid_profile()

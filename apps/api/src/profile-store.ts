@@ -650,13 +650,34 @@ function insertChildren(db: SqliteDatabase, profile: ProfileShape): void {
 
 function achievementEvidenceForEntry(entry: Record<string, unknown>, entryId: string): Array<Record<string, unknown>> {
   const explicitEvidence = asRecordArray(entry.achievement_evidence);
-  if (explicitEvidence.length > 0 || !entryId) {
+  if (!entryId) {
     return explicitEvidence;
   }
-  const scope = [text(entry.title), text(entry.company)].filter(Boolean).join(" ");
+  const derivedEvidence = legacyBulletAchievementEvidenceForEntry(entry, entryId);
+  if (explicitEvidence.length === 0) {
+    return derivedEvidence;
+  }
+  if (explicitEvidence.every((evidence) => isMaterializedLegacyBulletEvidence(evidence, entryId))) {
+    return derivedEvidence;
+  }
+  const derivedById = new Map(derivedEvidence.map((evidence) => [text(evidence.id), evidence]));
+  return explicitEvidence.flatMap((evidence) => {
+    if (!isMaterializedLegacyBulletEvidence(evidence, entryId)) {
+      return [evidence];
+    }
+    const replacement = derivedById.get(text(evidence.id));
+    return replacement ? [replacement] : [];
+  });
+}
+
+function legacyBulletAchievementEvidenceForEntry(
+  entry: Record<string, unknown>,
+  entryId: string,
+): Array<Record<string, unknown>> {
+  const scope = legacyBulletEvidenceScope(entry);
   return asTextArray(entry.bullets).map((bullet, index) => {
     const sourceText = bullet.trim();
-    const normalized = [text(entry.title), text(entry.company), sourceText].join(" ").toLowerCase().replace(/\s+/g, " ");
+    const normalized = legacyBulletEvidenceNormalizedText(entry, sourceText);
     return {
       id: legacyBulletEvidenceId(entryId, index + 1),
       source_text: sourceText,
@@ -674,6 +695,24 @@ function achievementEvidenceForEntry(entry: Record<string, unknown>, entryId: st
       tags: [],
     };
   });
+}
+
+function isMaterializedLegacyBulletEvidence(evidence: Record<string, unknown>, entryId: string): boolean {
+  if (!legacyBulletEvidenceIndex(text(evidence.id), entryId)) {
+    return false;
+  }
+  const sourceText = text(evidence.source_text).trim();
+  if (!sourceText) {
+    return false;
+  }
+  return text(evidence.action).trim() === sourceText
+    && text(evidence.outcome).trim() === sourceText
+    && asTextArray(evidence.tools).length === 0
+    && arraysEqual(asTextArray(evidence.metrics), extractedLegacyBulletMetrics(sourceText))
+    && text(evidence.evidence_strength, "supported").trim() === "supported"
+    && confidenceNumber(evidence.claim_confidence) === 0.8
+    && boolValue(evidence.user_confirmed, false)
+    && asTextArray(evidence.tags).length === 0;
 }
 
 function backfillAchievementEvidenceFromBullets(db: SqliteDatabase): void {
@@ -709,8 +748,8 @@ function backfillAchievementEvidenceFromBullets(db: SqliteDatabase): void {
     for (const row of rows) {
       const entryId = text(row.entry_id);
       const sourceText = text(row.bullet_text).trim();
-      const scope = [text(row.title), text(row.company)].filter(Boolean).join(" ");
-      const normalized = [text(row.title), text(row.company), sourceText].join(" ").toLowerCase().replace(/\s+/g, " ");
+      const scope = legacyBulletEvidenceScope(row);
+      const normalized = legacyBulletEvidenceNormalizedText(row, sourceText);
       const bulletIndex = Number(row.bullet_index ?? 0);
       insertEvidence.run(
         text(row.tenant_id, TENANT_ID),
@@ -737,15 +776,37 @@ function backfillAchievementEvidenceFromBullets(db: SqliteDatabase): void {
   transaction();
 }
 
+function legacyBulletEvidenceScope(entry: Record<string, unknown>): string {
+  return [text(entry.title), text(entry.company)].filter(Boolean).join(" ");
+}
+
+function legacyBulletEvidenceNormalizedText(entry: Record<string, unknown>, sourceText: string): string {
+  return [text(entry.title), text(entry.company), sourceText].join(" ").toLowerCase().replace(/\s+/g, " ");
+}
+
 function legacyBulletEvidenceId(entryId: string, bulletIndex: number): string {
   const safeEntryId = entryId.replace(/[^a-zA-Z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "") || "experience";
   return `${safeEntryId}_bullet_${Math.max(1, Math.trunc(bulletIndex))}`;
+}
+
+function legacyBulletEvidenceIndex(evidenceId: string, entryId: string): number | null {
+  const match = evidenceId.match(/_bullet_([1-9]\d*)$/);
+  const rawIndex = match?.[1];
+  if (!rawIndex) {
+    return null;
+  }
+  const bulletIndex = Number(rawIndex);
+  return evidenceId === legacyBulletEvidenceId(entryId, bulletIndex) ? bulletIndex : null;
 }
 
 function extractedLegacyBulletMetrics(sourceText: string): string[] {
   return Array.from(sourceText.matchAll(LEGACY_BULLET_METRIC_PATTERN), (match) =>
     match[0].trim().replace(/\s+/g, " "),
   );
+}
+
+function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function insertRequiredIds(db: SqliteDatabase, table: string, column: string, values: string[]): void {
@@ -1352,8 +1413,12 @@ function nullableBoolInt(value: unknown): number | null {
 }
 
 function boolInt(value: unknown, fallback: boolean): number {
-  if (value === undefined || value === null) return fallback ? 1 : 0;
-  if (typeof value === "boolean") return value ? 1 : 0;
-  if (typeof value === "string") return ["true", "yes", "y", "1", "on"].includes(value.trim().toLowerCase()) ? 1 : 0;
-  return value ? 1 : 0;
+  return boolValue(value, fallback) ? 1 : 0;
+}
+
+function boolValue(value: unknown, fallback: boolean): boolean {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return ["true", "yes", "y", "1", "on"].includes(value.trim().toLowerCase());
+  return Boolean(value);
 }

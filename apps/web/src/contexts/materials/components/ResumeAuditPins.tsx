@@ -2052,6 +2052,7 @@ function ResumeEditorToolbarControls({
 }): JSX.Element {
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const linkInputRef = useRef<HTMLInputElement | null>(null);
+  const linkTriggerRef = useRef<HTMLButtonElement | null>(null);
   const fontFamilyId = useId();
   const fontSizeId = useId();
   const linkInputId = useId();
@@ -2069,6 +2070,7 @@ function ResumeEditorToolbarControls({
   const closeLinkPopover = useCallback(() => {
     setLinkError(null);
     setLinkPopoverOpen(false);
+    window.requestAnimationFrame(() => linkTriggerRef.current?.focus());
   }, []);
   useEffect(() => {
     if (!linkPopoverOpen) return;
@@ -2148,9 +2150,9 @@ function ResumeEditorToolbarControls({
       setLinkError(null);
       setLinkUrl(href);
       onSetLink(href);
-      setLinkPopoverOpen(false);
+      closeLinkPopover();
     },
-    [linkUrl, onSetLink],
+    [closeLinkPopover, linkUrl, onSetLink],
   );
   const handleLinkPopoverKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLFormElement>) => {
@@ -2206,6 +2208,7 @@ function ResumeEditorToolbarControls({
       <div className="resume-link-popover-anchor">
         <div className="resume-format-button-group" aria-label="Hyperlink actions">
           <button
+            ref={linkTriggerRef}
             aria-controls={linkPopoverOpen ? linkPopoverId : undefined}
             aria-expanded={linkPopoverOpen}
             aria-keyshortcuts="Meta+K Control+K"

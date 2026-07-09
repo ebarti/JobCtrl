@@ -919,13 +919,15 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Italic" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Underline" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Insert link" })).toBeInTheDocument();
+    const insertLinkButton = screen.getByRole("button", { name: "Insert link" });
+    expect(insertLinkButton).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Link URL" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Insert link" }));
+    await userEvent.click(insertLinkButton);
     const toolbarLinkInput = await screen.findByRole("textbox", { name: "Link URL" });
     await waitFor(() => expect(toolbarLinkInput).toHaveFocus());
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("textbox", { name: "Link URL" })).not.toBeInTheDocument());
+    await waitFor(() => expect(insertLinkButton).toHaveFocus());
     expect(screen.getByLabelText("Font")).toBeInTheDocument();
     expect(screen.getByLabelText("Size")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Align left" })).toBeInTheDocument();
