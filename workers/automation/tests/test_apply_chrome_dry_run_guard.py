@@ -319,7 +319,7 @@ def test_public_destination_cdp_guard_fails_loopback_requests(monkeypatch):
     monkeypatch.setattr(websocket, "create_connection", lambda *_args, **_kwargs: _FakeWebSocket())
 
     guard = chrome._PublicDestinationCdpGuard(port=1)
-    chrome._run_apply_page_session("ws://example.invalid/devtools/page/1", guard)
+    chrome._run_apply_page_session("target-1", "ws://example.invalid/devtools/page/1", guard)
 
     assert {
         "id": 4,
@@ -328,6 +328,7 @@ def test_public_destination_cdp_guard_fails_loopback_requests(monkeypatch):
     } in sent
     assert all(message.get("method") != "Fetch.continueRequest" for message in sent)
     assert guard.evidence()["blocked_channels"] == ("public_destination:GET",)
+    assert guard.evidence()["protected_targets"] == 1
 
 
 def test_public_destination_cdp_guard_continues_public_requests(monkeypatch):
@@ -367,7 +368,7 @@ def test_public_destination_cdp_guard_continues_public_requests(monkeypatch):
     monkeypatch.setattr(chrome, "validate_public_http_url", lambda _url: PublicUrlDecision(True))
 
     guard = chrome._PublicDestinationCdpGuard(port=1)
-    chrome._run_apply_page_session("ws://example.invalid/devtools/page/2", guard)
+    chrome._run_apply_page_session("target-2", "ws://example.invalid/devtools/page/2", guard)
 
     assert {
         "id": 4,
@@ -375,6 +376,29 @@ def test_public_destination_cdp_guard_continues_public_requests(monkeypatch):
         "params": {"requestId": "intercept-2"},
     } in sent
     assert all(message.get("method") != "Fetch.failRequest" for message in sent)
+    assert guard.evidence()["protected_targets"] == 1
+
+
+def test_dry_run_guard_evidence_reports_unprotected_when_guard_is_missing():
+    port = 64001
+    with chrome._dry_run_guards_lock:
+        chrome._dry_run_guards.pop(port, None)
+
+    evidence = chrome.get_dry_run_cdp_guard_evidence(port)
+
+    assert evidence == {
+        "coverage": "unprotected",
+        "blocked_channels": (),
+        "blocked_requests": (),
+        "protected_targets": 0,
+    }
+
+
+def test_dry_run_guard_evidence_reports_unprotected_before_any_page_session_attaches():
+    guard = chrome._DryRunCdpGuard(port=1)
+
+    assert guard.evidence()["coverage"] == "unprotected"
+    assert guard.evidence()["protected_targets"] == 0
 
 
 def test_dry_run_guard_evidence_records_sanitized_submission_channels():
@@ -400,6 +424,7 @@ def test_dry_run_guard_evidence_records_sanitized_submission_channels():
 
     evidence = guard.evidence()
     assert evidence["coverage"] == "partial"
+    assert evidence["protected_targets"] == 0
     assert evidence["blocked_channels"] == (
         "WebSocket:WEBSOCKET",
         "network:DELETE",

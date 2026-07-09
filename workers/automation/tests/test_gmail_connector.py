@@ -317,6 +317,159 @@ def test_mcp_server_rejects_out_of_scope_verification_messages() -> None:
     }
 
 
+def test_mcp_server_rejects_public_suffix_sibling_verification_messages() -> None:
+    class FakeClient:
+        def search_emails(self, **_kwargs):
+            return [
+                {
+                    "id": "sibling",
+                    "from": "noreply@attacker.co.uk",
+                    "internalDate": "2000",
+                },
+                {
+                    "id": "legitimate",
+                    "from": "noreply@mail.example.co.uk",
+                    "internalDate": "2000",
+                },
+            ]
+
+        def read_email(self, *, message_id):
+            if message_id != "legitimate":
+                raise AssertionError(f"out-of-scope message was read: {message_id}")
+            return {
+                "id": message_id,
+                "snippet": "Your verification code is 654321",
+                "body_text": "Your verification code is 654321.",
+            }
+
+    server = GmailMcpServer(
+        client=FakeClient(),
+        allowed_sender_domains=("example.co.uk",),
+        earliest_internal_ms=1000,
+        to_email="candidate@example.com",
+    )
+    called = server.handle_json(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_verification_code",
+                    "arguments": {},
+                },
+            }
+        )
+    )
+
+    payload = json.loads(called["result"]["content"][0]["text"])
+    assert "654321" in payload["codes"]
+    assert payload["source_count"] == 1
+
+
+def test_mcp_server_scopes_from_header_by_actual_mailbox_domain() -> None:
+    class FakeClient:
+        def search_emails(self, **_kwargs):
+            return [
+                {
+                    "id": "display-spoof",
+                    "from": '"Trusted @example.com" <attacker@evil.invalid>',
+                    "internalDate": "2000",
+                },
+                {
+                    "id": "legitimate",
+                    "from": "ATS <noreply@apply.example.com>",
+                    "internalDate": "2000",
+                },
+            ]
+
+        def read_email(self, *, message_id):
+            if message_id != "legitimate":
+                raise AssertionError(f"out-of-scope message was read: {message_id}")
+            return {
+                "id": message_id,
+                "snippet": "Your verification code is 654321",
+                "body_text": "Your verification code is 654321.",
+            }
+
+    server = GmailMcpServer(
+        client=FakeClient(),
+        allowed_sender_domains=("example.com",),
+        earliest_internal_ms=1000,
+        to_email="candidate@example.com",
+    )
+    called = server.handle_json(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_verification_code",
+                    "arguments": {},
+                },
+            }
+        )
+    )
+
+    payload = json.loads(called["result"]["content"][0]["text"])
+    assert "654321" in payload["codes"]
+    assert payload["source_count"] == 1
+
+
+def test_mcp_server_rejects_malformed_and_ambiguous_from_headers() -> None:
+    class FakeClient:
+        def search_emails(self, **_kwargs):
+            return [
+                {
+                    "id": "unquoted-spoof",
+                    "from": "Trusted @example.com <attacker@evil.invalid>",
+                    "internalDate": "2000",
+                },
+                {
+                    "id": "multiple",
+                    "from": "noreply@example.com, attacker@evil.invalid",
+                    "internalDate": "2000",
+                },
+                {
+                    "id": "malformed",
+                    "from": "not an address",
+                    "internalDate": "2000",
+                },
+            ]
+
+        def read_email(self, *, message_id):
+            raise AssertionError(f"out-of-scope message was read: {message_id}")
+
+    server = GmailMcpServer(
+        client=FakeClient(),
+        allowed_sender_domains=("example.com",),
+        earliest_internal_ms=1000,
+        to_email="candidate@example.com",
+    )
+    called = server.handle_json(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_verification_code",
+                    "arguments": {},
+                },
+            }
+        )
+    )
+
+    payload = json.loads(called["result"]["content"][0]["text"])
+    assert payload == {
+        "codes": [],
+        "links": [],
+        "source_count": 0,
+        "note": "verification values extracted; raw email content withheld",
+    }
+
+
 def test_mcp_server_rejects_raw_gmail_tool_names() -> None:
     server = GmailMcpServer(
         client=object(),

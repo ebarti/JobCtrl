@@ -8,6 +8,7 @@ live board traffic, nothing spendful.
 
 from __future__ import annotations
 
+import socket
 import sqlite3
 import threading
 import time
@@ -33,6 +34,7 @@ from jobctrl.infrastructure.network.politeness import (
     PolitenessSession,
     PolitenessSourceContext,
 )
+from jobctrl.infrastructure.network.public_http import build_public_http_opener
 from jobctrl.infrastructure.network.rate_limiter import HostRateLimiter
 from jobctrl.infrastructure.network.robots import RobotsCache
 from jobctrl.operational_metrics import ensure_operational_metric_tables
@@ -131,7 +133,7 @@ def test_robots_deny_fixture_blocks_records_and_never_fetches_disallowed_path() 
     with loopback_robots(robots_txt) as server:
         gateway = PolitenessGateway(
             user_agent=HONEST_UA,
-            robots=RobotsCache(),
+            robots=RobotsCache(opener=urllib.request.build_opener()),
             rate_limiter=HostRateLimiter(),
         )
         conn = _memory_conn()
@@ -174,7 +176,9 @@ def test_robots_allow_path_proceeds_and_consumes_budget() -> None:
     robots_txt = "User-agent: *\nDisallow: /private\n"
     with loopback_robots(robots_txt) as server:
         gateway = PolitenessGateway(
-            user_agent=HONEST_UA, robots=RobotsCache(), rate_limiter=HostRateLimiter()
+            user_agent=HONEST_UA,
+            robots=RobotsCache(opener=urllib.request.build_opener()),
+            rate_limiter=HostRateLimiter(),
         )
         budget = gateway.new_run_budget(5)
         session = PolitenessSession(
@@ -339,6 +343,22 @@ class _RaisingOpener:
         raise self.exc
 
 
+def _resolver_for(*addresses: str):
+    def _resolve(_host: str, port: int, *_args: object, **_kwargs: object):
+        infos = []
+        for address in addresses:
+            family = socket.AF_INET6 if ":" in address else socket.AF_INET
+            sockaddr = (address, port, 0, 0) if family == socket.AF_INET6 else (address, port)
+            infos.append((family, socket.SOCK_STREAM, 0, "", sockaddr))
+        return infos
+
+    return _resolve
+
+
+def _unexpected_socket(_family: int, _socktype: int, _proto: int):
+    raise AssertionError("unsafe robots destination must be rejected before socket creation")
+
+
 def test_unreachable_robots_5xx_fails_closed() -> None:
     opener = _RaisingOpener(
         urllib.error.HTTPError("http://host/robots.txt", 503, "unavailable", {}, None)  # type: ignore[arg-type]
@@ -362,6 +382,16 @@ def test_definitively_absent_robots_connection_refused_fails_open() -> None:
     cache = RobotsCache(opener=opener)
     # D6: definitive network absence => fail-open with warning (allow).
     assert cache.evaluate("http://host/jobs", "JobCtrl/test") is RobotsVerdict.ALLOW
+
+
+def test_private_robots_destination_fails_closed_without_socket() -> None:
+    opener = build_public_http_opener(
+        resolver=_resolver_for("10.0.0.5"),
+        socket_factory=_unexpected_socket,
+    )
+    cache = RobotsCache(opener=opener)
+
+    assert cache.evaluate("http://jobs.example/jobs", "JobCtrl/test") is RobotsVerdict.UNKNOWN
 
 
 def test_unknown_robots_verdict_blocks_at_gateway_fail_closed() -> None:

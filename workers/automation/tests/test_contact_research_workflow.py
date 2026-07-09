@@ -416,6 +416,30 @@ def test_gateway_fetcher_rejects_public_host_resolving_to_private_address() -> N
     assert session.guarded == [_TEAM_URL]
 
 
+def test_gateway_fetcher_rejects_dns_rebind_before_urllib_connect() -> None:
+    policy = ContactResearchSourcePolicy(domain_allowlist=(_HOST,))
+    session = _AllowedSession()
+    resolutions: list[str] = []
+
+    def rebinding_resolver(host: str, port: int | None) -> tuple[str, ...]:  # noqa: ARG001
+        resolutions.append(host)
+        return ("93.184.216.34",) if len(resolutions) == 1 else ("10.0.0.5",)
+
+    fetcher = GatewayContactResearchFetcher(
+        policy=policy,
+        session=session,
+        target_resolver=rebinding_resolver,
+    )
+
+    result = fetcher.fetch(_TEAM_URL)
+
+    assert result.outcome == ResearchSourceOutcome.REJECTED.value
+    assert result.final_url == _TEAM_URL
+    assert result.text == ""
+    assert session.guarded == [_TEAM_URL]
+    assert len(resolutions) == 2
+
+
 def test_gateway_fetcher_rejects_private_redirect_target_without_fetching_it() -> None:
     policy = ContactResearchSourcePolicy(domain_allowlist=(_HOST,))
     session = _AllowedSession()

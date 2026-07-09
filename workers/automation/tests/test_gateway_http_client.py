@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 import sqlite3
 import urllib.error
 
@@ -21,6 +22,7 @@ from jobctrl.infrastructure.network.politeness import (
     PolitenessSession,
     PolitenessSourceContext,
 )
+from jobctrl.infrastructure.network.public_http import build_public_http_opener
 from jobctrl.infrastructure.network.rate_limiter import HostRateLimiter
 from jobctrl.operational_metrics import ensure_operational_metric_tables
 
@@ -62,6 +64,22 @@ class _RecordingOpener:
         if self.raise_exc is not None:
             raise self.raise_exc
         return _FakeResponse(self.body)
+
+
+def _resolver_for(*addresses: str):
+    def _resolve(_host: str, port: int, *_args: object, **_kwargs: object):
+        infos = []
+        for address in addresses:
+            family = socket.AF_INET6 if ":" in address else socket.AF_INET
+            sockaddr = (address, port, 0, 0) if family == socket.AF_INET6 else (address, port)
+            infos.append((family, socket.SOCK_STREAM, 0, "", sockaddr))
+        return infos
+
+    return _resolve
+
+
+def _unexpected_socket(_family: int, _socktype: int, _proto: int):
+    raise AssertionError("unsafe destination must be rejected before socket creation")
 
 
 class _VirtualClock:
@@ -116,6 +134,18 @@ def test_allowed_fetch_returns_json_with_honest_user_agent() -> None:
     request = opener.requests[0]
     assert request.get_header("User-agent") == "JobCtrl/test (+https://example.com/repo)"
     assert "Mozilla" not in request.get_header("User-agent")
+
+
+def test_public_opener_rejects_private_feed_destination_without_socket() -> None:
+    gateway = PolitenessGateway(user_agent=HONEST_UA, robots=_AllowAllRobots(), rate_limiter=HostRateLimiter())
+    conn = _conn()
+    opener = build_public_http_opener(
+        resolver=_resolver_for("10.0.0.5"),
+        socket_factory=_unexpected_socket,
+    )
+    client = GatewayHttpClient(_session(gateway, policy=_policy(), conn=conn), opener=opener)
+
+    assert client.fetch_json("http://api.example.com/jobs") is None
 
 
 def test_robots_disallowed_returns_none_without_fetching_and_records() -> None:

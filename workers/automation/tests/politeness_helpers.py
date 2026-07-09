@@ -9,7 +9,10 @@ collects it as a test file.
 from __future__ import annotations
 
 import sqlite3
+import socket
 import threading
+import urllib.request
+from typing import Any
 
 from jobctrl.domain.discovery.source_registry import ENRICHMENT_CRAWL_POLICY
 from jobctrl.domain.ports.politeness import RobotsVerdict
@@ -19,6 +22,7 @@ from jobctrl.infrastructure.network import (
     PolitenessSession,
     PolitenessSourceContext,
     RunBudgetCounter,
+    build_public_http_opener,
 )
 
 
@@ -72,6 +76,29 @@ def no_sleep_limiter(clock: VirtualClock | None = None) -> HostRateLimiter:
     """A real host limiter driven by a virtual clock (never blocks the suite)."""
     vc = clock or VirtualClock()
     return HostRateLimiter(clock=vc.now, sleep=vc.sleep)
+
+
+class _LoopbackRedirectSocket:
+    def __init__(self, family: int, socktype: int, proto: int) -> None:
+        self._socket = socket.socket(family, socktype, proto)
+
+    def connect(self, sockaddr: tuple[object, ...]) -> None:
+        self._socket.connect(("127.0.0.1", int(sockaddr[1])))
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._socket, name)
+
+
+def public_loopback_opener() -> urllib.request.OpenerDirector:
+    """Public-destination opener that connects approved test hosts to loopback."""
+
+    def resolver(_host: str, port: int, **_kwargs: object):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", port))]
+
+    def socket_factory(family: int, socktype: int, proto: int) -> Any:
+        return _LoopbackRedirectSocket(family, socktype, proto)
+
+    return build_public_http_opener(resolver=resolver, socket_factory=socket_factory)
 
 
 def offline_gateway(*, robots: object | None = None) -> PolitenessGateway:

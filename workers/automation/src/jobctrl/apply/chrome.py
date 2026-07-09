@@ -381,9 +381,10 @@ def get_dry_run_cdp_guard_evidence(port: int) -> dict[str, object]:
         guard = _dry_run_guards.get(int(port))
     if guard is None:
         return {
-            "coverage": "full",
+            "coverage": "unprotected",
             "blocked_channels": (),
             "blocked_requests": (),
+            "protected_targets": 0,
         }
     return guard.evidence()
 
@@ -393,6 +394,7 @@ class _ApplyCdpGuard:
         self._port = int(port)
         self._enforce_dry_run = enforce_dry_run
         self._seen: set[str] = set()
+        self._protected_targets: set[str] = set()
         self._blocked: list[dict[str, str]] = []
         self._blocked_keys: set[tuple[str, str, str, str]] = set()
         self._request_initiators: dict[str, str] = {}
@@ -430,11 +432,17 @@ class _ApplyCdpGuard:
                 self._seen.add(target_id)
             thread = threading.Thread(
                 target=_run_apply_page_session,
-                args=(ws_url, self),
+                args=(target_id, ws_url, self),
                 name=f"apply-cdp-page-{target_id[:8]}",
                 daemon=True,
             )
             thread.start()
+
+    def record_protected_target(self, target_id: str) -> None:
+        if not target_id:
+            return
+        with self._lock:
+            self._protected_targets.add(target_id)
 
     def record_blocked_request(
         self,
@@ -466,10 +474,12 @@ class _ApplyCdpGuard:
     def evidence(self) -> dict[str, object]:
         with self._lock:
             blocked = tuple(dict(item) for item in self._blocked)
+            protected_targets = len(self._protected_targets)
         return {
-            "coverage": _dry_run_coverage(blocked),
+            "coverage": _dry_run_coverage(blocked, protected_targets=protected_targets),
             "blocked_channels": _dry_run_blocked_channels(blocked),
             "blocked_requests": blocked,
+            "protected_targets": protected_targets,
         }
 
     def record_request_initiator(self, request_id: str, initiator_type: str) -> None:
@@ -504,7 +514,7 @@ def _cdp_json(port: int, path: str) -> object:
         return []
 
 
-def _run_apply_page_session(ws_url: str, guard: _ApplyCdpGuard) -> None:
+def _run_apply_page_session(target_id: str, ws_url: str, guard: _ApplyCdpGuard) -> None:
     try:
         import websocket
     except Exception:
@@ -542,6 +552,7 @@ def _run_apply_page_session(ws_url: str, guard: _ApplyCdpGuard) -> None:
         )
         if guard.enforce_dry_run:
             send("Runtime.evaluate", {"expression": _FORM_SUBMIT_GUARD_SOURCE})
+        guard.record_protected_target(target_id)
         while True:
             try:
                 raw_message = ws.recv()
@@ -662,7 +673,9 @@ def _sanitize_evidence_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 
-def _dry_run_coverage(blocked: tuple[dict[str, str], ...]) -> str:
+def _dry_run_coverage(blocked: tuple[dict[str, str], ...], *, protected_targets: int = 1) -> str:
+    if protected_targets <= 0 and not blocked:
+        return "unprotected"
     partial_resources = {
         "Document",
         "EventSource",

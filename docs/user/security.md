@@ -75,12 +75,13 @@ shared locations, or attach it to bug reports.
 
 The browser-extension API surface uses a local capability token so an installed
 extension can prove it is paired with your local JobCtrl stack. The token is
-generated under `~/.jobctrl/`, shown in Settings for pairing, and only
-accepted on `/v1/extension/*` routes that still target a loopback host. Settings
-token display and rotation are limited to CLI or same-origin Settings requests,
-so arbitrary loopback web origins cannot mint or rotate the extension token. It
-does not grant application-submission authority; live submission remains behind
-Apply Review.
+generated under `~/.jobctrl/`, shown in Settings for pairing, and required on
+`/v1/extension/*` routes that still target a loopback host. Settings token
+display and rotation are limited to CLI or same-origin Settings requests, so
+arbitrary loopback web origins cannot mint or rotate the extension token. The
+same local token can authenticate deliberate non-browser local API mutations,
+but arbitrary browser origins on loopback remain blocked; live submission still
+remains behind Apply Review.
 
 In Phase 1, the extension can only capture the active http(s) page after you
 click **Save job** in the popup. It sends the page URL and visible text to the

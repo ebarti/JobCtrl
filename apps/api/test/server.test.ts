@@ -616,7 +616,7 @@ describe("local TypeScript API", () => {
         },
       });
       expect(loopbackWebRotate.statusCode, loopbackWebRotate.body).toBe(403);
-      expect(loopbackWebRotate.json()).toMatchObject({ ok: false, error: "untrusted_extension_pairing_request" });
+      expect(loopbackWebRotate.json()).toMatchObject({ ok: false, error: "cross_site_request" });
       expect(fs.readFileSync(rotatedBody.tokenPath, "utf8").trim()).toBe(rotatedBody.token);
     } finally {
       await app.close();
@@ -919,6 +919,15 @@ describe("local TypeScript API", () => {
       expectedBody: { action: "mark_applied", stage: { state: "succeeded" } },
     },
     {
+      name: "non-first-party loopback browser metadata",
+      jobUrl: "https://example.com/jobs/ready",
+      action: "mark-applied",
+      payload: { reason: "non-first-party loopback metadata" },
+      headers: { origin: "http://127.0.0.1:9999", "sec-fetch-site": "same-site" },
+      expectedStatus: 403,
+      expectedBody: { ok: false, error: "cross_site_request" },
+    },
+    {
       name: "same-origin browser metadata",
       jobUrl: "https://example.com/jobs/ready",
       action: "mark-applied",
@@ -933,8 +942,8 @@ describe("local TypeScript API", () => {
       action: "mark-skipped",
       payload: { reason: "browser navigation" },
       headers: { "sec-fetch-site": "none" },
-      expectedStatus: 200,
-      expectedBody: { action: "mark_skipped", stage: { state: "skipped" } },
+      expectedStatus: 403,
+      expectedBody: { ok: false, error: "cross_site_request" },
     },
     {
       name: "headerless curl-style mutation",
@@ -942,8 +951,8 @@ describe("local TypeScript API", () => {
       action: "mark-skipped",
       payload: { reason: "CLI" },
       headers: {},
-      expectedStatus: 200,
-      expectedBody: { action: "mark_skipped", stage: { state: "skipped" } },
+      expectedStatus: 403,
+      expectedBody: { ok: false, error: "cross_site_request" },
     },
   ])("enforces the unsafe mutation CSRF matrix for $name", async (testCase) => {
     const app = buildApp(options);
@@ -972,7 +981,7 @@ describe("local TypeScript API", () => {
     }
   });
 
-  it("allows loopback browser and no-origin mutation callers", async () => {
+  it("allows first-party browser and token-authenticated no-origin mutation callers", async () => {
     const app = buildApp(options);
     const appliedKey = encodeURIComponent("https://example.com/jobs/ready");
     const skippedKey = encodeURIComponent("https://example.com/jobs/blocked-tailor");
@@ -983,16 +992,31 @@ describe("local TypeScript API", () => {
       headers: { origin: "http://127.0.0.1:5173" },
       payload: { reason: "local browser" },
     });
-    const noOrigin = await app.inject({
+    const tokenResponse = await app.inject({ method: "GET", url: "/v1/extension/pairing-token" });
+    const token = (tokenResponse.json() as { token: string }).token;
+    const noOriginWithToken = await app.inject({
       method: "POST",
       url: `/v1/jobs/${skippedKey}/actions/mark-skipped`,
+      headers: { authorization: `Bearer ${token}` },
       payload: { reason: "CLI" },
+    });
+    const loopbackBrowserWithToken = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/failed-score")}/actions/mark-skipped`,
+      headers: {
+        origin: "http://127.0.0.1:9999",
+        authorization: `Bearer ${token}`,
+        "sec-fetch-site": "same-site",
+      },
+      payload: { reason: "token must not bless arbitrary loopback web origins" },
     });
 
     expect(loopback.statusCode, loopback.body).toBe(200);
-    expect(noOrigin.statusCode, noOrigin.body).toBe(200);
+    expect(noOriginWithToken.statusCode, noOriginWithToken.body).toBe(200);
+    expect(loopbackBrowserWithToken.statusCode, loopbackBrowserWithToken.body).toBe(403);
     expect(loopback.json()).toMatchObject({ action: "mark_applied", stage: { state: "succeeded" } });
-    expect(noOrigin.json()).toMatchObject({ action: "mark_skipped", stage: { state: "skipped" } });
+    expect(noOriginWithToken.json()).toMatchObject({ action: "mark_skipped", stage: { state: "skipped" } });
+    expect(loopbackBrowserWithToken.json()).toMatchObject({ ok: false, error: "cross_site_request" });
 
     await app.close();
   });

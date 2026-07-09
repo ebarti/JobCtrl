@@ -13,7 +13,13 @@ from jobctrl.discovery import smartextract
 from jobctrl.enrichment import detail
 from jobctrl.enrichment.detail import scrape_detail_page
 from jobctrl.infrastructure.enrichment.playwright_fetcher import PlaywrightDetailPageFetcher
-from jobctrl.infrastructure.network import PublicUrlDecision, validate_public_http_url
+from jobctrl.infrastructure.network import (
+    PublicHttpUrlRouteGuard,
+    PublicUrlDecision,
+    RouteFulfillment,
+    UnsafePublicDestinationError,
+    validate_public_http_url,
+)
 
 from .politeness_helpers import offline_session
 
@@ -99,6 +105,89 @@ class _AbortRoute:
 
     def continue_(self) -> None:
         self.continued = True
+
+
+class _FulfillRoute(_AbortRoute):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fulfilled: dict[str, object] | None = None
+
+    def fulfill(self, **kwargs: object) -> None:
+        self.fulfilled = kwargs
+
+
+class _RouteOnlyPage:
+    def __init__(self) -> None:
+        self.handler = None
+
+    def route(self, _pattern: str, handler) -> None:  # noqa: ANN001 - Playwright-shaped test double
+        self.handler = handler
+
+    def unroute(self, _pattern: str, _handler) -> None:  # noqa: ANN001 - Playwright-shaped test double
+        self.handler = None
+
+
+def test_public_route_guard_fulfills_public_requests_with_pinned_fetcher() -> None:
+    page = _RouteOnlyPage()
+    calls: list[tuple[str, str, dict[str, str]]] = []
+
+    def fetcher(url: str, method: str, headers: dict[str, str]) -> RouteFulfillment:
+        calls.append((url, method, headers))
+        return RouteFulfillment(
+            status=200,
+            headers={"content-type": "text/html"},
+            body=b"<main>remote role</main>",
+        )
+
+    PublicHttpUrlRouteGuard(
+        page,
+        resolver=_resolver_for("93.184.216.34"),
+        fetch_public_requests=True,
+        request_fetcher=fetcher,
+    ).install()
+    route = _FulfillRoute()
+
+    assert page.handler is not None
+    page.handler(
+        route,
+        SimpleNamespace(url="https://jobs.example/role", method="GET", headers={"user-agent": "JobCtrl"}),
+    )
+
+    assert calls == [("https://jobs.example/role", "GET", {"user-agent": "JobCtrl"})]
+    assert route.fulfilled == {
+        "status": 200,
+        "headers": {"content-type": "text/html"},
+        "body": b"<main>remote role</main>",
+    }
+    assert not route.continued
+    assert not route.aborted
+
+
+def test_public_route_guard_aborts_when_pinned_fetch_rejects_rebound_dns() -> None:
+    page = _RouteOnlyPage()
+
+    def fetcher(_url: str, _method: str, _headers: dict[str, str]) -> RouteFulfillment:
+        raise UnsafePublicDestinationError("URL host resolves to a non-public address: 127.0.0.1")
+
+    guard = PublicHttpUrlRouteGuard(
+        page,
+        resolver=_resolver_for("93.184.216.34"),
+        fetch_public_requests=True,
+        request_fetcher=fetcher,
+    ).install()
+    route = _FulfillRoute()
+
+    assert page.handler is not None
+    page.handler(
+        route,
+        SimpleNamespace(url="https://jobs.example/role", method="GET", headers={}),
+    )
+
+    assert route.aborted
+    assert not route.continued
+    assert route.fulfilled is None
+    assert guard.blocked_url == "https://jobs.example/role"
+    assert "non-public address" in str(guard.blocked_reason)
 
 
 class _RedirectToLoopbackPage:

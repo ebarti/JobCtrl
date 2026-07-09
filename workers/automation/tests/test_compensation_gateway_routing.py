@@ -12,6 +12,8 @@ from jobctrl.infrastructure.compensation.sqlite_market_repository import (
     load_euro_top_tech_observations,
 )
 
+from .politeness_helpers import public_loopback_opener
+
 
 def test_compensation_feed_policy_is_robots_exempt() -> None:
     # Documented public API / licensed feed relies on its usage contract (D2).
@@ -63,7 +65,7 @@ class _FeedServer:
                 pass
 
         self._httpd = HTTPServer(("127.0.0.1", 0), Handler)
-        self.base_url = f"http://127.0.0.1:{self._httpd.server_port}"
+        self.base_url = f"http://levels.example:{self._httpd.server_port}"
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
 
     def __enter__(self) -> "_FeedServer":
@@ -101,6 +103,7 @@ def test_licensed_feed_url_fetched_with_honest_user_agent() -> None:
         load_default_reported_compensation_observations(
             include_eurotoptech=False,
             env=env,
+            opener=public_loopback_opener(),
         )
     # The licensed URL feed was fetched through the gateway with the honest UA.
     assert server.seen_user_agents, "licensed feed URL was never fetched"

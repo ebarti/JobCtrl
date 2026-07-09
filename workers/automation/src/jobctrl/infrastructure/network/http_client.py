@@ -20,6 +20,10 @@ from typing import Any, Mapping
 
 from jobctrl.infrastructure.network.politeness import PolitenessSession
 from jobctrl.infrastructure.network.proxy import parse_proxy
+from jobctrl.infrastructure.network.public_http import (
+    UnsafePublicDestinationError,
+    build_public_http_opener,
+)
 
 
 def build_opener(proxy: str | None = None) -> urllib.request.OpenerDirector:
@@ -30,11 +34,11 @@ def build_opener(proxy: str | None = None) -> urllib.request.OpenerDirector:
     ``urllib`` themselves.
     """
     if not proxy:
-        return urllib.request.build_opener()
+        return build_public_http_opener()
     config = parse_proxy(proxy)
     proxy_url = f"http://{config.jobspy}"
     handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
-    return urllib.request.build_opener(handler)
+    return build_public_http_opener(handler)
 
 
 def parse_retry_after(value: str | None) -> float | None:
@@ -72,7 +76,7 @@ class GatewayHttpClient:
     ) -> None:
         self._session = session
         self._default_timeout = default_timeout
-        self._opener = opener or urllib.request.build_opener()
+        self._opener = opener or build_public_http_opener()
 
     def fetch_json(
         self,
@@ -132,6 +136,8 @@ class GatewayHttpClient:
             try:
                 with self._opener.open(request, timeout=timeout or self._default_timeout) as response:
                     return response.read()
+            except UnsafePublicDestinationError:
+                return None
             except urllib.error.HTTPError as exc:
                 if exc.code in (429, 503):
                     retry_after = parse_retry_after(

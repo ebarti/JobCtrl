@@ -4,18 +4,51 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import urllib.error
+import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
+from email.message import Message
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
 
 Resolver = Callable[..., list[tuple[Any, Any, Any, Any, tuple[Any, ...]]]]
+RouteRequestFetcher = Callable[[str, str, Mapping[str, str]], "RouteFulfillment"]
+
+_ROUTE_FETCH_TIMEOUT_SECONDS = 20
+_ROUTE_FETCH_MAX_BYTES = 2_000_000
+_UNSAFE_REQUEST_HEADERS = {
+    "authorization",
+    "cookie",
+    "host",
+    "proxy-authorization",
+    "proxy-connection",
+}
+_HOP_BY_HOP_RESPONSE_HEADERS = {
+    "connection",
+    "content-length",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+}
 
 
 @dataclass(frozen=True)
 class PublicUrlDecision:
     allowed: bool
     reason: str | None = None
+
+
+@dataclass(frozen=True)
+class RouteFulfillment:
+    status: int
+    headers: dict[str, str]
+    body: bytes
 
 
 def validate_public_http_url(url: str, *, resolver: Resolver | None = None) -> PublicUrlDecision:
@@ -86,10 +119,20 @@ def validate_public_http_url(url: str, *, resolver: Resolver | None = None) -> P
 
 
 class PublicHttpUrlRouteGuard:
-    """Abort Playwright requests that target non-public destinations."""
+    """Abort or safely fulfill Playwright requests to public destinations."""
 
-    def __init__(self, page: Any) -> None:
+    def __init__(
+        self,
+        page: Any,
+        *,
+        resolver: Resolver | None = None,
+        fetch_public_requests: bool = False,
+        request_fetcher: RouteRequestFetcher | None = None,
+    ) -> None:
         self._page = page
+        self._resolver = resolver
+        self._fetch_public_requests = fetch_public_requests
+        self._request_fetcher = request_fetcher or _fetch_public_route_request
         self._handler: Callable[[Any, Any], None] | None = None
         self.blocked_url: str | None = None
         self.blocked_reason: str | None = None
@@ -105,13 +148,34 @@ class PublicHttpUrlRouteGuard:
 
         def handler(playwright_route: Any, request: Any) -> None:
             request_url = str(getattr(request, "url", ""))
-            decision = validate_public_http_url(request_url)
-            if decision.allowed:
+            decision = validate_public_http_url(request_url, resolver=self._resolver)
+            if not decision.allowed:
+                self.blocked_url = request_url
+                self.blocked_reason = decision.reason or "URL is not a public HTTP(S) destination"
+                playwright_route.abort("blockedbyclient")
+                return
+            if not self._fetch_public_requests:
                 playwright_route.continue_()
                 return
-            self.blocked_url = request_url
-            self.blocked_reason = decision.reason or "URL is not a public HTTP(S) destination"
-            playwright_route.abort("blockedbyclient")
+            method = str(getattr(request, "method", "GET") or "GET").upper()
+            if method not in {"GET", "HEAD"}:
+                self.blocked_url = request_url
+                self.blocked_reason = f"Unsupported public route method: {method}"
+                playwright_route.abort("blockedbyclient")
+                return
+            headers = getattr(request, "headers", {}) or {}
+            try:
+                fulfillment = self._request_fetcher(request_url, method, dict(headers))
+            except Exception as exc:
+                self.blocked_url = request_url
+                self.blocked_reason = str(exc) or "Public route fetch failed"
+                playwright_route.abort("blockedbyclient")
+                return
+            playwright_route.fulfill(
+                status=fulfillment.status,
+                headers=fulfillment.headers,
+                body=b"" if method == "HEAD" else fulfillment.body,
+            )
 
         self._handler = handler
         route("**/*", handler)
@@ -141,3 +205,62 @@ def _ip_literal(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | N
 
 def _is_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return bool(address.is_global)
+
+
+def _fetch_public_route_request(
+    url: str,
+    method: str,
+    headers: Mapping[str, str],
+) -> RouteFulfillment:
+    from jobctrl.infrastructure.network.public_http import build_public_http_opener
+
+    opener = build_public_http_opener(follow_redirects=False)
+    request = urllib.request.Request(
+        url,
+        method=method,
+        headers=_safe_request_headers(headers),
+    )
+    try:
+        with opener.open(request, timeout=_ROUTE_FETCH_TIMEOUT_SECONDS) as response:
+            return RouteFulfillment(
+                status=int(getattr(response, "status", 200)),
+                headers=_response_headers(response.headers),
+                body=_read_limited(response),
+            )
+    except urllib.error.HTTPError as exc:
+        return RouteFulfillment(
+            status=int(exc.code),
+            headers=_response_headers(exc.headers),
+            body=_read_limited(exc),
+        )
+
+
+def _safe_request_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    safe: dict[str, str] = {}
+    for name, value in headers.items():
+        normalized = str(name).lower()
+        if normalized in _UNSAFE_REQUEST_HEADERS:
+            continue
+        if normalized == "accept-encoding":
+            continue
+        safe[str(name)] = str(value)
+    safe.setdefault("Accept-Encoding", "identity")
+    return safe
+
+
+def _response_headers(headers: Message | Mapping[str, str]) -> dict[str, str]:
+    response_headers: dict[str, str] = {}
+    items = headers.items() if hasattr(headers, "items") else ()
+    for name, value in items:
+        normalized = str(name).lower()
+        if normalized in _HOP_BY_HOP_RESPONSE_HEADERS:
+            continue
+        response_headers[str(name)] = str(value)
+    return response_headers
+
+
+def _read_limited(response: Any) -> bytes:
+    body = response.read(_ROUTE_FETCH_MAX_BYTES + 1)
+    if len(body) > _ROUTE_FETCH_MAX_BYTES:
+        raise ValueError("Public route response exceeded the maximum allowed size")
+    return bytes(body)

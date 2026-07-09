@@ -224,9 +224,10 @@ employers, accounts, provider APIs, and third-party sites as live operations:
 - The local API is intended for loopback use. Browser-extension routes
   additionally require a local capability token shown in Settings and stored
   under `~/.jobctrl/`; token display and rotation are restricted to CLI or the
-  same-origin Settings surface, not arbitrary loopback web origins. Do not bind
-  the API to a network interface or tunnel it unless you accept exposing
-  private profile, job, and artifact data.
+  same-origin Settings surface, not arbitrary loopback web origins. Unsafe API
+  calls from non-browser local clients need that token; arbitrary loopback web
+  origins remain blocked. Do not bind the API to a network interface or tunnel
+  it unless you accept exposing private profile, job, and artifact data.
 - LLM work can spend money and send job, profile, and generated-material text
   to configured providers. `dailyBudgetUsd` caps new spendful workflows
   locally, but it is an estimate rather than the provider bill.

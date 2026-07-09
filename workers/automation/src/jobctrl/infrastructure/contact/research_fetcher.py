@@ -12,7 +12,6 @@ this guard.
 
 from __future__ import annotations
 
-import ipaddress
 import logging
 import socket
 import urllib.error
@@ -36,6 +35,11 @@ from jobctrl.infrastructure.network import (
     RunBudgetCounter,
     parse_retry_after,
 )
+from jobctrl.infrastructure.network.public_http import (
+    UnsafePublicDestinationError,
+    build_public_http_opener,
+)
+from jobctrl.infrastructure.network.url_safety import Resolver, validate_public_http_url
 
 log = logging.getLogger(__name__)
 
@@ -62,8 +66,12 @@ class GatewayContactResearchFetcher:
     ) -> None:
         self._policy = policy
         self._timeout = timeout
-        self._opener = opener or urllib.request.build_opener(_NoRedirectHandler())
         self._target_resolver = target_resolver or _resolve_target_addresses
+        self._resolver = _resolver_from_target_resolver(self._target_resolver)
+        self._opener = opener or build_public_http_opener(
+            resolver=self._resolver,
+            follow_redirects=False,
+        )
         self._session = session or PolitenessSession(
             PolitenessGateway(),
             policy=policy.source_policy,
@@ -86,8 +94,13 @@ class GatewayContactResearchFetcher:
             return self._get(url, decision.user_agent, redirects_remaining=redirects_remaining)
 
     def _get(self, url: str, user_agent: str, *, redirects_remaining: int) -> ResearchPageFetch:
-        if not _is_public_network_target(url, self._target_resolver):
-            log.warning("Contact research network target rejected for %s", url)
+        public_decision = validate_public_http_url(url, resolver=self._resolver)
+        if not public_decision.allowed:
+            log.warning(
+                "Contact research network target rejected for %s: %s",
+                url,
+                public_decision.reason,
+            )
             return ResearchPageFetch(outcome=ResearchSourceOutcome.REJECTED.value, final_url=url)
         request = urllib.request.Request(url, method="GET")
         request.add_header("User-Agent", user_agent)
@@ -97,7 +110,7 @@ class GatewayContactResearchFetcher:
                 final_url = response.geturl()
                 if final_url != url and (
                     not self._source_allowed(final_url)
-                    or not _is_public_network_target(final_url, self._target_resolver)
+                    or not validate_public_http_url(final_url, resolver=self._resolver).allowed
                 ):
                     log.warning("Contact research final URL rejected for %s -> %s", url, final_url)
                     return ResearchPageFetch(
@@ -126,6 +139,9 @@ class GatewayContactResearchFetcher:
             return ResearchPageFetch(
                 outcome=ResearchSourceOutcome.ALLOWED.value, final_url=url, status=exc.code
             )
+        except UnsafePublicDestinationError as exc:
+            log.warning("Contact research unsafe destination for %s: %s", url, exc)
+            return ResearchPageFetch(outcome=ResearchSourceOutcome.REJECTED.value, final_url=url)
         except (urllib.error.URLError, ValueError) as exc:
             log.warning("Contact research fetch error for %s: %s", url, exc)
             return ResearchPageFetch(outcome=ResearchSourceOutcome.ALLOWED.value, final_url=url)
@@ -166,6 +182,19 @@ class GatewayContactResearchFetcher:
                 final_url=redirect_url,
                 status=exc.code,
             )
+        public_decision = validate_public_http_url(redirect_url, resolver=self._resolver)
+        if not public_decision.allowed:
+            log.warning(
+                "Contact research redirect target rejected for %s -> %s: %s",
+                url,
+                redirect_url,
+                public_decision.reason,
+            )
+            return ResearchPageFetch(
+                outcome=ResearchSourceOutcome.REJECTED.value,
+                final_url=redirect_url,
+                status=exc.code,
+            )
         return self._fetch_guarded(redirect_url, redirects_remaining=redirects_remaining - 1)
 
     def _source_allowed(self, url: str) -> bool:
@@ -178,11 +207,6 @@ class GatewayContactResearchFetcher:
         )
 
 
-class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ARG002
-        return None
-
-
 def _visible_text(body: bytes) -> str:
     try:
         soup = BeautifulSoup(body, "html.parser")
@@ -192,22 +216,6 @@ def _visible_text(body: bytes) -> str:
         tag.decompose()
     text = soup.get_text(separator="\n", strip=True)
     return text[:_MAX_TEXT_CHARS]
-
-
-def _is_public_network_target(url: str, resolver: TargetResolver) -> bool:
-    try:
-        parts = urllib.parse.urlsplit(url)
-        hostname = (parts.hostname or "").lower().rstrip(".")
-        port = parts.port
-    except ValueError:
-        return False
-    if parts.scheme not in {"http", "https"} or not hostname:
-        return False
-    literal = _ip_address(hostname)
-    if literal is not None:
-        return literal.is_global
-    addresses = resolver(hostname, port)
-    return bool(addresses) and all(_is_public_ip_address(address) for address in addresses)
 
 
 def _resolve_target_addresses(hostname: str, port: int | None) -> tuple[str, ...]:
@@ -223,16 +231,21 @@ def _resolve_target_addresses(hostname: str, port: int | None) -> tuple[str, ...
     return tuple(dict.fromkeys(addresses))
 
 
-def _is_public_ip_address(address: str) -> bool:
-    ip = _ip_address(address)
-    return bool(ip and ip.is_global)
+def _resolver_from_target_resolver(target_resolver: TargetResolver) -> Resolver:
+    def _resolve(host: str, port: int | None, *_args: object, **_kwargs: object):
+        resolved_port = int(port or 0)
+        infos = []
+        for address in target_resolver(host, port):
+            family = socket.AF_INET6 if ":" in address else socket.AF_INET
+            sockaddr = (
+                (address, resolved_port, 0, 0)
+                if family == socket.AF_INET6
+                else (address, resolved_port)
+            )
+            infos.append((family, socket.SOCK_STREAM, 0, "", sockaddr))
+        return infos
 
-
-def _ip_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
-    try:
-        return ipaddress.ip_address(value)
-    except ValueError:
-        return None
+    return _resolve
 
 
 __all__ = ["GatewayContactResearchFetcher"]

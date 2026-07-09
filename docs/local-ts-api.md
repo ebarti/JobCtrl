@@ -14,17 +14,20 @@ any request whose `Host` header is not a loopback host (`127.0.0.1`,
 `localhost`, or `[::1]`, with an optional port) with `403` `forbidden_host`;
 local browser and CLI callers always send a loopback `Host`, so legitimate
 access is unaffected. A second guard rejects cross-site mutations: `DELETE`,
-`PATCH`, `POST`, and `PUT` requests whose `Origin` or `Referer` is present but
-not loopback fail with `403` `cross_site_request` before any handler runs. When
-browser fetch metadata is present, unsafe mutations also reject
-`Sec-Fetch-Site: cross-site`; `same-site` is accepted only after the loopback
+`PATCH`, `POST`, and `PUT` requests require either a first-party local web
+`Origin`/`Referer` (the default Vite ports, plus `JOBCTRL_WEB_PORT` /
+`JOBCTRL_E2E_WEB_PORT`) or a valid local capability token on a request without
+browser origin/fetch metadata. Arbitrary loopback web origins and no-token
+headerless mutations fail with `403` `cross_site_request` before any handler
+runs. When browser fetch metadata is present, unsafe mutations also reject
+`Sec-Fetch-Site: cross-site`; `same-site` is accepted only after the first-party
 `Origin`/`Referer` check has passed, so the default Vite web app on another
 loopback port still works while foreign browser origins do not.
 Authenticated browser-extension routes are additive to that model:
 `/v1/extension/*` routes still require a loopback `Host`, but trusted
 `chrome-extension://` origins get route-scoped CORS and may satisfy the mutation
 origin/fetch-metadata guards with `Authorization: Bearer <local capability
-token>`. Existing loopback web and CLI behavior is unchanged.
+token>`.
 
 ## API at a glance
 
@@ -1094,6 +1097,10 @@ event-history cap.
   Bearer <token>`. A valid token allows a `chrome-extension://` origin through
   the route-scoped CORS and unsafe-mutation guards, but only after the loopback
   `Host` check has passed.
+- Non-browser local clients can also use `Authorization: Bearer <token>` for
+  unsafe local API mutations when they send no browser `Origin`, `Referer`, or
+  `Sec-Fetch-*` metadata. Browser-origin requests from arbitrary loopback ports
+  are still rejected even if they present the token.
 - `POST /v1/extension/captures` is the Phase 1 browser-extension capture
   endpoint. It accepts the manual-capture import fields plus `originatingUrl`,
   an optional stable `captureId` retry id, `captureClient:

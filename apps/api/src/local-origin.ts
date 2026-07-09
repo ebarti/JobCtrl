@@ -6,6 +6,7 @@ export const LOCAL_ORIGIN_PATTERNS = [
 
 export const LOCAL_CORS_METHODS = ["DELETE", "GET", "HEAD", "POST", "PATCH"];
 export const LOCAL_CORS_ALLOWED_HEADERS = ["authorization", "content-type"];
+const DEFAULT_FIRST_PARTY_WEB_PORTS = ["5173", "5174"];
 
 export const LOOPBACK_HOST_PATTERNS = [
   /^localhost(?::\d+)?$/i,
@@ -32,9 +33,9 @@ export function isTrustedMutationSource(
     ...headerValues(refererHeader).map(parseRefererOrigin),
   ];
   if (origins.length === 0) {
-    return true;
+    return false;
   }
-  return origins.every((origin) => origin !== null && isLoopbackOrigin(origin));
+  return origins.every((origin) => origin !== null && isFirstPartyWebOrigin(origin));
 }
 
 export function resolveLoopbackCorsOrigin(originHeader: string | string[] | undefined): string | undefined {
@@ -59,6 +60,38 @@ export function resolveExtensionCorsOrigin(originHeader: string | string[] | und
 
 export function isLoopbackOrigin(origin: string): boolean {
   return LOCAL_ORIGIN_PATTERNS.some((pattern) => pattern.test(origin));
+}
+
+function isFirstPartyWebOrigin(origin: string): boolean {
+  if (!isLoopbackOrigin(origin)) {
+    return false;
+  }
+  try {
+    const url = new URL(origin);
+    const port = url.port || (url.protocol === "https:" ? "443" : "80");
+    return trustedFirstPartyWebPorts().has(port);
+  } catch {
+    return false;
+  }
+}
+
+function trustedFirstPartyWebPorts(): Set<string> {
+  const ports = new Set(DEFAULT_FIRST_PARTY_WEB_PORTS);
+  for (const value of [process.env["JOBCTRL_WEB_PORT"], process.env["JOBCTRL_E2E_WEB_PORT"]]) {
+    const port = normalizePort(value);
+    if (port) {
+      ports.add(port);
+    }
+  }
+  return ports;
+}
+
+function normalizePort(value: string | undefined): string | null {
+  if (!value || !/^\d+$/.test(value)) {
+    return null;
+  }
+  const port = Number.parseInt(value, 10);
+  return port >= 1 && port <= 65535 ? String(port) : null;
 }
 
 function headerValues(value: string | string[] | undefined): string[] {

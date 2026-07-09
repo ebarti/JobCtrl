@@ -457,7 +457,7 @@ def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = No
 
 def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
     """Navigate + run the three-tier cascade inside the held politeness slot."""
-    route_guard = PublicHttpUrlRouteGuard(page).install()
+    route_guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True).install()
     status_code: int | None = None
     try:
         try:

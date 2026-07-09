@@ -30,6 +30,10 @@ from urllib.parse import urlsplit
 from urllib.robotparser import RobotFileParser
 
 from jobctrl.domain.ports.politeness import RobotsPort, RobotsVerdict
+from jobctrl.infrastructure.network.public_http import (
+    UnsafePublicDestinationError,
+    build_public_http_opener,
+)
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +71,7 @@ class RobotsCache(RobotsPort):
         self._ttl = ttl_seconds
         self._unreachable_ttl = unreachable_ttl_seconds
         self._timeout = timeout_seconds
-        self._opener = opener or urllib.request.build_opener()
+        self._opener = opener or build_public_http_opener()
         self._clock = clock
         self._lock = threading.Lock()
         self._cache: dict[str, _RobotsEntry] = {}
@@ -108,6 +112,9 @@ class RobotsCache(RobotsPort):
             return self._allow_all()
         except (TimeoutError, socket.timeout):
             log.warning("robots.txt timeout for %s: disallowing until retry", host_key)
+            return self._unreachable()
+        except UnsafePublicDestinationError as exc:
+            log.warning("robots.txt unsafe destination for %s (%s): disallowing until retry", host_key, exc)
             return self._unreachable()
         except urllib.error.URLError as exc:
             reason = getattr(exc, "reason", None)

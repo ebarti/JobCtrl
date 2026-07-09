@@ -53,6 +53,9 @@ dependencies = [
     # Mirrors the working reference in ~/Github/mestre. Published after the
     # workspace cutoff, so a per-package override is set in [tool.uv] below.
     "google-antigravity==0.1.2",
+    # Gmail verification scopes derive sender domains from application URLs and
+    # need public-suffix-aware eTLD+1 parsing.
+    "publicsuffix2>=2.20191221,<3",
 ]
 
 [project.optional-dependencies]

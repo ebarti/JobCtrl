@@ -29,6 +29,16 @@ from jobctrl.infrastructure.network.proxy import (
     ProxyConfig,
     parse_proxy,
 )
+from jobctrl.infrastructure.network.public_http import (
+    NoRedirectHandler,
+    PublicDestinationHTTPHandler,
+    PublicDestinationHTTPSHandler,
+    PublicDestinationRedirectHandler,
+    UnsafePublicDestinationError,
+    build_public_http_opener,
+    create_public_connection,
+    resolve_public_addrinfos,
+)
 from jobctrl.infrastructure.network.rate_limiter import (
     HostRateLimiter,
     get_shared_rate_limiter,
@@ -37,6 +47,7 @@ from jobctrl.infrastructure.network.robots import RobotsCache
 from jobctrl.infrastructure.network.url_safety import (
     PublicHttpUrlRouteGuard,
     PublicUrlDecision,
+    RouteFulfillment,
     validate_public_http_url,
 )
 
@@ -57,7 +68,16 @@ __all__ = [
     "GatewayHttpClient",
     "build_opener",
     "parse_retry_after",
+    "NoRedirectHandler",
+    "PublicDestinationHTTPHandler",
+    "PublicDestinationHTTPSHandler",
+    "PublicDestinationRedirectHandler",
+    "UnsafePublicDestinationError",
+    "build_public_http_opener",
+    "create_public_connection",
+    "resolve_public_addrinfos",
     "PublicHttpUrlRouteGuard",
     "PublicUrlDecision",
+    "RouteFulfillment",
     "validate_public_http_url",
 ]
