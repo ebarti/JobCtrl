@@ -147,6 +147,103 @@ def test_resolve_installs_public_route_guard_before_navigation() -> None:
     assert page.closed is True
 
 
+class _PopupRouteContext:
+    def __init__(self) -> None:
+        self._handler = None
+        self.unsafe_request_aborted = False
+        self.unrouted = False
+
+    def route(self, _pattern: str, handler) -> None:  # noqa: ANN001 - Playwright-shaped double
+        self._handler = handler
+
+    def unroute(self, _pattern: str, _handler) -> None:  # noqa: ANN001 - Playwright-shaped double
+        self.unrouted = True
+
+    def trigger_unsafe_popup_navigation(self) -> None:
+        assert self._handler is not None
+        route = _AbortRoute()
+        self._handler(route, SimpleNamespace(url="http://127.0.0.1:8766/v1/profile"))
+        self.unsafe_request_aborted = route.aborted
+        assert route.aborted
+
+
+class _PopupOnlyLocator:
+    def __init__(self, context: _PopupRouteContext) -> None:
+        self._context = context
+
+    def wait_for(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def get_attribute(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def click(self, *_args: object, **_kwargs: object) -> None:
+        self._context.trigger_unsafe_popup_navigation()
+
+
+class _PopupInfo:
+    def __init__(self, popup: "_PopupPage") -> None:
+        self.value = popup
+
+    def __enter__(self) -> "_PopupInfo":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+
+class _PopupPage:
+    url = "https://www.linkedin.com/jobs/view/123"
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def wait_for_load_state(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def wait_for_timeout(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _LoadedPageWithPopupApply:
+    url = "https://www.linkedin.com/jobs/view/123"
+
+    def __init__(self, context: _PopupRouteContext, locator: _PopupOnlyLocator) -> None:
+        self.context = context
+        self._locator = locator
+        self._popup = _PopupPage()
+
+    def locator(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(first=self._locator)
+
+    def get_by_role(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(first=self._locator)
+
+    def expect_popup(self, *_args: object, **_kwargs: object) -> _PopupInfo:
+        return _PopupInfo(self._popup)
+
+
+def test_resolve_loaded_page_guards_popup_initial_navigation() -> None:
+    context = _PopupRouteContext()
+    locator = _PopupOnlyLocator(context)
+    page = _LoadedPageWithPopupApply(context, locator)
+    resolver = LinkedInApplyUrlResolver(
+        timeout_seconds=0.01,
+        url_safety_checker=_allow_public_url,
+    )
+
+    result = resolver.resolve_loaded_page(page, "https://www.linkedin.com/jobs/view/123")
+
+    assert result.application_url is None
+    assert result.method == "unsafe_url"
+    assert "public" in str(result.error)
+    assert context.unsafe_request_aborted is True
+    assert context.unrouted is True
+
+
 class _VisibleApplyLocator:
     def wait_for(self, *_args: object, **_kwargs: object) -> None:
         return None

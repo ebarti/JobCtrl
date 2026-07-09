@@ -214,7 +214,7 @@ class LinkedInApplyUrlResolver:
             return _unsafe_url_resolution(initial_safety.reason)
 
         page = self.new_page()
-        route_guard = PublicHttpUrlRouteGuard(page).install()
+        route_guard = _install_public_route_guard(page, context=self._context)
         try:
             try:
                 page.goto(job_url, timeout=_NAV_TIMEOUT_MS)
@@ -241,7 +241,7 @@ class LinkedInApplyUrlResolver:
     def resolve_loaded_page(self, page: Any, job_url: str) -> LinkedInApplyResolution:
         """Capture the apply target from an already-loaded LinkedIn page."""
 
-        route_guard = PublicHttpUrlRouteGuard(page).install()
+        route_guard = _install_public_route_guard(page)
         try:
             result = self._resolve_loaded_page(page, job_url)
             if route_guard.blocked:
@@ -305,6 +305,24 @@ def _first_visible_apply_locator(page: Any) -> Any | None:
         except Exception:
             continue
     return None
+
+
+def _install_public_route_guard(page: Any, *, context: Any | None = None) -> PublicHttpUrlRouteGuard:
+    """Install the route guard on the broadest available Playwright target."""
+
+    route_target = context if callable(getattr(context, "route", None)) else None
+    if route_target is None:
+        page_context = getattr(page, "context", None)
+        if callable(page_context):
+            try:
+                page_context = page_context()
+            except Exception:
+                page_context = None
+        if callable(getattr(page_context, "route", None)):
+            route_target = page_context
+    if route_target is None:
+        route_target = page
+    return PublicHttpUrlRouteGuard(route_target).install()
 
 
 def _bootstrap_profile_dir(profile_dir: Path, *, chrome_profile: str) -> None:
