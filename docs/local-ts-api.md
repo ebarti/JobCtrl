@@ -1087,8 +1087,9 @@ event-history cap.
   capability token for the Settings pairing surface; `POST
   /v1/extension/pairing-token/rotate` replaces it. The token is generated under
   the app dir (`~/.jobctrl/extension-capability-token` by default) with
-  restrictive file permissions. These pairing routes are for loopback web/CLI
-  callers, not extension-origin CORS.
+  restrictive file permissions. These pairing routes are for CLI callers and
+  same-origin Settings requests only; arbitrary loopback web origins and
+  extension-origin CORS cannot mint or rotate the token.
 - Authenticated extension routes under `/v1/extension/*` require `Authorization:
   Bearer <token>`. A valid token allows a `chrome-extension://` origin through
   the route-scoped CORS and unsafe-mutation guards, but only after the loopback
