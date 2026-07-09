@@ -263,19 +263,11 @@ def get_achievement_evidence(profile: dict) -> list[dict]:
                 normalized["experience_entry_id"] = entry_id
                 normalized_items.append(normalized)
         if normalized_items:
-            evidence.extend(normalized_items)
+            evidence.extend(_reconciled_achievement_evidence(entry, entry_id, normalized_items))
             continue
         if not entry_id:
             continue
-        for bullet_index, bullet in enumerate(_text_list(entry.get("bullets")), start=1):
-            normalized = _legacy_bullet_achievement_evidence(
-                entry=entry,
-                entry_id=entry_id,
-                bullet=bullet,
-                bullet_index=bullet_index,
-            )
-            normalized["experience_entry_id"] = entry_id
-            evidence.append(normalized)
+        evidence.extend(_legacy_bullet_achievement_evidence_for_entry(entry, entry_id))
     return evidence
 
 
@@ -353,11 +345,69 @@ def _normalize_achievement_evidence(item: dict) -> dict:
     }
 
 
+def _reconciled_achievement_evidence(entry: dict, entry_id: str, items: list[dict]) -> list[dict]:
+    if not entry_id:
+        return items
+    derived_items = _legacy_bullet_achievement_evidence_for_entry(entry, entry_id)
+    if all(_is_materialized_legacy_bullet_evidence(item, entry_id) for item in items):
+        return derived_items
+    derived_by_id = {str(item["id"]): item for item in derived_items}
+    reconciled: list[dict] = []
+    for item in items:
+        if not _is_materialized_legacy_bullet_evidence(item, entry_id):
+            reconciled.append(item)
+            continue
+        replacement = derived_by_id.get(str(item["id"]))
+        if replacement is not None:
+            reconciled.append(replacement)
+    return reconciled
+
+
+def _legacy_bullet_achievement_evidence_for_entry(entry: dict, entry_id: str) -> list[dict]:
+    evidence: list[dict] = []
+    for bullet_index, bullet in enumerate(_text_list(entry.get("bullets")), start=1):
+        normalized = _legacy_bullet_achievement_evidence(
+            entry=entry,
+            entry_id=entry_id,
+            bullet=bullet,
+            bullet_index=bullet_index,
+        )
+        normalized["experience_entry_id"] = entry_id
+        evidence.append(normalized)
+    return evidence
+
+
+def _is_materialized_legacy_bullet_evidence(item: dict, entry_id: str) -> bool:
+    if _legacy_bullet_evidence_index(str(item.get("id", "")), entry_id) is None:
+        return False
+    source_text = str(item.get("source_text", "")).strip()
+    if not source_text:
+        return False
+    return (
+        str(item.get("action", "")).strip() == source_text
+        and str(item.get("outcome", "")).strip() == source_text
+        and _text_list(item.get("tools")) == []
+        and _text_list(item.get("metrics")) == _legacy_bullet_metrics(source_text)
+        and str(item.get("evidence_strength", "supported")).strip() == "supported"
+        and float(item.get("claim_confidence", 0.0)) == 0.8
+        and bool(item.get("user_confirmed", False)) is True
+        and _text_list(item.get("tags")) == []
+    )
+
+
 def legacy_bullet_evidence_id(entry_id: str, bullet_index: int) -> str:
     """Return the stable evidence id used for legacy resume bullets."""
     safe_entry_id = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(entry_id).strip()).strip("_")
     safe_entry_id = safe_entry_id or "experience"
     return f"{safe_entry_id}_bullet_{max(1, int(bullet_index))}"
+
+
+def _legacy_bullet_evidence_index(evidence_id: str, entry_id: str) -> int | None:
+    match = re.search(r"_bullet_([1-9]\d*)$", evidence_id)
+    if match is None:
+        return None
+    bullet_index = int(match.group(1))
+    return bullet_index if evidence_id == legacy_bullet_evidence_id(entry_id, bullet_index) else None
 
 
 def _legacy_bullet_achievement_evidence(
@@ -382,10 +432,7 @@ def _legacy_bullet_achievement_evidence(
         "scope": " ".join(part for part in [title, company] if part),
         "action": source_text,
         "tools": [],
-        "metrics": [
-            re.sub(r"\s+", " ", match.group(0).strip())
-            for match in _LEGACY_BULLET_METRIC_RE.finditer(source_text)
-        ],
+        "metrics": _legacy_bullet_metrics(source_text),
         "outcome": source_text,
         "seniority_signal": seniority_signal,
         "evidence_strength": "supported",
@@ -393,6 +440,13 @@ def _legacy_bullet_achievement_evidence(
         "user_confirmed": True,
         "tags": [],
     }
+
+
+def _legacy_bullet_metrics(source_text: str) -> list[str]:
+    return [
+        re.sub(r"\s+", " ", match.group(0).strip())
+        for match in _LEGACY_BULLET_METRIC_RE.finditer(source_text)
+    ]
 
 
 def _text_list(value: object) -> list[str]:

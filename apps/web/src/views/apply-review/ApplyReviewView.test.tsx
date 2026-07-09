@@ -919,6 +919,15 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Italic" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Underline" })).toBeInTheDocument();
+    const insertLinkButton = screen.getByRole("button", { name: "Insert link" });
+    expect(insertLinkButton).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Link URL" })).not.toBeInTheDocument();
+    await userEvent.click(insertLinkButton);
+    const toolbarLinkInput = await screen.findByRole("textbox", { name: "Link URL" });
+    await waitFor(() => expect(toolbarLinkInput).toHaveFocus());
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Link URL" })).not.toBeInTheDocument());
+    await waitFor(() => expect(insertLinkButton).toHaveFocus());
     expect(screen.getByLabelText("Font")).toBeInTheDocument();
     expect(screen.getByLabelText("Size")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Align left" })).toBeInTheDocument();
@@ -1392,8 +1401,13 @@ describe("<ApplyReviewView>", () => {
 
     let shadow = await findResumeShadowRoot();
     await selectResumeLine(shadow, "Owned platform reliability improvements for incident response.");
-    await userEvent.type(screen.getByRole("textbox", { name: "Link URL" }), "portfolio.example.test");
+    expect(screen.queryByRole("textbox", { name: "Link URL" })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    const linkInput = await screen.findByRole("textbox", { name: "Link URL" });
+    await waitFor(() => expect(linkInput).toHaveFocus());
+    await userEvent.type(linkInput, "portfolio.example.test");
     await userEvent.click(screen.getByRole("button", { name: "Apply link" }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Link URL" })).not.toBeInTheDocument());
 
     shadow = await findResumeShadowRoot();
     await waitFor(() =>

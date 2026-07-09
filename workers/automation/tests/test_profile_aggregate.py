@@ -103,6 +103,34 @@ def test_get_achievement_evidence_derives_legacy_bullets_when_explicit_evidence_
     assert all(item["user_confirmed"] is True for item in evidence)
 
 
+def test_get_achievement_evidence_rederives_materialized_legacy_bullets():
+    profile = _valid_profile_dict()
+    entry = profile["resume"]["experience_entries"][0]
+    entry["achievement_evidence"] = [
+        {
+            "id": "role_1_bullet_1",
+            "source_text": "Reduced incidents 40%.",
+            "scope": "Software Engineer Acme",
+            "action": "Reduced incidents 40%.",
+            "tools": [],
+            "metrics": ["40%"],
+            "outcome": "Reduced incidents 40%.",
+            "seniority_signal": "",
+            "evidence_strength": "supported",
+            "claim_confidence": 0.8,
+            "user_confirmed": True,
+            "tags": [],
+        }
+    ]
+    entry["bullets"] = ["Reduced incidents 55%."]
+
+    evidence = get_achievement_evidence(profile)
+
+    assert [item["id"] for item in evidence] == ["role_1_bullet_1"]
+    assert evidence[0]["source_text"] == "Reduced incidents 55%."
+    assert evidence[0]["metrics"] == ["55%"]
+
+
 def test_from_dict_rejects_missing_resume_block():
     with pytest.raises(InvalidProfileError) as exc:
         Profile.from_dict(LOCAL_TENANT, {"personal": {"full_name": "X"}})

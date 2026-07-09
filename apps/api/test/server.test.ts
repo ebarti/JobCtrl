@@ -7557,6 +7557,112 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("materializes profile achievement evidence from bullets when explicit evidence is absent", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Bullet Evidence Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entries = resume.experience_entries as Array<Record<string, unknown>>;
+    entries[0]!.bullets = ["Reduced incidents 40% by hardening service ownership."];
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const body = response.json();
+    expect(body.profile.resume.experience_entries[0].achievement_evidence).toEqual([
+      expect.objectContaining({
+        id: "role_1_bullet_1",
+        source_text: "Reduced incidents 40% by hardening service ownership.",
+        metrics: ["40%"],
+        evidence_strength: "supported",
+        claim_confidence: 0.8,
+        user_confirmed: true,
+      }),
+    ]);
+
+    const db = new Database(options.dbPath);
+    try {
+      expect(db.prepare("SELECT COUNT(*) AS count FROM candidate_profile_achievement_evidence").get()).toMatchObject({
+        count: 1,
+      });
+      expect(
+        db.prepare("SELECT evidence_id, source_text, metrics_json FROM candidate_profile_achievement_evidence").get(),
+      ).toMatchObject({
+        evidence_id: "role_1_bullet_1",
+        source_text: "Reduced incidents 40% by hardening service ownership.",
+        metrics_json: '["40%"]',
+      });
+      db.prepare("DELETE FROM candidate_profile_achievement_evidence").run();
+    } finally {
+      db.close();
+    }
+
+    const repaired = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(repaired.statusCode, repaired.body).toBe(200);
+    expect(repaired.json().profile.resume.experience_entries[0].achievement_evidence).toEqual([
+      expect.objectContaining({
+        id: "role_1_bullet_1",
+        source_text: "Reduced incidents 40% by hardening service ownership.",
+        metrics: ["40%"],
+      }),
+    ]);
+
+    await app.close();
+  });
+
+  it("rederives materialized bullet evidence when a profile bullet changes", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Updated Bullet Evidence Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entries = resume.experience_entries as Array<Record<string, unknown>>;
+    entries[0]!.bullets = ["Reduced incidents 40% by hardening service ownership."];
+
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile },
+    });
+
+    expect(initial.statusCode, initial.body).toBe(200);
+    const materializedProfile = initial.json().profile as Record<string, unknown>;
+    const materializedResume = materializedProfile.resume as Record<string, unknown>;
+    const materializedEntries = materializedResume.experience_entries as Array<Record<string, unknown>>;
+    materializedEntries[0]!.bullets = ["Reduced incidents 55% by hardening service ownership."];
+
+    const updated = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: materializedProfile },
+    });
+
+    expect(updated.statusCode, updated.body).toBe(200);
+    expect(updated.json().profile.resume.experience_entries[0].achievement_evidence).toEqual([
+      expect.objectContaining({
+        id: "role_1_bullet_1",
+        source_text: "Reduced incidents 55% by hardening service ownership.",
+        metrics: ["55%"],
+      }),
+    ]);
+
+    const db = new Database(options.dbPath);
+    try {
+      expect(
+        db.prepare("SELECT evidence_id, source_text, metrics_json FROM candidate_profile_achievement_evidence").get(),
+      ).toMatchObject({
+        evidence_id: "role_1_bullet_1",
+        source_text: "Reduced incidents 55% by hardening service ownership.",
+        metrics_json: '["55%"]',
+      });
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
   it("keeps explicit claim policy when legacy strict mode is present", async () => {
     const app = buildApp(options);
     const profile = validProfileFixture("Explicit Claim Policy Candidate");
