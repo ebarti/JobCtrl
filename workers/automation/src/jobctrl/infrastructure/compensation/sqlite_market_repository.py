@@ -99,6 +99,7 @@ def _feed_client(
     source_id: str,
     conn: sqlite3.Connection | None,
     run_id: str | None,
+    opener: Any | None = None,
 ) -> GatewayHttpClient:
     session = PolitenessSession(
         gateway,
@@ -113,7 +114,7 @@ def _feed_client(
         ),
         recorder_conn=conn,
     )
-    return GatewayHttpClient(session)
+    return GatewayHttpClient(session, opener=opener)
 
 
 def _text_feed_fetcher(
@@ -121,8 +122,9 @@ def _text_feed_fetcher(
     source_id: str,
     conn: sqlite3.Connection | None,
     run_id: str | None,
+    opener: Any | None = None,
 ) -> TextFeedFetcher:
-    client = _feed_client(gateway, source_id, conn, run_id)
+    client = _feed_client(gateway, source_id, conn, run_id, opener=opener)
 
     def fetch(url: str, auth_token: str | None) -> str | None:
         headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -560,6 +562,7 @@ def load_default_reported_compensation_observations(
     gateway: PolitenessGateway | None = None,
     recorder_conn: sqlite3.Connection | None = None,
     run_id: str | None = None,
+    opener: Any | None = None,
 ) -> ReportedCompensationSourceLoad:
     """Load every configured reported-compensation source for refresh paths.
 
@@ -575,12 +578,12 @@ def load_default_reported_compensation_observations(
     local = _load_optional_observation_ref(
         local_observations_path,
         default_source_id=None,
-        text_fetch=_text_feed_fetcher(active_gateway, "local", recorder_conn, run_id),
+        text_fetch=_text_feed_fetcher(active_gateway, "local", recorder_conn, run_id, opener=opener),
     )
     levels_fyi = _load_configured_provider_observations(
         source_env,
         provider="levels_fyi",
-        text_fetch=_text_feed_fetcher(active_gateway, "levels_fyi", recorder_conn, run_id),
+        text_fetch=_text_feed_fetcher(active_gateway, "levels_fyi", recorder_conn, run_id, opener=opener),
         default_source_id="levels_fyi",
         access_var="JOBCTRL_LEVELS_FYI_ACCESS_MODE",
         permitted_access_modes={"licensed_api", "licensed_data_feed", "enterprise_mcp"},
@@ -607,7 +610,7 @@ def load_default_reported_compensation_observations(
     glassdoor = _load_configured_provider_observations(
         source_env,
         provider="glassdoor",
-        text_fetch=_text_feed_fetcher(active_gateway, "glassdoor", recorder_conn, run_id),
+        text_fetch=_text_feed_fetcher(active_gateway, "glassdoor", recorder_conn, run_id, opener=opener),
         default_source_id="glassdoor",
         access_var="JOBCTRL_GLASSDOOR_ACCESS_MODE",
         permitted_access_modes={"partner_api", "written_permission"},

@@ -6,7 +6,7 @@ import pytest
 import sys
 
 from jobctrl.apply import prompt as prompt_mod
-from jobctrl.domain.apply.services import ApplyPromptBuilder, _default_mcp_config
+from jobctrl.domain.apply.services import ApplyPromptBuilder, _default_mcp_config, _verification_sender_domains
 from jobctrl.domain.apply.value_objects import ApplyPrompt
 from jobctrl.infrastructure.apply import claude_code_cli
 
@@ -273,6 +273,39 @@ def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> Non
     assert "CAPSOLVER_API_KEY" not in apply_tools["env"]
     assert "mcp__apply_tools__solve_captcha" not in claude_code_cli._allowed_tools_for_mcp_config(config)
     assert "DistinctivePasswordShouldNeverRender" not in json.dumps(apply_tools["env"])
+
+
+@pytest.mark.parametrize(
+    ("application_url", "expected"),
+    [
+        ("https://jobs.example.com/role", ("example.com",)),
+        ("https://careers.example.co.uk/apply", ("example.co.uk",)),
+        ("https://co.uk/apply", ()),
+        ("https://127.0.0.1/apply", ()),
+        ("http://localhost/apply", ("localhost",)),
+    ],
+)
+def test_verification_sender_domains_use_registrable_domain(
+    application_url: str,
+    expected: tuple[str, ...],
+) -> None:
+    assert _verification_sender_domains(application_url) == expected
+
+
+def test_default_mcp_config_uses_public_suffix_aware_gmail_sender_scope(monkeypatch) -> None:
+    monkeypatch.delenv("CAPSOLVER_API_KEY", raising=False)
+    config = _default_mcp_config(
+        9222,
+        job={
+            "url": "https://jobs.example.co.uk/role",
+            "application_url": "https://careers.example.co.uk/apply",
+        },
+        snapshot=_FakeSnapshot(),
+        upload_dir="/tmp/worker-0",
+    )
+
+    gmail = config["mcpServers"]["gmail"]
+    assert gmail["env"]["JOBCTRL_GMAIL_ALLOWED_DOMAINS"] == "example.co.uk"
 
 
 def test_default_mcp_config_scopes_capsolver_key_to_apply_tools(monkeypatch) -> None:

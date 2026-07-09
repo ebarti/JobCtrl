@@ -152,11 +152,12 @@ def configure_workday_politeness(
     gateway: PolitenessGateway | None = None,
     run_id: str | None = None,
     proxy: str | None = None,
+    opener: object | None = None,
 ) -> None:
     """Configure the politeness gateway for a Workday run (optional proxy)."""
     global _politeness
-    opener = build_opener(proxy)
-    _politeness = _WorkdayPoliteness(gateway or PolitenessGateway(), run_id, opener)
+    active_opener = opener or build_opener(proxy)
+    _politeness = _WorkdayPoliteness(gateway or PolitenessGateway(), run_id, active_opener)
 
 
 def _workday_source_id(*, configured: object = "", employer_key: object = "", name: object = "") -> str:

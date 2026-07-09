@@ -6,11 +6,17 @@ import json
 import os
 import re
 import sys
+from email.utils import getaddresses
 from typing import Any
 from urllib.parse import urlparse
 
 from jobctrl import __version__
 from jobctrl.infrastructure.gmail.client import GmailClient
+
+_EMAIL_DOMAIN_RE = re.compile(
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
+)
 
 
 def main() -> None:
@@ -194,8 +200,14 @@ def _message_in_scope(
 
 
 def _email_domain(value: str) -> str:
-    match = re.search(r"@([A-Za-z0-9.-]+)", value)
-    return match.group(1).lower() if match else ""
+    parsed = [address for _name, address in getaddresses([value]) if address]
+    if len(parsed) != 1:
+        return ""
+    local_part, separator, domain = parsed[0].rpartition("@")
+    if separator != "@" or not local_part or not domain:
+        return ""
+    normalized = domain.strip().strip(".").lower()
+    return normalized if _EMAIL_DOMAIN_RE.fullmatch(normalized) else ""
 
 
 def _extract_codes(text: str) -> list[str]:

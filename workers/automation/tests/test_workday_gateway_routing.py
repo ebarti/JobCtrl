@@ -19,9 +19,11 @@ from jobctrl.domain.discovery.source_registry import WORKDAY_API_POLICY
 from jobctrl.infrastructure.network.politeness import PolitenessGateway
 from jobctrl.infrastructure.network.rate_limiter import HostRateLimiter
 
+from .politeness_helpers import public_loopback_opener
+
 
 class _CxsServer:
-    def __init__(self, body: bytes) -> None:
+    def __init__(self, body: bytes, *, host: str = "workday.example") -> None:
         self.seen_user_agents: list[str] = []
         self.seen_paths: list[str] = []
         self.seen_times: list[float] = []
@@ -51,7 +53,7 @@ class _CxsServer:
                 pass
 
         self._httpd = HTTPServer(("127.0.0.1", 0), Handler)
-        self.base_url = f"http://127.0.0.1:{self._httpd.server_port}"
+        self.base_url = f"http://{host}:{self._httpd.server_port}"
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
 
     def __enter__(self) -> "_CxsServer":
@@ -70,6 +72,7 @@ def test_workday_search_routes_through_gateway_with_honest_ua() -> None:
         workday.configure_workday_politeness(
             gateway=PolitenessGateway(rate_limiter=HostRateLimiter()),
             run_id="discovery:workday:test",
+            opener=public_loopback_opener(),
         )
         employer = {
             "name": "Acme",
@@ -135,10 +138,14 @@ def test_workday_search_returns_empty_dict_when_gateway_blocks() -> None:
 
 def test_parallel_employers_pace_per_host_and_run_concurrently() -> None:
     body = json.dumps({"total": 0, "jobPostings": []}).encode("utf-8")
-    with _CxsServer(body) as server_a, _CxsServer(body) as server_b:
+    with (
+        _CxsServer(body, host="workday-a.example") as server_a,
+        _CxsServer(body, host="workday-b.example") as server_b,
+    ):
         workday.configure_workday_politeness(
             gateway=PolitenessGateway(rate_limiter=HostRateLimiter()),
             run_id="discovery:workday:p5a-pacing",
+            opener=public_loopback_opener(),
         )
         employers = {
             "acme": {

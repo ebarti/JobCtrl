@@ -452,17 +452,26 @@ def test_type_credential_types_only_on_approved_page_origin(monkeypatch):
     assert insert == [{"id": 2, "method": "Input.insertText", "params": {"text": "SyntheticPasswordTyped"}}]
 
 
-def test_solve_captcha_uses_owned_solver_without_returning_secret(tmp_path):
+def test_solve_captcha_uses_owned_solver_without_returning_secret(monkeypatch, tmp_path):
     challenge = CaptchaChallenge(
         kind="hcaptcha",
-        sitekey="site-key",
-        page_url="https://example.com/apply",
+        sitekey="active-site-key",
+        page_url="https://example.com/apply/form",
     )
     calls: list[tuple[str, CaptchaChallenge]] = []
     injected: list[tuple[str, str]] = []
+    ws = _install_fake_captcha_cdp(
+        monkeypatch,
+        detection={
+            "ok": True,
+            "href": "https://example.com/apply/form",
+            "sitekey": "active-site-key",
+        },
+    )
     server = ApplyToolsMcpServer(
         upload_dir=tmp_path,
         cdp_endpoint="http://localhost:9222",
+        approved_application_url="https://example.com/apply",
         captcha_key_resolver=lambda: "capsolver-secret-never-returned",
         captcha_solver=lambda api_key, detected: (
             calls.append((api_key, detected))
@@ -481,16 +490,16 @@ def test_solve_captcha_uses_owned_solver_without_returning_secret(tmp_path):
         "solve_captcha",
         {
             "kind": "hcaptcha",
-            "sitekey": "site-key",
-            "page_url": "https://example.com/apply",
         },
     )
 
     assert calls == [("capsolver-secret-never-returned", challenge)]
     assert injected == [("hcaptcha", "solver-token")]
+    assert ws.closed is True
     text = response["result"]["content"][0]["text"]
     assert "capsolver-secret-never-returned" not in text
     assert "solver-token" not in text
+    assert "active-site-key" not in text
     assert json.loads(text) == {
         "cost_usd": 0.002,
         "elapsed_s": 1.25,
@@ -500,7 +509,66 @@ def test_solve_captcha_uses_owned_solver_without_returning_secret(tmp_path):
     usage_events = (tmp_path / "captcha_solve_events.jsonl").read_text(encoding="utf-8")
     assert "solver-token" not in usage_events
     assert "capsolver-secret-never-returned" not in usage_events
+    assert "active-site-key" not in usage_events
     assert json.loads(usage_events)["event_type"] == "CaptchaSolveCompleted"
+
+
+def test_solve_captcha_rejects_model_supplied_challenge_coordinates(tmp_path):
+    calls: list[tuple[str, CaptchaChallenge]] = []
+    injected: list[str] = []
+    server = ApplyToolsMcpServer(
+        upload_dir=tmp_path,
+        cdp_endpoint="http://localhost:9222",
+        approved_application_url="https://example.com/apply",
+        captcha_key_resolver=lambda: "capsolver-secret",
+        captcha_solver=lambda api_key, detected: calls.append((api_key, detected)),
+        captcha_injector=lambda _endpoint, _challenge, token: injected.append(token),
+    )
+
+    response = _call(
+        server,
+        "solve_captcha",
+        {
+            "kind": "hcaptcha",
+            "sitekey": "model-supplied-sitekey",
+            "page_url": "https://attacker.example/apply",
+        },
+    )
+
+    assert response["error"]["code"] == -32000
+    assert "challenge coordinates are derived from the active page" in response["error"]["message"]
+    assert calls == []
+    assert injected == []
+    assert not (tmp_path / "captcha_solve_events.jsonl").exists()
+
+
+def test_solve_captcha_rejects_active_page_origin_mismatch(monkeypatch, tmp_path):
+    calls: list[tuple[str, CaptchaChallenge]] = []
+    injected: list[str] = []
+    _install_fake_captcha_cdp(
+        monkeypatch,
+        detection={
+            "ok": True,
+            "href": "https://attacker.example/apply/form",
+            "sitekey": "active-site-key",
+        },
+    )
+    server = ApplyToolsMcpServer(
+        upload_dir=tmp_path,
+        cdp_endpoint="http://localhost:9222",
+        approved_application_url="https://example.com/apply",
+        captcha_key_resolver=lambda: "capsolver-secret",
+        captcha_solver=lambda api_key, detected: calls.append((api_key, detected)),
+        captcha_injector=lambda _endpoint, _challenge, token: injected.append(token),
+    )
+
+    response = _call(server, "solve_captcha", {"kind": "hcaptcha"})
+
+    assert response["error"]["code"] == -32000
+    assert "approved application origin" in response["error"]["message"]
+    assert calls == []
+    assert injected == []
+    assert not (tmp_path / "captcha_solve_events.jsonl").exists()
 
 
 def test_solve_captcha_fails_closed_without_solver_key(tmp_path):
@@ -514,8 +582,6 @@ def test_solve_captcha_fails_closed_without_solver_key(tmp_path):
         "solve_captcha",
         {
             "kind": "hcaptcha",
-            "sitekey": "site-key",
-            "page_url": "https://example.com/apply",
         },
     )
 
@@ -558,7 +624,8 @@ def test_apply_tools_mcp_lists_captcha_tool_when_key_present(tmp_path):
     tools = {tool["name"]: tool for tool in response["result"]["tools"]}
     assert set(tools) == {"solve_captcha", "type_credential", "upload_artifact"}
     solve_schema = tools["solve_captcha"]["inputSchema"]
-    assert solve_schema["required"] == ["kind", "sitekey", "page_url"]
+    assert solve_schema["required"] == ["kind"]
+    assert set(solve_schema["properties"]) == {"kind"}
 
 
 class _FakeCdpResponse:
@@ -609,6 +676,30 @@ class _FakeCdpWebSocket:
         self.closed = True
 
 
+class _FakeCaptchaCdpWebSocket:
+    def __init__(self, detection: dict) -> None:
+        self._detection = detection
+        self.sent: list[dict] = []
+        self._last_id = 0
+        self.closed = False
+
+    def send(self, payload: str) -> None:
+        message = json.loads(payload)
+        self.sent.append(message)
+        self._last_id = int(message["id"])
+
+    def recv(self) -> str:
+        return json.dumps(
+            {
+                "id": self._last_id,
+                "result": {"result": {"value": self._detection}},
+            }
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def _install_fake_cdp(monkeypatch, ws: _FakeCdpWebSocket) -> None:
     monkeypatch.setattr(apply_tools_mcp, "urlopen", lambda _url, timeout: _FakeCdpResponse())
     monkeypatch.setitem(
@@ -616,3 +707,14 @@ def _install_fake_cdp(monkeypatch, ws: _FakeCdpWebSocket) -> None:
         "websocket",
         SimpleNamespace(create_connection=lambda *_args, **_kwargs: ws),
     )
+
+
+def _install_fake_captcha_cdp(monkeypatch, detection: dict) -> _FakeCaptchaCdpWebSocket:
+    ws = _FakeCaptchaCdpWebSocket(detection)
+    monkeypatch.setattr(apply_tools_mcp, "urlopen", lambda _url, timeout: _FakeCdpResponse())
+    monkeypatch.setitem(
+        sys.modules,
+        "websocket",
+        SimpleNamespace(create_connection=lambda *_args, **_kwargs: ws),
+    )
+    return ws

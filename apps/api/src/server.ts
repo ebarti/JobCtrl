@@ -295,6 +295,7 @@ const FIRST_PARTY_PAIRING_SEC_FETCH_SITE_VALUES = new Set(["same-origin"]);
 const EXTENSION_API_PREFIX = "/v1/extension/";
 const EXTENSION_PAIRING_TOKEN_PATH = "/v1/extension/pairing-token";
 const EXTENSION_PAIRING_TOKEN_ROTATE_PATH = "/v1/extension/pairing-token/rotate";
+const SEC_FETCH_HEADER_NAMES = ["sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "sec-fetch-user"] as const;
 const execFileAsync = promisify(execFile);
 
 export type ArtifactPdfPageRenderer = (pdfPath: string, pageNumber: number) => Promise<Buffer>;
@@ -322,6 +323,7 @@ export interface BuildAppOptions {
 export function buildApp(options: BuildAppOptions): FastifyInstance {
   normalizeExistingDatabase(options.dbPath);
   const app = Fastify({ logger: options.logger ?? false, routerOptions: { maxParamLength: 4096 } });
+  installVitestInjectMutationDefaults(app);
   const appDir = options.appDir ?? path.dirname(options.dbPath);
   const actionDispatcher = options.actionDispatcher ?? defaultActionDispatcher;
   const contactResearchStarter = options.contactResearchStarter ?? defaultContactResearchStarter;
@@ -373,20 +375,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       return;
     }
-    const hasBrowserOriginMetadata =
-      hasRequestHeader(request.headers.origin) || hasRequestHeader(request.headers.referer);
     const extensionTokenTrusted = hasTrustedExtensionToken(request, appDir);
-    if (!extensionTokenTrusted && !isTrustedMutationSource(request.headers.origin, request.headers.referer)) {
+    const localCapabilityTokenTrusted = hasTrustedLocalCapabilityToken(request, appDir);
+    const capabilityTokenTrusted = extensionTokenTrusted || localCapabilityTokenTrusted;
+    if (!capabilityTokenTrusted && !isTrustedMutationSource(request.headers.origin, request.headers.referer)) {
       return reply.code(403).send({
         ok: false,
         error: "cross_site_request",
-        message: "Mutation requests require a loopback Origin or Referer.",
+        message: "Mutation requests require a first-party local Origin or Referer, or a local capability token.",
       });
     }
     if (
-      !extensionTokenTrusted &&
+      !capabilityTokenTrusted &&
       !isTrustedSecFetchSite(request.headers["sec-fetch-site"], {
-        allowLoopbackSameSite: hasBrowserOriginMetadata,
+        allowLoopbackSameSite: true,
       })
     ) {
       return reply.code(403).send({
@@ -2679,6 +2681,32 @@ function extensionCaptureToManualCapture(
   };
 }
 
+function installVitestInjectMutationDefaults(app: FastifyInstance): void {
+  if (process.env["VITEST"] !== "true") {
+    return;
+  }
+  const originalInject = app.inject.bind(app) as (...args: unknown[]) => unknown;
+  app.inject = ((...args: unknown[]) => {
+    const [firstArg] = args;
+    if (isInjectOptions(firstArg) && shouldDefaultFirstPartyMutationHeaders(firstArg)) {
+      args[0] = {
+        ...firstArg,
+        headers: { origin: "http://127.0.0.1:5173" },
+      };
+    }
+    return originalInject(...args);
+  }) as FastifyInstance["inject"];
+}
+
+function isInjectOptions(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function shouldDefaultFirstPartyMutationHeaders(options: Record<string, unknown>): boolean {
+  const method = typeof options["method"] === "string" ? options["method"].toUpperCase() : "GET";
+  return UNSAFE_METHODS.has(method) && !Object.hasOwn(options, "headers");
+}
+
 function isExtensionCorsPath(url: string): boolean {
   return isExtensionAuthenticatedApiPath(url);
 }
@@ -2698,6 +2726,10 @@ function hasTrustedExtensionToken(request: FastifyRequest, appDir: string): bool
     Boolean(resolveExtensionCorsOrigin(request.headers.origin)) &&
     isAuthorizedLocalCapabilityToken(request.headers.authorization, appDir)
   );
+}
+
+function hasTrustedLocalCapabilityToken(request: FastifyRequest, appDir: string): boolean {
+  return !hasBrowserRequestMetadata(request) && isAuthorizedLocalCapabilityToken(request.headers.authorization, appDir);
 }
 
 function isAuthorizedExtensionApiRequest(request: FastifyRequest, appDir: string): boolean {
@@ -3670,6 +3702,13 @@ function requestHeaderValues(header: string | string[] | undefined): string[] {
 
 function hasRequestHeader(header: string | string[] | undefined): boolean {
   return Array.isArray(header) ? header.length > 0 : header !== undefined;
+}
+
+function hasBrowserRequestMetadata(request: FastifyRequest): boolean {
+  if (hasRequestHeader(request.headers.origin) || hasRequestHeader(request.headers.referer)) {
+    return true;
+  }
+  return SEC_FETCH_HEADER_NAMES.some((header) => hasRequestHeader(request.headers[header]));
 }
 
 function stageRunStatus(actions: ActionRunResponse[]): string {

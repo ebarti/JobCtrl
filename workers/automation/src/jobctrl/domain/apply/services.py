@@ -29,13 +29,17 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from ipaddress import ip_address
 from typing import Any, Mapping
 from urllib.parse import urlparse
+
+from publicsuffix2 import PublicSuffixList
 
 from jobctrl.domain.apply.value_objects import ApplyPrompt
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 
 log = logging.getLogger(__name__)
+_PUBLIC_SUFFIX_LIST = PublicSuffixList()
 
 
 # ---------------------------------------------------------------------------
@@ -273,15 +277,24 @@ def _default_mcp_config(
 
 def _verification_sender_domains(application_url: str) -> tuple[str, ...]:
     try:
-        hostname = (urlparse(application_url).hostname or "").lower()
+        hostname = (urlparse(application_url).hostname or "").strip().strip(".").lower()
     except Exception:
         hostname = ""
     if not hostname:
         return ()
-    labels = hostname.split(".")
-    if len(labels) >= 2:
-        return (".".join(labels[-2:]),)
-    return (hostname,)
+    try:
+        ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        return ()
+    if "." not in hostname:
+        return (hostname,)
+    registrable_domain = _PUBLIC_SUFFIX_LIST.get_sld(hostname)
+    public_suffix = _PUBLIC_SUFFIX_LIST.get_tld(hostname)
+    if not registrable_domain or registrable_domain == public_suffix:
+        return ()
+    return (registrable_domain.lower(),)
 
 
 def _credential_origins(application_url: str) -> tuple[str, ...]:

@@ -141,7 +141,7 @@ class PlaywrightDetailPageFetcher:
             try:
                 context = browser.new_context(user_agent=user_agent)
                 page = context.new_page()
-                route_guard = PublicHttpUrlRouteGuard(page).install()
+                route_guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True).install()
                 status: int | None = None
                 resp = None
                 try:

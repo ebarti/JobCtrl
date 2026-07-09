@@ -29,6 +29,7 @@ from jobctrl.infrastructure.network import (
     HostRateLimiter,
     PolitenessGateway,
     PublicUrlDecision,
+    RobotsCache,
     RunBudgetCounter,
 )
 
@@ -39,6 +40,7 @@ from .politeness_helpers import (
     no_sleep_limiter,
     offline_gateway,
     offline_session,
+    public_loopback_opener,
 )
 
 LONG_DESC = "Build reliable distributed systems with Python and TypeScript. " * 8
@@ -211,7 +213,7 @@ class _RobotsServer:
                 pass
 
         self._httpd = HTTPServer(("127.0.0.1", 0), Handler)
-        self.base_url = f"http://127.0.0.1:{self._httpd.server_port}"
+        self.base_url = f"http://robots.example:{self._httpd.server_port}"
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
 
     def __enter__(self) -> "_RobotsServer":
@@ -247,9 +249,13 @@ def test_robots_disallowed_job_never_navigates_and_folds_blocked(
             spy = _SpyPlaywright()
             monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "0")
             monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
+            _allow_test_url_safety(monkeypatch)
 
             # Real RobotsCache fetches the loopback robots.txt; no-sleep limiter.
-            gateway = PolitenessGateway(rate_limiter=no_sleep_limiter())
+            gateway = PolitenessGateway(
+                robots=RobotsCache(opener=public_loopback_opener()),
+                rate_limiter=no_sleep_limiter(),
+            )
             stats = scrape_site_batch(conn, "RemoteOK", [(url, "Role")], gateway=gateway)
 
             # The invariant: a disallowed page is NEVER navigated.

@@ -175,7 +175,12 @@ class ApplyToolsMcpServer:
         api_key = self._captcha_key_resolver()
         if not api_key:
             raise ValueError("CAPTCHA solver is not configured")
-        challenge = _captcha_challenge_from_args(args)
+        kind = _captcha_kind_from_args(args)
+        challenge = _captcha_challenge_from_active_page(
+            self._cdp_endpoint,
+            kind,
+            self._approved_application_url,
+        )
         result = self._captcha_solver(api_key, challenge)
         if not isinstance(result, CaptchaSolveResult):
             result = CaptchaSolveResult(token=str(result or ""), kind=challenge.kind, elapsed_s=0.0)
@@ -273,18 +278,16 @@ def _tools(*, captcha_configured: bool | None = None) -> list[dict[str, Any]]:
             1,
             {
                 "name": "solve_captcha",
-                "description": "Solve a supported CAPTCHA through the local configured solver. Provider keys and solver tokens are never returned to the model.",
+                "description": "Solve a supported CAPTCHA on the active approved application page. The page URL, sitekey, provider keys, and solver tokens are never supplied by or returned to the model.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "kind": {
                             "type": "string",
                             "enum": ["recaptcha_v2", "hcaptcha", "turnstile"],
-                        },
-                        "sitekey": {"type": "string", "minLength": 1},
-                        "page_url": {"type": "string", "minLength": 1},
+                        }
                     },
-                    "required": ["kind", "sitekey", "page_url"],
+                    "required": ["kind"],
                     "additionalProperties": False,
                 },
             },
@@ -374,17 +377,98 @@ def _origin_from_url(value: str) -> str | None:
     return f"{scheme}://{host}{port_suffix}"
 
 
-def _captcha_challenge_from_args(args: dict[str, Any]) -> CaptchaChallenge:
+def _captcha_kind_from_args(args: dict[str, Any]) -> str:
+    unexpected = set(args) - {"kind"}
+    if unexpected:
+        raise ValueError("solve_captcha challenge coordinates are derived from the active page")
     kind = str(args.get("kind") or "")
-    sitekey = str(args.get("sitekey") or "")
-    page_url = str(args.get("page_url") or "")
     if kind not in {"recaptcha_v2", "hcaptcha", "turnstile"}:
         raise ValueError("solve_captcha kind must be recaptcha_v2, hcaptcha, or turnstile")
+    return kind
+
+
+def _captcha_challenge_from_active_page(
+    cdp_endpoint: str,
+    kind: str,
+    approved_application_url: str,
+) -> CaptchaChallenge:
+    approved_origin = _url_origin(approved_application_url)
+    if not approved_origin:
+        raise ValueError("solve_captcha approved application URL is invalid")
+    detected = _evaluate_on_page(cdp_endpoint, _captcha_detection_expression(kind))
+    if not isinstance(detected, dict):
+        raise RuntimeError("could not inspect CAPTCHA challenge on the active page")
+    page_url = str(detected.get("href") or "")
+    active_origin = _url_origin(page_url)
+    if not active_origin:
+        raise RuntimeError("active CAPTCHA page is not an HTTP(S) page")
+    if active_origin != approved_origin:
+        raise RuntimeError("active CAPTCHA page does not match the approved application origin")
+    if not detected.get("ok"):
+        reason = str(detected.get("reason") or "no supported CAPTCHA challenge is available")
+        raise RuntimeError(reason)
+    sitekey = str(detected.get("sitekey") or "").strip()
     if not sitekey.strip():
-        raise ValueError("solve_captcha sitekey is required")
+        raise RuntimeError("active CAPTCHA challenge is missing a sitekey")
     if not page_url.strip():
-        raise ValueError("solve_captcha page_url is required")
+        raise RuntimeError("active CAPTCHA page URL is unavailable")
     return CaptchaChallenge(kind=kind, sitekey=sitekey, page_url=page_url)
+
+
+def _captcha_detection_expression(kind: str) -> str:
+    return f"""
+(() => {{
+  const kind = {json.dumps(kind)};
+  const href = window.location.href;
+  const selectorMap = {{
+    recaptcha_v2: [
+      '.g-recaptcha[data-sitekey]',
+      '[class~="g-recaptcha"][data-sitekey]'
+    ],
+    hcaptcha: [
+      '.h-captcha[data-sitekey]',
+      '[class~="h-captcha"][data-sitekey]'
+    ],
+    turnstile: [
+      '.cf-turnstile[data-sitekey]',
+      '[class~="cf-turnstile"][data-sitekey]'
+    ]
+  }};
+  const frameNeedles = {{
+    recaptcha_v2: ['google.com/recaptcha/', 'recaptcha.net/recaptcha/'],
+    hcaptcha: ['hcaptcha.com/'],
+    turnstile: ['challenges.cloudflare.com/']
+  }};
+  const selectors = selectorMap[kind] || [];
+  for (const selector of selectors) {{
+    const element = document.querySelector(selector);
+    const sitekey = element && element.getAttribute('data-sitekey');
+    if (sitekey && sitekey.trim()) {{
+      return {{ok: true, href, sitekey: sitekey.trim()}};
+    }}
+  }}
+  for (const frame of Array.from(document.querySelectorAll('iframe[src]'))) {{
+    const src = frame.getAttribute('src') || '';
+    if (!(frameNeedles[kind] || []).some((needle) => src.includes(needle))) {{
+      continue;
+    }}
+    try {{
+      const url = new URL(src, href);
+      const sitekey = url.searchParams.get('k') || url.searchParams.get('sitekey');
+      if (sitekey && sitekey.trim()) {{
+        return {{ok: true, href, sitekey: sitekey.trim()}};
+      }}
+    }} catch (_error) {{
+      // Ignore malformed iframe URLs and keep looking for a supported widget.
+    }}
+  }}
+  return {{
+    ok: false,
+    href,
+    reason: 'no supported CAPTCHA challenge is available on the active page'
+  }};
+}})()
+"""
 
 
 def _record_captcha_usage(upload_dir: Path | None, payload: dict[str, Any]) -> None:

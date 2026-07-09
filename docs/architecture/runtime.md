@@ -257,12 +257,13 @@ reports the worker heartbeat (`healthy` / `missing` / `stale` after 45 s /
 return `503 worker_runtime_unavailable` until a healthy heartbeat exists.
 Request hardening beyond the loopback bind: a Host-header allowlist rejects
 non-loopback hosts with `403 forbidden_host` (DNS-rebinding defense), and
-mutating requests with a non-loopback `Origin`/`Referer` are rejected with
-`403 cross_site_request`. Browser-extension routes are additive: authenticated
+mutating requests require a first-party local web `Origin`/`Referer` or a local
+capability token on a request without browser origin/fetch metadata; arbitrary
+loopback web origins and no-token headerless callers are rejected with `403
+cross_site_request`. Browser-extension routes are additive: authenticated
 `/v1/extension/*` routes still require a loopback Host and a local capability
 token, then allow a trusted `chrome-extension://` origin through route-scoped
-CORS and mutation-origin checks. Ordinary web and CLI routes keep the existing
-loopback posture. The browser-extension capture route seeds
+CORS and mutation-origin checks. The browser-extension capture route seeds
 `manual_capture_queue` with extension provenance and then delegates to the
 same worker-backed manual-capture importer used by the web app, so discovery
 dedupe, snapshots, quarantine, and projections remain owned by the existing

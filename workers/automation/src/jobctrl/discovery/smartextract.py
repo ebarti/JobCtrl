@@ -442,7 +442,7 @@ def collect_page_intelligence(
             # evaluated with in session.guard below), never an import-time constant —
             # so an owner UA override reaches the browser fetch.
             page = browser.new_page(user_agent=session.user_agent)
-            route_guard = PublicHttpUrlRouteGuard(page).install()
+            route_guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True).install()
             page.on("response", on_response)
 
             try:
