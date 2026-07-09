@@ -7,6 +7,7 @@ import sqlite3
 import sys
 from types import SimpleNamespace
 
+from jobctrl.infrastructure.apply_tools import mcp_server as apply_tools_mcp
 from jobctrl.infrastructure.apply_tools.mcp_server import (
     ApplyToolsMcpServer,
     CaptchaChallenge,
@@ -16,6 +17,7 @@ from jobctrl.infrastructure.apply_tools.mcp_server import (
     _upload_input_guard_expression,
     _upload_file_to_current_input,
     _profile_credential,
+    _type_credential_into_active_field,
 )
 
 
@@ -154,17 +156,26 @@ def test_upload_artifact_refuses_missing_run_artifact(tmp_path):
 
 
 def test_type_credential_types_resolved_password_without_returning_secret(tmp_path):
-    typed: list[tuple[str, str]] = []
+    typed: list[tuple[str, str, tuple[str, ...]]] = []
     server = ApplyToolsMcpServer(
         upload_dir=tmp_path,
         cdp_endpoint="http://localhost:9222",
         credential_resolver=lambda kind: "SyntheticPasswordNeverReturned" if kind == "job_site_password" else "",
-        credential_typer=lambda endpoint, credential: typed.append((endpoint, credential)),
+        credential_typer=lambda endpoint, credential, origins: typed.append(
+            (endpoint, credential, origins)
+        ),
+        allowed_credential_origins=("https://apply.example.com",),
     )
 
     response = _call(server, "type_credential", {"kind": "job_site_password"})
 
-    assert typed == [("http://localhost:9222", "SyntheticPasswordNeverReturned")]
+    assert typed == [
+        (
+            "http://localhost:9222",
+            "SyntheticPasswordNeverReturned",
+            ("https://apply.example.com",),
+        )
+    ]
     text = response["result"]["content"][0]["text"]
     assert "SyntheticPasswordNeverReturned" not in text
     assert json.loads(text) == {
@@ -361,7 +372,10 @@ def test_type_credential_refuses_missing_profile_db(monkeypatch, tmp_path):
     monkeypatch.setenv("JOBCTRL_APPLY_PROFILE_DB_PATH", str(tmp_path / "missing.db"))
 
     response = _call(
-        ApplyToolsMcpServer(cdp_endpoint="http://localhost:9222"),
+        ApplyToolsMcpServer(
+            cdp_endpoint="http://localhost:9222",
+            allowed_credential_origins=("https://apply.example.com",),
+        ),
         "type_credential",
         {"kind": "job_site_password"},
     )
@@ -375,12 +389,67 @@ def test_type_credential_refuses_unknown_kind(tmp_path):
         upload_dir=tmp_path,
         cdp_endpoint="http://localhost:9222",
         credential_typer=lambda _endpoint, _credential: None,
+        allowed_credential_origins=("https://apply.example.com",),
     )
 
     response = _call(server, "type_credential", {"kind": "api_key"})
 
     assert response["error"]["code"] == -32000
     assert "kind must be job_site_password" in response["error"]["message"]
+
+
+def test_type_credential_fails_closed_without_origin_policy(tmp_path):
+    resolved: list[str] = []
+    server = ApplyToolsMcpServer(
+        upload_dir=tmp_path,
+        cdp_endpoint="http://localhost:9222",
+        credential_resolver=lambda kind: resolved.append(kind) or "SyntheticPassword",
+        credential_typer=lambda _endpoint, _credential, _origins: None,
+    )
+
+    response = _call(server, "type_credential", {"kind": "job_site_password"})
+
+    assert resolved == []
+    assert response["error"]["code"] == -32000
+    assert "credential origin policy is not configured" in response["error"]["message"]
+
+
+def test_type_credential_rejects_unapproved_page_origin(monkeypatch):
+    ws = _FakeCdpWebSocket(
+        origin="https://evil.example",
+        field_ok=True,
+    )
+    _install_fake_cdp(monkeypatch, ws)
+
+    try:
+        _type_credential_into_active_field(
+            "http://localhost:9222",
+            "SyntheticPasswordNeverTyped",
+            ("https://apply.example.com",),
+        )
+    except RuntimeError as exc:
+        assert "stored credential is not approved for this page origin" in str(exc)
+    else:
+        raise AssertionError("credential typing should fail for mismatched origins")
+
+    assert not any(message.get("method") == "Input.insertText" for message in ws.sent)
+
+
+def test_type_credential_types_only_on_approved_page_origin(monkeypatch):
+    ws = _FakeCdpWebSocket(
+        origin="https://apply.example.com",
+        field_ok=True,
+    )
+    _install_fake_cdp(monkeypatch, ws)
+
+    _type_credential_into_active_field(
+        "http://localhost:9222",
+        "SyntheticPasswordTyped",
+        ("https://apply.example.com",),
+    )
+
+    insert = [message for message in ws.sent if message.get("method") == "Input.insertText"]
+    assert insert == [{"id": 2, "method": "Input.insertText", "params": {"text": "SyntheticPasswordTyped"}}]
 
 
 def test_solve_captcha_uses_owned_solver_without_returning_secret(tmp_path):
@@ -490,3 +559,60 @@ def test_apply_tools_mcp_lists_captcha_tool_when_key_present(tmp_path):
     assert set(tools) == {"solve_captcha", "type_credential", "upload_artifact"}
     solve_schema = tools["solve_captcha"]["inputSchema"]
     assert solve_schema["required"] == ["kind", "sitekey", "page_url"]
+
+
+class _FakeCdpResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc_info):
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(
+            [
+                {
+                    "type": "page",
+                    "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/1",
+                }
+            ]
+        ).encode("utf-8")
+
+
+class _FakeCdpWebSocket:
+    def __init__(self, *, origin: str, field_ok: bool) -> None:
+        self._origin = origin
+        self._field_ok = field_ok
+        self.sent: list[dict] = []
+        self._last_id = 0
+        self.closed = False
+
+    def send(self, payload: str) -> None:
+        message = json.loads(payload)
+        self.sent.append(message)
+        self._last_id = int(message["id"])
+
+    def recv(self) -> str:
+        method = self.sent[-1]["method"]
+        if method == "Runtime.evaluate":
+            result = {"origin": self._origin, "fieldOk": self._field_ok}
+        else:
+            result = True
+        return json.dumps(
+            {
+                "id": self._last_id,
+                "result": {"result": {"value": result}},
+            }
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _install_fake_cdp(monkeypatch, ws: _FakeCdpWebSocket) -> None:
+    monkeypatch.setattr(apply_tools_mcp, "urlopen", lambda _url, timeout: _FakeCdpResponse())
+    monkeypatch.setitem(
+        sys.modules,
+        "websocket",
+        SimpleNamespace(create_connection=lambda *_args, **_kwargs: ws),
+    )
