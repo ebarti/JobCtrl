@@ -14,10 +14,15 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qsl, unquote, urljoin, urlparse
 
 from jobctrl import config
+from jobctrl.infrastructure.network import (
+    PublicHttpUrlRouteGuard,
+    PublicUrlDecision,
+    validate_public_http_url,
+)
 from jobctrl.infrastructure.network.proxy import ProxyConfig
 
 log = logging.getLogger(__name__)
@@ -45,6 +50,8 @@ _EXTERNAL_URL_PARAM_NAMES = {
     "externalurl",
 }
 _APPLY_TEXT_RE = re.compile(r"\b(apply|solicitar)\b", re.IGNORECASE)
+
+UrlSafetyChecker = Callable[[str], PublicUrlDecision]
 
 
 @dataclass(frozen=True)
@@ -119,6 +126,7 @@ class LinkedInApplyUrlResolver:
         user_agent: str | None = None,
         playwright: Any | None = None,
         chrome_profile: str | None = None,
+        url_safety_checker: UrlSafetyChecker | None = None,
     ) -> None:
         self._profile_dir = profile_dir or default_linkedin_apply_profile_dir()
         self._chrome_profile = chrome_profile or linkedin_apply_chrome_profile()
@@ -127,6 +135,7 @@ class LinkedInApplyUrlResolver:
         self._timeout_seconds = timeout_seconds or linkedin_apply_timeout_seconds()
         self._user_agent = user_agent
         self._external_playwright = playwright
+        self._url_safety_checker = url_safety_checker or validate_public_http_url
         self._playwright: Any | None = None
         self._context: Any | None = None
 
@@ -200,7 +209,12 @@ class LinkedInApplyUrlResolver:
     def resolve(self, job_url: str) -> LinkedInApplyResolution:
         """Navigate to ``job_url`` and capture the external apply target."""
 
+        initial_safety = self._url_safety_checker(job_url)
+        if not initial_safety.allowed:
+            return _unsafe_url_resolution(initial_safety.reason)
+
         page = self.new_page()
+        route_guard = _install_public_route_guard(page, context=self._context)
         try:
             try:
                 page.goto(job_url, timeout=_NAV_TIMEOUT_MS)
@@ -210,9 +224,15 @@ class LinkedInApplyUrlResolver:
                 except Exception:
                     pass
             except Exception as exc:
+                if route_guard.blocked:
+                    return _unsafe_url_resolution(route_guard.blocked_reason)
                 return LinkedInApplyResolution(None, "navigation_error", str(exc)[:300])
-            return self.resolve_loaded_page(page, job_url)
+            result = self._resolve_loaded_page(page, job_url)
+            if route_guard.blocked:
+                return _unsafe_url_resolution(route_guard.blocked_reason)
+            return result
         finally:
+            route_guard.close()
             try:
                 page.close()
             except Exception:
@@ -221,7 +241,21 @@ class LinkedInApplyUrlResolver:
     def resolve_loaded_page(self, page: Any, job_url: str) -> LinkedInApplyResolution:
         """Capture the apply target from an already-loaded LinkedIn page."""
 
-        direct = _extract_external_from_redirect_url(getattr(page, "url", "") or "", job_url)
+        route_guard = _install_public_route_guard(page)
+        try:
+            result = self._resolve_loaded_page(page, job_url)
+            if route_guard.blocked:
+                return _unsafe_url_resolution(route_guard.blocked_reason)
+            return result
+        finally:
+            route_guard.close()
+
+    def _resolve_loaded_page(self, page: Any, job_url: str) -> LinkedInApplyResolution:
+        direct = _extract_external_from_redirect_url(
+            getattr(page, "url", "") or "",
+            job_url,
+            url_safety_checker=self._url_safety_checker,
+        )
         if direct:
             return LinkedInApplyResolution(direct, "current_url")
 
@@ -231,10 +265,14 @@ class LinkedInApplyUrlResolver:
 
         href = _locator_href(locator, getattr(page, "url", "") or job_url)
         if href:
-            direct = _extract_external_from_redirect_url(href, job_url)
+            direct = _extract_external_from_redirect_url(
+                href,
+                job_url,
+                url_safety_checker=self._url_safety_checker,
+            )
             if direct:
                 return LinkedInApplyResolution(direct, "href_redirect")
-            if _is_external_apply_url(href, job_url):
+            if _is_safe_external_apply_url(href, job_url, self._url_safety_checker):
                 return LinkedInApplyResolution(href, "href")
 
         clicked = _click_and_capture_apply_target(
@@ -242,6 +280,7 @@ class LinkedInApplyUrlResolver:
             locator,
             job_url,
             timeout_seconds=self._timeout_seconds,
+            url_safety_checker=self._url_safety_checker,
         )
         if clicked:
             return LinkedInApplyResolution(clicked, "click")
@@ -266,6 +305,24 @@ def _first_visible_apply_locator(page: Any) -> Any | None:
         except Exception:
             continue
     return None
+
+
+def _install_public_route_guard(page: Any, *, context: Any | None = None) -> PublicHttpUrlRouteGuard:
+    """Install the route guard on the broadest available Playwright target."""
+
+    route_target = context if callable(getattr(context, "route", None)) else None
+    if route_target is None:
+        page_context = getattr(page, "context", None)
+        if callable(page_context):
+            try:
+                page_context = page_context()
+            except Exception:
+                page_context = None
+        if callable(getattr(page_context, "route", None)):
+            route_target = page_context
+    if route_target is None:
+        route_target = page
+    return PublicHttpUrlRouteGuard(route_target).install()
 
 
 def _bootstrap_profile_dir(profile_dir: Path, *, chrome_profile: str) -> None:
@@ -360,6 +417,7 @@ def _click_and_capture_apply_target(
     original_job_url: str,
     *,
     timeout_seconds: float,
+    url_safety_checker: UrlSafetyChecker,
 ) -> str | None:
     popup = None
     try:
@@ -380,12 +438,14 @@ def _click_and_capture_apply_target(
                 popup,
                 original_job_url,
                 timeout_seconds=timeout_seconds,
+                url_safety_checker=url_safety_checker,
             )
         except PlaywrightTimeoutError:
             return _wait_for_external_apply_url(
                 page,
                 original_job_url,
                 timeout_seconds=timeout_seconds,
+                url_safety_checker=url_safety_checker,
             )
     except Exception as exc:
         log.debug("LinkedIn apply click capture failed for %s: %s", original_job_url, exc)
@@ -403,6 +463,7 @@ def _wait_for_external_apply_url(
     original_job_url: str,
     *,
     timeout_seconds: float,
+    url_safety_checker: UrlSafetyChecker,
 ) -> str | None:
     deadline = time.monotonic() + timeout_seconds
     last_url = ""
@@ -412,10 +473,14 @@ def _wait_for_external_apply_url(
         except Exception:
             current = ""
         if current and current != last_url:
-            extracted = _extract_external_from_redirect_url(current, original_job_url)
+            extracted = _extract_external_from_redirect_url(
+                current,
+                original_job_url,
+                url_safety_checker=url_safety_checker,
+            )
             if extracted:
                 return extracted
-            if _is_external_apply_url(current, original_job_url):
+            if _is_safe_external_apply_url(current, original_job_url, url_safety_checker):
                 return current
             last_url = current
         try:
@@ -425,7 +490,12 @@ def _wait_for_external_apply_url(
     return None
 
 
-def _extract_external_from_redirect_url(url: str, original_job_url: str) -> str | None:
+def _extract_external_from_redirect_url(
+    url: str,
+    original_job_url: str,
+    *,
+    url_safety_checker: UrlSafetyChecker = validate_public_http_url,
+) -> str | None:
     """Extract an external target embedded inside a redirect/tracking URL."""
 
     if not url:
@@ -436,7 +506,7 @@ def _extract_external_from_redirect_url(url: str, original_job_url: str) -> str 
         if normalized_key not in _EXTERNAL_URL_PARAM_NAMES:
             continue
         candidate = unquote(value.strip())
-        if _is_external_apply_url(candidate, original_job_url):
+        if _is_safe_external_apply_url(candidate, original_job_url, url_safety_checker):
             return candidate
     return None
 
@@ -455,6 +525,32 @@ def _is_external_apply_url(candidate_url: str, original_job_url: str) -> bool:
     if original_host and host == original_host:
         return False
     return True
+
+
+def _is_safe_external_apply_url(
+    candidate_url: str,
+    original_job_url: str,
+    url_safety_checker: UrlSafetyChecker,
+) -> bool:
+    if not _is_external_apply_url(candidate_url, original_job_url):
+        return False
+    decision = url_safety_checker(candidate_url)
+    if decision.allowed:
+        return True
+    log.debug(
+        "Rejected LinkedIn apply resolver target %s: %s",
+        candidate_url,
+        decision.reason or "URL is not a public HTTP(S) destination",
+    )
+    return False
+
+
+def _unsafe_url_resolution(reason: str | None) -> LinkedInApplyResolution:
+    return LinkedInApplyResolution(
+        None,
+        "unsafe_url",
+        reason or "URL is not a public HTTP(S) destination",
+    )
 
 
 def _is_linkedin_host(host: str) -> bool:
