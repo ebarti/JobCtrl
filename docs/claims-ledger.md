@@ -366,4 +366,4 @@ altered the `Current`/`Beta` verdict.
 - [x] CL-082 — owner-approved `Beta` on 2026-07-09
 - [x] CL-083 — owner-approved `Current` on 2026-07-09
 - [x] CL-084 — owner-approved `Current` on 2026-07-09
-- [ ] CL-085 — new `Roadmap` wording requires owner sign-off
+- [x] CL-085 — owner-approved `Roadmap` on 2026-07-10

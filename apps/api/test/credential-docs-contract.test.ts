@@ -55,6 +55,6 @@ describe("credential and browser privacy documentation contract", () => {
     const claims = readRepoFile("docs/claims-ledger.md");
 
     expect(claims).toContain("[x] CL-064 — owner-approved `Current` on 2026-07-09");
-    expect(claims).toContain("[ ] CL-085 — new `Roadmap` wording requires owner sign-off");
+    expect(claims).toContain("[x] CL-085 — owner-approved `Roadmap` on 2026-07-10");
   });
 });
