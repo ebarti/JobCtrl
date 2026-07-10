@@ -196,7 +196,10 @@ The release pipeline must publish, for every artifact:
 - A managed provider pack does not imply permission to reuse consumer
   subscription credentials. Bundled Claude setup accepts Anthropic API-key or
   supported cloud-provider authentication; it does not route Free, Pro, or Max
-  Claude Code credentials through the Agent SDK.
+  Claude Code credentials through the Agent SDK and launches the provider with
+  `--bare`. Bundled Codex accepts only `OPENAI_API_KEY`, forces API login with
+  ephemeral credential storage, and never reads or copies consumer
+  `CODEX_HOME/auth.json`; source mode retains its existing persisted-login path.
 - Credentials are never bundled, copied into release artifacts, or included in
   logs.
 
@@ -377,9 +380,10 @@ hash, size, and capability classification.
   dispatch with an absolute manifest-resolved command.
 - Build official-channel provider packs for components JobCtrl cannot
   redistribute.
-- Give bundled provider packs an explicit supported-auth policy; disable Claude
-  consumer-subscription credential probes while retaining Anthropic API key,
-  Bedrock, Vertex, and Foundry paths.
+- Give bundled provider packs explicit supported-auth policies: disable Claude
+  consumer-subscription and Keychain probes while retaining Anthropic API key,
+  Bedrock, Vertex, and Foundry paths; make Codex `OPENAI_API_KEY`-only with no
+  ambient consumer-login reuse.
 - Emit the manifest, SBOM, attribution files, and component-size report.
 
 **Tests and evidence**
@@ -394,8 +398,13 @@ hash, size, and capability classification.
 - The extracted payload starts with user `PATH` reduced to stock OS locations.
 - A grep/exec audit proves no production path invokes the forbidden user
   toolchain commands.
-- Provider-pack tests prove bundled mode never reads Claude Free/Pro/Max OAuth
-  credentials and accepts only the documented API/cloud authentication paths.
+- Provider-pack tests prove activation is anchored to retained signed-lock
+  wheels rather than mutable state metadata, cannot shadow core distributions,
+  and permits only signed-identical overlap between active packs.
+- Provider-auth tests prove bundled mode never reads Claude Free/Pro/Max OAuth
+  or Keychain credentials, always launches Claude with `--bare`, accepts only
+  documented Claude API/cloud paths, and uses only `OPENAI_API_KEY` for Codex
+  without reading/copying `CODEX_HOME/auth.json` or launching `codex login`.
 - A clean payload with network disabled can restart, discover a fixture,
   render a resume PDF, and render its page preview.
 - The artifact contains no web E2E browser, Storybook, docs, test fixtures,

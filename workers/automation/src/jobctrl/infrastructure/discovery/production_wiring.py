@@ -986,7 +986,7 @@ def import_manual_capture_item(
     source_id = _row_value(row, "source_id", 2) or f"manual_capture:{capture.item_id}"
     retry_context = _json_dict(_row_value(row, "retry_context_json", 4))
     captured_url = capture.captured_url or str(originating_url)
-    content = _manual_capture_content(capture)
+    content = manual_capture_content(capture)
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     now = utc_now()
     retry_context["manual_capture_provenance"] = {
@@ -1984,7 +1984,13 @@ def _extract_json_ld(content: str) -> list[dict[str, Any]]:
     return parsed
 
 
-def _manual_capture_content(capture: ManualCaptureImport) -> str:
+def manual_capture_content(capture: ManualCaptureImport) -> str:
+    """Return the canonical content used to identify a manual capture import.
+
+    Temporal retry recovery hashes this exact value before reusing an already
+    imported queue row. Keeping the transform beside the importer prevents the
+    activity and the canonical Discovery path from drifting apart.
+    """
     if capture.content_text:
         return capture.content_text
     if capture.content_html_base64:

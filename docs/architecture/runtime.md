@@ -18,6 +18,61 @@ or where a change belongs.
 You start the first four; the API spawns and reuses the `jobctrl rpc`
 subprocess itself.
 
+## Source and bundled runtime boundaries
+
+The table above describes the source-development topology. The bundled
+production boundary packages the same application without carrying the
+checkout or asking the user for a language/runtime toolchain:
+
+- the Vite output is static and is served by the loopback Fastify API, so an
+  installed runtime has no Vite process;
+- the API is compiled for the embedded Node runtime and its native SQLite
+  module is pinned for that exact Node ABI;
+- the worker and CLI run under an embedded CPython with only the core runtime
+  closure; fixed relative system-site entries expose the separately owned
+  worker and Python Playwright component roots;
+- Temporal, one Python Playwright Chromium revision, and Playwright MCP are
+  addressed through absolute payload paths and never through user `PATH`,
+  `npx`, `uv`, or a package registry at execution time; and
+- PDF page previews are rendered by PDF.js in the web client. The installed
+  runtime has no Poppler component or `pdftoppm` route.
+
+`JOBCTRL_RUNTIME_MODE=bundled` makes this boundary fail closed. The launcher
+must supply an absolute `JOBCTRL_PAYLOAD_DIR`; the API realpaths its Python,
+web, and Chromium roots and rejects paths outside that payload. Python isolated
+mode ignores ambient `PYTHONHOME`, `PYTHONPATH`, user-site, and virtualenv
+state. Bundled dotenv discovery is limited to the JobCtrl-owned state file and
+never searches the current directory or a checkout.
+
+Provider runtimes that JobCtrl cannot redistribute are a separate mutable
+boundary under the JobCtrl state directory. The signed payload owns the exact
+provider-pack lock; installation accepts only that lock, verifies every wheel's
+official HTTPS source, size, and SHA-256, rejects unsafe or overlapping wheel
+members, and retains the locked wheels. Every activation revalidates those
+wheels, deterministically re-extracts their expected tree, and compares it with
+live site-packages, so mutable activation metadata cannot authorize code. Pack
+paths are appended after the core runtime; core overlap is rejected and
+provider-to-provider overlap requires signed-identical wheel records. In
+bundled mode Claude accepts API/cloud authentication only, launches with
+`--bare`, and does not probe or reuse consumer Claude Code OAuth or Keychain
+credentials. Bundled Codex accepts only `OPENAI_API_KEY`, forces API login with
+ephemeral credential storage, and never reads or copies ambient
+`CODEX_HOME/auth.json`; source mode retains its existing isolated auth-copy
+workflow. Structured Claude analysis/voice calls expose no built-in tools.
+Codex analysis disables its shell, denies approvals, and gives any command
+child an empty inherited environment, so provider API keys authenticate the SDK
+transport without becoming model-readable tool input.
+
+Bundled doctor validates the payload-owned executable Playwright MCP wrapper
+instead of requiring system `npx`. Nested Python setup/doctor and MCP processes
+run with isolated mode plus bytecode suppression (`-I -B`) so they cannot write
+`__pycache__` into the launcher-verified payload.
+
+The Phase 1 payload uses an intentionally non-promotable local launcher stub.
+The native lifecycle supervisor and signed release acquisition are separate
+distribution phases; until those land, this payload is build evidence rather
+than a public install surface.
+
 ## Frontend
 
 The web app under `apps/web` owns user interaction:
@@ -212,6 +267,8 @@ Current responsibilities:
 - profile/settings read and write endpoints
 - resume PDF import draft endpoint (via JSON-RPC `profile_import`, which starts
   `ProfileImportWorkflow`)
+- manual-capture import endpoints (via JSON-RPC `manual_capture_import`, which
+  starts `ManualCaptureImportWorkflow` and awaits its persisted result)
 - structured job action endpoints for retry, material generation, dry-run apply,
   cancel, mark-applied, mark-skipped
 - current-policy preparation maintenance endpoints for per-job/bulk rescore and
@@ -227,16 +284,18 @@ execute inline in the TS process against shared `@jobctrl/domain-types`
 value objects; the full cancel action additionally fires `cancel_run` over
 JSON-RPC to signal the Temporal workflow. Complex commands travel through
 `SubprocessJsonRpcAdapter` to the long-lived `jobctrl rpc` subprocess. The
-JSON-RPC surface is eleven methods: nine workflow-mode methods whose handlers
+JSON-RPC surface is fifteen methods: twelve workflow-mode methods whose handlers
 return a workflow spec that the RPC server starts on Temporal (`run_stage`,
 `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `tailor_job`,
 `retailor_job`, `retailor_current_policy`, `refresh_compensation`, `apply`,
-`profile_import`), plus the synchronous `analyze_job` (inline three-SDK
-employer analysis) and `cancel_run` (cooperative Temporal cancellation). The
+`profile_import`, `manual_capture_import`, `generate_interview_prep`,
+`run_contact_research`), plus the synchronous `analyze_job` (inline three-SDK
+employer analysis), `generate_outreach_draft`, and `cancel_run` (cooperative
+Temporal cancellation). The
 per-job maintenance methods `rescore_job`, `tailor_job`, and `retailor_job`
 start `JobPreparationWorkflow` runs directly. Workflow-mode dispatch returns
 `{runId, workflowId, firstExecutionRunId}`; callers can pass `awaitResult`
-to block on the workflow result (profile import uses this).
+to block on the workflow result (profile and manual-capture imports use this).
 
 Worker-backed action routes are gated by worker readiness: `GET /v1/health`
 reports the worker heartbeat (`healthy` / `missing` / `stale` after 45 s /
@@ -255,10 +314,15 @@ CORS and mutation-origin checks. The browser-extension capture route seeds
 `manual_capture_queue` with extension provenance and then delegates to the
 same worker-backed manual-capture importer used by the web app, so discovery
 dedupe, snapshots, quarantine, and projections remain owned by the existing
-Job Discovery pipeline. Deterministic browser-extension autofill reads a
-separate sanitized profile DTO from the Candidate Profile read path; it does
-not expose profile passwords, resume content, generated artifacts, or apply
-submission authority.
+Job Discovery pipeline. Both routes start `ManualCaptureImportWorkflow` with a
+bounded SHA-256 workflow id derived from tenant plus queue-item identity. If an
+activity commits before Temporal observes its completion, the retry validates
+the persisted URL, content hash, capture metadata, and provenance before
+reconstructing the same result; a different replay fails non-retryably instead
+of returning an unrelated prior import. Deterministic browser-extension
+autofill reads a separate sanitized profile DTO from the Candidate Profile read
+path; it does not expose profile passwords, resume content, generated
+artifacts, or apply submission authority.
 
 ### Provider Credential Boundary
 
@@ -408,6 +472,7 @@ Workflow and activity retry policies are stage-specific:
 | `tailor` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
 | `cover` | 3 | 10s | 120s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
 | `ApplyWorkflow` | 1 live / 2 dry-run | 1s | 60s | _none set_ — apply safety comes from the at-most-once claim and submit-intent parking, not error-type filtering |
+| `ManualCaptureImportWorkflow` | 2 | 2s | 10s | `not_found`, `capture_replay_mismatch`, `invalid_capture_input`, `RuntimeIdentityMismatch` |
 | `ProfileImportWorkflow` | 2 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
 | `CompensationRefreshWorkflow` | 2 | 5s | 60s | `configuration`, `authentication`, `missing_input`, `budget_exceeded` |
 
@@ -453,6 +518,11 @@ Production workflows live alongside the activities:
 - `ProfileImportWorkflow` (`jobctrl/profile/workflow.py`) — starts profile
   PDF import through the same workflow visibility/finalize path as other heavy
   work, then calls the existing profile-import activity.
+- `ManualCaptureImportWorkflow`
+  (`jobctrl/discovery/manual_capture_workflow.py`) — runs the canonical
+  Discovery manual-capture importer on the long-lived worker and returns only
+  persisted queue/provenance fields, allowing exact recovery after a
+  commit-before-ack retry.
 - `CompensationRefreshWorkflow`
   (`jobctrl/infrastructure/compensation/workflow.py`) — wraps the extracted
   compensation refresh core so posted facts and market estimates no longer run

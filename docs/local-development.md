@@ -15,7 +15,7 @@ scripts/install
 ```
 
 `scripts/install` is the first-run path for new contributors. It checks for
-Node.js, Corepack, uv, the Temporal CLI, Chrome/Chromium, and Poppler, offers
+Node.js, Corepack, uv, the Temporal CLI, and Chrome/Chromium, offers
 Homebrew installs for missing machine-level tools when available, then runs the
 repository dependency setup: frozen pnpm install, uv sync, and Playwright
 Chromium installs for both the web package and the Python worker. This direct
@@ -52,7 +52,7 @@ corepack pnpm dev:setup
 `uv --project workers/automation sync --extra dev`, which installs the Python
 worker, `python-jobspy`, JobSpy's locked transitive dependencies, and
 the Python dev tools used by local checks. It does not install Temporal,
-Chrome/Chromium, Poppler, or Playwright browser binaries.
+Chrome/Chromium or Playwright browser binaries.
 
 Run the Python setup command directly when you only need to refresh vendor auth
 or analysis-leg configuration:
@@ -152,6 +152,46 @@ pnpm extension:e2e
 
 Regenerate public documentation screenshots with `pnpm docs:screenshots` — see
 [Documentation Screenshots](#documentation-screenshots).
+
+## Build the bundled payload
+
+The production-payload builder currently targets Apple-silicon macOS. It is a
+release-engineering path, not an alternative contributor setup: the build
+machine still needs the source toolchain above, while the resulting payload is
+self-contained and does not.
+
+```bash
+pnpm distribution:audit
+pnpm distribution:build
+```
+
+`pnpm distribution:audit` checks the component inventory, redistribution and
+license policy, exact external archive locks, provider-pack wheel locks, source
+dependency baseline, and signing policy. `pnpm distribution:build` writes an
+unsigned local payload and deterministic archive under
+`dist/distribution-real/`. The build compiles the API and web app, installs the
+core-only Python closure, embeds the pinned Node, Temporal, Python Playwright,
+Playwright MCP, and Chromium runtimes, then emits the manifest, SBOM,
+attributions, provenance, and component-size evidence. It fails if a
+development tool, provider runtime, source path, unowned file, unresolved
+license, or unpinned external input enters the payload.
+
+The local artifact is deliberately marked `unsigned-local` and cannot be
+promoted as a stable release. Native launcher, installer, signing, and
+notarization gates are owned by the later phases of the bundled-distribution
+plan. Use the much smaller contract fixture while changing the builder itself:
+
+```bash
+pnpm distribution:build:fixture
+pnpm distribution:provider-lock:check
+```
+
+Provider SDKs and their proprietary companion runtimes are not copied into the
+core archive. Their complete transitive wheel closures are generated from the
+Python lock and acquired later as isolated, hash-verified official-channel
+packs. Ordinary source `uv sync` and `uv run` retain the existing provider
+ensemble through the default `provider-runtime` dependency group; the payload
+builder explicitly selects `--no-default-groups --no-dev`.
 
 ## First-Run TTFV Measurement
 

@@ -14,7 +14,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-27T23:36:20.399806Z"
+exclude-newer = "2026-07-02T13:49:12.625224Z"
 exclude-newer-span = "P8D"
 
 [options.exclude-newer-package]
@@ -577,11 +577,7 @@ version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
-    { name = "claude-agent-sdk" },
-    { name = "google-antigravity" },
     { name = "httpx" },
-    { name = "openai-codex" },
-    { name = "openai-codex-cli-bin" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-instrumentation-httpx" },
@@ -608,16 +604,30 @@ dev = [
     { name = "pytest-randomly" },
     { name = "ruff" },
 ]
+providers = [
+    { name = "claude-agent-sdk" },
+    { name = "google-antigravity" },
+    { name = "openai-codex" },
+    { name = "openai-codex-cli-bin" },
+]
+
+[package.dev-dependencies]
+provider-runtime = [
+    { name = "claude-agent-sdk" },
+    { name = "google-antigravity" },
+    { name = "openai-codex" },
+    { name = "openai-codex-cli-bin" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
-    { name = "claude-agent-sdk", specifier = "==0.2.87" },
-    { name = "google-antigravity", specifier = "==0.1.2" },
+    { name = "claude-agent-sdk", marker = "extra == 'providers'", specifier = "==0.2.87" },
+    { name = "google-antigravity", marker = "extra == 'providers'", specifier = "==0.1.2" },
     { name = "httpx", specifier = ">=0.24" },
-    { name = "openai-codex", specifier = "==0.1.0b3" },
-    { name = "openai-codex-cli-bin", specifier = "==0.137.0a4" },
+    { name = "openai-codex", marker = "extra == 'providers'", specifier = "==0.1.0b3" },
+    { name = "openai-codex-cli-bin", marker = "extra == 'providers'", specifier = "==0.137.0a4" },
     { name = "opentelemetry-api", specifier = ">=1.27" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.27" },
     { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.48b0" },
@@ -639,7 +649,15 @@ requires-dist = [
     { name = "typer", specifier = ">=0.9.0" },
     { name = "websocket-client", specifier = ">=1.8" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "providers"]
+
+[package.metadata.requires-dev]
+provider-runtime = [
+    { name = "claude-agent-sdk", specifier = "==0.2.87" },
+    { name = "google-antigravity", specifier = "==0.1.2" },
+    { name = "openai-codex", specifier = "==0.1.0b3" },
+    { name = "openai-codex-cli-bin", specifier = "==0.137.0a4" },
+]
 
 [[package]]
 name = "jsonschema"

@@ -40,6 +40,7 @@ from jobctrl.domain.apply.value_objects import (
 )
 from jobctrl.domain.ports.apply import AgentResult, BrowserSession
 from jobctrl.infrastructure.setup_probes import resolve_claude_apply_binary
+from jobctrl.runtime import is_bundled_runtime
 
 log = logging.getLogger(__name__)
 
@@ -207,10 +208,15 @@ class ClaudeCodeCliAdapter:
 
         model_label = (model or "").strip() or "default"
         claude_bin = resolve_claude_apply_binary()
+        bundled = is_bundled_runtime()
         cmd = [claude_bin]
+        if bundled:
+            # The pinned runtime's --bare mode disables Keychain/OAuth and all
+            # consumer-account credential discovery for the distributed path.
+            cmd.append("--bare")
         if model_label not in _DEFAULT_MODEL_SENTINELS:
             cmd.extend(["--model", model_label])
-        if _claude_supports_budget_flag(claude_bin):
+        if _claude_supports_budget_flag(claude_bin, bare=bundled):
             cmd.extend(["--max-budget-usd", f"{config.get_apply_max_budget_usd():.2f}"])
         allowed_tools = _allowed_tools_for_mcp_config(prompt.mcp_config)
         cmd.extend([
@@ -497,6 +503,9 @@ def _apply_subprocess_env() -> dict[str, str]:
     for key, value in os.environ.items():
         if key in _ENV_ALLOWLIST:
             env[key] = value
+    from jobctrl.infrastructure.setup_probes import bundled_claude_process_auth_env
+
+    env.update(bundled_claude_process_auth_env())
     return env
 
 
@@ -518,10 +527,14 @@ def _write_private_json(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 @lru_cache(maxsize=8)
-def _claude_supports_budget_flag(claude_bin: str) -> bool:
+def _claude_supports_budget_flag(claude_bin: str, *, bare: bool = False) -> bool:
     try:
+        command = [claude_bin]
+        if bare:
+            command.append("--bare")
+        command.append("--help")
         result = subprocess.run(
-            [claude_bin, "--help"],
+            command,
             capture_output=True,
             text=True,
             timeout=5,

@@ -229,6 +229,7 @@ def _default_mcp_config(
     launcher used.
     """
     from jobctrl import config as _config
+    from jobctrl.runtime import is_bundled_runtime, payload_path
 
     application_url = str((job or {}).get("application_url") or (job or {}).get("url") or "")
     personal = snapshot.personal if snapshot is not None else {}
@@ -245,30 +246,66 @@ def _default_mcp_config(
     captcha_key = os.environ.get("CAPSOLVER_API_KEY", "").strip()
     if captcha_key:
         apply_tools_env["CAPSOLVER_API_KEY"] = captcha_key
+    bundled = is_bundled_runtime()
+    bundled_env: dict[str, str] = {}
+    python_args_prefix: list[str] = []
+    if bundled:
+        payload_root = str(payload_path(".", require_exists=True))
+        bundled_env = {
+            "JOBCTRL_DIR": str(_config.APP_DIR),
+            "JOBCTRL_PAYLOAD_DIR": payload_root,
+            "JOBCTRL_RUNTIME_MODE": "bundled",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONSAFEPATH": "1",
+        }
+        for key in (
+            "JOBCTRL_ENV_FILE",
+            "JOBCTRL_PROVIDER_PACKS_DIR",
+            "PLAYWRIGHT_BROWSERS_PATH",
+        ):
+            if value := os.environ.get(key, "").strip():
+                bundled_env[key] = value
+        playwright_command = str(
+            payload_path("playwright-mcp/bin/playwright-mcp", require_exists=True)
+        )
+        playwright_args = [
+            f"--cdp-endpoint=http://localhost:{cdp_port}",
+            f"--viewport-size={_config.DEFAULTS['viewport']}",
+        ]
+        # Isolate imports and suppress bytecode writes so MCP children cannot
+        # mutate the launcher-verified, signed Python payload.
+        python_args_prefix = ["-I", "-B"]
+    else:
+        playwright_command = "npx"
+        playwright_args = [
+            PLAYWRIGHT_MCP_PACKAGE,
+            f"--cdp-endpoint=http://localhost:{cdp_port}",
+            f"--viewport-size={_config.DEFAULTS['viewport']}",
+        ]
+    gmail_env = {
+        **bundled_env,
+        "JOBCTRL_GMAIL_ALLOWED_DOMAINS": ",".join(_verification_sender_domains(application_url)),
+        "JOBCTRL_GMAIL_AFTER_MS": str(int(time.time() * 1000)),
+        "JOBCTRL_GMAIL_TO_EMAIL": str(personal.get("email") or ""),
+        "JOBCTRL_GMAIL_TOKEN_PATH": str(_config.get_gmail_mcp_credentials_path()),
+        "JOBCTRL_GMAIL_OAUTH_CLIENT_PATH": str(_config.get_gmail_mcp_oauth_keys_path()),
+    }
+    apply_tools_env = {**bundled_env, **apply_tools_env}
     return {
         "mcpServers": {
             "playwright": {
-                "command": "npx",
-                "args": [
-                    PLAYWRIGHT_MCP_PACKAGE,
-                    f"--cdp-endpoint=http://localhost:{cdp_port}",
-                    f"--viewport-size={_config.DEFAULTS['viewport']}",
-                ],
+                "command": playwright_command,
+                "args": playwright_args,
+                **({"env": bundled_env} if bundled_env else {}),
             },
             "gmail": {
                 "command": sys.executable,
-                "args": ["-m", "jobctrl.infrastructure.gmail.mcp_server"],
-                "env": {
-                    "JOBCTRL_GMAIL_ALLOWED_DOMAINS": ",".join(_verification_sender_domains(application_url)),
-                    "JOBCTRL_GMAIL_AFTER_MS": str(int(time.time() * 1000)),
-                    "JOBCTRL_GMAIL_TO_EMAIL": str(personal.get("email") or ""),
-                    "JOBCTRL_GMAIL_TOKEN_PATH": str(_config.get_gmail_mcp_credentials_path()),
-                    "JOBCTRL_GMAIL_OAUTH_CLIENT_PATH": str(_config.get_gmail_mcp_oauth_keys_path()),
-                },
+                "args": [*python_args_prefix, "-m", "jobctrl.infrastructure.gmail.mcp_server"],
+                "env": gmail_env,
             },
             "apply_tools": {
                 "command": sys.executable,
-                "args": ["-m", "jobctrl.infrastructure.apply_tools.mcp_server"],
+                "args": [*python_args_prefix, "-m", "jobctrl.infrastructure.apply_tools.mcp_server"],
                 "env": apply_tools_env,
             },
         },

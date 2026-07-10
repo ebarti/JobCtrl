@@ -21,6 +21,7 @@ required notice is denied by default. Update both this review and
 | `jobctrl-web` | `core-runtime` | `AGPL-3.0-only` | `bundle` | Ship JobCtrl license; include bundled asset and production dependency notices. |
 | `jobctrl-worker` | `core-runtime` | `AGPL-3.0-only` | `bundle` | Ship JobCtrl license; include its resolved Python runtime dependency notices. |
 | `jobctrl-release-metadata` | `core-runtime` | `AGPL-3.0-only` | `bundle` | Own the generated SBOM, license texts, notices, provenance, and component-size report; fail when any payload file lacks attribution. |
+| `better-sqlite3-native` | `core-runtime` | `MIT` | `bundle` | Embedded in `jobctrl-api`; verify the pinned Node 22 ABI 127 darwin-arm64 prebuild and ship the better-sqlite3 license. Never run an unpinned prebuild installer. |
 | `font-jetbrains-mono` | `core-runtime` | `OFL-1.1` | `bundle` | Embedded in `jobctrl-web`; ship the OFL text and JetBrains/Fontsource attribution. |
 | `font-plus-jakarta-sans` | `core-runtime` | `OFL-1.1` | `bundle` | Embedded in `jobctrl-web`; ship the OFL text and Tokotype/Fontsource attribution. |
 | `node-runtime` | `core-runtime` | `MIT` | `bundle` | Verify the pinned upstream archive and ship Node.js license and notices. |

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "inputs": [
+    {
+      "package": "opentelemetry-util-http",
+      "version": "0.62b1",
+      "license": "Apache-2.0",
+      "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-python-contrib/beabf5636fb4999e994cda55358453948078aa54/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "sizeBytes": 11357
+    },
+    {
+      "package": "publicsuffix2",
+      "version": "2.20191221",
+      "license": "MIT AND MPL-2.0",
+      "url": "https://raw.githubusercontent.com/nexB/python-publicsuffix2/7d7222f0c26c32d08f4901cb6a26bcc8288d964d/publicsuffix2.LICENSE",
+      "sha256": "35a08a34fa7be904c187f95872a32c19353b59ac1e4790737db77ff8f4177179",
+      "sizeBytes": 18406
+    }
+  ]
+}

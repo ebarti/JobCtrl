@@ -1,0 +1,10 @@
+{
+  "name": "@jobctrl/api-native-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Isolated Node 22 native dependency closure for the bundled API",
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "better-sqlite3": "12.9.0"
+  }
+}

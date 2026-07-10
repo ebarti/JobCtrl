@@ -31,6 +31,7 @@ const PLATFORM_ID_PATTERN = /^[a-z0-9]+-[a-z0-9_]+$/;
 const OS_VERSION_PATTERN = /^[0-9]+(?:\.[0-9]+){1,2}$/;
 const SAFE_FILE_MODES = new Set(["0644", "0755"]);
 const EXPECTED_LOCK_INPUTS = new Map([
+  ["better-sqlite3-node22-prebuild", "better-sqlite3-native"],
   ["node-runtime-archive", "node-runtime"],
   ["python-runtime-archive", "python-runtime"],
   ["temporal-runtime-archive", "temporal-runtime"],
@@ -42,6 +43,30 @@ const EXPECTED_CAPABILITY_POLICY = new Map([
   ["core-browser", { defaultEnabled: true, componentIds: ["chromium-core", "playwright-python"] }],
   ["auto-apply-browser", { defaultEnabled: false, componentIds: ["jobctrl-worker", "playwright-mcp"] }],
   ["authenticated-linkedin-browser", { defaultEnabled: false, componentIds: ["jobctrl-worker"] }],
+]);
+const EXPECTED_PYTHON_LICENSE_EVIDENCE = new Map([
+  ["opentelemetry-util-http@0.62b1", { license: "Apache-2.0" }],
+  ["publicsuffix2@2.20191221", { license: "MIT AND MPL-2.0" }],
+]);
+const EXPECTED_NODE_LICENSE_EVIDENCE = new Map([
+  ["@napi-rs/canvas-darwin-arm64@0.1.100", { license: "MIT", evidenceKind: "license-text" }],
+  ["@radix-ui/number@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
+  ["@radix-ui/react-use-escape-keydown@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
+  ["@radix-ui/react-use-previous@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
+  ["@radix-ui/react-use-rect@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
+  ["@radix-ui/react-use-size@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
+  ["@radix-ui/rect@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
+  ["@udecode/react-hotkeys@52.0.11", { license: "MIT", evidenceKind: "license-text" }],
+  ["abstract-logging@2.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],
+  ["data-uri-to-buffer@4.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],
+  ["jotai-x@2.3.4", { license: "MIT", evidenceKind: "license-text" }],
+  ["react-compiler-runtime@1.0.0", { license: "MIT", evidenceKind: "license-text" }],
+  ["react-remove-scroll-bar@2.3.8", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate@0.124.1", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-dom@0.124.1", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-hyperscript@0.125.0", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-react@0.124.2", { license: "MIT", evidenceKind: "license-text" }],
+  ["zustand-x@6.2.1", { license: "MIT", evidenceKind: "license-text" }],
 ]);
 
 function invariant(condition, message) {
@@ -127,16 +152,184 @@ async function loadJson(filePath) {
 
 export async function loadDistributionContracts(root = REPO_ROOT) {
   const distributionDir = path.join(root, "packaging", "distribution");
-  const [schema, inventory, platforms, componentLocks, capabilityPolicy, sourceBaseline, signingPolicy] = await Promise.all([
+  const [schema, inventory, platforms, componentLocks, providerPackLocks, pythonLicenseEvidenceLocks, nodeLicenseEvidenceLocks, capabilityPolicy, sourceBaseline, signingPolicy] = await Promise.all([
     loadJson(path.join(distributionDir, "manifest.schema.json")),
     loadJson(path.join(distributionDir, "component-inventory.json")),
     loadJson(path.join(distributionDir, "platforms.json")),
     loadJson(path.join(distributionDir, "components.lock.json")),
+    loadJson(path.join(distributionDir, "provider-packs.lock.json")),
+    loadJson(path.join(distributionDir, "license-evidence.lock.json")),
+    loadJson(path.join(distributionDir, "node-license-evidence.lock.json")),
     loadJson(path.join(distributionDir, "capability-policy.json")),
     loadJson(path.join(distributionDir, "source-baseline.json")),
     loadJson(path.join(distributionDir, "signing-policy.json")),
   ]);
-  return { schema, inventory, platforms, componentLocks, capabilityPolicy, sourceBaseline, signingPolicy };
+  return {
+    schema,
+    inventory,
+    platforms,
+    componentLocks,
+    providerPackLocks,
+    pythonLicenseEvidenceLocks,
+    nodeLicenseEvidenceLocks,
+    capabilityPolicy,
+    sourceBaseline,
+    signingPolicy,
+  };
+}
+
+function assertImmutableRawGitHubUrl(value, label) {
+  const url = assertString(value, label);
+  invariant(
+    /^https:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[a-f0-9]{40}\/[^?#]+$/.test(url),
+    `${label} must be an immutable raw.githubusercontent.com URL pinned to a full commit SHA`,
+  );
+  return url;
+}
+
+function uvLockContainsPackageVersion(contents, packageName, version) {
+  return contents.split(/\n(?=\[\[package\]\])/).some((block) =>
+    block.match(/^name\s*=\s*"([^"]+)"/m)?.[1] === packageName
+      && block.match(/^version\s*=\s*"([^"]+)"/m)?.[1] === version);
+}
+
+function pnpmLockContainsPackageVersion(contents, packageName, version) {
+  const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^  ['"]?${escape(packageName)}@${escape(version)}(?:\\([^\\n]+\\))?['"]?:$`, "m").test(contents);
+}
+
+function validateLicenseEvidenceEnvelope(lockValue, expectedSubjects, label) {
+  const lock = assertExactKeys(lockValue, ["schemaVersion", "inputs"], label);
+  invariant(lock.schemaVersion === 1, `${label} schemaVersion must be 1`);
+  invariant(Array.isArray(lock.inputs), `${label}.inputs must be an array`);
+  const subjects = lock.inputs.map((input) => `${input?.package}@${input?.version}`);
+  assertUnique(subjects, `${label} subjects`);
+  invariant(
+    JSON.stringify([...subjects].sort(bytewiseCompare)) === JSON.stringify([...expectedSubjects.keys()].sort(bytewiseCompare)),
+    `${label} must contain the exact required subject set`,
+  );
+  invariant(
+    JSON.stringify(subjects) === JSON.stringify([...subjects].sort(bytewiseCompare)),
+    `${label} subjects must be bytewise sorted`,
+  );
+  return lock;
+}
+
+function validateLicenseEvidenceInput(inputValue, expected, label, allowedKeys) {
+  const input = assertExactKeys(inputValue, allowedKeys, label);
+  assertString(input.package, `${label}.package`);
+  assertString(input.version, `${label}.version`);
+  invariant(input.license === expected.license, `${label}.license must be the required valid SPDX expression ${expected.license}`);
+  if (expected.evidenceKind !== undefined) {
+    invariant(input.evidenceKind === expected.evidenceKind, `${label}.evidenceKind does not match the required evidence type`);
+  }
+  assertImmutableRawGitHubUrl(input.url, `${label}.url`);
+  invariant(SHA256_PATTERN.test(input.sha256), `${label}.sha256 must be lowercase SHA-256`);
+  assertInteger(input.sizeBytes, `${label}.sizeBytes`, 1);
+  return input;
+}
+
+export function validatePythonLicenseEvidenceLocks(lockValue, uvLockContents) {
+  const lock = validateLicenseEvidenceEnvelope(lockValue, EXPECTED_PYTHON_LICENSE_EVIDENCE, "Python license-evidence lock");
+  for (const inputValue of lock.inputs) {
+    const subject = `${inputValue.package}@${inputValue.version}`;
+    const input = validateLicenseEvidenceInput(
+      inputValue,
+      EXPECTED_PYTHON_LICENSE_EVIDENCE.get(subject),
+      `Python license evidence ${subject}`,
+      ["package", "version", "license", "url", "sha256", "sizeBytes"],
+    );
+    invariant(
+      uvLockContainsPackageVersion(uvLockContents, input.package, input.version),
+      `${subject}: Python license evidence subject is not exactly pinned in uv.lock`,
+    );
+  }
+  return lock;
+}
+
+export function validateNodeLicenseEvidenceLocks(lockValue, pnpmLockContents) {
+  const lock = validateLicenseEvidenceEnvelope(lockValue, EXPECTED_NODE_LICENSE_EVIDENCE, "Node license-evidence lock");
+  for (const inputValue of lock.inputs) {
+    const subject = `${inputValue.package}@${inputValue.version}`;
+    const input = validateLicenseEvidenceInput(
+      inputValue,
+      EXPECTED_NODE_LICENSE_EVIDENCE.get(subject),
+      `Node license evidence ${subject}`,
+      ["package", "version", "license", "evidenceKind", "url", "sha256", "sizeBytes"],
+    );
+    invariant(
+      pnpmLockContainsPackageVersion(pnpmLockContents, input.package, input.version),
+      `${subject}: Node license evidence subject is not exactly pinned in the pnpm lock closure`,
+    );
+  }
+  return lock;
+}
+
+export function validateProviderPackLocks(lockValue, inventoryById, versions, uvLockContents) {
+  const locks = assertExactKeys(lockValue, ["schemaVersion", "platform", "python", "coreSelector", "packs"], "provider-pack lock");
+  invariant(locks.schemaVersion === 1, "provider-pack lock schemaVersion must be 1");
+  invariant(locks.platform === "darwin-arm64", "provider-pack lock must target darwin-arm64");
+  invariant(locks.python === "cpython-3.12", "provider-pack lock must target CPython 3.12");
+  assertString(locks.coreSelector, "provider-pack coreSelector");
+  invariant(Array.isArray(locks.packs) && locks.packs.length === 3, "provider-pack lock must contain exactly three packs");
+  const expectedPackages = new Map([
+    ["claude-agent-sdk", ["claude-agent-sdk"]],
+    ["codex-provider-runtime", ["openai-codex", "openai-codex-cli-bin"]],
+    ["antigravity-provider-runtime", ["google-antigravity"]],
+  ]);
+  const packIds = locks.packs.map((pack) => pack.id);
+  assertUnique(packIds, "provider-pack lock ids");
+  invariant(
+    JSON.stringify([...packIds].sort(bytewiseCompare)) === JSON.stringify([...expectedPackages.keys()].sort(bytewiseCompare)),
+    "provider-pack lock does not contain the exact provider inventory",
+  );
+  for (const packValue of locks.packs) {
+    const pack = assertExactKeys(
+      packValue,
+      ["id", "version", "owner", "source", "license", "redistribution", "isolation", "exactPackages", "wheels"],
+      "provider-pack entry",
+    );
+    const inventory = inventoryById.get(pack.id);
+    invariant(inventory?.classification === "provider-pack", `${pack.id}: provider lock id is not a provider pack`);
+    invariant(pack.owner === inventory.owner, `${pack.id}: provider lock owner does not match inventory`);
+    invariant(pack.source === inventory.source, `${pack.id}: provider lock source does not match inventory`);
+    invariant(pack.license === inventory.license, `${pack.id}: provider lock license does not match inventory`);
+    invariant(inventory.redistribution === "official-download", `${pack.id}: provider lock must remain official-download`);
+    invariant(pack.redistribution === "official-download", `${pack.id}: provider lock cannot authorize redistribution`);
+    invariant(pack.isolation === "independent-site-packages", `${pack.id}: provider pack must be independently isolated`);
+    invariant(pack.version === versions[pack.id], `${pack.id}: provider lock version does not match inventory`);
+    invariant(Array.isArray(pack.wheels) && pack.wheels.length > 0, `${pack.id}: provider lock wheels must not be empty`);
+    invariant(Array.isArray(pack.exactPackages) && pack.exactPackages.length > 0, `${pack.id}: exactPackages must not be empty`);
+    assertUnique(pack.exactPackages, `${pack.id}.exactPackages`);
+    const packageNames = pack.wheels.map((wheel) => wheel.package);
+    assertUnique(packageNames, `${pack.id}.wheels.package`);
+    const sortedPackageNames = [...packageNames].sort(bytewiseCompare);
+    invariant(
+      JSON.stringify(pack.exactPackages) === JSON.stringify([...pack.exactPackages].sort(bytewiseCompare)),
+      `${pack.id}: exactPackages must be bytewise sorted`,
+    );
+    invariant(
+      JSON.stringify(sortedPackageNames) === JSON.stringify(pack.exactPackages),
+      `${pack.id}: exactPackages must exactly match wheels`,
+    );
+    invariant(
+      expectedPackages.get(pack.id).every((name) => pack.exactPackages.includes(name)),
+      `${pack.id}: provider wheel closure omits a required top-level package`,
+    );
+    for (const wheelValue of pack.wheels) {
+      const wheel = assertExactKeys(wheelValue, ["package", "version", "url", "sha256", "sizeBytes"], "provider wheel");
+      assertString(wheel.package, `${pack.id}.wheel.package`);
+      assertString(wheel.version, `${pack.id}.wheel.version`);
+      invariant(wheel.url.startsWith("https://files.pythonhosted.org/"), `${pack.id}: provider wheel must use the official PyPI file host`);
+      invariant(wheel.url.endsWith(".whl"), `${pack.id}: provider artifact must be a wheel`);
+      invariant(SHA256_PATTERN.test(wheel.sha256), `${pack.id}: invalid provider wheel SHA-256`);
+      assertInteger(wheel.sizeBytes, `${pack.id}.wheel.sizeBytes`, 1);
+      invariant(/macosx_[^/]*arm64\.whl$|py3-none-any\.whl$/.test(wheel.url), `${pack.id}: provider wheel is not darwin-arm64 compatible`);
+      const uvNeedle = `{ url = "${wheel.url}", hash = "sha256:${wheel.sha256}", size = ${wheel.sizeBytes},`;
+      invariant(uvLockContents.includes(uvNeedle), `${pack.id}: provider wheel is not exactly pinned in uv.lock`);
+    }
+  }
+  return locks;
 }
 
 export function compileManifestSchema(schema) {
@@ -525,13 +718,41 @@ export function validateLicenseReview(licenseReview, inventoryById) {
 }
 
 export async function auditDistributionContracts(root = REPO_ROOT) {
-  const { schema, inventory, platforms, componentLocks, capabilityPolicy, sourceBaseline, signingPolicy } = await loadDistributionContracts(root);
+  const {
+    schema,
+    inventory,
+    platforms,
+    componentLocks,
+    providerPackLocks,
+    pythonLicenseEvidenceLocks,
+    nodeLicenseEvidenceLocks,
+    capabilityPolicy,
+    sourceBaseline,
+    signingPolicy,
+  } = await loadDistributionContracts(root);
   compileManifestSchema(schema);
   const inventoryById = validateComponentInventory(inventory);
   const platformsById = validatePlatforms(platforms, inventoryById);
   const locks = validateComponentLocks(componentLocks, inventoryById);
   const capabilitiesById = validateCapabilityPolicy(capabilityPolicy, inventoryById);
   const versions = await resolveInventoryVersions(inventory, root);
+  const [uvLockContents, rootPnpmLockContents, mcpPnpmLockContents, apiNativePnpmLockContents] = await Promise.all([
+    readFile(path.join(root, "workers", "automation", "uv.lock"), "utf8"),
+    readFile(path.join(root, "pnpm-lock.yaml"), "utf8"),
+    readFile(path.join(root, "packaging", "distribution", "playwright-mcp", "pnpm-lock.yaml"), "utf8"),
+    readFile(path.join(root, "packaging", "distribution", "api-native", "pnpm-lock.yaml"), "utf8"),
+  ]);
+  const providerLocks = validateProviderPackLocks(
+    providerPackLocks,
+    inventoryById,
+    versions,
+    uvLockContents,
+  );
+  const pythonLicenseEvidence = validatePythonLicenseEvidenceLocks(pythonLicenseEvidenceLocks, uvLockContents);
+  const nodeLicenseEvidence = validateNodeLicenseEvidenceLocks(
+    nodeLicenseEvidenceLocks,
+    [rootPnpmLockContents, mcpPnpmLockContents, apiNativePnpmLockContents].join("\n"),
+  );
   invariant(platformsById.has(locks.platform), `component locks target unsupported platform ${locks.platform}`);
   for (const input of locks.inputs) {
     invariant(
@@ -598,7 +819,8 @@ export async function auditDistributionContracts(root = REPO_ROOT) {
     javascriptUniqueRuntimeDirect: javascript.uniqueRuntimeDirect,
     javascriptUniqueDevelopmentDirect: javascript.uniqueDevelopmentDirect,
     pnpmPackageRecords: lockCounts.pnpmPackageRecords,
-    pythonRuntimeDirect: python.runtimeDirect,
+    pythonCoreRuntimeDirect: python.coreRuntimeDirect,
+    pythonProviderRuntimeDirect: python.providerRuntimeDirect,
     pythonDevelopmentDirect: python.developmentDirect,
     uvPackageRecords: lockCounts.uvPackageRecords,
   };
@@ -613,6 +835,9 @@ export async function auditDistributionContracts(root = REPO_ROOT) {
     componentCount: inventory.components.length,
     bundledComponentCount: inventory.components.filter((component) => component.redistribution === "bundle").length,
     providerPackCount: inventory.components.filter((component) => component.classification === "provider-pack").length,
+    providerPackWheelCount: providerLocks.packs.reduce((count, pack) => count + pack.wheels.length, 0),
+    pythonLicenseEvidenceCount: pythonLicenseEvidence.inputs.length,
+    nodeLicenseEvidenceCount: nodeLicenseEvidence.inputs.length,
     developerOnlyCount: inventory.components.filter((component) => component.classification === "developer-only").length,
     lockedInputCount: locks.inputs.length,
     capabilityCount: capabilitiesById.size,
@@ -979,9 +1204,15 @@ async function pythonDependencyCounts(root) {
   const contents = await readFile(path.join(root, "workers", "automation", "pyproject.toml"), "utf8");
   const runtimeBlock = contents.match(/^dependencies\s*=\s*\[([\s\S]*?)^\]/m)?.[1] ?? "";
   const runtime = [...runtimeBlock.matchAll(/^\s*"([^"]+)"/gm)].map((match) => match[1]);
+  const providerBlock = contents.match(/^provider-runtime\s*=\s*\[([\s\S]*?)^\]/m)?.[1] ?? "";
+  const providers = [...providerBlock.matchAll(/^\s*"([^"]+)"/gm)].map((match) => match[1]);
   const devLine = contents.match(/^dev\s*=\s*\[([^\]]*)\]/m)?.[1] ?? "";
   const development = [...devLine.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
-  return { runtimeDirect: runtime.length, developmentDirect: development.length };
+  return {
+    coreRuntimeDirect: runtime.length,
+    providerRuntimeDirect: new Set(providers.map((requirement) => requirement.match(/^[A-Za-z0-9_.-]+/)?.[0].toLowerCase().replace(/[_.]+/g, "-"))).size,
+    developmentDirect: development.length,
+  };
 }
 
 async function lockRecordCounts(root) {

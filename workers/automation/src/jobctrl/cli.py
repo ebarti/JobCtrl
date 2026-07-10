@@ -259,7 +259,6 @@ def _setup_toolchain_rows() -> list[tuple[str, bool, str]]:
         ("corepack", "Corepack"),
         ("uv", "uv"),
         ("temporal", "Temporal CLI"),
-        ("pdftoppm", "Poppler pdftoppm"),
     ):
         ok, note = _tool_available(command)
         rows.append((label, ok, note))
@@ -796,8 +795,9 @@ def setup(
 
     import os
     import subprocess
+    import sys
 
-    from jobctrl.config import ENV_PATH, ensure_dirs, load_env
+    from jobctrl.config import ensure_dirs, get_env_path, load_env
     from jobctrl.infrastructure.setup_probes import (
         ANALYSIS_LEGS_ENV,
         antigravity_auth_kwargs,
@@ -809,11 +809,14 @@ def setup(
         probe_codex_auth,
         resolve_bundled_codex_path,
     )
+    from jobctrl.runtime import is_bundled_runtime, payload_dir
 
     ensure_dirs()
     load_env()
-    root = _repo_root()
+    bundled = is_bundled_runtime()
+    root = None if bundled else _repo_root()
     summary: dict[str, Any] = {
+        "runtimeMode": "bundled" if bundled else "source",
         "toolchain": [],
         "commands": [],
         "analysis": [],
@@ -824,7 +827,11 @@ def setup(
         console.print("[bold]JobCtrl Setup[/bold]")
 
     if not skip_system:
-        rows = _setup_toolchain_rows()
+        rows = (
+            [("Bundled payload", True, str(payload_dir()))]
+            if bundled
+            else _setup_toolchain_rows()
+        )
         summary["toolchain"] = [
             {"name": name, "ok": ok, "note": note} for name, ok, note in rows
         ]
@@ -835,12 +842,12 @@ def setup(
                 console.print(f"  {name:<22} {status}  [dim]{note}[/dim]")
 
     commands: list[list[str]] = []
-    if not skip_dependencies:
+    if not bundled and not skip_dependencies:
         commands.extend([
             ["corepack", "pnpm", "install", "--frozen-lockfile"],
             ["uv", "--project", "workers/automation", "sync", "--extra", "dev"],
         ])
-    if not skip_browsers:
+    if not bundled and not skip_browsers:
         commands.extend([
             ["corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "install", "chromium"],
             ["uv", "--project", "workers/automation", "run", "playwright", "install", "chromium"],
@@ -900,28 +907,52 @@ def setup(
         if codex_probe.ok:
             authenticated_legs.append("codex")
         else:
-            key = os.environ.get("OPENAI_API_KEY") or os.environ.get("CODEX_API_KEY")
-            if key and launch_logins and _confirm_setup_action(
-                "Enroll the current OpenAI key into CODEX_HOME/auth.json now?",
-                yes=yes,
-                non_interactive=non_interactive,
-                default=False,
-            ):
-                command = [str(resolve_bundled_codex_path()), "login", "--with-api-key"]
-                summary["commands"].append(command)
-                if not json_output:
-                    console.print(f"[dim]+ {_shell_join(command)}[/dim]")
-                if dry_run:
-                    authenticated_legs.append("codex")
-                else:
-                    proc = subprocess.run(command, input=key + "\n", text=True, check=False, cwd=str(root))
-                    if proc.returncode == 0:
+            if bundled:
+                if _confirm_setup_action(
+                    "Paste OPENAI_API_KEY for the bundled Codex analysis leg?",
+                    yes=False,
+                    non_interactive=non_interactive or yes,
+                    default=False,
+                ):
+                    key = typer.prompt("OPENAI_API_KEY", hide_input=True)
+                    if key.strip():
+                        env_updates["OPENAI_API_KEY"] = key.strip()
                         authenticated_legs.append("codex")
-            elif not json_output:
-                console.print(
-                    "  [dim]Codex enrollment: run `codex login` or "
-                    "`printenv OPENAI_API_KEY | codex login --with-api-key`, then rerun setup.[/dim]"
-                )
+                elif not json_output:
+                    console.print(
+                        "  [dim]Bundled Codex auth: set OPENAI_API_KEY; "
+                        "consumer CODEX_HOME/auth.json and CODEX_API_KEY are not reused.[/dim]"
+                    )
+            else:
+                key = os.environ.get("OPENAI_API_KEY") or os.environ.get("CODEX_API_KEY")
+                if key and launch_logins and _confirm_setup_action(
+                    "Enroll the current OpenAI key into CODEX_HOME/auth.json now?",
+                    yes=yes,
+                    non_interactive=non_interactive,
+                    default=False,
+                ):
+                    command = [str(resolve_bundled_codex_path()), "login", "--with-api-key"]
+                    summary["commands"].append(command)
+                    if not json_output:
+                        console.print(f"[dim]+ {_shell_join(command)}[/dim]")
+                    if dry_run:
+                        authenticated_legs.append("codex")
+                    else:
+                        proc = subprocess.run(
+                            command,
+                            input=key + "\n",
+                            text=True,
+                            check=False,
+                            cwd=str(root) if root else None,
+                        )
+                        if proc.returncode == 0:
+                            authenticated_legs.append("codex")
+                elif not json_output:
+                    console.print(
+                        "  [dim]Codex enrollment: run `codex login` or "
+                        "`printenv OPENAI_API_KEY | codex login --with-api-key`, "
+                        "then rerun setup.[/dim]"
+                    )
             if "codex" not in authenticated_legs and _confirm_setup_action(
                 "Skip the Codex analysis leg for now?",
                 yes=yes,
@@ -966,7 +997,7 @@ def setup(
     elif configured_legs:
         if not json_output:
             console.print("[yellow]No analysis leg is authenticated; leaving existing leg configuration unchanged.[/yellow]")
-    _write_env_updates(ENV_PATH, env_updates, dry_run=dry_run, quiet=json_output)
+    _write_env_updates(get_env_path(), env_updates, dry_run=dry_run, quiet=json_output)
     summary["envUpdates"] = sorted(env_updates)
 
     # Employer-analysis synthesis ALWAYS reconciles with the Claude Agent SDK
@@ -988,8 +1019,13 @@ def setup(
     if not skip_doctor:
         if not json_output:
             console.print("\n[bold]Doctor[/bold]")
+        doctor_command = (
+            [sys.executable, "-I", "-B", "-m", "jobctrl", "doctor"]
+            if bundled
+            else ["uv", "--project", "workers/automation", "run", "jobctrl", "doctor"]
+        )
         rc = _run_setup_step(
-            ["uv", "--project", "workers/automation", "run", "jobctrl", "doctor"],
+            doctor_command,
             dry_run=dry_run,
             cwd=root,
             quiet=json_output,
@@ -999,6 +1035,38 @@ def setup(
 
     if json_output:
         console.print_json(data=summary)
+
+
+@app.command("provider-pack-install", hidden=True)
+def provider_pack_install(
+    pack: str = typer.Option(..., "--pack", help="Provider-pack id selected from the signed lock."),
+) -> None:
+    """Internal launcher hook for installing a hash-pinned provider pack."""
+
+    from jobctrl.config import APP_DIR
+    from jobctrl.provider_packs import (
+        ProviderPackError,
+        install_provider_pack,
+        load_provider_pack_spec,
+    )
+    from jobctrl.runtime import is_bundled_runtime, payload_path
+
+    if not is_bundled_runtime():
+        console.print("[red]Provider packs are managed only by the installed JobCtrl launcher.[/red]")
+        raise typer.Exit(code=2)
+    try:
+        # The lock is part of the signed, manifest-covered payload. Never accept
+        # a caller-selected lock whose hashes merely authenticate attacker-chosen
+        # wheels.
+        lock = payload_path("release/provider-packs.lock.json", require_exists=True)
+        installed = install_provider_pack(
+            load_provider_pack_spec(lock, pack_id=pack),
+            app_dir=APP_DIR,
+        )
+    except ProviderPackError as exc:
+        console.print(f"[red]Provider pack installation failed:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print_json(data={"installed": True, "path": str(installed)})
 
 
 @app.command()
@@ -2418,8 +2486,10 @@ def doctor() -> None:
         probe_analysis_setup,
         resolve_claude_apply_binary,
     )
+    from jobctrl.runtime import is_bundled_runtime, payload_path
 
     keychain_diagnostics = load_env() or ()
+    bundled = is_bundled_runtime()
 
     ok_mark = "[green]OK[/green]"
     fail_mark = "[red]MISSING[/red]"
@@ -2588,7 +2658,7 @@ def doctor() -> None:
         claude_bin = resolve_claude_apply_binary()
         if shutil.which(claude_bin) or Path(claude_bin).expanduser().exists():
             results.append(("Claude apply runtime", ok_mark, claude_bin))
-            if _claude_supports_budget_flag(claude_bin):
+            if _claude_supports_budget_flag(claude_bin, bare=bundled):
                 results.append(("Claude apply budget flag", ok_mark, "--max-budget-usd available"))
             else:
                 results.append((
@@ -2609,13 +2679,26 @@ def doctor() -> None:
         results.append(("Chrome/Chromium", fail_mark,
                         "Install Chrome or set CHROME_PATH env var (needed for auto-apply)"))
 
-    # Node.js / npx (for Playwright MCP)
-    npx_bin = shutil.which("npx")
-    if npx_bin:
-        results.append(("Node.js (npx)", ok_mark, npx_bin))
+    # Playwright MCP uses the payload-owned Node/runtime wrapper in bundled
+    # mode; only source checkouts need a machine-level npx executable.
+    if bundled:
+        try:
+            playwright_mcp = payload_path(
+                "playwright-mcp/bin/playwright-mcp",
+                require_exists=True,
+            )
+            if not playwright_mcp.is_file() or not os.access(playwright_mcp, os.X_OK):
+                raise RuntimeError(f"embedded wrapper is not executable: {playwright_mcp}")
+            results.append(("Playwright MCP runtime", ok_mark, str(playwright_mcp)))
+        except Exception as exc:  # noqa: BLE001 - doctor is diagnostic
+            results.append(("Playwright MCP runtime", fail_mark, f"unavailable: {exc}"))
     else:
-        results.append(("Node.js (npx)", fail_mark,
-                        "Install Node.js 18+ from nodejs.org (needed for auto-apply)"))
+        npx_bin = shutil.which("npx")
+        if npx_bin:
+            results.append(("Node.js (npx)", ok_mark, npx_bin))
+        else:
+            results.append(("Node.js (npx)", fail_mark,
+                            "Install Node.js 18+ from nodejs.org (needed for auto-apply)"))
 
     # Gmail connector is optional, but apply runs that hit email verification need it
     # to stay browser-independent and finish automatically.
@@ -2742,9 +2825,11 @@ def doctor() -> None:
 
     if tier == 1:
         console.print("[dim]  → Tier 2 unlocks: scoring, tailoring, cover letters (needs an LLM provider)[/dim]")
-        console.print("[dim]  → Tier 3 unlocks: auto-apply (needs Claude apply runtime + Chrome + Node.js)[/dim]")
+        tier3_tools = "Claude apply runtime + Chrome" + ("" if bundled else " + Node.js")
+        console.print(f"[dim]  → Tier 3 unlocks: auto-apply (needs {tier3_tools})[/dim]")
     elif tier == 2:
-        console.print("[dim]  → Tier 3 unlocks: auto-apply (needs Claude apply runtime + Chrome + Node.js)[/dim]")
+        tier3_tools = "Claude apply runtime + Chrome" + ("" if bundled else " + Node.js")
+        console.print(f"[dim]  → Tier 3 unlocks: auto-apply (needs {tier3_tools})[/dim]")
 
     console.print()
 

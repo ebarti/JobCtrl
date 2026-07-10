@@ -38,6 +38,7 @@ from jobctrl.domain.materials.analysis import (
 from jobctrl.infrastructure.analysis.strict_schema import strict_json_schema
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
 from jobctrl.infrastructure.setup_probes import codex_auth_path, resolve_codex_binary
+from jobctrl.runtime import is_bundled_runtime, provider_runtime_home
 
 AsyncCodexFactory = Callable[[], Any]
 
@@ -62,8 +63,26 @@ _CODEX_PERMISSION_PROFILE_OVERRIDE = (
 _CODEX_CONFIG_OVERRIDES = (
     "features.plugins=false",
     "features.apps=false",
+    # Employer analysis is a pure structured-generation call. Do not expose a
+    # shell to the model, and keep command children empty even if a future SDK
+    # or model accidentally contributes one. The app-server itself still
+    # receives provider auth through CodexConfig.env.
+    "features.shell_tool=false",
+    "allow_login_shell=false",
+    'shell_environment_policy={inherit="none"}',
     f'default_permissions="{_CODEX_PERMISSION_PROFILE}"',
     _CODEX_PERMISSION_PROFILE_OVERRIDE,
+)
+_CODEX_BUNDLED_AUTH_OVERRIDES = (
+    'forced_login_method="api"',
+    'cli_auth_credentials_store="ephemeral"',
+)
+_CODEX_BUNDLED_NEUTRALIZED_AUTH_ENV = (
+    "CODEX_ACCESS_TOKEN",
+    "CODEX_AGENT_IDENTITY_AUTH",
+    "CODEX_API_KEY",
+    "CODEX_REFRESH_TOKEN_URL_OVERRIDE",
+    "CODEX_REVOKE_TOKEN_URL_OVERRIDE",
 )
 _CODEX_HOME_DIRNAME = "codex_home"
 _CODEX_WORKSPACE_DIRNAME = "workspace"
@@ -81,6 +100,8 @@ def _isolated_codex_home() -> Path:
     """Return the JobCtrl-owned Codex home used by analysis app-server sessions."""
     from jobctrl.config import APP_DIR
 
+    if is_bundled_runtime():
+        return provider_runtime_home("codex", app_dir=APP_DIR)
     return APP_DIR / _CODEX_HOME_DIRNAME
 
 
@@ -99,7 +120,7 @@ def _copy_codex_auth(source: Path, target: Path) -> None:
 
 
 def _prepare_isolated_codex_home() -> _CodexHomeDirs:
-    """Create the isolated Codex home with auth outside the command workspace."""
+    """Create an isolated Codex home under the source or bundled auth policy."""
 
     codex_home = _isolated_codex_home()
     codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -109,7 +130,19 @@ def _prepare_isolated_codex_home() -> _CodexHomeDirs:
     for directory in (workdir, process_home):
         directory.mkdir(mode=0o700, exist_ok=True)
         directory.chmod(0o700)
-    _copy_codex_auth(codex_auth_path(), codex_home / "auth.json")
+    auth_target = codex_home / "auth.json"
+    if is_bundled_runtime():
+        if not os.environ.get("OPENAI_API_KEY", "").strip():
+            raise RuntimeError(
+                "bundled Codex analysis requires OPENAI_API_KEY and does not reuse auth.json"
+            )
+        # Never allow a stale copy or consumer login to become a bundled
+        # credential source. Fail closed instead of reading or silently reusing
+        # any auth.json placed in this separate provider-runtime home.
+        if auth_target.exists() or auth_target.is_symlink():
+            raise RuntimeError(f"bundled Codex refuses auth.json credentials: {auth_target}")
+    else:
+        _copy_codex_auth(codex_auth_path(), auth_target)
     return _CodexHomeDirs(
         codex_home=codex_home,
         workdir=workdir,
@@ -121,6 +154,14 @@ def _isolated_codex_env(codex_home: Path, process_home: Path) -> dict[str, str]:
     """Return the minimal env override; the SDK merges this over ``os.environ``."""
 
     env = {"CODEX_HOME": str(codex_home), "HOME": str(process_home)}
+    if is_bundled_runtime():
+        api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError(
+                "bundled Codex analysis requires OPENAI_API_KEY and does not reuse auth.json"
+            )
+        env["OPENAI_API_KEY"] = api_key
+        env.update({key: "" for key in _CODEX_BUNDLED_NEUTRALIZED_AUTH_ENV})
     if os.name == "nt":
         env["USERPROFILE"] = str(process_home)
     return env
@@ -131,6 +172,12 @@ def _load_async_codex_factory() -> AsyncCodexFactory:
 
     Lazy-imports ``openai_codex`` so the package imports without it installed.
     """
+    from jobctrl.runtime import activate_provider_pack
+
+    if is_bundled_runtime():
+        from jobctrl.config import APP_DIR
+
+        activate_provider_pack("codex-provider-runtime", app_dir=APP_DIR)
     from openai_codex import AsyncCodex, CodexConfig  # type: ignore[import-untyped]
 
     def _make() -> Any:
@@ -138,7 +185,8 @@ def _load_async_codex_factory() -> AsyncCodexFactory:
         config_kwargs: dict[str, Any] = {
             "cwd": str(dirs.workdir),
             "env": _isolated_codex_env(dirs.codex_home, dirs.process_home),
-            "config_overrides": _CODEX_CONFIG_OVERRIDES,
+            "config_overrides": _CODEX_CONFIG_OVERRIDES
+            + (_CODEX_BUNDLED_AUTH_OVERRIDES if is_bundled_runtime() else ()),
         }
         # Prefer the SDK-pinned bundled runtime. A system ``codex`` on PATH may
         # speak a different app-server protocol; JOBCTRL_CODEX_BIN is the
@@ -147,6 +195,14 @@ def _load_async_codex_factory() -> AsyncCodexFactory:
         return AsyncCodex(config=CodexConfig(**config_kwargs))
 
     return _make
+
+
+def _deny_all_approval_mode() -> Any:
+    """Resolve the SDK enum lazily after the bundled provider pack is active."""
+
+    from openai_codex import ApprovalMode  # type: ignore[import-untyped]
+
+    return ApprovalMode.deny_all
 
 
 class CodexAnalysisAdapter:
@@ -180,6 +236,10 @@ class CodexAnalysisAdapter:
         ) as record:
             async with factory() as codex:  # reuses existing Codex login (D-04)
                 thread = await codex.thread_start(
+                    # Analysis has no local-tool use case. Never auto-review or
+                    # approve an escalation even if a future runtime exposes a
+                    # tool despite the locked-down feature configuration.
+                    approval_mode=_deny_all_approval_mode(),
                     model=self._model,
                     # Max reasoning effort (D-18). Command filesystem access is
                     # governed by the configured Codex permissions profile.

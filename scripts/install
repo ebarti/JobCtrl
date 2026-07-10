@@ -224,7 +224,6 @@ check_system_dependencies() {
   ensure_command "corepack" "Corepack" "install Corepack directly or with Homebrew (brew install corepack)" 1 corepack
   ensure_command "uv" "uv" "install uv from https://docs.astral.sh/uv/ or Homebrew" 1 uv
   ensure_command "temporal" "Temporal CLI" "install the Temporal CLI so pnpm dev can start temporal server start-dev" 0 temporal
-  ensure_command "pdftoppm" "Poppler pdftoppm" "install Poppler for PDF page previews" 0 poppler
   ensure_chrome
 }
 

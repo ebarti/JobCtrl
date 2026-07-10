@@ -49,6 +49,15 @@ def disable_langfuse_network_export_by_default(monkeypatch: pytest.MonkeyPatch, 
 
 
 @pytest.fixture(autouse=True)
+def source_runtime_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep source tests independent of an installed launcher's ambient env."""
+
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "source")
+    for key in ("JOBCTRL_ENV_FILE", "JOBCTRL_PAYLOAD_DIR", "JOBCTRL_PROVIDER_PACKS_DIR"):
+        monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def reset_apply_dashboard_state() -> None:
     """Keep the module-level apply dashboard state from leaking across tests."""
     from jobctrl.apply import dashboard

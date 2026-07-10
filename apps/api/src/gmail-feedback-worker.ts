@@ -1,6 +1,4 @@
 import { spawn } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import type {
   ApplicationOutcomeKind,
@@ -8,9 +6,7 @@ import type {
   GmailOutcomeScanResponse,
 } from "./contracts.js";
 import { APPLICATION_OUTCOME_KINDS } from "./contracts.js";
-
-const API_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
-const AUTOMATION_PROJECT_DIR = path.resolve(API_SRC_DIR, "../../../workers/automation");
+import { createSourcePythonRuntime, type PythonRuntimeCommandResolver } from "./python-runtime.js";
 
 export interface GmailFeedbackScanContext {
   appDir: string;
@@ -25,6 +21,7 @@ export type GmailFeedbackScanner = (
 export interface WorkerGmailFeedbackScannerOptions {
   projectDir?: string;
   uvBinary?: string;
+  pythonRuntime?: PythonRuntimeCommandResolver;
 }
 
 export class GmailFeedbackScanError extends Error {
@@ -40,15 +37,18 @@ export class GmailFeedbackScanError extends Error {
 export function createWorkerGmailFeedbackScanner(
   options: WorkerGmailFeedbackScannerOptions = {},
 ): GmailFeedbackScanner {
-  const projectDir = options.projectDir ?? AUTOMATION_PROJECT_DIR;
-  const uvBinary = options.uvBinary ?? "uv";
+  const pythonRuntime =
+    options.pythonRuntime ??
+    createSourcePythonRuntime({
+      ...(options.projectDir ? { projectDir: options.projectDir } : {}),
+      ...(options.uvBinary ? { uvBinary: options.uvBinary } : {}),
+    });
 
   return async (input, context) =>
     runWorkerScan(input, {
       appDir: context.appDir,
       dbPath: context.dbPath,
-      projectDir,
-      uvBinary,
+      pythonRuntime,
     });
 }
 
@@ -85,8 +85,7 @@ export function sanitizeGmailFeedbackScanResponse(output: unknown): GmailOutcome
 }
 
 interface WorkerRunOptions extends GmailFeedbackScanContext {
-  projectDir: string;
-  uvBinary: string;
+  pythonRuntime: PythonRuntimeCommandResolver;
 }
 
 function runWorkerScan(
@@ -94,27 +93,19 @@ function runWorkerScan(
   options: WorkerRunOptions,
 ): Promise<GmailOutcomeScanResponse> {
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      options.uvBinary,
-      [
-        "--project",
-        options.projectDir,
-        "run",
-        "python",
-        "-m",
-        "jobctrl.infrastructure.gmail.feedback",
-        "--db-path",
-        options.dbPath,
-      ],
+    const command = options.pythonRuntime.resolve(
       {
-        cwd: options.appDir,
-        env: {
-          ...process.env,
-          JOBCTRL_DIR: options.appDir,
-        },
-        stdio: ["pipe", "pipe", "pipe"],
+        kind: "module",
+        module: "jobctrl.infrastructure.gmail.feedback",
+        args: ["--db-path", options.dbPath],
       },
+      { appDir: options.appDir },
     );
+    const child = spawn(command.executable, command.argv, {
+      cwd: command.cwd,
+      env: command.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");

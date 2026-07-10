@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "platform": "darwin-arm64",
+  "components": [
+    { "id": "jobctrl-launcher", "path": "launcher" },
+    { "id": "jobctrl-api", "path": "api" },
+    { "id": "jobctrl-web", "path": "web" },
+    { "id": "jobctrl-worker", "path": "worker" },
+    { "id": "jobctrl-release-metadata", "path": "release" },
+    { "id": "node-runtime", "path": "node" },
+    { "id": "python-runtime", "path": "python" },
+    { "id": "temporal-runtime", "path": "temporal" },
+    { "id": "pdfjs-renderer", "path": "pdfjs" },
+    { "id": "playwright-python", "path": "playwright-python" },
+    { "id": "chromium-core", "path": "chromium" },
+    { "id": "playwright-mcp", "path": "playwright-mcp" }
+  ],
+  "embeddedComponents": [
+    {
+      "id": "better-sqlite3-native",
+      "includedIn": "jobctrl-api",
+      "prefixes": [
+        "api/node_modules/better-sqlite3",
+        "api/node_modules/bindings",
+        "api/node_modules/file-uri-to-path"
+      ]
+    },
+    {
+      "id": "font-jetbrains-mono",
+      "includedIn": "jobctrl-web",
+      "prefixes": ["web/assets/jetbrains-mono-"]
+    },
+    {
+      "id": "font-plus-jakarta-sans",
+      "includedIn": "jobctrl-web",
+      "prefixes": ["web/assets/plus-jakarta-sans-"]
+    },
+    {
+      "id": "system-browser-adapter",
+      "includedIn": "jobctrl-worker",
+      "paths": [
+        "worker/site-packages/jobctrl/apply/chrome.py",
+        "worker/site-packages/jobctrl/infrastructure/apply/local_chrome.py"
+      ]
+    }
+  ],
+  "sharedComponentFiles": [
+    {
+      "id": "pdfjs-renderer",
+      "includedIn": "jobctrl-web",
+      "prefixes": ["web/assets/pdf-", "web/assets/pdf.worker-"]
+    }
+  ],
+  "standardInputs": {
+    "apiBundle": "dist/api/server.mjs",
+    "apiNativeModules": "dist/api/native",
+    "apiNativeRuntime": "packaging/distribution/api-native",
+    "webAssets": "dist/web",
+    "workerWheelDirectory": "dist",
+    "playwrightMcpRuntime": "packaging/distribution/playwright-mcp"
+  },
+  "envelopeExclusions": ["manifest.json", "manifest.sig"]
+}

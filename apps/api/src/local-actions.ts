@@ -1,8 +1,8 @@
 /**
  * Local action dispatchers — JSON-RPC backed (Phase 9 / S-34).
  *
- * Per the no-strangler directive the previous "spawn one ``uv run
- * jobctrl action ...`` subprocess per call" path is **deleted**.
+ * Per the no-strangler directive the previous "spawn one CLI action
+ * subprocess per call" path is **deleted**.
  * Every action is now routed through ``SubprocessJsonRpcAdapter``
  * (long-lived ``jobctrl rpc`` worker) per ddd-target.md §6.5.
  *
@@ -12,7 +12,7 @@
  *     ``cmd /c start`` to fire the OS file handler.  Not part of the
  *     JSON-RPC protocol surface.
  *   * ``defaultProfilePreviewRenderer`` — invokes an inline Python
- *     script via ``uv run python -c`` for the profile baseline resume
+ *     script through the central runtime resolver for the profile baseline resume
  *     preview render path.  This is a one-off helper that doesn't fit
  *     the JSON-RPC method set.
  */
@@ -21,7 +21,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
 
 import {
   DEFAULT_PIPELINE_LLM_MODEL,
@@ -34,9 +33,11 @@ import {
   getDefaultJsonRpcDispatcher,
   type JsonRpcDispatcher,
 } from "./json-rpc-adapter.js";
-
-const API_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
-const AUTOMATION_PROJECT_DIR = path.resolve(API_SRC_DIR, "../../../workers/automation");
+import {
+  defaultSourcePythonRuntime,
+  type PythonRuntimeCommandResolver,
+  type ResolvedPythonCommand,
+} from "./python-runtime.js";
 
 export interface ActionDispatchContext {
   appDir: string;
@@ -58,6 +59,16 @@ export type ActionDispatcher = (
   context: ActionDispatchContext,
 ) => Promise<ActionDispatchResult>;
 export type JsonRpcDispatcherFactory = (context: ActionDispatchContext) => JsonRpcDispatcher;
+
+export function createRuntimeJsonRpcDispatcherFactory(
+  pythonRuntime: PythonRuntimeCommandResolver,
+): JsonRpcDispatcherFactory {
+  return (context) =>
+    getDefaultJsonRpcDispatcher({
+      appDir: context.appDir,
+      pythonRuntime,
+    });
+}
 
 export type ArtifactOpener = (artifactPath: string) => Promise<void>;
 
@@ -103,7 +114,10 @@ export type ProfilePreviewRenderer = (
 export function createActionDispatcher(
   dispatcher?: JsonRpcDispatcher,
   dispatcherFactory: JsonRpcDispatcherFactory = (context) =>
-    getDefaultJsonRpcDispatcher({ appDir: context.appDir }),
+    getDefaultJsonRpcDispatcher({
+      appDir: context.appDir,
+      pythonRuntime: defaultSourcePythonRuntime,
+    }),
 ): ActionDispatcher {
   return async (command, context) => {
     const rpc = dispatcher ?? dispatcherFactory(context);
@@ -192,29 +206,35 @@ export type ContactResearchStarter = (
 ) => Promise<ContactResearchStartOutcome>;
 
 /** Start a supervised research run on the Python worker via JSON-RPC / Temporal. */
-export const defaultContactResearchStarter: ContactResearchStarter = async (input, context) => {
-  const rpc = getDefaultJsonRpcDispatcher({ appDir: context.appDir });
-  const response = await rpc.call("run_contact_research", {
-    tenantId: "local",
-    expectedAppDir: context.appDir,
-    expectedDbPath: context.dbPath,
-    taskId: input.taskId,
-    ...(input.employer ? { employer: input.employer } : {}),
-    ...(input.jobUrl ? { jobUrl: input.jobUrl } : {}),
-    sources: input.sources,
-    llmModel: input.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
-  });
-  if (response.error) {
-    throw new Error(response.error.message);
-  }
-  const start = extractWorkflowStart(response.result);
-  return {
-    runId: start.runId,
-    workflowId: start.workflowId,
-    firstExecutionRunId: start.firstExecutionRunId,
-    status: "queued",
+export function createContactResearchStarter(
+  pythonRuntime: PythonRuntimeCommandResolver = defaultSourcePythonRuntime,
+): ContactResearchStarter {
+  return async (input, context) => {
+    const rpc = getDefaultJsonRpcDispatcher({ appDir: context.appDir, pythonRuntime });
+    const response = await rpc.call("run_contact_research", {
+      tenantId: "local",
+      expectedAppDir: context.appDir,
+      expectedDbPath: context.dbPath,
+      taskId: input.taskId,
+      ...(input.employer ? { employer: input.employer } : {}),
+      ...(input.jobUrl ? { jobUrl: input.jobUrl } : {}),
+      sources: input.sources,
+      llmModel: input.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
+    });
+    if (response.error) {
+      throw new Error(response.error.message);
+    }
+    const start = extractWorkflowStart(response.result);
+    return {
+      runId: start.runId,
+      workflowId: start.workflowId,
+      firstExecutionRunId: start.firstExecutionRunId,
+      status: "queued",
+    };
   };
-};
+}
+
+export const defaultContactResearchStarter: ContactResearchStarter = createContactResearchStarter();
 
 export interface OutreachDraftGeneratorInput {
   threadId: string;
@@ -248,25 +268,31 @@ export type OutreachDraftGenerator = (
  * ``contactId`` selects the generate path; ``editedBodyText`` selects revise. This
  * has no send capability (INV-1) — it only persists a gated draft.
  */
-export const defaultOutreachDraftGenerator: OutreachDraftGenerator = async (input, context) => {
-  const rpc = getDefaultJsonRpcDispatcher({ appDir: context.appDir });
-  const response = await rpc.call("generate_outreach_draft", {
-    tenantId: "local",
-    expectedAppDir: context.appDir,
-    expectedDbPath: context.dbPath,
-    threadId: input.threadId,
-    ...(input.contactId ? { contactId: input.contactId } : {}),
-    ...(input.jobId ? { jobId: input.jobId } : {}),
-    ...(input.kind ? { kind: input.kind } : {}),
-    ...(input.editedBodyText ? { editedBodyText: input.editedBodyText } : {}),
-    ...(input.applicationRole ? { applicationRole: input.applicationRole } : {}),
-    llmModel: input.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
-  });
-  if (response.error) {
-    throw new Error(response.error.message);
-  }
-  return parseOutreachDraftResult(response.result);
-};
+export function createOutreachDraftGenerator(
+  pythonRuntime: PythonRuntimeCommandResolver = defaultSourcePythonRuntime,
+): OutreachDraftGenerator {
+  return async (input, context) => {
+    const rpc = getDefaultJsonRpcDispatcher({ appDir: context.appDir, pythonRuntime });
+    const response = await rpc.call("generate_outreach_draft", {
+      tenantId: "local",
+      expectedAppDir: context.appDir,
+      expectedDbPath: context.dbPath,
+      threadId: input.threadId,
+      ...(input.contactId ? { contactId: input.contactId } : {}),
+      ...(input.jobId ? { jobId: input.jobId } : {}),
+      ...(input.kind ? { kind: input.kind } : {}),
+      ...(input.editedBodyText ? { editedBodyText: input.editedBodyText } : {}),
+      ...(input.applicationRole ? { applicationRole: input.applicationRole } : {}),
+      llmModel: input.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
+    });
+    if (response.error) {
+      throw new Error(response.error.message);
+    }
+    return parseOutreachDraftResult(response.result);
+  };
+}
+
+export const defaultOutreachDraftGenerator: OutreachDraftGenerator = createOutreachDraftGenerator();
 
 function parseOutreachDraftResult(result: unknown): OutreachDraftGeneratorOutcome {
   if (!isRecord(result)) {
@@ -293,92 +319,99 @@ export const defaultArtifactOpener: ArtifactOpener = async (artifactPath) => {
   child.unref();
 };
 
-export const defaultProfileImporter: ProfileImporter = async (input, context) => {
-  const importDir = path.join(context.appDir, "profile-imports");
-  fs.mkdirSync(importDir, { recursive: true });
-  const pdfPath = path.join(importDir, `${randomUUID()}-${sanitizeFilename(input.filename)}`);
-  fs.writeFileSync(pdfPath, input.pdfBytes);
-  const command: ActionCommandPayload = {
-    action: "profile_import",
-    jobKey: "profile",
-  };
-  const actionId = `act-${randomUUID()}`;
-  const dispatcher = getDefaultJsonRpcDispatcher({ appDir: context.appDir });
-  const response = await dispatcher.call("profile_import", {
-    tenantId: "local",
-    expectedAppDir: context.appDir,
-    expectedDbPath: context.dbPath,
-    pdfPath,
-    importProfile: input.importProfile,
-    importStyle: input.importStyle,
-    awaitResult: true,
-  });
-  if (response.error) {
-    throw new Error(response.error.message);
-  }
-  const workflowStart = extractWorkflowStart(response.result);
-  const workflowResult = extractWorkflowResult(response.result);
-  if (workflowResult?.status === "failed") {
-    throw new Error(extractProfileImportError(workflowResult) ?? "Profile import workflow failed.");
-  }
-  const draft = extractProfileImportDraft(workflowResult);
-  const runId = workflowStart.runId ?? workflowStart.workflowId ?? actionId;
-  const workflowId = workflowStart.workflowId ?? runId;
-  const action: ActionRunResponse = {
-    ok: true,
-    runId,
-    workflowId,
-    actionId,
-    action: command.action,
-    status: "queued",
-    jobKey: command.jobKey,
-    command,
-    result: response.result,
-  };
-  if (workflowStart.firstExecutionRunId) {
-    action.firstExecutionRunId = workflowStart.firstExecutionRunId;
-  }
-  const result: ProfileImportResult = {
-    profile: draft.profile,
-    style: draft.style,
-    source: draft.source,
-    action,
-  };
-  if (draft.templateText !== undefined) {
-    result.templateText = draft.templateText;
-  }
-  return result;
-};
-
-export const defaultProfilePreviewRenderer: ProfilePreviewRenderer = async (input, context) => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-profile-preview-"));
-  const profilePath = path.join(tempDir, "profile-preview-input.json");
-  const outputPath = path.join(tempDir, "resume-preview.pdf");
-  const htmlPath = outputPath.replace(/\.pdf$/i, ".html");
-  try {
-    fs.writeFileSync(profilePath, JSON.stringify(input.profile), "utf8");
-    await runCommand(
-      "uv",
-      [
-        "--project",
-        AUTOMATION_PROJECT_DIR,
-        "run",
-        "python",
-        "-c",
-        PROFILE_PREVIEW_SCRIPT,
-        profilePath,
-        outputPath,
-      ],
-      context.appDir,
-    );
-    return {
-      pdfBytes: fs.readFileSync(outputPath),
-      htmlText: fs.readFileSync(htmlPath, "utf8"),
+export function createProfileImporter(
+  pythonRuntime: PythonRuntimeCommandResolver = defaultSourcePythonRuntime,
+): ProfileImporter {
+  return async (input, context) => {
+    const importDir = path.join(context.appDir, "profile-imports");
+    fs.mkdirSync(importDir, { recursive: true });
+    const pdfPath = path.join(importDir, `${randomUUID()}-${sanitizeFilename(input.filename)}`);
+    fs.writeFileSync(pdfPath, input.pdfBytes);
+    const command: ActionCommandPayload = {
+      action: "profile_import",
+      jobKey: "profile",
     };
-  } finally {
-    fs.rmSync(tempDir, { force: true, recursive: true });
-  }
-};
+    const actionId = `act-${randomUUID()}`;
+    const dispatcher = getDefaultJsonRpcDispatcher({ appDir: context.appDir, pythonRuntime });
+    const response = await dispatcher.call("profile_import", {
+      tenantId: "local",
+      expectedAppDir: context.appDir,
+      expectedDbPath: context.dbPath,
+      pdfPath,
+      importProfile: input.importProfile,
+      importStyle: input.importStyle,
+      awaitResult: true,
+    });
+    if (response.error) {
+      throw new Error(response.error.message);
+    }
+    const workflowStart = extractWorkflowStart(response.result);
+    const workflowResult = extractWorkflowResult(response.result);
+    if (workflowResult?.status === "failed") {
+      throw new Error(extractProfileImportError(workflowResult) ?? "Profile import workflow failed.");
+    }
+    const draft = extractProfileImportDraft(workflowResult);
+    const runId = workflowStart.runId ?? workflowStart.workflowId ?? actionId;
+    const workflowId = workflowStart.workflowId ?? runId;
+    const action: ActionRunResponse = {
+      ok: true,
+      runId,
+      workflowId,
+      actionId,
+      action: command.action,
+      status: "queued",
+      jobKey: command.jobKey,
+      command,
+      result: response.result,
+    };
+    if (workflowStart.firstExecutionRunId) {
+      action.firstExecutionRunId = workflowStart.firstExecutionRunId;
+    }
+    const result: ProfileImportResult = {
+      profile: draft.profile,
+      style: draft.style,
+      source: draft.source,
+      action,
+    };
+    if (draft.templateText !== undefined) {
+      result.templateText = draft.templateText;
+    }
+    return result;
+  };
+}
+
+export const defaultProfileImporter: ProfileImporter = createProfileImporter();
+
+export function createProfilePreviewRenderer(
+  pythonRuntime: PythonRuntimeCommandResolver = defaultSourcePythonRuntime,
+): ProfilePreviewRenderer {
+  return async (input, context) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-profile-preview-"));
+    const profilePath = path.join(tempDir, "profile-preview-input.json");
+    const outputPath = path.join(tempDir, "resume-preview.pdf");
+    const htmlPath = outputPath.replace(/\.pdf$/i, ".html");
+    try {
+      fs.writeFileSync(profilePath, JSON.stringify(input.profile), "utf8");
+      const command = pythonRuntime.resolve(
+        {
+          kind: "script",
+          script: PROFILE_PREVIEW_SCRIPT,
+          args: [profilePath, outputPath],
+        },
+        { appDir: context.appDir },
+      );
+      await runCommand(command);
+      return {
+        pdfBytes: fs.readFileSync(outputPath),
+        htmlText: fs.readFileSync(htmlPath, "utf8"),
+      };
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  };
+}
+
+export const defaultProfilePreviewRenderer: ProfilePreviewRenderer = createProfilePreviewRenderer();
 
 export function buildActionResponse(
   command: ActionCommandPayload,
@@ -788,13 +821,11 @@ function openerCommand(artifactPath: string): { command: string; args: string[] 
   return { command: "xdg-open", args: [artifactPath] };
 }
 
-function runCommand(command: string, args: string[], appDir: string): Promise<string> {
+function runCommand(command: ResolvedPythonCommand): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      env: {
-        ...process.env,
-        JOBCTRL_DIR: appDir,
-      },
+    const child = spawn(command.executable, command.argv, {
+      cwd: command.cwd,
+      env: command.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

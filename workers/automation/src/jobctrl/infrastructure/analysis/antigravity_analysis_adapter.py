@@ -26,6 +26,7 @@ stop is cooperative cancellation of the wrapping asyncio task. ``save_dir`` /
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -38,6 +39,7 @@ from jobctrl.domain.materials.analysis import (
 from jobctrl.infrastructure.analysis.gemini_schema import gemini_json_schema
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
 from jobctrl.infrastructure.setup_probes import antigravity_auth_kwargs
+from jobctrl.runtime import activate_provider_pack, is_bundled_runtime
 
 # An ``Agent`` factory: (config) -> async-context-manager agent.
 AgentFactory = Callable[[Any], Any]
@@ -61,6 +63,10 @@ _RUNTIME_DIR_NAME = "jobctrl-antigravity"
 
 def _load_agent_factory() -> AgentFactory:
     """Lazy-import ``google.antigravity.agent.Agent`` so the package imports without it."""
+    if is_bundled_runtime():
+        from jobctrl.config import APP_DIR
+
+        activate_provider_pack("antigravity-provider-runtime", app_dir=APP_DIR)
     from google.antigravity.agent import Agent  # type: ignore[import-untyped]
 
     return Agent
@@ -68,6 +74,10 @@ def _load_agent_factory() -> AgentFactory:
 
 def _load_config_factory() -> ConfigFactory:
     """Lazy-import ``LocalAgentConfig`` so the package imports without the SDK."""
+    if is_bundled_runtime():
+        from jobctrl.config import APP_DIR
+
+        activate_provider_pack("antigravity-provider-runtime", app_dir=APP_DIR)
     from google.antigravity.connections.local.local_connection_config import (  # type: ignore[import-untyped]
         LocalAgentConfig,
     )
@@ -77,6 +87,10 @@ def _load_config_factory() -> ConfigFactory:
 
 def _load_types_module() -> Any:
     """Lazy-import the ``google.antigravity.types`` module (enums + config types)."""
+    if is_bundled_runtime():
+        from jobctrl.config import APP_DIR
+
+        activate_provider_pack("antigravity-provider-runtime", app_dir=APP_DIR)
     from google.antigravity import types  # type: ignore[import-untyped]
 
     return types
@@ -84,7 +98,15 @@ def _load_types_module() -> Any:
 
 def _runtime_subdir(name: str) -> str:
     """Return a per-process 0700 runtime dir for the local agent's state."""
-    base = Path(tempfile.gettempdir()) / _RUNTIME_DIR_NAME
+    if is_bundled_runtime():
+        from jobctrl.config import APP_DIR
+
+        # Never point the provider at the user's Antigravity IDE state. A
+        # process-scoped directory also prevents reuse of prior OAuth/session
+        # artifacts if the SDK persists more state in app_data later.
+        base = APP_DIR / "provider-runtime" / "antigravity" / str(os.getpid())
+    else:
+        base = Path(tempfile.gettempdir()) / _RUNTIME_DIR_NAME
     path = base / name
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     # parents= keeps the existing mode on pre-existing dirs; re-assert 0700.

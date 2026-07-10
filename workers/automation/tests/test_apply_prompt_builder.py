@@ -4,7 +4,9 @@ the rendered text + MCP config bound to the requested CDP port."""
 import json
 import pytest
 import sys
+from pathlib import Path
 
+from jobctrl import config as jobctrl_config
 from jobctrl.apply import prompt as prompt_mod
 from jobctrl.domain.apply.services import ApplyPromptBuilder, _default_mcp_config, _verification_sender_domains
 from jobctrl.domain.apply.value_objects import ApplyPrompt
@@ -241,6 +243,7 @@ def test_attestation_lines_render_full_partial_and_empty_sets() -> None:
 
 
 def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> None:
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "source")
     monkeypatch.delenv("CAPSOLVER_API_KEY", raising=False)
     config = _default_mcp_config(
         9222,
@@ -253,6 +256,7 @@ def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> Non
     )
 
     playwright = config["mcpServers"]["playwright"]
+    assert playwright["command"] == "npx"
     assert playwright["args"][0] == "@playwright/mcp@0.0.77"
     gmail = config["mcpServers"]["gmail"]
     assert gmail["command"] == sys.executable
@@ -273,6 +277,49 @@ def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> Non
     assert "CAPSOLVER_API_KEY" not in apply_tools["env"]
     assert "mcp__apply_tools__solve_captcha" not in claude_code_cli._allowed_tools_for_mcp_config(config)
     assert "DistinctivePasswordShouldNeverRender" not in json.dumps(apply_tools["env"])
+
+
+def test_bundled_mcp_config_uses_only_signed_payload_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    payload = tmp_path / "payload"
+    wrapper = payload / "playwright-mcp/bin/playwright-mcp"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "bundled")
+    monkeypatch.setenv("JOBCTRL_PAYLOAD_DIR", str(payload))
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(payload / "chromium"))
+
+    config = _default_mcp_config(
+        9222,
+        job={"application_url": "https://apply.example.com/job"},
+        snapshot=_FakeSnapshot(),
+        upload_dir="/tmp/worker-0",
+    )
+
+    serialized = json.dumps(config)
+    assert "npx" not in serialized
+    assert "@playwright/mcp" not in serialized
+    playwright = config["mcpServers"]["playwright"]
+    assert playwright["command"] == str(wrapper.resolve())
+    assert playwright["args"] == [
+        "--cdp-endpoint=http://localhost:9222",
+        f"--viewport-size={jobctrl_config.DEFAULTS['viewport']}",
+    ]
+    for name, module in (
+        ("gmail", "jobctrl.infrastructure.gmail.mcp_server"),
+        ("apply_tools", "jobctrl.infrastructure.apply_tools.mcp_server"),
+    ):
+        server = config["mcpServers"][name]
+        assert server["command"] == sys.executable
+        assert server["args"] == ["-I", "-B", "-m", module]
+        assert server["env"]["JOBCTRL_RUNTIME_MODE"] == "bundled"
+        assert server["env"]["JOBCTRL_PAYLOAD_DIR"] == str(payload.resolve())
+        assert server["env"]["JOBCTRL_DIR"] == str(jobctrl_config.APP_DIR)
+        assert server["env"]["PYTHONNOUSERSITE"] == "1"
+        assert server["env"]["PYTHONSAFEPATH"] == "1"
 
 
 @pytest.mark.parametrize(

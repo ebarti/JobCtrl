@@ -11,6 +11,8 @@ import {
   DEFAULT_PIPELINE_LLM_MODEL,
   GenerateInterviewPrepRequestSchema,
   GenerateInterviewPrepParamsSchema,
+  ManualCaptureImportParamsSchema,
+  ManualCaptureImportWorkflowResultSchema,
   RefreshCompensationParamsSchema,
   RefreshCompensationResultSchema,
   RescoreJobParamsSchema,
@@ -61,6 +63,71 @@ describe("cancel_run RPC contract", () => {
     expect(() =>
       CancelRunResultSchema.parse({ runId: "wf-123", status: "canceled" }),
     ).toThrow();
+  });
+});
+
+describe("manual_capture_import RPC contract", () => {
+  it("registers and parses the awaited manual-capture workflow request", () => {
+    expect(RpcMethods.ManualCaptureImport).toBe("manual_capture_import");
+    expect(
+      ManualCaptureImportParamsSchema.parse({
+        itemId: "manual-1",
+        captureMode: "pasted_text",
+        contentText: "User-provided posting text.",
+        capturedUrl: "https://example.test/jobs/1",
+        note: "Captured after sign in.",
+        futureManualActionRequired: true,
+        expectedAppDir: "/tmp/jobctrl",
+        expectedDbPath: "/tmp/jobctrl/jobctrl.db",
+        awaitResult: true,
+      }),
+    ).toEqual({
+      tenantId: "local",
+      itemId: "manual-1",
+      captureMode: "pasted_text",
+      contentText: "User-provided posting text.",
+      capturedUrl: "https://example.test/jobs/1",
+      note: "Captured after sign in.",
+      futureManualActionRequired: true,
+      expectedAppDir: "/tmp/jobctrl",
+      expectedDbPath: "/tmp/jobctrl/jobctrl.db",
+      awaitResult: true,
+    });
+  });
+
+  it("requires user-mediated content and an awaited workflow result", () => {
+    expect(() =>
+      ManualCaptureImportParamsSchema.parse({
+        itemId: "manual-1",
+        captureMode: "pasted_text",
+        awaitResult: true,
+      }),
+    ).toThrow();
+    expect(() =>
+      ManualCaptureImportParamsSchema.parse({
+        itemId: "manual-1",
+        captureMode: "pasted_text",
+        contentText: "User-provided posting text.",
+      }),
+    ).toThrow();
+  });
+
+  it("parses the snake_case workflow result contract", () => {
+    expect(
+      ManualCaptureImportWorkflowResultSchema.parse({
+        status: "succeeded",
+        item_id: "manual-1",
+        job_id: "https://example.test/jobs/1",
+        imported_at: "2026-07-10T10:00:00Z",
+        retry_context: { manual_capture_provenance: {} },
+        error: null,
+        error_code: null,
+      }),
+    ).toMatchObject({
+      status: "succeeded",
+      item_id: "manual-1",
+      job_id: "https://example.test/jobs/1",
+    });
   });
 });
 

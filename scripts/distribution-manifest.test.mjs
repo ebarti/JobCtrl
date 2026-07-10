@@ -15,6 +15,8 @@ import {
   validateComponentInventory,
   validateComponentLocks,
   validateLicenseReview,
+  validateNodeLicenseEvidenceLocks,
+  validatePythonLicenseEvidenceLocks,
   validateSigningPolicy,
 } from "./distribution-manifest.mjs";
 
@@ -90,7 +92,9 @@ test("distribution contracts are complete and every version source resolves", as
   const report = await auditDistributionContracts();
   assert.equal(report.schemaVersion, 1);
   assert.ok(report.componentCount >= 20);
-  assert.equal(report.lockedInputCount, 6);
+  assert.equal(report.lockedInputCount, 7);
+  assert.equal(report.pythonLicenseEvidenceCount, 2);
+  assert.equal(report.nodeLicenseEvidenceCount, 18);
   assert.equal(report.capabilityCount, 3);
   assert.deepEqual(report.platforms, ["darwin-arm64"]);
   assert.equal(report.versions["jobctrl-launcher"], "2.0.0");
@@ -324,6 +328,63 @@ test("human license review is machine-bound to inventory policy", async () => {
   );
 });
 
+test("license evidence locks are closed, immutable, exact, and bound to dependency locks", async () => {
+  const { pythonLicenseEvidenceLocks, nodeLicenseEvidenceLocks } = await loadDistributionContracts();
+  const uvLock = await readFile(path.join(process.cwd(), "workers", "automation", "uv.lock"), "utf8");
+  const pnpmLocks = (await Promise.all([
+    "pnpm-lock.yaml",
+    "packaging/distribution/playwright-mcp/pnpm-lock.yaml",
+    "packaging/distribution/api-native/pnpm-lock.yaml",
+  ].map((file) => readFile(path.join(process.cwd(), file), "utf8")))).join("\n");
+
+  assert.equal(validatePythonLicenseEvidenceLocks(pythonLicenseEvidenceLocks, uvLock).inputs.length, 2);
+  assert.equal(validateNodeLicenseEvidenceLocks(nodeLicenseEvidenceLocks, pnpmLocks).inputs.length, 18);
+
+  const missingPythonSubject = structuredClone(pythonLicenseEvidenceLocks);
+  missingPythonSubject.inputs.pop();
+  assert.throws(
+    () => validatePythonLicenseEvidenceLocks(missingPythonSubject, uvLock),
+    /exact required subject set/,
+  );
+
+  const mutablePythonReference = structuredClone(pythonLicenseEvidenceLocks);
+  mutablePythonReference.inputs[0].url = "https://raw.githubusercontent.com/open-telemetry/opentelemetry-python-contrib/v0.62b1/LICENSE";
+  assert.throws(
+    () => validatePythonLicenseEvidenceLocks(mutablePythonReference, uvLock),
+    /pinned to a full commit SHA/,
+  );
+
+  const invalidNodeHash = structuredClone(nodeLicenseEvidenceLocks);
+  invalidNodeHash.inputs[0].sha256 = "not-a-sha256";
+  assert.throws(
+    () => validateNodeLicenseEvidenceLocks(invalidNodeHash, pnpmLocks),
+    /sha256 must be lowercase SHA-256/,
+  );
+
+  const wrongNodeEvidenceKind = structuredClone(nodeLicenseEvidenceLocks);
+  wrongNodeEvidenceKind.inputs.find((input) => input.package === "abstract-logging").evidenceKind = "license-text";
+  assert.throws(
+    () => validateNodeLicenseEvidenceLocks(wrongNodeEvidenceKind, pnpmLocks),
+    /evidenceKind does not match/,
+  );
+
+  const unknownNodeField = structuredClone(nodeLicenseEvidenceLocks);
+  unknownNodeField.inputs[0].fallback = true;
+  assert.throws(
+    () => validateNodeLicenseEvidenceLocks(unknownNodeField, pnpmLocks),
+    /fields must be exactly/,
+  );
+
+  assert.throws(
+    () => validatePythonLicenseEvidenceLocks(pythonLicenseEvidenceLocks, ""),
+    /not exactly pinned in uv.lock/,
+  );
+  assert.throws(
+    () => validateNodeLicenseEvidenceLocks(nodeLicenseEvidenceLocks, ""),
+    /not exactly pinned in the pnpm lock closure/,
+  );
+});
+
 test("artifact file inventory is bytewise deterministic after mode normalization", async (context) => {
   const first = await mkdtemp(path.join(os.tmpdir(), "jobctrl-dist-a-"));
   const second = await mkdtemp(path.join(os.tmpdir(), "jobctrl-dist-b-"));
@@ -367,7 +428,8 @@ test("source measurement reports dependency, lockfile, and environment presence"
   assert.equal(report.schemaVersion, 1);
   assert.ok(report.source.javascript.uniqueDirect > 0);
   assert.ok(report.source.javascript.uniqueRuntimeDirect > 0);
-  assert.ok(report.source.python.runtimeDirect > 0);
+  assert.equal(report.source.python.coreRuntimeDirect, 18);
+  assert.equal(report.source.python.providerRuntimeDirect, 4);
   assert.ok(report.source.locks.pnpmPackageRecords > 0);
   assert.ok(report.source.locks.uvPackageRecords > 0);
   assert.ok(["present", "absent"].includes(report.source.environmentPresence.nodeModules));

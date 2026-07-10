@@ -101,7 +101,8 @@ async def test_passes_voice_schema_empty_tools_and_no_turn_cap() -> None:
     await adapter.rewrite("system", _request())
     opts = captured[0]["options"].kwargs
     assert opts["max_turns"] is None  # no turn cap (no timeout)
-    assert opts["allowed_tools"] == []  # constrained, structured output only
+    assert opts["tools"] == []  # built-in file/shell tools are absent
+    assert opts["allowed_tools"] == []  # no tools are auto-approved
     assert opts["output_format"]["type"] == "json_schema"
     # The schema is the VoicePayload schema (prose-only: executive_profile + experience).
     props = opts["output_format"]["schema"]["properties"]

@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { pdfTextLines, type PdfAuditLineTarget } from "./pdf-audit-lines.js";
-import { pageImageUrlForPreview, renderedLinesFromLayoutBoxes } from "./PdfPreviewViewer.js";
+import { renderPdfPageToObjectUrl, renderedLinesFromLayoutBoxes } from "./PdfPreviewViewer.js";
 
 const pdfjs = {
   Util: {
@@ -260,14 +260,58 @@ describe("PdfAuditPreviewViewer line geometry", () => {
   });
 });
 
-describe("pageImageUrlForPreview", () => {
-  it("uses the server-rendered page image endpoint for artifact PDF previews", () => {
-    expect(pageImageUrlForPreview("/v1/artifacts/resume-artifact/preview.pdf?v=3", 2)).toBe(
-      "http://localhost:3000/v1/artifacts/resume-artifact/preview/page/2.png?v=3",
-    );
+describe("renderPdfPageToObjectUrl", () => {
+  it("encodes every PDF page as a revocable Blob URL and releases the canvas", async () => {
+    const context = {} as CanvasRenderingContext2D;
+    const png = new Blob(["png"], { type: "image/png" });
+    const canvas = {
+      getContext: vi.fn(() => context),
+      height: 0,
+      toBlob: vi.fn((callback: BlobCallback) => callback(png)),
+      width: 0,
+    } as unknown as HTMLCanvasElement;
+    const render = vi.fn(() => ({ promise: Promise.resolve() }));
+    const page = { render } as unknown as Parameters<typeof renderPdfPageToObjectUrl>[0];
+    const renderViewport = {
+      height: 1600.9,
+      width: 1200.6,
+    } as unknown as Parameters<typeof renderPdfPageToObjectUrl>[1];
+    const objectUrl = {
+      createObjectURL: vi.fn(() => "blob:local-page"),
+      revokeObjectURL: vi.fn(),
+    };
+
+    const image = await renderPdfPageToObjectUrl(page, renderViewport, () => canvas, objectUrl);
+
+    expect(image.src).toBe("blob:local-page");
+    expect(render).toHaveBeenCalledWith({ canvas, canvasContext: context, viewport: renderViewport });
+    expect(canvas.toBlob).toHaveBeenCalledWith(expect.any(Function), "image/png");
+    expect(objectUrl.createObjectURL).toHaveBeenCalledWith(png);
+    expect(canvas.width).toBe(0);
+    expect(canvas.height).toBe(0);
+
+    image.revoke();
+    image.revoke();
+    expect(objectUrl.revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(objectUrl.revokeObjectURL).toHaveBeenCalledWith("blob:local-page");
   });
 
-  it("does not rewrite profile PDF previews to an endpoint the API does not expose", () => {
-    expect(pageImageUrlForPreview("/v1/profile/preview.pdf?v=3", 1)).toBeNull();
+  it("releases the canvas when PDF.js rendering fails", async () => {
+    const canvas = {
+      getContext: vi.fn(() => ({} as CanvasRenderingContext2D)),
+      height: 0,
+      toBlob: vi.fn(),
+      width: 0,
+    } as unknown as HTMLCanvasElement;
+    const page = {
+      render: vi.fn(() => ({ promise: Promise.reject(new Error("render failed")) })),
+    } as unknown as Parameters<typeof renderPdfPageToObjectUrl>[0];
+    const viewport = { height: 900, width: 700 } as Parameters<typeof renderPdfPageToObjectUrl>[1];
+    const objectUrl = { createObjectURL: vi.fn(), revokeObjectURL: vi.fn() };
+
+    await expect(renderPdfPageToObjectUrl(page, viewport, () => canvas, objectUrl)).rejects.toThrow("render failed");
+    expect(canvas.width).toBe(0);
+    expect(canvas.height).toBe(0);
+    expect(objectUrl.createObjectURL).not.toHaveBeenCalled();
   });
 });

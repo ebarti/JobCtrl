@@ -19,6 +19,7 @@ from jobctrl.discovery.workflow import (
     DiscoverWorkflowInput,
     discover_workflow_id,
 )
+from jobctrl.domain.discovery.source_registry import ManualCaptureMode
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.interview.workflow import InterviewPrepWorkflow, InterviewPrepWorkflowInput
@@ -308,6 +309,55 @@ def build_profile_import_workflow_spec(params: dict[str, Any]) -> WorkflowStartS
     return WorkflowStartSpec(workflow=ProfileImportWorkflow, args=(payload,))
 
 
+def build_manual_capture_import_workflow_spec(
+    params: dict[str, Any],
+) -> WorkflowStartSpec:
+    from jobctrl.discovery.manual_capture_workflow import (
+        ManualCaptureImportWorkflow,
+        ManualCaptureImportWorkflowInput,
+        manual_capture_import_workflow_id,
+    )
+
+    tenant_id = _tenant_id(params)
+    item_id = _required_string(params, "itemId")
+    capture_mode = _required_string(params, "captureMode")
+    try:
+        ManualCaptureMode(capture_mode)
+    except ValueError as exc:
+        raise ValueError(f"unsupported manual capture mode: {capture_mode}") from exc
+    content_text = _optional_string(params, "contentText", allow_empty=True)
+    content_html_base64 = _optional_string(
+        params,
+        "contentHtmlBase64",
+        allow_empty=True,
+    )
+    captured_url = _optional_string(params, "capturedUrl")
+    if content_text is None and content_html_base64 is None and captured_url is None:
+        raise ValueError(
+            "one of contentText, contentHtmlBase64, or capturedUrl is required"
+        )
+    future_manual_action_required = params.get("futureManualActionRequired", False)
+    if not isinstance(future_manual_action_required, bool):
+        raise ValueError("futureManualActionRequired must be a boolean")
+    payload = ManualCaptureImportWorkflowInput(
+        tenant_id=tenant_id,
+        item_id=item_id,
+        capture_mode=capture_mode,
+        expected_app_dir=_optional_string(params, "expectedAppDir"),
+        expected_db_path=_optional_string(params, "expectedDbPath"),
+        content_text=content_text,
+        content_html_base64=content_html_base64,
+        captured_url=captured_url,
+        note=_optional_string(params, "note", allow_empty=True),
+        future_manual_action_required=future_manual_action_required,
+    )
+    return WorkflowStartSpec(
+        workflow=ManualCaptureImportWorkflow,
+        args=(payload,),
+        workflow_id=manual_capture_import_workflow_id(tenant_id, item_id),
+    )
+
+
 def apply_workflow_id(tenant_id: str, job_key: str) -> str:
     return f"apply-{tenant_id}-{job_key}"
 
@@ -398,3 +448,26 @@ def _source_ids(params: dict[str, Any]) -> tuple[str, ...]:
     if not isinstance(raw, list):
         raise ValueError("sourceIds must be an array")
     return tuple(dict.fromkeys(str(item).strip() for item in raw if str(item).strip()))
+
+
+def _optional_string(
+    params: dict[str, Any],
+    name: str,
+    *,
+    allow_empty: bool = False,
+) -> str | None:
+    value = params.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    if not allow_empty and not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
+    return value
+
+
+def _required_string(params: dict[str, Any], name: str) -> str:
+    value = _require(params, name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
+    return value.strip()

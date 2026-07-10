@@ -97,27 +97,38 @@ method as either `mode="workflow"` (start a workflow, return its ids) or
 | `tailor_job`, `retailor_job`, `retailor_current_policy` | workflow | `JobPreparationWorkflow` (`tailor`,`cover`,`pdf`) |
 | `refresh_compensation` | workflow | `CompensationRefreshWorkflow` |
 | `profile_import` | workflow | `ProfileImportWorkflow` |
+| `manual_capture_import` | workflow | `ManualCaptureImportWorkflow` (awaited by the API route) |
+| `generate_interview_prep` | workflow | `InterviewPrepWorkflow` |
 | `run_contact_research` | workflow | `ContactResearchWorkflow` (per-task, `contact-research-{taskId}`) |
 | `analyze_job` | sync | none (inline read) |
+| `generate_outreach_draft` | sync | none (inline generation + persistence) |
 | `cancel_run` | sync | none (issues a Temporal cancel to a running handle) |
 
 Workflow selection for `run_stage` lives in
 `workers/automation/src/jobctrl/workflow_specs.py`
-(`build_run_stage_workflow_spec` and `build_apply_workflow_spec`).
+(`build_run_stage_workflow_spec`, `build_apply_workflow_spec`, and
+`build_manual_capture_import_workflow_spec`).
 
 ### Async vs Sync (202 vs 200)
 
 The distinction matters for anyone reading the API or the UI:
 
-- **Workflow-mode methods are asynchronous.** The method returns
+- **Workflow-mode methods are asynchronous by default.** The method returns
   `{ runId, workflowId }` the moment Temporal accepts the start, and the HTTP
   route answers **202 Accepted**. The outcome is *not* in that response — it
   arrives later in the read model and is pushed to the UI via SSE invalidation.
   A failure to *start* (bad input, worker unreachable) returns an error status,
   not a 202; a request the API resolves **without** starting a workflow — an
   ineligible stage or a pure stage reset — answers **200 OK**, not 202.
+- **Awaited workflow methods preserve synchronous HTTP contracts without
+  bypassing Temporal.** `profile_import` and `manual_capture_import` pass
+  `awaitResult`; JSON-RPC starts the registered workflow, waits for its result,
+  and the HTTP route answers **200 OK** only after the worker-owned activity
+  completes. Manual-capture retries reconstruct that response from the
+  canonical imported queue row after validating capture identity and content.
 - **Sync-mode methods block for their result** and answer **200 OK** with the
-  payload inline. Only `analyze_job` and `cancel_run` are synchronous.
+  payload inline. `analyze_job`, `generate_outreach_draft`, and `cancel_run`
+  are synchronous.
 
 So a green "Run stage" click that returns 202 means "queued and running", not
 "done". This is why the UI reconciles later through projections and SSE.
@@ -145,7 +156,7 @@ sequenceDiagram
 
 ## Workflow Catalog
 
-Six workflows are registered in
+The workflow catalog is registered in
 `workers/automation/src/jobctrl/infrastructure/temporal/registry.py`
 (`WORKFLOWS`). All timeouts and retry policies below are set at the workflow's
 activity call sites.
@@ -156,9 +167,12 @@ activity call sites.
 | `JobPipelineWorkflow` | serial stage dispatch; `discover`→child `DiscoverWorkflow`, `enrich`/`score`/`tailor`/`cover`→activities, `apply`→child `ApplyWorkflow` | stage activities 30 min; heartbeat 2 min | enrich/score 5 s→60 s ×3; tailor/cover 10 s→120 s ×3 |
 | `JobPreparationWorkflow` | `score_job`, `tailor_job`, `cover_letter`, `render_pdf` in fixed order | each 30 min; heartbeat 2 min | score ×3; tailor ×3; cover/pdf ×3 |
 | `ApplyWorkflow` | `apply_activity` | 2 h batch / 1 h continuous batch; heartbeat 60 s | live: 1 attempt; dry-run: 2 attempts |
+| `ManualCaptureImportWorkflow` | `manual_capture_import_activity` | 10 min | 2 s→10 s ×2; identity/input/replay mismatches are non-retryable |
 | `ProfileImportWorkflow` | `profile_import_activity` | 10 min | 2 attempts |
 | `CompensationRefreshWorkflow` | `refresh_compensation_activity` | 20 min | 2 attempts |
+| `InterviewPrepWorkflow` | `generate_interview_prep_activity` | 20 min | 2 attempts |
 | `ContactResearchWorkflow` | `check_spend_budget` preflight, then `run_contact_research` (one source-family activity: gateway-guarded fetch + LLM candidate extraction, proposing candidates in `needs_review`) | activity 30 min; heartbeat 2 min | 10 s→120 s ×3 |
+| `DurabilityProbeWorkflow` | durable timer only (diagnostic; no business activity) | caller-selected timer | Temporal timer recovery |
 
 A few catalog details worth calling out:
 

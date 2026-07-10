@@ -1,11 +1,11 @@
 /**
  * SubprocessJsonRpcAdapter (Phase 9 / S-34).
  *
- * Spawns ``uv --project workers/automation run jobctrl rpc`` as a
- * long-lived subprocess and pipes JSON-RPC requests over its
+ * Spawns the centrally resolved Python CLI command as a long-lived
+ * subprocess and pipes JSON-RPC requests over its
  * stdin/stdout.  Replaces the previous "spawn one subprocess per
  * action" pattern in ``local-actions.ts`` — per the no-strangler
- * directive the old per-call ``uv run jobctrl action ...`` path is
+ * directive the old per-call subprocess action path is
  * deleted.
  *
  * Lifecycle:
@@ -22,13 +22,13 @@
  * request; ``call()`` resolves on that envelope.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { buildJsonRpcRequest, JsonRpcResponseSchema, type JsonRpcResponse, type RpcMethod } from "./contracts.js";
-
-const API_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
-const AUTOMATION_PROJECT_DIR = path.resolve(API_SRC_DIR, "../../../workers/automation");
+import {
+  AUTOMATION_PROJECT_DIR,
+  createSourcePythonRuntime,
+  type PythonRuntimeCommandResolver,
+} from "./python-runtime.js";
 
 export interface JsonRpcCallOptions {
   /** Working directory for the worker process (defaults to repo root). */
@@ -37,6 +37,8 @@ export interface JsonRpcCallOptions {
   uvBinary?: string;
   /** Override the worker project directory. Useful for tests. */
   projectDir?: string;
+  /** Inject the private Python runtime used by production payloads. */
+  pythonRuntime?: PythonRuntimeCommandResolver;
   /**
    * Per-request timeout in ms. A dead or hung worker handler would otherwise
    * leave the request pending forever; on timeout the pending entry is
@@ -65,13 +67,21 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
   private readonly pending = new Map<number | string, PendingRequest>();
   private buffer = "";
   private closed = false;
-  private readonly options: Required<JsonRpcCallOptions>;
+  private readonly options: {
+    appDir: string;
+    pythonRuntime: PythonRuntimeCommandResolver;
+    requestTimeoutMs: number;
+  };
 
   constructor(options: JsonRpcCallOptions = {}) {
     this.options = {
       appDir: options.appDir ?? AUTOMATION_PROJECT_DIR,
-      uvBinary: options.uvBinary ?? "uv",
-      projectDir: options.projectDir ?? AUTOMATION_PROJECT_DIR,
+      pythonRuntime:
+        options.pythonRuntime ??
+        createSourcePythonRuntime({
+          ...(options.projectDir ? { projectDir: options.projectDir } : {}),
+          ...(options.uvBinary ? { uvBinary: options.uvBinary } : {}),
+        }),
       requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
     };
   }
@@ -126,13 +136,13 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
   private ensureChild(): ChildProcessWithoutNullStreams {
     if (this.child) return this.child;
 
-    const args = ["--project", this.options.projectDir, "run", "jobctrl", "rpc"];
-    const child = spawn(this.options.uvBinary, args, {
-      cwd: this.options.appDir,
-      env: {
-        ...process.env,
-        JOBCTRL_DIR: this.options.appDir,
-      },
+    const command = this.options.pythonRuntime.resolve(
+      { kind: "cli", args: ["rpc"] },
+      { appDir: this.options.appDir },
+    );
+    const child = spawn(command.executable, command.argv, {
+      cwd: command.cwd,
+      env: command.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdout.setEncoding("utf8");
@@ -206,10 +216,15 @@ let _defaultDispatcher: SubprocessJsonRpcAdapter | null = null;
 let _defaultDispatcherKey: string | null = null;
 
 function dispatcherKey(options: JsonRpcCallOptions = {}): string {
+  const pythonRuntime =
+    options.pythonRuntime ??
+    createSourcePythonRuntime({
+      ...(options.projectDir ? { projectDir: options.projectDir } : {}),
+      ...(options.uvBinary ? { uvBinary: options.uvBinary } : {}),
+    });
   return JSON.stringify({
     appDir: options.appDir ?? AUTOMATION_PROJECT_DIR,
-    projectDir: options.projectDir ?? AUTOMATION_PROJECT_DIR,
-    uvBinary: options.uvBinary ?? "uv",
+    pythonRuntime: pythonRuntime.id,
   });
 }
 
