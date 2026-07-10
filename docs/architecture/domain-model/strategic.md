@@ -9,89 +9,36 @@ boundaries explicitly is what stops one context's assumptions from leaking into
 another. This page names the nine contexts, says what each owns (and does not
 own), and maps how they hand work to one another.
 
-### Context Map
+## Context Map
 
 ```mermaid
-graph TB
-    subgraph "Core Domain"
-        JD["Job Discovery"]
-        JE["Job Enrichment"]
-        SC["Scoring"]
-        MG["Materials Generation"]
-        AA["Apply Automation"]
-    end
+flowchart LR
+    DISC["Discovery"] --> ENRICH["Enrichment"] --> SCORE["Scoring"]
+    PROFILE["Candidate Profile"] --> SCORE
+    SCORE --> MATERIALS["Materials"] --> APPLY["Apply"]
+    PROFILE --> MATERIALS
 
-    subgraph "Supporting Domain"
-        CP["Candidate Profile"]
-        PO["Pipeline Orchestration"]
-        PREP["Preparation (per-job)"]
-        CMP["Compensation"]
-        CO["Contact & Outreach"]
-    end
+    PIPE["Pipeline Orchestration"] -->|commands| CORE["Core pipeline"]
+    CORE -->|domain events| PIPE
+    PIPE --> PREP["Per-job preparation"]
 
-    subgraph "Generic Subdomain"
-        OPS["Operations / Read-Side"]
-    end
+    DISC --> OPS["Operations / read side"]
+    SCORE --> OPS
+    MATERIALS --> OPS
+    APPLY --> OPS
+    COMP["Compensation"] --> OPS
+    OUT["Contact & Outreach"] --> OPS
 
-    subgraph "Platform Contexts (cloud)"
-        IAM["Identity & Access"]
-        BILL["Billing & Entitlements"]
-        AUDIT["Audit Log"]
-        SECRETS["Secret Management"]
-    end
-
-    JD -->|"JobDiscovered (Published Language)"| PO
-    JE -->|"JobEnriched (Published Language)"| PO
-    SC -->|"JobScored (Published Language)"| PO
-    MG -->|"ResumeApproved / CoverLetterGenerated / PdfRendered (Published Language)"| PO
-    AA -->|"ApplicationSubmitted / ApplicationFailed (Published Language)"| PO
-
-    PO -->|"StageCompleted events"| OPS
-
-    CP -->|"Conformist (Profile read)"| SC
-    CP -->|"Conformist (Profile read)"| MG
-    CP -->|"Conformist (Profile read)"| AA
-
-    PO -->|"commands ▸"| JD
-    PO -->|"commands ▸"| JE
-    PO -->|"commands ▸"| SC
-    PO -->|"commands ▸"| MG
-    PO -->|"commands ▸"| AA
-
-    PO -->|"starts JobPreparationWorkflow ▸"| PREP
-    CMP -.->|"CompensationFactsUpdated"| OPS
-    JD -.->|"Employer / JobId (Conformist)"| CO
-    CO -.->|"Contact events"| OPS
-
-    OPS -.->|"Projection queries"| JD
-    OPS -.->|"Projection queries"| SC
-    OPS -.->|"Projection queries"| MG
-    OPS -.->|"Projection queries"| AA
-
-    IAM -.->|"TenantContext (middleware)"| OPS
-    IAM -.->|"TenantContext (middleware)"| PO
-    BILL -.->|"Entitlement check"| PO
-    BILL -.->|"Usage metering"| AA
-    BILL -.->|"Usage metering"| SC
-    AUDIT -.->|"Event sink"| OPS
-    SECRETS -.->|"Credential fetch"| JD
-    SECRETS -.->|"Credential fetch"| JE
-    SECRETS -.->|"Credential fetch"| AA
-
-    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
-    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
-    classDef ext fill:#f1f5f9,stroke:#94a3b8,color:#334155,stroke-dasharray:5 4
-    class JD,JE,SC,MG,AA,CP,PO,PREP,CMP,CO py
+    class DISC,ENRICH,SCORE,PROFILE,MATERIALS,APPLY,PIPE,CORE,PREP,COMP,OUT py
     class OPS store
-    class IAM,BILL,AUDIT,SECRETS ext
 ```
 
-Notice how the five **Core Domain** contexts each publish a Published-Language
-event to Pipeline Orchestration, which in turn commands them and forwards
-progress to Operations; the platform contexts at the bottom (Identity, Billing,
-Audit, Secrets) are cloud-only seams that do not exist in local-first mode.
+The core flow moves left to right. Pipeline Orchestration commands that work and
+receives domain events; Operations turns those events into read projections.
+Identity, billing, audit, and secret-management remain cloud-only seams, so they
+are described in the context sections instead of crowding this local-first map.
 
-### 3.1 Job Discovery
+## 3.1 Job Discovery
 
 **Purpose:** Find job postings from external sources and create canonical job
 records with stable identity.
@@ -133,7 +80,7 @@ processing.
 
 ---
 
-### 3.2 Job Enrichment
+## 3.2 Job Enrichment
 
 **Purpose:** Enrich discovered jobs with full descriptions and direct
 application URLs by scraping job detail pages.
@@ -171,7 +118,7 @@ parser, and LLM I/O in adapters.
 
 ---
 
-### 3.3 Candidate Profile
+## 3.3 Candidate Profile
 
 **Purpose:** Own the user's reusable career data, resume baseline, tailoring
 policies, and writing style preferences.
@@ -214,7 +161,7 @@ boundary.
 
 ---
 
-### 3.4 Scoring
+## 3.4 Scoring
 
 **Purpose:** Evaluate candidate-job fit and produce structured, explainable
 scores.
@@ -255,7 +202,7 @@ context with its own persistence.
 
 ---
 
-### 3.5 Materials Generation
+## 3.5 Materials Generation
 
 **Purpose:** Produce tailored application materials (resumes, cover letters,
 PDFs) for jobs that pass the scoring threshold.
@@ -308,7 +255,7 @@ writes remain adapter concerns.
 
 ---
 
-### 3.6 Apply Automation
+## 3.6 Apply Automation
 
 **Purpose:** Automate job application submission through browser-based
 interaction with ATS portals.
@@ -356,7 +303,7 @@ management, telemetry, persistence, and business rules.
 
 ---
 
-### 3.7 Pipeline Orchestration
+## 3.7 Pipeline Orchestration
 
 **Purpose:** Coordinate the flow of jobs through pipeline stages, manage stage
 state machines, enforce ordering and retry policies, and dispatch commands to
@@ -400,7 +347,7 @@ Apply processing logic.
 
 ---
 
-### 3.8 Operations / Read-Side
+## 3.8 Operations / Read-Side
 
 **Purpose:** Provide the user-facing read model — dashboards, job lists, job
 detail views, artifact listings, and event logs — by projecting data from all
@@ -439,7 +386,7 @@ directly.
 
 ---
 
-### 3.9 Compensation (Supporting Capability)
+## 3.9 Compensation (Supporting Capability)
 
 **Purpose:** Attach compensation evidence from licensed or configured sources
 (Levels.fyi, Glassdoor) to jobs and employers, and expose it to Scoring, the
@@ -463,7 +410,7 @@ evidence that other contexts consume.
 
 ---
 
-### 3.10 Preparation (Per-Job Orchestration)
+## 3.10 Preparation (Per-Job Orchestration)
 
 **Purpose:** Drive a single discovered job through its per-job preparation
 sequence — scoring, tailoring, cover letter, and PDF rendering (with artifact
@@ -484,7 +431,7 @@ contexts).
 
 ---
 
-### 3.11 Contact & Outreach (Supporting Domain)
+## 3.11 Contact & Outreach (Supporting Domain)
 
 **Purpose:** Keep durable **contact records** — the people relevant to a company
 or a specific application (recruiter, hiring manager, referrer, warm intro) —

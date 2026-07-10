@@ -5,306 +5,171 @@ next: false
 
 # Security
 
-JobCtrl runs entirely on your machine. There is no hosted backend, no account,
-and no server that receives your job-search data. The trust boundary is your own
-computer: the local SQLite database, generated resumes and cover letters, browser
-profiles, logs, and environment configuration live under `~/.jobctrl/`; the
-optional macOS credential panel writes its three entries to the system Keychain.
-Local data stays on your computer unless a step you start or a schedule you
-explicitly enable sends something to an external service. This page describes
-what those steps are, the approval gates that guard risky actions, and the honest
-limits of running everything locally.
+JobCtrl is local-first software with one high-risk capability: it can drive a
+browser or Gmail connector to submit a real application. Security therefore
+depends on both local data protection and binding controls around outbound
+actions.
 
-This page owns JobCtrl's user-facing security model and safety gates. For the
-repo-scoped developer threat model, see
-[developer Security](../developer/security.md#repository-threat-model). For the
-full inventory of what is stored locally and how to share bug reports safely,
-see [Data, Privacy & Safety](data-and-safety.md).
+This page owns the user-facing enforcement model. The complete local-file
+inventory is in [Data, Privacy & Safety](data-and-safety.md); exact controls are
+in [Configuration](configuration.md); the repo threat model is in
+[Developer Security](../developer/security.md#repository-threat-model).
 
 ## Privacy Quick Answer
 
-Local-first means JobCtrl stores your database, browser state, generated
-resumes, cover letters, logs, and runtime configuration on your own computer.
-It does not mean every character stays local forever: LLM providers, the apply
-agent, Gmail, Google Maps, CAPTCHA solving, and Langfuse receive data only when
-you configure the related feature and start a step or explicitly enable a
-schedule that needs them.
+- Your database, generated artifacts, browser state, and logs stay under your
+  local control.
+- Nothing calls a provider until you configure and use the related feature or
+  explicitly enable its schedule.
+- Local files are not encrypted by JobCtrl; OS account and disk protection are
+  the at-rest boundary.
+- Live apply is approval-gated by default, dry-run is blocked at the browser
+  network layer, and ambiguous post-submit recovery parks for verification.
 
 ## What Leaves Your Machine
 
-Nothing leaves your machine by default. The following calls happen only when you
-start the step that needs them or explicitly enable its schedule, and have
-configured the relevant provider:
-
-| Outbound call | When it happens | What is sent |
+| Outbound call | When | What can be sent |
 | --- | --- | --- |
-| LLM provider APIs | Scoring, employer analysis, resume tailoring, cover-letter generation, and contact-research extraction | Job posting text, your profile evidence (experience, skills, verified metrics), generated resume/cover-letter text, and the fetched text of user-opted public contact-research pages. Employer analysis sends the posting text to a Claude, Codex, and Gemini ensemble. |
-| The apply agent's model | During apply or dry-run work you start, or the standing apply loop you explicitly enable | The full apply prompt: your profile summary (contact details, work authorization, salary expectation, EEO answers) plus the tailored resume and cover-letter text. Profile passwords and CAPTCHA-provider keys are not included in the prompt. The apply agent is a local Claude runtime subprocess (system `claude` or the pinned SDK-bundled binary), so this prompt is sent to the model backing it. |
-| Job boards, ATS APIs, posting pages, and contact-research public pages | Discovery, enrichment, and supervised contact research | Search queries and page fetches. JobCtrl never bypasses login, paywall, CAPTCHA, rate-limit, or bot-control gates (see [No Third-Party Bypass](#no-third-party-bypass)). Contact research rejects loopback, private-network, link-local, and metadata URLs or redirects before fetched page text can enter the LLM extraction prompt. |
-| Gmail | Only if you authenticate the Gmail connector | Bounded search queries for verification codes and application-outcome emails, plus approved email application sends. Raw email bodies stay local and are not copied into events, telemetry, broad projections, or logs; outgoing sends require `gmail.send` and a matching Apply Review binding. |
-| Google Maps | Only if you set `VITE_GOOGLE_MAPS_API_KEY` | Address text you type into the Profile form's location search. |
-| CAPTCHA solving service | Only when `CAPSOLVER_API_KEY` is configured and a supported apply-page widget is detected | The owned local solver tool sends the site key and page URL to the configured provider; provider keys and solver tokens are not sent through the model prompt. Unsupported or unconfigured CAPTCHA flows fail closed. |
-| Langfuse / OpenTelemetry | Only if you configure Langfuse credentials | LLM prompts and completions, workflow spans, and JSON-RPC spans. Export is off unless configured, and `LANGFUSE_DISABLE=1` opts out even when credentials are present. |
+| LLM providers | Scoring, analysis, tailoring, cover letters, contact extraction | Posting text, relevant profile evidence, generated text, or opted-in page text. Employer analysis uses Claude, Codex, and Gemini legs. |
+| Apply model | Apply/dry-run or an enabled standing loop | Profile application fields plus tailored resume/cover-letter text. Passwords and solver keys are excluded from the prompt. |
+| Job/ATS/public pages | Discovery, enrichment, supervised contact research | Search terms and network/page requests. |
+| Gmail | Authenticated verification/outcome flows or approved email applications | Bounded queries/evidence, or the exact reviewed send. |
+| Google Maps | Configured profile autocomplete | Address text typed in the field. |
+| CAPTCHA provider | Configured supported widget | Site key and page URL through the local solver tool. |
+| Langfuse/OpenTelemetry | Explicit telemetry configuration | Prompts/completions and workflow/JSON-RPC spans. |
 
-The apply prompt is the largest single batch of personal data that leaves your
-machine. Review dry-run transcripts and keep targets narrow before any live
-submission.
+The apply prompt is the largest single transfer of personal data. Review a
+dry-run and keep targets narrow before live submission.
 
 ## What Stays On Your Machine
 
-JobCtrl never uploads these files anywhere — they exist only on your disk:
+The SQLite database, generated files, browser/apply state, raw Gmail bodies,
+logs, and local traces stay on disk. Their *text* may still be sent when a model
+generates or applies with that content, or when configured telemetry exports it.
 
-- the `jobctrl.db` SQLite database (profile, jobs, events, projections,
-  settings, artifact metadata, and its `-wal` / `-shm` sidecars);
-- generated resume, cover-letter, and PDF files;
-- browser profiles and apply-worker state;
-- raw Gmail message bodies;
-- local logs and locally written prompt/completion traces.
-
-Files staying local is not the same as their *content* staying local: the text
-of a tailored resume or cover letter necessarily passes through the LLM
-provider that generates it, is included in the apply prompt, and appears in
-Langfuse traces if you enabled that export — exactly the rows in the table
-above. If you configured no external provider, nothing in this list leaves in
-any form.
-
-::: warning Local data is not encrypted
-JobCtrl does not encrypt the database, the `.env` file, or generated
-artifacts, so their protection is your operating-system account and disk
-security. Treat `~/.jobctrl/` as sensitive: do not commit it, copy it into
-shared locations, or attach it to bug reports.
+::: warning Local does not mean encrypted
+JobCtrl does not encrypt `jobctrl.db`, `.env`, or generated artifacts. Protect
+your OS account/disk and never attach `~/.jobctrl/` to a bug report.
 :::
 
 ## Browser Extension Pairing
 
-The browser-extension API surface uses a local capability token so an installed
-extension can prove it is paired with your local JobCtrl stack. The token is
-generated under `~/.jobctrl/`, shown in Settings for pairing, and required on
-`/v1/extension/*` routes that still target a loopback host. Settings token
-display and rotation are limited to CLI or same-origin Settings requests, so
-arbitrary loopback web origins cannot mint or rotate the extension token. The
-same local token can authenticate deliberate non-browser local API mutations,
-but arbitrary browser origins on loopback remain blocked; live submission still
-remains behind Apply Review.
+The extension uses a local capability token for `/v1/extension/*` loopback
+routes. Settings can display/rotate it only from the CLI or same-origin Settings
+surface. The token does not make a remote API bind safe.
 
-In Phase 1, the extension can only capture the active http(s) page after you
-click **Save job** in the popup. It sends the page URL and visible text to the
-local API over loopback, where JobCtrl records it through the same
-manual-capture importer used by the web app. If the local stack is down, the
-extension keeps a bounded local queue in browser extension storage. It does not
-send captures to third-party services and it has no submit/apply action.
-
-In deterministic autofill mode, the extension reads only a whitelisted profile
-field list from `/v1/extension/autofill/profile`; password and resume content
-are excluded. Content scripts are limited to supported ATS hosts and show a
-review panel before filling accepted values. The extension code does not call
-form submit, `requestSubmit`, or an apply route.
+Capture requires a click and sends the active page URL/visible text to the local
+API. If the stack is down, the extension holds a bounded local queue. Autofill
+reads only whitelisted profile fields on supported ATS hosts, shows a review
+panel, and never calls submit. Passwords, resume content, and generated free-text
+answers are excluded.
 
 ## Approval And Control Gates
 
-Applying to jobs is JobCtrl's one genuinely risky action, because it can drive
-a real browser and submit a real application. Several gates stand between a
-discovered job and a submitted one. In plain terms: you rehearse the application
-with a dry run before live submission, nothing is submitted for real until you
-explicitly approve that exact job with current evidence, and the same application
-is never submitted twice.
-
 ### Apply Approval Is Required By Default
 
-Live submission is gated on an explicit decision. With the default
-`applyApprovalRequired: true`, a live apply run starts only when the latest Apply
-Review decision for that job is `approve_submit`, that approval is bound to the
-current materials generation, profile version, and application URL, and matching
-dry-run evidence exists. Full dry-run evidence satisfies the gate. A partial dry
-run satisfies it only when you use the explicit partial-evidence approval action
-for that specific run. Otherwise the backend claim rolls back and the browser
-never launches. The gate is enforced in the worker's claim transaction, not
-merely surfaced in the UI, so no UI or command path can submit without a fresh
-recorded approval while the gate is on. You can turn the gate off in Preferences,
-which is why the settings form shows a persistent warning when it is off — with
-the gate off, the agent may submit immediately after claiming a job.
+With `applyApprovalRequired: true`, the latest decision must be
+`approve_submit` and bind the current materials generation, profile version,
+application URL, and qualifying dry-run evidence. A partial rehearsal requires
+an explicit approval for that run and its blocked channels.
 
-Email-only application paths still use this approval model. During dry-run, the
-agent may report a posted recipient with `RESULT:EMAIL_ONLY:<address>`, but it
-does not draft or send email. JobCtrl verifies that recipient against stored
-posting text, records a deterministic candidate with the selected resume PDF
-attachment, and sends through Gmail only when Apply Review approves that exact
-recipient and attachment. A stale binding, missing `gmail.send` token, or missing
-sender parks or fails closed instead of sending.
+The Python launcher's atomic claim checks the binding. This is not a UI-only
+warning, so API/RPC dispatch cannot bypass it while enabled. Turning the setting
+off permits a claimed live run to submit without per-job approval; the UI keeps
+a persistent warning visible.
+
+Email-only applications use the same binding for the exact recipient and resume
+attachment. Missing scope, sender, or fresh approval fails closed.
 
 ### Dry-Run Cannot Submit
 
-Run dry-runs before approving any real submission. Dry-run does two things, so
-that safety does not depend on the agent choosing not to click submit:
+Dry-run combines instruction with enforcement. A Chrome DevTools Protocol guard
+blocks mutating requests, form submission, WebSocket/beacon channels, scripted
+navigation, and data-bearing subresource exfiltration. Ordinary page navigation
+remains available for rehearsal.
 
-- it tells the agent not to click the final Submit/Apply button; and
-- it installs a guard inside the browser itself — over the Chrome DevTools
-  Protocol — that blocks mutating requests, form submits, WebSocket/beacon
-  channels, and script-initiated document navigation or subresource
-  `GET`/`HEAD` requests that could carry filled profile data out through an
-  iframe, image, fetch, or similar page-controlled channel. Ordinary document
-  navigation remains available so the rehearsal can still reach the application
-  page. Even a misbehaving agent physically cannot submit a form through the
-  browser during a dry run.
-
-Dry-run submits nothing, so it does not require an approval decision.
+Because the browser enforces the boundary, safety does not depend on the agent
+choosing not to click Submit.
 
 ### Applications Submit At Most Once
 
-JobCtrl is built so that a job is never submitted twice, even if something
-crashes mid-apply. Before it starts, an apply run refuses to claim a job that
-already has a run in progress, succeeded, or parked for verification. The agent
-records a "submit intent" checkpoint just before it submits; if the process then
-crashes without a clear result, the run is parked for you to verify by hand
-instead of being retried. A missed retry is safer than a duplicate application.
+An apply run cannot claim a job already running, succeeded, or awaiting
+verification. Immediately before a live submit it records a durable submit
+intent. If the process then dies without a terminal result, recovery parks the
+job in `needs_verification` instead of retrying.
 
 ### Daily LLM Spend Ceiling
 
-A daily budget (`dailyBudgetUsd`, default `25`; `0` means unlimited) caps LLM
-cost. Every workflow that spends LLM tokens runs a budget preflight and stops
-with a non-retryable budget error once the day's estimated spend reaches the
-ceiling. The ledger is a coarse estimate, not billing truth, and the ceiling is a
-per-workflow preflight rather than a mid-call interrupt: a run already in flight
-is not aborted, but the next spendful workflow will not start. Today's estimated
-spend against the budget is shown on the health surface. See
-[Configuration](configuration.md#llm-spend-budget).
+`dailyBudgetUsd` defaults to `25`; `0` means unlimited. Spendful workflows run a
+preflight and stop non-retryably after the daily estimate reaches the limit. It
+is a coarse workflow-start guard, not provider billing truth or a mid-call kill
+switch.
 
 ### No Third-Party Bypass
 
-JobCtrl must never submit applications, run destructive profile or database
-actions, or bypass third-party controls unless you explicitly authorize that
-behavior. This includes CAPTCHA, paywall, login, rate-limit, and bot-control
-bypass. The apply agent is instructed to stop on single sign-on and third-party login
-screens (SSO/OAuth), decline browser permission prompts, refuse ID or biometric
-verification, and never enter payment or bank details. CAPTCHA solving is limited
-to the owned local solver tool for supported widgets; unsupported or unconfigured
-challenges fail closed.
+JobCtrl does not bypass login, paywall, rate-limit, bot-control, identity,
+biometric, payment, or bank-detail gates. The apply agent declines browser
+permission prompts and stops on SSO/OAuth or unsupported CAPTCHA. Supported
+CAPTCHA solving uses only the owned local tool; provider keys/tokens never enter
+the model prompt.
 
 ### Crawl Politeness
 
-Every discovery and enrichment fetch — `urllib` API calls and Playwright
-navigations alike — routes through one crawl-politeness gateway. It:
+Discovery/enrichment uses one gateway for controlled HTTP and Playwright fetches:
 
-- **Honors `robots.txt`** for page-rendering fetches, following owner decision
-  D6 when the file cannot be read: a `2xx` is parsed and enforced; a `4xx`
-  (including `404`) means the file is genuinely absent, so the fetch is allowed
-  (per RFC 9309); a `5xx` or a timeout is *inconclusive* and fails **closed** —
-  the path is treated as disallowed and re-checked on a short TTL; and a DNS
-  failure or a refused connection is a *definitive network absence* of the robots
-  endpoint and fails **open with a warning** (allow), since a genuinely down host
-  simply fails the follow-on content fetch harmlessly. The trade-off this accepts
-  is that a host which refuses `/robots.txt` while still serving content is
-  crawled unenforced. JobCtrl also uses the standard-library `robotparser`,
-  which is first-match rather than RFC 9309 longest-match, so it can over-block an
-  `Allow` exception — the safe direction.
-- **Stamps one honest `User-Agent`** — `JobCtrl/<version> (+<repo url>)` by
-  default — that **never impersonates a browser** on a surface it controls. You
-  can override the product token and contact via
-  [configuration](configuration.md#crawl-politeness); review it before real
-  crawls.
-- **Rejects non-public destinations** before content extraction: direct targets,
-  redirects, and Playwright subrequests must be public HTTP(S) destinations.
-  Loopback, private, link-local, metadata-service, and file URLs are blocked
-  before page content can feed enrichment or LLM-assisted extraction.
-- **Paces requests per host** (a minimum interval + a concurrency cap) and
-  **bounds each run's request budget**, so parallel crawls cannot hammer a host.
-  A server `Retry-After` is honored but clamped, so a hostile header cannot
-  freeze a worker.
+- `robots.txt` is enforced for page rendering: `2xx` parses the file, `4xx`
+  means absent, `5xx`/timeout is inconclusive and fails closed, and definitive
+  network absence fails open with a warning;
+- targets, redirects, and subrequests must be public HTTP(S)—loopback, private,
+  link-local, metadata, and file URLs are blocked;
+- per-host pacing, concurrency, and per-run request budgets limit load;
+- one honest JobCtrl user agent is used instead of browser impersonation; and
+- denied/rate-limited/budget/unsafe destinations are recorded as outcomes, not
+  generic scrape errors.
 
-A blocked fetch is recorded as a first-class **outcome** — robots-disallowed,
-rate-limited, budget-exhausted, or unsafe-url — never a scrape error. Politeness
-blocks are surfaced per source in the Source Health card
-(`SourcePolitenessBadges`) and discovery controls; unsafe enrichment URLs are
-non-retryable detail failures. Broad job boards fetched through `python-jobspy`
-own their internal per-board transport, so JobCtrl cannot robots-gate those
-individual requests; it applies budget + pacing at its own invocation boundary,
-and `jobctrl doctor` discloses when broad boards are active. The authenticated
-LinkedIn path uses your own logged-in browser session and presents its real
-browser identity — an owner-scoped exception that is still rate- and
-budget-limited.
+`python-jobspy` owns its internal board transport, so JobCtrl can apply only
+invocation-level pacing/budget there. Authenticated LinkedIn uses the user's real
+browser session but remains rate/budget limited. See
+[Configuration → Crawl Politeness](configuration.md#crawl-politeness).
 
 ## Credentials
 
-Different secrets live in different places, and it is worth knowing which:
+| Secret | Boundary |
+| --- | --- |
+| Provider/runtime keys | Shell or plaintext `~/.jobctrl/.env`; never SQLite. |
+| macOS web credential entries | Keychain for `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `LLM_URL`; status only is returned. |
+| CAPTCHA key | `CAPSOLVER_API_KEY` read by the owned local solver, not the model. |
+| Job-site passwords | Optional local profile value typed through a focused-field credential tool, never returned to the model. |
 
-- **Working runtime credentials and switches** are environment variables,
-  normally loaded from the plaintext `~/.jobctrl/.env` file or supplied by the
-  shell. This includes LLM-provider credentials and the other API keys described
-  on the [Configuration](configuration.md) page. They are never stored in
-  SQLite, but `.env` is not encrypted at rest.
-- **The web credential panel is macOS-only.** It sends a submitted
-  `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `LLM_URL` value to the loopback API,
-  which writes it to the macOS Keychain. Presence checks never return the stored
-  values and report configured, not configured, or status unknown. Unknown
-  (`inspection_failed`) means Keychain could not be inspected, not that the entry
-  is absent; unlock Keychain if it is locked and retry. Operational save/remove
-  failures expose only a generic unavailable result, never raw Keychain output.
-  When a Python CLI or worker process starts, after env-file loading, it loads a
-  Keychain fallback only for a missing or empty environment value; any non-empty
-  value already present wins. Keychain changes are not hot-reloaded, so restart
-  the worker or full stack after saving or removing one. Windows and Linux use
-  environment configuration today; native Credential Manager and Secret
-  Service/keyring adapters are planned.
-- **The CapSolver key** is the `CAPSOLVER_API_KEY` environment variable
-  (`.env`). The apply agent does not receive this key in its model prompt; the
-  owned solver tool reads it locally and never returns provider keys or solver
-  tokens to the model.
-- **Account passwords for login autofill** are profile data if you store them,
-  but the apply agent does not receive profile passwords in its prompt. For a
-  regular job-site password field, it can call a local credential tool that
-  reads the password from the local profile database and types it into the
-  focused field without returning the value to the model. If the credential is
-  missing or the field is not a password field, login fails closed for operator
-  handling.
-
-JobCtrl never commits any of these; the release gate scans for accidental
-secret commits (see the [developer Security page](../developer/security.md)).
+Environment values win over Keychain. Keychain is loaded only for missing/empty
+values at process startup, so restart after changes. Windows and Linux use
+environment configuration today.
 
 ## The Apply Agent
 
-The apply agent is a local Claude runtime subprocess that drives a real Chrome
-browser through Playwright. It uses a system `claude` when present, then the
-pinned Claude Agent SDK bundled binary unless `JOBCTRL_CLAUDE_BIN` is set. It
-runs with an explicit MCP tool allowlist for apply automation: browser form
-tools plus bounded Gmail verification-code tools, not shell/file access, raw
-Gmail mailbox send tools, raw page-script evaluation, or broad permission
-bypass. Email-only applications are sent by JobCtrl's owned Gmail connector
-after Apply Review approval, not by an agent mailbox tool.
+The local Claude runtime drives Chrome through an explicit apply-tool allowlist.
+It has browser form tools and bounded verification-code access—not shell/file
+access, raw mailbox/send tools, broad permission bypass, or arbitrary page
+script evaluation. Owned JobCtrl code performs approved email application sends.
 
-::: warning Prompt injection is a real risk
-Because the agent reads live, untrusted job pages and acts on them, a malicious
-page could try to trick it into doing something you did not intend. The controls
-below limit the damage; they do not remove the risk.
+::: warning Prompt injection remains a real risk
+The agent reads untrusted pages that can attempt to manipulate it. The controls
+limit consequences; they cannot make untrusted page content safe.
 :::
 
-Those controls:
-
-- the dry-run guard inside the browser makes it impossible to submit a form off
-  your machine during a dry run;
-- the approval gate keeps live submission behind a fresh `approve_submit`
-  decision bound to the reviewed materials, profile, URL, and dry-run evidence;
-- the spend ceiling caps how much LLM cost a runaway loop can incur;
-- credentials stay local — the LLM keys are not in the page's reach, and Gmail
-  write tools (draft, send, delete, modify, label, filter) are explicitly
-  disallowed for the agent;
-- the prompt hard-rules tell the agent never to lie about work authorization or
-  background, never to grant camera/mic/location permissions, and never to enter
-  payment details.
-
-Keep targets narrow and review dry-run transcripts before any live submission.
-If a required legal or screening attestation is missing from the profile, the
-agent stops instead of guessing.
+The practical containment layers are browser-enforced dry-run, bound approval,
+at-most-once submission, spend limits, local credential tools, and hard prompt
+rules against fabricated answers, permissions, or sensitive payments. If a
+legal/screening attestation is missing, the agent stops instead of guessing.
 
 ## Scoring Is Applicant-Side Only
 
-Fit scores are a triage aid for you, the applicant. They are not employer-side
-candidate screening and must not be used to rank people for hiring without a
-separate legal, bias-audit, validation, notice, and human-review process.
+Fit scores help the applicant prioritize. They are not employer-side screening
+and must not rank people for hiring without separate legal, bias-audit,
+validation, notice, and human-review controls.
 
 ## Reporting A Security Issue
 
-Report vulnerabilities privately. Prefer GitHub private vulnerability reporting
-if it is enabled for the repository; otherwise open a minimal public issue asking
-for a private contact path, and omit exploit details, secrets, logs, profile
-data, generated materials, and local paths. The full policy is in
-[SECURITY.md](../../SECURITY.md).
+Prefer GitHub private vulnerability reporting. Otherwise request a private
+contact path in a minimal public issue; omit exploit details, secrets, logs,
+profiles, artifacts, and local paths. See [SECURITY.md](../../SECURITY.md).

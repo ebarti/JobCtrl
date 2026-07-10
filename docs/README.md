@@ -75,10 +75,12 @@
 - [`developer/first-run-ttfv.md`](developer/first-run-ttfv.md): owner-run
   real-path first-run time-to-value measurement protocol and generated record
   commands.
-- [`local-ts-api.md`](local-ts-api.md): local TypeScript API, web app
-  development notes, and the `GET /v1/events/stream` SSE contract.
-- [`local-reliability-qa.md`](local-reliability-qa.md): local QA checklist,
-  regression matrix, frontend test pyramid, and a11y bar.
+- [`local-ts-api.md`](local-ts-api.md): local TypeScript API overview and route
+  family map. Focused references live under [`api/`](api/), with the exhaustive
+  field-level reference in [`api/complete-contract.md`](api/complete-contract.md).
+- [`local-reliability-qa.md`](local-reliability-qa.md): QA command and checklist
+  chooser. Focused regression, browser, and frontend guides live under
+  [`developer/qa/`](developer/qa/), alongside the exhaustive checklist.
 - [`requirements.md`](requirements.md): product and technical requirements that
   must stay true as implementation changes.
 - [`decisions.md`](decisions.md): accepted architecture decision records.

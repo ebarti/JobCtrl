@@ -21,8 +21,6 @@ flowchart LR
     C["Contact & Outreach"] --> Cc["Contact"]
     R["Operations / Read-Side"] --> Rr["(no aggregate — projections only)"]
 
-    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
-    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
     class D,E,P,S,M,A,O,C,Djob,Ejob,Pp,Ss,Mm,Aa,Oo,Cc py
     class R,Rr store
 ```
@@ -31,9 +29,9 @@ Each context below owns the one aggregate root named on the right; its section
 then lists that root's invariants, entities, value objects, and the domain
 events it emits.
 
-### 4.1 Job Discovery Context
+## 4.1 Job Discovery Context
 
-#### Aggregate: Job
+### Aggregate: Job
 
 ```
 Aggregate Root: Job
@@ -74,9 +72,9 @@ behind ports; the aggregate is purely data.
 
 ---
 
-### 4.2 Job Enrichment Context
+## 4.2 Job Enrichment Context
 
-#### Aggregate: JobEnrichment
+### Aggregate: JobEnrichment
 
 ```
 Aggregate Root: JobEnrichment
@@ -120,9 +118,9 @@ multiple aggregate instances.
 
 ---
 
-### 4.3 Candidate Profile Context
+## 4.3 Candidate Profile Context
 
-#### Aggregate: Profile
+### Aggregate: Profile
 
 ```
 Aggregate Root: Profile
@@ -174,9 +172,9 @@ Profile context's internal modules.
 
 ---
 
-### 4.4 Scoring Context
+## 4.4 Scoring Context
 
-#### Aggregate: JobScore
+### Aggregate: JobScore
 
 ```
 Aggregate Root: JobScore
@@ -215,9 +213,9 @@ Identity: (TenantId, JobId, version: int)
 
 ---
 
-### 4.5 Materials Generation Context
+## 4.5 Materials Generation Context
 
-#### Aggregate: MaterialsSet
+### Aggregate: MaterialsSet
 
 ```
 Aggregate Root: MaterialsSet
@@ -311,9 +309,9 @@ queryable through the Operations read model (artifact list projection).
 
 ---
 
-### 4.6 Apply Automation Context
+## 4.6 Apply Automation Context
 
-#### Aggregate: ApplyRun
+### Aggregate: ApplyRun
 
 ```
 Aggregate Root: ApplyRun
@@ -383,9 +381,9 @@ stateDiagram-v2
 
 ---
 
-### 4.7 Pipeline Orchestration Context
+## 4.7 Pipeline Orchestration Context
 
-#### Aggregate: JobPipelineState
+### Aggregate: JobPipelineState
 
 ```
 Aggregate Root: JobPipelineState
@@ -455,7 +453,7 @@ Orchestration hasn't acknowledged.
 
 ---
 
-### 4.8 Operations / Read-Side Context
+## 4.8 Operations / Read-Side Context
 
 This context has no aggregates of its own. It maintains **projections** (read
 models) built from domain events emitted by other contexts.
@@ -487,9 +485,9 @@ read-model behaviour; source health is projected through `source_quality_stats`.
 
 ---
 
-### 4.9 Contact & Outreach Context
+## 4.9 Contact & Outreach Context
 
-#### Aggregate: Contact
+### Aggregate: Contact
 
 ```
 Aggregate Root: Contact
@@ -531,7 +529,7 @@ Phase 1 realises the `Contact` aggregate; Phase 2 adds the supervised
 `captureMethod = manual`; a row that links to neither an employer nor an
 application is skipped.
 
-#### Aggregate: ContactResearchTask
+### Aggregate: ContactResearchTask
 
 ```
 Aggregate Root: ContactResearchTask
@@ -580,7 +578,7 @@ outcomes, and timestamps — never candidate values):
 - `ContactResearchTaskFailed { tenantId, taskId, errorClass, retryable, failedAt }`
   — All consumed by: Operations (the `contact_research_task_projections` read model).
 
-#### Aggregate: OutreachThread
+### Aggregate: OutreachThread
 
 ```
 Aggregate Root: OutreachThread

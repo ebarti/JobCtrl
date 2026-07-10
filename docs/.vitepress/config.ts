@@ -11,9 +11,11 @@ const UNPUBLISHED_PREFIXES = ["docs/plans/", "docs/incidents/"];
 const UNPUBLISHED_FILES = new Set([
   "docs/backlog.md",
   "docs/claims-ledger.md",
+  "docs/decisions.md",
   "docs/delivered.md",
   "docs/publish-checklist.md",
   "docs/README.md",
+  "docs/requirements.md",
 ]);
 
 // Single source of truth for page rewrites: fed to VitePress `rewrites` AND
@@ -36,10 +38,9 @@ function routeForRewrittenPage(docPath: string): string | null {
 // in docs/developer/README.md): use the product (User Guide: install → see
 // it → use it daily → tune it → understand the data → protect it) → change
 // the product (Developer Guide) → understand the system (System
-// Architecture) → look things up (API, Reference). User-guide pages hide the
-// developer/reference groups in the theme layer; developer and reference
-// sections stay collapsed until opened or active. URLs are frozen; only labels
-// and order may change here.
+// Architecture) → look things up (API). User-guide pages hide the developer
+// groups in the theme layer; developer sections stay collapsed until opened
+// or active.
 const SIDEBAR: DefaultTheme.SidebarItem[] = [
   { text: "Home", link: "/" },
   // Frozen slot for the alternatives-comparison page (launch-readiness plan
@@ -63,7 +64,17 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
     items: [
       { text: "Overview", link: "/developer/" },
       { text: "Local Development", link: "/local-development" },
-      { text: "Reliability & QA", link: "/local-reliability-qa" },
+      {
+        text: "Reliability & QA",
+        collapsed: true,
+        items: [
+          { text: "Overview", link: "/local-reliability-qa" },
+          { text: "Regression Catalog", link: "/developer/qa/regression-catalog" },
+          { text: "Browser Smoke", link: "/developer/qa/browser-smoke" },
+          { text: "Frontend QA", link: "/developer/qa/frontend" },
+          { text: "Complete Checklist", link: "/developer/qa/complete-checklist" },
+        ],
+      },
       { text: "Security", link: "/developer/security" },
     ],
   },
@@ -130,14 +141,12 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
   {
     text: "API",
     collapsed: true,
-    items: [{ text: "Local TypeScript API", link: "/local-ts-api" }],
-  },
-  {
-    text: "Reference",
-    collapsed: true,
     items: [
-      { text: "Requirements", link: "/requirements" },
-      { text: "Decisions (ADRs)", link: "/decisions" },
+      { text: "Overview", link: "/local-ts-api" },
+      { text: "Profile & Settings", link: "/api/profile-and-settings" },
+      { text: "Jobs & Materials", link: "/api/jobs-and-materials" },
+      { text: "Operations & Events", link: "/api/operations-and-events" },
+      { text: "Complete Contract", link: "/api/complete-contract" },
     ],
   },
 ];
@@ -183,7 +192,17 @@ export default withMermaid(
       ["meta", { property: "og:image", content: "https://jobctrl.dev/assets/brand/lockup-primary.png" }],
       ["meta", { name: "theme-color", content: "#6d28d9" }],
     ],
-    srcExclude: ["plans/**", "incidents/**", "backlog.md", "claims-ledger.md", "delivered.md", "publish-checklist.md", "README.md"],
+    srcExclude: [
+      "plans/**",
+      "incidents/**",
+      "backlog.md",
+      "claims-ledger.md",
+      "decisions.md",
+      "delivered.md",
+      "publish-checklist.md",
+      "README.md",
+      "requirements.md",
+    ],
     cleanUrls: true,
     lastUpdated: true,
     rewrites: PAGE_REWRITES,

@@ -42,6 +42,7 @@ const PAGES = [
 const BASE_VIEWPORT = { width: 1440, height: 1000 };
 const REPORTED_TOUR_VIEWPORT = { width: 1285, height: 1397 };
 const NARROW_DESKTOP_VIEWPORT = { width: 1024, height: 900 };
+const SIDEBAR_SCROLL_VIEWPORT = { width: 1285, height: 600 };
 const ZOOMED_DESKTOP_CSS_VIEWPORT = { width: 720, height: 500 };
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const galleryHeroScreenshot = path.join(root, "docs/assets/screenshots/dashboard.png");
@@ -242,46 +243,76 @@ try {
     console.log("ok    /user/screenshots 1285px media/outline layout");
   }
 
-  const widthControl = page.getByLabel("Navigation width");
-  const rangeContract = {
-    min: await widthControl.getAttribute("min"),
-    max: await widthControl.getAttribute("max"),
-    step: await widthControl.getAttribute("step"),
+  const resizeNavigation = page.getByRole("separator", { name: "Resize navigation", exact: true });
+  const separatorContract = {
+    controls: await resizeNavigation.getAttribute("aria-controls"),
+    orientation: await resizeNavigation.getAttribute("aria-orientation"),
+    min: await resizeNavigation.getAttribute("aria-valuemin"),
+    max: await resizeNavigation.getAttribute("aria-valuemax"),
   };
-  await widthControl.focus();
+  const obsoleteControlCount = await page
+    .locator('.jh-sidebar-controls, input[type="range"]')
+    .count();
+  await resizeNavigation.focus();
   await page.keyboard.press("Home");
   await page.waitForFunction(() => Math.abs((document.querySelector(".VPSidebar")?.getBoundingClientRect().width ?? 0) - 224) < 1);
   const narrowSidebar = await productTourGeometry(page);
-  const narrowOutput = await page.locator('output[for="jh-sidebar-width"]').innerText();
+  const narrowValue = await resizeNavigation.getAttribute("aria-valuenow");
+
+  const resizeHandleBox = await resizeNavigation.boundingBox();
+  if (resizeHandleBox) {
+    const resizeY = resizeHandleBox.y + Math.min(120, resizeHandleBox.height / 2);
+    await page.mouse.move(resizeHandleBox.x + (resizeHandleBox.width / 2), resizeY);
+    await page.mouse.down();
+    await page.mouse.move(resizeHandleBox.x + (resizeHandleBox.width / 2) + 56, resizeY, { steps: 4 });
+    await page.mouse.up();
+  }
+  await page.waitForFunction(() => Math.abs((document.querySelector(".VPSidebar")?.getBoundingClientRect().width ?? 0) - 280) < 1);
+  const draggedSidebar = await productTourGeometry(page);
+  const draggedValue = await resizeNavigation.getAttribute("aria-valuenow");
+
+  await resizeNavigation.focus();
   await page.keyboard.press("End");
   await page.waitForFunction(() => Math.abs((document.querySelector(".VPSidebar")?.getBoundingClientRect().width ?? 0) - 320) < 1);
   const wideSidebar = await productTourGeometry(page);
-  const wideOutput = await page.locator('output[for="jh-sidebar-width"]').innerText();
+  const wideValue = await resizeNavigation.getAttribute("aria-valuenow");
   if (
-    rangeContract.min !== "224"
-    || rangeContract.max !== "320"
-    || rangeContract.step !== "8"
-    || narrowOutput !== "224px"
-    || wideOutput !== "320px"
+    separatorContract.controls !== "VPSidebarNav"
+    || separatorContract.orientation !== "vertical"
+    || separatorContract.min !== "224"
+    || separatorContract.max !== "320"
+    || obsoleteControlCount !== 0
+    || narrowValue !== "224"
+    || draggedValue !== "280"
+    || wideValue !== "320"
+    || !resizeHandleBox
     || !narrowSidebar.sidebar
+    || !draggedSidebar.sidebar
     || !wideSidebar.sidebar
     || !narrowSidebar.docContainer
+    || !draggedSidebar.docContainer
     || !wideSidebar.docContainer
     || narrowSidebar.sidebar.width !== 224
+    || draggedSidebar.sidebar.width !== 280
     || wideSidebar.sidebar.width !== 320
+    || draggedSidebar.docContainer.x <= narrowSidebar.docContainer.x
     || wideSidebar.docContainer.x <= narrowSidebar.docContainer.x
     || wideSidebar.imageOutlineOverlap > 0
     || wideSidebar.pageOverflows
   ) {
-    fail(`/user/screenshots sidebar resize: keyboard or layout contract regressed (${JSON.stringify({
-      rangeContract,
-      narrowOutput,
-      wideOutput,
+    fail(`/user/screenshots sidebar resize: pointer, keyboard, or layout contract regressed (${JSON.stringify({
+      separatorContract,
+      obsoleteControlCount,
+      narrowValue,
+      draggedValue,
+      wideValue,
+      resizeHandleBox,
       narrowSidebar,
+      draggedSidebar,
       wideSidebar,
     })})`);
   } else {
-    console.log("ok    /user/screenshots keyboard sidebar resize");
+    console.log("ok    /user/screenshots direct-manipulation sidebar resize");
   }
 
   const collapseNavigation = page.getByRole("button", { name: "Collapse navigation", exact: true });
@@ -293,13 +324,33 @@ try {
     titleDisplay: getComputedStyle(document.querySelector(".VPNavBarTitle")).display,
     restoreX: document.querySelector(".jh-sidebar-restore")?.getBoundingClientRect().x ?? -1,
     docContainerX: document.querySelector(".VPDoc > .container")?.getBoundingClientRect().x ?? -1,
-    activeName: document.activeElement?.textContent?.trim() ?? "",
+    activeName: document.activeElement?.getAttribute("aria-label") ?? "",
     visibleSidebarFocusables: [...document.querySelectorAll(".VPSidebar a, .VPSidebar button, .VPSidebar input")]
       .filter((element) => element.getClientRects().length > 0).length,
     pageOverflows: document.documentElement.scrollWidth > window.innerWidth,
   }));
   const restoreNavigation = page.getByRole("button", { name: "Show navigation", exact: true });
   const restoreExpanded = await restoreNavigation.getAttribute("aria-expanded");
+  await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
+  await page.waitForFunction(() => document.documentElement.dataset.jhSidebarExpanded === "false");
+  const collapsedHomepageState = await page.evaluate(() => ({
+    hasSidebar: Boolean(document.querySelector(".VPSidebar")),
+    restoreVisible: (document.querySelector(".jh-sidebar-restore")?.getClientRects().length ?? 0) > 0,
+    pageOverflows: document.documentElement.scrollWidth > window.innerWidth,
+  }));
+  const homepageRestoreNavigation = page.getByRole("button", { name: "Show navigation", exact: true });
+  await homepageRestoreNavigation.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.documentElement.dataset.jhSidebarExpanded === "true");
+  const expandedHomepageState = await page.evaluate(() => ({
+    activeHref: document.activeElement?.getAttribute("href") ?? "",
+    activeVisible: (document.activeElement?.getClientRects().length ?? 0) > 0,
+  }));
+  await page.goto(`http://127.0.0.1:${port}/user/screenshots`, { waitUntil: "networkidle" });
+  await page.waitForFunction(() => document.documentElement.dataset.jhSidebarExpanded === "true");
+  await page.getByRole("button", { name: "Collapse navigation", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.documentElement.dataset.jhSidebarExpanded === "false");
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForFunction(() => document.documentElement.dataset.jhSidebarExpanded === "false");
   const restoredPreferenceVisible = await page.getByRole("button", { name: "Show navigation", exact: true }).isVisible();
@@ -308,12 +359,10 @@ try {
   await page.waitForFunction(() => document.documentElement.dataset.jhSidebarExpanded === "true");
   const expandedState = await page.evaluate(() => ({
     sidebarWidth: document.querySelector(".VPSidebar")?.getBoundingClientRect().width ?? 0,
-    activeName: document.activeElement?.textContent?.trim() ?? "",
-    collapseExpanded: document
-      .querySelector(".jh-sidebar-controls button[aria-controls=VPSidebarNav]")
-      ?.getAttribute("aria-expanded"),
+    activeName: document.activeElement?.getAttribute("aria-label") ?? "",
+    collapseExpanded: document.querySelector(".jh-sidebar-collapse")?.getAttribute("aria-expanded"),
   }));
-  await page.getByRole("button", { name: "Reset width", exact: true }).click();
+  await page.getByRole("separator", { name: "Resize navigation", exact: true }).dblclick();
   await page.waitForFunction(() => Math.abs((document.querySelector(".VPSidebar")?.getBoundingClientRect().width ?? 0) - 272) < 1);
   if (
     collapsedState.sidebarDisplay !== "none"
@@ -324,6 +373,11 @@ try {
     || collapsedState.visibleSidebarFocusables !== 0
     || collapsedState.pageOverflows
     || restoreExpanded !== "false"
+    || collapsedHomepageState.hasSidebar
+    || !collapsedHomepageState.restoreVisible
+    || collapsedHomepageState.pageOverflows
+    || expandedHomepageState.activeHref !== "/"
+    || !expandedHomepageState.activeVisible
     || !restoredPreferenceVisible
     || expandedState.sidebarWidth !== 320
     || expandedState.activeName !== "Collapse navigation"
@@ -331,12 +385,59 @@ try {
   ) {
     fail(`/user/screenshots sidebar collapse: focus, persistence, or width release regressed (${JSON.stringify({
       collapsedState,
+      collapsedHomepageState,
+      expandedHomepageState,
       restoreExpanded,
       restoredPreferenceVisible,
       expandedState,
     })})`);
   } else {
     console.log("ok    /user/screenshots keyboard sidebar collapse and restore");
+  }
+
+  await page.setViewportSize(SIDEBAR_SCROLL_VIEWPORT);
+  await page.goto(`http://127.0.0.1:${port}/architecture/`, { waitUntil: "networkidle" });
+  const sidebarScrollStart = await page.evaluate(() => {
+    const sidebar = document.querySelector(".VPSidebar");
+    const box = sidebar?.getBoundingClientRect();
+    if (!(sidebar instanceof HTMLElement) || !box) return null;
+    const testY = Math.min(box.bottom - 40, box.top + 260);
+    const hitClass = (x) => document.elementFromPoint(x, testY)?.className ?? "";
+    return {
+      clientHeight: sidebar.clientHeight,
+      innerHitClass: hitClass(box.right - 4),
+      innerX: box.right - 4,
+      outerHitClass: hitClass(box.right + 4),
+      scrollHeight: sidebar.scrollHeight,
+      testY,
+      width: box.width,
+    };
+  });
+  if (sidebarScrollStart) {
+    await page.mouse.move(sidebarScrollStart.innerX, sidebarScrollStart.testY);
+    await page.mouse.wheel(0, 360);
+    await page.waitForFunction(() => (document.querySelector(".VPSidebar")?.scrollTop ?? 0) > 0);
+  }
+  const sidebarScrollEnd = await page.evaluate(() => ({
+    pageScrollY: window.scrollY,
+    scrollTop: document.querySelector(".VPSidebar")?.scrollTop ?? 0,
+    width: document.querySelector(".VPSidebar")?.getBoundingClientRect().width ?? 0,
+  }));
+  if (
+    !sidebarScrollStart
+    || sidebarScrollStart.scrollHeight <= sidebarScrollStart.clientHeight
+    || String(sidebarScrollStart.innerHitClass).includes("jh-sidebar-resizer")
+    || !String(sidebarScrollStart.outerHitClass).includes("jh-sidebar-resizer")
+    || sidebarScrollEnd.scrollTop <= 0
+    || sidebarScrollEnd.pageScrollY !== 0
+    || Math.abs(sidebarScrollEnd.width - sidebarScrollStart.width) > 1
+  ) {
+    fail(`/architecture/ sidebar edge: resize rail blocked scrolling (${JSON.stringify({
+      sidebarScrollStart,
+      sidebarScrollEnd,
+    })})`);
+  } else {
+    console.log("ok    /architecture/ sidebar edge preserves scrolling");
   }
 
   await page.setViewportSize(NARROW_DESKTOP_VIEWPORT);
@@ -362,7 +463,7 @@ try {
   const zoomedDesktopState = await page.evaluate(() => ({
     pageOverflows: document.documentElement.scrollWidth > window.innerWidth,
     menuVisible: (document.querySelector("button.menu")?.getClientRects().length ?? 0) > 0,
-    desktopControlsVisible: [...document.querySelectorAll(".jh-sidebar-controls, .jh-sidebar-restore")]
+    desktopControlsVisible: [...document.querySelectorAll(".jh-sidebar-rail, .jh-sidebar-restore")]
       .some((element) => element.getClientRects().length > 0),
   }));
   if (
@@ -544,7 +645,7 @@ try {
   await page.goto(`http://127.0.0.1:${port}/user/screenshots`, { waitUntil: "networkidle" });
   const mobileTourImage = await page.locator(".vp-doc img").first().boundingBox();
   const customDesktopControlsVisible = await page
-    .locator(".jh-sidebar-controls, .jh-sidebar-restore")
+    .locator(".jh-sidebar-rail, .jh-sidebar-restore")
     .evaluateAll((elements) => elements.some((element) => element.getClientRects().length > 0));
   if (!mobileTourImage || mobileTourImage.width < 700) {
     fail(`/user/screenshots mobile: screenshot did not remain inspectable (${mobileTourImage?.width ?? 0}px)`);
@@ -684,25 +785,6 @@ try {
     fail(`/ search privacy: user-facing privacy/security docs missing from top results (${searchState.hrefs.join(", ")})`);
   } else {
     console.log("ok    / search privacy");
-  }
-
-  await page.goto(`http://127.0.0.1:${port}/requirements#technical-requirements`, {
-    waitUntil: "networkidle",
-  });
-  const tableMetrics = await page.locator(".vp-doc table", { hasText: "Credentials must use" }).first().evaluate((table) => {
-    const cell = table.querySelector("td:nth-child(3)") ?? table.querySelector("td");
-    return {
-      clientWidth: table.clientWidth,
-      scrollWidth: table.scrollWidth,
-      cellWidth: cell?.getBoundingClientRect().width ?? 0,
-    };
-  });
-  if (tableMetrics.scrollWidth <= tableMetrics.clientWidth + 80 || tableMetrics.cellWidth < 120) {
-    fail(
-      `/requirements mobile: reference table is still crushed (${JSON.stringify(tableMetrics)})`,
-    );
-  } else {
-    console.log("ok    /requirements mobile table");
   }
 } finally {
   await browser.close();

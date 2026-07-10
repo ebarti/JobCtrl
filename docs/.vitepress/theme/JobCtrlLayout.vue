@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import DefaultTheme from "vitepress/theme";
 
 const VitePressLayout = DefaultTheme.Layout;
@@ -13,7 +13,11 @@ const sidebarExpanded = ref(true);
 const sidebarWidth = ref(SIDEBAR_DEFAULT_WIDTH);
 const collapseButton = ref<HTMLButtonElement | null>(null);
 const restoreButton = ref<HTMLButtonElement | null>(null);
+const resizeHandle = ref<HTMLElement | null>(null);
 let preferencesReady = false;
+let activePointerId: number | null = null;
+let dragStartX = 0;
+let dragStartWidth = SIDEBAR_DEFAULT_WIDTH;
 
 function clampSidebarWidth(value: unknown): number {
   const numeric = typeof value === "number" ? value : Number(value);
@@ -47,11 +51,65 @@ async function collapseSidebar(): Promise<void> {
 async function expandSidebar(): Promise<void> {
   sidebarExpanded.value = true;
   await nextTick();
-  collapseButton.value?.focus();
+  const visibleCollapseButton = collapseButton.value?.getClientRects().length
+    ? collapseButton.value
+    : null;
+  const fallbackTarget = document.querySelector<HTMLAnchorElement>(".VPNavBarTitle .title");
+  (visibleCollapseButton ?? fallbackTarget)?.focus();
 }
 
 function resetSidebarWidth(): void {
   sidebarWidth.value = SIDEBAR_DEFAULT_WIDTH;
+}
+
+function beginSidebarResize(event: PointerEvent): void {
+  if (!event.isPrimary || event.button !== 0) return;
+
+  activePointerId = event.pointerId;
+  dragStartX = event.clientX;
+  dragStartWidth = sidebarWidth.value;
+  resizeHandle.value?.setPointerCapture(event.pointerId);
+  document.documentElement.dataset.jhSidebarResizing = "true";
+  event.preventDefault();
+}
+
+function resizeSidebar(event: PointerEvent): void {
+  if (event.pointerId !== activePointerId) return;
+
+  const direction = getComputedStyle(document.documentElement).direction === "rtl" ? -1 : 1;
+  sidebarWidth.value = clampSidebarWidth(
+    dragStartWidth + ((event.clientX - dragStartX) * direction),
+  );
+}
+
+function finishSidebarResize(event: PointerEvent): void {
+  if (event.pointerId !== activePointerId) return;
+
+  if (resizeHandle.value?.hasPointerCapture(event.pointerId)) {
+    resizeHandle.value.releasePointerCapture(event.pointerId);
+  }
+  activePointerId = null;
+  delete document.documentElement.dataset.jhSidebarResizing;
+}
+
+function resizeSidebarWithKeyboard(event: KeyboardEvent): void {
+  const direction = getComputedStyle(document.documentElement).direction === "rtl" ? -1 : 1;
+  const increments: Partial<Record<KeyboardEvent["key"], number>> = {
+    ArrowLeft: -8 * direction,
+    ArrowRight: 8 * direction,
+  };
+
+  if (event.key === "Home") {
+    sidebarWidth.value = SIDEBAR_MIN_WIDTH;
+  } else if (event.key === "End") {
+    sidebarWidth.value = SIDEBAR_MAX_WIDTH;
+  } else if (increments[event.key] !== undefined) {
+    sidebarWidth.value = clampSidebarWidth(sidebarWidth.value + increments[event.key]!);
+  } else {
+    return;
+  }
+
+  event.preventDefault();
 }
 
 onMounted(() => {
@@ -71,6 +129,10 @@ onMounted(() => {
   applyPreferences();
 });
 
+onBeforeUnmount(() => {
+  delete document.documentElement.dataset.jhSidebarResizing;
+});
+
 watch([sidebarExpanded, sidebarWidth], () => {
   sidebarWidth.value = clampSidebarWidth(sidebarWidth.value);
   if (!preferencesReady) return;
@@ -87,41 +149,57 @@ watch([sidebarExpanded, sidebarWidth], () => {
         ref="restoreButton"
         type="button"
         class="jh-sidebar-restore"
+        aria-label="Show navigation"
         aria-controls="VPSidebarNav"
         aria-expanded="false"
+        title="Show navigation"
         @click="expandSidebar"
       >
-        Show navigation
+        <svg aria-hidden="true" viewBox="0 0 20 20">
+          <rect x="2.5" y="3" width="15" height="14" rx="2" />
+          <path d="M7 3v14M10.5 7.5 13 10l-2.5 2.5" />
+        </svg>
       </button>
     </template>
 
-    <template #sidebar-nav-before>
-      <div class="jh-sidebar-controls">
-        <div class="jh-sidebar-controls__heading">
-          <label for="jh-sidebar-width">Navigation width</label>
-          <output for="jh-sidebar-width">{{ sidebarWidth }}px</output>
-        </div>
-        <input
-          id="jh-sidebar-width"
-          v-model.number="sidebarWidth"
-          class="jh-sidebar-controls__range"
-          type="range"
-          :min="SIDEBAR_MIN_WIDTH"
-          :max="SIDEBAR_MAX_WIDTH"
-          step="8"
+    <template #layout-bottom>
+      <div v-if="sidebarExpanded" class="jh-sidebar-rail">
+        <div
+          ref="resizeHandle"
+          class="jh-sidebar-resizer"
+          role="separator"
+          aria-label="Resize navigation"
+          aria-controls="VPSidebarNav"
+          aria-orientation="vertical"
+          :aria-valuemin="SIDEBAR_MIN_WIDTH"
+          :aria-valuemax="SIDEBAR_MAX_WIDTH"
+          :aria-valuenow="sidebarWidth"
+          :aria-valuetext="`${sidebarWidth} pixels`"
+          tabindex="0"
+          title="Drag to resize navigation. Double-click to reset."
+          @pointerdown="beginSidebarResize"
+          @pointermove="resizeSidebar"
+          @pointerup="finishSidebarResize"
+          @pointercancel="finishSidebarResize"
+          @lostpointercapture="finishSidebarResize"
+          @keydown="resizeSidebarWithKeyboard"
+          @dblclick="resetSidebarWidth"
         />
-        <div class="jh-sidebar-controls__actions">
-          <button type="button" @click="resetSidebarWidth">Reset width</button>
-          <button
-            ref="collapseButton"
-            type="button"
-            aria-controls="VPSidebarNav"
-            aria-expanded="true"
-            @click="collapseSidebar"
-          >
-            Collapse navigation
-          </button>
-        </div>
+        <button
+          ref="collapseButton"
+          type="button"
+          class="jh-sidebar-collapse"
+          aria-label="Collapse navigation"
+          aria-controls="VPSidebarNav"
+          aria-expanded="true"
+          title="Collapse navigation"
+          @click="collapseSidebar"
+        >
+          <svg aria-hidden="true" viewBox="0 0 20 20">
+            <rect x="2.5" y="3" width="15" height="14" rx="2" />
+            <path d="M7 3v14m5.5-9.5L10 10l2.5 2.5" />
+          </svg>
+        </button>
       </div>
     </template>
   </VitePressLayout>

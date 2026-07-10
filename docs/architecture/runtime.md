@@ -127,26 +127,18 @@ de-facto driving-port representation; no `UseCase` interface is formalised
 The provider stack as wired in `apps/web/src/main.tsx` (top-down):
 
 ```mermaid
-flowchart TB
-  Main["main.tsx<br/>createRoot + adapter wiring"]
-  PP["PortsProvider<br/>(ApiClient, EventStream, Storage, Session,<br/>Clipboard, OpenInOs, Telemetry, FeatureFlag)"]
-  TP["TenantProvider<br/>(LOCAL_TENANT today; JWT-derived in hosted)"]
-  QC["QueryClientProvider<br/>(TanStack Query; per-context query-key factories)"]
-  ES["EventStreamProvider<br/>(contexts/operations/providers/;<br/>subscribes EventStreamPort; dispatches DomainEvent<br/>to invalidation-router)"]
-  TH["ThemeProvider"]
-  DN["DensityProvider"]
-  TT["TooltipProvider (Radix)"]
-  TS["ToasterProvider"]
-  App["App<br/>(RouterProvider — TanStack Router file-based routes)"]
-  Shell["AppShell<br/>(SideRail, Topbar, ConnectionStatusPill, Toaster)"]
-  Routes["routes/* → views/*"]
+flowchart LR
+  BOOT["Bootstrap<br/>main.tsx · ports · tenant · query client"]
+  REALTIME["Realtime<br/>EventStreamProvider · invalidation router"]
+  PRESENT["Presentation providers<br/>theme · density · tooltip · toaster"]
+  APP["Application<br/>router · AppShell · routes · views"]
 
-  Main --> PP --> TP --> QC --> ES --> TH --> DN --> TT --> TS --> App --> Shell --> Routes
+  BOOT --> REALTIME --> PRESENT --> APP
 
-  classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
-  class Main,PP,TP,QC,ES,TH,DN,TT,TS,App,Shell,Routes ui
+  class BOOT,REALTIME,PRESENT,APP ui
 ```
 
+Providers within each layer keep their source order from `main.tsx`.
 `EventStreamProvider` lives in `contexts/operations/providers/` because the
 Operations context owns the SSE subscription and the invalidation-router
 dispatch (Frontend §3.9, §7.3); every other provider lives
@@ -175,10 +167,6 @@ flowchart LR
   Router --> Keys
   Router --> Cache
 
-  classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
-  classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
-  classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
-  classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
   class Worker py
   class Endpoint ts
   class ES,Provider,Parser,Router,Keys ui

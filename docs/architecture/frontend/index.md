@@ -173,9 +173,6 @@ graph TB
     LS["localStorage"] -.->|"hydrate / persist"| TH
     TN -.->|"tenant prefix"| QC
 
-    classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
-    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
-    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
     class BE ts
     class SP,PP,RT,TH,TN,TS,UI,BR ui
     class QC,PJ,PR,DS,LS store
