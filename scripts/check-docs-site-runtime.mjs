@@ -35,6 +35,7 @@ const PAGES = [
   { path: "/architecture/pipeline/operations", mermaid: true, images: false },
   { path: "/user/normal-flows", mermaid: true, images: true },
   { path: "/user/screenshots", mermaid: false, images: true },
+  { path: "/user/data-and-safety", mermaid: false, images: false },
   { path: "/comparison", mermaid: false, images: true },
 ];
 
@@ -376,6 +377,89 @@ try {
 
   await page.setViewportSize(BASE_VIEWPORT);
 
+  await page.goto(`http://127.0.0.1:${port}/user/data-and-safety`, { waitUntil: "networkidle" });
+  const privacyContract = await page.evaluate(() => {
+    const heading = document.querySelector("#privacy-quick-answer");
+    const table = heading?.nextElementSibling;
+    const text = document.querySelector(".vp-doc")?.textContent ?? "";
+    return {
+      headerCount: table?.querySelectorAll("thead th").length ?? 0,
+      rowCount: table?.querySelectorAll("tbody tr").length ?? 0,
+      tableText: table?.textContent ?? "",
+      hasWorkspaceScope: text.includes("every path below is relative to JOBCTRL_DIR"),
+      hasMacOnlyBoundary: text.includes("macOS-only credential panel"),
+      hasRuntimeBoundary: text.includes("loads a Keychain entry at startup"),
+      hasPrecedenceBoundary: text.includes("Any non-empty environment value already present wins"),
+      hasRestartBoundary: text.includes("Restart the worker"),
+      hasWindowsBoundary: text.includes("Windows Credential Manager"),
+      hasLinuxBoundary: text.includes("Linux Secret Service/keyring"),
+      hasInspectionFailureBoundary: text.includes("Unknown (inspection_failed) means Keychain could not be inspected"),
+      hasRetryBoundary: text.includes("unlock it and retry"),
+      hasDefaultProtection: text.includes("Protected by default"),
+    };
+  });
+  const requiredQuickAnswers = [
+    "Hosted backend or JobCtrl account required?",
+    "Model or provider calls automatic?",
+    "Discovery makes network requests?",
+    "Telemetry enabled by default?",
+    "Discovery or enrichment may launch a browser?",
+    "Application-submission browser automation always running?",
+    "Employer-facing submission or email send by default?",
+  ];
+  const requiredQuickAnswerStatuses = ["✓ Yes", "✕ No", "◐ Only"];
+  if (
+    privacyContract.headerCount !== 2
+    || privacyContract.rowCount < 8
+    || requiredQuickAnswers.some((answer) => !privacyContract.tableText.includes(answer))
+    || requiredQuickAnswerStatuses.some(
+      (status) => !privacyContract.tableText.includes(status),
+    )
+    || !privacyContract.tableText.includes(
+      "during runs you start or schedules you explicitly enable",
+    )
+    || !privacyContract.tableText.includes(
+      "Smart extraction and some detail enrichment use Playwright",
+    )
+    || !privacyContract.hasWorkspaceScope
+    || !privacyContract.hasMacOnlyBoundary
+    || !privacyContract.hasRuntimeBoundary
+    || !privacyContract.hasPrecedenceBoundary
+    || !privacyContract.hasRestartBoundary
+    || !privacyContract.hasWindowsBoundary
+    || !privacyContract.hasLinuxBoundary
+    || !privacyContract.hasInspectionFailureBoundary
+    || !privacyContract.hasRetryBoundary
+    || !privacyContract.hasDefaultProtection
+  ) {
+    fail(`/user/data-and-safety: privacy/path/credential contract regressed (${JSON.stringify(privacyContract)})`);
+  } else {
+    console.log("ok    /user/data-and-safety privacy contract");
+  }
+
+  await page.goto(`http://127.0.0.1:${port}/architecture/runtime`, { waitUntil: "networkidle" });
+  const credentialRuntimeContract = await page.evaluate(() => {
+    const text = document.querySelector(".vp-doc")?.textContent ?? "";
+    return {
+      hasBoundary: text.includes("Provider Credential Boundary"),
+      hasSubmittedValueBoundary: text.includes("sends one submitted value"),
+      hasPresenceOnlyBoundary: text.includes("responses use presence checks"),
+      hasTriStateBoundary: text.includes("configured state is true, false, or null"),
+      hasInspectionFailureBoundary: text.includes("unavailableReason: inspection_failed"),
+      hasSanitizedOperationalFailure: text.includes("503 credential_store_unavailable"),
+      hasFixedAllowlist: text.includes("same fixed allowlist"),
+      hasMissingOrEmptyBoundary: text.includes("only for a missing or empty value"),
+      hasProcessLocalBoundary: text.includes("only into that process's environment"),
+      hasNoHotReloadBoundary: text.includes("There is no hot reload"),
+      hasPlatformBoundary: text.includes("native Windows and Linux stores are planned"),
+    };
+  });
+  if (Object.values(credentialRuntimeContract).some((present) => !present)) {
+    fail(`/architecture/runtime: credential boundary regressed (${JSON.stringify(credentialRuntimeContract)})`);
+  } else {
+    console.log("ok    /architecture/runtime credential boundary");
+  }
+
   await page.goto(`http://127.0.0.1:${port}/comparison`, { waitUntil: "networkidle" });
   const comparisonDesktop = await page.evaluate(() => {
     const cards = [...document.querySelectorAll(".jh-compare-card")].map((card) => {
@@ -543,6 +627,30 @@ try {
     );
   } else {
     console.log("ok    /comparison mobile layout and keyboard table scroll");
+  }
+
+  await page.goto(`http://127.0.0.1:${port}/user/data-and-safety`, { waitUntil: "networkidle" });
+  const privacyMobile = await page.evaluate(() => {
+    const heading = document.querySelector("#privacy-quick-answer");
+    const table = heading?.nextElementSibling;
+    const box = table?.getBoundingClientRect();
+    return {
+      pageOverflows: document.documentElement.scrollWidth > window.innerWidth,
+      tableLeft: box?.left ?? -1,
+      tableRight: box?.right ?? -1,
+      viewportWidth: window.innerWidth,
+      headerCount: table?.querySelectorAll("thead th").length ?? 0,
+    };
+  });
+  if (
+    privacyMobile.pageOverflows
+    || privacyMobile.headerCount !== 2
+    || privacyMobile.tableLeft < 0
+    || privacyMobile.tableRight > privacyMobile.viewportWidth + 1
+  ) {
+    fail(`/user/data-and-safety mobile: quick-answer table is not viewport-contained (${JSON.stringify(privacyMobile)})`);
+  } else {
+    console.log("ok    /user/data-and-safety mobile privacy table");
   }
 
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });

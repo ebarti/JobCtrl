@@ -18,6 +18,13 @@ recorded in the git log and in [docs/plans/implemented/](docs/plans/implemented/
 
 ## Next
 
+- **Planned — native cross-platform secret stores.** Add Windows Credential
+  Manager and Linux Secret Service/keyring adapters with parity to the shipped
+  macOS Keychain path: the same allowlisted provider settings, explicit
+  environment precedence, presence-only API responses, restart-to-activate
+  lifecycle, bounded failure behavior, and no secret values in logs or HTTP.
+  Completion requires mocked adapter contract tests plus read/write/delete host
+  validation on supported Windows and Linux runners.
 - Improve workflow-run parity for non-apply pipeline stages so Discover,
   preparation, and Apply have one consistent run history and cancellation model.
 - Reduce broad SSE invalidation with targeted cache patches for jobs, artifacts,

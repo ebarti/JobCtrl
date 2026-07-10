@@ -6,19 +6,28 @@ pageClass: jh-user-guide-page
 
 The short version: your job-search data stays on your machine. Your profile,
 jobs, generated resumes and cover letters, logs, and browser state all live in a
-folder under your home directory, and nothing leaves your computer unless you run
-a step that needs an external service. This page lists what is stored locally,
-what can leave, and which actions to treat with care.
+folder under your home directory, and nothing leaves your computer unless a step
+you start or a schedule you explicitly enable needs an external service. This
+page lists what is stored locally, what can leave, and which actions to treat
+with care.
 
 ## Privacy Quick Answer
 
-JobCtrl has no hosted backend and no account system. Your database and files
-stay local by default. Privacy-sensitive content can still leave your machine
-when you deliberately run steps that need outside services: LLM calls, job-board
-fetches, Gmail lookups or approved email application sends, Google Maps
-autocomplete, CAPTCHA solving, or Langfuse telemetry when configured. Live apply
-automation and email-based application sending are real employer-facing actions,
-not simulations.
+| Question | Answer |
+| --- | --- |
+| Hosted backend or JobCtrl account required? | ✕ **No.** The app, API, worker, database, and generated files run locally. |
+| Database and generated files stored locally? | ✓ **Yes, by default.** They live under `JOBCTRL_DIR` (normally `~/.jobctrl/`). |
+| Model or provider calls automatic? | ◐ **Only when used and configured.** Scoring, analysis, tailoring, cover letters, and opted-in contact research call the configured provider during runs you start or schedules you explicitly enable. |
+| Discovery makes network requests? | ◐ **Only when used.** Discovery and enrichment contact job boards, ATS APIs, or posting pages in runs you start or schedules you explicitly enable. |
+| Telemetry enabled by default? | ✕ **No.** Langfuse export requires configuration, and `LANGFUSE_DISABLE=1` overrides configured credentials. |
+| Discovery or enrichment may launch a browser? | ◐ **Only when the selected source needs it.** Smart extraction and some detail enrichment use Playwright during runs you start or schedules you explicitly enable; other source paths use direct HTTP or API clients. |
+| Application-submission browser automation always running? | ✕ **No.** The standing apply loop is off by default; submission-browser work starts only through an apply or dry-run path you initiate, or the standing loop you explicitly enable. |
+| Employer-facing submission or email send by default? | ✕ **No.** Live browser submission and Gmail application sending are explicit, guarded actions. Outreach drafts never send themselves. |
+
+Other optional integrations include Google Maps autocomplete and CAPTCHA
+solving. Each sends data only when its credential is configured and the related
+feature is used. Live apply automation and email-based application sending are
+real employer-facing actions, not simulations.
 
 ## Local Data
 
@@ -28,12 +37,13 @@ Default local directory:
 ~/.jobctrl/
 ```
 
-Common files and directories:
+Unless a row says otherwise, every path below is relative to `JOBCTRL_DIR`
+(default `~/.jobctrl/`):
 
 | Path | Contents |
 | --- | --- |
 | `jobctrl.db` | SQLite database with profile, jobs, events, projections, settings, artifacts, review drafts, contacts, and workflow state. |
-| `.env` | Provider keys and runtime settings. |
+| `.env` | Plaintext, cross-platform runtime environment: provider/API credentials plus non-secret runtime settings. It is not encrypted at rest. |
 | `tailored_resumes/` | Generated resumes and related HTML/PDF outputs. |
 | `cover_letters/` | Generated cover letters. |
 | `logs/` | Local worker and apply logs. |
@@ -47,6 +57,21 @@ Common files and directories:
 
 The development launcher also writes PIDs and process logs under the repo's
 `.dev/` directory — treat those logs as sensitive too.
+
+The web app also exposes a **macOS-only** credential panel for
+`OPENAI_API_KEY`, `GEMINI_API_KEY`, and `LLM_URL`. It writes those entries to
+the macOS Keychain, outside `~/.jobctrl/`. After environment-file loading, each
+Python CLI or worker process loads a Keychain entry at startup only when the
+corresponding environment value is missing or empty. Any non-empty environment
+value already present wins. Restart the worker (or the full local stack) after
+saving or removing a Keychain value.
+Windows and Linux use `.env` or shell variables today; native Windows Credential
+Manager and Linux Secret Service/keyring adapters are planned, not shipped.
+The macOS panel distinguishes **not configured** from **status unknown**.
+Unknown (`inspection_failed`) means Keychain could not be inspected, not that an
+entry is absent. If Keychain is locked, unlock it and retry; otherwise retry the
+operation after Keychain is available. Save/remove failures return a generic
+unavailable message and never expose raw Keychain command output.
 
 Contact records you keep — recruiter, hiring-manager, and referrer names, emails,
 phone numbers, and notes — are stored only in that local `jobctrl.db`, and each
@@ -85,10 +110,14 @@ conservative next date you can edit, shows it when it is due, and never acts on 
 or sends it. Any optional recurring follow-up reminder is off by default. Send and
 follow-up data are advisory and never affect scoring or apply decisions.
 
-::: warning Never commit your local data
-Do not commit `~/.jobctrl/` (or the repo's `.dev/` logs), or any copy of those
-files. They hold your database, provider keys, and generated resumes and cover
-letters.
+::: tip Protected by default
+The default `~/.jobctrl/` workspace sits outside the repository. Inside a
+checkout, `.gitignore` also excludes `.env` files, SQLite databases and
+sidecars, the known artifact/worker/log directories, baseline resume filenames,
+and `.dev/`. The release privacy check adds another guard before publication.
+Avoid manually copying private files into a differently named tracked path or
+force-adding an ignored file; use `pnpm qa:seed` when you need shareable sample
+data.
 :::
 
 ## External Services
