@@ -12,6 +12,10 @@ here is a real person, a real resume, or a real job.
 Click or tap any screenshot to zoom. On small screens, swipe the screenshot
 sideways first when you want to inspect the actual controls.
 
+On desktop, the controls at the top of the navigation rail let you resize it or
+collapse it completely. **Show navigation** remains in the header so the menu is
+always recoverable; on smaller screens, use the standard menu button instead.
+
 ## Set Up Your Profile
 
 ![JobCtrl Profile page with personal information, resume baseline, experience, and skills](../assets/screenshots/profile.png)

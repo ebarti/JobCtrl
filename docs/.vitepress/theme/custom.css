@@ -21,6 +21,8 @@
   --vp-home-hero-name-color: var(--vp-c-brand-1);
   --jh-doc-surface: color-mix(in oklab, var(--vp-c-bg-soft), var(--vp-c-bg) 32%);
   --jh-doc-frame: color-mix(in oklab, var(--vp-c-divider), var(--vp-c-brand-1) 18%);
+  --jh-sidebar-width: 272px;
+  --vp-sidebar-width: var(--jh-sidebar-width);
 }
 
 html.dark {
@@ -221,8 +223,106 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
 }
 
 /* --------------------------------------------------------------------------
-   Visual documentation pages: keep prose readable while letting screenshots
-   and diagrams use the available page width.
+   Desktop navigation controls: VitePress derives both the sidebar box and the
+   content offset from --vp-sidebar-width, so one token owns resize/collapse.
+   The stock mobile drawer remains untouched below the desktop breakpoint.
+   -------------------------------------------------------------------------- */
+.jh-sidebar-controls {
+  margin-block: -8px 24px;
+  padding-block-end: 18px;
+  border-block-end: 1px solid var(--vp-c-divider);
+}
+
+.jh-sidebar-controls__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-block-end: 8px;
+  color: var(--vp-c-text-1);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.jh-sidebar-controls__heading output {
+  color: var(--vp-c-text-2);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.jh-sidebar-controls__range {
+  display: block;
+  width: 100%;
+  min-block-size: 24px;
+  accent-color: var(--vp-c-brand-1);
+  cursor: ew-resize;
+}
+
+.jh-sidebar-controls__actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  margin-block-start: 8px;
+}
+
+.jh-sidebar-controls button,
+.jh-sidebar-restore {
+  min-block-size: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 6px;
+  background: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-1);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.jh-sidebar-controls button:hover,
+.jh-sidebar-restore:hover {
+  border-color: var(--vp-c-brand-1);
+  background: var(--vp-c-brand-soft);
+}
+
+.jh-sidebar-controls :is(button, input):focus-visible,
+.jh-sidebar-restore:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
+}
+
+.jh-sidebar-restore {
+  margin-inline-start: 32px;
+  margin-inline-end: 12px;
+  white-space: nowrap;
+}
+
+@media (min-width: 960px) {
+  html[data-jh-sidebar-expanded="false"] {
+    --vp-sidebar-width: 0px;
+  }
+
+  html[data-jh-sidebar-expanded="false"] .VPSidebar {
+    display: none;
+  }
+
+  html[data-jh-sidebar-expanded="false"] .VPNavBarTitle {
+    display: none;
+  }
+}
+
+@media (max-width: 959px) {
+  .jh-sidebar-controls,
+  .jh-sidebar-restore {
+    display: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Visual documentation pages: keep prose and inline media on one coherent
+   content track. Detailed screenshots remain inspectable through the zoom and
+   mobile horizontal-scroll affordances below.
    -------------------------------------------------------------------------- */
 .Layout.jh-visual-doc:not(.jh-outline-page) .VPDoc .aside {
   display: none;
@@ -260,7 +360,7 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
 }
 
 @media (min-width: 768px) {
-  .Layout.jh-visual-doc .vp-doc p:has(> img:only-child) {
+  .Layout.jh-visual-doc:not(.jh-outline-page) .vp-doc p:has(> img:only-child) {
     width: min(960px, calc(100vw - var(--vp-sidebar-width) - 112px));
     max-width: none;
   }

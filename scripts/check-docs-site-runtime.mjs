@@ -39,6 +39,9 @@ const PAGES = [
 ];
 
 const BASE_VIEWPORT = { width: 1440, height: 1000 };
+const REPORTED_TOUR_VIEWPORT = { width: 1285, height: 1397 };
+const NARROW_DESKTOP_VIEWPORT = { width: 1024, height: 900 };
+const ZOOMED_DESKTOP_CSS_VIEWPORT = { width: 720, height: 500 };
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const galleryHeroScreenshot = path.join(root, "docs/assets/screenshots/dashboard.png");
 const publicHeroScreenshot = path.join(root, "docs/public/assets/screenshots/dashboard.png");
@@ -55,6 +58,35 @@ function freePort() {
       srv.close(() => resolve(port));
     });
     srv.on("error", reject);
+  });
+}
+
+async function productTourGeometry(page) {
+  return page.evaluate(() => {
+    const rect = (selector) => {
+      const element = document.querySelector(selector);
+      if (!element) return null;
+      const box = element.getBoundingClientRect();
+      return { x: box.x, right: box.right, width: box.width };
+    };
+    const image = document.querySelector(".vp-doc p:has(> img:only-child) > img");
+    const outline = document.querySelector(".VPDocAsideOutline");
+    const imageBox = image?.getBoundingClientRect();
+    const outlineBox = outline?.getBoundingClientRect();
+    return {
+      sidebar: rect(".VPSidebar"),
+      docContainer: rect(".VPDoc > .container"),
+      mainContent: rect(".VPDoc > .container > .content"),
+      prose: rect(".vp-doc > div > p:not(:has(> img:only-child))"),
+      mediaFrame: rect(".vp-doc p:has(> img:only-child)"),
+      image: rect(".vp-doc p:has(> img:only-child) > img"),
+      outline: rect(".VPDocAsideOutline"),
+      imageOutlineOverlap:
+        imageBox && outlineBox
+          ? Math.max(0, Math.min(imageBox.right, outlineBox.right) - Math.max(imageBox.left, outlineBox.left))
+          : 0,
+      pageOverflows: document.documentElement.scrollWidth > window.innerWidth,
+    };
   });
 }
 
@@ -155,12 +187,194 @@ try {
   } else {
     console.log("ok    /user/screenshots footer notice");
   }
-  const tourImage = await page.locator(".vp-doc img").first().boundingBox();
-  if (!tourImage || tourImage.width < 800) {
-    fail(`/user/screenshots: first desktop screenshot is too narrow (${tourImage?.width ?? 0}px)`);
+  const desktopTour = await productTourGeometry(page);
+  if (
+    !desktopTour.mediaFrame
+    || !desktopTour.prose
+    || !desktopTour.mainContent
+    || desktopTour.mediaFrame.width < 600
+    || Math.abs(desktopTour.mediaFrame.width - desktopTour.prose.width) > 2
+    || desktopTour.mediaFrame.right > desktopTour.mainContent.right + 1
+    || desktopTour.imageOutlineOverlap > 0
+    || desktopTour.pageOverflows
+  ) {
+    fail(`/user/screenshots desktop: media escaped its content track (${JSON.stringify(desktopTour)})`);
   } else {
-    console.log("ok    /user/screenshots visual width");
+    console.log("ok    /user/screenshots desktop media track");
   }
+
+  const zoomableTourImage = page.locator(".vp-doc img").first();
+  const imageAlt = await zoomableTourImage.getAttribute("alt");
+  const imageRole = await zoomableTourImage.getAttribute("role");
+  const imageLabel = await zoomableTourImage.getAttribute("aria-label");
+  await zoomableTourImage.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForSelector(".jh-lightbox", { state: "visible", timeout: 5000 });
+  const expandedAlt = await page.locator(".jh-lightbox__content img").getAttribute("alt");
+  if (
+    !imageAlt?.includes("JobCtrl Profile page")
+    || imageRole !== "button"
+    || !imageLabel?.startsWith("Expand image:")
+    || expandedAlt !== imageAlt
+  ) {
+    fail("/user/screenshots: responsive media lost its zoom or alternative-text semantics");
+  } else {
+    console.log("ok    /user/screenshots image zoom semantics");
+  }
+  await page.locator('.jh-lightbox button[aria-label="Close"]').click();
+
+  await page.setViewportSize(REPORTED_TOUR_VIEWPORT);
+  await page.goto(`http://127.0.0.1:${port}/user/screenshots`, { waitUntil: "networkidle" });
+  const reportedTour = await productTourGeometry(page);
+  if (
+    !reportedTour.mediaFrame
+    || !reportedTour.prose
+    || !reportedTour.mainContent
+    || !reportedTour.outline
+    || Math.abs(reportedTour.mediaFrame.width - reportedTour.prose.width) > 2
+    || reportedTour.mediaFrame.right > reportedTour.mainContent.right + 1
+    || reportedTour.imageOutlineOverlap > 0
+    || reportedTour.pageOverflows
+  ) {
+    fail(`/user/screenshots 1285px: media/outline layout regressed (${JSON.stringify(reportedTour)})`);
+  } else {
+    console.log("ok    /user/screenshots 1285px media/outline layout");
+  }
+
+  const widthControl = page.getByLabel("Navigation width");
+  const rangeContract = {
+    min: await widthControl.getAttribute("min"),
+    max: await widthControl.getAttribute("max"),
+    step: await widthControl.getAttribute("step"),
+  };
+  await widthControl.focus();
+  await page.keyboard.press("Home");
+  await page.waitForFunction(() => Math.abs((document.querySelector(".VPSidebar")?.getBoundingClientRect().width ?? 0) - 224) < 1);
+  const narrowSidebar = await productTourGeometry(page);
+  const narrowOutput = await page.locator('output[for="jh-sidebar-width"]').innerText();
+  await page.keyboard.press("End");
+  await page.waitForFunction(() => Math.abs((document.querySelector(".VPSidebar")?.getBoundingClientRect().width ?? 0) - 320) < 1);
+  const wideSidebar = await productTourGeometry(page);
+  const wideOutput = await page.locator('output[for="jh-sidebar-width"]').innerText();
+  if (
+    rangeContract.min !== "224"
+    || rangeContract.max !== "320"
+    || rangeContract.step !== "8"
+    || narrowOutput !== "224px"
+    || wideOutput !== "320px"
+    || !narrowSidebar.sidebar
+    || !wideSidebar.sidebar
+    || !narrowSidebar.docContainer
+    || !wideSidebar.docContainer
+    || narrowSidebar.sidebar.width !== 224
+    || wideSidebar.sidebar.width !== 320
+    || wideSidebar.docContainer.x <= narrowSidebar.docContainer.x
+    || wideSidebar.imageOutlineOverlap > 0
+    || wideSidebar.pageOverflows
+  ) {
+    fail(`/user/screenshots sidebar resize: keyboard or layout contract regressed (${JSON.stringify({
+      rangeContract,
+      narrowOutput,
+      wideOutput,
+      narrowSidebar,
+      wideSidebar,
+    })})`);
+  } else {
+    console.log("ok    /user/screenshots keyboard sidebar resize");
+  }
+
+  const collapseNavigation = page.getByRole("button", { name: "Collapse navigation", exact: true });
+  await collapseNavigation.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.documentElement.dataset.jhSidebarExpanded === "false");
+  const collapsedState = await page.evaluate(() => ({
+    sidebarDisplay: getComputedStyle(document.querySelector(".VPSidebar")).display,
+    titleDisplay: getComputedStyle(document.querySelector(".VPNavBarTitle")).display,
+    restoreX: document.querySelector(".jh-sidebar-restore")?.getBoundingClientRect().x ?? -1,
+    docContainerX: document.querySelector(".VPDoc > .container")?.getBoundingClientRect().x ?? -1,
+    activeName: document.activeElement?.textContent?.trim() ?? "",
+    visibleSidebarFocusables: [...document.querySelectorAll(".VPSidebar a, .VPSidebar button, .VPSidebar input")]
+      .filter((element) => element.getClientRects().length > 0).length,
+    pageOverflows: document.documentElement.scrollWidth > window.innerWidth,
+  }));
+  const restoreNavigation = page.getByRole("button", { name: "Show navigation", exact: true });
+  const restoreExpanded = await restoreNavigation.getAttribute("aria-expanded");
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForFunction(() => document.documentElement.dataset.jhSidebarExpanded === "false");
+  const restoredPreferenceVisible = await page.getByRole("button", { name: "Show navigation", exact: true }).isVisible();
+  await page.getByRole("button", { name: "Show navigation", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.documentElement.dataset.jhSidebarExpanded === "true");
+  const expandedState = await page.evaluate(() => ({
+    sidebarWidth: document.querySelector(".VPSidebar")?.getBoundingClientRect().width ?? 0,
+    activeName: document.activeElement?.textContent?.trim() ?? "",
+    collapseExpanded: document
+      .querySelector(".jh-sidebar-controls button[aria-controls=VPSidebarNav]")
+      ?.getAttribute("aria-expanded"),
+  }));
+  await page.getByRole("button", { name: "Reset width", exact: true }).click();
+  await page.waitForFunction(() => Math.abs((document.querySelector(".VPSidebar")?.getBoundingClientRect().width ?? 0) - 272) < 1);
+  if (
+    collapsedState.sidebarDisplay !== "none"
+    || collapsedState.titleDisplay !== "none"
+    || collapsedState.restoreX < 24
+    || collapsedState.docContainerX > 33
+    || collapsedState.activeName !== "Show navigation"
+    || collapsedState.visibleSidebarFocusables !== 0
+    || collapsedState.pageOverflows
+    || restoreExpanded !== "false"
+    || !restoredPreferenceVisible
+    || expandedState.sidebarWidth !== 320
+    || expandedState.activeName !== "Collapse navigation"
+    || expandedState.collapseExpanded !== "true"
+  ) {
+    fail(`/user/screenshots sidebar collapse: focus, persistence, or width release regressed (${JSON.stringify({
+      collapsedState,
+      restoreExpanded,
+      restoredPreferenceVisible,
+      expandedState,
+    })})`);
+  } else {
+    console.log("ok    /user/screenshots keyboard sidebar collapse and restore");
+  }
+
+  await page.setViewportSize(NARROW_DESKTOP_VIEWPORT);
+  await page.goto(`http://127.0.0.1:${port}/user/screenshots`, { waitUntil: "networkidle" });
+  const narrowDesktopTour = await productTourGeometry(page);
+  if (
+    !narrowDesktopTour.mediaFrame
+    || !narrowDesktopTour.prose
+    || Math.abs(narrowDesktopTour.mediaFrame.width - narrowDesktopTour.prose.width) > 2
+    || narrowDesktopTour.imageOutlineOverlap > 0
+    || narrowDesktopTour.pageOverflows
+  ) {
+    fail(`/user/screenshots 1024px: responsive media layout regressed (${JSON.stringify(narrowDesktopTour)})`);
+  } else {
+    console.log("ok    /user/screenshots 1024px media layout");
+  }
+
+  // A 1440px display at 200% page zoom exposes roughly a 720px-wide CSS
+  // viewport. The desktop controls should yield to VitePress's reachable
+  // mobile navigation instead of clipping either control set.
+  await page.setViewportSize(ZOOMED_DESKTOP_CSS_VIEWPORT);
+  await page.goto(`http://127.0.0.1:${port}/user/screenshots`, { waitUntil: "networkidle" });
+  const zoomedDesktopState = await page.evaluate(() => ({
+    pageOverflows: document.documentElement.scrollWidth > window.innerWidth,
+    menuVisible: (document.querySelector("button.menu")?.getClientRects().length ?? 0) > 0,
+    desktopControlsVisible: [...document.querySelectorAll(".jh-sidebar-controls, .jh-sidebar-restore")]
+      .some((element) => element.getClientRects().length > 0),
+  }));
+  if (
+    zoomedDesktopState.pageOverflows
+    || !zoomedDesktopState.menuVisible
+    || zoomedDesktopState.desktopControlsVisible
+  ) {
+    fail(`/user/screenshots 200% zoom: navigation became unreachable (${JSON.stringify(zoomedDesktopState)})`);
+  } else {
+    console.log("ok    /user/screenshots 200% zoom navigation fallback");
+  }
+
+  await page.setViewportSize(BASE_VIEWPORT);
 
   await page.goto(`http://127.0.0.1:${port}/comparison`, { waitUntil: "networkidle" });
   const comparisonDesktop = await page.evaluate(() => {
@@ -245,8 +459,13 @@ try {
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto(`http://127.0.0.1:${port}/user/screenshots`, { waitUntil: "networkidle" });
   const mobileTourImage = await page.locator(".vp-doc img").first().boundingBox();
+  const customDesktopControlsVisible = await page
+    .locator(".jh-sidebar-controls, .jh-sidebar-restore")
+    .evaluateAll((elements) => elements.some((element) => element.getClientRects().length > 0));
   if (!mobileTourImage || mobileTourImage.width < 700) {
     fail(`/user/screenshots mobile: screenshot did not remain inspectable (${mobileTourImage?.width ?? 0}px)`);
+  } else if (customDesktopControlsVisible) {
+    fail("/user/screenshots mobile: desktop sidebar controls displaced the stock mobile drawer");
   }
   await page.locator("button.menu").click();
   await page.waitForTimeout(200);

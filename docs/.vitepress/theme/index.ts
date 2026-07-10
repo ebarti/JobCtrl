@@ -1,6 +1,7 @@
 import type { Theme } from "vitepress";
 import { inBrowser } from "vitepress";
 import DefaultTheme from "vitepress/theme";
+import JobCtrlLayout from "./JobCtrlLayout.vue";
 import MermaidRenderer from "./MermaidRenderer.vue";
 import WorkflowSurfacePanel from "./WorkflowSurfacePanel.vue";
 import WorkflowSurfaceSelector from "./WorkflowSurfaceSelector.vue";
@@ -19,6 +20,7 @@ import "./custom.css";
 // to call once here even in the SPA.
 export default {
   extends: DefaultTheme,
+  Layout: JobCtrlLayout,
   enhanceApp({ app, router }) {
     app.component("Mermaid", MermaidRenderer);
     app.component("WorkflowSurfacePanel", WorkflowSurfacePanel);
