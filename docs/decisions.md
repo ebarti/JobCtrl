@@ -22,6 +22,7 @@ the Historical Spec Ledger in `plans/README.md`.
 - [TypeScript Product API, Python Workers](#_2026-05-01-typescript-product-api-python-workers) · 2026-05-01
 - [pnpm Workspace With Python Automation Worker](#_2026-05-04-pnpm-workspace-with-python-automation-worker) · 2026-05-04
 - [Desktop Packaging Decision Pending Owner TTFV Evidence](#_2026-07-06-desktop-packaging-decision-pending-owner-ttfv-evidence) · 2026-07-06
+- [Bundled JobCtrl Distribution With One Public Command](#_2026-07-10-bundled-jobctrl-distribution-with-one-public-command) · 2026-07-10
 
 **Local API & runtime**
 
@@ -1765,3 +1766,44 @@ Consequences until the owner fills the verdict:
 - do not publish a packaging claim based on synthetic or fixture timing
 - keep `scripts/ttfv-real.mjs` measurement records outside commits unless they
   have been reviewed for sensitive data
+
+## 2026-07-10: Bundled JobCtrl Distribution With One Public Command
+
+Status: accepted; implementation pending
+
+Decision: proceed with the bundled distribution (the “Go” verdict named in the
+2026-07-06 ADR). Curl and Homebrew will acquire the same signed platform
+artifact, and every installed user will start and operate JobCtrl through one
+native `jobctrl` executable. The launcher will also dispatch the existing
+Python CLI through the private runtime, so uv, pnpm, Git, and checkout-relative
+commands become contributor-only.
+
+This decision supersedes the unresolved posture in the 2026-07-06 desktop
+packaging ADR. Real-path TTFV measurements remain release and regression
+evidence; they are no longer a prerequisite for deciding whether the production
+distribution boundary should exist.
+
+The production contract is:
+
+- one public executable plus a private versioned payload, not a forced
+  monolithic Mach-O;
+- the same runtime artifact and `jobctrl start` command after either acquisition
+  channel;
+- no production dependency on user-installed Git, Node, pnpm, Corepack, uv,
+  Python, Temporal, Poppler, Playwright, or npx;
+- one managed Playwright Chromium revision for core scraping and PDF rendering;
+- system Chrome and authenticated browser-profile access are disabled unless
+  the user explicitly enables auto-apply or authenticated LinkedIn resolution;
+- all legally redistributable runtimes ship in the artifact, while
+  non-redistributable provider components are installed and verified by JobCtrl
+  from their official channels without exposing package-manager commands;
+- versioned, signed updates and rollback preserve the independent
+  `~/.jobctrl` state directory.
+
+The first release target is Apple-silicon macOS. Other platforms follow the same
+manifest, lifecycle, capability, and clean-machine QA contract without blocking
+that initial artifact.
+
+Cites: active plan
+`docs/plans/2026-07-10-bundled-jobctrl-distribution-plan.md`; the superseded
+pending-decision record immediately above; `docs/developer/first-run-ttfv.md`.
