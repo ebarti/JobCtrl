@@ -685,25 +685,6 @@ try {
   } else {
     console.log("ok    / search privacy");
   }
-
-  await page.goto(`http://127.0.0.1:${port}/requirements#technical-requirements`, {
-    waitUntil: "networkidle",
-  });
-  const tableMetrics = await page.locator(".vp-doc table", { hasText: "Credentials must use" }).first().evaluate((table) => {
-    const cell = table.querySelector("td:nth-child(3)") ?? table.querySelector("td");
-    return {
-      clientWidth: table.clientWidth,
-      scrollWidth: table.scrollWidth,
-      cellWidth: cell?.getBoundingClientRect().width ?? 0,
-    };
-  });
-  if (tableMetrics.scrollWidth <= tableMetrics.clientWidth + 80 || tableMetrics.cellWidth < 120) {
-    fail(
-      `/requirements mobile: reference table is still crushed (${JSON.stringify(tableMetrics)})`,
-    );
-  } else {
-    console.log("ok    /requirements mobile table");
-  }
 } finally {
   await browser.close();
   preview.kill("SIGTERM");

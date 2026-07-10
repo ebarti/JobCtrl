@@ -535,7 +535,7 @@ workflow: [CONTRIBUTING.md](CONTRIBUTING.md).
   pipeline, storage, scoring, materials audit, read model, observability.
 - [Reliability & QA](https://jobctrl.dev/local-reliability-qa) — regression
   matrix and QA gates.
-- [Decisions](https://jobctrl.dev/decisions) — accepted architecture decisions.
+- [Decisions](docs/decisions.md) — accepted architecture decisions.
 - [docs/backlog.md](docs/backlog.md) · [docs/plans/](docs/plans/) — backlog
   and implementation records.
 

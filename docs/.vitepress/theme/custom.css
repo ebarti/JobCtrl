@@ -217,8 +217,7 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
    -------------------------------------------------------------------------- */
 .Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/developer/"]),
 .Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/architecture/"]),
-.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/local-ts-api"]),
-.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/requirements"]) {
+.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/local-ts-api"]) {
   display: none;
 }
 

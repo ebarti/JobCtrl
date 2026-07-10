@@ -20,10 +20,20 @@ function* walk(dir) {
 
 const files = [...walk(dist)];
 const emitted = new Set(files.map((f) => "/" + relative(dist, f).split(sep).join("/")));
+const repositoryOnlyRoutes = ["/decisions", "/requirements"];
 
 const SKIP = /^(?:[a-z][a-z0-9+.-]*:|#)/i;
 const failures = [];
 let checked = 0;
+
+for (const route of repositoryOnlyRoutes) {
+  const candidates = [`${route}.html`, `${route}/index.html`];
+  for (const candidate of candidates) {
+    if (emitted.has(candidate)) {
+      failures.push(`${candidate} must remain repository-only`);
+    }
+  }
+}
 
 for (const file of files) {
   if (!file.endsWith(".html")) continue;
@@ -50,7 +60,7 @@ for (const file of files) {
 }
 
 if (failures.length > 0) {
-  console.error(`docs site link check FAILED: ${failures.length} unresolved reference(s):`);
+  console.error(`docs site link check FAILED: ${failures.length} failure(s):`);
   for (const f of failures) console.error(`  ${f}`);
   process.exit(1);
 }
