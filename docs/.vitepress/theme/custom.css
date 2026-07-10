@@ -222,82 +222,110 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
 }
 
 /* --------------------------------------------------------------------------
-   Desktop navigation controls: VitePress derives both the sidebar box and the
-   content offset from --vp-sidebar-width, so one token owns resize/collapse.
+   Desktop navigation rail: the visible boundary is the resize control.
+   VitePress derives both the sidebar box and content offset from
+   --vp-sidebar-width, so one token keeps the divider and layout synchronized.
    The stock mobile drawer remains untouched below the desktop breakpoint.
    -------------------------------------------------------------------------- */
-.jh-sidebar-controls {
-  margin-block: -8px 24px;
-  padding-block-end: 18px;
-  border-block-end: 1px solid var(--vp-c-divider);
+.jh-sidebar-rail {
+  display: none;
 }
 
-.jh-sidebar-controls__heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-block-end: 8px;
-  color: var(--vp-c-text-1);
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-
-.jh-sidebar-controls__heading output {
-  color: var(--vp-c-text-2);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-
-.jh-sidebar-controls__range {
-  display: block;
-  width: 100%;
-  min-block-size: 24px;
-  accent-color: var(--vp-c-brand-1);
-  cursor: ew-resize;
-}
-
-.jh-sidebar-controls__actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
-  margin-block-start: 8px;
-}
-
-.jh-sidebar-controls button,
+.jh-sidebar-collapse,
 .jh-sidebar-restore {
-  min-block-size: 32px;
-  padding: 5px 10px;
+  display: grid;
+  place-items: center;
+  inline-size: 32px;
+  block-size: 32px;
   border: 1px solid var(--vp-c-divider);
-  border-radius: 6px;
-  background: var(--vp-c-bg-soft);
+  border-radius: 8px;
+  background: var(--vp-c-bg);
   color: var(--vp-c-text-1);
-  font: inherit;
-  font-size: 0.75rem;
-  font-weight: 650;
-  line-height: 1.25;
+  box-shadow: var(--vp-shadow-1);
   cursor: pointer;
 }
 
-.jh-sidebar-controls button:hover,
+.jh-sidebar-collapse:hover,
 .jh-sidebar-restore:hover {
   border-color: var(--vp-c-brand-1);
   background: var(--vp-c-brand-soft);
 }
 
-.jh-sidebar-controls :is(button, input):focus-visible,
+.jh-sidebar-collapse:focus-visible,
 .jh-sidebar-restore:focus-visible {
   outline: 2px solid var(--vp-c-brand-1);
   outline-offset: 2px;
 }
 
+.jh-sidebar-collapse svg,
+.jh-sidebar-restore svg {
+  inline-size: 18px;
+  block-size: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
 .jh-sidebar-restore {
-  margin-inline-start: 32px;
+  margin-inline-start: 24px;
   margin-inline-end: 12px;
-  white-space: nowrap;
 }
 
 @media (min-width: 960px) {
+  .Layout:has(.VPSidebar) .jh-sidebar-rail {
+    position: fixed;
+    z-index: calc(var(--vp-z-index-sidebar) + 1);
+    inset-block: var(--vp-nav-height) 0;
+    inset-inline-start: var(--vp-sidebar-width);
+    display: block;
+    inline-size: 14px;
+    pointer-events: none;
+  }
+
+  .jh-sidebar-resizer {
+    position: absolute;
+    inset: 0;
+    cursor: col-resize;
+    outline: none;
+    pointer-events: auto;
+    touch-action: none;
+  }
+
+  .jh-sidebar-resizer::before {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    inline-size: 1px;
+    background: var(--vp-c-divider);
+    content: "";
+    transition:
+      inline-size 120ms ease,
+      background-color 120ms ease;
+  }
+
+  .jh-sidebar-resizer:is(:hover, :focus-visible)::before,
+  html[data-jh-sidebar-resizing="true"] .jh-sidebar-resizer::before {
+    inline-size: 3px;
+    background: var(--vp-c-brand-1);
+  }
+
+  .jh-sidebar-collapse {
+    position: absolute;
+    z-index: 1;
+    inset-block-start: 14px;
+    inset-inline-start: 0;
+    pointer-events: auto;
+    transform: translateX(-50%);
+  }
+
+  html[data-jh-sidebar-resizing="true"],
+  html[data-jh-sidebar-resizing="true"] * {
+    cursor: col-resize !important;
+    user-select: none !important;
+  }
+
   html[data-jh-sidebar-expanded="false"] {
     --vp-sidebar-width: 0px;
   }
@@ -311,10 +339,26 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
   }
 }
 
+@media (min-width: 1440px) {
+  .Layout:has(.VPSidebar) .jh-sidebar-rail {
+    inset-inline-start: calc((100% - var(--vp-layout-max-width)) / 2 + var(--vp-sidebar-width));
+  }
+}
+
 @media (max-width: 959px) {
-  .jh-sidebar-controls,
+  .jh-sidebar-rail,
   .jh-sidebar-restore {
     display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .jh-sidebar-resizer::before {
+    background: CanvasText;
+  }
+
+  .jh-sidebar-resizer:is(:hover, :focus-visible)::before {
+    background: Highlight;
   }
 }
 
