@@ -42,6 +42,13 @@
 > **W0.6 owner pass (2026-07-07):** owner review closed W0.6 as passed. The
 > private disposition table remains off-repo; no private concern text is
 > committed here, and no W0.6 accepted-risk entry remains a release blocker.
+>
+> **Owner release decisions (2026-07-10):** prepare v2.0.0 as the first public
+> release and explicitly defer W2.4. The existing global estimated daily USD
+> ceiling remains shipped; per-lane attribution and token ceilings remain
+> backlog. Hosted Actions are rerun immediately after the owner makes the
+> repository public; docs deployment, tagging, and publishing remain blocked
+> until those real runs are green.
 
 ---
 
@@ -350,37 +357,43 @@ scripts. Each recipe defers to the item's spec DoD for the exhaustive clause lis
 
 Mirrors spec §5. Every box needs the stated verification; every owner checkpoint
 (spec §0.5) needs a recorded decision. The flip and first tag are owner-only.
-Assemble this, with links, as the final release deliverable.
+The 2026-07-10 hosted-CI exception changes only ordering: exact-tree local green
+precedes the flip, and the exact-SHA hosted result closes immediately afterward;
+docs deployment, tagging, and publication remain blocked meanwhile. Assemble
+this, with links, as the final release deliverable.
 
 | # | Gate line (spec §5) | Verification step | Owner checkpoint |
 | --- | --- | --- | --- |
-| 1 | W0.1–W0.6 merged; `release-check` CI green on `main` since W0.4 | §2 shows W0.1–W0.6 = merged; `release-check` workflow green on every `main` commit since #246 | — |
+| 1 | W0.1–W0.6 merged; Release Privacy green on the exact public-release `main` SHA | Complete local matrix before the flip; immediately after it, rerun the exact-SHA hosted workflow. Zero-step billing failures do not count. | **2026-07-10 sequencing exception** |
 | 2 | Temporal P1b–P5 merged | §2 confirms #235, #237, #238, #239, #240 on `main` | — |
 | 3 | W1.1–W1.7 merged, each `Gate: PASS` review + QA | §2 = merged for all seven; §4.2 W1 proofs pass | — |
-| 4 | Distribution name chosen and live; `publish.yml` re-enabled and gated | §4.2 W2.1 — **or** #257 deferral in force and rename train tracked as the owner action | **§0.5.1 — distribution-name decision (in-flight in #257)** |
-| 5 | W2.2, W2.3, W2.5 merged; W2.4 + W2.6 merged or owner-deferred in writing | §4.2 W2 proofs pass; any deferral recorded by the owner | **§0.5.2 — W2.4 per-lane defaults** |
+| 4 | Distribution renamed to `jobctrl`; v2.0.0 selected; guarded release workflow prepared | Source manifests/archive/tag parity pass; `release-pypi.yml` remains disabled until post-public hosted green. | **Resolved 2026-07-10 — v2.0.0** |
+| 5 | W2.2, W2.3, W2.5, and W2.6 merged; W2.4 merged or owner-deferred in writing | W2 proofs pass; W2.4's v2.0.0 deferral and retained global USD ceiling are recorded in the spec and backlog. | **Resolved 2026-07-10 — W2.4 deferred** |
 | 6 | W0.6 dispositions closed (fixed / backlogged-sanitized / owner-accepted) | Owner's private disposition artifact complete; sanitized entries in `docs/backlog.md` | **§0.5.3 — each accepted-risk entry** |
 | 7 | Owner records acceptance of retained history + capability posture | Owner statement in the flip PR/issue: historical blobs remain reachable; live-submit / CAPTCHA / email-send / LinkedIn-Indeed are deliberate disclosed choices | **owner statement** |
-| 8 | Final manual QA (human) | `jobhunter doctor` clean with expected warnings; seeded `/apply-review` smoke (approval → dry-run evidence → gated submit); one harness dry-run showing blocked-channel evidence; **no real applications** | **owner-run** |
-| 9 | Owner flips visibility and tags first release | Owner-only action | **§0.5.4 — flip + first tag** |
+| 8 | Final manual QA (human) | `jobctrl doctor` clean with expected warnings; seeded `/apply-review` smoke (approval → dry-run evidence → gated submit); one harness dry-run showing blocked-channel evidence; **no real applications** | **owner-run** |
+| 9 | Owner flips visibility; hosted gates execute; owner later tags v2.0.0 | Flip is the controlled unblock; rerun all five exact-SHA hosted workflows immediately. Tag only after hosted green. | **§0.5.4 — flip, verify, then first tag** |
 
-**Go decision:** all nine rows verified and every owner checkpoint recorded. Any
+**Go decision:** all pre-flip portions of the nine rows are verified and every
+owner checkpoint is recorded; after the controlled flip, row 1's hosted result
+must close before docs deployment or the tag. Any
 open Blocker/High review or QA finding, any un-dispositioned W0.6 concern, or any
 un-closed residual whose route is not owner-accepted = **no-go** (CLAUDE.md: work
 is not done while Blocker/High findings remain).
 
 ---
 
-## 6. Risks and open owner decisions
+## 6. Risks and owner-decision status
 
-- **Naming / PyPI deferral pending (PR #257).** Reshapes spec W2.1, §0.5.1, and
-  §5 row 4. Until it merges, keep W2.1 in the inventory as a live item and treat
-  the name as an unresolved owner decision. On merge, re-run §2; the W2.1 rows
-  and §5 row 4 convert to the rename-train owner action. **Owner decision.**
-- **Per-lane spend-ceiling defaults (spec §0.5.2 / W2.4).** Values are an owner
-  confirmation; the drive cannot mark W2.4 done without them. **Owner decision.**
-- **Accepted-risk W0.6 concerns (spec §0.5.3).** Each acceptance is owner-only;
-  no agent may self-accept. **Owner decision.**
+The former naming, W2.4, and W0.6 decisions are resolved: the product and
+distribution are JobCtrl/`jobctrl`, v2.0.0 is the first public version, W2.4 is
+explicitly deferred with its global USD ceiling retained, and W0.6 closed with
+no accepted-risk release blocker. Current risks are:
+
+- **Hosted-CI ordering.** Private-repository runs are blocked before execution.
+  Mitigation: complete the exact-tree local gate, use the owner-approved public
+  flip solely to unblock Actions, rerun all five hosted workflows on that exact
+  SHA immediately, and keep docs/tag/publication blocked until green.
 - **Anchor collision / drift.** Verified real on `main` (§2.3): W2.3's error
   code exists for an unrelated gate.
   Mitigation: the method mandates probing an item's *distinctive* symbol and
@@ -388,9 +401,11 @@ is not done while Blocker/High findings remain).
 - **Sibling-agent merge contention.** Multiple concurrent agents touch
   overlapping files (spec §0.1 collision map). Mitigation: verify on `main` HEAD
   after each merge, lean on parity tests, retry on git-lock contention.
-- **Owner-only completion.** Rows 7–9 of §5 cannot be closed by any agent;
-  premature "done" is a false-completion risk. Mitigation: the gate blocks on
-  recorded owner statements.
+- **Owner-only completion.** Rows 7–9 are owner-only, with rows 7–8 required
+  before the flip; row 1's hosted result and row 9's hosted-verification/tag
+  portion close only at or after cutover. Premature "done" is a
+  false-completion risk. Mitigation: the gate blocks on recorded owner
+  statements and hosted readback.
 - **Residual under-detection.** A merged item can silently miss a DoD clause
   (the W2.2 `doctor` warnings are the live example). Mitigation: Class C probes,
   not Class A/B alone, decide merged-vs-residual.
@@ -536,35 +551,23 @@ requirement. R11 guarded submission / browser-extension Phase 3 must not start.
   row in the ledger/comparison/public launch copy must say **Roadmap** if it is
   post-launch. `docs/claims-ledger.md` was not edited in this close-out.
 
-### 9.5 Remaining owner-action checklist
+### 9.5 Remaining release owner-action checklist
 
-W0.6 disposition closure is no longer a remaining owner action: owner review
-closed it as passed on 2026-07-07, with private concern details kept off-repo.
+W0.6, naming/rename, W2.4 disposition, comparison content, demo-asset scope,
+Current-vs-Beta policy, claims-ledger ownership/location, and the shipped
+browser-extension Phase 1/2 decisions are resolved. Browser-extension future
+phases and the optional per-source policy editor remain product-roadmap choices,
+not v2.0.0 release gates.
 
 | Owner action | Source |
 | --- | --- |
-| Pick/confirm final distribution name, complete the pre-publication repository/distribution rename path, and re-enable tag publishing. | OSS spec checkpoints `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:160`-`:167`; W2.1 evidence in §9.3. |
-| Confirm W2.4 default per-lane token ceilings and spend defaults. | OSS spec checkpoint `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:162`-`:163`; W2.4 DoD `:1052`-`:1068`. |
-| Record historical-blob acceptance and live capability posture before visibility flip. | OSS spec gate `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:1124`-`:1127`. |
-| Complete final manual QA and owner-only visibility flip / first release tag. | OSS spec gate `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md:1128`-`:1132`. |
-| Confirm comparison page row categories, alternative columns, maintenance cadence interval, and final sidebar label/placement; replace all alternative `TODO(owner)` placeholders only after facts are verified. | Launch-readiness plan `docs/plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md:503`-`:516`; comparison placeholders `docs/comparison.md:26`-`:35`, `:44`-`:57`. |
-| Confirm the initial launch demo-asset set. | Launch-readiness plan `docs/plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md:517`-`:532`. |
-| Set the Current-vs-Beta threshold and resolve the named reclassification candidates. | Launch-readiness plan `docs/plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md:545`-`:554`; claims-ledger sign-off list `docs/claims-ledger.md:224`-`:237`. |
-| Name the claims-freeze sign-off owner and each Phase C publish-step owner. | Launch-readiness plan `docs/plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md:555`-`:560`; claims ledger `docs/claims-ledger.md:240`-`:241`. |
-| Re-stamp the claims ledger against the final `main` SHA at actual freeze time. | Claims ledger freeze status `docs/claims-ledger.md:24`-`:38`. |
-| Confirm the claims-ledger location/publication decision. | Claims ledger owner row `docs/claims-ledger.md:222`-`:223`. |
-| Review final honest crawl user-agent contact string before real crawls. | Crawl-politeness plan `docs/plans/implemented/2026-07-05-crawl-politeness-plan.md:676`-`:697`. |
-| Decide whether per-source politeness policy editor / web knobs remain deferred or enter scope. | Crawl-politeness plan `docs/plans/implemented/2026-07-05-crawl-politeness-plan.md:737`-`:751`. |
-| Browser extension D-1: exact token model, storage, pairing UX, and whether a valid token relaxes the mutation-origin gate. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:381`. |
-| Browser extension D-2: whether unauthenticated loopback API reads stay open. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:382`. |
-| Browser extension D-3: extension provenance fields and source-id scheme. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:383`. |
-| Browser extension D-4: starting generic matcher family set and rollout order. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:384`. |
-| Browser extension D-5: offline capture queue retention policy. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:385`. |
-| Browser extension D-6: go/no-go to begin guarded-submission Phase 3 once §6.1 is satisfied. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:386`. |
-| Browser extension D-7: distribution channel and signing key ownership. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:387`. |
-| Browser extension D-8: target browser/engine for v1. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:388`. |
-| Browser extension D-9: whether to ship LLM-assisted free-text drafts or keep deterministic-only for v1. | Browser plan `docs/plans/implemented/2026-07-05-browser-extension-plan.md:389`. |
-| Claims-ledger `TODO(owner)` cells. | None found by `rg -n "TODO\\(owner\\)" docs/claims-ledger.md`; remaining claims-ledger owner actions are listed above instead. |
+| Review the final honest crawl user-agent contact string before the authorized real TTFV crawls. | Crawl-politeness plan D1, "Owner decisions". |
+| Re-stamp the already signed claims ledger against the final release `main` SHA. | `docs/claims-ledger.md`, "Freeze status" and GOV-04. |
+| Record historical-blob acceptance and the deliberate live capability posture in the flip record. | OSS release spec §5, retained-history/capability-posture gate. |
+| Complete the final human QA, including `jobctrl doctor`, the Apply Review gated-submit smoke, and blocked-channel harness evidence; no real applications. | OSS release spec §5, final manual QA gate. |
+| Flip visibility, then immediately rerun Release Privacy, Docs Site, Python CI, Sync Homebrew Tap, and TypeScript CI on the exact `main` SHA. | Owner hosted-CI sequencing decision; `docs/publish-checklist.md` §9.1. |
+| After hosted green, enable docs deployment, configure the exact `release-pypi.yml` Trusted Publisher, enable the release workflow, and publish the reviewed v2.0.0 GitHub Release. | `docs/publish-checklist.md` §§9.2 and 9.4. |
+| At the v2.0.0 tag, add the stable Homebrew URL/SHA, merge its canonical formula update, verify tap sync, and run the stable install smoke. | `docs/publish-checklist.md` §9.5. |
 
 ## 10. Refreshed W1 residual inventory after remediation (2026-07-06)
 
@@ -622,9 +625,10 @@ W0.6 is no longer a current blocker: owner review closed it as passed on
 
 | Gate | Current status | Evidence |
 | --- | --- | --- |
-| W2.1 final distribution name and publish re-enable | not complete | PR #257 remains open; `.github/workflows/publish.yml` is still manual-only and `workers/automation/pyproject.toml` still uses the current distribution name. |
-| W2.4 per-lane token ceilings and owner-confirmed defaults | not complete | The base daily spend cap exists, but the spec still requires lane-attributed ceilings, owner-confirmed defaults, doctor visibility, and health-surface breakdown before release. |
-| Final release/visibility owner actions | not complete | §9.5 still requires the owner-only release flip, first tag, and final sign-offs. |
+| W2.1 distribution rename and guarded publishing path | complete | The distribution is `jobctrl`; the historical workflow is gone; `release-pypi.yml` is release-only, exact-main/tag/version gated, and remains disabled pending the owner release action. |
+| W2.4 per-lane token ceilings | explicitly deferred | Owner written decision 2026-07-10: v2.0.0 retains the global estimated daily USD ceiling; per-lane attribution, token ceilings, apply accounting, and lane visibility remain backlog. |
+| Hosted release gates | pending post-public rerun | Private-repository jobs fail before running because of GitHub billing. The owner-approved sequence is local full green → visibility flip → immediate hosted rerun; docs, tag, and publication remain blocked until green. |
+| Final release/visibility owner actions | not complete | §9.5 still requires the owner-only release flip, post-public workflow readback, first tag, and final sign-offs. |
 
 ## Delivery Model: Stacked PRs On This Plan
 

@@ -13,8 +13,8 @@ class Jobctrl < Formula
   homepage "https://jobctrl.dev"
   license "AGPL-3.0-only"
 
-  # TODO(release): add a stable spec after the owner approves the first version:
-  #   url "https://github.com/ebarti/JobCtrl/archive/refs/tags/vVERSION.tar.gz"
+  # TODO(release): add a stable spec when the v2.0.0 release is published:
+  #   url "https://github.com/ebarti/JobCtrl/archive/refs/tags/v2.0.0.tar.gz"
   #   sha256 "<sha256 of that tarball>"
   head "https://github.com/ebarti/JobCtrl.git", branch: "main"
 

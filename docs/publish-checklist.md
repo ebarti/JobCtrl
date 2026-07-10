@@ -20,8 +20,12 @@ The **authoritative release gate is OSS spec §5**
 §5 "Release gate — flipping public"). That gate owns the capability and privacy
 preconditions (W0.\* privacy scanner, W1.\* apply safety, W2.\* naming/governance,
 Temporal P1b–P5). This checklist does not duplicate those; it lists only the
-publish *mechanics* that feed the gate. **Do not flip visibility, deploy the
-public docs site, or tag a release until every OSS spec §5 box is checked.**
+publish *mechanics* that feed the gate. The sole sequencing exception is the
+owner decision recorded on 2026-07-10: because GitHub refuses to start the
+private-repository jobs under the current billing state, the owner may flip
+visibility after the complete exact-tree local gate passes solely to unblock
+the hosted runs. Docs deployment, release tagging, Homebrew stable publication,
+and PyPI publication remain prohibited until every hosted gate is then green.
 
 ## Owner-only actions (do not execute here)
 
@@ -36,10 +40,14 @@ to the rename train / post-rename launch assets (R7b).
 
 - **Action.** Owner flips `github.com/ebarti/JobCtrl` from private to public.
 - **Verification.**
-  - `release-check` (`.github/workflows/release-check.yml`) is green on `main`
-    for every commit since W0.4 landed (it triggers on every `push` to `main`
-    and is also available through `workflow_dispatch` for maintainer-reviewed
-    branches).
+  - Before the flip, run the complete local matrix on the exact `main` tree,
+    including strict release/privacy scanning and built-distribution scanning.
+  - Immediately after the flip, rerun Release Privacy, Docs Site, Python CI,
+    Sync Homebrew Tap, and TypeScript CI on that exact `main` SHA. The current
+    private-repository runs are zero-step billing failures and are not passing
+    evidence. If Release Privacy fails after actually executing, return the
+    repository to private while investigating. Any other hosted failure blocks
+    docs deployment, tagging, and publication.
   - `python3 scripts/release_check.py` reports zero findings locally on the
     exact commit to be published.
   - Every box in OSS spec §5 is checked, including the final human manual QA
@@ -114,6 +122,9 @@ to the rename train / post-rename launch assets (R7b).
 > The historical "Publish to PyPI" workflow remains `disabled_manually`; once
 > the new path first appears on `main`, explicitly disable "Release to PyPI"
 > too until every release gate below is satisfied.
+> The owner selected **v2.0.0** as the first public release version on
+> 2026-07-10. All shipped manifests are prepared at that version before the
+> tag; publishing the tag remains an owner-only action after hosted gates pass.
 
 - **Action.** Re-check that the `jobctrl` PyPI name is still available and
   configure/verify its Trusted Publisher immediately before release. A pending
@@ -155,8 +166,8 @@ committing, and makes no commit when the tap is already current.
 
 | Step | Owner-only | Rename-gated | Status |
 | --- | --- | --- | --- |
-| 9.1 Visibility flip | Yes | No | Prepared + verifiable; owner executes |
-| 9.2 Docs-site deploy | Yes | No | Prepared + verifiable; owner executes |
+| 9.1 Visibility flip | Yes | No | Prepared; owner flips after exact-tree local green, then immediately verifies hosted gates |
+| 9.2 Docs-site deploy | Yes | No | Blocked until the post-public hosted gates are green; owner executes |
 | 9.3 Rename redirect | Yes | Landed 2026-07-07 | Redirect verify at flip; owner executes |
-| 9.4 Release tagging | Yes | Landed 2026-07-07 | Mechanics ready; owner re-enables + tags |
+| 9.4 Release tagging | Yes | Landed 2026-07-07 | v2.0.0 selected and mechanics ready; blocked until post-public hosted gates pass |
 | 9.5 Homebrew tap | First stable tag only | No | Head formula published; automated exact-copy sync configured; stable spec + install verification remain for first tag |

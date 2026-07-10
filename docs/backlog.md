@@ -33,6 +33,13 @@ frontend adapters remain deferred until the local product is solid.
 
 ## Release Hardening Follow-Ups
 
+- Implement the explicitly deferred W2.4 spend-control delta after v2.0.0:
+  attribute every recorded LLM usage entry to its workflow lane, capture apply
+  subprocess usage in the same ledger, enforce configurable per-lane daily
+  token ceilings through the existing budget preflight, and expose the lane
+  breakdown in `jobctrl doctor` and health. The shipped global estimated daily
+  USD ceiling remains in force; this follow-up must extend it rather than add a
+  second spend table or preflight.
 - Add a shared schema-contract check for database tables initialized by both
   the TypeScript API and Python worker so cross-runtime table ownership cannot
   drift silently.

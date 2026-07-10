@@ -12,6 +12,22 @@
 > gate as passed. Private concern details remain off-repo; no W0.6 accepted-risk
 > entry remains a release blocker.
 >
+> **Owner release decisions (2026-07-10):** the first public release is
+> **v2.0.0**. W2.4 is explicitly deferred for that release: v2.0.0 keeps P5's
+> application-wide estimated daily USD ceiling and preflight, while per-lane
+> token attribution, per-lane ceilings, apply-lane accounting, and lane-level
+> doctor/health visibility remain an acknowledged backlog item. This is a
+> written deferral, not a claim that W2.4 was implemented.
+>
+> **Owner hosted-CI sequencing decision (2026-07-10):** GitHub currently
+> refuses to start private-repository jobs because of the account billing
+> state. After the exact release tree passes the complete local gate, the owner
+> will flip the repository public and immediately rerun Release Privacy, Docs,
+> Python, Homebrew sync, and TypeScript workflows. Docs deployment, release
+> tagging, and package publication stay blocked until those runs are green; a
+> failed privacy run requires an immediate return to private while it is
+> investigated. No failed zero-step run is treated as passing evidence.
+>
 > **Owner decision (2026-07-06):** the W1.8 dry-run-by-default requirement is
 > withdrawn. `jobhunter apply` and workflow/RPC apply starts keep the existing
 > non-dry-run default unless the caller passes `--dry-run` / `dryRun: true`.
@@ -168,8 +184,10 @@ PII-clean per §0.2.
 1. **W2.1** — removed 2026-07-05; naming and publishing are deferred to
    the owner's pre-publication rename train (§1 "Naming"). No checkpoint
    remains. (Number retained so §0.5.2–.4 references stay stable.)
-2. **W2.4** — default daily spend-ceiling values per lane (you propose
-   defaults; the owner confirms).
+2. **W2.4** — resolved 2026-07-10 by explicit owner deferral for v2.0.0.
+   The existing global estimated-USD ceiling remains; per-lane attribution,
+   token ceilings, apply-lane accounting, and lane visibility stay in the
+   engineering backlog.
 3. **W0.6** — any CONCERNS item you propose to classify as
    "accepted risk" (the owner must approve each acceptance). Closed on
    2026-07-07 with no accepted-risk entry remaining as a release blocker.
@@ -997,7 +1015,12 @@ headerless curl-style → allowed; existing Origin/Referer cases unchanged.
 - [ ] Test matrix green; `SECURITY.md` updated.
 - [ ] Full sweep (§0.3) passes.
 
-### W2.4 — Per-lane spend attribution and token ceilings *(requires temporal P5; delta on P5's spend system; owner checkpoint for defaults)*
+### W2.4 — Per-lane spend attribution and token ceilings *(explicitly deferred for v2.0.0 by owner decision 2026-07-10)*
+
+> **Release disposition:** deferred in writing under §0.5.2. The work and
+> Definition of Done below remain the future implementation contract. v2.0.0
+> ships only the already-implemented global estimated daily USD ceiling; no
+> per-lane token-control claim may be made.
 
 **Objective:** extend — do not duplicate — the spend system temporal P5
 ships. P5 delivers the base: the `llm_spend` day-aggregate table
@@ -1074,13 +1097,21 @@ describe the full chain and what degrades when a link is missing.
 
 ## 5. Release gate — flipping public (owner executes; you prepare)
 
-All boxes below must be checked before the repository visibility flip and
-first tag. Assemble this checklist, with links, as the final deliverable.
+All boxes below must be checked before the first tag. They must also be checked
+before the visibility flip except for the single hosted-CI sequencing exception
+recorded above: that box closes immediately after the public flip and before
+docs deployment, tagging, or publication. Assemble this checklist, with links,
+as the final deliverable.
 
-- [ ] W0.1–W0.6 merged; `release-check` CI green on `main` on every commit
-      since W0.4 landed.
-- [ ] Temporal P1b–P5 merged (PR #232 program complete).
-- [ ] **G1 (crawl politeness) met:** every discovery/enrichment fetch surface
+- [ ] W0.1–W0.6 merged and Release Privacy green on the exact public-release
+      `main` SHA. The code is merged and the exact release tree is locally
+      green, but private-repository jobs currently fail before running because
+      of GitHub billing. The 2026-07-10 owner sequencing decision supersedes
+      the former every-commit hosted criterion: this box closes only when the
+      immediate post-public exact-SHA run actually executes and passes. A
+      zero-step failure is never accepted as evidence.
+- [x] Temporal P1b–P5 merged (PR #232 program complete).
+- [x] **G1 (crawl politeness) met:** every discovery/enrichment fetch surface
       (#1–#10 in the crawl-politeness plan) routes through the politeness gateway
       — robots honored, per-host rate limit + per-run budget, one honest
       owner-configurable user-agent, blocked/rate-limited/budget-exhausted
@@ -1091,7 +1122,7 @@ first tag. Assemble this checklist, with links, as the final deliverable.
       is merged to `main`.
 - [x] W1.1–W1.7 merged, each with review gate `Gate: PASS` and QA gate
       `Gate: PASS` per repo process.
-- [ ] Rename train executed (owner-side, after all W-items): full
+- [x] Rename train executed (owner-side, after all W-items): full
       `JobHunter` → `JobCtrl` rename; `workers/automation/pyproject.toml`
       distribution name `jobctrl` (re-check availability and configure the
       Trusted Publisher immediately before first publish; a pending publisher
@@ -1099,15 +1130,15 @@ first tag. Assemble this checklist, with links, as the final deliverable.
       while the new release-only `release-pypi.yml` runs only for
       a published non-prerelease GitHub Release with exact
       manifest/archive/tag version parity; W0.3 structural check updated/retired.
-- [ ] W2.2, W2.3, W2.5 merged; W2.4 and W2.6 merged or explicitly deferred
-      by the owner in writing.
+- [x] W2.2, W2.3, W2.5, and W2.6 merged; W2.4 explicitly deferred by the
+      owner in writing on 2026-07-10 for v2.0.0.
 - [x] W0.6 dispositions closed: every concern fixed, backlogged
       (sanitized), or owner-accepted.
 - [ ] Owner has recorded, in the flip PR/issue: acceptance of historical
       blobs remaining reachable (git history kept), and the capability
       posture (live submit, CapSolver, email send, LinkedIn/Indeed) as
       deliberate, disclosed choices.
-- [ ] Final manual QA (human): `jobhunter doctor` clean with expected
+- [ ] Final manual QA (human): `jobctrl doctor` clean with expected
       warnings; seeded `/apply-review` smoke showing approval → dry-run
       evidence → gated submit controls; one harness dry-run showing the
       blocked-channel evidence. No real applications.
