@@ -272,6 +272,36 @@ separate sanitized profile DTO from the Candidate Profile read path; it does
 not expose profile passwords, resume content, generated artifacts, or apply
 submission authority.
 
+### Provider Credential Boundary
+
+Provider credential storage crosses the TypeScript/Python process boundary; it
+is not a runtime secret read performed by the API:
+
+- On macOS, the web Settings form sends one submitted value to
+  `PATCH /v1/credentials`. The loopback TypeScript API accepts only the fixed
+  allowlist `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `LLM_URL`, then passes that
+  value to the `JobCtrl` macOS Keychain service. `GET` and post-mutation
+  responses use presence checks; each `configured` state is `true`, `false`, or
+  `null`. `false` means confirmed absent, while `null` plus
+  `unavailableReason: inspection_failed` means the store could not be inspected
+  and must not be treated as missing. The API never reads a stored value back
+  for provider execution or returns one over HTTP. Unsupported mutation hosts
+  receive a sanitized `409 credential_store_unavailable`; operational Keychain
+  failures receive sanitized `503 credential_store_unavailable` with
+  `operational_failure`, never raw command output. A user can unlock Keychain if
+  needed and retry.
+- Provider-consuming Python CLI, RPC, and worker startup paths call
+  `config.load_env()`. After env files are loaded, it considers that same fixed
+  allowlist and performs a non-interactive Keychain lookup only for a missing or
+  empty value. Each lookup uses the fixed `/usr/bin/security` binary with a
+  two-second timeout and no stdin. A successful value is copied only into that
+  process's environment; a non-empty environment value always wins.
+- Keychain resolution is cached for the life of the Python process. There is no
+  hot reload, so a long-lived worker or RPC subprocess must restart after a
+  Settings edit. Non-macOS processes do not probe Keychain and use env files or
+  their inherited environment today; native Windows and Linux stores are
+  planned, not shipped.
+
 ## Python Automation Engine
 
 Python owns automation execution:

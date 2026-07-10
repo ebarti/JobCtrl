@@ -255,6 +255,12 @@ function createMemoryCredentialStore(): CredentialStore {
   const values = new Map<CredentialKey, string>();
   const list = async (): Promise<CredentialsResponse> => ({
     ok: true,
+    store: {
+      kind: "macos_keychain",
+      available: true,
+      unavailableReason: null,
+      requiresWorkerRestart: true,
+    },
     credentials: CredentialKeys.map((key) => ({
       key,
       label: key,

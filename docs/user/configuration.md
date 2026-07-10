@@ -13,9 +13,9 @@ Claude + Codex + Antigravity ensemble; `jobctrl setup` and `jobctrl doctor`
 report those separately.
 
 JobCtrl configuration is intentionally local. Some settings live in the local
-SQLite database, set through the web app; secrets and runtime switches are read
-from environment variables. Everything here is optional unless a feature you want
-depends on it.
+SQLite database, set through the web app; working runtime credentials and
+runtime switches are read from environment variables. Everything here is
+optional unless a feature you want depends on it.
 
 ## Configuration Sources
 
@@ -29,6 +29,22 @@ depends on it.
 
 The development launcher loads `~/.jobctrl/.env`, repo `.env`, and the optional
 `JOBCTRL_USER_ENV_PATH` file before starting local services.
+
+The web app's credential panel is a separate, macOS-only store for
+`OPENAI_API_KEY`, `GEMINI_API_KEY`, and `LLM_URL`. It can write and report the
+presence of those entries in the macOS Keychain. At Python process startup,
+after env-file loading, JobCtrl uses a Keychain value only when the corresponding
+environment value is missing or empty; any non-empty value already present wins.
+Saving or removing a value in the running web app is therefore
+**restart-to-activate**: restart the Python worker (or the full local stack)
+before provider work. Native Windows and Linux credential-store adapters are
+planned; use the plaintext `.env` fallback or the shell on those platforms
+today. `jobctrl doctor` reports the effective source without printing secret
+values. In the macOS panel, **status unknown** (`inspection_failed`) is distinct
+from **not configured**: it means JobCtrl could not inspect Keychain, not that the
+entry is absent. Unlock Keychain if it is locked and retry; operational
+save/remove failures use a generic unavailable message without raw command
+details.
 
 ## Candidate Profile Application Fields
 

@@ -300,7 +300,8 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
 
 - `jobctrl.db` — local SQLite database with profile, jobs, events,
   projections, settings, and artifact metadata.
-- `.env` — provider keys and local runtime settings.
+- `.env` — plaintext, cross-platform fallback for provider/API credentials
+  and local runtime settings; it is not encrypted at rest.
 - `tailored_resumes/`, `cover_letters/`, `logs/` — generated artifacts and
   logs.
 - `chrome-workers/`, `apply-workers/` — local browser/apply worker state.
@@ -309,13 +310,21 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
   prompt-driven commands from `codex_home/workspace/` only.
 - `backups/` — timestamped database snapshots written by `jobctrl backup`.
 
+Unless noted otherwise, those paths are relative to `JOBCTRL_DIR`, whose
+default is `~/.jobctrl/`. On macOS, the three provider settings supported by
+the web credential panel can live in the system Keychain instead of this
+directory.
+
 The daily digest is local-only: `jobctrl digest` and the Dashboard panel read
 from `jobctrl.db` without sending notifications; only the explicit
 acknowledge action advances the `digest_state` watermark.
 
-Never commit profiles, API keys, generated resumes, cover letters, PDFs,
-browser profiles, logs, SQLite databases, screenshots containing real data,
-or local worker state. See
+The default workspace is outside the repository, and the repository's
+`.gitignore` excludes the known `.env`, SQLite, generated-artifact, browser,
+worker, log, resume, and `.dev/` paths. The release privacy check adds a second
+guard before publication. These protections reduce accidental commits; they do
+not make a manually copied or force-added private file safe to publish. Use
+`pnpm qa:seed` for shareable screenshots and reproduction data. See
 [Data, Privacy & Safety](https://jobctrl.dev/user/data-and-safety) and
 [SECURITY.md](SECURITY.md).
 
@@ -454,6 +463,21 @@ Configuration comes from local profile/settings stores, environment variables
 registries. Compensation-source opt-ins are managed from Settings and stored
 locally. Start with [.env.example](.env.example); full reference:
 [Configuration](https://jobctrl.dev/user/configuration).
+
+The cross-platform provider-credential path is the plaintext
+`~/.jobctrl/.env` file or the process environment. On macOS only, Settings can
+instead store `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `LLM_URL` in the system
+Keychain. At Python process startup, after env files are loaded, a non-empty
+environment value takes precedence; only a missing or empty allowlisted value
+is copied from Keychain into that process. Keychain edits are not hot-reloaded,
+so restart the worker or full stack after saving or removing one. Native Windows
+Credential Manager and Linux Secret Service/keyring adapters are planned, not
+shipped; use `.env` or the shell on those platforms today. The macOS panel
+distinguishes **not configured** from **status unknown**: an unknown
+(`inspection_failed`) result means Keychain could not be inspected, not that the
+entry is absent. Unlock Keychain if it is locked, then retry; operational
+save/remove failures return a generic unavailable message rather than raw
+Keychain output.
 
 <details>
 <summary><b>Common variables</b></summary>

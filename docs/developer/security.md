@@ -169,9 +169,12 @@ owned sender only after Apply Review approval, not by an agent mailbox tool.
 The detailed containment rules are below in
 [Apply-Path Containment](#apply-path-containment).
 
-**Secrets, files, and observability.** LLM provider keys use the macOS Keychain
-credential store or explicit environment variables; the CapSolver key is an env
-var scoped to the owned solver tool; Gmail token files are local; job-site
+**Secrets, files, and observability.** Runtime LLM provider keys use explicit
+environment variables first, with a process-start macOS Keychain fallback for
+three supported settings. The fallback never overrides a non-empty environment
+value and never exposes the stored value through HTTP, logs, or diagnostics.
+Native Windows and Linux credential-store adapters are planned. The CapSolver
+key is an env var scoped to the owned solver tool; Gmail token files are local; job-site
 passwords, if saved, remain local profile data consumed by `type_credential`.
 SQLite, generated artifacts, browser profiles, logs, prompts, completions, and
 worker directories are sensitive. Langfuse/OTel export is opt-in and warns that
@@ -291,13 +294,26 @@ apply-worker state, or raw logs and traces. Use synthetic fixtures or
 `pnpm qa:seed` for reproduction cases. This mirrors the rules in
 [SECURITY.md](../../SECURITY.md) and `.gitignore`.
 
-**Store credentials in a secret port.** Credentials must use the macOS Keychain
-credential store or explicit environment variables, never SQLite, snapshots,
-logs, traces, or artifacts (TR-013). The Keychain store
-(`apps/api/src/credentials.ts`) currently holds the LLM provider keys. The
-CapSolver key is an env var scoped to the owned CAPTCHA tool. A job-site login
-password, if the user provides one, remains local profile data consumed by the
-owned `type_credential` tool; it is not interpolated into the apply prompt.
+**Store credentials in a secret port.** Credentials must use a secret port or
+explicit environment variables, never SQLite, snapshots, logs, traces, or
+artifacts (TR-013). The macOS-only API store
+(`apps/api/src/credentials.ts`) accepts submitted values only for
+`OPENAI_API_KEY`, `GEMINI_API_KEY`, and `LLM_URL`; it can write, presence-check,
+and delete those Keychain entries without reading them back for provider runtime
+or returning their values. Presence is tri-state: `configured: false` means
+confirmed absent; `configured: null` with `inspection_failed` means unknown and
+must not be collapsed into absence. Unsupported mutations return a sanitized
+409, operational store failures a sanitized 503 with `operational_failure`, and
+neither exposes raw `security` output. After env-file loading, the shared Python
+`config.load_env()` boundary loads a missing or empty value through a bounded,
+non-interactive Keychain lookup once per process; any non-empty environment
+value wins, failures degrade to no fallback, and long-lived workers require a
+restart after a web edit. Windows and Linux use environment configuration until
+their planned native adapters ship. The
+CapSolver key is an env var scoped to the
+owned CAPTCHA tool. A job-site login password, if the user provides one,
+remains local profile data consumed by the owned `type_credential` tool; it is
+not interpolated into the apply prompt.
 
 **The release gate is enforced before release-bound changes land.**
 `scripts/release_check.py` runs automatically on every push to `main` and is
@@ -348,9 +364,9 @@ the SaaS section of the [backlog](../backlog.md). The load-bearing ones:
   constant `local`. In hosted mode the value's source changes to JWT claims — a
   mechanical change, because query keys, events, and projections are already
   tenant-scoped.
-- **Secret storage.** The macOS Keychain / `.env` model gives way to a managed
-  secret vault (e.g. AWS Secrets Manager) on any non-macOS or multi-tenant
-  deployment, since Keychain is macOS-only and `.env` is unencrypted.
+- **Secret storage.** The current environment-first, macOS-Keychain-fallback
+  credential model gives way to a managed secret vault (e.g. AWS Secrets
+  Manager) on any hosted or multi-tenant deployment. `.env` is unencrypted.
 - **Browser isolation.** Local Chrome on CDP ports becomes managed browser
   sessions (e.g. Browserbase) on any cloud deployment, because running Chrome in a
   container needs elevated privileges or `--no-sandbox`. This is a day-1 cloud

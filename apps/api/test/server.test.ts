@@ -4,10 +4,16 @@ import path from "node:path";
 import Database from "better-sqlite3";
 
 import { createJobCtrlApiClient } from "@jobctrl/api-client";
-import { CredentialKeys, type ActionCommandPayload, type CredentialKey } from "@jobctrl/contracts";
+import {
+  CREDENTIAL_VALUE_MAX_LENGTH,
+  CredentialKeys,
+  type ActionCommandPayload,
+  type CredentialKey,
+} from "@jobctrl/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
+import { KeychainCredentialStore } from "../src/credentials.js";
 import { PROFILE_PREVIEW_SCRIPT, defaultActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 
@@ -18,6 +24,8 @@ let strayStyleExportPath = "";
 let strayTemplateExportPath = "";
 const CHROME_EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const INERT_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
+const REJECTED_CREDENTIAL_VALUE_MARKER =
+  "rejected-credential-must-not-appear";
 
 function validProfileFixture(fullName: string): Record<string, unknown> {
   return {
@@ -8319,6 +8327,12 @@ describe("local TypeScript API", () => {
     const credentialStore = {
       list: vi.fn(async () => ({
         ok: true as const,
+        store: {
+          kind: "macos_keychain" as const,
+          available: true,
+          unavailableReason: null,
+          requiresWorkerRestart: true as const,
+        },
         credentials: CredentialKeys.map((key) => ({
           key,
           label: key,
@@ -8363,6 +8377,192 @@ describe("local TypeScript API", () => {
     expect(remove.json().credentials.find((credential: { key: string }) => credential.key === "OPENAI_API_KEY")).toMatchObject({
       configured: false,
     });
+
+    await app.close();
+  });
+
+  it.each([
+    ["empty", ""],
+    [
+      "over 8,000 characters",
+      `${REJECTED_CREDENTIAL_VALUE_MARKER}${"x".repeat(
+        CREDENTIAL_VALUE_MAX_LENGTH +
+          1 -
+          REJECTED_CREDENTIAL_VALUE_MARKER.length,
+      )}`,
+    ],
+    ["carriage return", `${REJECTED_CREDENTIAL_VALUE_MARKER}\rrest`],
+    ["line feed", `${REJECTED_CREDENTIAL_VALUE_MARKER}\nrest`],
+    ["NUL", `${REJECTED_CREDENTIAL_VALUE_MARKER}\0rest`],
+  ])(
+    "rejects a credential containing %s before invoking the store",
+    async (_label, value) => {
+      const runSecurity = vi.fn();
+      const credentialStore = new KeychainCredentialStore({
+        platform: "darwin",
+        runSecurity,
+      });
+      const setCredential = vi.spyOn(credentialStore, "set");
+      const app = buildApp({ ...options, credentialStore });
+      const logError = vi.spyOn(app.log, "error");
+
+      const save = await app.inject({
+        method: "PATCH",
+        url: "/v1/credentials",
+        payload: { key: "OPENAI_API_KEY", value },
+      });
+
+      expect(save.statusCode, save.body).toBe(400);
+      expect(save.body).not.toContain(REJECTED_CREDENTIAL_VALUE_MARKER);
+      expect(setCredential).not.toHaveBeenCalled();
+      expect(runSecurity).not.toHaveBeenCalled();
+      expect(logError).not.toHaveBeenCalled();
+
+      await app.close();
+    },
+  );
+
+  it.each([
+    ["one character", "x"],
+    ["8,000 characters", "x".repeat(CREDENTIAL_VALUE_MAX_LENGTH)],
+  ])("accepts a valid credential at the %s boundary", async (_label, value) => {
+    const response = {
+      ok: true as const,
+      store: {
+        kind: "macos_keychain" as const,
+        available: true,
+        unavailableReason: null,
+        requiresWorkerRestart: true as const,
+      },
+      credentials: CredentialKeys.map((key) => ({
+        key,
+        label: key,
+        configured: true,
+        storage: "keychain" as const,
+      })),
+    };
+    const credentialStore = {
+      list: vi.fn(async () => response),
+      set: vi.fn(async (_key: CredentialKey, _value: string) => response),
+      delete: vi.fn(async () => response),
+    };
+    const app = buildApp({ ...options, credentialStore });
+
+    const save = await app.inject({
+      method: "PATCH",
+      url: "/v1/credentials",
+      payload: { key: "OPENAI_API_KEY", value },
+    });
+
+    expect(save.statusCode, save.body).toBe(200);
+    expect(credentialStore.set).toHaveBeenCalledTimes(1);
+    expect(credentialStore.set.mock.calls[0]?.[0]).toBe("OPENAI_API_KEY");
+    expect(credentialStore.set.mock.calls[0]?.[1]).toHaveLength(value.length);
+
+    await app.close();
+  });
+
+  it.each(["linux", "win32"] as const)(
+    "reports unsupported Keychain storage on %s without spawning or failing credential reads",
+    async (platform) => {
+      const runSecurity = vi.fn();
+      const credentialStore = new KeychainCredentialStore({ platform, runSecurity });
+      const app = buildApp({ ...options, credentialStore });
+
+      const initial = await app.inject({ method: "GET", url: "/v1/credentials" });
+      expect(initial.statusCode, initial.body).toBe(200);
+      expect(initial.json()).toMatchObject({
+        ok: true,
+        store: {
+          kind: "macos_keychain",
+          available: false,
+          unavailableReason: "unsupported_platform",
+          requiresWorkerRestart: true,
+        },
+      });
+      expect(
+        initial.json().credentials.every(
+          (credential: { configured: boolean | null }) => credential.configured === null,
+        ),
+      ).toBe(true);
+      expect(runSecurity).not.toHaveBeenCalled();
+
+      const save = await app.inject({
+        method: "PATCH",
+        url: "/v1/credentials",
+        payload: { key: "OPENAI_API_KEY", value: "test-secret" },
+      });
+      expect(save.statusCode, save.body).toBe(409);
+      expect(save.json()).toMatchObject({
+        ok: false,
+        error: "credential_store_unavailable",
+        reason: "unsupported_platform",
+      });
+
+      const remove = await app.inject({ method: "DELETE", url: "/v1/credentials/OPENAI_API_KEY" });
+      expect(remove.statusCode, remove.body).toBe(409);
+      expect(remove.json()).toMatchObject({
+        ok: false,
+        error: "credential_store_unavailable",
+        reason: "unsupported_platform",
+      });
+      expect(runSecurity).not.toHaveBeenCalled();
+
+      await app.close();
+    },
+  );
+
+  it("keeps failed Keychain inspection unknown and returns sanitized 503 mutation errors", async () => {
+    const secret = "server-secret-and-raw-stderr-must-not-appear";
+    const runSecurity = vi.fn(async () => {
+      throw new Error(secret);
+    });
+    const credentialStore = new KeychainCredentialStore({ platform: "darwin", runSecurity });
+    const app = buildApp({ ...options, credentialStore });
+    const logError = vi.spyOn(app.log, "error");
+
+    const initial = await app.inject({ method: "GET", url: "/v1/credentials" });
+    expect(initial.statusCode, initial.body).toBe(200);
+    expect(initial.json()).toMatchObject({
+      ok: true,
+      store: {
+        available: false,
+        unavailableReason: "inspection_failed",
+      },
+    });
+    expect(
+      initial.json().credentials.every(
+        (credential: { configured: boolean | null }) => credential.configured === null,
+      ),
+    ).toBe(true);
+    expect(initial.body).not.toContain(secret);
+
+    const save = await app.inject({
+      method: "PATCH",
+      url: "/v1/credentials",
+      payload: { key: "OPENAI_API_KEY", value: secret },
+    });
+    expect(save.statusCode, save.body).toBe(503);
+    expect(save.json()).toEqual({
+      ok: false,
+      error: "credential_store_unavailable",
+      reason: "operational_failure",
+      message: "macOS Keychain is temporarily unavailable. Unlock Keychain Access and retry.",
+    });
+    expect(save.body).not.toContain(secret);
+
+    const remove = await app.inject({
+      method: "DELETE",
+      url: "/v1/credentials/OPENAI_API_KEY",
+    });
+    expect(remove.statusCode, remove.body).toBe(503);
+    expect(remove.json()).toMatchObject({
+      ok: false,
+      error: "credential_store_unavailable",
+      reason: "operational_failure",
+    });
+    expect(remove.body).not.toContain(secret);
+    expect(logError).not.toHaveBeenCalled();
 
     await app.close();
   });

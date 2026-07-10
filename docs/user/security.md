@@ -8,10 +8,12 @@ next: false
 JobCtrl runs entirely on your machine. There is no hosted backend, no account,
 and no server that receives your job-search data. The trust boundary is your own
 computer: the local SQLite database, generated resumes and cover letters, browser
-profiles, logs, and credentials all live under `~/.jobctrl/` and stay there
-unless a step you run explicitly sends something to an external service. This
-page describes what those steps are, the approval gates that guard risky actions,
-and the honest limits of running everything locally.
+profiles, logs, and environment configuration live under `~/.jobctrl/`; the
+optional macOS credential panel writes its three entries to the system Keychain.
+Local data stays on your computer unless a step you start or a schedule you
+explicitly enable sends something to an external service. This page describes
+what those steps are, the approval gates that guard risky actions, and the honest
+limits of running everything locally.
 
 This page owns JobCtrl's user-facing security model and safety gates. For the
 repo-scoped developer threat model, see
@@ -22,20 +24,22 @@ see [Data, Privacy & Safety](data-and-safety.md).
 ## Privacy Quick Answer
 
 Local-first means JobCtrl stores your database, browser state, generated
-resumes, cover letters, logs, and credentials on your own computer. It does not
-mean every character stays local forever: LLM providers, the apply agent,
-Gmail, Google Maps, CAPTCHA solving, and Langfuse receive data only when you
-configure and run the specific step that needs them.
+resumes, cover letters, logs, and runtime configuration on your own computer.
+It does not mean every character stays local forever: LLM providers, the apply
+agent, Gmail, Google Maps, CAPTCHA solving, and Langfuse receive data only when
+you configure the related feature and start a step or explicitly enable a
+schedule that needs them.
 
 ## What Leaves Your Machine
 
 Nothing leaves your machine by default. The following calls happen only when you
-run the step that needs them and have configured the relevant provider:
+start the step that needs them or explicitly enable its schedule, and have
+configured the relevant provider:
 
 | Outbound call | When it happens | What is sent |
 | --- | --- | --- |
 | LLM provider APIs | Scoring, employer analysis, resume tailoring, cover-letter generation, and contact-research extraction | Job posting text, your profile evidence (experience, skills, verified metrics), generated resume/cover-letter text, and the fetched text of user-opted public contact-research pages. Employer analysis sends the posting text to a Claude, Codex, and Gemini ensemble. |
-| The apply agent's model | Only when you run apply or dry-run | The full apply prompt: your profile summary (contact details, work authorization, salary expectation, EEO answers) plus the tailored resume and cover-letter text. Profile passwords and CAPTCHA-provider keys are not included in the prompt. The apply agent is a local Claude runtime subprocess (system `claude` or the pinned SDK-bundled binary), so this prompt is sent to the model backing it. |
+| The apply agent's model | During apply or dry-run work you start, or the standing apply loop you explicitly enable | The full apply prompt: your profile summary (contact details, work authorization, salary expectation, EEO answers) plus the tailored resume and cover-letter text. Profile passwords and CAPTCHA-provider keys are not included in the prompt. The apply agent is a local Claude runtime subprocess (system `claude` or the pinned SDK-bundled binary), so this prompt is sent to the model backing it. |
 | Job boards, ATS APIs, posting pages, and contact-research public pages | Discovery, enrichment, and supervised contact research | Search queries and page fetches. JobCtrl never bypasses login, paywall, CAPTCHA, rate-limit, or bot-control gates (see [No Third-Party Bypass](#no-third-party-bypass)). Contact research rejects loopback, private-network, link-local, and metadata URLs or redirects before fetched page text can enter the LLM extraction prompt. |
 | Gmail | Only if you authenticate the Gmail connector | Bounded search queries for verification codes and application-outcome emails, plus approved email application sends. Raw email bodies stay local and are not copied into events, telemetry, broad projections, or logs; outgoing sends require `gmail.send` and a matching Apply Review binding. |
 | Google Maps | Only if you set `VITE_GOOGLE_MAPS_API_KEY` | Address text you type into the Profile form's location search. |
@@ -223,10 +227,24 @@ budget-limited.
 
 Different secrets live in different places, and it is worth knowing which:
 
-- **LLM provider keys** (OpenAI, Gemini, and a local LLM endpoint) can be stored
-  in the macOS Keychain through the web app's credential store, or in
-  `~/.jobctrl/.env`. When stored in the Keychain they are never written to
-  SQLite, logs, traces, or artifacts.
+- **Working runtime credentials and switches** are environment variables,
+  normally loaded from the plaintext `~/.jobctrl/.env` file or supplied by the
+  shell. This includes LLM-provider credentials and the other API keys described
+  on the [Configuration](configuration.md) page. They are never stored in
+  SQLite, but `.env` is not encrypted at rest.
+- **The web credential panel is macOS-only.** It sends a submitted
+  `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `LLM_URL` value to the loopback API,
+  which writes it to the macOS Keychain. Presence checks never return the stored
+  values and report configured, not configured, or status unknown. Unknown
+  (`inspection_failed`) means Keychain could not be inspected, not that the entry
+  is absent; unlock Keychain if it is locked and retry. Operational save/remove
+  failures expose only a generic unavailable result, never raw Keychain output.
+  When a Python CLI or worker process starts, after env-file loading, it loads a
+  Keychain fallback only for a missing or empty environment value; any non-empty
+  value already present wins. Keychain changes are not hot-reloaded, so restart
+  the worker or full stack after saving or removing one. Windows and Linux use
+  environment configuration today; native Credential Manager and Secret
+  Service/keyring adapters are planned.
 - **The CapSolver key** is the `CAPSOLVER_API_KEY` environment variable
   (`.env`). The apply agent does not receive this key in its model prompt; the
   owned solver tool reads it locally and never returns provider keys or solver

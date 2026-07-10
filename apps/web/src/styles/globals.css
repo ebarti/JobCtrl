@@ -941,6 +941,31 @@ input[type="radio"] {
   flex-direction: column;
 }
 
+.banner.credential-store-notice {
+  display: block;
+  min-width: 0;
+  padding: 12px 16px;
+  text-align: left;
+}
+
+.banner.credential-store-notice--guidance {
+  background: var(--status-info-muted);
+  color: var(--foreground);
+}
+
+.banner.credential-store-notice.credential-store-recovery {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+.credential-store-recovery > span {
+  min-width: 0;
+  max-width: 72ch;
+}
+
 .privacy-box {
   border: 1px solid color-mix(in oklch, var(--primary) 34%, var(--border));
   border-radius: var(--radius);

@@ -1849,6 +1849,12 @@ export function makeWorkflowRunsPage(
 
 export const sampleCredentialsResponse: CredentialsResponse = {
   ok: true,
+  store: {
+    kind: "macos_keychain",
+    available: true,
+    unavailableReason: null,
+    requiresWorkerRestart: true,
+  },
   credentials: [
     { key: "OPENAI_API_KEY", label: "OpenAI API Key", configured: true, storage: "keychain" },
     { key: "GEMINI_API_KEY", label: "Gemini API Key", configured: false, storage: "keychain" },
