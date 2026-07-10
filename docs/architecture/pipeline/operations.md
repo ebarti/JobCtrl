@@ -194,10 +194,6 @@ flowchart LR
     Api --> UI
     SSE --> UI
 
-    classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
-    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
-    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
-    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
     class PB py
     class RP,Api,SSE ts
     class UI ui

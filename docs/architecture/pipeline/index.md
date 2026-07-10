@@ -127,26 +127,20 @@ So a green "Run stage" click that returns 202 means "queued and running", not
 ```mermaid
 sequenceDiagram
     autonumber
-    participant User
-    participant Web as Web UI
-    participant Api as TypeScript API (Fastify)
-    participant Rpc as jobctrl rpc (JSON-RPC)
-    participant T as Temporal
-    participant WF as Workflow (worker)
+    actor User
+    participant Client as Web UI or CLI
+    participant Api as TypeScript API + JSON-RPC
+    participant T as Temporal + worker
     participant DB as SQLite
-    participant SSE as SSE poller (250ms)
 
-    User->>Web: Run stage (discover / apply)
-    Web->>Api: POST /v1/pipeline/actions/run-stage
-    Api->>Rpc: run_stage(stages, limit, workers)
-    Rpc->>T: start workflow (spec + deterministic id)
-    T-->>Rpc: {runId, workflowId}
-    Rpc-->>Api: accepted
-    Api-->>Web: 202 Accepted (runId, workflowId)
-    Note over WF,DB: work runs asynchronously on the worker
-    WF->>DB: WorkflowStarted, business activities, terminal Workflow*
-    DB-->>SSE: new job_events rows
-    SSE-->>Web: invalidate TanStack Query caches, UI updates
+    User->>Client: Run a stage
+    Client->>Api: start workflow command
+    Api->>T: start with deterministic workflow ID
+    T-->>Api: runId + workflowId
+    Api-->>Client: 202 Accepted
+    Note over T,DB: Work continues asynchronously
+    T->>DB: events, stage state, and projections
+    DB-->>Client: SSE invalidation, then refreshed read model
 ```
 
 ## Workflow Catalog

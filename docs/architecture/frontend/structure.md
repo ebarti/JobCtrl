@@ -279,69 +279,21 @@ apps/web/
 ```
 
 ```mermaid
-graph TB
-    SRC["apps/web/src"]
-    SRC --> RTS["routes/<br/>file-based"]
-    SRC --> CTX["contexts/<br/>1:1 with backend bounded contexts"]
-    SRC --> VW["views/<br/>composers only — NOT contexts"]
-    SRC --> SHA["shared/<br/>ui, layout, providers, ports, stores, lib"]
-    SRC --> TST["test/<br/>MSW, fixtures, setup"]
+flowchart LR
+    ROUTES["routes/<br/>URL + typed search state"] --> VIEWS["views/<br/>composition only"]
+    VIEWS --> CONTEXTS["contexts/<br/>domain reads, writes, and UI"]
+    CONTEXTS --> SHARED["shared/<br/>ports, adapters, providers, primitives"]
+    TESTS["test/ + e2e/<br/>MSW, fixtures, browser flows"] -.-> ROUTES
+    TESTS -.-> CONTEXTS
 
-    CTX --> OPS2["operations/"]
-    CTX --> DSC2["discovery/"]
-    CTX --> ENR2["enrichment/"]
-    CTX --> PRO2["profile/"]
-    CTX --> SCO2["scoring/"]
-    CTX --> MAT2["materials/"]
-    CTX --> APP2["apply/"]
-    CTX --> PIP2["pipeline/"]
-    CTX --> OUT2["outreach/"]
-
-    VW --> VD2["dashboard/"]
-    VW --> VJ2["jobs/"]
-    VW --> VA2["artifacts/"]
-    VW --> VAR2["apply-review/"]
-    VW --> VRUN2["runs/"]
-    VW --> VPIP2["pipelines/"]
-    VW --> VDISC2["discovery/"]
-    VW --> VDBG2["debug/"]
-    VW --> VOUT2["outreach/"]
-
-    SHA --> UI2["ui/ (shadcn)"]
-    SHA --> LY2["layout/"]
-    SHA --> PR2["providers/"]
-    SHA --> PORT2["ports/ + adapters/"]
-    SHA --> STORE2["stores/ (Zustand)"]
-    SHA --> HOOKS2["hooks/"]
-    SHA --> LIB2["lib/"]
-
-    RTS -->|"mount"| VD2
-    RTS -->|"mount"| VJ2
-    RTS -->|"mount"| VA2
-    RTS -->|"mount"| PRO2
-
-    OPS2 -.->|"read hooks"| VD2
-    OPS2 -.->|"read hooks"| VJ2
-    OPS2 -.->|"read hooks"| VA2
-
-    DSC2 -.->|"mutations"| VJ2
-    SCO2 -.->|"badge / breakdown"| VJ2
-    MAT2 -.->|"generate / open"| VJ2
-    MAT2 -.->|"open"| VA2
-    APP2 -.->|"buttons / timeline"| VJ2
-    APP2 -.->|"badge / card"| VD2
-    PIP2 -.->|"badge / timeline / actions"| VJ2
-    PIP2 -.->|"badge / funnel"| VD2
-
-    DSC2 -.->|"handler reg."| OPS2
-    ENR2 -.->|"handler reg."| OPS2
-    PRO2 -.->|"handler reg."| OPS2
-    SCO2 -.->|"handler reg."| OPS2
-    MAT2 -.->|"handler reg."| OPS2
-    APP2 -.->|"handler reg."| OPS2
-    PIP2 -.->|"handler reg."| OPS2
-    OUT2 -.->|"handler reg."| OPS2
+    class ROUTES,VIEWS,CONTEXTS,SHARED ui
+    class TESTS infra
 ```
+
+The file tree above is the exact inventory. This smaller map captures the
+dependency direction: routes mount views, views compose contexts, and contexts
+consume shared ports and primitives. Tests exercise each layer without becoming
+a production dependency.
 
 **Folder principles:**
 

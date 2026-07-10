@@ -9,7 +9,7 @@ events it writes, and how it fails.
 **Read this if** you need to know exactly what a stage does, what it persists, or
 why a run failed at that stage.
 
-### Discover
+## Discover
 
 Discover finds postings from configured sources, creates canonical job records
 and source observations, drains detail enrichment for jobs that pass the initial
@@ -24,24 +24,18 @@ own their own writes.
 sequenceDiagram
     autonumber
     participant WF as DiscoverWorkflow
-    participant Plan as plan_discovery_sources
-    participant Src as discovery_source_family (xN)
-    participant Enr as discovery_enrichment
-    participant Fan as discovery_preparation_fanout
-    participant Prep as JobPreparationWorkflow (root xM)
-    participant DB as SQLite
+    participant Sources as Plan + source-family activities
+    participant Enrich as Detail enrichment
+    participant Prep as Preparation fan-out
+    participant Store as SQLite + root workflows
 
-    WF->>Plan: plan families (limit, source_ids)
-    Plan-->>WF: families, progress_total, start_count
-    loop each source family
-        WF->>Src: run family (6h, 15s heartbeat, cancel_event)
-        Src->>DB: jobs, observations, DiscoveryRun* + progress
-    end
-    WF->>Enr: drain detail enrichment (6h, 15s heartbeat)
-    Enr->>DB: descriptions, apply URLs, snapshot + JobEnriched events
-    WF->>Fan: derive targets + start prep workflows
-    Fan->>Prep: start prep-{key} in batches of 25 (USE_EXISTING)
-    Fan->>DB: TailoredArtifactsSuppressed for ineligible jobs
+    WF->>Sources: plan and run each source family
+    Sources->>Store: jobs observations and progress
+    WF->>Enrich: drain eligible detail work
+    Enrich->>Store: descriptions URLs snapshots and events
+    WF->>Prep: derive sorted preparation targets
+    Prep->>Store: start root prep workflows in bounded batches
+    Prep->>Store: suppress ineligible active artifacts
 ```
 
 Component shape (`DiscoverWorkflow` orchestrates activities; the activities call
@@ -105,7 +99,7 @@ dashboard read models advance past the last source-family percentage. If the
 workflow fails, terminal workflow state finalizes the progress row instead of
 leaving a stale `running` card.
 
-### Detail Enrichment
+## Detail Enrichment
 
 Detail enrichment turns discovered jobs into usable records by fetching full
 descriptions, application URLs, and detail-page metadata. It is not a top-level
@@ -155,7 +149,7 @@ and the batch continues. If the enrichment activity itself must fail, it
 propagates a Temporal `ApplicationError` with the real error class and message
 rather than a `failed: failed` placeholder.
 
-### Preparation
+## Preparation
 
 Preparation is where a discovered, enriched job becomes an apply-ready candidate:
 it scores the job and, for eligible high-fit matches, tailors a resume, writes a
@@ -175,33 +169,27 @@ Targets are derived in `pipeline/preparation.py` from stage state:
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Fan as discovery_preparation_fanout
-    participant T as Temporal
+    participant Fan as Discovery fan-out
     participant Prep as JobPreparationWorkflow
-    participant Score as score_job_activity
-    participant Mat as materials activities
-    participant DB as job_events + projections
+    participant Score as Scoring activity
+    participant Mat as Materials activities
+    participant Store as Events + projections
 
-    Fan->>T: start prep-{idempotency_key} (root, USE_EXISTING, batches of 25)
-    T->>Prep: run steps in fixed order
-    Prep->>DB: WorkflowStarted
+    Fan->>Prep: start root workflow with deterministic ID
+    Prep->>Store: WorkflowStarted
     opt step: score
-        Prep->>Score: score one job (current policy)
-        Score->>DB: EmployerAnalyzed, JobScored
+        Prep->>Score: score one job against current policy
+        Score->>Store: EmployerAnalyzed and JobScored
     end
     opt step: tailor (eligible)
-        Prep->>Mat: tailor_job (see docs/tailoring.md)
-        Mat->>DB: ResumeApproved / ResumeFailed, BulletProvenanceRecorded
+        Prep->>Mat: tailor and record provenance
+        Mat->>Store: ResumeApproved or ResumeFailed
     end
-    opt step: cover
-        Prep->>Mat: cover_letter
-        Mat->>DB: CoverLetterGenerated
+    opt cover and PDF
+        Prep->>Mat: generate cover and render PDFs
+        Mat->>Store: CoverLetterGenerated and PdfRendered
     end
-    opt step: pdf
-        Prep->>Mat: render_pdf
-        Mat->>DB: PdfRendered
-    end
-    Prep->>DB: WorkflowCompleted / WorkflowFailed
+    Prep->>Store: WorkflowCompleted or WorkflowFailed
 ```
 
 Behavior notes:
@@ -218,7 +206,7 @@ Behavior notes:
 - There is no local preparation reaper. Rows already claimed by a fast worker are
   not moved backward; Temporal owns in-flight recovery.
 
-### Score
+## Score
 
 Score assigns applicant-side fit scores and structured reasoning to enriched
 jobs. It owns retrieval preselection, scoring criteria, LLM parsing, score
@@ -247,22 +235,18 @@ which model machinery each uses:
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Prep as JobPreparationWorkflow / pipeline
-    participant Act as score_job_activity / score_activity
-    participant Retr as BM25 retrieval (lexical)
-    participant Ens as employer-analysis ensemble
-    participant LLM as LLMClient.chat_json (httpx)
-    participant Pol as deterministic policy resolve
-    participant DB as SQLite
+    participant Prep as Pipeline or preparation
+    participant Retr as BM25 retrieval
+    participant Analyze as Employer analysis ensemble
+    participant Score as LLM score + policy resolution
+    participant Store as Versioned score rows + events
 
-    Prep->>Act: score (current policy)
-    Act->>Retr: preselect candidate pool
-    Act->>Ens: ensure employer analysis
-    Ens->>DB: EmployerAnalyzed
-    Act->>LLM: score job vs profile + criteria
-    LLM-->>Act: structured fit score + reasoning
-    Act->>Pol: resolve band/thresholds/anchors
-    Act->>DB: JobScored (versioned), score events
+    Prep->>Retr: preselect candidate pool
+    Prep->>Analyze: ensure canonical employer analysis
+    Analyze->>Store: EmployerAnalyzed
+    Prep->>Score: score job against profile and criteria
+    Score-->>Prep: fit score reasoning and policy band
+    Prep->>Store: versioned JobScored result
 ```
 
 Score writes versioned `job_scores` rows (criteria + trace), can write a new
@@ -273,7 +257,7 @@ failure never masquerades as a successful low-fit result. Scoring prompt/model/
 schema/rubric/policy changes must run the local scoring eval gate documented in
 [Local Reliability QA](../../local-reliability-qa.md).
 
-### Tailor
+## Tailor
 
 Tailor creates job-specific resume materials for eligible high-fit jobs. It owns
 resume generation, validation mode, retry/re-tailor decisions, and artifact
@@ -297,7 +281,7 @@ The Tailor stage emits `EmployerAnalyzed` (shared with scoring), `ResumeApproved
 / `ResumeFailed`, and `BulletProvenanceRecorded`; successful tailoring proceeds
 into the Cover step.
 
-### Cover
+## Cover
 
 Cover generates the job-scoped cover letter for a job that already has sufficient
 score/material context, and renders its PDF, so it outputs the artifacts Apply
@@ -308,13 +292,13 @@ event**: a failed cover surfaces as `StageFailed` plus the workflow's
 `WorkflowFailed` outcome. Failures are per job, so a retry continues from the
 remaining pending cover letters.
 
-### PDF
+## PDF
 
 `render_pdf` renders missing PDFs for the current approved materials. It is the
 deterministic tail of preparation (no LLM, no spend preflight) and emits
 `PdfRendered`. As a prep step it retries under the Cover retry policy.
 
-### Apply
+## Apply
 
 Apply drives browser/agent automation to submit or dry-run applications. It is
 the riskiest, longest-running stage, so it is isolated in its own workflow with a
@@ -331,35 +315,26 @@ There are **two entry paths** into `ApplyWorkflow`:
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Web as Web UI
-    participant Api as TypeScript API
-    participant Rpc as JSON-RPC
-    participant T as Temporal
-    participant AW as ApplyWorkflow
-    participant Act as apply_activity
-    participant L as apply launcher
-    participant Br as Browser (CDP)
-    participant DB as job_events + apply_run_projections
+    actor User
+    participant Entry as Web/API entry
+    participant Flow as Temporal ApplyWorkflow
+    participant Runner as Apply activity + launcher + browser
+    participant Store as events + apply projections
 
     alt pipeline route
-        Web->>Api: POST /v1/pipeline/actions/run-stage (apply)
-        Api->>Rpc: run_stage(["apply"])
-        Rpc->>T: JobPipelineWorkflow -> child ApplyWorkflow ({wf}-apply)
+        User->>Entry: Run apply stage
+        Entry->>Flow: child ApplyWorkflow
     else direct per-job route
-        Web->>Api: apply action
-        Api->>Rpc: apply(jobUrl, ...)
-        Rpc->>T: ApplyWorkflow (apply-{tenant}-{jobKey})
+        User->>Entry: Apply one job
+        Entry->>Flow: ApplyWorkflow (per-job ID)
     end
-    T->>AW: run (approval_required, dry_run, continuous)
-    AW->>Act: check_spend_budget, then apply_activity (2h / 1h)
-    Act->>L: run_blocking_with_heartbeat(launcher, on_cancel)
-    L->>DB: BEGIN IMMEDIATE lock, ApplyRunStarted
-    L->>DB: ApplySubmitIntended (at-most-once checkpoint)
-    L->>Br: fill, then submit only if approved AND not dry-run
-    Br-->>L: dry-run blocks non-local POST/PUT/PATCH via CDP
-    L->>DB: ApplicationSubmitted / DryRunCompleted / ApplicationFailed
+    Flow->>Runner: budget check and heartbeat-backed activity
+    Runner->>Store: lock and ApplyRunStarted
+    Runner->>Store: ApplySubmitIntended checkpoint
+    Runner->>Runner: browser guard blocks dry-run writes
+    Runner->>Store: submitted dry-run complete or failed
     opt continuous
-        AW->>AW: continue_as_new (batch of 25, 30s empty poll)
+        Flow->>Flow: continue as new after each bounded batch
     end
 ```
 
@@ -402,7 +377,7 @@ cooperatively; the terminal state is recorded as `WorkflowCanceled` (by finalize
 on the cancel path, or by the reconciler). The post-hoc SQLite stage-canceled
 write is the API's `cancelJobAction`.
 
-### Contact Research (supervised, off-pipeline)
+## Contact Research (supervised, off-pipeline)
 
 `ContactResearchWorkflow` (Contact & Outreach) is not a pipeline stage — it is a
 user-started, supervised run that *proposes* contacts for review. The API mints a
@@ -417,24 +392,20 @@ into a stored `Contact` fact (INV-4).
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Web as Web UI
+    actor User
     participant Api as TypeScript API
-    participant Rpc as JSON-RPC
-    participant CW as ContactResearchWorkflow
-    participant Act as run_contact_research activity
-    participant GW as Politeness gateway + LLM
-    participant DB as job_events + contact_research_task_projections
+    participant Flow as ContactResearchWorkflow
+    participant Research as Politeness gateway + extraction
+    participant Store as Tasks candidates + events
 
-    Web->>Api: POST /v1/contacts/research (employer/jobId, opted-in sources)
-    Api->>DB: pre-create queued task, ContactResearchTaskStarted
-    Api->>Rpc: run_contact_research(taskId, sources)
-    Rpc->>CW: start (contact-research-{taskId})
-    CW->>Act: check_spend_budget, then research activity
-    Act->>GW: guard(url) per source; robots/rate-limit/budget are outcomes
-    GW-->>Act: allowed page text -> LLM candidate extraction
-    Act->>DB: ContactCandidateProposed*, ContactResearchTaskNeedsReview
-    Web->>Api: POST .../candidates/:id/confirm (explicit user command, INV-4)
-    Api->>DB: ContactCreated + ContactAttributeRecorded; ContactResearchTaskCompleted
+    User->>Api: start research with opted-in sources
+    Api->>Store: create queued task
+    Api->>Flow: dispatch deterministic task ID
+    Flow->>Research: budget check and permitted fetches
+    Research->>Store: proposed candidates and source outcomes
+    Store-->>User: needs-review projection
+    User->>Api: confirm one candidate
+    Api->>Store: create contact fact and complete task
 ```
 
 Robots-denial, rate-limit, and budget-exhaustion are recorded as first-class

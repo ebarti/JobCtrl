@@ -43,12 +43,6 @@ flowchart LR
   Db --> Sse["SSE event stream"]
   Sse --> Web
 
-  classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
-  classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
-  classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
-  classDef infra fill:#fef3c7,stroke:#d97706,color:#78350f
-  classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
-  classDef ext fill:#f1f5f9,stroke:#94a3b8,color:#334155,stroke-dasharray:5 4
   class Web ui
   class Api,Sse ts
   class Rpc,Worker py

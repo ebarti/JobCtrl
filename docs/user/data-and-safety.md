@@ -4,277 +4,164 @@ pageClass: jh-user-guide-page
 
 # Data, Privacy & Safety
 
-The short version: your job-search data stays on your machine. Your profile,
-jobs, generated resumes and cover letters, logs, and browser state all live in a
-folder under your home directory, and nothing leaves your computer unless a step
-you start or a schedule you explicitly enable needs an external service. This
-page lists what is stored locally, what can leave, and which actions to treat
-with care.
+JobCtrl stores your working data on your computer. Network access happens only
+when a feature you start—or a schedule you explicitly enable—needs a configured
+external service.
+
+This page owns the data inventory and responsible-use boundaries. For the
+controls that enforce risky actions, read [Security](security.md). For exact
+settings, read [Configuration](configuration.md).
 
 ## Privacy Quick Answer
 
 | Question | Answer |
 | --- | --- |
-| Hosted backend or JobCtrl account required? | ✕ **No.** The app, API, worker, database, and generated files run locally. |
+| Hosted backend or JobCtrl account required? | ✕ **No.** App, API, worker, database, and files run locally. |
 | Database and generated files stored locally? | ✓ **Yes, by default.** They live under `JOBCTRL_DIR` (normally `~/.jobctrl/`). |
-| Model or provider calls automatic? | ◐ **Only when used and configured.** Scoring, analysis, tailoring, cover letters, and opted-in contact research call the configured provider during runs you start or schedules you explicitly enable. |
-| Discovery makes network requests? | ◐ **Only when used.** Discovery and enrichment contact job boards, ATS APIs, or posting pages in runs you start or schedules you explicitly enable. |
-| Telemetry enabled by default? | ✕ **No.** Langfuse export requires configuration, and `LANGFUSE_DISABLE=1` overrides configured credentials. |
-| Discovery or enrichment may launch a browser? | ◐ **Only when the selected source needs it.** Smart extraction and some detail enrichment use Playwright during runs you start or schedules you explicitly enable; other source paths use direct HTTP or API clients. |
-| Application-submission browser automation always running? | ✕ **No.** The standing apply loop is off by default; submission-browser work starts only through an apply or dry-run path you initiate, or the standing loop you explicitly enable. |
-| Employer-facing submission or email send by default? | ✕ **No.** Live browser submission and Gmail application sending are explicit, guarded actions. Outreach drafts never send themselves. |
+| Model or provider calls automatic? | ◐ **Only when used and configured.** Generation and opted-in research call providers during runs you start or schedules you explicitly enable. |
+| Discovery makes network requests? | ◐ **Only when used.** Discovery contacts sources during runs you start or schedules you explicitly enable. |
+| Telemetry enabled by default? | ✕ **No.** Langfuse requires configuration; `LANGFUSE_DISABLE=1` overrides it. |
+| Discovery or enrichment may launch a browser? | ◐ **Only when needed.** Smart extraction and some detail enrichment use Playwright during runs you start or schedules you explicitly enable. |
+| Application-submission browser automation always running? | ✕ **No.** It starts only through apply/dry-run work you initiate or a standing loop you explicitly enable. |
+| Employer-facing submission or email send by default? | ✕ **No.** Browser submission and Gmail application sending are explicit guarded actions. |
+| Outreach sends messages? | ✕ **No.** Drafts end at copy/export; send logs are user attestations. |
 
-Other optional integrations include Google Maps autocomplete and CAPTCHA
-solving. Each sends data only when its credential is configured and the related
-feature is used. Live apply automation and email-based application sending are
-real employer-facing actions, not simulations.
+Local-first does not mean offline. Discovery fetches sources, generation calls
+models, and live apply contacts an employer only when you use those features.
 
 ## Local Data
 
-Default local directory:
+Default workspace:
 
 ```text
 ~/.jobctrl/
 ```
 
-Unless a row says otherwise, every path below is relative to `JOBCTRL_DIR`
-(default `~/.jobctrl/`):
+Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
+(normally `~/.jobctrl/`).
 
 | Path | Contents |
 | --- | --- |
-| `jobctrl.db` | SQLite database with profile, jobs, events, projections, settings, artifacts, review drafts, contacts, and workflow state. |
-| `.env` | Plaintext, cross-platform runtime environment: provider/API credentials plus non-secret runtime settings. It is not encrypted at rest. |
-| `tailored_resumes/` | Generated resumes and related HTML/PDF outputs. |
-| `cover_letters/` | Generated cover letters. |
-| `logs/` | Local worker and apply logs. |
-| `chrome-workers/` | Browser profiles and state for local browser tasks. |
-| `apply-workers/` | Apply-run worker state. |
-| `codex_home/` | JobCtrl-owned Codex home used by local analysis integrations; it keeps app-server state out of the user's normal Codex app and gives sandboxed analysis commands read access only to `codex_home/workspace/` plus minimal runtime paths. |
-| `backups/` | Timestamped SQLite snapshots written by `jobctrl backup`; restore steps are in the README. |
-| `resume.txt`, `resume.pdf`, legacy `resume_style.json`, legacy `resume_template.tex` | Baseline resume inputs and older local style/template files that may remain from prior installs. |
-| `gmail/` | Gmail OAuth client and token (`oauth-client.json`, `token.json`). |
-| `jobctrl.db-wal`, `jobctrl.db-shm` | SQLite write-ahead sidecars; treat them as part of the database. |
+| `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, events, projections, settings, artifact metadata, review drafts, contacts, and workflows. Treat all three files as one database. |
+| `.env` | Plaintext provider credentials and runtime settings. Not encrypted at rest. |
+| `tailored_resumes/`, `cover_letters/` | Generated text, HTML, and PDF artifacts. |
+| `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state. |
+| `codex_home/` | JobCtrl-owned integration state, isolated from the normal Codex app home. |
+| `backups/` | Timestamped SQLite snapshots created by `jobctrl backup`. |
+| `gmail/` | Gmail OAuth client and token files. |
+| Baseline/legacy resume files | `resume.txt`, `resume.pdf`, and older local style/template files. |
 
-The development launcher also writes PIDs and process logs under the repo's
-`.dev/` directory — treat those logs as sensitive too.
+The development launcher writes PIDs and logs under the checkout's `.dev/`
+directory; treat those logs as sensitive too.
 
-The web app also exposes a **macOS-only** credential panel for
-`OPENAI_API_KEY`, `GEMINI_API_KEY`, and `LLM_URL`. It writes those entries to
-the macOS Keychain, outside `~/.jobctrl/`. After environment-file loading, each
-Python CLI or worker process loads a Keychain entry at startup only when the
-corresponding environment value is missing or empty. Any non-empty environment
-value already present wins. Restart the worker (or the full local stack) after
-saving or removing a Keychain value.
-Windows and Linux use `.env` or shell variables today; native Windows Credential
-Manager and Linux Secret Service/keyring adapters are planned, not shipped.
-The macOS panel distinguishes **not configured** from **status unknown**.
-Unknown (`inspection_failed`) means Keychain could not be inspected, not that an
-entry is absent. If Keychain is locked, unlock it and retry; otherwise retry the
-operation after Keychain is available. Save/remove failures return a generic
-unavailable message and never expose raw Keychain command output.
+### Credentials Outside The Workspace
 
-Contact records you keep — recruiter, hiring-manager, and referrer names, emails,
-phone numbers, and notes — are stored only in that local `jobctrl.db`, and each
-fact is tagged with its provenance (where it came from). Their values never appear
-in the event log, read-model projections, logs, or telemetry, and JobCtrl never
-sends anything to a contact: it keeps records only, with no email, message, or
-outreach sending.
+The web app exposes a macOS-only credential panel for `OPENAI_API_KEY`,
+`GEMINI_API_KEY`, and `LLM_URL`. After environment-file loading, Python loads a
+Keychain entry at startup only when that environment value is missing or empty.
+Any non-empty environment value already present wins. Restart the worker (or the
+full stack) after saving or removing a value.
 
-**Supervised contact research** is conservative and opt-in. It only ever looks at
-three source kinds: what you type, a list you import, and a public web page you
-explicitly point it at. No public page is fetched automatically — you supply each
-URL, and JobCtrl fetches it politely (respecting the site's `robots.txt` and
-rate limits) through its one shared fetch path. Any login-walled, paywalled, or
-bot-protected page is never auto-fetched — it is routed to a manual-capture step
-instead. Research only **proposes** contacts for your review; nothing it finds
-becomes a stored contact until you explicitly confirm it, and every proposed fact
-shows its source. It still never sends anything, and research data never affects
-scoring or apply decisions.
-
-**Outreach drafts** are generated under the same anti-fabrication discipline as
-your resumes and cover letters: every draft is checked against your profile and the
-confirmed contact record, and a draft that invents a metric, employer, or
-relationship is blocked from approval. Drafts are yours — the message body, its
-gate results, and its provenance stay in the local `jobctrl.db` and never enter
-the event log, projections, logs, or telemetry. A draft terminates at
-**copy/export**: there is no send transport of any kind, so you send every message
-yourself through your own channel.
-
-**Logging a send** is a record you enter, not an action JobCtrl takes. After you
-have sent an approved draft yourself, you can note the date and the channel you
-used; that is the only way a thread is ever marked "sent". JobCtrl never sends
-and has no send capability — the send-log records a fact. The logged event stores
-only ids, the channel label, and timestamps; it never stores a contact's name or
-email. **Follow-ups** are surfaced-only reminders: JobCtrl suggests a
-conservative next date you can edit, shows it when it is due, and never acts on it
-or sends it. Any optional recurring follow-up reminder is off by default. Send and
-follow-up data are advisory and never affect scoring or apply decisions.
+Windows Credential Manager and Linux Secret Service/keyring adapters are
+planned; those platforms use `.env` or shell variables today. The panel returns
+status, never stored values. Unknown (`inspection_failed`) means Keychain could
+not be inspected—not that a credential is absent. If Keychain is locked, unlock
+it and retry.
 
 ::: tip Protected by default
-The default `~/.jobctrl/` workspace sits outside the repository. Inside a
-checkout, `.gitignore` also excludes `.env` files, SQLite databases and
-sidecars, the known artifact/worker/log directories, baseline resume filenames,
-and `.dev/`. The release privacy check adds another guard before publication.
-Avoid manually copying private files into a differently named tracked path or
-force-adding an ignored file; use `pnpm qa:seed` when you need shareable sample
-data.
+The normal workspace is outside the repository. `.gitignore` and the release
+privacy scan add safeguards, but use `corepack pnpm qa:seed` for anything you
+intend to share.
 :::
+
+### Contacts And Outreach
+
+Contact values and notes stay in canonical local tables. Events and broad
+projections carry only IDs, kinds, counts, timestamps, and provenance metadata.
+
+Contact research is supervised:
+
+1. you provide or opt into a permitted source;
+2. JobCtrl records the source attempt and proposes candidates;
+3. you confirm a candidate before it becomes a contact.
+
+Draft bodies, gate results, and claim provenance stay local. An approved draft
+can be copied/exported; JobCtrl has no outreach send transport. Logging a send
+records something you did. Follow-ups are reminders and never act automatically.
 
 ## External Services
 
-Depending on configuration, JobCtrl can call:
+| Service | When used | Data involved |
+| --- | --- | --- |
+| LLM providers | Scoring, employer analysis, materials, contact extraction, stored interview prep | Posting text, relevant profile evidence, generated text, or opted-in fetched page text. |
+| Job boards, ATS APIs, posting pages | Discovery and enrichment | Search terms, URLs, and page/API requests. |
+| Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | Apply prompt, reviewed materials, profile application fields, and page interaction. |
+| Gmail | Authenticated verification, bounded outcome feedback, or an approved email application | Scoped queries/evidence or the exact approved recipient/attachment. |
+| Google Maps | Profile location autocomplete with a configured key | Address text typed into the location field. |
+| CAPTCHA provider | Supported widget detected with a configured solver | Site key and page URL through the owned local tool. |
+| Langfuse/OpenTelemetry | Explicitly configured telemetry | LLM, workflow, and JSON-RPC traces. |
 
-- LLM providers for scoring, employer analysis, tailoring, cover letters, and
-  Beta stored interview prep whose output quality lacks real-user validation;
-- job boards, ATS APIs, or public posting pages for discovery and enrichment;
-- Gmail APIs for verification-code or outcome feedback flows, plus approved
-  email application sends when the dry-run candidate and Apply Review approval
-  bind the same recipient and attachment;
-- Langfuse/OpenTelemetry endpoints for traces when explicitly enabled;
-- paid CAPTCHA solving services when explicitly configured for apply automation.
-
-Review configuration before running large pipelines.
-
-Discovery and enrichment fetches go through one crawl-politeness gateway that
-honors `robots.txt` (failing closed on an inconclusive fetch — a `5xx` or timeout
-— but failing open with a warning when the host has no robots endpoint at all — a
-DNS failure or refused connection), paces requests per host, bounds each run's
-request budget, and stamps a single honest
-`User-Agent` — `JobCtrl/<version> (+<repo url>)` by default, never a spoofed
-browser. Direct targets, redirects, and Playwright subrequests must be public
-HTTP(S) destinations; loopback, private, link-local, metadata-service, and file
-URLs are blocked before content extraction or LLM enrichment. Blocked fetches
-become recorded outcomes (robots-disallowed / rate-limited / budget-exhausted /
-unsafe-url), not scrape errors. See
-[Security → Crawl Politeness](security.md#crawl-politeness) for the full posture
-and [Configuration → Crawl Politeness](configuration.md#crawl-politeness) to
-review or override the user-agent.
+Review [Security → What Leaves Your Machine](security.md#what-leaves-your-machine)
+before enabling a provider.
 
 ## Responsible Use Boundaries
 
-These boundaries are the operator's responsibility:
-
-- **Live employer submissions:** apply automation can submit real applications
-  to real employers. Keep `applyApprovalRequired` enabled unless you have a
-  specific reason to disable it, rehearse with dry runs, and target one job or
-  site at a time while validating behavior.
-- **Email applications:** sending an application by email is still a live
-  employer submission. JobCtrl sends only through the owned Gmail connector
-  after a dry-run records the recipient and attachment candidate and Apply
-  Review approves that exact binding; without Gmail `gmail.send` or a matching
-  approval, the path fails closed.
-- **Credential typing:** browser automation can type non-secret profile fields.
-  For regular job-site password fields, the apply agent can call a local
-  credential tool that reads the stored profile password and types it into the
-  focused field without returning the value to the model. If the tool is
-  unavailable or the focused field is not a password field, login fails closed
-  for operator handling.
-- **CAPTCHA solving:** supported CAPTCHA widgets are handled only through the
-  owned local solver tool when configured. The apply agent does not solve
-  image/audio challenges manually, switch to stealth browsers, or receive a
-  CAPTCHA-provider key or solver token through the model prompt. Unsupported or
-  unconfigured CAPTCHA flows fail closed.
-- **Scraping and source terms:** source access can violate provider or site
-  terms. Default discovery options include LinkedIn and Indeed; disable any
-  source you are not allowed to query automatically.
-- **Local API exposure:** the TypeScript API is intended for loopback use. The
-  default host is `127.0.0.1`; opting into a non-loopback bind or exposing it
-  through a tunnel can expose private profile, job, artifact, and
-  credential-adjacent metadata. Browser-extension routes add a local capability
-  token stored under `~/.jobctrl/`, but that token does not make a remote bind
-  safe.
-- **Browser-extension captures:** the optional extension stores its pairing
-  token and any stack-down capture queue in browser extension storage. Queued
-  captures contain page URLs and visible posting text, expire under the
-  extension's bounded local policy, and are cleared when you save a new pairing
-  token.
-- **Browser-extension autofill:** supported ATS pages receive only the
-  whitelisted profile fields needed for deterministic suggestions. Profile
-  passwords, resume bullets, generated materials, and free-text answer drafts
-  are not sent to the extension autofill route.
-- **AI spend:** LLM calls can cost money. The local `dailyBudgetUsd` ceiling
-  gates new spendful workflows, but it is an estimate and does not replace your
-  provider-side billing controls.
-- **Interview prep (Beta):** JobCtrl can generate stored pre-interview notes for
-  a job from grounded profile/job/material evidence. Its truthfulness gates are
-  shipped, but output quality has not yet been validated through real-user
-  usage. Post-interview reflection
-  notes can be linked to an accepted prep generation, but they stay local manual
-  outcome notes. JobCtrl is not a live interview assistant and has no
-  transcript upload, microphone input, streaming, websocket, in-session state, or
-  real-time answer surface.
+- **Employer actions are irreversible.** Rehearse with dry-run, review current
+  materials and field mappings, and keep `applyApprovalRequired` enabled.
+- **Email applications are live submissions.** They require a recorded
+  recipient/attachment candidate and matching Apply Review approval.
+- **Source access has terms.** Enable only job boards, feeds, and public pages
+  you are allowed to query. JobCtrl does not authorize access for you.
+- **CAPTCHA and login flows fail closed.** Unsupported challenges, identity or
+  biometric checks, payment/bank prompts, and missing credentials require human
+  handling.
+- **The API is loopback software.** Binding it beyond `127.0.0.1` or tunneling
+  it can expose private profile, job, artifact, and credential-adjacent data.
+- **LLM spend is real.** `dailyBudgetUsd` limits new JobCtrl workflows based on
+  a local estimate; keep provider-side billing controls too.
+- **Interview prep is stored pre-interview material.** It is not live assistance
+  and has no microphone, transcript, stream, or real-time answer surface.
 
 ## Auto-Apply Safety
 
-Apply automation can submit real applications to real employers, so it is
-guarded by approval gates: a rehearsal dry run before live submission, an
-explicit approval bound to the reviewed materials generation, profile version,
-and application URL, a browser-level guard during dry runs, no application
-submitted twice, and a daily spend ceiling. Apply Review allows a partial
-dry-run override only when it names the specific partial run and shows the
-blocked channels you are accepting. Email-only applications use the same
-approval model: the agent can report the posted recipient, but JobCtrl records
-the deterministic email candidate locally and sends only after approval binds
-that recipient and attachment. The apply agent also reads untrusted job pages,
-so prompt injection is a real exposure. The full gate model, the apply agent's
-automation posture, and how credentials appear in the apply prompt live in
-[Security](security.md).
+The detailed enforcement model lives in [Security](security.md#approval-and-control-gates).
+The user-facing guarantees are:
 
-Two guarantees stay here because they are about your local artifacts:
-
-- manual outcomes, including interview-prep reflections, can be recorded without
-  browser automation, and web approval facts do not submit by themselves;
-- failed refreshes or invalid edited drafts must not destroy current accepted
-  materials.
+- live apply requires a current bound approval by default;
+- dry-run has a browser-layer network/submission guard;
+- submit intent is checkpointed so crashes do not cause blind retries;
+- email-only applications use the same reviewed binding; and
+- failed replacements never delete the last accepted materials.
 
 ::: warning Applying is irreversible
-Never run auto-apply against broad targets until you have verified your profile
-data, materials, field mapping, account state, and site-specific behavior. Once
-an application is submitted, you cannot undo it.
+Start narrowly. Once an application or email is sent, JobCtrl cannot undo it.
 :::
 
 ## Scoring Safety
 
-Scores are applicant-side triage aids. They are not employer-side candidate
-screening or hiring decisions. Do not use JobCtrl to rank people for hiring
-without separate legal, bias-audit, validation, notice, and human-review
-processes.
+Scores are applicant-side triage aids. They are not employer-side screening or
+hiring decisions. Using them to rank people would require separate legal,
+bias-audit, validation, notice, and human-review controls.
 
 ## LLM Spend Ceiling
 
-LLM usage is metered locally. A daily budget (`dailyBudgetUsd`, default `25`;
-`0` means unlimited) gates every workflow that spends LLM tokens: a budget
-preflight runs before the heavy activity and stops the workflow with a
-non-retryable budget error once the estimated daily spend reaches the
-ceiling. Current spend versus budget is visible on `GET /v1/health` and in
-the web app's health surface. This ceiling controls JobCtrl workflow starts;
-it is not the provider's bill and it does not stop provider usage outside
-JobCtrl.
+`dailyBudgetUsd` defaults to `25`; `0` means unlimited. A preflight blocks the
+next spendful workflow after the local daily estimate reaches the ceiling. It
+does not interrupt a call already in flight and is not provider billing truth.
+Current estimated spend appears on the health surface.
 
 ## Telemetry
 
-Langfuse export is off unless configured. If enabled, LLM prompts and
-completions are exported to the configured Langfuse instance. Set
-`LANGFUSE_DISABLE=1` to opt out even when credentials are present.
+Langfuse export is off unless configured. When enabled, prompts, completions,
+workflow spans, and JSON-RPC spans may be exported. Set `LANGFUSE_DISABLE=1` to
+force opt-out.
 
 ## Public Bug Reports
 
-Use synthetic data only. Do not include:
+Use synthetic data. Never attach real profiles/resumes, databases, secrets,
+OAuth tokens, generated artifacts, local paths, raw logs, or prompt traces.
 
-- real resumes or profile fields;
-- real job-search databases;
-- API keys or OAuth tokens;
-- generated PDFs or cover letters;
-- local filesystem paths;
-- raw logs or prompt/completion traces.
-
-`pnpm qa:seed` creates a disposable synthetic workspace that is safe for
-screenshots and bug reproduction.
-
-`scripts/release_check.py` is the enforcement gate behind these rules. CI runs
-it automatically on every push to `main` and during release publication to scan
-the tree for real-profile needles, secrets, prompt tripwires, blocked file
-types, and blocked distribution paths before anything is published. Public
-pull requests intentionally do not run heavyweight CI automatically;
-maintainers run the scanner locally or through the manual workflow after review
-and before merge.
+`corepack pnpm qa:seed` creates a disposable workspace. The release privacy
+check scans for secret/profile needles, blocked file types, and unsafe
+distribution paths before publication, but it cannot protect a private file you
+manually copy into a new tracked path.

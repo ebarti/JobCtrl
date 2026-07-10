@@ -21,10 +21,6 @@ flowchart LR
   IR --> QC["Query cache"]
   QC --> UI["React views<br/>refetch + re-render"]
 
-  classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
-  classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
-  classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
-  classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
   class W py
   class API ts
   class ES,IR,UI ui
@@ -47,7 +43,7 @@ liveness.
 This section defines that realtime architecture, including the
 `apps/api/` SSE endpoint contract it depends on.
 
-### 7.1 The Endpoint — `GET /v1/events/stream`
+## 7.1 The Endpoint — `GET /v1/events/stream`
 
 **Decision (resolves §6 question 9 transport):** Server-Sent Events (SSE)
 on a new dedicated endpoint.
@@ -148,7 +144,7 @@ streams from the current tail (no backfill).
 - Expose a status indicator (`connecting | open | closed`) consumed by
   the AppShell to render a small "live"/"reconnecting" badge.
 
-### 7.2 Typed Event Schemas
+## 7.2 Typed Event Schemas
 
 The event taxonomy lives in `@jobctrl/domain-types` at
 `packages/domain-types/src/events/`. It is a **plain TypeScript
@@ -167,7 +163,7 @@ payload shape. An unknown `event:` type is dropped (forward-compat: the
 backend can introduce `SomethingNew` events without breaking the client;
 the client routes them once the union and a handler are added).
 
-### 7.3 The `EventStreamProvider`
+## 7.3 The `EventStreamProvider`
 
 ```ts
 // contexts/operations/providers/EventStreamProvider.tsx
@@ -192,7 +188,7 @@ and above the theme/density providers. It also exposes `useEventStreamStatus`
 (consumed by `<ConnectionStatusPill>`). It renders no UI of its own — it
 manages the subscription lifecycle.
 
-### 7.4 The Invalidation Router
+## 7.4 The Invalidation Router
 
 A pure function that maps `DomainEvent → Set<QueryKey>`. The router lives
 in `contexts/operations/invalidation-router.ts`. Each backend event type
@@ -279,7 +275,7 @@ the backend triggers a TypeScript compile error (in CI, via `pnpm -r
 check`) AND a runtime parity-test failure (locally) on the frontend —
 silent invalidation gaps are prevented by construction.
 
-### 7.5 Strategy: `invalidate` vs `setQueryData` (resolves §6 question 9)
+## 7.5 Strategy: `invalidate` vs `setQueryData` (resolves §6 question 9)
 
 Two patterns exist; both have a place:
 
@@ -306,34 +302,26 @@ Two patterns exist; both have a place:
 - **Reconciliation backstop.** When the apply-run drawer is closed and
   re-opened, it re-fetches, naturally reconciling with any drift.
 
-### 7.6 Realtime Data Flow
+## 7.6 Realtime Data Flow
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant W as Python Worker
-    participant DB as SQLite (job_events)
-    participant API as apps/api (Fastify SSE handler)
-    participant ES as EventSource (browser)
-    participant IR as InvalidationRouter
-    participant QC as QueryClient
-    participant V as React View
+    participant Write as Domain write
+    participant Stream as SQLite + SSE endpoint
+    participant Router as Event stream + invalidation router
+    participant Cache as TanStack Query cache
+    participant View as React view
 
-    W->>DB: INSERT JobScored row (event_id=12345)
-    API->>DB: tail SELECT WHERE event_id > last_seen
-    DB-->>API: row 12345
-    API-->>ES: id:12345\nevent:JobScored\ndata:{...}
-    ES->>IR: handle(JobScored)
-    IR->>QC: invalidateQueries(jobsKeys.detail(tid, jobId))
-    IR->>QC: invalidateQueries(jobsKeys.lists(tid))
-    IR->>QC: invalidateQueries(dashboardKeys.summary(tid))
-    QC->>V: subscribed components re-render with stale=true
-    V->>API: GET /v1/jobs?... (background refetch)
-    API-->>V: fresh JobListProjection rows
-    V->>V: render fresh data
+    Write->>Stream: persist JobScored event
+    Stream-->>Router: typed SSE event + event ID
+    Router->>Cache: invalidate affected detail, list, and dashboard keys
+    Cache-->>View: mark subscribed data stale
+    View->>Stream: background projection refetch
+    Stream-->>View: fresh read-model rows
 ```
 
-### 7.7 Reconnect / Backoff
+## 7.7 Reconnect / Backoff
 
 `EventSource`'s built-in reconnect is sufficient for the MVP:
 
@@ -349,7 +337,7 @@ On reconnection, the provider triggers a one-shot
 from any events lost during the gap. (`Last-Event-ID` covers the common
 case; the full invalidation is a backstop.)
 
-### 7.8 Tenant Scoping in Realtime
+## 7.8 Tenant Scoping in Realtime
 
 The connection is parameterized by `tenantId`. In local mode, the value
 is `LOCAL_TENANT`. In hosted mode:
@@ -362,7 +350,7 @@ is `LOCAL_TENANT`. In hosted mode:
   there is zero cross-tenant cache leak even if events were
   mis-delivered.
 
-### 7.9 What If SSE Is Not Enough Later
+## 7.9 What If SSE Is Not Enough Later
 
 Named-not-built evolution paths (also see §9):
 

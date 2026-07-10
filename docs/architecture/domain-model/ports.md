@@ -13,7 +13,7 @@ local adapter in use today and the hosted adapter named for the cloud future.
 LLM, a browser, the filesystem — plugs into the domain, and what would change to
 swap it for a hosted service.
 
-### Port Naming Convention
+## Port Naming Convention
 
 - **Driving ports** (inbound): named as use cases — `ScoreJobUseCase`, `TailorResumeUseCase`.
 - **Driven ports** (outbound): named as capabilities — `JobRepository`, `LlmPort`, `BrowserPort`.
@@ -31,7 +31,7 @@ swap it for a hosted service.
 > projection store in `infrastructure/projections/` is the concrete read side).
 > They are kept here because each names a real hosted-future seam.
 
-### 5.1 Job Discovery Context
+## 5.1 Job Discovery Context
 
 | Port Type | Port | Description |
 |---|---|---|
@@ -54,7 +54,7 @@ swap it for a hosted service.
 scrapers without touching domain logic. The repository port lets us switch
 from SQLite to Postgres without changing Discovery logic.
 
-### 5.2 Job Enrichment Context
+## 5.2 Job Enrichment Context
 
 | Port Type | Port | Description |
 |---|---|---|
@@ -75,7 +75,7 @@ from SQLite to Postgres without changing Discovery logic.
 obstacle to horizontal scaling. The `DetailPageFetcherPort` lets us swap local
 Playwright for a hosted browser fleet without changing extraction logic.
 
-### 5.3 Candidate Profile Context
+## 5.3 Candidate Profile Context
 
 | Port Type | Port | Description |
 |---|---|---|
@@ -94,7 +94,7 @@ Playwright for a hosted browser fleet without changing extraction logic.
 **Seam justification:** Profile storage is isolated behind the repository port:
 local SQLite and hosted Postgres adapters expose the same aggregate contract.
 
-### 5.4 Scoring Context
+## 5.4 Scoring Context
 
 | Port Type | Port | Description |
 |---|---|---|
@@ -112,7 +112,7 @@ local SQLite and hosted Postgres adapters expose the same aggregate contract.
 | `ScoreRepository` | `SqliteScoreRepository` | `PostgresScoreRepository` (RDS Postgres, tenant-scoped) |
 | `ProfileSnapshotPort` | `LocalProfileSnapshotAdapter` (reads the SQLite-backed Profile repository) | `ProfileServiceGrpcClient` (internal **gRPC** call to Profile service; tenant context propagated via gRPC metadata) |
 
-### 5.5 Materials Generation Context
+## 5.5 Materials Generation Context
 
 | Port Type | Port | Description |
 |---|---|---|
@@ -142,7 +142,7 @@ layout boxes for Apply Review, and historical `latex_pdf` rows remain metadata
 for migration/inspection without a render adapter. The
 `ArtifactStoragePort` absorbs the local-to-cloud transition for generated files.
 
-### 5.6 Apply Automation Context
+## 5.6 Apply Automation Context
 
 | Port Type | Port | Description |
 |---|---|---|
@@ -167,7 +167,7 @@ infrastructure dependencies (Chrome lifecycle and Claude Code subprocess) behind
 clean interfaces. This is essential for the hosted future where browsers and
 agents are managed fleet resources.
 
-### 5.7 Pipeline Orchestration Context
+## 5.7 Pipeline Orchestration Context
 
 | Port Type | Port | Description |
 |---|---|---|
@@ -194,7 +194,7 @@ agents are managed fleet resources.
 > execution model see the [System Architecture overview](../index.md) and the
 > [Job Pipeline section](../pipeline/index.md).
 
-### 5.8 Operations / Read-Side Context
+## 5.8 Operations / Read-Side Context
 
 | Port Type | Port | Description |
 |---|---|---|
@@ -211,7 +211,7 @@ agents are managed fleet resources.
 | `ReadModelStore` | `SqliteReadModelStore` (same DB, denormalized views) | `PostgresReadModelStore` (**AWS RDS Postgres read replica**; tenant-scoped queries via RLS; optional **ElastiCache Redis** for dashboard aggregation caching) |
 | `EventSubscriber` | `InProcessEventBus` | `SqsEventConsumer` (**AWS SQS FIFO** consumer; reads from per-context queues; processes events in tenant-ordered batches; dead-letter queue for failed projections) |
 
-### 5.9 Contact & Outreach Context
+## 5.9 Contact & Outreach Context
 
 Phase 1 realises the `Contact` aggregate's ports; Phase 2 adds the
 supervised-research ports; Phase 3 adds the `OutreachThread` aggregate's ports

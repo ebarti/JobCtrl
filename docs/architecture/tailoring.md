@@ -72,36 +72,22 @@ profile structure decides where generated text can go.
 ## End-to-End Flow
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    participant Caller as Pipeline/API/CLI
-    participant Tailor as TailorResumeUseCase
-    participant Analyze as AnalyzeJobUseCase
-    participant Plan as build_tailoring_plan
-    participant LLM as Generator model(s)
-    participant Validator as Validators
-    participant Judge as Judge/adversarial review
-    participant Voice as Optional voice pass
-    participant Gate as Fabrication gate
-    participant Prov as Provenance builder
-    participant Repo as Materials repository
+flowchart LR
+    INPUTS["1. Plan<br/>job · profile · employer analysis · fit report"] --> DRAFT["2. Draft<br/>structured generator output"]
+    DRAFT --> CHECK["3. Validate<br/>schema · render · quality · judge"]
+    CHECK -->|repairable| DRAFT
+    CHECK --> VOICE["4. Refine<br/>optional voice pass"]
+    VOICE --> GATE["5. Protect<br/>fabrication + prose gates"]
+    GATE -->|reject or repair| DRAFT
+    GATE --> SAVE["6. Persist<br/>provenance · coverage · artifacts"]
 
-    Caller->>Tailor: execute(job, profile_snapshot, validation_mode)
-    Tailor->>Analyze: produce or reuse EmployerAnalysis
-    Analyze-->>Tailor: canonical role, requirements, keywords
-    Tailor->>Plan: profile + job + EmployerAnalysis + RequirementFitReport
-    Plan-->>Tailor: TailoringPlan
-    Tailor->>LLM: prompt + target job + response schema
-    LLM-->>Tailor: tailored resume payload
-    Tailor->>Validator: JSON fields, rendered text, quality checks
-    Tailor->>Judge: structured judge if validation_mode is not lenient
-    Judge-->>Tailor: PASS/FAIL, score, issues, repairs
-    Tailor->>Voice: optional rewrite of selected payload
-    Tailor->>Gate: deterministic never-fabricate + prose skill/tool gate
-    Gate-->>Tailor: pass, or hard reject / repair-loop avoid_note
-    Tailor->>Prov: build provenance and coverage for final rendered text
-    Tailor->>Repo: save approved/rejected MaterialsSet and artifact metadata
+    class INPUTS,DRAFT,CHECK,VOICE,GATE py
+    class SAVE store
 ```
+
+The loop is deliberate: a candidate is persisted as approved only after the
+structured, rendered, quality, and fabrication checks agree. The sections below
+spell out each input, gate, and persisted audit field.
 
 ## Inputs To Tailoring
 

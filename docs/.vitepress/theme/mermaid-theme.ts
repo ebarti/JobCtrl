@@ -10,22 +10,91 @@
 const FONT_STACK =
   'ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
 
+interface SemanticPalette {
+  ui: [fill: string, stroke: string, text: string];
+  ts: [fill: string, stroke: string, text: string];
+  py: [fill: string, stroke: string, text: string];
+  infra: [fill: string, stroke: string, text: string];
+  store: [fill: string, stroke: string, text: string];
+  ext: [fill: string, stroke: string, text: string];
+}
+
+function semanticThemeCss(palette: SemanticPalette): string {
+  const nodeRule = (name: keyof SemanticPalette, dashed = false): string => {
+    const [fill, stroke, text] = palette[name];
+    return `
+      .node.${name} :is(rect, circle, ellipse, polygon, path),
+      .actor.${name} {
+        fill: ${fill} !important;
+        stroke: ${stroke} !important;
+        ${dashed ? "stroke-dasharray: 6 4 !important;" : ""}
+      }
+      .node.${name} .nodeLabel,
+      .node.${name} .label,
+      .actor.${name} text {
+        color: ${text} !important;
+        fill: ${text} !important;
+      }
+    `;
+  };
+
+  return `
+    ${nodeRule("ui")}
+    ${nodeRule("ts")}
+    ${nodeRule("py")}
+    ${nodeRule("infra")}
+    ${nodeRule("store")}
+    ${nodeRule("ext", true)}
+    .cluster rect {
+      rx: 12px;
+      ry: 12px;
+    }
+    .cluster-label text,
+    .cluster-label span {
+      font-weight: 700 !important;
+    }
+    .edgeLabel {
+      border-radius: 6px;
+      padding: 2px 4px;
+    }
+  `;
+}
+
+const LIGHT_SEMANTIC: SemanticPalette = {
+  ui: ["#eff6ff", "#3b82f6", "#172554"],
+  ts: ["#eef2ff", "#6366f1", "#312e81"],
+  py: ["#ecfdf5", "#10b981", "#064e3b"],
+  infra: ["#fffbeb", "#f59e0b", "#78350f"],
+  store: ["#ecfeff", "#06b6d4", "#164e63"],
+  ext: ["#f8fafc", "#94a3b8", "#334155"],
+};
+
+const DARK_SEMANTIC: SemanticPalette = {
+  ui: ["#172554", "#60a5fa", "#dbeafe"],
+  ts: ["#1e1b4b", "#818cf8", "#e0e7ff"],
+  py: ["#052e2b", "#34d399", "#d1fae5"],
+  infra: ["#451a03", "#fbbf24", "#fef3c7"],
+  store: ["#083344", "#22d3ee", "#cffafe"],
+  ext: ["#1f2937", "#94a3b8", "#e2e8f0"],
+};
+
 const SHARED = {
   startOnLoad: false,
   securityLevel: "loose",
   theme: "base",
   flowchart: {
     curve: "linear",
-    nodeSpacing: 45,
-    rankSpacing: 55,
-    padding: 14,
+    nodeSpacing: 40,
+    rankSpacing: 50,
+    padding: 16,
     htmlLabels: true,
   },
-  sequence: { actorMargin: 60, messageMargin: 40, mirrorActors: false },
+  sequence: { actorMargin: 48, messageMargin: 32, mirrorActors: false },
 } as const;
 
 export const MERMAID_LIGHT = {
   ...SHARED,
+  themeCSS: semanticThemeCss(LIGHT_SEMANTIC),
   themeVariables: {
     fontFamily: FONT_STACK,
     fontSize: "16px",
@@ -67,6 +136,7 @@ export const MERMAID_LIGHT = {
 
 export const MERMAID_DARK = {
   ...SHARED,
+  themeCSS: semanticThemeCss(DARK_SEMANTIC),
   themeVariables: {
     fontFamily: FONT_STACK,
     fontSize: "16px",
