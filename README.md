@@ -45,12 +45,18 @@ the rest:
 curl -fsSL https://jobctrl.dev/install.sh | bash
 ```
 
-**Homebrew (beta, HEAD-only until the first tagged formula)** — installs the
-toolchain and a global `jobctrl` launcher:
+**Homebrew (beta, HEAD-only until the first tagged formula)** — install the
+toolchain and global `jobctrl` launcher first, then bootstrap the app checkout:
 
 ```bash
-brew install ebarti/tap/jobctrl --HEAD && jobctrl bootstrap
+brew install ebarti/tap/jobctrl --HEAD
+jobctrl bootstrap
 ```
+
+`--HEAD` is required only because the tap does not have a stable tagged formula
+yet; it installs the launcher from `main`. After the first tagged formula, the
+install command becomes `brew install ebarti/tap/jobctrl`, while
+`jobctrl bootstrap` remains the next step that clones and configures JobCtrl.
 
 > Published to [`ebarti/homebrew-tap`](https://github.com/ebarti/homebrew-tap)
 > from the canonical formula at `packaging/homebrew/Formula/jobctrl.rb` — also
