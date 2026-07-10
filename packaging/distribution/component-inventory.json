@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 1,
+  "components": [
+    {
+      "id": "jobctrl-launcher",
+      "classification": "core-runtime",
+      "owner": "JobCtrl",
+      "versionSource": "package.json#version",
+      "source": "https://github.com/ebarti/JobCtrl",
+      "license": "AGPL-3.0-only",
+      "redistribution": "bundle",
+      "requiredInCore": true,
+      "notes": "Native Go launcher; Go toolchain and standard-library notices are recorded in the release SBOM."
+    },
+    {
+      "id": "jobctrl-api",
+      "classification": "core-runtime",
+      "owner": "JobCtrl",
+      "versionSource": "apps/api/package.json#version",
+      "source": "https://github.com/ebarti/JobCtrl/tree/main/apps/api",
+      "license": "AGPL-3.0-only",
+      "redistribution": "bundle",
+      "requiredInCore": true
+    },
+    {
+      "id": "jobctrl-web",
+      "classification": "core-runtime",
+      "owner": "JobCtrl",
+      "versionSource": "apps/web/package.json#version",
+      "source": "https://github.com/ebarti/JobCtrl/tree/main/apps/web",
+      "license": "AGPL-3.0-only",
+      "redistribution": "bundle",
+      "requiredInCore": true
+    },
+    {
+      "id": "jobctrl-worker",
+      "classification": "core-runtime",
+      "owner": "JobCtrl",
+      "versionSource": "workers/automation/pyproject.toml#project.version",
+      "source": "https://github.com/ebarti/JobCtrl/tree/main/workers/automation",
+      "license": "AGPL-3.0-only",
+      "redistribution": "bundle",
+      "requiredInCore": true
+    },
+    {
+      "id": "jobctrl-release-metadata",
+      "classification": "core-runtime",
+      "owner": "JobCtrl",
+      "versionSource": "package.json#version",
+      "source": "https://github.com/ebarti/JobCtrl/tree/main/packaging/distribution",
+      "license": "AGPL-3.0-only",
+      "redistribution": "bundle",
+      "requiredInCore": true,
+      "notes": "Owns the payload SBOM, license texts, notices, provenance, and size report. The manifest and its detached signature are the only fixed signed-envelope exclusions from the manifest file list."
+    },
+    {
+      "id": "font-jetbrains-mono",
+      "classification": "core-runtime",
+      "owner": "JetBrains and Fontsource contributors",
+      "versionSource": "apps/web/package.json#dependencies.@fontsource-variable/jetbrains-mono",
+      "source": "https://github.com/fontsource/font-files/tree/main/fonts/variable/jetbrains-mono",
+      "license": "OFL-1.1",
+      "redistribution": "bundle",
+      "requiredInCore": false,
+      "embeddedIn": "jobctrl-web",
+      "notes": "Bundled web font. The OFL license text and font attribution must be present in the release."
+    },
+    {
+      "id": "font-plus-jakarta-sans",
+      "classification": "core-runtime",
+      "owner": "Tokotype and Fontsource contributors",
+      "versionSource": "apps/web/package.json#dependencies.@fontsource-variable/plus-jakarta-sans",
+      "source": "https://github.com/fontsource/font-files/tree/main/fonts/variable/plus-jakarta-sans",
+      "license": "OFL-1.1",
+      "redistribution": "bundle",
+      "requiredInCore": false,
+      "embeddedIn": "jobctrl-web",
+      "notes": "Bundled web font. The OFL license text and font attribution must be present in the release."
+    },
+    {
+      "id": "node-runtime",
+      "classification": "core-runtime",
+      "owner": "OpenJS Foundation and Node.js contributors",
+      "version": "22.21.1",
+      "source": "https://nodejs.org/download/release/v22.21.1/",
+      "license": "MIT",
+      "redistribution": "bundle",
+      "requiredInCore": true,
+      "notes": "Pinned production runtime. The builder verifies the upstream archive hash before extraction."
+    },
+    {
+      "id": "python-runtime",
+      "classification": "core-runtime",
+      "owner": "Python Software Foundation",
+      "version": "3.12.12+20251209",
+      "source": "https://github.com/astral-sh/python-build-standalone/releases/tag/20251209",
+      "license": "PSF-2.0",
+      "redistribution": "bundle",
+      "requiredInCore": true,
+      "notes": "Relocatable CPython build. The archive URL and SHA-256 are pinned by the production builder."
+    },
+    {
+      "id": "temporal-runtime",
+      "classification": "core-runtime",
+      "owner": "Temporal Technologies Inc.",
+      "version": "1.7.3",
+      "source": "https://github.com/temporalio/cli/releases/tag/v1.7.3",
+      "license": "MIT",
+      "redistribution": "bundle",
+      "requiredInCore": true,
+      "notes": "Built for the declared deployment target; a host Homebrew binary is never copied blindly."
+    },
+    {
+      "id": "pdfjs-renderer",
+      "classification": "core-runtime",
+      "owner": "Mozilla and PDF.js contributors",
+      "versionSource": "pnpm-lock.yaml#pdfjs-dist",
+      "source": "https://github.com/mozilla/pdf.js",
+      "license": "Apache-2.0",
+      "redistribution": "bundle",
+      "requiredInCore": true,
+      "notes": "Client-side PDF rendering replaces the sole pdftoppm page-preview route, so Poppler is excluded from the user artifact."
+    },
+    {
+      "id": "playwright-python",
+      "classification": "core-runtime",
+      "owner": "Microsoft Corporation",
+      "versionSource": "workers/automation/uv.lock#playwright",
+      "source": "https://github.com/microsoft/playwright-python",
+      "license": "Apache-2.0",
+      "redistribution": "bundle",
+      "requiredInCore": true
+    },
+    {
+      "id": "chromium-core",
+      "classification": "core-runtime",
+      "owner": "The Chromium Authors",
+      "version": "145.0.7632.6",
+      "source": "https://playwright.azureedge.net/",
+      "license": "BSD-3-Clause",
+      "redistribution": "bundle",
+      "requiredInCore": true,
+      "notes": "Playwright revision 1208. Chromium third-party notices must be shipped verbatim."
+    },
+    {
+      "id": "playwright-mcp",
+      "classification": "core-runtime",
+      "owner": "Microsoft Corporation",
+      "version": "0.0.77",
+      "source": "https://www.npmjs.com/package/@playwright/mcp/v/0.0.77",
+      "license": "Apache-2.0",
+      "redistribution": "bundle",
+      "requiredInCore": true
+    },
+    {
+      "id": "system-browser-adapter",
+      "classification": "optional-capability",
+      "owner": "JobCtrl",
+      "versionSource": "package.json#version",
+      "source": "https://github.com/ebarti/JobCtrl",
+      "license": "AGPL-3.0-only",
+      "redistribution": "bundle",
+      "requiredInCore": false,
+      "embeddedIn": "jobctrl-worker",
+      "notes": "Contains no browser. It can adopt a user-selected Chrome or Chromium only after explicit capability enablement."
+    },
+    {
+      "id": "claude-agent-sdk",
+      "classification": "provider-pack",
+      "owner": "Anthropic PBC",
+      "versionSource": "workers/automation/uv.lock#claude-agent-sdk",
+      "source": "https://pypi.org/project/claude-agent-sdk/",
+      "license": "MIT AND LicenseRef-Anthropic-Commercial-Terms",
+      "redistribution": "official-download",
+      "requiredInCore": false,
+      "notes": "The wheel contains a proprietary Claude runtime. JobCtrl downloads and verifies the official wheel as a provider pack instead of republishing it. Bundled mode accepts only Anthropic-supported API-key or cloud-provider auth and does not reuse Free, Pro, or Max Claude Code credentials."
+    },
+    {
+      "id": "codex-provider-runtime",
+      "classification": "provider-pack",
+      "owner": "OpenAI",
+      "versionSource": "workers/automation/uv.lock#openai-codex-cli-bin",
+      "source": "https://pypi.org/project/openai-codex-cli-bin/",
+      "license": "Apache-2.0",
+      "redistribution": "official-download",
+      "requiredInCore": false,
+      "notes": "The exact wheel embeds Codex, ripgrep, and patched zsh without their license or notice files. JobCtrl may download and verify it as a managed provider pack; republishing remains denied until the full embedded closure and notices are recorded."
+    },
+    {
+      "id": "antigravity-provider-runtime",
+      "classification": "provider-pack",
+      "owner": "Google LLC",
+      "versionSource": "workers/automation/uv.lock#google-antigravity",
+      "source": "https://pypi.org/project/google-antigravity/",
+      "license": "Apache-2.0",
+      "redistribution": "official-download",
+      "requiredInCore": false,
+      "notes": "The exact wheel embeds an internal-MPM localharness binary without a recoverable module or third-party notice closure. JobCtrl may download and verify it as a managed provider pack; republishing remains denied until Google supplies that closure or written permission."
+    },
+    {
+      "id": "source-development-toolchain",
+      "classification": "developer-only",
+      "owner": "Multiple upstream projects",
+      "versionSource": "package.json#packageManager",
+      "source": "https://github.com/ebarti/JobCtrl/blob/main/docs/local-development.md",
+      "license": "NOASSERTION",
+      "redistribution": "exclude",
+      "requiredInCore": false,
+      "notes": "Git, Go, pnpm, Corepack, uv, TypeScript, Vite, Vitest, Storybook, VitePress, pytest, Ruff, and web/extension E2E browsers never enter the user artifact."
+    },
+    {
+      "id": "poppler-source-compatibility",
+      "classification": "developer-only",
+      "owner": "Poppler contributors",
+      "version": "26.07.0",
+      "source": "https://poppler.freedesktop.org/",
+      "license": "GPL-2.0-only OR GPL-3.0-only",
+      "redistribution": "exclude",
+      "requiredInCore": false,
+      "notes": "Temporary source-install compatibility only. Phase 1 removes the API pdftoppm route before the bundled user artifact is built."
+    }
+  ]
+}

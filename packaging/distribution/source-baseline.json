@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "reproducibleCounts": {
+    "javascriptPackageFiles": 8,
+    "javascriptUniqueDirect": 82,
+    "javascriptUniqueRuntimeDirect": 44,
+    "javascriptUniqueDevelopmentDirect": 40,
+    "pnpmPackageRecords": 1428,
+    "pythonRuntimeDirect": 22,
+    "pythonDevelopmentDirect": 5,
+    "uvPackageRecords": 100
+  },
+  "referenceFootprint": {
+    "status": "observational",
+    "measurementContext": {
+      "referenceCommit": "771f40c057c2b4b92b46df3fbb9bd77c25867d73",
+      "recordedOn": "2026-07-10",
+      "platform": "darwin-arm64",
+      "scope": "source-development installation on the planning machine",
+      "interpretation": "Directional planning evidence, not a reproducible release size or release artifact report"
+    },
+    "logicalBytes": {
+      "nodeModules": 734377612,
+      "pythonEnvironment": 928475103
+    },
+    "observations": [
+      {
+        "id": "pnpm-workspace",
+        "value": 897,
+        "unit": "MiB",
+        "qualifier": "approximately",
+        "note": "Installed node_modules observation from the planning checkout; collection context differs from the regular-file logical-byte snapshot above."
+      },
+      {
+        "id": "python-worker-environment",
+        "value": 909,
+        "unit": "MiB",
+        "qualifier": "approximately",
+        "note": "Installed Python worker environment, including the source-development dependency closure."
+      },
+      {
+        "id": "playwright-browser-installations",
+        "value": 1.0,
+        "unit": "GiB",
+        "qualifier": "approximately",
+        "note": "Combined Node Playwright revision 1217 and Python Playwright revision 1208 browser installations."
+      },
+      {
+        "id": "uv-managed-python",
+        "value": 319,
+        "unit": "MiB",
+        "qualifier": "approximately",
+        "note": "Additional footprint when uv provisions Python."
+      },
+      {
+        "id": "homebrew-dependency-closure",
+        "value": 1.18,
+        "unit": "GiB",
+        "qualifier": "approximately",
+        "note": "Seventy-two formulae observed on the reference machine."
+      },
+      {
+        "id": "google-chrome",
+        "value": 1.3,
+        "unit": "GiB",
+        "qualifier": "approximately",
+        "optional": true,
+        "note": "System application observed on the reference machine; excluded when authenticated-browser capabilities are disabled."
+      },
+      {
+        "id": "source-archive",
+        "value": 23,
+        "unit": "MiB",
+        "qualifier": "approximately",
+        "note": "Compressed source checkout archive."
+      }
+    ],
+    "notes": [
+      "The exact logical-byte snapshot sums the planning checkout's files and excludes filesystem block overhead and download caches.",
+      "The approximate observations came from the original planning audit and may use a different filesystem accounting context; they explain the current cold-machine estimate rather than define a reproducible target.",
+      "Only reproducibleCounts is compared for source dependency drift in P0.",
+      "P1 measures the built production payload and its components from two clean builds; never reuse this source snapshot as a release artifact report."
+    ]
+  }
+}

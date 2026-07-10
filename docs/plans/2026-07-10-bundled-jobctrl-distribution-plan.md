@@ -43,6 +43,7 @@ jobctrl open
 jobctrl setup
 jobctrl init
 jobctrl doctor
+jobctrl pipeline-status
 jobctrl <domain-command>
 
 jobctrl version
@@ -117,9 +118,11 @@ layers. A README-only rewrite would hide the defect without resolving it.
 
 ## 2. Current dependency and footprint baseline
 
-Planning measurements from the 2026-07-10 reference checkout are directional;
-Phase 0 must reproduce them with a checked-in measurement script before any size
-claim is published.
+Planning measurements from the 2026-07-10 reference checkout are directional.
+Phase 0 reproduces dependency counts and preserves the footprint observations
+with their measurement context; it does not treat machine-specific source
+footprints as reproducible release sizes. Phase 1 measures the first production
+payload from clean builds before any packaged-size claim is published.
 
 | Current source-install component | Observed logical footprint / count |
 | --- | --- |
@@ -130,6 +133,13 @@ claim is published.
 | Homebrew dependency closure | 72 formulae; approximately 1.18 GiB on the reference machine |
 | Google Chrome | approximately 1.3 GiB on the reference machine; should be excluded when authenticated browser features are disabled |
 | Source archive | approximately 23 MiB compressed |
+
+The JavaScript count in that planning snapshot predates the Phase 0 manifest
+validator. The checked-in Phase 0 audit reports 82 unique direct packages and
+40 direct development packages because it adds Ajv for full JSON Schema 2020-12
+validation; runtime-direct dependencies remain 44 and pnpm lock records remain
+1,428. `source-baseline.json` records that reproducible current count separately
+from the historical footprint observation.
 
 The current cold-machine path is therefore roughly **5–6 GiB before download
 caches**, depending on what was already present. This is not the target package
@@ -161,6 +171,9 @@ The release pipeline must publish, for every artifact:
   model as the supervisor.
 - Existing Typer domain commands are dispatched through the embedded Python
   runtime without showing its path or requiring a working directory.
+- The current Python `jobctrl status` pipeline-statistics command is preserved
+  as `jobctrl pipeline-status` (and a one-release `jobctrl status --pipeline`
+  compatibility form) so lifecycle status does not silently destroy user value.
 - Public commands never shell out to user-installed `git`, `node`, `pnpm`,
   `corepack`, `uv`, `python`, `temporal`, `pdftoppm`, or `npx`.
 
@@ -180,6 +193,10 @@ The release pipeline must publish, for every artifact:
   from its official distribution channel, pinned by version and hash, and stored
   as a JobCtrl-managed provider pack.
 - Users never run pip, uv, npm, npx, or a vendor CLI to install those packs.
+- A managed provider pack does not imply permission to reuse consumer
+  subscription credentials. Bundled Claude setup accepts Anthropic API-key or
+  supported cloud-provider authentication; it does not route Free, Pro, or Max
+  Claude Code credentials through the Agent SDK.
 - Credentials are never bundled, copied into release artifacts, or included in
   logs.
 
@@ -205,7 +222,8 @@ capabilities are disabled.
   placed inside a release directory.
 - Runtime files live in a separate versioned store, configurable through
   `JOBCTRL_RUNTIME_HOME`.
-- Upgrades back up the SQLite database before migration.
+- Upgrades back up both the JobCtrl SQLite database and the persistent Temporal
+  SQLite database before migration or candidate startup.
 - A failed health gate atomically returns to the previous runtime.
 - `jobctrl uninstall` preserves user data by default.
 - `jobctrl uninstall --remove-data` requires an explicit destructive
@@ -265,11 +283,11 @@ jobctrl-<version>-darwin-arm64/
     runtimes/node/
     runtimes/python/
     runtimes/temporal/
-    runtimes/poppler/
     browsers/core/
     node_modules/@playwright/mcp/
-    licenses/
-    sbom.cdx.json
+    release-metadata/
+      licenses/
+      sbom.cdx.json
 ```
 
 The exact internal layout may change; the manifest and public command contract
@@ -286,8 +304,8 @@ may not.
   dependencies. pytest, Ruff, build tooling, and package-manager caches do not
   ship.
 - Include the Temporal server binary privately; it is never required on `PATH`.
-- Include Poppler privately for the current PDF-page preview adapter. A later
-  replacement is allowed, but user installation of Poppler is not.
+- Replace the sole Poppler-backed PDF-page image route with the web app's
+  existing PDF.js renderer. Poppler is neither bundled nor a user prerequisite.
 - Install exactly one Python Playwright Chromium revision under a private,
   versioned `PLAYWRIGHT_BROWSERS_PATH`.
 - Include the pinned `@playwright/mcp` package under the embedded Node runtime;
@@ -317,8 +335,9 @@ artifact gate passes.
 - Add a machine-readable bundle manifest schema with app version, build ID,
   platform, minimum OS, component versions, hashes, sizes, licenses, and
   required/optional capability flags.
-- Add a reproducible dependency/footprint report for source install and
-  production payload.
+- Add a reproducible source-dependency count report and a separately labeled,
+  observational source-install footprint baseline. Define the production
+  payload measurement contract; Phase 1 supplies its build evidence.
 - Classify every shipped component as runtime, optional capability, provider
   pack, or developer-only.
 - Complete redistribution/license review, especially the Claude runtime,
@@ -329,10 +348,13 @@ artifact gate passes.
 **Tests and evidence**
 
 - Manifest schema unit tests.
-- Two identical builds from clean runners produce identical file inventories;
-  any unavoidable non-deterministic metadata is documented.
+- Deterministic inventory contract tests cover canonical ordering, hashing,
+  file-mode policy, safe relative symlinks, ownership, and rejection of
+  unclassified files.
+- External builder inputs are an exact, versioned, hash-pinned set; deleting or
+  substituting any required runtime archive fails the audit.
 - License inventory fails closed for unclassified files.
-- Baseline report reproduces or explains the measurements in `2.
+- Baseline report reproduces or explains the measurements in §2.
 
 **Exit criterion**
 
@@ -347,26 +369,40 @@ hash, size, and capability classification.
 - Build and serve the web app from the local API.
 - Compile the API and prune the Node production closure.
 - Build the relocatable Python worker/CLI runtime without the dev extra.
-- Embed Temporal and Poppler.
+- Embed Temporal and remove the Poppler-only server preview route in favor of
+  the existing client-side PDF.js renderer.
 - Bundle one Python Playwright Chromium revision and remove the Node Playwright
   browser install from the user artifact.
 - Bundle Playwright MCP with the private Node runtime and replace runtime `npx`
   dispatch with an absolute manifest-resolved command.
 - Build official-channel provider packs for components JobCtrl cannot
   redistribute.
+- Give bundled provider packs an explicit supported-auth policy; disable Claude
+  consumer-subscription credential probes while retaining Anthropic API key,
+  Bedrock, Vertex, and Foundry paths.
 - Emit the manifest, SBOM, attribution files, and component-size report.
 
 **Tests and evidence**
 
+- Two independently clean production payload builds produce identical file and
+  component inventories; any unavoidable non-deterministic metadata is
+  documented and excluded from the signed identity by an explicit rule.
+- The build reports compressed size, installed size, and per-component logical
+  size for the production payload, with deltas suitable for the release gate.
 - API unit tests cover static web serving, SPA fallback, cache headers, and path
   traversal rejection.
 - The extracted payload starts with user `PATH` reduced to stock OS locations.
 - A grep/exec audit proves no production path invokes the forbidden user
   toolchain commands.
+- Provider-pack tests prove bundled mode never reads Claude Free/Pro/Max OAuth
+  credentials and accepts only the documented API/cloud authentication paths.
 - A clean payload with network disabled can restart, discover a fixture,
   render a resume PDF, and render its page preview.
 - The artifact contains no web E2E browser, Storybook, docs, test fixtures,
   pytest/Ruff, package-manager cache, Git metadata, or source checkout.
+- Exact extracted-tree verification proves every regular file and safe relative
+  symlink is in the signed manifest and owned by one component; only the
+  manifest and its detached signature are fixed signed-envelope exclusions.
 
 **Exit criterion**
 
@@ -380,6 +416,8 @@ the repository or any system toolchain.
 - Add the Go `jobctrl` launcher and cross-process runtime registry.
 - Implement `start`, `stop`, `status`, `logs`, `open`, `version`, and
   transparent dispatch to the embedded Python CLI.
+- Rename the Python pipeline-statistics command to `pipeline-status` and retain
+  the documented compatibility form while native `status` owns lifecycle state.
 - Move production startup knowledge out of `scripts/dev` into an explicit
   runtime manifest consumed by the launcher.
 - Start Temporal, worker, and API in dependency order; the API serves the web
@@ -493,7 +531,8 @@ behavior.
   update/rollback does not depend on mutating a Homebrew Cellar.
 - Implement signed update metadata, download locking, resumable staging, atomic
   activation, previous-version retention, and health-gated promotion.
-- Back up SQLite before any schema migration and record the release/schema pair.
+- Back up both JobCtrl and Temporal SQLite state before any schema migration and
+  record the release/schema pair.
 - Implement rollback that restores the matching pre-upgrade database backup
   when the prior runtime cannot read the upgraded schema.
 - Implement safe uninstall and explicit data removal.
@@ -506,7 +545,8 @@ behavior.
 - Interrupt update at every staging/activation boundary; the prior release
   remains runnable.
 - Upgrade across a real schema migration, force the health gate to fail, and
-  prove automatic rollback restores both runtime and data coherently.
+  prove automatic rollback restores the runtime, JobCtrl data, and Temporal
+  workflow history coherently.
 - Concurrent update/start commands serialize correctly.
 - Uninstall preserves `~/.jobctrl` by default.
 - Old signed artifacts cannot be replayed below the configured minimum safe

@@ -44,6 +44,8 @@
     "docs:build": "node scripts/check-install-asset.mjs && vitepress build docs && node scripts/check-docs-site-links.mjs",
     "docs:check:runtime": "node scripts/check-docs-site-runtime.mjs",
     "docs:preview": "vitepress preview docs",
+    "distribution:audit": "node scripts/distribution-manifest.mjs audit",
+    "distribution:measure": "node scripts/distribution-manifest.mjs measure",
     "ttfv:real": "node scripts/ttfv-real.mjs run",
     "ttfv:probe": "node scripts/ttfv-real.mjs probe",
     "ttfv:summary": "node scripts/ttfv-real.mjs summarize",
@@ -73,6 +75,7 @@
   },
   "homepage": "https://github.com/ebarti/JobCtrl#readme",
   "devDependencies": {
+    "ajv": "8.20.0",
     "mermaid": "^11.16.0",
     "typescript": "^6.0.3",
     "vitepress": "^1.6.4",
