@@ -175,7 +175,7 @@ Use the CLI to inspect workflow health, then review the jobs themselves in the
 web app:
 
 ```bash
-uv --project workers/automation run jobctrl status
+uv --project workers/automation run jobctrl pipeline-status
 uv --project workers/automation run jobctrl runs --failed-only
 ```
 
@@ -402,7 +402,7 @@ Useful web app views:
 <WorkflowSurfacePanel surface="cli">
 
 ```bash
-uv --project workers/automation run jobctrl status
+uv --project workers/automation run jobctrl pipeline-status
 uv --project workers/automation run jobctrl digest
 uv --project workers/automation run jobctrl runs
 uv --project workers/automation run jobctrl runs --failed-only

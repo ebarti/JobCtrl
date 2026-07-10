@@ -68,10 +68,17 @@ instead of requiring system `npx`. Nested Python setup/doctor and MCP processes
 run with isolated mode plus bytecode suppression (`-I -B`) so they cannot write
 `__pycache__` into the launcher-verified payload.
 
-The Phase 1 payload uses an intentionally non-promotable local launcher stub.
-The native lifecycle supervisor and signed release acquisition are separate
-distribution phases; until those land, this payload is build evidence rather
-than a public install surface.
+The Phase 2 payload replaces the local stub with a native `jobctrl` supervisor.
+It verifies the manifest envelope/tree before dispatch, starts fixed loopback
+Temporal (gRPC `7233`, Web UI `8233`) → worker → API (`8766`) in that order,
+and waits for Temporal plus API worker-heartbeat health. Each canonical
+`JOBCTRL_DIR` gets one `flock`-protected registry at
+`~/Library/Application Support/JobCtrl/instances/<sha256>` (or
+`JOBCTRL_RUNTIME_HOME`); records bind PID, PGID, start identity, executable,
+build ID, manifest digest, and ports so lifecycle cleanup cannot target a
+reused PID. The local artifact remains unsigned/non-promotable until later
+signing and installer phases, so this is still build evidence rather than a
+public install surface.
 
 ## Frontend
 

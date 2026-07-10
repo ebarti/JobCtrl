@@ -240,7 +240,7 @@ real `~/.jobctrl` workspace so real data never mixes in.
 ## 6. First Useful Checks
 
 ```bash
-uv --project workers/automation run jobctrl status
+uv --project workers/automation run jobctrl pipeline-status
 uv --project workers/automation run jobctrl runs
 curl http://127.0.0.1:8766/v1/health
 ```

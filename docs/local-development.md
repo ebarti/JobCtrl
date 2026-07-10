@@ -157,8 +157,10 @@ Regenerate public documentation screenshots with `pnpm docs:screenshots` — see
 
 The production-payload builder currently targets Apple-silicon macOS. It is a
 release-engineering path, not an alternative contributor setup: the build
-machine still needs the source toolchain above, while the resulting payload is
-self-contained and does not.
+machine still needs the source toolchain above plus the pinned `go1.26.4`
+launcher compiler, while the resulting payload is self-contained and does not.
+The artifact ships only the statically linked launcher and the Go standard
+library BSD-3-Clause attribution — never the compiler.
 
 ```bash
 pnpm distribution:audit
@@ -177,9 +179,15 @@ development tool, provider runtime, source path, unowned file, unresolved
 license, or unpinned external input enters the payload.
 
 The local artifact is deliberately marked `unsigned-local` and cannot be
-promoted as a stable release. Native launcher, installer, signing, and
-notarization gates are owned by the later phases of the bundled-distribution
-plan. Use the much smaller contract fixture while changing the builder itself:
+promoted as a stable release. It includes the Phase 2 native launcher at
+`payload/launcher/jobctrl`: its private runtime manifest starts the fixed
+loopback Temporal (`7233`/`8233`), worker, and API (`8766`) fleet without Vite,
+and records each canonical `JOBCTRL_DIR` under
+`~/Library/Application Support/JobCtrl/instances/<sha256>` (override with
+`JOBCTRL_RUNTIME_HOME`). This is an artifact smoke/development surface only;
+`scripts/dev` remains the source-contributor launcher until the installer and
+signing phases land. Use the much smaller contract fixture while changing the
+builder itself:
 
 ```bash
 pnpm distribution:build:fixture

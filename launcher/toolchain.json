@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "goVersion": "go1.26.4",
+  "archive": {
+    "type": "tar.gz",
+    "url": "https://go.dev/dl/go1.26.4.darwin-arm64.tar.gz",
+    "sha256": "b62ad2b6d7d2464f12a5bcad7ff47f19d08325773b5efd21610e445a05a9bf53",
+    "sizeBytes": 64723756,
+    "officialMetadataUrl": "https://go.dev/dl/?mode=json&include=all"
+  },
+  "moduleClosure": "standard-library-only",
+  "license": "BSD-3-Clause",
+  "licenseSource": "https://go.dev/LICENSE",
+  "licenseSha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+}

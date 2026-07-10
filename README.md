@@ -446,7 +446,7 @@ All commands run as `uv --project workers/automation run jobctrl <command>`
 | `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). |
 | `action <stage>` | Low-level single-action dispatch with JSON output (used by scripts). |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates (`--url`, `--observations-json`). |
-| `status` / `runs` | Inspect database stats and run telemetry (`runs --failed-only`). |
+| `pipeline-status` / `runs` | Inspect database stats and run telemetry (`runs --failed-only`). |
 | `digest` | Print the local daily digest (`--json`, `--acknowledge`, `--min-fit-score`). |
 | `worker` | Run the long-lived Temporal worker. |
 | `rpc` | JSON-RPC server spawned by the TypeScript API (internal). |

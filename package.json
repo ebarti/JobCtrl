@@ -44,12 +44,14 @@
     "docs:build": "node scripts/check-install-asset.mjs && vitepress build docs && node scripts/check-docs-site-links.mjs",
     "docs:check:runtime": "node scripts/check-docs-site-runtime.mjs",
     "docs:preview": "vitepress preview docs",
-    "distribution:audit": "node scripts/distribution-provider-lock.mjs check && node scripts/distribution-manifest.mjs audit",
+    "distribution:audit": "node scripts/distribution-provider-lock.mjs check && node scripts/distribution-manifest.mjs audit && node scripts/distribution-build.mjs audit",
     "distribution:build:fixture": "node scripts/distribution-build.mjs fixture",
     "distribution:build": "node scripts/distribution-build.mjs real",
     "distribution:provider-lock:check": "node scripts/distribution-provider-lock.mjs check",
     "distribution:provider-lock:generate": "node scripts/distribution-provider-lock.mjs generate",
     "distribution:measure": "node scripts/distribution-manifest.mjs measure",
+    "launcher:check": "cd launcher && test \"$(go env GOVERSION)\" = \"go1.26.4\" && go vet ./...",
+    "launcher:test": "cd launcher && test \"$(go env GOVERSION)\" = \"go1.26.4\" && go test -race ./...",
     "ttfv:real": "node scripts/ttfv-real.mjs run",
     "ttfv:probe": "node scripts/ttfv-real.mjs probe",
     "ttfv:summary": "node scripts/ttfv-real.mjs summarize",
@@ -57,8 +59,8 @@
     "python:test": "uv --project workers/automation run --extra dev pytest -q",
     "python:lint": "uv --project workers/automation run --extra dev ruff check .",
     "python:build": "uv --project workers/automation run --extra dev python -m build workers/automation",
-    "check": "corepack pnpm --filter @jobctrl/contracts check && corepack pnpm --filter @jobctrl/api-client check && corepack pnpm api:check && corepack pnpm web:check && corepack pnpm extension:check && corepack pnpm python:lint",
-    "test": "corepack pnpm scripts:test && corepack pnpm api:test && corepack pnpm web:build && corepack pnpm extension:test && corepack pnpm extension:e2e && corepack pnpm python:test"
+    "check": "corepack pnpm --filter @jobctrl/contracts check && corepack pnpm --filter @jobctrl/api-client check && corepack pnpm api:check && corepack pnpm web:check && corepack pnpm extension:check && corepack pnpm python:lint && corepack pnpm launcher:check",
+    "test": "corepack pnpm scripts:test && corepack pnpm api:test && corepack pnpm web:build && corepack pnpm extension:test && corepack pnpm extension:e2e && corepack pnpm python:test && corepack pnpm launcher:test"
   },
   "repository": {
     "type": "git",
