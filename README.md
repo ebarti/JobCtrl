@@ -94,12 +94,12 @@ uv --project workers/automation run jobctrl setup
 ```
 
 Requirements: Python 3.11+, Node.js 20.19+ (pnpm via Corepack), uv, Temporal
-CLI, Chrome/Chromium, Playwright Chromium, Poppler (`pdftoppm`), and an LLM
+CLI, Playwright Chromium, Poppler (`pdftoppm`), and an LLM
 provider key or local LLM endpoint (plus vendor auth for any enabled
 employer-analysis ensemble legs). `corepack pnpm dev:setup` is the non-interactive
 dependency sync for provisioned machines.
 
-Playwright Chromium is installed per Python virtualenv; a bare `uv sync` or a
+Playwright Chromium is the managed core browser, installed per Python virtualenv; a bare `uv sync` or a
 fresh git worktree needs `uv --project workers/automation run playwright
 install chromium` (set `PLAYWRIGHT_SKIP_BROWSER_GC=1` when installing from
 another checkout that shares the browser cache). `jobctrl doctor` validates
@@ -182,7 +182,9 @@ evidence, qualifications, and the complete capability matrix.
 
 Auto-apply is powerful and must be treated as an explicit submission tool. It
 is off by default (`autoApply: false`), so no standing apply loop runs unless
-you opt in. When `autoApply: true`, a worker maintains one continuous Apply
+you opt in. It also requires the separately disabled
+`auto-apply-browser` capability to be enabled with an explicit Chrome/Chromium
+executable choice. When `autoApply: true`, a worker maintains one continuous Apply
 workflow, visible in Runs as the standing apply loop. With the default
 approval gate still on (`applyApprovalRequired: true`), that loop only submits
 jobs already approved in Apply Review and parks the rest for review. If you
@@ -192,6 +194,21 @@ jobs autonomously — still bounded by minimum fit score, the daily spend
 ceiling, at-most-once submit intent tracking, CAPTCHA fail-closed behavior,
 and the dry-run guard when a dry-run apply path is used. Use dry-run paths
 and narrow targets before allowing live submission.
+
+System Chrome/Chromium is never a core requirement. Discovery, enrichment, and
+PDF rendering use the managed Playwright Chromium. Inspect the split with
+`jobctrl capability list`; adopt a system browser only for authenticated apply
+features:
+
+```bash
+jobctrl capability enable auto-apply-browser --browser-path /path/to/Chrome
+jobctrl capability enable authenticated-linkedin-browser --browser-path /path/to/Chrome \
+  --copy-profile-from /path/to/Chrome-profile --consent-copy-profile
+```
+
+LinkedIn profile copying always requires its own consent flag: `--yes` never
+grants it. JobCtrl copies only into its owned data directory and does not retain
+the source-profile path.
 
 ### Browser Extension Capture And Autofill
 
@@ -495,7 +512,6 @@ Keychain output.
   intentionally skips an unauthenticated leg.
 - `LLM_MODEL` — default model for the configured provider.
 - `VITE_GOOGLE_MAPS_API_KEY` — optional address search in the Profile form.
-- `CHROME_PATH` — override Chrome/Chromium detection.
 - `PLAYWRIGHT_SKIP_BROWSER_GC=1` — keep other worktrees' Playwright browsers
   when running `playwright install` from this checkout.
 - `JOBCTRL_SKIP_BROWSER_PREFLIGHT=1` — skip the worker's startup Chromium

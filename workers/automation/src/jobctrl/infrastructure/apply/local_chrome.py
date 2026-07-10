@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 
 from jobctrl.apply import chrome as _chrome
+from jobctrl.browser_capabilities import require_system_browser_capability
 from jobctrl.domain.apply.value_objects import BrowserWorkerConfig
 from jobctrl.domain.ports.apply import BrowserSession
 
@@ -34,6 +35,9 @@ class LocalChromeAdapter:
     """
 
     def launch(self, config: BrowserWorkerConfig) -> BrowserSession:
+        # Keep the port boundary fail-closed even if a future BrowserPort
+        # implementation bypasses ``apply.chrome``.
+        require_system_browser_capability("auto-apply-browser")
         if config.user_data_dir:
             # The use case may prepare resume/cover-letter uploads before
             # browser launch. Preserve that directory when it is supplied.

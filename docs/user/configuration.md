@@ -276,15 +276,32 @@ tied to the same material generation.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `CHROME_PATH` | auto-detected | Chrome/Chromium executable path. |
 | `JOBCTRL_CLAUDE_BIN` | unset | Explicit apply-agent Claude runtime override. By default apply uses a system `claude` when present, then the pinned Claude Agent SDK bundled binary. |
 | `JOBCTRL_APPLY_TIMEOUT_SECONDS` | `900` | Per-job autonomous apply timeout. |
 | `CAPSOLVER_API_KEY` | unset | Optional key used only by the owned local `solve_captcha` apply tool for supported widgets. Provider keys and solver tokens are not sent through the model prompt; unsupported or unconfigured CAPTCHA flows fail closed. |
-| `JOBCTRL_LINKEDIN_APPLY_RESOLVER` | enabled | Set to `0` to disable authenticated LinkedIn outbound apply URL resolution. |
-| `JOBCTRL_LINKEDIN_APPLY_PROFILE_DIR` | `~/.jobctrl/chrome-workers/linkedin-apply-url-resolver` | Dedicated Chrome profile for LinkedIn apply URL resolution. |
-| `JOBCTRL_LINKEDIN_APPLY_SOURCE_PROFILE_DIR` | platform Chrome profile dir | Optional source profile copied into the resolver profile on first use. |
+| `JOBCTRL_LINKEDIN_APPLY_RESOLVER` | capability-controlled | Set to `0` to disable authenticated LinkedIn outbound apply URL resolution after it has been explicitly enabled. It cannot enable the feature by itself. |
 | `JOBCTRL_LINKEDIN_APPLY_CHROME_PROFILE` | browser default | Chrome profile name inside the resolver user-data directory. |
 | `JOBCTRL_LINKEDIN_APPLY_HEADLESS` | visible Chrome | Set to `1` to run the resolver headless. |
+
+The managed Playwright Chromium is the required core browser for discovery,
+enrichment, and PDF rendering. System Chrome/Chromium is optional and is never
+auto-detected or adopted for authenticated operations. Its choices are stored in
+`$JOBCTRL_DIR/browser-capabilities.json` with private `0600` permissions:
+
+```bash
+jobctrl capability list
+jobctrl capability enable auto-apply-browser --browser-path /path/to/Chrome
+jobctrl capability enable authenticated-linkedin-browser --browser-path /path/to/Chrome \
+  --copy-profile-from /path/to/Chrome-profile --consent-copy-profile
+jobctrl capability disable auto-apply-browser
+```
+
+The managed optional browser-pack choice intentionally reports unavailable until
+JobCtrl has a signed pack supply chain; the command does not download an
+unsigned browser. Authenticated LinkedIn resolution remains unavailable until a
+separate, explicitly consented copy of an existing profile exists under
+`$JOBCTRL_DIR/browser-profiles/linkedin-apply-url-resolver`. JobCtrl never
+persists the source-profile path, and `--yes` cannot imply profile-copy consent.
 
 Apply automation can submit applications. Use dry runs and narrow targets before
 approving real submission.
@@ -293,7 +310,7 @@ The web app writes the apply safety settings to `dashboard.json`:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `autoApply` | `false` | When `true`, a running worker keeps exactly one continuous Apply workflow active for eligible prepared jobs. The loop appears in Runs as the standing apply loop. Turning it back off cancels that loop. |
+| `autoApply` | `false` | When `true`, a running worker keeps exactly one continuous Apply workflow active for eligible prepared jobs only while `auto-apply-browser` is explicitly ready. The loop appears in Runs as the standing apply loop. Turning it back off cancels that loop. |
 | `applyApprovalRequired` | `true` | When `true`, live submit waits for Apply Review approval; the standing loop parks unapproved jobs as awaiting approval. When `false`, manually started live runs and the standing loop may submit eligible jobs without review. |
 | `minFitScore` | `7` | Minimum score for jobs claimed by apply automation, including the standing loop. |
 | `applyConcurrency` | `1` | Number of concurrent apply workers used by apply automation. The standing loop re-reads this setting when it polls. |

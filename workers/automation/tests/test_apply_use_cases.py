@@ -35,6 +35,16 @@ from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.apply.local_chrome import LocalChromeAdapter
 
 
+@pytest.fixture(autouse=True)
+def permit_browser_for_existing_apply_use_case_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use-case tests exercise domain outcomes after capability enforcement."""
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.apply.local_chrome.require_system_browser_capability",
+        lambda _capability: Path("/test/Chromium"),
+    )
+
+
 class _InMemoryApplyRunRepository:
     def __init__(self) -> None:
         self._store: dict[tuple[str, str], ApplyRun] = {}

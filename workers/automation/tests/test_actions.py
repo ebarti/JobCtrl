@@ -6,11 +6,22 @@ import typer
 from rich.console import Console
 from typer.testing import CliRunner
 
-from jobctrl import actions, cli
+from jobctrl import actions, browser_capabilities, cli
 from jobctrl.actions import LocalActionRequest, run_local_action
 from jobctrl.cli import app
 from jobctrl.database import close_connection, get_connection, init_db
 from jobctrl.workflow_specs import StartedWorkflowResult, build_run_stage_workflow_spec
+
+
+@pytest.fixture(autouse=True)
+def permit_browser_for_existing_apply_action_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Action result tests run after the browser capability preflight."""
+
+    monkeypatch.setattr(
+        browser_capabilities,
+        "require_system_browser_capability",
+        lambda _capability: Path("/test/Chromium"),
+    )
 
 
 def _started(result: dict | None = None) -> StartedWorkflowResult:

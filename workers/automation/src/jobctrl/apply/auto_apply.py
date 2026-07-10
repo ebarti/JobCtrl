@@ -13,6 +13,7 @@ from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.service import RPCError, RPCStatusCode
 
 from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
+from jobctrl.browser_capabilities import browser_capability_status
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.scoring.criteria_provider import (
     read_apply_approval_required,
@@ -41,7 +42,7 @@ class AutoApplyReconcileResult:
 
     @property
     def changed(self) -> bool:
-        return self.action in {"started", "canceled"}
+        return self.action == "started" or self.action.startswith("canceled")
 
 
 def auto_apply_workflow_id(tenant_id: str = str(LOCAL_TENANT)) -> str:
@@ -73,6 +74,16 @@ async def reconcile_auto_apply_loop(
     workflow_id = auto_apply_workflow_id(tenant_id)
     running = await _is_workflow_running(client, workflow_id)
     if settings.enabled:
+        capability = browser_capability_status("auto-apply-browser")
+        if capability.status != "ready":
+            if running:
+                await client.get_workflow_handle(workflow_id).cancel()
+                return AutoApplyReconcileResult(
+                    workflow_id, f"canceled_capability_{capability.status}", False
+                )
+            return AutoApplyReconcileResult(
+                workflow_id, f"blocked_capability_{capability.status}", False
+            )
         if running:
             return AutoApplyReconcileResult(workflow_id, "already_running", True)
         if _budget_halt_active(

@@ -22,12 +22,20 @@ from jobctrl.enrichment.detail import (
     _is_linkedin_job,
     _reset_authenticated_linkedin_retry_candidates,
 )
+from jobctrl.enrichment import detail
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
 from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
     LinkedInApplyResolution,
 )
 
 from .politeness_helpers import offline_session
+
+
+@pytest.fixture(autouse=True)
+def enable_authenticated_resolver_for_recovery_logic_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Recovery fixtures supply a fake resolver; capability gating has its own tests."""
+
+    monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: True)
 
 
 @pytest.fixture()

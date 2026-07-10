@@ -16,6 +16,11 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from jobctrl import config
+from jobctrl.browser_capabilities import (
+    BrowserCapabilityError,
+    require_system_browser_capability,
+    system_browser_capability_is_enabled,
+)
 from jobctrl.infrastructure.network import validate_public_http_url
 
 logger = logging.getLogger(__name__)
@@ -105,11 +110,11 @@ def _kill_on_port(port: int) -> None:
 # ---------------------------------------------------------------------------
 
 def setup_worker_profile(worker_id: int) -> Path:
-    """Create an isolated Chrome profile for a worker.
+    """Create or reuse an isolated, JobCtrl-owned Chrome profile for a worker.
 
-    On first run, clones from an existing worker profile (preferred, since
-    it already has session cookies) or from the user's real Chrome profile.
-    Subsequent runs reuse the existing worker profile.
+    This function intentionally never discovers, reads, or copies a host
+    browser profile. Authentication for a system browser is an explicit
+    capability choice; a bare auto-apply enable starts from a clean profile.
 
     Args:
         worker_id: Numeric worker identifier.
@@ -120,49 +125,9 @@ def setup_worker_profile(worker_id: int) -> Path:
     profile_dir = config.CHROME_WORKER_DIR / f"worker-{worker_id}"
     if (profile_dir / "Default").exists():
         return profile_dir  # Already initialized
-
-    # Find a source: prefer existing worker (has session cookies), else user profile
-    source: Path | None = None
-    for wid in range(10):
-        if wid == worker_id:
-            continue
-        candidate = config.CHROME_WORKER_DIR / f"worker-{wid}"
-        if (candidate / "Default").exists():
-            source = candidate
-            break
-    if source is None:
-        source = config.get_chrome_user_data()
-
-    logger.info("[worker-%d] Copying Chrome profile from %s (first time setup)...",
-                worker_id, source.name)
-    profile_dir.mkdir(parents=True, exist_ok=True)
-
-    # Copy essential profile dirs -- skip caches and heavy transient data
-    skip = {
-        "ShaderCache", "GrShaderCache", "Service Worker", "Cache",
-        "Code Cache", "GPUCache", "CacheStorage", "Crashpad",
-        "BrowserMetrics", "SafeBrowsing", "Crowd Deny",
-        "MEIPreload", "SSLErrorAssistant", "recovery", "Temp",
-        "SingletonLock", "SingletonSocket", "SingletonCookie",
-    }
-
-    for item in source.iterdir():
-        if item.name in skip:
-            continue
-        dst = profile_dir / item.name
-        try:
-            if item.is_dir():
-                shutil.copytree(
-                    str(item), str(dst), dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns(
-                        "Cache", "Code Cache", "GPUCache", "Service Worker",
-                    ),
-                )
-            else:
-                shutil.copy2(str(item), str(dst))
-        except (PermissionError, OSError):
-            pass  # skip locked files
-
+    profile_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    profile_dir.chmod(0o700)
+    (profile_dir / "Default").mkdir(mode=0o700, exist_ok=True)
     return profile_dir
 
 
@@ -205,6 +170,10 @@ def launch_chrome(worker_id: int, port: int | None = None,
     Returns:
         subprocess.Popen handle for the Chrome process.
     """
+    # This is the final process-launch boundary.  Do this before creating or
+    # reading a worker profile so disabled means no authenticated-browser I/O.
+    chrome_exe = str(require_system_browser_capability("auto-apply-browser"))
+
     if port is None:
         port = BASE_CDP_PORT + worker_id
 
@@ -215,8 +184,6 @@ def launch_chrome(worker_id: int, port: int | None = None,
 
     # Patch preferences to suppress restore nag
     _suppress_restore_nag(profile_dir)
-
-    chrome_exe = config.get_chrome_path()
 
     cmd = [
         chrome_exe,
@@ -250,12 +217,18 @@ def launch_chrome(worker_id: int, port: int | None = None,
     with _chrome_lock:
         _chrome_procs[worker_id] = proc
 
-    # Give Chrome time to start and open the debug port
+    # Give Chrome time to start and open the debug port. The synchronous guard
+    # startup below does not return until every initial page acknowledges
+    # Fetch.enable and browser-level paused auto-attach protects future pages.
     time.sleep(3)
-    if dry_run:
-        install_dry_run_cdp_guard(port)
-    else:
-        install_public_destination_cdp_guard(port)
+    try:
+        if dry_run:
+            install_dry_run_cdp_guard(port, worker_id=worker_id, process=proc)
+        else:
+            install_public_destination_cdp_guard(port, worker_id=worker_id, process=proc)
+    except Exception:
+        cleanup_worker(worker_id, proc)
+        raise
     logger.info("[worker-%d] Chrome started on port %d (pid %d)",
                 worker_id, port, proc.pid)
     return proc
@@ -357,21 +330,43 @@ _FORM_SUBMIT_GUARD_SOURCE = """
 """
 
 
-def install_dry_run_cdp_guard(port: int) -> "_DryRunCdpGuard":
+def install_dry_run_cdp_guard(
+    port: int,
+    *,
+    worker_id: int | None = None,
+    process: subprocess.Popen | None = None,
+) -> "_DryRunCdpGuard":
     """Install the public-destination + dry-run CDP guard for this worker."""
-    guard = _DryRunCdpGuard(port)
+    guard = _DryRunCdpGuard(port, worker_id=worker_id, process=process)
     with _dry_run_guards_lock:
         _dry_run_guards[int(port)] = guard
-    guard.start()
+    try:
+        guard.start()
+    except Exception:
+        with _dry_run_guards_lock:
+            if _dry_run_guards.get(int(port)) is guard:
+                _dry_run_guards.pop(int(port), None)
+        raise
     return guard
 
 
-def install_public_destination_cdp_guard(port: int) -> "_PublicDestinationCdpGuard":
+def install_public_destination_cdp_guard(
+    port: int,
+    *,
+    worker_id: int | None = None,
+    process: subprocess.Popen | None = None,
+) -> "_PublicDestinationCdpGuard":
     """Install the live apply public-destination guard on Chrome pages."""
-    guard = _PublicDestinationCdpGuard(port)
+    guard = _PublicDestinationCdpGuard(port, worker_id=worker_id, process=process)
     with _public_destination_guards_lock:
         _public_destination_guards[int(port)] = guard
-    guard.start()
+    try:
+        guard.start()
+    except Exception:
+        with _public_destination_guards_lock:
+            if _public_destination_guards.get(int(port)) is guard:
+                _public_destination_guards.pop(int(port), None)
+        raise
     return guard
 
 
@@ -390,10 +385,23 @@ def get_dry_run_cdp_guard_evidence(port: int) -> dict[str, object]:
 
 
 class _ApplyCdpGuard:
-    def __init__(self, port: int, *, enforce_dry_run: bool) -> None:
+    def __init__(
+        self,
+        port: int,
+        *,
+        enforce_dry_run: bool,
+        capability_checker=None,
+        worker_id: int | None = None,
+        process: subprocess.Popen | None = None,
+    ) -> None:
         self._port = int(port)
         self._enforce_dry_run = enforce_dry_run
-        self._seen: set[str] = set()
+        self._capability_checker = capability_checker
+        self._worker_id = worker_id
+        self._process = process
+        self._revoked = threading.Event()
+        self._termination_lock = threading.Lock()
+        self._termination_requested = False
         self._protected_targets: set[str] = set()
         self._blocked: list[dict[str, str]] = []
         self._blocked_keys: set[tuple[str, str, str, str]] = set()
@@ -405,38 +413,54 @@ class _ApplyCdpGuard:
         return self._enforce_dry_run
 
     def start(self) -> None:
-        self._attach_existing_targets()
+        session = _BrowserApplyGuardSession.connect(self._port, self)
+        session.arm_and_wait_until_ready()
         watcher = threading.Thread(
-            target=self._watch_targets,
+            target=session.run,
             name=f"apply-cdp-guard-{self._port}",
             daemon=True,
         )
         watcher.start()
 
-    def _watch_targets(self) -> None:
-        while True:
-            self._attach_existing_targets()
-            time.sleep(1.0)
+    def live_submission_allowed(self) -> bool:
+        """Fail closed when the live browser capability has been revoked.
 
-    def _attach_existing_targets(self) -> None:
-        for target in _cdp_json(self._port, "/json/list"):
-            if not isinstance(target, dict) or target.get("type") != "page":
-                continue
-            target_id = str(target.get("id") or "")
-            ws_url = str(target.get("webSocketDebuggerUrl") or "")
-            if not target_id or not ws_url:
-                continue
-            with self._lock:
-                if target_id in self._seen:
-                    continue
-                self._seen.add(target_id)
-            thread = threading.Thread(
-                target=_run_apply_page_session,
-                args=(target_id, ws_url, self),
-                name=f"apply-cdp-page-{target_id[:8]}",
-                daemon=True,
-            )
-            thread.start()
+        The live guard owns the CDP request boundary, so this is deliberately
+        checked for each paused HTTP request as well as by the background
+        watcher. Dry-run has its separate no-submit guard and does not need an
+        authenticated submission authorization check here.
+        """
+
+        if self._enforce_dry_run:
+            return True
+        if self._revoked.is_set():
+            return False
+        if self._capability_checker is None:
+            return True
+        try:
+            enabled = self._capability_checker()
+        except BrowserCapabilityError:
+            self._revoked.set()
+            return False
+        if enabled is False:
+            self._revoked.set()
+            return False
+        return True
+
+    def close_owned_browser(self) -> None:
+        """Terminate the single worker browser once its capability is revoked."""
+
+        with self._termination_lock:
+            if self._termination_requested:
+                return
+            self._termination_requested = True
+        if self._worker_id is None or self._process is None:
+            return
+        with _chrome_lock:
+            tracked = _chrome_procs.get(self._worker_id)
+            if tracked is not self._process or self._process.poll() is not None:
+                return
+            _kill_process_tree(self._process.pid)
 
     def record_protected_target(self, target_id: str) -> None:
         if not target_id:
@@ -496,13 +520,382 @@ class _ApplyCdpGuard:
 
 
 class _DryRunCdpGuard(_ApplyCdpGuard):
-    def __init__(self, port: int) -> None:
-        super().__init__(port, enforce_dry_run=True)
+    def __init__(
+        self,
+        port: int,
+        *,
+        worker_id: int | None = None,
+        process: subprocess.Popen | None = None,
+    ) -> None:
+        super().__init__(
+            port,
+            enforce_dry_run=True,
+            worker_id=worker_id,
+            process=process,
+        )
 
 
 class _PublicDestinationCdpGuard(_ApplyCdpGuard):
-    def __init__(self, port: int) -> None:
-        super().__init__(port, enforce_dry_run=False)
+    def __init__(
+        self,
+        port: int,
+        *,
+        capability_checker=None,
+        worker_id: int | None = None,
+        process: subprocess.Popen | None = None,
+    ) -> None:
+        super().__init__(
+            port,
+            enforce_dry_run=False,
+            capability_checker=capability_checker
+            or (lambda: system_browser_capability_is_enabled("auto-apply-browser")),
+            worker_id=worker_id,
+            process=process,
+        )
+
+
+class _BrowserApplyGuardSession:
+    """One browser-level CDP session that fail-closed protects every page."""
+
+    def __init__(self, websocket_module, websocket_connection, guard: _ApplyCdpGuard) -> None:
+        self._websocket_module = websocket_module
+        self._ws = websocket_connection
+        self._guard = guard
+        self._counter = 0
+        self._pending: dict[int, tuple[str, str, str]] = {}
+        self._setup_pending: dict[str, set[int]] = {}
+        self._session_targets: dict[str, str] = {}
+        self._target_sessions: dict[str, str] = {}
+        self._initial_targets: set[str] | None = None
+        self._fetch_ready_targets: set[str] = set()
+        self._resumed_targets: set[str] = set()
+        self._discover_ready = False
+        self._auto_attach_ready = False
+
+    @classmethod
+    def connect(cls, port: int, guard: _ApplyCdpGuard) -> "_BrowserApplyGuardSession":
+        try:
+            import websocket
+        except Exception as exc:
+            raise BrowserCapabilityError(
+                "websocket-client is required for apply CDP enforcement"
+            ) from exc
+        version = _cdp_json(port, "/json/version")
+        ws_url = (
+            str(version.get("webSocketDebuggerUrl") or "")
+            if isinstance(version, dict)
+            else ""
+        )
+        if not ws_url:
+            raise BrowserCapabilityError("Chrome browser-level CDP endpoint is unavailable")
+        try:
+            connection = websocket.create_connection(
+                ws_url,
+                timeout=0.25,
+                suppress_origin=True,
+            )
+        except Exception as exc:
+            raise BrowserCapabilityError("Chrome browser-level CDP connection failed") from exc
+        return cls(websocket, connection, guard)
+
+    def _send(
+        self,
+        method: str,
+        params: dict | None = None,
+        *,
+        session_id: str = "",
+        pending: tuple[str, str, str] | None = None,
+    ) -> int:
+        self._counter += 1
+        payload: dict[str, object] = {
+            "id": self._counter,
+            "method": method,
+            "params": params or {},
+        }
+        if session_id:
+            payload["sessionId"] = session_id
+        self._ws.send(json.dumps(payload))
+        if pending is not None:
+            self._pending[self._counter] = pending
+        return self._counter
+
+    def arm_and_wait_until_ready(self, *, timeout: float = 8.0) -> None:
+        """Synchronously arm auto-attach and every page present at startup."""
+
+        if not self._guard.live_submission_allowed():
+            self._guard.close_owned_browser()
+            self._close()
+            raise BrowserCapabilityError("auto-apply browser capability was revoked during launch")
+        self._send(
+            "Target.setDiscoverTargets",
+            {"discover": True},
+            pending=("discover", "", ""),
+        )
+        self._send(
+            "Target.setAutoAttach",
+            {
+                "autoAttach": True,
+                "waitForDebuggerOnStart": True,
+                "flatten": True,
+            },
+            pending=("auto_attach", "", ""),
+        )
+        self._send("Target.getTargets", pending=("initial_targets", "", ""))
+
+        deadline = time.monotonic() + timeout
+        try:
+            while not self._startup_ready():
+                if time.monotonic() >= deadline:
+                    raise BrowserCapabilityError(
+                        "Chrome CDP guard did not acknowledge Fetch.enable for every initial page"
+                    )
+                if not self._guard.live_submission_allowed():
+                    raise BrowserCapabilityError(
+                        "auto-apply browser capability was revoked while arming Chrome"
+                    )
+                self._receive_one()
+        except Exception:
+            self._guard.close_owned_browser()
+            self._close()
+            raise
+
+    def _startup_ready(self) -> bool:
+        return (
+            self._discover_ready
+            and self._auto_attach_ready
+            and self._initial_targets is not None
+            and self._initial_targets <= self._fetch_ready_targets
+            and self._initial_targets <= self._resumed_targets
+        )
+
+    def _receive_one(self) -> None:
+        try:
+            raw_message = self._ws.recv()
+        except self._websocket_module.WebSocketTimeoutException:
+            return
+        if not raw_message:
+            raise BrowserCapabilityError("Chrome browser-level CDP connection closed")
+        message = json.loads(raw_message)
+        if not isinstance(message, dict):
+            raise BrowserCapabilityError("Chrome returned an invalid CDP message")
+        self._handle_message(message)
+
+    def _handle_message(self, message: dict) -> None:
+        message_id = message.get("id")
+        if isinstance(message_id, int) and message_id in self._pending:
+            kind, session_id, target_id = self._pending.pop(message_id)
+            if message.get("error"):
+                if kind == "attach" and target_id in self._target_sessions:
+                    return
+                raise BrowserCapabilityError(
+                    f"Chrome rejected required CDP guard command: {kind}"
+                )
+            self._handle_response(
+                kind,
+                session_id=session_id,
+                target_id=target_id,
+                message=message,
+                message_id=message_id,
+            )
+            return
+
+        method_name = message.get("method")
+        if method_name == "Target.attachedToTarget":
+            params = message.get("params") or {}
+            target_info = params.get("targetInfo") or {}
+            session_id = str(params.get("sessionId") or "")
+            target_id = str(target_info.get("targetId") or "")
+            if not session_id:
+                raise BrowserCapabilityError("Chrome auto-attached a target without a session")
+            if target_info.get("type") == "page" and target_id:
+                self._configure_page(session_id, target_id)
+            else:
+                self._send(
+                    "Runtime.runIfWaitingForDebugger",
+                    session_id=session_id,
+                )
+            return
+        if method_name == "Target.targetDestroyed":
+            params = message.get("params") or {}
+            self._forget_target(str(params.get("targetId") or ""))
+            return
+        if method_name == "Target.detachedFromTarget":
+            params = message.get("params") or {}
+            self._forget_session(str(params.get("sessionId") or ""))
+            return
+        session_id = str(message.get("sessionId") or "")
+        if session_id and session_id in self._session_targets:
+            keep_running = _handle_apply_page_event(
+                message,
+                self._guard,
+                lambda method, params=None: self._send(
+                    method,
+                    params,
+                    session_id=session_id,
+                ),
+            )
+            if not keep_running:
+                raise BrowserCapabilityError("auto-apply browser capability was revoked")
+
+    def _handle_response(
+        self,
+        kind: str,
+        *,
+        session_id: str,
+        target_id: str,
+        message: dict,
+        message_id: int,
+    ) -> None:
+        if kind == "discover":
+            self._discover_ready = True
+            return
+        if kind == "auto_attach":
+            self._auto_attach_ready = True
+            return
+        if kind == "initial_targets":
+            result = message.get("result") or {}
+            target_infos = result.get("targetInfos") or []
+            if not isinstance(target_infos, list):
+                raise BrowserCapabilityError("Chrome returned an invalid initial target list")
+            self._initial_targets = {
+                str(item.get("targetId"))
+                for item in target_infos
+                if isinstance(item, dict)
+                and item.get("type") == "page"
+                and item.get("targetId")
+            }
+            for initial_target in sorted(self._initial_targets):
+                if initial_target not in self._target_sessions:
+                    self._send(
+                        "Target.attachToTarget",
+                        {"targetId": initial_target, "flatten": True},
+                        pending=("attach", "", initial_target),
+                    )
+            return
+        if kind == "attach":
+            result = message.get("result") or {}
+            attached_session = str(result.get("sessionId") or "")
+            if not attached_session:
+                raise BrowserCapabilityError("Chrome did not return a page CDP session")
+            self._configure_page(attached_session, target_id)
+            return
+        if kind == "setup":
+            pending = self._setup_pending.get(session_id)
+            if pending is None:
+                return
+            pending.discard(message_id)
+            if not pending:
+                self._send(
+                    "Runtime.runIfWaitingForDebugger",
+                    session_id=session_id,
+                    pending=("resume", session_id, target_id),
+                )
+            return
+        if kind == "fetch_enable":
+            self._guard.record_protected_target(target_id)
+            self._fetch_ready_targets.add(target_id)
+            pending = self._setup_pending.get(session_id)
+            if pending is None:
+                return
+            pending.discard(message_id)
+            if not pending:
+                self._send(
+                    "Runtime.runIfWaitingForDebugger",
+                    session_id=session_id,
+                    pending=("resume", session_id, target_id),
+                )
+            return
+        if kind == "resume":
+            self._resumed_targets.add(target_id)
+
+    def _configure_page(self, session_id: str, target_id: str) -> None:
+        existing_session = self._target_sessions.get(target_id)
+        if existing_session == session_id:
+            return
+        if existing_session is not None:
+            raise BrowserCapabilityError("Chrome delivered duplicate page CDP sessions")
+        self._target_sessions[target_id] = session_id
+        self._session_targets[session_id] = target_id
+        setup_commands: list[tuple[str, dict | None]] = [
+            ("Page.enable", None),
+            ("Network.enable", None),
+        ]
+        if self._guard.enforce_dry_run:
+            setup_commands.extend(
+                [
+                    ("Runtime.enable", None),
+                    ("Runtime.addBinding", {"name": "jobctrlDryRunBlocked"}),
+                    (
+                        "Page.addScriptToEvaluateOnNewDocument",
+                        {"source": _FORM_SUBMIT_GUARD_SOURCE},
+                    ),
+                ]
+            )
+        setup_commands.append(
+            (
+                "Fetch.enable",
+                {
+                    "patterns": [
+                        {
+                            "urlPattern": "*",
+                            "requestStage": "Request",
+                        }
+                    ]
+                },
+            )
+        )
+        if self._guard.enforce_dry_run:
+            setup_commands.append(
+                ("Runtime.evaluate", {"expression": _FORM_SUBMIT_GUARD_SOURCE})
+            )
+        pending_ids: set[int] = set()
+        self._setup_pending[session_id] = pending_ids
+        for method, params in setup_commands:
+            kind = "fetch_enable" if method == "Fetch.enable" else "setup"
+            command_id = self._send(
+                method,
+                params,
+                session_id=session_id,
+                pending=(kind, session_id, target_id),
+            )
+            pending_ids.add(command_id)
+
+    def _forget_target(self, target_id: str) -> None:
+        if not target_id:
+            return
+        if self._initial_targets is not None:
+            self._initial_targets.discard(target_id)
+        self._fetch_ready_targets.discard(target_id)
+        self._resumed_targets.discard(target_id)
+        session_id = self._target_sessions.pop(target_id, "")
+        if session_id:
+            self._session_targets.pop(session_id, None)
+            self._setup_pending.pop(session_id, None)
+
+    def _forget_session(self, session_id: str) -> None:
+        target_id = self._session_targets.pop(session_id, "")
+        self._setup_pending.pop(session_id, None)
+        if target_id and self._target_sessions.get(target_id) == session_id:
+            self._target_sessions.pop(target_id, None)
+
+    def run(self) -> None:
+        try:
+            while True:
+                if not self._guard.live_submission_allowed():
+                    self._guard.close_owned_browser()
+                    return
+                self._receive_one()
+        except Exception:
+            logger.debug("Browser-level apply CDP guard ended", exc_info=True)
+            self._guard.close_owned_browser()
+        finally:
+            self._close()
+
+    def _close(self) -> None:
+        try:
+            self._ws.close()
+        except Exception:
+            pass
 
 
 def _cdp_json(port: int, path: str) -> object:
@@ -559,56 +952,8 @@ def _run_apply_page_session(target_id: str, ws_url: str, guard: _ApplyCdpGuard) 
             except websocket.WebSocketTimeoutException:
                 continue
             message = json.loads(raw_message)
-            method_name = message.get("method")
-            if guard.enforce_dry_run and method_name == "Runtime.bindingCalled":
-                _record_binding_call(message, guard)
-                continue
-            if guard.enforce_dry_run and method_name == "Network.webSocketCreated":
-                params = message.get("params") or {}
-                guard.record_blocked_request(
-                    channel="WebSocket",
-                    method="WEBSOCKET",
-                    url=str(params.get("url") or ""),
-                    resource_type="WebSocket",
-                )
-                continue
-            if method_name == "Network.requestWillBeSent":
-                if guard.enforce_dry_run:
-                    _record_request_initiator(message, guard)
-                continue
-            if method_name != "Fetch.requestPaused":
-                continue
-            params = message.get("params") or {}
-            request = params.get("request") or {}
-            request_id = params.get("requestId")
-            network_id = str(params.get("networkId") or "")
-            method = str(request.get("method") or "GET").upper()
-            url = str(request.get("url") or "")
-            resource_type = str(params.get("resourceType") or "Other")
-            initiator_type = guard.request_initiator(network_id)
-            public_decision = validate_public_http_url(url)
-            if request_id and not public_decision.allowed:
-                guard.record_blocked_request(
-                    channel="public_destination",
-                    method=method,
-                    url=url,
-                    resource_type=resource_type,
-                )
-                send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
-            elif request_id and guard.enforce_dry_run and _should_block_dry_run_request(
-                method,
-                resource_type=resource_type,
-                initiator_type=initiator_type,
-            ):
-                guard.record_blocked_request(
-                    channel="network",
-                    method=method,
-                    url=url,
-                    resource_type=resource_type,
-                )
-                send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
-            elif request_id:
-                send("Fetch.continueRequest", {"requestId": request_id})
+            if not _handle_apply_page_event(message, guard, send):
+                break
     except Exception:
         logger.debug("CDP dry-run page session ended", exc_info=True)
     finally:
@@ -616,6 +961,75 @@ def _run_apply_page_session(target_id: str, ws_url: str, guard: _ApplyCdpGuard) 
             ws.close()
         except Exception:
             pass
+
+
+def _handle_apply_page_event(message: dict, guard: _ApplyCdpGuard, send) -> bool:
+    """Handle one session event; return false after a fail-closed revocation."""
+
+    method_name = message.get("method")
+    if guard.enforce_dry_run and method_name == "Runtime.bindingCalled":
+        _record_binding_call(message, guard)
+        return True
+    if guard.enforce_dry_run and method_name == "Network.webSocketCreated":
+        params = message.get("params") or {}
+        guard.record_blocked_request(
+            channel="WebSocket",
+            method="WEBSOCKET",
+            url=str(params.get("url") or ""),
+            resource_type="WebSocket",
+        )
+        return True
+    if method_name == "Network.requestWillBeSent":
+        if guard.enforce_dry_run:
+            _record_request_initiator(message, guard)
+        return True
+    if method_name != "Fetch.requestPaused":
+        return True
+    params = message.get("params") or {}
+    request = params.get("request") or {}
+    request_id = params.get("requestId")
+    network_id = str(params.get("networkId") or "")
+    method = str(request.get("method") or "GET").upper()
+    url = str(request.get("url") or "")
+    resource_type = str(params.get("resourceType") or "Other")
+    initiator_type = guard.request_initiator(network_id)
+    if request_id and not guard.live_submission_allowed():
+        guard.record_blocked_request(
+            channel="capability_revoked",
+            method=method,
+            url=url,
+            resource_type=resource_type,
+        )
+        send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
+        # Closing both the page and the owned browser prevents existing
+        # WebSocket/other channels from continuing after revocation.
+        send("Page.close")
+        guard.close_owned_browser()
+        return False
+    public_decision = validate_public_http_url(url)
+    if request_id and not public_decision.allowed:
+        guard.record_blocked_request(
+            channel="public_destination",
+            method=method,
+            url=url,
+            resource_type=resource_type,
+        )
+        send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
+    elif request_id and guard.enforce_dry_run and _should_block_dry_run_request(
+        method,
+        resource_type=resource_type,
+        initiator_type=initiator_type,
+    ):
+        guard.record_blocked_request(
+            channel="network",
+            method=method,
+            url=url,
+            resource_type=resource_type,
+        )
+        send("Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"})
+    elif request_id:
+        send("Fetch.continueRequest", {"requestId": request_id})
+    return True
 
 
 def _record_binding_call(message: dict, guard: _DryRunCdpGuard) -> None:

@@ -1272,6 +1272,7 @@ def _build_use_case():
     from jobctrl.domain.apply.process_manager import ApplySaga
     from jobctrl.domain.apply.services import ApplyEligibilityChecker
     from jobctrl.domain.apply.use_cases import SubmitApplicationUseCase
+    from jobctrl.browser_capabilities import require_system_browser_capability
     from jobctrl.infrastructure.apply import (
         ClaudeCodeCliAdapter,
         GmailEmailApplicationSender,
@@ -1287,6 +1288,7 @@ def _build_use_case():
         repository=SqliteApplyRunRepository(),
         email_sender=GmailEmailApplicationSender(),
         timeout_seconds=config.get_apply_timeout_seconds(),
+        submission_authorizer=lambda: require_system_browser_capability("auto-apply-browser"),
     )
     return SubmitApplicationUseCase(
         repository=SqliteApplyRunRepository(),
@@ -1635,6 +1637,18 @@ def worker_loop(
 
     while not _stop_event.is_set():
         if not continuous and jobs_done >= limit:
+            break
+
+        # A standing loop may live for hours. Check again before every claim so
+        # disabling the capability stops subsequent candidates without waiting
+        # for a process restart or a browser launch attempt.
+        from jobctrl.browser_capabilities import BrowserCapabilityError, require_system_browser_capability
+
+        try:
+            require_system_browser_capability("auto-apply-browser")
+        except BrowserCapabilityError as exc:
+            add_event(f"[W{worker_id}] Auto-apply browser capability unavailable: {exc}")
+            update_state(worker_id, status="done", last_action="browser capability disabled")
             break
 
         update_state(

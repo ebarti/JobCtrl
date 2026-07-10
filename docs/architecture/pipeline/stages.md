@@ -140,7 +140,9 @@ Two truths correct the old diagram:
 
 For LinkedIn rows that are failed or enriched without an application URL, a
 bounded authenticated Chrome pass may click the LinkedIn apply control to
-capture an external company URL — but it **stops before any form or submission**.
+capture an external company URL **only when the separately enabled, explicitly
+consented authenticated-LinkedIn browser capability is ready** — and it **stops
+before any form or submission**.
 Detail enrichment isolates faults at two levels. A crash while processing one
 site's batch is recorded in `site_errors`, healthy sites keep running, and the
 enrichment run ends `partial` rather than `failed`. Within a site, a single

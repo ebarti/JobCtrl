@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
+from jobctrl import browser_capabilities
 from jobctrl.domain.rpc.messages import JsonRpcRequest, WorkflowStartSpec
 from jobctrl.infrastructure.rpc.handlers import apply_action, register_default_handlers
 from jobctrl.infrastructure.rpc.server import JsonRpcServer
+
+
+@pytest.fixture(autouse=True)
+def permit_browser_for_existing_rpc_spec_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RPC serialization tests run after the browser capability preflight."""
+
+    monkeypatch.setattr(
+        browser_capabilities,
+        "require_system_browser_capability",
+        lambda _capability: Path("/test/Chromium"),
+    )
 
 
 class _FakeHandle:

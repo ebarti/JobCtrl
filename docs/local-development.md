@@ -15,7 +15,7 @@ scripts/install
 ```
 
 `scripts/install` is the first-run path for new contributors. It checks for
-Node.js, Corepack, uv, the Temporal CLI, and Chrome/Chromium, offers
+Node.js, Corepack, uv, and the Temporal CLI, offers
 Homebrew installs for missing machine-level tools when available, then runs the
 repository dependency setup: frozen pnpm install, uv sync, and Playwright
 Chromium installs for both the web package and the Python worker. This direct
@@ -51,8 +51,9 @@ corepack pnpm dev:setup
 `corepack pnpm dev:setup` installs the Node workspace dependencies and runs
 `uv --project workers/automation sync --extra dev`, which installs the Python
 worker, `python-jobspy`, JobSpy's locked transitive dependencies, and
-the Python dev tools used by local checks. It does not install Temporal,
-Chrome/Chromium or Playwright browser binaries.
+the Python dev tools used by local checks. It does not install Temporal or
+Playwright browser binaries. System Chrome/Chromium is optional; contributor
+testing of apply behavior must explicitly enable a browser capability first.
 
 Run the Python setup command directly when you only need to refresh vendor auth
 or analysis-leg configuration:

@@ -128,6 +128,8 @@ The detailed enforcement model lives in [Security](security.md#approval-and-cont
 The user-facing guarantees are:
 
 - live apply requires a current bound approval by default;
+- system-browser apply is disabled until you explicitly enable and adopt the
+  `auto-apply-browser` capability;
 - dry-run has a browser-layer network/submission guard;
 - submit intent is checkpointed so crashes do not cause blind retries;
 - email-only applications use the same reviewed binding; and

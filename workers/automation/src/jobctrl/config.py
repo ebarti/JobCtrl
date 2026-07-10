@@ -1592,7 +1592,7 @@ def get_tier() -> int:
 
     Tier 1 (Discovery):            Python + pip
     Tier 2 (AI Scoring & Tailoring): + LLM provider config
-    Tier 3 (Full Auto-Apply):       + Claude apply runtime + Chrome
+    Tier 3 (Full Auto-Apply):       + Claude apply runtime + explicitly enabled browser capability
     """
     load_env()
 
@@ -1601,13 +1601,11 @@ def get_tier() -> int:
         return 1
 
     has_claude = _has_claude_apply_runtime()
-    try:
-        get_chrome_path()
-        has_chrome = True
-    except FileNotFoundError:
-        has_chrome = False
+    from jobctrl.browser_capabilities import browser_capability_status
 
-    if has_claude and has_chrome:
+    has_auto_apply_browser = browser_capability_status("auto-apply-browser").status == "ready"
+
+    if has_claude and has_auto_apply_browser:
         return 3
 
     return 2
@@ -1653,10 +1651,14 @@ def check_tier(required: int, feature: str) -> None:
     if required >= 3:
         if not _has_claude_apply_runtime():
             missing.append("Claude apply runtime — install dependencies or set JOBCTRL_CLAUDE_BIN")
-        try:
-            get_chrome_path()
-        except FileNotFoundError:
-            missing.append("Chrome/Chromium — install or set CHROME_PATH")
+        from jobctrl.browser_capabilities import browser_capability_status
+
+        capability = browser_capability_status("auto-apply-browser")
+        if capability.status != "ready":
+            missing.append(
+                "auto-apply browser capability — explicitly adopt a Chrome/Chromium executable with "
+                "[bold]jobctrl capability enable auto-apply-browser --browser-path <path>[/bold]"
+            )
 
     _console.print(
         f"\n[red]'{feature}' requires {TIER_LABELS.get(required, f'Tier {required}')} (Tier {required}).[/red]\n"

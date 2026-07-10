@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from jobctrl.browser_capabilities import BrowserCapabilityDisabledError
 from jobctrl.domain.apply import (
     Applied,
     ApplyPrompt,
@@ -252,6 +253,38 @@ def test_live_saga_records_submit_intent_before_agent_result(repo):
     intent = next(event for event in outcome.apply_run.events if event.event_type == "ApplySubmitIntended")
     assert intent.payload["job_key"] == "https://example.com/job"
     assert intent.payload["material_version"] == "7"
+
+
+def test_live_saga_revocation_after_browser_launch_blocks_intent_and_agent(repo):
+    """A capability can change after launch; submit must still fail closed."""
+
+    browser = _FakeBrowser()
+    agent = _FakeAgent()
+    saga = ApplySaga(
+        browser_port=browser,
+        agent_port=agent,
+        repository=repo,
+        submission_authorizer=lambda: (_ for _ in ()).throw(
+            BrowserCapabilityDisabledError("auto-apply-browser disabled mid-run")
+        ),
+    )
+
+    outcome = saga.run(
+        apply_run=_starting(),
+        browser_config=_config(),
+        prompt=_prompt(),
+        model="sonnet",
+    )
+
+    event_types = [event.event_type for event in outcome.apply_run.events]
+    assert "BrowserLaunched" in event_types
+    assert "ApplySubmissionBlocked" in event_types
+    assert "ApplySubmitIntended" not in event_types
+    assert agent.calls == 0
+    assert outcome.agent_invoked is False
+    assert isinstance(outcome.apply_run.submission_result, Failed)
+    assert "SUBMISSION_AUTHORIZATION_REVOKED" in outcome.apply_run.submission_result.error
+    assert browser.cleanups == 1
 
 
 def test_dry_run_saga_does_not_record_submit_intent(repo):

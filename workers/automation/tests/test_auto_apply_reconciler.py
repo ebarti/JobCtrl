@@ -11,8 +11,25 @@ from temporalio.client import WorkflowExecutionStatus
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.service import RPCError, RPCStatusCode
 
+from jobctrl.apply import auto_apply
 from jobctrl.apply.auto_apply import auto_apply_workflow_id, reconcile_auto_apply_loop
 from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
+from jobctrl.browser_capabilities import BrowserCapabilityStatus
+
+
+@pytest.fixture(autouse=True)
+def ready_auto_apply_browser_for_existing_reconciler_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The legacy loop tests exercise scheduling after capability validation."""
+
+    monkeypatch.setattr(
+        auto_apply,
+        "browser_capability_status",
+        lambda _capability: BrowserCapabilityStatus(
+            id="auto-apply-browser",
+            status="ready",
+            detail="test capability",
+        ),
+    )
 
 
 class _FakeHandle:
@@ -50,6 +67,32 @@ class _FakeClient:
 
 def _write_settings(path, **values: object) -> None:
     path.write_text(json.dumps(values), encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_reconciler_does_not_start_a_disabled_browser_capability(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings_path = tmp_path / "dashboard.json"
+    _write_settings(settings_path, auto_apply=True)
+    client = _FakeClient()
+    monkeypatch.setattr(
+        auto_apply,
+        "browser_capability_status",
+        lambda _capability: BrowserCapabilityStatus(
+            id="auto-apply-browser",
+            status="disabled",
+            detail="disabled for test",
+        ),
+    )
+
+    result = await reconcile_auto_apply_loop(
+        client, task_queue="jobctrl-test", settings_path=settings_path
+    )
+
+    assert result.action == "blocked_capability_disabled"
+    assert result.enabled is False
+    assert client.starts == []
 
 
 @pytest.mark.asyncio
