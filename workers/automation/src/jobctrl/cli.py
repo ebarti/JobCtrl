@@ -2419,13 +2419,58 @@ def doctor() -> None:
         resolve_claude_apply_binary,
     )
 
-    load_env()
+    keychain_diagnostics = load_env() or ()
 
     ok_mark = "[green]OK[/green]"
     fail_mark = "[red]MISSING[/red]"
     warn_mark = "[yellow]WARN[/yellow]"
 
     results: list[tuple[str, str, str]] = []  # (check, status, note)
+
+    loaded_from_keychain = sum(result.status == "loaded" for result in keychain_diagnostics)
+    unavailable_from_keychain = sum(result.status == "unavailable" for result in keychain_diagnostics)
+    unsupported_from_keychain = sum(result.status == "unsupported" for result in keychain_diagnostics)
+    explicit_provider_settings = sum(result.status == "explicit" for result in keychain_diagnostics)
+    if loaded_from_keychain:
+        results.append(
+            (
+                "provider credential source",
+                ok_mark,
+                f"{loaded_from_keychain} setting(s) loaded from macOS Keychain for this process; restart the worker after Settings changes",
+            )
+        )
+    elif unavailable_from_keychain:
+        results.append(
+            (
+                "provider credential source",
+                warn_mark,
+                "macOS Keychain fallback unavailable; use ~/.jobctrl/.env or shell environment",
+            )
+        )
+    elif unsupported_from_keychain:
+        results.append(
+            (
+                "provider credential source",
+                "[dim]environment only[/dim]",
+                "native OS credential-store fallback is not shipped on this platform",
+            )
+        )
+    elif explicit_provider_settings:
+        results.append(
+            (
+                "provider credential source",
+                ok_mark,
+                "environment configuration takes precedence over macOS Keychain",
+            )
+        )
+    else:
+        results.append(
+            (
+                "provider credential source",
+                "[dim]optional[/dim]",
+                "no macOS Keychain fallback entries found; environment configuration remains available",
+            )
+        )
 
     # --- Tier 1 checks ---
     # Profile

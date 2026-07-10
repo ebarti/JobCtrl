@@ -12,18 +12,64 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Populated: Story = {};
+export const Present: Story = {};
 
-export const AllUnconfigured: Story = {
+export const Absent: Story = {
   parameters: {
     msw: {
       handlers: [
         http.get("*/v1/credentials", () =>
           HttpResponse.json({
-            ok: true,
+            ...sampleCredentialsResponse,
             credentials: sampleCredentialsResponse.credentials.map((entry) => ({
               ...entry,
               configured: false,
+            })),
+          }),
+        ),
+      ],
+    },
+  },
+};
+
+export const InspectionFailed: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        http.get("*/v1/credentials", () =>
+          HttpResponse.json({
+            ...sampleCredentialsResponse,
+            store: {
+              ...sampleCredentialsResponse.store,
+              available: false,
+              unavailableReason: "inspection_failed",
+            },
+            credentials: sampleCredentialsResponse.credentials.map((entry) => ({
+              ...entry,
+              configured: null,
+            })),
+          }),
+        ),
+      ],
+    },
+  },
+};
+
+export const UnsupportedPlatform: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        http.get("*/v1/credentials", () =>
+          HttpResponse.json({
+            ...sampleCredentialsResponse,
+            store: {
+              ...sampleCredentialsResponse.store,
+              available: false,
+              unavailableReason: "unsupported_platform",
+            },
+            credentials: sampleCredentialsResponse.credentials.map((entry) => ({
+              ...entry,
+              configured: null,
             })),
           }),
         ),

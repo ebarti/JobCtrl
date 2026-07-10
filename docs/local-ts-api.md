@@ -1105,10 +1105,35 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   Settings forms use these routes.
 - `GET /v1/credentials` lists the supported provider credential keys
   (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `LLM_URL`) with a label, storage kind,
-  and a `configured` presence flag only — values are never returned.
-  `PATCH /v1/credentials` stores a value in the macOS Keychain
-  (service `JobCtrl`) and `DELETE /v1/credentials/:key` removes it; unknown
-  keys return `400 invalid_credential_key`.
+  and a `configured` presence state (`true`, `false`, or `null`) only — values
+  are never returned. `false` means confirmed absent; `null` means presence is
+  unknown and must not be interpreted as missing. Its
+  top-level `store` capability reports `kind: "macos_keychain"`, whether that
+  backend is available on the API host, `unavailableReason` as
+  `unsupported_platform`, `inspection_failed`, or `null`, and
+  `requiresWorkerRestart: true`. Non-macOS reads return the unsupported
+  capability and unknown entries without invoking the macOS `security` command
+  or failing the endpoint. A macOS inspection failure returns
+  `inspection_failed` and unknown presence rather than misreporting an entry as
+  absent.
+  `PATCH /v1/credentials` receives the submitted value and passes it to the
+  macOS Keychain (service `JobCtrl`); its response returns the same
+  presence-only shape. The PATCH schema rejects unknown keys with `400`.
+  `DELETE /v1/credentials/:key` removes an allowlisted entry and returns
+  `400 invalid_credential_key` for an unknown path key. Mutations on an
+  unsupported host return sanitized `409 credential_store_unavailable`;
+  operational Keychain failures return sanitized
+  `503 credential_store_unavailable` with reason `operational_failure`. Neither
+  path returns raw Keychain errors. `GET` and `DELETE` never return stored values,
+  and the API never reads a stored value back for provider runtime use. If
+  inspection or a mutation fails, unlock Keychain if it is locked and retry
+  rather than replacing an unknown status with a new credential blindly.
+  Separately, each Python CLI/worker process performs a bounded Keychain lookup
+  once at startup for allowlisted environment values that remain missing or
+  empty after env-file loading. A non-empty environment value wins. A running
+  Python worker does not hot-reload API edits, so saving or removing a Keychain
+  entry requires a worker or full-stack restart before provider work observes
+  the change.
 - `GET /v1/extension/pairing-token` returns the local browser-extension
   capability token for the Settings pairing surface; `POST
   /v1/extension/pairing-token/rotate` replaces it. The token is generated under

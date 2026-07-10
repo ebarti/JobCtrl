@@ -171,7 +171,11 @@ import {
   isAuthorizedLocalCapabilityToken,
   rotateLocalCapabilityToken,
 } from "./extension-auth.js";
-import { KeychainCredentialStore, type CredentialStore } from "./credentials.js";
+import {
+  CredentialStoreUnavailableError,
+  KeychainCredentialStore,
+  type CredentialStore,
+} from "./credentials.js";
 import {
   type ActionDispatchResult,
   buildActionResponse,
@@ -2231,7 +2235,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
-    return credentialStore.set(body.key, body.value);
+    try {
+      return await credentialStore.set(body.key, body.value);
+    } catch (error) {
+      if (error instanceof CredentialStoreUnavailableError) {
+        void reply.code(error.reason === "unsupported_platform" ? 409 : 503);
+        return {
+          ok: false,
+          error: "credential_store_unavailable",
+          reason: error.reason,
+          message: error.message,
+        };
+      }
+      throw error;
+    }
   });
 
   app.delete<{ Params: { key: string } }>("/v1/credentials/:key", async (request, reply) => {
@@ -2240,7 +2257,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       void reply.code(400);
       return { ok: false, error: "invalid_credential_key" };
     }
-    return credentialStore.delete(key as (typeof CredentialKeys)[number]);
+    try {
+      return await credentialStore.delete(key as (typeof CredentialKeys)[number]);
+    } catch (error) {
+      if (error instanceof CredentialStoreUnavailableError) {
+        void reply.code(error.reason === "unsupported_platform" ? 409 : 503);
+        return {
+          ok: false,
+          error: "credential_store_unavailable",
+          reason: error.reason,
+          message: error.message,
+        };
+      }
+      throw error;
+    }
   });
 
   // Contact & Outreach (R6 Phase 1). Reads project provenance for every fact

@@ -1765,10 +1765,23 @@ export type SettingsUpdateRequest = z.infer<typeof SettingsUpdateRequestSchema>;
 export const CredentialKeys = ["OPENAI_API_KEY", "GEMINI_API_KEY", "LLM_URL"] as const;
 export type CredentialKey = (typeof CredentialKeys)[number];
 
+export const CREDENTIAL_VALUE_MAX_LENGTH = 8_000;
+const CREDENTIAL_VALUE_UNSAFE_CHARACTERS = /[\r\n\u0000]/u;
+
 export const CredentialUpdateRequestSchema = z
   .object({
     key: z.enum(CredentialKeys),
-    value: z.string().min(1).max(8000),
+    value: z
+      .string()
+      .min(1, "Credential value is required.")
+      .max(
+        CREDENTIAL_VALUE_MAX_LENGTH,
+        "Credential value exceeds the supported length.",
+      )
+      .refine((value) => !CREDENTIAL_VALUE_UNSAFE_CHARACTERS.test(value), {
+        message:
+          "Credential value must not contain carriage returns, line feeds, or NUL characters.",
+      }),
   })
   .strict();
 export type CredentialUpdateRequest = z.infer<typeof CredentialUpdateRequestSchema>;
@@ -3571,12 +3584,25 @@ export interface DiscoverySettingsResponse {
 
 export interface CredentialsResponse {
   ok: true;
+  store: {
+    kind: "macos_keychain";
+    available: boolean;
+    unavailableReason: "inspection_failed" | "unsupported_platform" | null;
+    requiresWorkerRestart: true;
+  };
   credentials: Array<{
     key: CredentialKey;
     label: string;
-    configured: boolean;
+    configured: boolean | null;
     storage: "keychain";
   }>;
+}
+
+export interface CredentialStoreErrorResponse {
+  ok: false;
+  error: "credential_store_unavailable";
+  reason: "operational_failure" | "unsupported_platform";
+  message: string;
 }
 
 // ---------------------------------------------------------------------------

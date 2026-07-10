@@ -7,7 +7,11 @@ import platform
 import re
 import shutil
 import sqlite3
+import subprocess
+from collections.abc import Callable, MutableMapping
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.domain.discovery.source_registry import (
@@ -30,6 +34,67 @@ APP_DIRNAME = ".jobctrl"
 DB_FILENAME = "jobctrl.db"
 _LEGACY_TOKEN = "job" + "hunter"
 _LEGACY_TOKENS = ("job" + "ctl", _LEGACY_TOKEN)
+
+KEYCHAIN_SERVICE = "JobCtrl"
+KEYCHAIN_SECURITY_BINARY = "/usr/bin/security"
+KEYCHAIN_PROVIDER_KEYS = ("OPENAI_API_KEY", "GEMINI_API_KEY", "LLM_URL")
+KEYCHAIN_ACCOUNT_MAPPING = "key"
+KEYCHAIN_REQUIRES_WORKER_RESTART = True
+KEYCHAIN_LOOKUP_TIMEOUT_SECONDS = 2.0
+
+KeychainFallbackStatus = Literal["explicit", "loaded", "missing", "unavailable", "unsupported"]
+KeychainFallbackReason = Literal[
+    "environment_precedence",
+    "loaded",
+    "item_not_found",
+    "empty_value",
+    "binary_missing",
+    "command_failed",
+    "timeout",
+    "non_darwin",
+]
+
+
+@dataclass(frozen=True)
+class KeychainFallbackDiagnostic:
+    """Secret-free result for one optional macOS Keychain lookup."""
+
+    key: str
+    status: KeychainFallbackStatus
+    reason: KeychainFallbackReason
+
+
+_KEYCHAIN_FALLBACK_DIAGNOSTICS: tuple[KeychainFallbackDiagnostic, ...] | None = None
+
+
+def _find_macos_security_binary(_name: str) -> str | None:
+    """Return the trusted system Keychain CLI, never a PATH-resolved shim."""
+
+    return KEYCHAIN_SECURITY_BINARY if os.access(KEYCHAIN_SECURITY_BINARY, os.X_OK) else None
+
+
+def _is_confirmed_keychain_miss(returncode: int, stderr: str) -> bool:
+    """Recognize only Apple's confirmed item-not-found result, never broad stderr fragments."""
+
+    if returncode == 44:
+        return True
+    return (
+        re.fullmatch(
+            r"(?:security:\s*[^:\r\n]+:\s*)?"
+            r"The specified item could not be found(?: in the keychain)?\.?",
+            stderr.strip(),
+            flags=re.IGNORECASE,
+        )
+        is not None
+    )
+
+
+def _keychain_account(key: str) -> str:
+    """Apply the cross-runtime account convention guarded by parity tests."""
+
+    if KEYCHAIN_ACCOUNT_MAPPING != "key":
+        raise RuntimeError("unsupported Keychain account mapping")
+    return key
 
 
 class WorkspaceMigrationError(RuntimeError):
@@ -1388,14 +1453,104 @@ def get_apply_max_budget_usd() -> float:
     return float(DEFAULTS.get("apply_max_budget_usd", 5.00))
 
 
-def load_env():
-    """Load environment variables from ~/.jobctrl/.env if it exists."""
+def load_macos_keychain_fallbacks(
+    *,
+    env: MutableMapping[str, str] = os.environ,
+    system_name: str | None = None,
+    find_executable: Callable[[str], str | None] = _find_macos_security_binary,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> tuple[KeychainFallbackDiagnostic, ...]:
+    """Fill missing provider settings from the macOS Keychain.
+
+    Environment values always win. Keychain values are copied only into this
+    process environment, so a long-lived worker must restart after the web API
+    saves or removes an entry. Diagnostics deliberately contain no command
+    output or secret value.
+    """
+
+    diagnostics: dict[str, KeychainFallbackDiagnostic] = {}
+    missing_keys: list[str] = []
+    for key in KEYCHAIN_PROVIDER_KEYS:
+        if env.get(key):
+            diagnostics[key] = KeychainFallbackDiagnostic(key, "explicit", "environment_precedence")
+        else:
+            missing_keys.append(key)
+
+    if not missing_keys:
+        return tuple(diagnostics[key] for key in KEYCHAIN_PROVIDER_KEYS)
+
+    if (system_name or platform.system()) != "Darwin":
+        for key in missing_keys:
+            diagnostics[key] = KeychainFallbackDiagnostic(key, "unsupported", "non_darwin")
+        return tuple(diagnostics[key] for key in KEYCHAIN_PROVIDER_KEYS)
+
+    security = find_executable("security")
+    if security != KEYCHAIN_SECURITY_BINARY:
+        for key in missing_keys:
+            diagnostics[key] = KeychainFallbackDiagnostic(key, "unavailable", "binary_missing")
+        return tuple(diagnostics[key] for key in KEYCHAIN_PROVIDER_KEYS)
+
+    for key in missing_keys:
+        command = [
+            security,
+            "find-generic-password",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            _keychain_account(key),
+            "-w",
+        ]
+        try:
+            completed = run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                timeout=KEYCHAIN_LOOKUP_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            diagnostics[key] = KeychainFallbackDiagnostic(key, "unavailable", "timeout")
+            continue
+        except OSError:
+            diagnostics[key] = KeychainFallbackDiagnostic(key, "unavailable", "binary_missing")
+            continue
+        except subprocess.SubprocessError:
+            diagnostics[key] = KeychainFallbackDiagnostic(key, "unavailable", "command_failed")
+            continue
+
+        if completed.returncode != 0:
+            missing = _is_confirmed_keychain_miss(completed.returncode, completed.stderr)
+            diagnostics[key] = KeychainFallbackDiagnostic(
+                key,
+                "missing" if missing else "unavailable",
+                "item_not_found" if missing else "command_failed",
+            )
+            continue
+
+        value = completed.stdout.rstrip("\r\n")
+        if not value:
+            diagnostics[key] = KeychainFallbackDiagnostic(key, "unavailable", "empty_value")
+            continue
+        env[key] = value
+        diagnostics[key] = KeychainFallbackDiagnostic(key, "loaded", "loaded")
+
+    return tuple(diagnostics[key] for key in KEYCHAIN_PROVIDER_KEYS)
+
+
+def load_env() -> tuple[KeychainFallbackDiagnostic, ...]:
+    """Load env files, then fill missing provider settings from Keychain."""
     from dotenv import load_dotenv
+
+    global _KEYCHAIN_FALLBACK_DIAGNOSTICS
 
     if ENV_PATH.exists():
         load_dotenv(ENV_PATH)
     # Also try CWD .env as fallback
     load_dotenv()
+    if _KEYCHAIN_FALLBACK_DIAGNOSTICS is None or not KEYCHAIN_REQUIRES_WORKER_RESTART:
+        _KEYCHAIN_FALLBACK_DIAGNOSTICS = load_macos_keychain_fallbacks()
+    return _KEYCHAIN_FALLBACK_DIAGNOSTICS
 
 
 # ---------------------------------------------------------------------------
