@@ -573,7 +573,7 @@ wheels = [
 
 [[package]]
 name = "jobctrl"
-version = "0.3.0"
+version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
