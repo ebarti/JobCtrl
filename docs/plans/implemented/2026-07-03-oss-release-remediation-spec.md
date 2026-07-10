@@ -1093,10 +1093,12 @@ first tag. Assemble this checklist, with links, as the final deliverable.
       `Gate: PASS` per repo process.
 - [ ] Rename train executed (owner-side, after all W-items): full
       `JobHunter` → `JobCtrl` rename; `workers/automation/pyproject.toml`
-      distribution name `jobctrl` (reserved on PyPI via owner placeholder;
-      re-verify before first publish); `publish.yml` tag trigger
-      re-enabled and gated on the release-check workflow; W0.3 structural
-      check updated/retired.
+      distribution name `jobctrl` (re-check availability and configure the
+      Trusted Publisher immediately before first publish; a pending publisher
+      does not reserve the name); the historical `publish.yml` stays disabled
+      while the new release-only `release-pypi.yml` runs only for
+      a published non-prerelease GitHub Release with exact
+      manifest/archive/tag version parity; W0.3 structural check updated/retired.
 - [ ] W2.2, W2.3, W2.5 merged; W2.4 and W2.6 merged or explicitly deferred
       by the owner in writing.
 - [x] W0.6 dispositions closed: every concern fixed, backlogged

@@ -1,0 +1,52 @@
+name: Release to PyPI
+
+# This intentionally uses a new workflow path. The historical publish.yml
+# workflow stays disabled, so tagging an older commit cannot execute its former
+# tag-push publication logic after this workflow is enabled.
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    if: github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write  # required for OIDC trusted publishing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Verify tag points at current main
+        run: |
+          git fetch --no-tags --depth=1 origin +main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" || {
+            echo "Release tags must point at the current audited main commit." >&2
+            exit 1
+          }
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build package
+        run: python -m build workers/automation
+
+      - name: Scan source and built distributions
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: python3 scripts/release_check.py --strict-prompt --release-tag "$RELEASE_TAG"
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: workers/automation/dist

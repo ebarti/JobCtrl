@@ -35,6 +35,7 @@ const PAGES = [
   { path: "/architecture/pipeline/operations", mermaid: true, images: false },
   { path: "/user/normal-flows", mermaid: true, images: true },
   { path: "/user/screenshots", mermaid: false, images: true },
+  { path: "/comparison", mermaid: false, images: true },
 ];
 
 const BASE_VIEWPORT = { width: 1440, height: 1000 };
@@ -161,6 +162,45 @@ try {
     console.log("ok    /user/screenshots visual width");
   }
 
+  await page.goto(`http://127.0.0.1:${port}/comparison`, { waitUntil: "networkidle" });
+  const comparisonDesktop = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll(".jh-compare-card")].map((card) => {
+      const box = card.getBoundingClientRect();
+      return { x: box.x, y: box.y, width: box.width };
+    });
+    const headings = [...document.querySelectorAll(".vp-doc h2")].map((heading) =>
+      (heading.textContent ?? "").replaceAll("\u200B", "").trim(),
+    );
+    return {
+      cards,
+      headings,
+      pageOverflows: document.documentElement.scrollWidth > window.innerWidth,
+      summaryRegionLabel: document
+        .querySelector(".jh-compare-table-wrap")
+        ?.getAttribute("aria-label"),
+      summaryRegionTabIndex: document
+        .querySelector(".jh-compare-table-wrap")
+        ?.getAttribute("tabindex"),
+    };
+  });
+  const cardsShareRow = comparisonDesktop.cards.length === 3
+    && comparisonDesktop.cards.every(
+      (card) => Math.abs(card.y - comparisonDesktop.cards[0].y) < 2
+        && Math.abs(card.width - comparisonDesktop.cards[0].width) < 2,
+    );
+  if (
+    !cardsShareRow
+    || comparisonDesktop.pageOverflows
+    || comparisonDesktop.summaryRegionLabel !== "At-a-glance comparison table"
+    || comparisonDesktop.summaryRegionTabIndex !== "0"
+    || !comparisonDesktop.headings.includes("JobCtrl's UI is part of the product")
+    || comparisonDesktop.headings.at(-1) !== "Appendix: evidence-backed capability matrix"
+  ) {
+    fail(`/comparison desktop: visual hierarchy or appendix order regressed (${JSON.stringify(comparisonDesktop)})`);
+  } else {
+    console.log("ok    /comparison desktop visual hierarchy");
+  }
+
   await page.goto(`http://127.0.0.1:${port}/user/normal-flows`, { waitUntil: "networkidle" });
   await page.waitForFunction(() => document.querySelectorAll(".mermaid svg").length >= 1, { timeout: 15000 });
   const desktopLoopDiagram = await page.locator(".vp-doc .mermaid").first().boundingBox();
@@ -243,6 +283,48 @@ try {
     console.log("ok    /user/normal-flows mobile diagram");
   }
   await page.locator('.jh-lightbox button[aria-label="Close"]').click();
+
+  await page.goto(`http://127.0.0.1:${port}/comparison`, { waitUntil: "networkidle" });
+  const comparisonMobile = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll(".jh-compare-card")].map((card) => {
+      const box = card.getBoundingClientRect();
+      return { x: box.x, y: box.y, width: box.width };
+    });
+    const summary = document.querySelector(".jh-compare-table-wrap");
+    return {
+      cards,
+      pageOverflows: document.documentElement.scrollWidth > window.innerWidth,
+      summaryClientWidth: summary?.clientWidth ?? 0,
+      summaryScrollWidth: summary?.scrollWidth ?? 0,
+    };
+  });
+  const cardsStack = comparisonMobile.cards.length === 3
+    && comparisonMobile.cards.every(
+      (card, index) => Math.abs(card.x - comparisonMobile.cards[0].x) < 2
+        && (index === 0 || card.y > comparisonMobile.cards[index - 1].y),
+    );
+  const summaryRegion = page.locator(".jh-compare-table-wrap");
+  await summaryRegion.focus();
+  const beforeArrow = await summaryRegion.evaluate((element) => element.scrollLeft);
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(100);
+  const afterArrow = await summaryRegion.evaluate((element) => element.scrollLeft);
+  if (
+    !cardsStack
+    || comparisonMobile.pageOverflows
+    || comparisonMobile.summaryScrollWidth <= comparisonMobile.summaryClientWidth + 80
+    || afterArrow <= beforeArrow
+  ) {
+    fail(
+      `/comparison mobile: cards or keyboard-scroll table regressed (${JSON.stringify({
+        ...comparisonMobile,
+        beforeArrow,
+        afterArrow,
+      })})`,
+    );
+  } else {
+    console.log("ok    /comparison mobile layout and keyboard table scroll");
+  }
 
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
   await page.locator(".DocSearch-Button").click();

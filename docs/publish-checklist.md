@@ -98,19 +98,37 @@ to the rename train / post-rename launch assets (R7b).
 - **Rollback (for reference).** Rename back (GitHub reserves the prior name);
   revert the `REPO_URL`/link edits.
 
-### 9.4 — Release tagging (owner-only; rename landed 2026-07-07, mechanics ready)
+### 9.4 — Release tagging (owner-only; rename landed 2026-07-07)
 
-> **Update 2026-07-07.** The distribution is renamed (`pyproject` name
-> `jobctrl`) and the tag trigger (`push: tags: v*`) is restored in
-> `.github/workflows/publish.yml`; `release_check` enforces both. The "Publish
-> to PyPI" workflow remains `disabled_manually` on GitHub as the safety catch.
+> **Update 2026-07-10.** The distribution is renamed (`pyproject` name
+> `jobctrl`) and package publishing lives in the new
+> `.github/workflows/release-pypi.yml` path. It runs only when a non-prerelease
+> GitHub Release is published. The new path is absent from historical commits,
+> and `.github/workflows/publish.yml` stays disabled, so older tagged commits
+> cannot supply its former tag-push publication logic.
+> `release_check` enforces the distribution name, one version across every
+> shipped manifest and built distribution, and an exact `v<version>` tag.
+> Unrestricted manual and tag-push publishing are disabled. The
+> GitHub `pypi` environment exists and admits only `v*` tags; add a required
+> reviewer after the visibility/plan change makes that protection available.
+> The historical "Publish to PyPI" workflow remains `disabled_manually`; once
+> the new path first appears on `main`, explicitly disable "Release to PyPI"
+> too until every release gate below is satisfied.
 
-- **Action.** Confirm the `jobctrl` PyPI name is held, re-enable the "Publish
-  to PyPI" workflow, then tag the first public release. The publish job builds
-  the wheel and source archive first, runs the strict-prompt release scanner
-  against both the checkout and those exact archives, and only then uploads
-  them; the separate strict release-check workflow remains the pre-tag
-  repository gate.
+- **Action.** Re-check that the `jobctrl` PyPI name is still available and
+  configure/verify its Trusted Publisher immediately before release. A pending
+  publisher can create the project on first publish but does **not** reserve the
+  name ([PyPI documentation](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)).
+  Confirm the owner-approved first version and configure the Trusted Publisher
+  for workflow `release-pypi.yml` and environment `pypi`. Prepare a GitHub
+  Release with that exact tag targeting the audited current `main` commit, and
+  review its notes. Enable only the new "Release to PyPI" workflow, then publish
+  that GitHub Release (not a prerelease). The job rejects a tag on any other
+  commit, builds the wheel and source archive, runs the strict-prompt release
+  scanner and version/tag parity gate against both the checkout and those exact
+  archives, and only then uploads them; the separate strict release-check
+  workflow remains the pre-release repository gate. Verify the PyPI package and
+  GitHub Release after the workflow succeeds.
 - **Rollback.** Delete the tag; if a bad artifact published to PyPI, yank it;
   re-disable the workflow.
 

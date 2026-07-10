@@ -9,6 +9,7 @@ persistence never have to reach into global settings.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +24,8 @@ DEFAULT_SETTINGS_PATH = APP_DIR / "dashboard.json"
 class LocalScoringCriteriaProvider:
     """Load local scoring settings from ``~/.jobctrl/dashboard.json``."""
 
-    def __init__(self, path: Path | str = DEFAULT_SETTINGS_PATH) -> None:
-        self._path = Path(path)
+    def __init__(self, path: Path | str | None = None) -> None:
+        self._path = resolve_dashboard_settings_path(path)
 
     def load(self, profile_snapshot: ProfileSnapshot) -> ScoringCriteria:
         settings = self._read_settings()
@@ -50,7 +51,7 @@ def read_apply_approval_required(
     *,
     default: bool = True,
 ) -> bool:
-    settings = LocalScoringCriteriaProvider(path or DEFAULT_SETTINGS_PATH)._read_settings()
+    settings = LocalScoringCriteriaProvider(path)._read_settings()
     value = settings.get("apply_approval_required")
     if value is None:
         value = settings.get("applyApprovalRequired")
@@ -70,7 +71,7 @@ def read_auto_apply_enabled(
     *,
     default: bool = False,
 ) -> bool:
-    settings = LocalScoringCriteriaProvider(path or DEFAULT_SETTINGS_PATH)._read_settings()
+    settings = LocalScoringCriteriaProvider(path)._read_settings()
     value = settings.get("auto_apply")
     if value is None:
         value = settings.get("autoApply")
@@ -90,7 +91,7 @@ def read_daily_budget_usd(
     *,
     default: float = 25.0,
 ) -> float:
-    settings = LocalScoringCriteriaProvider(path or DEFAULT_SETTINGS_PATH)._read_settings()
+    settings = LocalScoringCriteriaProvider(path)._read_settings()
     value = settings.get("daily_budget_usd")
     if value is None:
         value = settings.get("dailyBudgetUsd")
@@ -106,7 +107,7 @@ def read_min_fit_score(
     *,
     default: int = 7,
 ) -> int:
-    settings = LocalScoringCriteriaProvider(path or DEFAULT_SETTINGS_PATH)._read_settings()
+    settings = LocalScoringCriteriaProvider(path)._read_settings()
     value = settings.get("min_fit_score")
     if value is None:
         value = settings.get("minFitScore")
@@ -118,7 +119,7 @@ def read_apply_concurrency(
     *,
     default: int = 1,
 ) -> int:
-    settings = LocalScoringCriteriaProvider(path or DEFAULT_SETTINGS_PATH)._read_settings()
+    settings = LocalScoringCriteriaProvider(path)._read_settings()
     value = settings.get("apply_concurrency")
     if value is None:
         value = settings.get("applyConcurrency")
@@ -130,3 +131,13 @@ def _int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def resolve_dashboard_settings_path(path: Path | str | None = None) -> Path:
+    """Resolve the worker settings file using the same override as the API."""
+    if path is not None:
+        return Path(path).expanduser()
+    configured = os.environ.get("JOBCTRL_DASHBOARD_CONFIG_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return DEFAULT_SETTINGS_PATH

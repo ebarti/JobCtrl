@@ -19,11 +19,14 @@ export function resolveApiConfig(env: NodeJS.ProcessEnv = process.env): ApiRunti
     );
   }
   const appDir = resolveDefaultWorkspace(env);
+  const settingsOverride = env.JOBCTRL_DASHBOARD_CONFIG_PATH;
 
   return {
     appDir,
     dbPath: env.JOBCTRL_DB_PATH || path.join(appDir, "jobctrl.db"),
-    settingsPath: env.JOBCTRL_DASHBOARD_CONFIG_PATH || path.join(appDir, "dashboard.json"),
+    settingsPath: settingsOverride
+      ? expandHomePath(settingsOverride, env)
+      : path.join(appDir, "dashboard.json"),
     host,
     port: Number.isFinite(port) ? port : 8766,
   };
@@ -32,10 +35,19 @@ export function resolveApiConfig(env: NodeJS.ProcessEnv = process.env): ApiRunti
 const currentAppDirname = ".jobctrl";
 
 export function resolveDefaultWorkspace(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.JOBCTRL_DIR) return env.JOBCTRL_DIR;
+  if (env.JOBCTRL_DIR) return expandHomePath(env.JOBCTRL_DIR, env);
 
   const home = env.HOME || env.USERPROFILE || os.homedir();
   return path.join(home, currentAppDirname);
+}
+
+function expandHomePath(value: string, env: NodeJS.ProcessEnv): string {
+  const home = env.HOME || env.USERPROFILE || os.homedir();
+  if (value === "~") return home;
+  if (value.startsWith("~/") || value.startsWith("~\\")) {
+    return path.join(home, value.slice(2));
+  }
+  return value;
 }
 
 function isLoopbackHost(host: string): boolean {

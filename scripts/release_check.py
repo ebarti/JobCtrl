@@ -7,6 +7,7 @@ W1. Pass ``--strict-prompt`` after W1 completes to promote them to failures.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -98,6 +99,14 @@ JSON_SECRET_ASSIGNMENT_RE = re.compile(
 PROJECT_NAME_RE = re.compile(
     r"""(?ims)^\[project\]\s*(?:(?!^\[).)*?^name\s*=\s*["']([^"']+)["']"""
 )
+PROJECT_VERSION_RE = re.compile(
+    r"""(?ims)^\[project\]\s*(?:(?!^\[).)*?^version\s*=\s*["']([^"']+)["']"""
+)
+PYTHON_VERSION_RE = re.compile(r'''(?m)^__version__\s*=\s*["']([^"']+)["']''')
+PUBLIC_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+LOCK_PACKAGE_BLOCK_RE = re.compile(
+    r"(?ms)^\[\[package\]\]\s*(.*?)(?=^\[\[package\]\]|\Z)"
+)
 
 SECRET_FILE_SUFFIXES = {".json", ".toml", ".yaml", ".yml"}
 PLACEHOLDER_VALUES = {
@@ -131,8 +140,24 @@ PLACEHOLDER_PREFIXES = (
 
 PROMPT_PATH = Path("workers/automation/src/jobctrl/apply/prompt.py")
 TARGET_DISTRIBUTION_NAME = "jobctrl"
+PYTHON_VERSION_PATH = Path("workers/automation/src/jobctrl/__init__.py")
+PYTHON_PROJECT_PATH = Path("workers/automation/pyproject.toml")
+PYTHON_LOCK_PATH = Path("workers/automation/uv.lock")
+EXTENSION_MANIFEST_PATH = Path("apps/extension/public/manifest.json")
+PACKAGE_VERSION_PATHS = (
+    Path("package.json"),
+    Path("apps/api/package.json"),
+    Path("apps/extension/package.json"),
+    Path("apps/web/package.json"),
+    Path("packages/api-client/package.json"),
+    Path("packages/contracts/package.json"),
+    Path("packages/domain-types/package.json"),
+    Path("packages/tsconfig/package.json"),
+)
 HOMEBREW_FORMULA_PATH = Path("packaging/homebrew/Formula/jobctrl.rb")
 HOMEBREW_SYNC_WORKFLOW_PATH = Path(".github/workflows/sync-homebrew-tap.yml")
+PUBLISH_WORKFLOW_PATH = Path(".github/workflows/release-pypi.yml")
+LEGACY_PUBLISH_WORKFLOW_PATH = Path(".github/workflows/publish.yml")
 OLD_PRODUCT_NAME_RE = re.compile(r"jobhunter|jobctl", re.IGNORECASE)
 OLD_PRODUCT_NAME_ALLOWLIST = (
     Path("docs/plans/implemented"),
@@ -221,9 +246,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Promote apply prompt safety tripwire warnings to failures.",
     )
+    parser.add_argument(
+        "--release-tag",
+        help="Require the release ref to equal v<project version> (for publish jobs).",
+    )
     args = parser.parse_args(argv)
 
-    result = scan_tree(ROOT, needles=FORBIDDEN_TEXT, strict_prompt=args.strict_prompt)
+    result = scan_tree(
+        ROOT,
+        needles=FORBIDDEN_TEXT,
+        strict_prompt=args.strict_prompt,
+        release_tag=args.release_tag,
+    )
 
     if result.findings:
         print("Release check failed:")
@@ -248,6 +282,7 @@ def scan_tree(
     paths: Iterable[Path] | None = None,
     tracked_paths: Iterable[Path] | None = None,
     strict_prompt: bool = False,
+    release_tag: str | None = None,
 ) -> ScanResult:
     """Scan a repository tree for release-blocking private data."""
     result = ScanResult(findings=[], warnings=[])
@@ -267,7 +302,7 @@ def scan_tree(
         result.findings.extend(scan_text(str(rel), text, rel, needles=needles))
 
     result.findings.extend(scan_old_product_name_gate(root, file_paths))
-    result.findings.extend(scan_structural_checks(root, tracked))
+    result.findings.extend(scan_structural_checks(root, tracked, release_tag=release_tag))
     result.extend(scan_prompt_tripwires(root, strict_prompt=strict_prompt))
     result.findings.extend(scan_dist_archives(root, needles=needles))
     return result
@@ -350,7 +385,12 @@ def _is_placeholder_secret(value: str) -> bool:
     return normalized.startswith(PLACEHOLDER_PREFIXES)
 
 
-def scan_structural_checks(root: Path, tracked: Iterable[Path]) -> list[str]:
+def scan_structural_checks(
+    root: Path,
+    tracked: Iterable[Path],
+    *,
+    release_tag: str | None = None,
+) -> list[str]:
     """Run repository-structure checks that cannot be caught by text needles."""
     findings = []
     for rel in tracked:
@@ -363,12 +403,116 @@ def scan_structural_checks(root: Path, tracked: Iterable[Path]) -> list[str]:
             "workers/automation/pyproject.toml: distribution name must be "
             f"{TARGET_DISTRIBUTION_NAME!r} before publication"
         )
-    if distribution_name == TARGET_DISTRIBUTION_NAME and not _publish_has_tag_trigger(root):
+    if distribution_name == TARGET_DISTRIBUTION_NAME:
+        trigger_names = _publish_trigger_names(root)
+        if trigger_names != {"release"}:
+            findings.append(
+                f"{PUBLISH_WORKFLOW_PATH}: workflow trigger set must be exactly ['release']; "
+                f"found {sorted(trigger_names)}"
+            )
+        elif not _publish_has_release_trigger(root):
+            findings.append(
+                f"{PUBLISH_WORKFLOW_PATH}: release publishing is not gated on a published GitHub Release"
+            )
+    if distribution_name == TARGET_DISTRIBUTION_NAME and (root / LEGACY_PUBLISH_WORKFLOW_PATH).is_file():
         findings.append(
-            ".github/workflows/publish.yml: tag publishing is disabled after the rename train"
+            f"{LEGACY_PUBLISH_WORKFLOW_PATH}: legacy workflow path must stay absent and disabled"
         )
+    findings.extend(_version_parity_findings(root, release_tag=release_tag))
     findings.extend(_homebrew_sync_findings(root))
     return findings
+
+
+def _version_parity_findings(root: Path, *, release_tag: str | None = None) -> list[str]:
+    """Require every shipped manifest and an optional release tag to agree."""
+    versions: dict[Path, str] = {}
+    findings: list[str] = []
+
+    pyproject = root / PYTHON_PROJECT_PATH
+    if pyproject.is_file():
+        match = PROJECT_VERSION_RE.search(pyproject.read_text(encoding="utf-8"))
+        if match:
+            versions[PYTHON_PROJECT_PATH] = match.group(1)
+    canonical = versions.get(PYTHON_PROJECT_PATH)
+    if canonical is None:
+        if (root / "pnpm-workspace.yaml").is_file():
+            findings.append(f"{PYTHON_PROJECT_PATH}: missing required project version")
+        return findings
+
+    python_version = root / PYTHON_VERSION_PATH
+    if python_version.is_file():
+        match = PYTHON_VERSION_RE.search(python_version.read_text(encoding="utf-8"))
+        if match:
+            versions[PYTHON_VERSION_PATH] = match.group(1)
+    if PYTHON_VERSION_PATH not in versions:
+        findings.append(f"{PYTHON_VERSION_PATH}: missing required release version")
+
+    python_lock = root / PYTHON_LOCK_PATH
+    if python_lock.is_file():
+        try:
+            lock_text = python_lock.read_text(encoding="utf-8")
+        except OSError:
+            lock_text = ""
+        for block in LOCK_PACKAGE_BLOCK_RE.finditer(lock_text):
+            name = re.search(r'(?m)^name\s*=\s*"([^"]+)"', block.group(1))
+            if name is None or name.group(1) != TARGET_DISTRIBUTION_NAME:
+                continue
+            version = re.search(r'(?m)^version\s*=\s*"([^"]+)"', block.group(1))
+            if version is not None:
+                versions[PYTHON_LOCK_PATH] = version.group(1)
+            break
+    if PYTHON_LOCK_PATH not in versions:
+        findings.append(f"{PYTHON_LOCK_PATH}: missing jobctrl release version")
+
+    for rel in PACKAGE_VERSION_PATHS:
+        manifest = root / rel
+        version = None
+        if manifest.is_file():
+            try:
+                version = json.loads(manifest.read_text(encoding="utf-8")).get("version")
+            except (json.JSONDecodeError, OSError):
+                pass
+        if isinstance(version, str) and version:
+            versions[rel] = version
+        else:
+            findings.append(f"{rel}: missing valid release version")
+
+    extension_manifest = root / EXTENSION_MANIFEST_PATH
+    version = None
+    if extension_manifest.is_file():
+        try:
+            version = json.loads(extension_manifest.read_text(encoding="utf-8")).get("version")
+        except (json.JSONDecodeError, OSError):
+            pass
+        if isinstance(version, str) and version:
+            versions[EXTENSION_MANIFEST_PATH] = version
+    if EXTENSION_MANIFEST_PATH not in versions:
+        findings.append(f"{EXTENSION_MANIFEST_PATH}: missing valid release version")
+
+    findings.extend(
+        f"{path}: version {version!r} does not match {PYTHON_PROJECT_PATH} {canonical!r}"
+        for path, version in versions.items()
+        if version != canonical
+    )
+    if not PUBLIC_VERSION_RE.fullmatch(canonical):
+        findings.append(
+            f"{PYTHON_PROJECT_PATH}: public release version {canonical!r} must use MAJOR.MINOR.PATCH"
+        )
+    if release_tag is not None and release_tag != f"v{canonical}":
+        findings.append(
+            f"release tag {release_tag!r} does not match project version v{canonical}"
+        )
+    return findings
+
+
+def _project_version(root: Path) -> str | None:
+    pyproject = root / PYTHON_PROJECT_PATH
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    match = PROJECT_VERSION_RE.search(text)
+    return match.group(1) if match else None
 
 
 def _homebrew_sync_findings(root: Path) -> list[str]:
@@ -449,16 +593,15 @@ def _old_product_name_allowed(rel: Path) -> bool:
     return any(rel == prefix or rel.is_relative_to(prefix) for prefix in OLD_PRODUCT_NAME_ALLOWLIST)
 
 
-def _publish_has_tag_trigger(root: Path) -> bool:
-    workflow = root / ".github/workflows/publish.yml"
+def _publish_on_block(root: Path) -> list[tuple[int, str]]:
+    workflow = root / PUBLISH_WORKFLOW_PATH
     try:
         lines = workflow.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
-        return False
+        return []
 
     in_on_block = False
-    in_push_block = False
-    push_indent = 0
+    entries: list[tuple[int, str]] = []
     for raw_line in lines:
         content = raw_line.split("#", 1)[0].rstrip()
         if not content.strip():
@@ -468,22 +611,55 @@ def _publish_has_tag_trigger(root: Path) -> bool:
 
         if indent == 0 and stripped == "on:":
             in_on_block = True
-            in_push_block = False
             continue
         if in_on_block and indent == 0:
             break
-        if not in_on_block:
-            continue
+        if in_on_block:
+            entries.append((indent, stripped))
+    return entries
 
-        if stripped == "push:":
-            in_push_block = True
-            push_indent = indent
-            continue
-        if in_push_block and indent <= push_indent:
-            in_push_block = False
-        if in_push_block and stripped.startswith("tags:"):
-            return True
 
+def _trigger_children(root: Path, trigger: str) -> list[str]:
+    entries = _publish_on_block(root)
+    for index, (indent, stripped) in enumerate(entries):
+        if stripped != f"{trigger}:":
+            continue
+        children: list[str] = []
+        for child_indent, child in entries[index + 1:]:
+            if child_indent <= indent:
+                break
+            children.append(child)
+        return children
+    return []
+
+
+def _publish_trigger_names(root: Path) -> set[str]:
+    entries = _publish_on_block(root)
+    if not entries:
+        return set()
+    trigger_indent = min(indent for indent, _ in entries)
+    return {
+        stripped.split(":", 1)[0]
+        for indent, stripped in entries
+        if indent == trigger_indent and ":" in stripped
+    }
+
+
+def _publish_has_release_trigger(root: Path) -> bool:
+    children = _trigger_children(root, "release")
+    for index, child in enumerate(children):
+        if not child.startswith("types:"):
+            continue
+        inline_tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_-]*", child.partition(":")[2])
+        if inline_tokens:
+            return set(inline_tokens) == {"published"}
+        if child == "types:":
+            activity_types = {
+                item.removeprefix("- ")
+                for item in children[index + 1:]
+                if item.startswith("- ")
+            }
+            return activity_types == {"published"}
     return False
 
 
@@ -522,6 +698,7 @@ def scan_dist_archives(
 ) -> list[str]:
     """Scan built wheel and sdist archives when present."""
     findings: list[str] = []
+    expected_version = _project_version(root)
     for dist in ARCHIVE_DIRS:
         dist_path = root / dist
         if not dist_path.exists():
@@ -531,7 +708,50 @@ def scan_dist_archives(
                 findings.extend(scan_zip_archive(root, archive, needles=needles))
             elif archive.name.endswith(".tar.gz"):
                 findings.extend(scan_tar_archive(root, archive, needles=needles))
+            if expected_version is not None:
+                findings.extend(
+                    _distribution_version_findings(root, archive, expected_version)
+                )
     return findings
+
+
+def _distribution_version_findings(
+    root: Path,
+    archive: Path,
+    expected_version: str,
+) -> list[str]:
+    """Verify built wheel/sdist metadata matches the source project version."""
+    metadata: list[tuple[str, str]] = []
+    if archive.suffix == ".whl":
+        with zipfile.ZipFile(archive) as bundle:
+            for name in bundle.namelist():
+                if name.endswith(".dist-info/METADATA"):
+                    metadata.append((name, bundle.read(name).decode("utf-8")))
+    elif archive.name.endswith(".tar.gz"):
+        with tarfile.open(archive) as bundle:
+            for info in bundle.getmembers():
+                if info.isfile() and info.name.endswith("/PKG-INFO"):
+                    extracted = bundle.extractfile(info)
+                    if extracted is not None:
+                        metadata.append((info.name, extracted.read().decode("utf-8")))
+    else:
+        return []
+
+    label = archive.relative_to(root)
+    if len(metadata) != 1:
+        return [f"{label}: expected exactly one distribution metadata file, found {len(metadata)}"]
+
+    member, text = metadata[0]
+    match = re.search(r"(?m)^Version:\s*(\S+)\s*$", text)
+    if match is None:
+        return [f"{label}!{member}: distribution metadata has no Version field"]
+    actual = match.group(1)
+    if actual != expected_version:
+        return [
+            f"{label}!{member}: distribution version {actual!r} does not match "
+            f"{PYTHON_PROJECT_PATH} {expected_version!r}"
+        ]
+    return []
 
 
 def scan_zip_archive(
