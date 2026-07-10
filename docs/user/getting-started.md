@@ -127,7 +127,8 @@ uv --project workers/automation run jobctrl doctor
 `jobctrl init` creates your local CLI workspace, profile, resume, and search
 configuration under `~/.jobctrl/`. `jobctrl doctor` checks which features are
 available: local database, LLM provider, Temporal, browser automation, the Gmail
-connector, and telemetry. The installer already ran `jobctrl setup`; rerun it
+connector, approval-gate posture, broad-board/CAPTCHA warnings, application
+attestations, and telemetry. The installer already ran `jobctrl setup`; rerun it
 later only when vendor auth or analysis-leg choices change.
 
 If you installed the Homebrew launcher, use the shorter commands from anywhere:

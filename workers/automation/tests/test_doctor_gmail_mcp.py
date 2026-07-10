@@ -93,3 +93,25 @@ def test_doctor_reports_owned_captcha_solver_when_configured(monkeypatch) -> Non
     assert result.exit_code == 0, result.output
     assert "CapSolver API key" in result.output
     assert "owned solve_captcha tool" in result.output
+
+
+def test_doctor_warns_when_apply_approval_gate_is_disabled(monkeypatch) -> None:
+    monkeypatch.setattr("jobctrl.config.load_env", lambda: None)
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.scoring.criteria_provider.read_apply_approval_required",
+        lambda *, default: False,
+    )
+
+    with patch(
+        "jobctrl.infrastructure.temporal.client.Client.connect",
+        new=AsyncMock(side_effect=RuntimeError("connection refused")),
+    ):
+        result = CliRunner().invoke(app, ["doctor"])
+
+    assert result.exit_code == 0, result.output
+    assert "apply approval gate" in result.output
+    assert "WARN" in result.output
+    assert "disabled" in result.output
+    # Rich may wrap the note between words at narrow test-terminal widths.
+    assert "eligible live runs" in result.output
+    assert "human review" in result.output

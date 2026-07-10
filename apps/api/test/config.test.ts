@@ -67,6 +67,22 @@ describe("API runtime config workspace resolution", () => {
     }
   });
 
+  it("expands home-relative workspace and dashboard settings overrides", () => {
+    const { home, cleanup } = makeHome();
+    try {
+      const config = resolveApiConfig({
+        HOME: home,
+        JOBCTRL_DIR: "~/custom-workspace",
+        JOBCTRL_DASHBOARD_CONFIG_PATH: "~/config/dashboard.json",
+      });
+
+      expect(config.appDir).toBe(path.join(home, "custom-workspace"));
+      expect(config.settingsPath).toBe(path.join(home, "config", "dashboard.json"));
+    } finally {
+      cleanup();
+    }
+  });
+
   it("uses an existing current workspace even when a legacy workspace also exists", () => {
     const { home, cleanup } = makeHome();
     try {

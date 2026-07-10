@@ -614,9 +614,10 @@ no spendful runs.
 - [x] Docs updated per the repository doc matrix (README, docs/user,
       docs/architecture, package.json, pyproject.toml) and screenshots
       regenerated.
-- [x] `publish.yml` tag trigger re-enabled and `release_check.py` structural
-      check updated to the new distribution name (§9.3), gated on the privacy
-      workflow.
+- [x] Package publishing and `release_check.py` were updated to the new
+      distribution name (§9.3). Final launch hardening moves publishing to the
+      new release-only `release-pypi.yml`; historical
+      `publish.yml` remains disabled so stale tags cannot execute its old logic.
 - [x] Owner decisions §15 resolved and recorded.
 - [x] Review gate and QA gate passed with no open Blocker/High findings; #350
       addressed the R0 QA hardening found after #349.
@@ -671,6 +672,10 @@ All five decisions were resolved by the owner on 2026-07-06:
    - **Resolved (2026-07-06):** `jobctrl` confirmed — **the owner already holds
      the `jobctrl` PyPI distribution name.** No availability contingency needed.
      The trademark sanity pass remains an owner to-do before publication.
+   - **Evidence correction (2026-07-10):** the public project endpoints still
+     return 404, and PyPI documents that a pending publisher does not reserve a
+     name. Treat `jobctrl` as available-but-unreserved until the first trusted
+     publish; re-check it immediately before tagging.
 2. **GitHub repository rename.** Rename `ebarti/JobHunter` → `ebarti/JobCtrl`
    (owner-only action; GitHub preserves redirects). Confirm the final
    owner/repo slug so all `REPO_URL` / `[project.urls]` / doc references can be

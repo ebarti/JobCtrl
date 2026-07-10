@@ -265,6 +265,7 @@ files are rewritten to GitHub URLs at build time.
 ```bash
 pnpm docs:dev
 pnpm docs:build
+pnpm docs:check:runtime
 pnpm docs:preview
 ```
 
@@ -277,7 +278,10 @@ them on pushes to `main`, and maintainers can run the docs workflow manually for
 pull requests after review.
 (`.github/workflows/docs-site.yml`). Mermaid diagrams render client-side in
 the browser, so a build that passes can still contain a diagram that fails to
-parse — check edited diagrams in `pnpm docs:dev` before merging. Note that
+parse. `pnpm docs:check:runtime` starts a fresh preview and checks hydration,
+images, navigation, responsive diagrams, search, and the desktop/mobile
+comparison layout (including keyboard access to its wide table) in Chromium;
+run it after `pnpm docs:build` for public-doc changes. Note that
 `pnpm docs:preview` snapshots the built file list at startup: after any
 rebuild, restart the preview server or hashed assets will 404. Deploys to
 Cloudflare Pages run from `main` once the `DOCS_DEPLOY_ENABLED` repository

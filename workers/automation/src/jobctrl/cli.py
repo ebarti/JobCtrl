@@ -2411,6 +2411,9 @@ def doctor() -> None:
     from jobctrl.domain.tenant import LOCAL_TENANT
     from jobctrl.infrastructure.profile import get_profile_repository
     from jobctrl.infrastructure.apply.claude_code_cli import _claude_supports_budget_flag
+    from jobctrl.infrastructure.scoring.criteria_provider import (
+        read_apply_approval_required,
+    )
     from jobctrl.infrastructure.setup_probes import (
         probe_analysis_setup,
         resolve_claude_apply_binary,
@@ -2592,6 +2595,22 @@ def doctor() -> None:
     else:
         results.append(("CapSolver API key", "[dim]optional[/dim]",
                         "not required; unsupported or unconfigured CAPTCHA flows fail closed"))
+
+    # The gate defaults on. If an operator has explicitly disabled it, make the
+    # resulting live-submission posture visible in the same preflight that
+    # reports the other preserved automation capabilities.
+    if read_apply_approval_required(default=True):
+        results.append((
+            "apply approval gate",
+            ok_mark,
+            "required before eligible live submissions",
+        ))
+    else:
+        results.append((
+            "apply approval gate",
+            warn_mark,
+            "disabled; eligible live runs may submit without human review",
+        ))
 
     # Temporal dev server (workflow engine)
     from jobctrl.infrastructure.temporal import get_temporal_client

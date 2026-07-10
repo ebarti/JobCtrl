@@ -56,7 +56,7 @@ attestation; leave it empty when there is no truthful answer.
 | --- | --- | --- |
 | `JOBCTRL_DIR` | `~/.jobctrl` | Local app directory for database, settings, artifacts, logs, browser worker state, and `.env`. |
 | `JOBCTRL_DB_PATH` | `$JOBCTRL_DIR/jobctrl.db` | TypeScript API database path. The Python worker ignores it and always uses `$JOBCTRL_DIR/jobctrl.db`, so overriding it desynchronizes the API from the worker — prefer `JOBCTRL_DIR` to move both. |
-| `JOBCTRL_DASHBOARD_CONFIG_PATH` | `$JOBCTRL_DIR/dashboard.json` | Settings file read and written by the TypeScript API (preferences, apply approval gate, spend budget). |
+| `JOBCTRL_DASHBOARD_CONFIG_PATH` | `$JOBCTRL_DIR/dashboard.json` | Settings file written by the TypeScript API and read by both API and worker (preferences, apply approval gate, spend budget). |
 | `JOBCTRL_API_HOST` | `127.0.0.1` | Local API bind host. Non-loopback hosts require explicit opt-in. |
 | `JOBCTRL_API_PORT` / `PORT` | `8766` | Local API port. |
 | `JOBCTRL_API_ALLOW_REMOTE_BIND` | unset | Set to `1`, `true`, or `yes` to allow non-loopback API binding. This can expose private local data. |
