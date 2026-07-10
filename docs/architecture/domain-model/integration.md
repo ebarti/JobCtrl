@@ -20,10 +20,6 @@ flowchart LR
     Ctx -->|"workflow dispatch"| Temporal["Temporal workflows"]
     Temporal -->|"result domain events"| Bus
 
-    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
-    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
-    classDef infra fill:#fef3c7,stroke:#d97706,color:#78350f
-    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
     class Ctx,Bus py
     class Api ts
     class Temporal infra
@@ -36,7 +32,7 @@ events, projections, and workflow results — flows through the worker.
 **Read this if** you are adding a domain event, wiring a projection, or changing
 how the TypeScript API and Python worker talk.
 
-### 6.1 Integration Backbone
+## 6.1 Integration Backbone
 
 The integration backbone uses **domain events** as the primary mechanism for
 inter-context communication. Commands flow from Pipeline Orchestration to
@@ -62,13 +58,11 @@ graph LR
         EB -->|"events"| OPS["Operations"]
     end
 
-    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
-    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
     class PO,JE,SC,MG,AA,JD,EB py
     class OPS store
 ```
 
-### 6.2 Event vs Command vs Request/Response
+## 6.2 Event vs Command vs Request/Response
 
 | Mechanism | When to use | Examples |
 |---|---|---|
@@ -76,9 +70,9 @@ graph LR
 | **Command** (async, at-most-once) | Tell a specific context to do something. Orchestration dispatches to processing contexts. | `EnrichJob(jobId)`, `ScoreJob(jobId)`, `TailorResume(jobId)`, `SubmitApplication(jobId)` |
 | **Request/Response** (sync) | Query for data needed to proceed. Used for read-model queries and profile snapshot access. | `GetProfileSnapshot()`, `GetJobDetail(jobId)`, `GetDashboardSummary()` |
 
-### 6.3 Event Bus — Local and Cloud Implementations
+## 6.3 Event Bus — Local and Cloud Implementations
 
-#### Local-First: In-Process Synchronous Bus
+### Local-First: In-Process Synchronous Bus
 
 In the local-first architecture, the event bus is **in-process and synchronous**.
 Domain events are published within the same transaction that produces them:
@@ -114,7 +108,7 @@ before all projections update, the startup reconciliation pass replays
 events from `job_events` whose `event_id` exceeds the last processed
 watermark stored in each projection's metadata.
 
-#### Cloud: Transactional Outbox + SQS FIFO
+### Cloud: Transactional Outbox + SQS FIFO
 
 In the cloud deployment, events use the **transactional outbox pattern** to
 guarantee exactly-once delivery without distributed transactions:
@@ -148,7 +142,7 @@ sqsConsumer.process(events)
 `job_events` + dispatches synchronously; the cloud adapter writes to the
 Postgres outbox table. The domain is unaware of which mode is active.
 
-### 6.4 `job_events` Table as Event Store
+## 6.4 `job_events` Table as Event Store
 
 The existing `job_events` table evolves from a passive log into the canonical
 event store:
@@ -174,7 +168,7 @@ events (`entity_kind = 'contact'`, `entity_ref = <contactId>`); a contact event
 that also concerns an application additionally keys on that job's `job_url`, so it
 appears in the job's audit history.
 
-### 6.5 TS API ↔ Python Worker Integration Protocol
+## 6.5 TS API ↔ Python Worker Integration Protocol
 
 **Chosen application protocol: JSON-RPC 2.0 request/response.**
 **Transport: swappable — subprocess locally, HTTP/gRPC in cloud.**
@@ -276,7 +270,7 @@ frontend validates each frame by set-membership on the known event types plus
 `JSON.parse` (`apps/web/src/shared/ports/lib/parseDomainEvent.ts`), not by
 schema parsing. Keeping the two registries in lockstep is a release check.
 
-### 6.6 Operations Read-Model Projection Strategy
+## 6.6 Operations Read-Model Projection Strategy
 
 The Operations context builds its projections by:
 
@@ -299,7 +293,7 @@ JobListProjection = {
 }
 ```
 
-### 6.7 Apply Automation Result Reporting
+## 6.7 Apply Automation Result Reporting
 
 Apply Automation reports results through domain events, not by directly
 mutating shared state:
@@ -312,7 +306,7 @@ mutating shared state:
 Apply result reporting stays event-driven: Apply writes domain events, Pipeline
 Orchestration owns stage transitions, and Operations updates read-side views.
 
-### 6.8 TS API Write Operations — Domain Logic Hosting
+## 6.8 TS API Write Operations — Domain Logic Hosting
 
 The current TypeScript API (`write-model.ts`) performs several write operations
 directly against SQLite. In the target, each operation maps to a driving port

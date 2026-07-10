@@ -1,0 +1,59 @@
+# Profile & Settings API
+
+This route family owns candidate facts, preferences, discovery configuration,
+ordinary settings, and credential references. The important distinction is
+authority: profile facts and preferences live in the profile model; runtime
+settings control product behavior; secrets use the credential boundary.
+
+For every request/response field, use the
+[complete contract](complete-contract.md#profile-and-preferences).
+
+## Candidate Profile
+
+| Route | Purpose |
+| --- | --- |
+| `GET /v1/profile` | Read the normalized candidate profile and current preferences. |
+| `PATCH /v1/profile` | Save validated profile fields and preference changes. |
+| `GET /v1/profile/preview.html` | Render the baseline profile resume as HTML. |
+| `GET /v1/profile/preview.pdf` | Render the baseline profile resume as PDF. |
+
+Profile writes are explicit saves/autosaves of canonical candidate data. A job
+tailoring run consumes a versioned snapshot; it does not silently mutate the
+profile to fit a posting.
+
+## Discovery Controls
+
+| Surface | Representative routes |
+| --- | --- |
+| Runtime discovery preferences | `GET/PATCH /v1/discovery/settings` |
+| Source registry | `GET/POST /v1/discovery/sources`, source state and preview routes |
+| Review queues | locator candidates, quarantine, and manual-capture routes |
+| Feedback | discovery feedback and role-match decision routes |
+
+These controls decide where discovery may look and how proposed sources or jobs
+enter the system. They do not hold provider credentials or raw feed contents.
+
+## Settings And Credentials
+
+| Route | Storage boundary |
+| --- | --- |
+| `GET/PATCH /v1/settings` | Non-secret runtime settings. |
+| `GET /v1/credentials` | Availability/status metadata, not secret values. |
+| `PATCH /v1/credentials` | Store or replace a credential through the local credential adapter. |
+| `DELETE /v1/credentials/:key` | Remove a stored credential. |
+| `GET /v1/extension/pairing-token` | Read the local extension pairing state. |
+
+Credential responses expose enough state for the UI to show whether a provider
+is configured, but do not return stored secret material. See the
+[Security guide](../user/security.md) for the user-facing trust boundary.
+
+## Which Screen Owns What?
+
+| Screen | Owns |
+| --- | --- |
+| Profile | Candidate facts, experience, skills, evidence, resume content. |
+| Preferences | Target role, location, work model, and fit preferences. |
+| Discovery | Sources, cadence, quarantine, and capture controls. |
+| Settings | Runtime behavior and credential status. |
+
+This split keeps a configuration change from masquerading as candidate evidence.

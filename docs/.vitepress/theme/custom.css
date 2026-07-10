@@ -341,8 +341,25 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
   margin-inline: auto;
 }
 
-.vp-doc p {
+.vp-doc :is(h1, h2, h3) {
+  text-wrap: balance;
+}
+
+.vp-doc :where(p, li) {
   text-wrap: pretty;
+}
+
+.vp-doc > :is(p, ul, ol, blockquote),
+.vp-doc > div > :is(p, ul, ol, blockquote) {
+  max-inline-size: 70ch;
+}
+
+.vp-doc h2 {
+  margin-block-start: 3rem;
+}
+
+.vp-doc h3 {
+  margin-block-start: 2rem;
 }
 
 .vp-doc p:has(> img:only-child) {
@@ -382,6 +399,10 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
   pointer-events: none;
 }
 
+.vp-doc .mermaid[data-jh-diagram-layout="scroll"]::after {
+  content: "Scroll or click to zoom";
+}
+
 .vp-doc p:has(> img:only-child) > img {
   display: block;
   width: 100%;
@@ -408,6 +429,10 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
   .vp-doc .mermaid[data-jh-zoomable]::after {
     content: "Tap to zoom";
   }
+
+  .vp-doc .mermaid[data-jh-diagram-layout="scroll"]::after {
+    content: "Swipe or tap to zoom";
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -431,10 +456,14 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
 
 .vp-doc .mermaid svg {
   display: block;
-  width: 100% !important;
-  max-width: 100% !important;
+  width: var(--jh-mermaid-render-width, 100%) !important;
+  max-width: none !important;
   height: auto !important;
   margin-inline: auto;
+}
+
+.vp-doc .mermaid[data-jh-diagram-layout="scroll"] svg {
+  margin-inline: 0;
 }
 
 @media (max-width: 767px) {
@@ -443,7 +472,7 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
   }
 
   .vp-doc .mermaid svg {
-    max-width: 100% !important;
+    max-width: none !important;
   }
 }
 

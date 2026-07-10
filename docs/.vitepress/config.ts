@@ -64,7 +64,17 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
     items: [
       { text: "Overview", link: "/developer/" },
       { text: "Local Development", link: "/local-development" },
-      { text: "Reliability & QA", link: "/local-reliability-qa" },
+      {
+        text: "Reliability & QA",
+        collapsed: true,
+        items: [
+          { text: "Overview", link: "/local-reliability-qa" },
+          { text: "Regression Catalog", link: "/developer/qa/regression-catalog" },
+          { text: "Browser Smoke", link: "/developer/qa/browser-smoke" },
+          { text: "Frontend QA", link: "/developer/qa/frontend" },
+          { text: "Complete Checklist", link: "/developer/qa/complete-checklist" },
+        ],
+      },
       { text: "Security", link: "/developer/security" },
     ],
   },
@@ -131,7 +141,13 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
   {
     text: "API",
     collapsed: true,
-    items: [{ text: "Local TypeScript API", link: "/local-ts-api" }],
+    items: [
+      { text: "Overview", link: "/local-ts-api" },
+      { text: "Profile & Settings", link: "/api/profile-and-settings" },
+      { text: "Jobs & Materials", link: "/api/jobs-and-materials" },
+      { text: "Operations & Events", link: "/api/operations-and-events" },
+      { text: "Complete Contract", link: "/api/complete-contract" },
+    ],
   },
 ];
 

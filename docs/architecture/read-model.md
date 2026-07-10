@@ -1,282 +1,168 @@
 # Apply Feedback & Projections
 
-How submitted applications feed outcomes back into the product, and how domain
-events project into the read model the API and web app serve.
+Domain writes become durable events and canonical rows; projection builders turn
+them into stable reads for the API and web app. Apply decisions and outcomes use
+the same pattern, with extra safeguards around approval, submission, and private
+feedback.
 
-**Read this if** you need to know how apply outcomes are captured and reviewed,
-or how domain events become the read model behind every list and detail view.
+**Read this if** you are changing Apply Review, outcomes, analytics, contacts,
+outreach, or any projection-backed list/detail view.
+
+## At A Glance
 
 ```mermaid
 flowchart LR
-    W["Workflows + activities"] -->|append| EV[("job_events")]
-    W -->|"in-process projection builders (Python + TypeScript, same JSON shapes)"| PT[("projection tables: job_list / job_detail / dashboard / apply_run / artifact_list / evidence_usage")]
-    PT --> API["TypeScript API reads"]
-    EV --> SSE["GET /v1/events/stream (SSE)"]
-    SSE --> IR["Invalidation router"]
-    IR -->|"invalidate / patch query keys"| TQ["TanStack Query cache"]
-    API --> TQ
-    TQ --> UI["Views"]
+    WRITE["Workflow or API write"] --> CANON["Canonical rows + job_events"]
+    CANON --> PROJECT["Python or TypeScript projection builder"]
+    PROJECT --> READ["Projection tables"]
+    READ --> API["TypeScript API"]
+    CANON --> SSE["SSE invalidation"]
+    SSE --> CACHE["TanStack Query cache"]
+    API --> CACHE --> VIEW["Web views"]
 
-    classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
-    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
-    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
-    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
-    class W py
+    class WRITE,PROJECT py
     class API,SSE ts
-    class IR,UI ui
-    class EV,PT,TQ store
+    class CACHE,VIEW ui
+    class CANON,READ store
 ```
 
-Every write appends to `job_events` and refreshes projections; the Server-Sent
-Events (SSE) stream then tells the web app's cache which queries to refetch.
-
-```mermaid
-flowchart LR
-    RD[("application_review_decisions (approve_submit)")] --> CLAIM["Atomic apply claim (Python launcher)"]
-    CLAIM --> INTENT["ApplySubmitIntended checkpoint"]
-    INTENT --> SUBMIT["Live submission"]
-    SUBMIT --> OUT[("application_outcomes")]
-    GM["Bounded Gmail scan (feedback.py)"] --> EVID[("application_email_evidence")]
-    EVID --> SUG[("application_outcome_suggestions")]
-    SUG -->|"user accepts / declines"| OUT
-
-    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
-    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
-    class CLAIM,INTENT,SUBMIT,GM py
-    class RD,OUT,EVID,SUG store
-```
-
-The apply path is gated and checkpointed: an approved review decision precedes
-the atomic claim, a durable submit-intent checkpoint precedes live submission,
-and Gmail evidence later suggests outcomes for the user to accept or decline.
+The read path never reconstructs domain state from raw events during a request.
+It reads precomputed projections; SSE only tells the client which projection to
+refetch or safely patch.
 
 ## Apply Review And Outcome Feedback
 
-The Apply Automation context has a local feedback foundation in the TypeScript
-API. `apps/api/src/application-feedback.ts` owns idempotent SQLite table
-creation and read/write helpers for:
+```mermaid
+flowchart LR
+    REVIEW["Apply Review decision"] --> CLAIM["Atomic apply claim"]
+    CLAIM --> INTENT["Submit-intent checkpoint"]
+    INTENT --> SUBMIT["Live submission"]
+    SUBMIT --> OUTCOME["Reviewed outcome"]
+    GMAIL["Bounded Gmail evidence"] --> SUGGEST["Outcome suggestion"]
+    SUGGEST -->|user accepts or corrects| OUTCOME
 
-- `application_review_decisions`: append-only user decisions for apply review.
-- `application_outcomes`: reviewed manual or suggestion-derived outcomes. Manual
-  interview reflections may carry a nullable `interview_prep_generation` link to
-  the stored prep generation they followed.
-- `application_email_evidence`: linked Gmail evidence, including body storage
-  and body hash columns for confidently linked messages.
-- `application_outcome_suggestions`: pending and decided classifier
-  suggestions.
+    class CLAIM,INTENT,SUBMIT,GMAIL py
+    class REVIEW,OUTCOME,SUGGEST store
+```
 
-Apply-review approval is modeled as a recorded decision, not as an automatic
-worker dispatch. Live apply claims require the latest decision for the job to
-be `approve_submit` by default (`applyApprovalRequired: true`); the check runs
-inside the Python launcher's atomic claim transaction, so while the gate is
-on, no API or RPC dispatch path can submit without a committed
-`approve_submit` decision. The gate itself is a runtime setting
-(`applyApprovalRequired`, default on); a caller-supplied override can disable
-it for a run, which is why the Preferences form shows a persistent warning
-when it is off. Dry-run claims bypass this approval gate. Manual
-outcome notes are stored only in the local outcome table; job events store
-presence flags and nullable prep-generation links, not the note text.
+### Approval And At-Most-Once Submission
 
-::: warning Live submission requires an explicit approval
-Live apply is blocked until an `approve_submit` decision exists for the job
-(`applyApprovalRequired`, default on). Disabling the gate lets a run submit real
-applications without human approval; dry-run claims always bypass it.
+With `applyApprovalRequired` enabled (the default), the Python launcher checks
+the latest `approve_submit` decision inside the atomic claim transaction. A UI,
+API, or RPC caller cannot bypass that committed decision. Dry-run claims do not
+need approval because browser-layer guards block submission.
+
+Immediately before a live submit, the launcher records
+`ApplySubmitIntended`. If the run dies after that checkpoint without a terminal
+result, recovery parks it in `needs_verification` instead of retrying. A run that
+never reached submit intent can return safely to `pending`.
+
+::: warning Live submission is an explicit trust boundary
+Turning off `applyApprovalRequired` allows a claimed live run to submit without
+per-job approval. The Preferences UI keeps that state visibly warned.
 :::
 
-Apply has an at-most-once checkpoint before autonomous submission:
-`ApplySubmitIntended` is durably recorded immediately before the agent may
-submit in a live run. If a live run dies after that checkpoint and no terminal
-submit result exists, recovery parks the apply stage in `needs_verification`
-instead of blindly re-queueing it. Runs without submit intent can be safely
-rewound to `pending`.
+### Resume Review Drafts
 
-Apply Review resume edits are modeled as a local feedback/draft layer in the
-TypeScript API, not as direct writes to the Materials aggregate. The generated
-HTML/CSS resume is loaded into a Plate editor; saved revisions, line edit
-deltas, JobCtrl comment threads, user replies, and feedback signals are
-persisted in `resume_review_*` / `tailoring_feedback_signals` tables. A render
-promotion validates the saved draft, creates a new `job_materials` generation
-with replacement `tailored_resume` and `resume_pdf` artifacts plus layout boxes,
-then marks unresolved comments as residual after acceptance. Existing approved
-artifacts remain visible until that replacement generation is written, so failed
-validation or render attempts do not destroy reviewable materials.
+Apply Review edits are a feedback layer, not in-place mutations of an accepted
+Materials generation. The API stores revisions, line deltas, comment threads,
+replies, and feedback signals in `resume_review_*` and
+`tailoring_feedback_signals` tables.
 
-Gmail outcome feedback is implemented in
-`workers/automation/src/jobctrl/infrastructure/gmail/feedback.py`, separate
-from the verification-only Gmail MCP server. The scanner reuses the readonly
-Gmail OAuth/client support but searches only bounded post-application windows
-for known SQLite application anchors. Candidate queries combine the recipient
-email with employer/ATS hints, job title/company terms, application URL/domain
-tokens, and application timing. The worker reads a full Gmail body only after
-metadata reaches the link-confidence threshold, then stores body text,
-`body_sha256`, `linked_at`, confidence, safe link signals, and a unique provider
-message ID in `application_email_evidence`. Deterministic v1 classification
-writes pending `application_outcome_suggestions` for confirmations, recruiter
-replies, interviews, assessments, rejections, offers, bounces, and unknowns.
+Promotion follows three steps:
 
-`job_events.payload_json` receives safe summaries with identifiers, kinds,
-sources, timestamps, confidence values, link signals, and presence flags; raw
-notes and raw email bodies are not copied into domain events, projections,
-logs, telemetry, or Gmail scan API responses.
+1. validate and render the saved draft;
+2. write a new `job_materials` generation with replacement HTML/PDF artifacts
+   and layout boxes;
+3. mark unresolved comments as residual after acceptance.
 
-## Read-Model Projections
+The previous accepted artifact stays visible until step 2 succeeds. A failed
+validation or render therefore cannot destroy reviewable materials.
 
-The Operations / Read-Side context maintains denormalised projection
-tables that back every read-model endpoint:
+### Outcomes And Gmail Suggestions
 
-| Table                        | What it stores                                                    |
-|------------------------------|-------------------------------------------------------------------|
-| `job_list_projections`       | One row per job — title, employer, current stage/state, fit score, canonical fit band when recorded, materials presence, apply status, apply mode, accepted resume template, and tailoring policy version. |
-| `dashboard_projections`      | Singleton aggregates: counts, funnel per stage, source breakdown, score distribution, and the outcome-conversion funnel (`outcome_conversion_json`: applied/reply/interview/offer/rejection counts by source, score band, fit band, apply mode, accepted resume template, and tailoring policy, plus response-minute samples and suggestion decision counts from canonical rows). |
-| `job_detail_projections`     | Per-job description preview, score reasoning, full stages array, employer/requirement audit JSON, latest accepted interview prep, and curated audit history assembled from job events plus append-only apply feedback records. |
-| `artifact_list_projections`  | All generated artifacts (resume txt/pdf, cover txt/pdf) with provenance. |
-| `evidence_usage_projections` | Career evidence map rows that invert profile achievement/skill evidence into resume-bullet usage, requirement-fit usage, generation-time skill coverage, and missing/blocked/transferable gaps. |
-| `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |
-| `workflow_run_projections`   | One row per Temporal workflow run across all workflow types — status (12-state), input summary, failure cause, and a timeline folded from the `Workflow*` lifecycle events. The Python builder is the sole writer; the TypeScript API creates/reads it. |
-| `source_quality_stats`       | Rolling per-source health rates used by the dashboard and discovery scheduler. |
-| `contact_projections`        | One row per contact (Contact & Outreach): link, role, attribute and confirmed-fact counts, distinct source kinds, and per-attribute provenance metadata. No attribute values (sensitivity). |
-| `contact_research_task_projections` | One row per supervised research task (Contact & Outreach): status, candidate/needs-review/confirmed counts, the source-attempt outcomes (provenance of the search), and per-candidate provenance metadata + attribute kinds. No candidate attribute values (sensitivity). |
-| `outreach_thread_projections` | One row per outreach thread (Contact & Outreach): draft count, latest generation and status, whether an approved draft exists, and per-draft metadata (draft id, generation, kind, status, and the persisted `gatePassed` outcome). No draft body, gate internals, or claim provenance — those stay in canonical `outreach_drafts` and are joined at detail-read time (sensitivity). |
-| `due_follow_up_projections` | One row per outreach thread with a **scheduled** follow-up (Contact & Outreach): the thread/contact/job ids, the suggested `due_at`, and the basis label. Completed/dismissed/unscheduled threads are not projected. Whether a follow-up is *due* is computed at read time over `due_at` + the clock (a derived signal, never stored and never an action — INV-1). Carries safe references only; never a contact name/email. |
-| `operational_attempt_metrics` | Append-only stage/source/apply attempt facts with outcome, source role, failure class, retryability, scrape/operational flags, counts, and durations. |
+`application_outcomes` stores reviewed manual or suggestion-derived outcomes.
+Interview reflections may link to the prep generation they followed. Notes stay
+in that local table; events carry presence flags and safe references, not note
+text.
 
-The Python `ProjectionBuilder` (driven by `InProcessEventBus`) and the TS
-`refreshProjections` helper both read new rows from `job_events` since the
-shared `event_watermarks.operations_projections` watermark, recompute
-projections from canonical aggregate state, and advance the watermark in the
-same transaction. Both processes write to the same tables; SQLite handles the
-concurrent advances. Request paths read precomputed projections instead of
-assembling stage state with per-request joins.
+The Gmail feedback scanner searches bounded post-application windows using
+known application anchors. It reads a body only after metadata reaches the
+link-confidence threshold, then stores evidence locally and proposes a
+classification. The user accepts, corrects, or declines the suggestion.
 
-Contact & Outreach projections follow the same dual-runtime pattern. The Python
-`ProjectionBuilder._rebuild_contacts` and the TypeScript
-`rebuildContactProjections` both rematerialise `contact_projections` from the
-canonical `contacts` / `contact_attributes` rows, and a cross-runtime parity
-fixture (`test_contact_projection_parity.py` /
-`apps/api/test/contact-projection-parity.test.ts`) guards drift. Contact events
-(`ContactCreated`, `ContactUpdated`, `ContactAttributeRecorded`,
-`ContactDeleted`) reach SSE and the projection watermark through `job_events`,
-written by `record_job_event` with `entity_kind = 'contact'` /
-`entity_ref = <contactId>` (the generic event-log columns added in schema v2); a
-contact event that also concerns an application keys on that job's `job_url` too.
-Both the events and the projection carry only safe references — attribute values
-(names, emails, notes) stay in `contact_attributes.value_json` and never appear
-in `job_events`, `contact_projections`, logs, or telemetry (INV-2 provenance is
-projected; the value is not).
+Raw mail bodies never enter events, broad projections, logs, telemetry, or the
+scan API response.
 
-Supervised research adds `contact_research_task_projections` under the same
-dual-runtime pattern. The Python `ProjectionBuilder._rebuild_contact_research`
-and the TypeScript `rebuildContactResearchProjections` both rematerialise it from
-the canonical `contact_research_tasks` / `contact_candidates` rows, gated on the
-research event set (`ContactResearchTaskStarted`, `ContactCandidateProposed`,
-`ContactResearchTaskNeedsReview`, `ContactResearchTaskCompleted`,
-`ContactResearchTaskFailed`), and a cross-runtime parity fixture
-(`test_contact_research_projection_parity.py` /
-`apps/api/test/contact-research-projection-parity.test.ts`) guards drift. The
-projection carries the task lifecycle, counts, the per-source
-`ResearchSourceAttempt` outcomes (allowed / robots_disallowed / rate_limited /
-budget_exhausted / manual_capture_required / rejected — the provenance of the
-search itself), and per-candidate provenance metadata + attribute *kinds*.
-Candidate attribute *values* (proposed names, emails) live only in
-`contact_candidates.attributes_json` and reach the client solely through the
-research-task detail read; they never enter events, the projection, logs, or
-telemetry.
+## Projection Catalog
 
-Outreach drafting adds `outreach_thread_projections` under the same dual-runtime
-pattern. The Python `ProjectionBuilder._rebuild_outreach` and the TypeScript
-`rebuildOutreachProjections` both rematerialise it from the canonical
-`outreach_threads` / `outreach_drafts` rows, gated on the outreach draft event set
-(`OutreachDraftGenerated`, `OutreachDraftRevised`, `OutreachDraftApproved`,
-`OutreachDraftRejected`), and a cross-runtime parity fixture
-(`test_outreach_projection_parity.py` /
-`apps/api/test/outreach-projection-parity.test.ts`) guards drift. The projection
-surfaces the draft lifecycle (generation, status, whether an approved draft
-exists) and the per-draft `gatePassed` metadata (the persisted truthfulness-gate
-outcome — INV-5); the review UI joins the canonical `outreach_drafts` rows for the
-full gate results and the claim → fact provenance. The draft `body_text`,
-`gate_results_json`, and `provenance_json` live only in `outreach_drafts` (the
-canonical write side) and are surfaced solely through the thread detail read model;
-the draft-lifecycle events (written by `record_job_event` with
-`entity_kind = 'outreach'` / `entity_ref = <threadId>`; application-linked threads
-also key on the job's `job_url`) and the projection carry only ids, kinds,
-generation, and timestamps. Contact PII and fetched page bodies never enter
-`job_events` payloads, the projection, logs, or telemetry. There is no send
-transport on any outreach read or write path (INV-1).
+| Projection | Main read responsibility |
+| --- | --- |
+| `job_list_projections` | One compact row per job: stage, score, materials, apply state, template, and policy metadata. |
+| `job_detail_projections` | Description, stage timeline, employer/requirement audit, compensation, accepted interview prep, and curated history. |
+| `dashboard_projections` | Counts, funnel, source/score distribution, and outcome-conversion counts. |
+| `artifact_list_projections` | Registered artifacts and their tailoring explanation. |
+| `evidence_usage_projections` | Profile evidence inverted into resume, requirement, and coverage usage/gaps. |
+| `apply_run_projections` | Apply-run context and event timeline. |
+| `workflow_run_projections` | Status, input summary, failure cause, and lifecycle timeline for every Temporal workflow type. |
+| `source_quality_stats` | Rolling source-health facts used by discovery and the dashboard. |
+| `contact_projections` | Contact references, counts, and provenance metadata—never attribute values. |
+| `contact_research_task_projections` | Research status, counts, source outcomes, and candidate provenance/kinds—never candidate values. |
+| `outreach_thread_projections` | Draft lifecycle, generation, status, and persisted gate outcome—never draft bodies. |
+| `due_follow_up_projections` | Scheduled follow-up references and due time; `isDue` is derived at read time. |
+| `operational_attempt_metrics` | Append-only attempt outcomes, failure class, retryability, counts, and duration. |
 
-Send logging and follow-ups (Phase 4) extend the same dual-runtime pattern. A
-**user-attested** `OutreachSendLog` — the only way a thread reaches a "sent" state
-(INV-1) — is recorded over an approved draft and emits `OutreachSendLogged`;
-scheduling/completing/dismissing a follow-up emits
-`FollowUpScheduled`/`FollowUpCompleted`/`FollowUpDismissed`. All four are added to
-the outreach event set, so the Python `ProjectionBuilder._rebuild_due_follow_ups`
-and the TypeScript `rebuildDueFollowUpProjections` rematerialise
-`due_follow_up_projections` from the canonical `outreach_threads` follow-up columns
-whenever any outreach event fires; a cross-runtime parity fixture
-(`test_due_follow_up_projection_parity.py` /
-`apps/api/test/due-follow-up-projection-parity.test.ts`) guards drift.
-`GET /v1/outreach/follow-ups/due` reads that projection and computes the derived
-`isDue` flag over the clock at read time — it never sends and never auto-acts. The
-send-log and follow-up events carry only ids, a channel *label*, and timestamps;
-no contact name/email ever enters an event, the projection, logs, or telemetry.
+## Cross-Runtime Consistency
 
-The evidence-usage projection is read-only and derives from existing canonical
-profile, requirement-fit, bullet-provenance, and artifact coverage rows. It does
-not create a new generation pipeline: resume usage still comes from the
-Materials provenance/audit tables, and requirement gaps still come from the
-Scoring requirement-fit rows. Older local databases that lack newer optional
-profile metadata columns project conservative defaults instead of failing
-unrelated read paths.
+Python's `ProjectionBuilder` and TypeScript's `refreshProjections` consume new
+`job_events` rows after the shared
+`event_watermarks.operations_projections` watermark. Each rebuilds from
+canonical aggregate state and advances the watermark in the same transaction.
+SQLite serializes concurrent advances.
 
-The outcome-conversion projection materialises integer funnel counts only (both
-builders must agree — the cross-runtime parity fixture asserts the
-`outcome_conversion_json` column). The dashboard read model derives the
-conversion rates (reply/interview/offer/rejection over applied) from those
-counts so there is no cross-runtime float drift; `costPerInterview` stays `null`
-until per-run apply cost is projected. `GET /v1/analytics/outcomes` reads the
-same integer-count projection and exposes an analytics-specific contract with
-`n`, `minSample`, `bySource`, `byScoreBand`, `byFitBand`, `byApplyMode`,
-`byTemplate`, `byPolicy`, `timeToResponse`, and `suggestionAccuracy`.
-`byScoreBand` keeps the existing parity-guarded score vocabulary
-(`perfect/strong/moderate/weak/poor/unscored`); `byFitBand` is a separate
-canonical requirement-fit vocabulary
-(`excellent/strong/plausible/stretch/poor/unreported`). Template and policy
-groups come from the accepted material artifact metadata projected onto
-`job_list_projections`. `timeToResponse.medianMinutes` is read-time derived from
-`applied_at` to the earliest response-kind `application_outcomes.occurred_at`;
-`suggestionAccuracy` counts decided `application_outcome_suggestions` rows. The
-read model uses the single `MIN_CONVERSION_SAMPLE` threshold for every rate and
-median, so sub-threshold buckets keep counts but return `null` rates or medians.
-This surface is read-only — it stays outside scoring, ranking, thresholds, and
-apply eligibility.
+Both runtimes emit the same JSON shapes. Shared parity fixtures guard the
+dual-written job, contact, research, outreach, follow-up, compensation, and
+audit projections. That makes a one-sided column or shape change a test failure
+instead of a client surprise.
 
-Job detail audit history is assembled at read time from allow-listed lifecycle
-events and append-only apply review/outcome records. It is a user-facing audit
-timeline, not a debug log: raw event payloads, debug messages, local paths, raw
-outcome notes, and email body text stay out of the response.
-Posted-compensation facts are persisted in `job_posted_compensation_facts`
-before inspection. They are exposed through both the narrow read-only
-inspection API and projection-backed job list/detail compensation summaries.
-Company-role market compensation estimates are persisted in
-`job_market_compensation_estimates` before inspection. Estimates are
-deterministic local facts derived from configured reported compensation feeds for
-Euro Top Tech, Levels.fyi, Glassdoor, or manual imports, or from employer-posted
-salary facts already captured by JobCtrl.
-Euro Top Tech rows are treated as public community-reported EUR/year total
-compensation observations. Levels.fyi and Glassdoor rows are loaded only when
-the user-enabled source preference, permitted access basis, and feed path or URL
-are configured; Levels.fyi also requires explicit Europe coverage confirmation.
-The API and worker read the same file-backed preference. Once present, that
-preference overrides the legacy environment gate, including when the user has
-explicitly disabled the source.
-Employer-posted market rows are labeled as job posting salary text and remain
-low confidence when they are based on a single posting or extrapolated fallback
-tier. These rows store explicit estimate
-states, normalized company and role, match scope, trimodal company tier,
-confidence factors, confidence interval bounds, safe source snapshots, warnings,
-and reasons. They do not store raw benchmark pages, provider payloads,
-credentials, local paths, private account state, user compensation preferences,
-or U.S. salary baselines.
-Compensation writes emit `CompensationFactsUpdated` rows into `job_events`.
-Those payloads carry only job id, changed section, state markers, and timestamp;
-the Operations/SSE invalidation path refreshes job list/detail queries from the
-projection tables.
+## Sensitive Projection Families
+
+### Contacts, Research, And Outreach
+
+Events and broad projections carry IDs, controlled kinds, counts, timestamps,
+and provenance metadata. Contact names, emails, notes, candidate values, fetched
+page bodies, draft bodies, gate internals, and claim provenance stay in their
+canonical tables and are joined only for authorized detail reads.
+
+Research outcomes such as `robots_disallowed`, `rate_limited`, and
+`budget_exhausted` are first-class provenance. A proposed candidate becomes a
+contact only after confirmation. Outreach has no send transport: an approved
+draft can be copied/exported, and a later send log is an explicit user
+attestation.
+
+Follow-up projections contain reminders only. `GET
+/v1/outreach/follow-ups/due` computes `isDue` from the stored due time and the
+clock; it never sends or acts.
+
+### Evidence, Analytics, And Compensation
+
+The evidence map derives from canonical profile evidence, requirement-fit,
+bullet-provenance, and coverage rows. It creates no second generation pipeline
+and uses conservative defaults for older databases missing optional metadata.
+
+Outcome conversion stores integer counts. The API derives rates and medians at
+read time using one minimum-sample threshold, so small groups keep counts but
+return `null` rates/medians. Analytics remain read-only and cannot alter scoring,
+ranking, thresholds, or apply eligibility.
+
+Posted compensation and deterministic market estimates are persisted before
+they are projected. Projection/API reads do not parse salary text or fetch a
+provider. Events carry only the affected job/section/state markers; raw feeds,
+credentials, private account state, and local paths stay out.
+
+## User-Facing Audit History
+
+Job detail assembles an allow-listed timeline from lifecycle events and
+append-only review/outcome records. It is an audit explanation, not a debug log:
+raw event payloads, debug messages, local paths, raw notes, email bodies, and
+contact values are excluded.

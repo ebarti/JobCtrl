@@ -17,6 +17,20 @@ SQLite database, set through the web app; working runtime credentials and
 runtime switches are read from environment variables. Everything here is
 optional unless a feature you want depends on it.
 
+## Start Here
+
+| You want to change… | Use |
+| --- | --- |
+| Candidate facts, target role, location, work model, or writing preferences | Profile / Preferences in the web app |
+| Discovery sources, schedules, quarantine, or manual capture | Discovery in the web app |
+| Approval, spend, worker, or provider behavior | Settings in the web app |
+| Provider secret used by the Python runtime | `~/.jobctrl/.env`, shell environment, or the macOS credential panel |
+| One isolated development/QA stack | `JOBCTRL_DIR`, API/web ports, and [Test And Documentation Workspaces](#test-and-documentation-workspaces) |
+
+The rest of this page is a lookup table. [Data, Privacy & Safety](data-and-safety.md)
+explains what is stored or sent; [Security](security.md) explains the controls
+around risky actions.
+
 ## Configuration Sources
 
 | Source | Purpose |

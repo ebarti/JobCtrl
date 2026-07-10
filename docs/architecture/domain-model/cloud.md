@@ -21,7 +21,7 @@ deployment model that ships to production.
 > Temporal rows below as *scale-out of an existing engine*, not *introduction of
 > a new one*.
 
-### What Changes
+## What Changes
 
 | Concern | Local-First (validation) | Cloud (target) | Concrete Technology |
 |---|---|---|---|
@@ -38,7 +38,7 @@ deployment model that ships to production.
 | **Billing** | None | Usage-based billing | **Stripe** for subscription and usage-based billing. Billing context tracks: LLM token usage, apply run count, browser session minutes, storage bytes. Entitlement checks gate pipeline execution (e.g., max apply runs per month). |
 | **Data residency** | Local disk (user controls) | Multi-region with tenant-level residency | Tenant metadata includes `data_region` (e.g., `us-east-1`, `eu-west-1`). Repository adapters route to region-specific RDS instances. S3 bucket replication configured per region. Cross-region queries prohibited at the adapter level. |
 
-### What Does NOT Change
+## What Does NOT Change
 
 | Concern | Why it survives the transition | Verified? |
 |---|---|---|
@@ -57,13 +57,13 @@ deployment model that ships to production.
   mode it was implicit (singleton). This is a signature change, not a logic
   change. The domain logic inside the use case is unchanged.
 
-### Platform Bounded Contexts (Cloud-Only)
+## Platform Bounded Contexts (Cloud-Only)
 
 These contexts do not exist in local-first mode. They are **cross-cutting
 platform services** that interact with the core domain through well-defined
 seams.
 
-#### Identity & Access Context
+### Identity & Access Context
 
 **Purpose:** Authenticate users, issue JWT tokens, manage tenant membership,
 enforce authorization policies.
@@ -80,7 +80,7 @@ downstream use case calls receive `TenantContext` as their first parameter.
 stage?"). That is the domain's responsibility via entitlement checks. Identity
 & Access only answers "who is this user and what tenant are they in?"
 
-#### Billing & Entitlements Context
+### Billing & Entitlements Context
 
 **Purpose:** Track usage, enforce subscription limits, meter costs, manage
 Stripe subscriptions.
@@ -100,7 +100,7 @@ events and updates usage counters.
 **Technology:** Stripe Billing with usage-based pricing. Internal usage ledger
 in Postgres.
 
-#### Audit Log Context
+### Audit Log Context
 
 **Purpose:** Provide an immutable, append-only record of all write operations
 for compliance, debugging, and support.
@@ -114,7 +114,7 @@ middleware.
 grants) + AWS CloudWatch Logs for real-time streaming + optional S3 export for
 long-term retention.
 
-#### Secret Management Context
+### Secret Management Context
 
 **Purpose:** Store and retrieve per-tenant credentials (LLM API keys, job board
 accounts, ATS login credentials) securely.
@@ -135,7 +135,7 @@ AWS Secrets Manager with tenant-scoped paths
 cached in-memory for 5 minutes (configurable TTL). Never logged or persisted
 outside Secrets Manager.
 
-### How the Seams Absorb the Change
+## How the Seams Absorb the Change
 
 1. **Database migration:** Swap `SqliteJobRepository` for `PostgresJobRepository`.
    The repository port interface is unchanged. Postgres adapter adds: connection
@@ -172,7 +172,7 @@ outside Secrets Manager.
    contexts. They interact through well-defined ports (`EntitlementPort`,
    `SecretPort`, `AuditSink`) and middleware (`TenantContext` injection).
 
-### 9.4 Evolution Triggers (Fitness Functions)
+## 9.4 Evolution Triggers (Fitness Functions)
 
 Each local-mode design choice has a **concrete, testable trigger** that
 initiates the evolution to its cloud variant. These triggers are the fitness
@@ -194,7 +194,7 @@ cloud" (circular), but measurable conditions.
 | No audit log | Postgres `audit_events` + CloudWatch | First compliance requirement (SOC2, GDPR data access log) | The `AuditSink` port is a no-op locally. |
 | HTML/CSS + Playwright resume PDFs | Hosted browser/PDF rendering service | Multi-node deployment **OR** browser sandbox hardening requirement | `PdfRendererPort` absorbs the engine and keeps generated artifacts typed as resume PDFs. |
 
-### 9.5 Cloud Migration Order
+## 9.5 Cloud Migration Order
 
 When the cloud trigger fires (per §9.4), bounded contexts migrate to their
 cloud adapters in a defined order. Migration is **incremental for

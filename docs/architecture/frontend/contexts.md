@@ -21,113 +21,20 @@ Operations, and Contact & Outreach. Views (Dashboard, Jobs, Artifacts, Apply
 Review, Runs, Pipelines, Discovery, Contacts, Debug) are **not** contexts; they
 are composers that live under `views/` (§3.10, §11).
 
-### 3.1 Frontend Context Map
+## 3.1 Frontend Context Map
 
 ```mermaid
-graph TB
-    subgraph "Frontend bounded contexts (1:1 with backend)"
-        DSC["discovery/<br/>job lifecycle + import mutations,<br/>source-registry admin"]
-        ENR["enrichment/<br/>retry + compensation refresh,<br/>compensation-evidence UI"]
-        PRO["profile/<br/>profile + settings + credentials<br/>+ resume-import wizard"]
-        SCO["scoring/<br/>badge / breakdown / staleness<br/>correction + rescore"]
-        MAT["materials/<br/>generate materials,<br/>open artifact"]
-        APP["apply/<br/>apply / dry-run / cancel,<br/>apply-run timeline"]
-        PIP["pipeline/<br/>retry / cancel / mark-applied / mark-skipped<br/>+ stage badges + timeline"]
-        OPS["operations/<br/>read hooks, query-key registry,<br/>SSE subscription, invalidation router"]
-        OUT["outreach/<br/>contacts + provenance, research,<br/>outreach drafts + gate review"]
-    end
+flowchart LR
+    ROUTES["Typed routes<br/>URL + search state"] --> VIEWS["View composers<br/>layout + cross-context composition"]
+    VIEWS --> CONTEXTS["Bounded-context folders<br/>discovery · enrichment · profile · scoring<br/>materials · apply · pipeline · outreach"]
+    CONTEXTS --> OPS["Operations context<br/>read hooks · query keys · invalidation"]
+    OPS --> PORTS["Shared ports + adapters<br/>API · event stream · session · storage"]
+    PORTS --> BACKEND["Fastify API + SSE endpoint"]
+    SHARED["Shared kernel<br/>UI · layout · providers · stores · helpers"] --> VIEWS
+    SHARED --> CONTEXTS
 
-    subgraph "View composers (NOT bounded contexts)"
-        VD["views/dashboard/<br/>KpiGrid, ConversionPanel, Funnel,<br/>SourceHealthCard, ApplyRunsCard"]
-        VDBG["views/debug/<br/>DebugActivityTable, FilterBar, ActivityDrawer"]
-        VJ["views/jobs/<br/>JobsTable, FilterBar, BulkActions, DetailDrawer"]
-        VA["views/artifacts/<br/>ArtifactsTable, FilterBar, DetailPanel"]
-        VAR["views/apply-review/<br/>review queue + Plate resume editor"]
-        VRUN["views/runs/<br/>workflow runs table + drawer"]
-        VPIP["views/pipelines/<br/>StageTriggerPanel"]
-        VDISC["views/discovery/<br/>sources + schedule settings"]
-        VOUT["views/outreach/<br/>ContactsTable + detail drawer"]
-    end
-
-    subgraph "Routes (URL → typed search params)"
-        RD["/dashboard"]
-        RDBG["/debug (+/activity/$eventId)"]
-        RJ["/jobs + /jobs/$jobId (+/run/$runId)"]
-        RA["/artifacts + /artifacts/$artifactId"]
-        RP["/profile (+/import wizard)"]
-        RPREF["/preferences"]
-        RS["/settings (+/credentials)"]
-        RAR["/apply-review"]
-        RRUN["/runs (+/$runId)"]
-        RPIP["/pipelines"]
-        RDISC["/discovery"]
-        ROUT["/outreach"]
-    end
-
-    subgraph "Shared kernel"
-        UI["shared/ui — primitives (shadcn/Radix)"]
-        LY["shared/layout — AppShell, Topbar, Nav"]
-        PR["shared/providers — Ports, Tenant, Query, Theme, Density, Toaster"]
-        STO["shared/stores — Zustand (UI prefs, toasts, cmd palette)"]
-        PORT["shared/ports — ApiClientPort, EventStreamPort, SessionPort, ..."]
-        LIB["shared/lib — formatters, cn(), createOptimisticMutation"]
-    end
-
-    RD --> VD
-    RDBG --> VDBG
-    RJ --> VJ
-    RA --> VA
-    RP --> PRO
-    RPREF --> PRO
-    RS --> PRO
-    RAR --> VAR
-    RRUN --> VRUN
-    RPIP --> VPIP
-    RDISC --> VDISC
-    ROUT --> VOUT
-
-    VD --> OPS
-    VD --> APP
-    VD --> PIP
-    VJ --> OPS
-    VJ --> DSC
-    VJ --> SCO
-    VJ --> MAT
-    VJ --> APP
-    VJ --> PIP
-    VJ --> ENR
-    VA --> OPS
-    VA --> MAT
-    VAR --> OPS
-    VAR --> APP
-    VAR --> MAT
-    VAR --> ENR
-    VRUN --> OPS
-    VRUN --> PIP
-    VPIP --> PIP
-    VDISC --> DSC
-    VDISC --> PRO
-    VOUT --> OPS
-    VOUT --> OUT
-    VJ --> OUT
-
-    DSC --> OPS
-    ENR --> OPS
-    PRO --> OPS
-    SCO --> OPS
-    MAT --> OPS
-    APP --> OPS
-    PIP --> OPS
-    OUT --> OPS
-
-    OPS --> PORT
-    VD --> UI
-    VJ --> UI
-    VA --> UI
-    PRO --> UI
-
-    PORT -.->|"adapters"| BE["apps/api (Fastify)"]
-    PORT -.->|"adapters"| SSE["GET /v1/events/stream (implemented)"]
+    class ROUTES,VIEWS,CONTEXTS,OPS,PORTS,SHARED ui
+    class BACKEND ts
 ```
 
 The diagram reads top-down:
@@ -147,7 +54,7 @@ The diagram reads top-down:
   formatting helpers, and the **frontend ports** (§6) that abstract the
   API client and event stream.
 
-### 3.2 Job Discovery (Frontend)
+## 3.2 Job Discovery (Frontend)
 
 **Backend mirror:** Job Discovery (backend domain model [§3.1](../domain-model/strategic.md), [§4.1](../domain-model/tactical.md), [§5.1](../domain-model/ports.md)).
 
@@ -194,7 +101,7 @@ source-registry use cases are Discovery-context use cases per backend §5.1
 surface has since grown into the full discovery-administration surface
 described above; the folder absorbed that growth without restructure.
 
-### 3.3 Job Enrichment (Frontend)
+## 3.3 Job Enrichment (Frontend)
 
 **Backend mirror:** Job Enrichment (backend domain model [§3.2](../domain-model/strategic.md), [§4.2](../domain-model/tactical.md), [§5.2](../domain-model/ports.md)).
 
@@ -233,7 +140,7 @@ UI and refresh mutations (with the manual re-enrichment retry hook still a
 stub pending its backend endpoint), and remains the unambiguous home for any
 further enrichment-triggered affordance.
 
-### 3.4 Candidate Profile
+## 3.4 Candidate Profile
 
 **Purpose:** Read, edit, and import the candidate profile; manage
 application preferences, settings, credentials, and resume template defaults;
@@ -283,7 +190,7 @@ preview the rendered resume PDF.
 - Per-job tailored content (that is `materials/`).
 - Score breakdown or correction (that is `scoring/`).
 
-### 3.5 Scoring
+## 3.5 Scoring
 
 **Purpose:** Render fit scores, the score breakdown and reasoning, score
 staleness, score correction, and rescore actions.
@@ -319,7 +226,7 @@ staleness, score correction, and rescore actions.
 - The fit-score column header in the jobs table (that is `views/jobs/`;
   scoring contributes the cell renderer only).
 
-### 3.6 Materials Generation
+## 3.6 Materials Generation
 
 **Purpose:** Trigger generation / re-tailoring of resume + cover letter +
 PDFs for a given job; observe progress; open generated artifacts in the
@@ -357,7 +264,7 @@ backend domain model [§4.5](../domain-model/tactical.md)):
 - Apply submission (that is `apply/`; apply consumes the latest
   `MaterialsSet` artifacts).
 
-### 3.7 Apply Automation
+## 3.7 Apply Automation
 
 **Purpose:** Trigger apply / dry-run for a job; cancel a running apply;
 observe an apply run's live event timeline.
@@ -386,7 +293,7 @@ observe an apply run's live event timeline.
 - "Mark applied" / "mark skipped" — those are pipeline-state transitions
   per backend §5.7 and live in `pipeline/`.
 
-### 3.8 Pipeline Orchestration
+## 3.8 Pipeline Orchestration
 
 **Purpose:** Render stage state badges; expose stage-management mutations
 (retry, cancel, mark-applied, mark-skipped); render the dashboard funnel
@@ -424,7 +331,7 @@ detail.
   affordance is a domain action, not a stage transition button).
 - Score correction (that is `scoring/`).
 
-### 3.9 Operations / Read-Side
+## 3.9 Operations / Read-Side
 
 **Purpose:** Provide the read-side kernel to all other contexts and
 views: the query client, query-key registry, projection-typed hooks, and
@@ -483,7 +390,7 @@ the SSE subscription that fans events out to invalidate query keys.
 - Any mutation. Mutations are owned by the aggregate context they
   correspond to (Discovery, Materials, Apply, Pipeline, Profile).
 
-### 3.10 Views (Composition Layer — NOT Bounded Contexts)
+## 3.10 Views (Composition Layer — NOT Bounded Contexts)
 
 The `views/` folder holds the sibling composers of `contexts/`, including
 `dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `runs/`,
@@ -520,7 +427,7 @@ another view (cross-view navigation goes through the URL).
 (filter bar, bulk-action toolbar). All cell renderers, badges, drawers,
 forms, and timelines are imported from the contexts that own them.
 
-### 3.11 Contact & Outreach (Frontend)
+## 3.11 Contact & Outreach (Frontend)
 
 **Backend mirror:** Contact & Outreach (backend domain model [§3.11](../domain-model/strategic.md), [§4.9](../domain-model/tactical.md), [§5.9](../domain-model/ports.md)).
 

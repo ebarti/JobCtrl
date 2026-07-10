@@ -8,46 +8,27 @@ where generated artifacts land on disk.
 
 ## Schema At A Glance
 
-The job pipeline core — one row in `jobs` (keyed by posting URL) accumulates
-per-stage state, events, evidence, generations, and feedback:
+The database is easier to understand as a set of ownership families. The
+diagram shows the main relationships; the table below names the exact tables.
 
 ```mermaid
-erDiagram
-    jobs {
-        text url PK
-        text title
-        text company
-        text salary
-        text location
-        text site
-        text discovered_at
-    }
-    jobs ||--o{ job_stage_states : "per-stage durable state"
-    jobs ||--o{ job_events : "append-only event log"
-    jobs ||--o| job_enrichments : "detail enrichment"
-    jobs ||--o{ job_source_observations : "provenance"
-    jobs ||--o| job_canonical_identities : "content identity"
-    jobs ||--o{ job_duplicate_links : "dedup evidence"
-    jobs ||--o{ job_scores : "versioned scores"
-    scoring_policies ||--o{ job_scores : "policy version"
-    jobs ||--o{ job_requirement_fit_reports : "requirement ledger"
-    job_requirement_fit_reports ||--o{ job_requirement_fit_items : "per-requirement fit"
-    jobs ||--o{ job_employer_analysis : "canonical analysis"
-    job_employer_analysis ||--o{ job_employer_analysis_sub_analyses : "ensemble parts"
-    jobs ||--o{ job_materials : "tailoring generations"
-    job_materials ||--o{ job_materials_artifacts : "generated files"
-    job_materials ||--o{ job_bullet_provenance : "per-bullet provenance"
-    job_materials ||--o{ job_material_layout_boxes : "render layout"
-    jobs ||--o{ job_artifacts : "registered artifacts"
-    jobs ||--o{ application_review_decisions : "apply approvals"
-    jobs ||--o{ application_outcomes : "reviewed outcomes"
-    jobs ||--o{ application_email_evidence : "linked Gmail evidence"
-    application_email_evidence ||--o{ application_outcome_suggestions : "classifier suggestions"
+flowchart LR
+    PROFILE["Candidate Profile"] --> SCORE["Scoring + fit evidence"]
+    JOB["Jobs + stage state"] --> SCORE
+    SCORE --> MATERIALS["Materials + artifacts"]
+    PROFILE --> MATERIALS
+    MATERIALS --> APPLY["Apply reviews + outcomes"]
+    JOB --> OUTREACH["Contacts + outreach"]
+    JOB --> OPS["Events + read projections"]
+    APPLY --> OPS
+    OUTREACH --> OPS
+    MATERIALS --> FILES["Generated local files"]
+
+    class PROFILE,JOB,SCORE,MATERIALS,APPLY,OUTREACH,OPS,FILES store
 ```
 
-One `jobs` row (keyed by posting URL) is the hub: per-stage state, events,
-scores, analysis, tailoring generations, artifacts, and apply records all hang
-off it.
+Within the job-owned families, one `jobs` row (keyed by posting URL) is the hub:
+stage state, events, scores, analysis, materials, and apply records hang off it.
 
 The remaining tables group by owner:
 
@@ -127,10 +108,6 @@ flowchart LR
     DB -->|"artifact_list_projections"| API["TypeScript API"]
     API --> WEB["Web app artifact views"]
 
-    classDef ui fill:#dbeafe,stroke:#2563eb,color:#0f172a
-    classDef ts fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
-    classDef py fill:#d1fae5,stroke:#059669,color:#064e3b
-    classDef store fill:#cffafe,stroke:#0891b2,color:#164e63
     class GEN,APPLY py
     class API ts
     class WEB ui

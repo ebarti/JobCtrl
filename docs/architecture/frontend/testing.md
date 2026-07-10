@@ -14,7 +14,7 @@ it comprises **220 colocated `*.test.ts(x)`** under `apps/web/src`
 **18 Playwright `*.spec.ts`** under `apps/web/e2e/tests`, and **112
 `*.stories.tsx`** Storybook story files.
 
-### 10.1 The Pyramid
+## 10.1 The Pyramid
 
 ```mermaid
 graph TB
@@ -26,7 +26,7 @@ graph TB
     S -. "drives I" .-> I
 ```
 
-### 10.2 Unit Tests (Vitest)
+## 10.2 Unit Tests (Vitest)
 
 **What is tested in isolation:**
 
@@ -57,7 +57,7 @@ graph TB
 
 These tests do not mount React components.
 
-### 10.3 Component & Hook Tests (Vitest + React Testing Library + MSW)
+## 10.3 Component & Hook Tests (Vitest + React Testing Library + MSW)
 
 **Decision (resolves §6 question 14):** **Both** domain hooks (with MSW)
 *and* end-to-end Playwright. The line:
@@ -94,7 +94,7 @@ browser" check on CI.
 overrides per-case; where MSW's SSE support is limiting, the fallback is a
 custom `EventStreamPort` mock injected through `<PortsProvider />`.
 
-### 10.4 End-to-End Tests (Playwright)
+## 10.4 End-to-End Tests (Playwright)
 
 The suite has **18** spec files under `apps/web/e2e/tests/` today:
 `analytics`, `artifact-comparison`, `dashboard`, `dry-run`, `evidence-map`,
@@ -127,7 +127,7 @@ Playwright is configured with **per-test isolated SQLite databases**
 seeded from fixture files; the `apps/api` boots against the test DB; the
 test interacts with the rendered web app at `http://127.0.0.1:5173`.
 
-### 10.5 Storybook (Component-Driven Development)
+## 10.5 Storybook (Component-Driven Development)
 
 The frontend has **112** colocated `*.stories.tsx` files today. Stories serve
 three audiences:
@@ -145,7 +145,7 @@ without booting the real backend. Snapshot-based visual regression
 (Chromatic or open-source Loki) is a named-not-built addition on top of the
 existing stories.
 
-### 10.6 Type-Level Tests
+## 10.6 Type-Level Tests
 
 Beyond the workspace typecheck, the frontend runs **11 `*.test-d.ts`** files
 under `apps/web/test/types` via Vitest's `typecheck` mode (separate config
@@ -159,7 +159,7 @@ There is no `tsd` dependency; assertions use Vitest `expectTypeOf`.
 - **Typed search-param tests** assert the inferred type of
   `useSearch({ from: "/jobs" })` matches the Zod-derived type.
 
-### 10.7 Accessibility Spot Checks
+## 10.7 Accessibility Spot Checks
 
 Accessibility is enforced on two surfaces. Colocated `*.a11y.test.tsx` files
 under `apps/web/src/` run axe against input-bearing components and other
@@ -170,7 +170,7 @@ pre-existing production defect may set `parameters.a11y.test = "off"` only
 with a matching entry in the "Frontend Accessibility Backlog" in
 `docs/backlog.md`, which owns the live deferral inventory.
 
-### 10.8 What We Do NOT Test
+## 10.8 What We Do NOT Test
 
 - **shadcn/ui primitive internals** — those are upstream-tested.
 - **TanStack library internals** — same.
@@ -178,7 +178,7 @@ with a matching entry in the "Frontend Accessibility Backlog" in
 - **Performance** — bundle-size and runtime perf budgets are CI gates,
   not Vitest tests.
 
-### 10.9 CI Pipeline (Cross-Reference)
+## 10.9 CI Pipeline (Cross-Reference)
 
 The GitHub Actions TypeScript workflow (`.github/workflows/typescript.yml`)
 runs, in order:

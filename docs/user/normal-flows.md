@@ -23,13 +23,11 @@ flowchart LR
   end
   Configure --> Discover
 
-  classDef you fill:#dbeafe,stroke:#2563eb,color:#0f172a
-  classDef auto fill:#d1fae5,stroke:#059669,color:#064e3b
-  class Profile,Configure,Review,ApplyReview,Submit you
-  class Discover,DryRun auto
+  class Profile,Configure,Review,ApplyReview,Submit ui
+  class Discover,DryRun py
 ```
 
-*Blue steps are yours; green steps are JobCtrl's. Setup happens once, the
+*Purple steps are yours; green steps are JobCtrl's. Setup happens once, the
 loop repeats. Under the hood, Discover runs Enrich, Score, and Materials for
 each eligible job. Live submission approval is bound to the current materials,
 profile version, application URL, and dry-run evidence.*
