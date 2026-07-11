@@ -38,30 +38,19 @@ a daily spend ceiling, and shows its work at every step.
 
 ## Get Started
 
-**One line** — checks your tools, clones to `~/JobCtrl`, and walks you through
-the rest:
+**Source install (current)** — clone the repository, then run the guided
+contributor setup:
 
 ```bash
-curl -fsSL https://jobctrl.dev/install.sh | bash
+git clone https://github.com/ebarti/JobCtrl.git
+cd JobCtrl
+scripts/install
 ```
 
-**Homebrew (beta, HEAD-only until the first tagged formula)** — install the
-toolchain and global `jobctrl` launcher first, then bootstrap the app checkout:
-
-```bash
-brew install ebarti/tap/jobctrl --HEAD
-jobctrl bootstrap
-```
-
-`--HEAD` is required only because the tap does not have a stable tagged formula
-yet; it installs the launcher from `main`. After the first tagged formula, the
-install command becomes `brew install ebarti/tap/jobctrl`, while
-`jobctrl bootstrap` remains the next step that clones and configures JobCtrl.
-
-> Published to [`ebarti/homebrew-tap`](https://github.com/ebarti/homebrew-tap)
-> from the canonical formula at `packaging/homebrew/Formula/jobctrl.rb` — also
-> installable straight from a checkout with
-> `brew install --formula packaging/homebrew/Formula/jobctrl.rb --HEAD`.
+The bundled curl installer and stable Homebrew formula are implementation work,
+not a published install channel yet: P4 emits only unsigned local fixtures and
+P6 must publish and verify signed release metadata first. Do not treat a local
+distribution fixture as a public install URL.
 
 Then choose how you want to start:
 
@@ -78,10 +67,8 @@ uv --project workers/automation run jobctrl init
 uv --project workers/automation run jobctrl doctor
 ```
 
-Homebrew users can start the web stack from anywhere with `jobctrl dev`, and
-can use `jobctrl init` / `jobctrl doctor` only when taking the CLI route.
-`jobctrl setup` is already run by the installer/bootstrap path; rerun it only
-when vendor auth or analysis-leg choices change.
+`scripts/install` runs `jobctrl setup`; rerun it only when vendor auth or
+analysis-leg choices change.
 
 <details>
 <summary><b>Manual install & requirements</b> (clone it yourself)</summary>

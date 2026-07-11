@@ -2,16 +2,21 @@ package launcher
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -105,6 +110,72 @@ func TestLifecycleExitCodesAreStable(t *testing.T) {
 	}
 }
 
+func TestAcquisitionBuildPolicyFailsClosedOutsideItsCompiledChannel(t *testing.T) {
+	previousChannel, previousKey := releaseChannel, releaseTrustKeyBase64
+	t.Cleanup(func() { releaseChannel, releaseTrustKeyBase64 = previousChannel, previousKey })
+	releaseTrustKeyBase64 = ""
+	releaseChannel = "local"
+	policy, err := AcquisitionBuildPolicy()
+	if err != nil || !policy.AllowUnsignedLocal || policy.AllowNetwork || policy.ExpectedChannel != "local" {
+		t.Fatalf("local policy = %#v, %v", policy, err)
+	}
+	releaseTrustKeyBase64 = base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))
+	releaseChannel = "stable"
+	policy, err = AcquisitionBuildPolicy()
+	if err != nil || policy.AllowUnsignedLocal || !policy.AllowNetwork || policy.ExpectedChannel != "stable" {
+		t.Fatalf("stable policy = %#v, %v", policy, err)
+	}
+	releaseChannel = "prerelease"
+	policy, err = AcquisitionBuildPolicy()
+	if err != nil || policy.ExpectedChannel != "prerelease" || policy.AllowUnsignedLocal {
+		t.Fatalf("prerelease policy = %#v, %v", policy, err)
+	}
+	releaseChannel = "local"
+	if _, err := AcquisitionBuildPolicy(); err == nil {
+		t.Fatal("local channel with embedded release key was accepted")
+	}
+}
+
+func TestDevCompatibilityAliasUsesTheStartEntrypointAndArgumentContract(t *testing.T) {
+	previous := startCommand
+	defer func() { startCommand = previous }()
+	sentinel := errors.New("start was selected")
+	var calls [][]string
+	startCommand = func(_ launchContext, args []string, _ io.Writer) error {
+		calls = append(calls, append([]string(nil), args...))
+		return sentinel
+	}
+	var stdout, stderr bytes.Buffer
+	if err := dispatchCommand(launchContext{}, []string{"dev", "--no-open", "--foreground"}, &stdout, &stderr); !errors.Is(err, sentinel) {
+		t.Fatalf("dev alias result = %v, want start result", err)
+	}
+	if got, want := calls, [][]string{{"--no-open", "--foreground"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("dev alias start args = %#v, want %#v", got, want)
+	}
+	if !strings.Contains(stderr.String(), "deprecated") || !strings.Contains(stderr.String(), "jobctrl start") {
+		t.Fatalf("missing dev deprecation warning: %q", stderr.String())
+	}
+	if err := dispatchCommand(launchContext{}, []string{"start", "--no-open"}, &stdout, &stderr); !errors.Is(err, sentinel) {
+		t.Fatalf("start result = %v, want same start entrypoint", err)
+	}
+	if got, want := calls, [][]string{{"--no-open", "--foreground"}, {"--no-open"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("start entrypoint calls = %#v, want %#v", got, want)
+	}
+
+	startCommand = executeStart
+	for _, command := range []string{"start", "dev"} {
+		err := dispatchCommand(launchContext{}, []string{command, "--unsupported"}, io.Discard, io.Discard)
+		if err == nil || err.Error() != `unknown start option "--unsupported"` {
+			t.Fatalf("%s unsupported-argument error = %v", command, err)
+		}
+	}
+	var help bytes.Buffer
+	printHelp(&help)
+	if !strings.Contains(help.String(), "jobctrl dev [--no-open] [--foreground]  (deprecated alias for start)") {
+		t.Fatalf("help omits dev compatibility alias: %q", help.String())
+	}
+}
+
 func TestPayloadVerificationRejectsTamperingUnknownFilesAndEscapingSymlinks(t *testing.T) {
 	for _, mutate := range []struct {
 		name  string
@@ -155,6 +226,120 @@ func TestDistributionLoaderPermitsConfinedParentRelativeSymlink(t *testing.T) {
 	writeLocalEnvelope(t, root, manifest)
 	if _, err := loadAndVerifyDistributionManifest(root); err != nil {
 		t.Fatalf("safe parent-relative symlink rejected by envelope loader: %v", err)
+	}
+}
+
+func TestSignedManifestUsesDedicatedEd25519Domain(t *testing.T) {
+	root, manifest := verifiedPayloadFixture(t)
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.ReleaseChannel = "stable"
+	manifest.Signing.ManifestKeyID = "jobctrl-release-v1"
+	manifest.Signing.CodeSigning = "developer-id"
+	manifest.Signing.Notarized = true
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString(ed25519.Sign(private, signedMessage("jobctrl:manifest:v1\x00", raw)))
+	signatureRaw, err := json.Marshal(manifestSignature{SchemaVersion: 1, Status: "signed", ManifestAlgorithm: "ed25519", ManifestKeyID: "jobctrl-release-v1", Signature: &encoded, Promotable: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "manifest.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "manifest.sig"), signatureRaw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	trust := DistributionTrust{PublicKeys: map[string]ed25519.PublicKey{"jobctrl-release-v1": public}, ExpectedChannel: "stable"}
+	if _, err := VerifyDistributionPayload(root, trust); err != nil {
+		t.Fatalf("valid signed manifest rejected: %v", err)
+	}
+	wrong, _, _ := ed25519.GenerateKey(rand.Reader)
+	if _, err := VerifyDistributionPayload(root, DistributionTrust{PublicKeys: map[string]ed25519.PublicKey{"jobctrl-release-v1": wrong}, ExpectedChannel: "stable"}); err == nil {
+		t.Fatal("wrong manifest key accepted")
+	}
+	encoded = base64.StdEncoding.EncodeToString(ed25519.Sign(private, signedMessage("jobctrl:release-descriptor:v1\x00", raw)))
+	signatureRaw, _ = json.Marshal(manifestSignature{SchemaVersion: 1, Status: "signed", ManifestAlgorithm: "ed25519", ManifestKeyID: "jobctrl-release-v1", Signature: &encoded, Promotable: true})
+	if err := os.WriteFile(filepath.Join(root, "manifest.sig"), signatureRaw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyDistributionPayload(root, trust); err == nil {
+		t.Fatal("cross-domain descriptor signature accepted as manifest")
+	}
+}
+
+func TestPublicRuntimeSelectorResolvesTheCurrentImmutablePayload(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	selector := filepath.Join(home, "bin", "jobctrl")
+	if err := os.WriteFile(selector, []byte("selector"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	receipt := `{"schemaVersion":1,"buildId":"local-test-build","channel":"local","sequence":1,"artifactSha256":"` + strings.Repeat("a", 64) + `","manifestSha256":"` + strings.Repeat("b", 64) + `","descriptorSha256":"` + strings.Repeat("c", 64) + `","descriptorUrl":"local-fixture","installedAt":"2026-01-01T00:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(home, "current.json"), []byte(receipt), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root, _, err := locatePayloadRoot(selector, []string{"HOME=" + t.TempDir(), "JOBCTRL_RUNTIME_HOME=" + home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(canonicalHome, "releases", "local-test-build", "payload")
+	if root != want {
+		t.Fatalf("selector payload = %q, want %q", root, want)
+	}
+}
+
+func TestSelectorReceiptBindsCurrentPointerToVerifiedPayloadAndImmutableReceipt(t *testing.T) {
+	home := t.TempDir()
+	payload := filepath.Join(home, "releases", "local-test-build", "payload")
+	if err := os.MkdirAll(payload, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifestRaw := []byte(`{"signed":"manifest"}`)
+	if err := os.WriteFile(filepath.Join(payload, "manifest.json"), manifestRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(manifestRaw)
+	receipt := selectorReceipt{SchemaVersion: 1, BuildID: "local-test-build", Channel: "local", Sequence: 1, ArtifactSHA256: strings.Repeat("a", 64), ManifestSHA256: hex.EncodeToString(digest[:]), DescriptorSHA256: strings.Repeat("b", 64), DescriptorURL: "local-fixture", InstalledAt: "2026-01-01T00:00:00Z"}
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "releases", "local-test-build", "receipt.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := distributionManifest{BuildID: "local-test-build", ReleaseChannel: "local"}
+	if err := verifySelectorReceipt(payload, manifest, receipt); err != nil {
+		t.Fatalf("matching selector receipt rejected: %v", err)
+	}
+	tampered := receipt
+	tampered.ManifestSHA256 = strings.Repeat("c", 64)
+	if err := verifySelectorReceipt(payload, manifest, tampered); err == nil {
+		t.Fatal("manifest-digest mismatch accepted")
+	}
+	tampered = receipt
+	tampered.Channel = "stable"
+	if err := verifySelectorReceipt(payload, manifest, tampered); err == nil {
+		t.Fatal("release-channel mismatch accepted")
+	}
+	immutable := receipt
+	immutable.Sequence = 2
+	raw, _ = json.Marshal(immutable)
+	if err := os.WriteFile(filepath.Join(home, "releases", "local-test-build", "receipt.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySelectorReceipt(payload, manifest, receipt); err == nil {
+		t.Fatal("current receipt differing from immutable release receipt accepted")
 	}
 }
 

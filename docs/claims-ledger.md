@@ -230,18 +230,17 @@ source and a resolving pointer.
 
 | Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
 | --- | --- | --- | --- | --- | --- | --- |
-| CL-081 | A one-line bootstrap script clones (or fast-forwards) a user-owned checkout and hands off to the guided interactive installer, which asks before any system-level (Homebrew) install and reports what it skipped. | README (Get Started); Getting Started (Install Dependencies) | Current | repo owner | `scripts/get`; `scripts/install` (confirm prompts, summary); `apps/api/test/install-script-contract.test.ts` | 2026-07-10 |
-| CL-082 | The public `ebarti/homebrew-tap` publishes a HEAD-only formula that installs the toolchain dependencies (git, node, corepack, uv, temporal, poppler) plus a global `jobctrl` launcher, which bootstraps and then proxies commands into the user-owned checkout. There is no stable tag formula yet, so the explicit install contract is `brew install ebarti/tap/jobctrl --HEAD`. The in-repo formula is canonical; an exact-copy synchronization workflow and write-scoped deploy key are configured in this change, but the first merged Actions run remains to be verified. | README (Get Started); Getting Started (Install Dependencies) | Beta | repo owner | `packaging/homebrew/Formula/jobctrl.rb`; `scripts/jobctrl-launcher`; `.github/workflows/sync-homebrew-tap.yml`; [public tap formula](https://github.com/ebarti/homebrew-tap/blob/main/Formula/jobctrl.rb); [publish checklist §9.5](publish-checklist.md) | 2026-07-10 |
+| CL-081 | The current public setup path is a source checkout plus `scripts/install`; it runs the guided contributor-tool setup and reports what it skipped. The bundled network installer intentionally fails closed until P6 publishes a signed pin. | README (Get Started); Getting Started (Install Dependencies) | Current | repo owner | `scripts/install`; `scripts/get`; `docs/local-development.md` | 2026-07-10 |
+| CL-082 | P4 provides a deterministic ZIP fixture, local-only descriptor contract, and one Homebrew formula template/generator. There is no public stable formula or curl release URL yet: P6 must provision the release public key, sign the descriptor, smoke-test the published ZIP, render the formula, and call the fail-closed reusable tap workflow. | Publish checklist §9.5; Local Development | Roadmap | repo owner | `packaging/homebrew/Formula/jobctrl.rb.tmpl`; `scripts/distribution-homebrew.mjs`; `packaging/distribution/release-keys.json`; `.github/workflows/sync-homebrew-tap.yml` | 2026-07-10 |
 | CL-083 | Contact records are kept per company or application with per-fact provenance and CSV import; outreach drafts are truthful and reviewable under the same anti-fabrication gates as resumes; the user sends messages themselves and logs the send (date + channel) — the only way an outreach thread is marked sent; follow-up reminders are surfaced-only suggestions; there is no outreach send transport. This does not describe the separately approval-bound Gmail email-application path in CL-062. | README (What It Does — contacts/outreach); Normal Flows §11 (Keep Contacts); Configuration (Contact Research; Outreach Follow-Ups) | Current | repo owner | Outreach planner close-out (`plans/implemented/2026-07-05-outreach-planner-plan.md`, INV-1 no-auto-send, four-layer enforcement + fixtures); [normal flows](user/normal-flows.md) §11; [configuration](user/configuration.md) (Contact Research, Outreach Follow-Ups) | 2026-07-09 |
 | CL-084 | JobCtrl's source is distributed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). | README (License); Comparison (Open-source license) | Current | repo owner | [`LICENSE`](../LICENSE); `package.json`; `workers/automation/pyproject.toml` | 2026-07-09 |
 | CL-085 | Native Windows Credential Manager and Linux Secret Service/keyring adapters are planned with parity to the shipped macOS Keychain boundary: environment precedence, presence-only API responses, restart-to-activate lifecycle, bounded failure behavior, and platform-host validation before promotion. | ROADMAP (Next) | Roadmap | repo owner | [`ROADMAP.md`](../ROADMAP.md) | 2026-07-10 |
 
-> **Why CL-082 is recommended Beta.** The tap formula is publicly reachable and
-> syntax/style/audit checks pass, but it is HEAD-only and the new cross-repo
-> synchronization path has not yet completed its first merged GitHub Actions
-> run. Promote it to `Current` only after the first sync readback and an
-> end-to-end tap install are recorded; a workflow file plus credentials is not
-> execution evidence.
+> **Why CL-082 remains roadmap work.** The checked-in artifact is a template
+> and P4's descriptor is deliberately unsigned and local-file-only. Promote it
+> only after P6 has independently verified a signed descriptor, published ZIP,
+> formula render, tap synchronization, and end-to-end install; a workflow file
+> plus credentials is not execution evidence.
 
 ## Maintenance cadence and re-review
 
@@ -305,7 +304,7 @@ altered the `Current`/`Beta` verdict.
 | **CL-055** | `Beta` | Outcome rates are descriptive and small-sample gated, not causal measurements. | `Current` would remove the maturity signal while the load-bearing qualifiers remain necessary. |
 | **CL-062** | `Current` | Gmail changed after the prior freeze from read-only to approval-bound application sending. | `Beta` requires Gmail-send claims in README/Security/Data & Safety to carry the label; `Current` accepts the deterministic gates as sufficient maturity. |
 | **CL-072** | `Current` | Public PR CI is intentionally manual after review, not automatic; the claim now states the real policy. | `Beta` would imply the scanner itself is rough rather than distinguish trigger policy from capability. |
-| **CL-082** | `Beta` | The tap is live, but the formula is HEAD-only and the configured sync has not completed its first merged Actions run. | Promote only after sync readback and end-to-end tap install evidence; leaving `Beta` requires an explicit HEAD/maturity qualifier in install copy. |
+| **CL-082** | `Roadmap` | P4's formula is an unrendered template and the only descriptor is unsigned/local. | Promote only after P6 signed-descriptor verification, published-ZIP smoke, tap sync readback, and end-to-end install evidence. |
 
 ### Claim-by-claim guided-review checklist
 

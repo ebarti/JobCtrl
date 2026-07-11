@@ -26,7 +26,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { Readable } from "node:stream";
 import { finished, pipeline } from "node:stream/promises";
-import { createGzip } from "node:zlib";
+import { createDeflateRaw, createGzip } from "node:zlib";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -43,10 +43,14 @@ import {
   sha256File,
   verifyLockedArchive,
 } from "./distribution-archive.mjs";
+import { writeLocalReleaseBundle } from "./distribution-release.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DISTRIBUTION_DIR = path.join(REPO_ROOT, "packaging", "distribution");
 const ENVELOPE_FILES = new Set(["manifest.json", "manifest.sig"]);
+const RELEASE_CHANNELS = new Set(["local", "prerelease", "stable"]);
+const ZIP_UINT32_MAX = 0xffffffff;
+const ZIP_EPOCH_FLOOR = 315532800;
 const GO_TOOLCHAIN_VERSION = "go1.26.4";
 const GO_TOOLCHAIN_LICENSE_SHA256 = "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad";
 const GO_TOOLCHAIN_ARCHIVE_URL = "https://go.dev/dl/go1.26.4.darwin-arm64.tar.gz";
@@ -474,6 +478,13 @@ async function writeFixtureComponents(payloadRoot, contracts) {
   for (const [componentId, relativeRoot] of contracts.componentPaths) {
     const root = path.join(payloadRoot, relativeRoot);
     await mkdir(root, { recursive: true, mode: 0o755 });
+    if (componentId === "jobctrl-launcher") {
+      for (const name of ["jobctrl", "jobctrl-installer"]) {
+        await writeFile(path.join(root, name), `#!/bin/sh\necho fixture:${name}:${contracts.versions[componentId]}\n`, { mode: 0o755 });
+        await chmod(path.join(root, name), 0o755);
+      }
+      continue;
+    }
     const executable = ["jobctrl-launcher", "node-runtime", "python-runtime", "temporal-runtime", "playwright-mcp"].includes(componentId);
     const filename = executable ? "bin" : "payload";
     await writeFile(path.join(root, filename), `fixture:${componentId}:${contracts.versions[componentId]}\n`, { mode: executable ? 0o755 : 0o644 });
@@ -1048,14 +1059,51 @@ async function measureProviderPackInstalledTrees(payloadRoot, root, contracts, s
   return measurement;
 }
 
-export function createNativeLauncherBuildPlan({ payloadRoot, root, platform, sourceDateEpoch, goExecutable, goRoot }) {
+function validateReleaseBuildBinding(releaseChannel, releaseTrustKeyBase64) {
+  invariant(RELEASE_CHANNELS.has(releaseChannel), "native release channel is invalid");
+  invariant(typeof releaseTrustKeyBase64 === "string", "native release trust key must be a string");
+  if (releaseChannel === "local") {
+    invariant(releaseTrustKeyBase64 === "", "local native builds must not embed a release trust key");
+    return;
+  }
+  let decoded;
+  try {
+    decoded = Buffer.from(releaseTrustKeyBase64, "base64");
+  } catch {
+    throw new Error("signed native builds require a base64 Ed25519 release trust key");
+  }
+  invariant(decoded.length === 32 && decoded.toString("base64") === releaseTrustKeyBase64, "signed native builds require a base64 Ed25519 release trust key");
+}
+
+export function createNativeLauncherBuildPlan({
+  payloadRoot,
+  root,
+  platform,
+  sourceDateEpoch,
+  goExecutable,
+  goRoot,
+  binary = "jobctrl",
+  releaseChannel = "local",
+  releaseTrustKeyBase64 = "",
+}) {
   invariant(platform?.os === "darwin" && platform?.arch === "arm64", "native launcher build target must be darwin-arm64");
   invariant(Number.isInteger(sourceDateEpoch) && sourceDateEpoch >= 0, "native launcher SOURCE_DATE_EPOCH must be non-negative");
   invariant(typeof goExecutable === "string" && path.isAbsolute(goExecutable), "native launcher compiler executable must be an absolute verified path");
   invariant(typeof goRoot === "string" && path.isAbsolute(goRoot), "native launcher GOROOT must be an absolute verified path");
+  invariant(["jobctrl", "jobctrl-installer"].includes(binary), "native binary must be jobctrl or jobctrl-installer");
+  validateReleaseBuildBinding(releaseChannel, releaseTrustKeyBase64);
+  const ldflags = [
+    "-s",
+    "-w",
+    "-buildid=",
+    `-X github.com/ebarti/jobctrl/launcher/internal/launcher.releaseChannel=${releaseChannel}`,
+  ];
+  if (releaseTrustKeyBase64) {
+    ldflags.push(`-X github.com/ebarti/jobctrl/launcher/internal/launcher.releaseTrustKeyBase64=${releaseTrustKeyBase64}`);
+  }
   return {
     command: goExecutable,
-    args: ["build", "-buildvcs=false", "-trimpath", "-ldflags=-s -w -buildid=", "-o", path.join(payloadRoot, "launcher", "jobctrl"), "./cmd/jobctrl"],
+    args: ["build", "-buildvcs=false", "-trimpath", `-ldflags=${ldflags.join(" ")}`, "-o", path.join(payloadRoot, "launcher", binary), `./cmd/${binary}`],
     cwd: path.join(root, "launcher"),
     environment: {
       CGO_ENABLED: "0",
@@ -1112,20 +1160,25 @@ async function prepareNativeGoToolchain(root, cacheDirectory, scratchDirectory, 
   return { archivePath, lock, goExecutable, goRoot, version };
 }
 
-async function writeGeneratedComponents(payloadRoot, root, contracts, sourceDateEpoch, nativeGoToolchain) {
+async function writeGeneratedComponents(payloadRoot, root, contracts, sourceDateEpoch, nativeGoToolchain, releaseBuild = {}) {
   const launcherRoot = componentRoot(payloadRoot, contracts, "jobctrl-launcher");
   await mkdir(launcherRoot, { recursive: true, mode: 0o755 });
   invariant(nativeGoToolchain?.lock?.sha256 === contracts.launcherToolchain.archive.sha256, "native launcher compiler does not match the locked toolchain contract");
-  const plan = createNativeLauncherBuildPlan({
-    payloadRoot,
-    root,
-    platform: contracts.platform,
-    sourceDateEpoch,
-    goExecutable: nativeGoToolchain.goExecutable,
-    goRoot: nativeGoToolchain.goRoot,
-  });
-  await run(plan.command, plan.args, { cwd: plan.cwd, env: { ...process.env, ...plan.environment } });
+  for (const binary of ["jobctrl", "jobctrl-installer"]) {
+    const plan = createNativeLauncherBuildPlan({
+      payloadRoot,
+      root,
+      platform: contracts.platform,
+      sourceDateEpoch,
+      goExecutable: nativeGoToolchain.goExecutable,
+      goRoot: nativeGoToolchain.goRoot,
+      binary,
+      ...releaseBuild,
+    });
+    await run(plan.command, plan.args, { cwd: plan.cwd, env: { ...process.env, ...plan.environment } });
+  }
   await chmod(path.join(launcherRoot, "jobctrl"), 0o755);
+  await chmod(path.join(launcherRoot, "jobctrl-installer"), 0o755);
   await copyFile(path.join(root, "launcher", "runtime-manifest.json"), path.join(launcherRoot, "runtime-manifest.json"));
   await chmod(path.join(launcherRoot, "runtime-manifest.json"), 0o644);
 
@@ -2339,25 +2392,59 @@ async function managedMcpChromiumExecutable(payloadRoot, contracts) {
   return requireFile(executable, "managed Chromium executable for Playwright MCP smoke");
 }
 
-async function smokeExtractedPayload(archivePath, outputRoot, contracts) {
+export async function prepareExtractedSmokeLayout({ archivePath, outputRoot }) {
   const extractedRoot = path.join(outputRoot, "clean-extraction");
   await rm(extractedRoot, { recursive: true, force: true });
-  await mkdir(extractedRoot, { recursive: true, mode: 0o755 });
-  await run("/usr/bin/tar", ["-xzf", archivePath, "-C", extractedRoot], { cwd: outputRoot });
+  const extractionPayloadRoot = path.join(extractedRoot, "payload");
+  await mkdir(extractionPayloadRoot, { recursive: true, mode: 0o755 });
+  // This uses the stock platform ZIP extractor rather than the builder's own
+  // parser, exercising the same transport shape an installed release uses.
+  await run("/usr/bin/unzip", ["-q", archivePath, "-d", extractionPayloadRoot], { cwd: outputRoot });
   // Python resolves the state directory before writing its heartbeat while
   // Node's path.resolve does not collapse macOS /tmp -> /private/tmp. Anchor
-  // the full extracted runtime to one canonical identity before either child
-  // starts so the API correctly accepts its worker heartbeat.
+  // the payload and its sibling state root to canonical identities before
+  // either child starts so the API correctly accepts its worker heartbeat.
   const canonicalExtractedRoot = await realpath(extractedRoot);
-  const payloadRoot = path.join(canonicalExtractedRoot, "payload");
+  const payloadRoot = await realpath(path.join(canonicalExtractedRoot, "payload"));
+  const homeRoot = path.join(canonicalExtractedRoot, "home");
+  await mkdir(homeRoot, { recursive: true, mode: 0o700 });
+  const canonicalHomeRoot = await realpath(homeRoot);
+  const stateRoot = path.join(canonicalHomeRoot, ".jobctrl");
+  await mkdir(stateRoot, { recursive: true, mode: 0o700 });
+  const canonicalStateRoot = await realpath(stateRoot);
+  invariant(
+    canonicalHomeRoot !== payloadRoot
+      && !canonicalHomeRoot.startsWith(`${payloadRoot}${path.sep}`)
+      && !payloadRoot.startsWith(`${canonicalHomeRoot}${path.sep}`)
+      && canonicalStateRoot !== payloadRoot
+      && !canonicalStateRoot.startsWith(`${payloadRoot}${path.sep}`)
+      && !payloadRoot.startsWith(`${canonicalStateRoot}${path.sep}`),
+    "distribution smoke HOME/state must be a sibling of the immutable payload root",
+  );
+  return {
+    extractedRoot,
+    canonicalExtractedRoot,
+    payloadRoot,
+    homeRoot: canonicalHomeRoot,
+    stateRoot: canonicalStateRoot,
+  };
+}
+
+async function smokeExtractedPayload(archivePath, outputRoot, contracts) {
+  const {
+    canonicalExtractedRoot,
+    payloadRoot,
+    homeRoot,
+    stateRoot,
+  } = await prepareExtractedSmokeLayout({ archivePath, outputRoot });
   const manifest = JSON.parse(await readFile(path.join(payloadRoot, "manifest.json"), "utf8"));
   validateDistributionManifest(manifest, contracts);
   await verifyExactPayloadTree(payloadRoot, manifest);
   const extractionForbiddenAudit = await scanForbiddenPayload(payloadRoot, { forbiddenAbsolutePaths: [REPO_ROOT, outputRoot] });
 
   const stockEnvironment = {
-    HOME: path.join(canonicalExtractedRoot, "home"),
-    JOBCTRL_DIR: path.join(canonicalExtractedRoot, "home", ".jobctrl"),
+    HOME: homeRoot,
+    JOBCTRL_DIR: stateRoot,
     JOBCTRL_PAYLOAD_DIR: payloadRoot,
     JOBCTRL_RUNTIME_MODE: "bundled",
     JOBCTRL_WEB_ASSETS_DIR: path.join(payloadRoot, contracts.componentPaths.get("jobctrl-web")),
@@ -2683,7 +2770,7 @@ export async function smokeExistingRealArtifact({ outputDirectory, root = REPO_R
   invariant(outputDirectory, "existing real artifact smoke requires outputDirectory");
   const contracts = await loadBuildContracts(root);
   const outputRoot = path.resolve(outputDirectory);
-  const archivePath = path.join(outputRoot, `jobctrl-${contracts.versions["jobctrl-launcher"]}-${contracts.platform.id}.tar.gz`);
+  const archivePath = path.join(outputRoot, `jobctrl-${contracts.versions["jobctrl-launcher"]}-${contracts.platform.id}.zip`);
   invariant(await exists(archivePath), `existing real artifact archive is missing: ${archivePath}`);
   return smokeExtractedPayload(archivePath, outputRoot, contracts);
 }
@@ -3297,6 +3384,181 @@ export async function createDeterministicTarGz(payloadRoot, archivePath, sourceD
   return { compressedBytes: archiveStat.size, sha256: await sha256File(archivePath), fileCount: files.length };
 }
 
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < table.length; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ ((value & 1) === 1 ? 0xedb88320 : 0);
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+function updateCrc32(value, chunk) {
+  let crc = value;
+  for (const byte of chunk) crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ byte) & 0xff];
+  return crc >>> 0;
+}
+
+function zipDosDateTime(sourceDateEpoch) {
+  invariant(Number.isInteger(sourceDateEpoch) && sourceDateEpoch >= 0 && sourceDateEpoch <= ZIP_UINT32_MAX, "ZIP SOURCE_DATE_EPOCH must be a non-negative uint32");
+  const date = new Date(Math.max(sourceDateEpoch, ZIP_EPOCH_FLOOR) * 1000);
+  const year = date.getUTCFullYear();
+  invariant(year >= 1980 && year <= 2107, "ZIP SOURCE_DATE_EPOCH is outside the DOS timestamp range");
+  return {
+    date: ((year - 1980) << 9) | ((date.getUTCMonth() + 1) << 5) | date.getUTCDate(),
+    time: (date.getUTCHours() << 11) | (date.getUTCMinutes() << 5) | Math.floor(date.getUTCSeconds() / 2),
+  };
+}
+
+function zipExtendedTimestamp(sourceDateEpoch) {
+  const extra = Buffer.alloc(9);
+  extra.writeUInt16LE(0x5455, 0);
+  extra.writeUInt16LE(5, 2);
+  extra.writeUInt8(1, 4);
+  extra.writeUInt32LE(sourceDateEpoch, 5);
+  return extra;
+}
+
+async function zipEntryMetadata(payloadRoot, file) {
+  const source = file.type === "symlink"
+    ? Readable.from([Buffer.from(file.target, "utf8")])
+    : createReadStream(path.join(payloadRoot, ...file.path.split("/")));
+  let crc = 0xffffffff;
+  let size = 0;
+  for await (const chunk of source) {
+    crc = updateCrc32(crc, chunk);
+    size += chunk.length;
+  }
+  invariant(size === file.sizeBytes, `${file.path}: ZIP source size drifted from manifest inventory`);
+  return { crc32: (crc ^ 0xffffffff) >>> 0, size };
+}
+
+function zipLocalHeader({ name, extra, dos, method }) {
+  const header = Buffer.alloc(30 + name.length + extra.length);
+  header.writeUInt32LE(0x04034b50, 0);
+  header.writeUInt16LE(20, 4);
+  header.writeUInt16LE(0x0008, 6); // data descriptor: stream without buffering the payload
+  header.writeUInt16LE(method, 8);
+  header.writeUInt16LE(dos.time, 10);
+  header.writeUInt16LE(dos.date, 12);
+  header.writeUInt32LE(0, 14);
+  header.writeUInt32LE(0, 18);
+  header.writeUInt32LE(0, 22);
+  header.writeUInt16LE(name.length, 26);
+  header.writeUInt16LE(extra.length, 28);
+  name.copy(header, 30);
+  extra.copy(header, 30 + name.length);
+  return header;
+}
+
+function zipCentralDirectoryHeader(entry) {
+  const header = Buffer.alloc(46 + entry.name.length + entry.extra.length);
+  header.writeUInt32LE(0x02014b50, 0);
+  header.writeUInt16LE(0x0314, 4); // Unix creator, ZIP 2.0
+  header.writeUInt16LE(20, 6);
+  header.writeUInt16LE(0x0008, 8);
+  header.writeUInt16LE(entry.method, 10);
+  header.writeUInt16LE(entry.dos.time, 12);
+  header.writeUInt16LE(entry.dos.date, 14);
+  header.writeUInt32LE(entry.crc32, 16);
+  header.writeUInt32LE(entry.compressedSize, 20);
+  header.writeUInt32LE(entry.size, 24);
+  header.writeUInt16LE(entry.name.length, 28);
+  header.writeUInt16LE(entry.extra.length, 30);
+  header.writeUInt16LE(0, 32);
+  header.writeUInt16LE(0, 34);
+  header.writeUInt16LE(0, 36);
+  const mode = entry.type === "symlink" ? 0o120777 : 0o100000 | Number.parseInt(entry.mode, 8);
+  header.writeUInt32LE((mode << 16) >>> 0, 38);
+  header.writeUInt32LE(entry.offset, 42);
+  entry.name.copy(header, 46);
+  entry.extra.copy(header, 46 + entry.name.length);
+  return header;
+}
+
+function zipDataDescriptor(entry) {
+  const descriptor = Buffer.alloc(16);
+  descriptor.writeUInt32LE(0x08074b50, 0);
+  descriptor.writeUInt32LE(entry.crc32, 4);
+  descriptor.writeUInt32LE(entry.compressedSize, 8);
+  descriptor.writeUInt32LE(entry.size, 12);
+  return descriptor;
+}
+
+// createDeterministicZip streams each payload file through raw Deflate and
+// uses ZIP data descriptors, so production artifacts remain bounded by file
+// streams rather than a whole-payload buffer. The central directory records
+// Unix file modes and safe symlink targets for the native installer.
+export async function createDeterministicZip(payloadRoot, archivePath, sourceDateEpoch) {
+  const files = await buildFileInventory(payloadRoot);
+  const dos = zipDosDateTime(sourceDateEpoch);
+  const extra = zipExtendedTimestamp(sourceDateEpoch);
+  await mkdir(path.dirname(archivePath), { recursive: true, mode: 0o755 });
+  const output = createWriteStream(archivePath, { mode: 0o644 });
+  let offset = 0;
+  const entries = [];
+  async function writeChunk(chunk) {
+    invariant(offset + chunk.length <= ZIP_UINT32_MAX, "ZIP64 output is not supported");
+    offset += chunk.length;
+    if (!output.write(chunk)) await once(output, "drain");
+  }
+  try {
+    for (const file of files) {
+      const name = Buffer.from(file.path, "utf8");
+      const metadata = await zipEntryMetadata(payloadRoot, file);
+      invariant(metadata.size <= ZIP_UINT32_MAX, `${file.path}: ZIP entry exceeds ZIP32 size limit`);
+      const entry = {
+        ...file,
+        ...metadata,
+        name,
+        extra,
+        dos,
+        method: 8,
+        offset,
+        compressedSize: 0,
+      };
+      await writeChunk(zipLocalHeader(entry));
+      const source = file.type === "symlink"
+        ? Readable.from([Buffer.from(file.target, "utf8")])
+        : createReadStream(path.join(payloadRoot, ...file.path.split("/")));
+      const deflater = createDeflateRaw({ level: 9 });
+      source.pipe(deflater);
+      for await (const chunk of deflater) {
+        entry.compressedSize += chunk.length;
+        invariant(entry.compressedSize <= ZIP_UINT32_MAX, `${file.path}: compressed ZIP entry exceeds ZIP32 size limit`);
+        await writeChunk(chunk);
+      }
+      await writeChunk(zipDataDescriptor(entry));
+      entries.push(entry);
+    }
+    const centralDirectoryOffset = offset;
+    for (const entry of entries) await writeChunk(zipCentralDirectoryHeader(entry));
+    const centralDirectorySize = offset - centralDirectoryOffset;
+    invariant(entries.length <= 0xffff, "ZIP entry count exceeds ZIP32 limit");
+    invariant(centralDirectorySize <= ZIP_UINT32_MAX, "ZIP central directory exceeds ZIP32 limit");
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(0, 4);
+    end.writeUInt16LE(0, 6);
+    end.writeUInt16LE(entries.length, 8);
+    end.writeUInt16LE(entries.length, 10);
+    end.writeUInt32LE(centralDirectorySize, 12);
+    end.writeUInt32LE(centralDirectoryOffset, 16);
+    end.writeUInt16LE(0, 20);
+    await writeChunk(end);
+    output.end();
+    await finished(output);
+  } catch (error) {
+    output.destroy();
+    await rm(archivePath, { force: true });
+    throw error;
+  }
+  await chmod(archivePath, 0o644);
+  const archiveStat = await stat(archivePath);
+  return { compressedBytes: archiveStat.size, sha256: await sha256File(archivePath), fileCount: files.length };
+}
+
 function compareProviderPackMeasurements(current, baseline = null) {
   if (current === undefined) return undefined;
   invariant(Array.isArray(current), "current provider-pack measurement must be an array");
@@ -3418,8 +3680,8 @@ export async function buildFixturePayload({
   const manifest = await createLocalManifest(payloadRoot, contracts, { buildId, sourceDateEpoch });
   await verifyExactPayloadTree(payloadRoot, manifest);
   await scanForbiddenPayload(payloadRoot, { forbiddenAbsolutePaths: [root, outputRoot] });
-  const archivePath = path.join(outputRoot, `jobctrl-${contracts.versions["jobctrl-launcher"]}-${contracts.platform.id}.tar.gz`);
-  const compressed = await createDeterministicTarGz(payloadRoot, archivePath, sourceDateEpoch);
+  const archivePath = path.join(outputRoot, `jobctrl-${contracts.versions["jobctrl-launcher"]}-${contracts.platform.id}.zip`);
+  const compressed = await createDeterministicZip(payloadRoot, archivePath, sourceDateEpoch);
   const installedBytes = manifest.files.reduce((sum, file) => sum + file.sizeBytes, 0)
     + (await stat(path.join(payloadRoot, "manifest.json"))).size
     + (await stat(path.join(payloadRoot, "manifest.sig"))).size;
@@ -3448,9 +3710,24 @@ export async function buildFixturePayload({
     providerPackTotals: fixtureSizeAccounting.providerPackTotals,
   };
   await writeJson(path.join(outputRoot, "size-report.json"), sizeReport);
+  const installerPath = path.join(outputRoot, "jobctrl-installer");
+  await copyFile(path.join(payloadRoot, "launcher", "jobctrl-installer"), installerPath);
+  await chmod(installerPath, 0o755);
+  const release = await writeLocalReleaseBundle({
+    outputDirectory: outputRoot,
+    archivePath,
+    manifestPath: path.join(payloadRoot, "manifest.json"),
+    installerPath,
+    buildId,
+    appVersion: contracts.versions["jobctrl-launcher"],
+    platform: contracts.platform,
+  });
   const result = {
     schemaVersion: 1,
     mode: "fixture",
+    buildId,
+    releaseChannel: "local",
+    archiveType: "zip",
     payloadRoot,
     archivePath,
     manifestPath: path.join(payloadRoot, "manifest.json"),
@@ -3458,6 +3735,7 @@ export async function buildFixturePayload({
     archiveSha256: compressed.sha256,
     installedBytes,
     compressedBytes: compressed.compressedBytes,
+    release,
   };
   await writeJson(path.join(outputRoot, "build-result.json"), result);
   return { ...result, manifest, sizeReport };
@@ -3469,9 +3747,13 @@ export async function buildRealPayload({
   buildId = "local-real-build-0001",
   sourceDateEpoch = Number.parseInt(process.env.SOURCE_DATE_EPOCH ?? "0", 10),
   baselineSizeReportPath = null,
+  releaseChannel = "local",
+  releaseTrustKeyBase64 = "",
   root = REPO_ROOT,
 } = {}) {
   invariant(outputDirectory, "real build requires outputDirectory");
+  validateReleaseBuildBinding(releaseChannel, releaseTrustKeyBase64);
+  invariant(releaseChannel === "local" && releaseTrustKeyBase64 === "", "P4 builds only unsigned-local release envelopes; P6 signs and binds prerelease/stable artifacts after its release gates");
   const contracts = await loadBuildContracts(root);
   const baselineSizeReport = baselineSizeReportPath === null
     ? null
@@ -3492,7 +3774,7 @@ export async function buildRealPayload({
     await copyPreparedApplicationInputs(payloadRoot, root, contracts);
     await Promise.all([
       assemblePlaywrightMcp(payloadRoot, root, contracts, externalInputs),
-      writeGeneratedComponents(payloadRoot, root, contracts, sourceDateEpoch, nativeGoToolchain),
+      writeGeneratedComponents(payloadRoot, root, contracts, sourceDateEpoch, nativeGoToolchain, { releaseChannel, releaseTrustKeyBase64 }),
     ]);
     const pythonSbom = await preparePythonWorker(payloadRoot, root, contracts, scratchDirectory);
     const providerPackMeasurement = await measureProviderPackInstalledTrees(payloadRoot, root, contracts, scratchDirectory);
@@ -3573,8 +3855,8 @@ export async function buildRealPayload({
       })),
     });
     await writeJson(path.join(evidenceRoot, "provider-pack-installed-trees.json"), providerPackMeasurement);
-    const archivePath = path.join(outputRoot, `jobctrl-${contracts.versions["jobctrl-launcher"]}-${contracts.platform.id}.tar.gz`);
-    const compressed = await createDeterministicTarGz(payloadRoot, archivePath, sourceDateEpoch);
+    const archivePath = path.join(outputRoot, `jobctrl-${contracts.versions["jobctrl-launcher"]}-${contracts.platform.id}.zip`);
+    const compressed = await createDeterministicZip(payloadRoot, archivePath, sourceDateEpoch);
     const smoke = await smokeExtractedPayload(archivePath, outputRoot, contracts);
     await rm(path.join(outputRoot, "clean-extraction"), { recursive: true, force: true });
 
@@ -3601,9 +3883,25 @@ export async function buildRealPayload({
       providerPackTotals: sizeAccounting.providerPackTotals,
     };
     await writeJson(path.join(outputRoot, "size-report.json"), sizeReport);
+    const installerPath = path.join(outputRoot, "jobctrl-installer");
+    await copyFile(path.join(payloadRoot, "launcher", "jobctrl-installer"), installerPath);
+    await chmod(installerPath, 0o755);
+    const release = await writeLocalReleaseBundle({
+      outputDirectory: outputRoot,
+      archivePath,
+      manifestPath: path.join(payloadRoot, "manifest.json"),
+      installerPath,
+      buildId,
+      appVersion: contracts.versions["jobctrl-launcher"],
+      platform: contracts.platform,
+    });
     const result = {
       schemaVersion: 1,
       mode: "real",
+      buildId,
+      releaseChannel: "local",
+      nativeLauncherReleaseChannel: releaseChannel,
+      archiveType: "zip",
       payloadRoot,
       archivePath,
       manifestPath: path.join(payloadRoot, "manifest.json"),
@@ -3615,6 +3913,7 @@ export async function buildRealPayload({
       machO,
       forbiddenAudit,
       smoke,
+      release,
     };
     await writeJson(path.join(outputRoot, "build-result.json"), result);
     return { ...result, manifest, sizeReport };

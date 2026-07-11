@@ -154,7 +154,9 @@ PACKAGE_VERSION_PATHS = (
     Path("packages/domain-types/package.json"),
     Path("packages/tsconfig/package.json"),
 )
-HOMEBREW_FORMULA_PATH = Path("packaging/homebrew/Formula/jobctrl.rb")
+HOMEBREW_FORMULA_TEMPLATE_PATH = Path("packaging/homebrew/Formula/jobctrl.rb.tmpl")
+HOMEBREW_FORMULA_GENERATOR_PATH = Path("scripts/distribution-homebrew.mjs")
+HOMEBREW_RELEASE_TRUST_PATH = Path("packaging/distribution/release-keys.json")
 HOMEBREW_SYNC_WORKFLOW_PATH = Path(".github/workflows/sync-homebrew-tap.yml")
 PUBLISH_WORKFLOW_PATH = Path(".github/workflows/release-pypi.yml")
 LEGACY_PUBLISH_WORKFLOW_PATH = Path(".github/workflows/publish.yml")
@@ -516,27 +518,56 @@ def _project_version(root: Path) -> str | None:
 
 
 def _homebrew_sync_findings(root: Path) -> list[str]:
-    if not (root / HOMEBREW_FORMULA_PATH).is_file():
+    homebrew_surfaces = (
+        HOMEBREW_FORMULA_TEMPLATE_PATH,
+        HOMEBREW_FORMULA_GENERATOR_PATH,
+        HOMEBREW_RELEASE_TRUST_PATH,
+        HOMEBREW_SYNC_WORKFLOW_PATH,
+    )
+    if not any((root / surface).exists() for surface in homebrew_surfaces):
         return []
-    formula = (root / HOMEBREW_FORMULA_PATH).read_text(encoding="utf-8")
     findings = []
-    if 'depends_on "corepack"' not in formula:
+    try:
+        template = (root / HOMEBREW_FORMULA_TEMPLATE_PATH).read_text(encoding="utf-8")
+    except FileNotFoundError:
         findings.append(
-            f"{HOMEBREW_FORMULA_PATH}: does not install Corepack required by the launcher and installer"
+            f"{HOMEBREW_FORMULA_TEMPLATE_PATH}: missing canonical Homebrew formula template"
+        )
+        template = ""
+    if "class Jobctrl < Formula" not in template:
+        findings.append(
+            f"{HOMEBREW_FORMULA_TEMPLATE_PATH}: does not define the Jobctrl formula template"
+        )
+    if "depends_on" in template or re.search(r"(?m)^\s*head\s+", template):
+        findings.append(
+            f"{HOMEBREW_FORMULA_TEMPLATE_PATH}: must not declare Homebrew dependencies or a HEAD source path"
+        )
+    if not (root / HOMEBREW_FORMULA_GENERATOR_PATH).is_file():
+        findings.append(
+            f"{HOMEBREW_FORMULA_GENERATOR_PATH}: missing Homebrew descriptor/formula generator"
+        )
+    try:
+        trust = json.loads((root / HOMEBREW_RELEASE_TRUST_PATH).read_text(encoding="utf-8"))
+        if not isinstance(trust, dict) or set(trust) != {"schemaVersion", "keys"} or trust.get("schemaVersion") != 1 or not isinstance(trust.get("keys"), dict):
+            raise ValueError("invalid registry")
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        findings.append(
+            f"{HOMEBREW_RELEASE_TRUST_PATH}: missing or invalid canonical release trust registry"
         )
     try:
         workflow = (root / HOMEBREW_SYNC_WORKFLOW_PATH).read_text(encoding="utf-8")
     except FileNotFoundError:
         return findings + [
-            f"{HOMEBREW_SYNC_WORKFLOW_PATH}: canonical Homebrew formula has no tap synchronization workflow"
+            f"{HOMEBREW_SYNC_WORKFLOW_PATH}: canonical Homebrew template has no P6-gated tap synchronization workflow"
         ]
 
     required_markers = {
-        'branches: ["main"]': "does not synchronize canonical formula changes from main",
-        'types: [published]': "does not synchronize published releases",
+        "workflow_call:": "is not reusable by the P6 release workflow",
+        "workflow_dispatch:": "has no explicit fail-closed manual verification route",
         'repository: ebarti/homebrew-tap': "does not target ebarti/homebrew-tap",
         'ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}': "does not use the write-scoped tap deploy key",
-        "packaging/homebrew/Formula/jobctrl.rb": "does not read the canonical formula path",
+        "node scripts/distribution-homebrew.mjs verify-promotion": "does not independently verify signed descriptor and promotion evidence",
+        "VERIFIED_FORMULA_PATH": "does not stage the verified formula at a fixed runner path",
         "homebrew-tap/Formula/jobctrl.rb": "does not write the tap formula path",
         "git status --short --untracked-files=all -- Formula/jobctrl.rb": "does not detect an absent or untracked tap formula",
     }
@@ -546,6 +577,7 @@ def _homebrew_sync_findings(root: Path) -> list[str]:
         if marker not in workflow
     )
     strict_gate = workflow.find("python3 scripts/release_check.py --strict-prompt")
+    promotion_gate = workflow.find("node scripts/distribution-homebrew.mjs verify-promotion")
     tap_checkout = workflow.find("repository: ebarti/homebrew-tap")
     if strict_gate < 0:
         findings.append(
@@ -554,6 +586,18 @@ def _homebrew_sync_findings(root: Path) -> list[str]:
     elif tap_checkout >= 0 and strict_gate > tap_checkout:
         findings.append(
             f"{HOMEBREW_SYNC_WORKFLOW_PATH}: loads tap credentials before the strict release privacy gate"
+        )
+    if promotion_gate < 0:
+        findings.append(
+            f"{HOMEBREW_SYNC_WORKFLOW_PATH}: has no signed-render promotion gate"
+        )
+    elif tap_checkout >= 0 and promotion_gate > tap_checkout:
+        findings.append(
+            f"{HOMEBREW_SYNC_WORKFLOW_PATH}: loads tap credentials before signed-render verification"
+        )
+    if re.search(r"(?m)^\s*push\s*:", workflow) or "types: [published]" in workflow:
+        findings.append(
+            f"{HOMEBREW_SYNC_WORKFLOW_PATH}: must not publish from push or merely published-release events"
         )
     return findings
 

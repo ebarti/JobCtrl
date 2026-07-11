@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmod, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -17,6 +17,7 @@ import {
   compareSizeReports,
   createNativeLauncherBuildPlan,
   createExtractedRuntimeStackPlan,
+  createDeterministicZip,
   createDeterministicTarGz,
   extensionCaptureSmokeHeaders,
   normalizeInstalledPythonMetadata,
@@ -24,6 +25,7 @@ import {
   npmIdentityForContributingSource,
   parseMachOMinimumVersions,
   parseOtoolDependencies,
+  prepareExtractedSmokeLayout,
   pruneInstalledPythonTree,
   pruneUnusedPythonRuntime,
   reconcilePythonSbom,
@@ -75,10 +77,18 @@ test("native launcher build pins an official verified darwin-arm64 compiler cont
     GOARM64: "v8.0",
     SOURCE_DATE_EPOCH: "0",
   });
-  assert.deepEqual(first.args.slice(0, 4), ["build", "-buildvcs=false", "-trimpath", "-ldflags=-s -w -buildid="]);
+  assert.deepEqual(first.args.slice(0, 4), ["build", "-buildvcs=false", "-trimpath", "-ldflags=-s -w -buildid= -X github.com/ebarti/jobctrl/launcher/internal/launcher.releaseChannel=local"]);
   assert.equal(first.args.at(-1), "./cmd/jobctrl");
   assert.equal(first.args[5], path.join(firstPayload, "launcher", "jobctrl"));
   assert.equal(second.args[5], path.join(secondPayload, "launcher", "jobctrl"));
+  const installer = createNativeLauncherBuildPlan({ ...options, payloadRoot: firstPayload, binary: "jobctrl-installer" });
+  assert.equal(installer.args[5], path.join(firstPayload, "launcher", "jobctrl-installer"));
+  assert.equal(installer.args.at(-1), "./cmd/jobctrl-installer");
+  const releaseKey = Buffer.alloc(32, 7).toString("base64");
+  const signed = createNativeLauncherBuildPlan({ ...options, payloadRoot: firstPayload, releaseChannel: "stable", releaseTrustKeyBase64: releaseKey });
+  assert.match(signed.args[3], /releaseChannel=stable/);
+  assert.match(signed.args[3], new RegExp(`releaseTrustKeyBase64=${releaseKey}`));
+  assert.throws(() => createNativeLauncherBuildPlan({ ...options, payloadRoot: firstPayload, releaseChannel: "local", releaseTrustKeyBase64: releaseKey }), /local native builds/);
   const runtimeManifest = JSON.parse(await readFile(path.join(root, "launcher", "runtime-manifest.json"), "utf8"));
   assert.equal(runtimeManifest.ports.api, 8766);
   assert.equal(runtimeManifest.ports.temporalGrpc, 7233);
@@ -516,6 +526,9 @@ test("fixture builds are bytewise reproducible in different directories", async 
   assert.deepEqual(first.manifest, second.manifest);
   assert.equal(first.manifestSha256, second.manifestSha256);
   assert.equal(first.archiveSha256, second.archiveSha256);
+  assert.equal(first.release.descriptorSha256, second.release.descriptorSha256);
+  assert.equal(await readFile(first.release.descriptorPath, "utf8"), await readFile(second.release.descriptorPath, "utf8"));
+  assert.match(first.archivePath, /\.zip$/);
   assert.deepEqual(first.sizeReport, second.sizeReport);
   assert.equal(first.manifest.signing.codeSigning, "unsigned-local");
   assert.equal(first.manifest.signing.notarized, false);
@@ -539,6 +552,8 @@ test("fixture builds are bytewise reproducible in different directories", async 
   );
   assert.ok(first.manifest.files.some((file) => file.path === "release/sbom.cdx.json"));
   assert.ok(first.manifest.files.some((file) => file.path === "release/capability-policy.json"));
+  assert.ok(first.manifest.files.some((file) => file.path === "launcher/jobctrl"));
+  assert.ok(first.manifest.files.some((file) => file.path === "launcher/jobctrl-installer"));
   assert.ok(first.manifest.files.every((file) => !/claude|openai.codex|antigravity/i.test(file.path)));
 });
 
@@ -549,6 +564,33 @@ test("fixture manifest covers the exact payload tree", async (context) => {
   assert.equal(await verifyExactPayloadTree(build.payloadRoot, build.manifest), true);
   await writeFile(path.join(build.payloadRoot, "api", "unrecorded"), "mutation\n", { mode: 0o644 });
   await assert.rejects(verifyExactPayloadTree(build.payloadRoot, build.manifest), /does not exactly match/);
+});
+
+test("smoke extraction keeps generated state outside the exact immutable payload tree", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-payload-smoke-layout-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  const build = await buildFixturePayload({ outputDirectory: root });
+  const layout = await prepareExtractedSmokeLayout({
+    archivePath: build.archivePath,
+    outputRoot: root,
+  });
+
+  assert.equal(path.dirname(layout.payloadRoot), layout.canonicalExtractedRoot);
+  assert.equal(path.dirname(layout.homeRoot), layout.canonicalExtractedRoot);
+  assert.equal(path.dirname(layout.stateRoot), layout.homeRoot);
+  assert.notEqual(layout.payloadRoot, layout.homeRoot);
+  assert.ok(!layout.homeRoot.startsWith(`${layout.payloadRoot}${path.sep}`));
+  assert.ok(!layout.stateRoot.startsWith(`${layout.payloadRoot}${path.sep}`));
+  assert.ok(!layout.payloadRoot.startsWith(`${layout.homeRoot}${path.sep}`));
+
+  await writeFile(path.join(layout.stateRoot, "distribution-smoke.pdf"), "smoke state\n", { mode: 0o644 });
+  assert.equal(await verifyExactPayloadTree(layout.payloadRoot, build.manifest), true);
+  assert.ok((await buildFileInventory(layout.canonicalExtractedRoot)).some(
+    (file) => file.path === "home/.jobctrl/distribution-smoke.pdf",
+  ));
+  assert.ok(!(await buildFileInventory(layout.payloadRoot)).some(
+    (file) => file.path === "home/.jobctrl/distribution-smoke.pdf",
+  ));
 });
 
 test("installed Python pruning removes proven build sources, docs, examples, and fixtures", async (context) => {
@@ -718,6 +760,27 @@ test("deterministic tar emits GNU records for long paths and link targets", asyn
   const entries = parseTarGzArchive(await readFile(archivePath), { stripComponents: 1 });
   assert.ok(entries.some((entry) => entry.type === "file" && entry.path === longPath));
   assert.ok(entries.some((entry) => entry.type === "symlink" && entry.path === "current" && entry.target === longPath));
+});
+
+test("deterministic ZIP preserves executable modes and confined symlinks at the payload root", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-deterministic-zip-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "launcher"), { recursive: true });
+  await writeFile(path.join(root, "launcher", "jobctrl"), "#!/bin/sh\n", { mode: 0o755 });
+  await chmod(path.join(root, "launcher", "jobctrl"), 0o755);
+  await symlink("jobctrl", path.join(root, "launcher", "current"));
+  const archivePath = path.join(root, "payload.zip");
+  await createDeterministicZip(root, archivePath, 0);
+  const entries = parseZipArchive(await readFile(archivePath));
+  assert.deepEqual(entries.map((entry) => [entry.type, entry.path, entry.mode ?? null, entry.target ?? null]), [
+    ["symlink", "launcher/current", null, "jobctrl"],
+    ["file", "launcher/jobctrl", "0755", null],
+  ]);
+  const extracted = path.join(root, "extracted");
+  await execFileAsync("/usr/bin/unzip", ["-q", archivePath, "-d", extracted]);
+  assert.equal((await lstat(path.join(extracted, "launcher", "jobctrl"))).mode & 0o777, 0o755);
+  assert.equal((await lstat(path.join(extracted, "launcher", "current"))).isSymbolicLink(), true);
+  assert.equal(await readFile(path.join(extracted, "launcher", "current"), "utf8"), "#!/bin/sh\n");
 });
 
 test("locked archives are verified before safe extraction", async (context) => {
