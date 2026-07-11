@@ -15,10 +15,12 @@ import {
   collectPayloadNpmContributors,
   compareMacOsVersions,
   compareSizeReports,
+  createNativeLauncherBuildPlan,
   createExtractedRuntimeStackPlan,
   createDeterministicTarGz,
   extensionCaptureSmokeHeaders,
   normalizeInstalledPythonMetadata,
+  loadNativeLauncherToolchain,
   npmIdentityForContributingSource,
   parseMachOMinimumVersions,
   parseOtoolDependencies,
@@ -42,6 +44,64 @@ import { buildFileInventory } from "./distribution-manifest.mjs";
 import { parseExportedRequirements } from "./distribution-provider-lock.mjs";
 
 const execFileAsync = promisify(execFile);
+
+test("native launcher build pins an official verified darwin-arm64 compiler contract", async (context) => {
+  const root = process.cwd();
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "jobctrl-launcher-build-"));
+  context.after(async () => rm(temporary, { recursive: true, force: true }));
+  const firstPayload = path.join(temporary, "first");
+  const secondPayload = path.join(temporary, "second");
+  await Promise.all([mkdir(path.join(firstPayload, "launcher"), { recursive: true }), mkdir(path.join(secondPayload, "launcher"), { recursive: true })]);
+  const options = {
+    root,
+    platform: { os: "darwin", arch: "arm64" },
+    sourceDateEpoch: 0,
+    goExecutable: "/verified/go/bin/go",
+    goRoot: "/verified/go",
+  };
+  const first = createNativeLauncherBuildPlan({ ...options, payloadRoot: firstPayload });
+  const second = createNativeLauncherBuildPlan({ ...options, payloadRoot: secondPayload });
+  assert.equal(first.command, "/verified/go/bin/go");
+  assert.deepEqual(first.environment, {
+    CGO_ENABLED: "0",
+    GOOS: "darwin",
+    GOARCH: "arm64",
+    GOROOT: "/verified/go",
+    GOENV: "off",
+    GOFLAGS: "",
+    GOWORK: "off",
+    GOTOOLCHAIN: "local",
+    GOEXPERIMENT: "",
+    GOARM64: "v8.0",
+    SOURCE_DATE_EPOCH: "0",
+  });
+  assert.deepEqual(first.args.slice(0, 4), ["build", "-buildvcs=false", "-trimpath", "-ldflags=-s -w -buildid="]);
+  assert.equal(first.args.at(-1), "./cmd/jobctrl");
+  assert.equal(first.args[5], path.join(firstPayload, "launcher", "jobctrl"));
+  assert.equal(second.args[5], path.join(secondPayload, "launcher", "jobctrl"));
+  const runtimeManifest = JSON.parse(await readFile(path.join(root, "launcher", "runtime-manifest.json"), "utf8"));
+  assert.equal(runtimeManifest.ports.api, 8766);
+  assert.equal(runtimeManifest.ports.temporalGrpc, 7233);
+  assert.equal(runtimeManifest.ports.temporalUi, 8233);
+  assert.deepEqual(JSON.parse(await readFile(path.join(root, "launcher", "toolchain.json"), "utf8")), {
+    schemaVersion: 1,
+    goVersion: "go1.26.4",
+    archive: {
+      type: "tar.gz",
+      url: "https://go.dev/dl/go1.26.4.darwin-arm64.tar.gz",
+      sha256: "b62ad2b6d7d2464f12a5bcad7ff47f19d08325773b5efd21610e445a05a9bf53",
+      sizeBytes: 64723756,
+      officialMetadataUrl: "https://go.dev/dl/?mode=json&include=all",
+    },
+    moduleClosure: "standard-library-only",
+    license: "BSD-3-Clause",
+    licenseSource: "https://go.dev/LICENSE",
+    licenseSha256: "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+  });
+  const toolchain = await loadNativeLauncherToolchain(root);
+  assert.equal(toolchain.archive.sizeBytes, 64723756);
+  assert.equal(await sha256File(path.join(root, "launcher", "GO-LICENSE")), "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad");
+});
 
 function tarField(value, width) {
   return `${value.toString(8).padStart(width - 1, "0")}\0`;
@@ -613,6 +673,19 @@ test("tar parser preserves safe links and rejects traversal, hard links, and spe
     () => parseTarGzArchive(tarArchive([{ path: "Dir/File", contents: "a" }, { path: "dir/file", contents: "b" }])),
     /collides case-insensitively/,
   );
+});
+
+test("tar parser may skip an explicit upstream test subtree before portable path validation", () => {
+  const archive = tarArchive([
+    { path: "go/bin/go", mode: 0o755, contents: "compiler" },
+    { path: "go/test/Þfixture.go", contents: "nonportable fixture" },
+  ]);
+  const entries = parseTarGzArchive(archive, {
+    stripComponents: 1,
+    skipEntry: (rawPath) => rawPath.startsWith("go/test/"),
+  });
+  assert.deepEqual(entries.map((entry) => entry.path), ["bin/go"]);
+  assert.throws(() => parseTarGzArchive(archive, { stripComponents: 1 }), /printable ASCII/);
 });
 
 test("zip parser preserves Unix symlinks and rejects traversal and special entries", () => {

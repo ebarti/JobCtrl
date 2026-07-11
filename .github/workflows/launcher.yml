@@ -1,0 +1,62 @@
+name: Native Launcher CI
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "launcher/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "scripts/**"
+      - "packaging/distribution/**"
+      - ".github/workflows/launcher.yml"
+  pull_request:
+    paths:
+      - "launcher/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "scripts/**"
+      - "packaging/distribution/**"
+      - ".github/workflows/launcher.yml"
+  workflow_dispatch:
+
+jobs:
+  launcher:
+    name: Darwin launcher (vet + race)
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pinned Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.4"
+          cache-dependency-path: launcher/go.mod
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.21.1"
+          cache: pnpm
+
+      - name: Install Node dependencies
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Vet native launcher
+        working-directory: launcher
+        run: go vet ./...
+
+      - name: Test native launcher
+        working-directory: launcher
+        run: go test -race ./...
+
+      - name: Test pinned distribution build contracts
+        run: corepack pnpm scripts:test
+
+      - name: Audit distribution contracts
+        run: corepack pnpm distribution:audit

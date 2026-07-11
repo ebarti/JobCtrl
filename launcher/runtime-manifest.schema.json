@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobctrl.dev/schemas/runtime-manifest-v1.json",
+  "title": "JobCtrl launcher runtime manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "launcherProtocol", "ports", "components", "health"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "launcherProtocol": { "const": 1 },
+    "ports": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["temporalGrpc", "temporalUi", "api"],
+      "properties": {
+        "temporalGrpc": { "const": 7233 },
+        "temporalUi": { "const": 8233 },
+        "api": { "const": 8766 }
+      }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "executable", "arguments"],
+        "properties": {
+          "name": { "enum": ["temporal", "worker", "api"] },
+          "executable": { "type": "string" },
+          "arguments": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["temporal", "api"],
+      "properties": {
+        "temporal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "arguments"],
+          "properties": {
+            "component": { "const": "temporal" },
+            "arguments": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "api": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "requireWorkerHealthy", "requireWorkerPid"],
+          "properties": {
+            "path": { "const": "/v1/health" },
+            "requireWorkerHealthy": { "const": true },
+            "requireWorkerPid": { "const": true }
+          }
+        }
+      }
+    }
+  }
+}

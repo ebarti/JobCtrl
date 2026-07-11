@@ -47,6 +47,12 @@ import {
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DISTRIBUTION_DIR = path.join(REPO_ROOT, "packaging", "distribution");
 const ENVELOPE_FILES = new Set(["manifest.json", "manifest.sig"]);
+const GO_TOOLCHAIN_VERSION = "go1.26.4";
+const GO_TOOLCHAIN_LICENSE_SHA256 = "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad";
+const GO_TOOLCHAIN_ARCHIVE_URL = "https://go.dev/dl/go1.26.4.darwin-arm64.tar.gz";
+const GO_TOOLCHAIN_ARCHIVE_SHA256 = "b62ad2b6d7d2464f12a5bcad7ff47f19d08325773b5efd21610e445a05a9bf53";
+const GO_TOOLCHAIN_ARCHIVE_SIZE_BYTES = 64723756;
+const GO_TOOLCHAIN_OFFICIAL_METADATA_URL = "https://go.dev/dl/?mode=json&include=all";
 const SAFE_MODES = new Set(["0644", "0755"]);
 const FORBIDDEN_PROVIDER_PATTERNS = [
   /(^|[/_.-])claude[-_]agent[-_]sdk([/_.-]|$)/i,
@@ -302,21 +308,63 @@ export function validateSharedComponentLayout(layout, contracts) {
   return specs;
 }
 
+export async function loadNativeLauncherToolchain(root = REPO_ROOT) {
+  const toolchain = JSON.parse(await readFile(path.join(root, "launcher", "toolchain.json"), "utf8"));
+  invariant(
+    JSON.stringify(Object.keys(toolchain).sort(bytewiseCompare)) === JSON.stringify(["archive", "goVersion", "license", "licenseSha256", "licenseSource", "moduleClosure", "schemaVersion"]),
+    "native launcher toolchain contract has unknown fields",
+  );
+  invariant(toolchain.archive && typeof toolchain.archive === "object", "native launcher toolchain archive is missing");
+  invariant(
+    JSON.stringify(Object.keys(toolchain.archive).sort(bytewiseCompare)) === JSON.stringify(["officialMetadataUrl", "sha256", "sizeBytes", "type", "url"]),
+    "native launcher toolchain archive has unknown fields",
+  );
+  invariant(
+    toolchain.schemaVersion === 1
+      && toolchain.goVersion === GO_TOOLCHAIN_VERSION
+      && toolchain.moduleClosure === "standard-library-only"
+      && toolchain.license === "BSD-3-Clause"
+      && toolchain.licenseSource === "https://go.dev/LICENSE"
+      && toolchain.licenseSha256 === GO_TOOLCHAIN_LICENSE_SHA256
+      && toolchain.archive.type === "tar.gz"
+      && toolchain.archive.url === GO_TOOLCHAIN_ARCHIVE_URL
+      && toolchain.archive.sha256 === GO_TOOLCHAIN_ARCHIVE_SHA256
+      && toolchain.archive.sizeBytes === GO_TOOLCHAIN_ARCHIVE_SIZE_BYTES
+      && toolchain.archive.officialMetadataUrl === GO_TOOLCHAIN_OFFICIAL_METADATA_URL,
+    "native launcher toolchain contract is invalid",
+  );
+  invariant(await sha256File(path.join(root, "launcher", "GO-LICENSE")) === toolchain.licenseSha256, "native launcher Go license does not match the pinned Go toolchain license");
+  return toolchain;
+}
+
+function nativeGoArchiveLock(toolchain) {
+  return {
+    id: "go-toolchain-darwin-arm64",
+    componentId: "jobctrl-launcher",
+    version: toolchain.goVersion,
+    archiveType: toolchain.archive.type,
+    url: toolchain.archive.url,
+    sha256: toolchain.archive.sha256,
+    sizeBytes: toolchain.archive.sizeBytes,
+  };
+}
+
 async function loadBuildContracts(root = REPO_ROOT) {
-  const [contracts, layout, locks, providerPackLocks, licenseEvidenceLocks, nodeLicenseEvidenceLocks] = await Promise.all([
+  const [contracts, layout, locks, providerPackLocks, licenseEvidenceLocks, nodeLicenseEvidenceLocks, launcherToolchain] = await Promise.all([
     loadManifestValidationContracts(root),
     readFile(path.join(root, "packaging", "distribution", "payload-layout.json"), "utf8").then(JSON.parse),
     readFile(path.join(root, "packaging", "distribution", "components.lock.json"), "utf8").then(JSON.parse),
     readFile(path.join(root, "packaging", "distribution", "provider-packs.lock.json"), "utf8").then(JSON.parse),
     readFile(path.join(root, "packaging", "distribution", "license-evidence.lock.json"), "utf8").then(JSON.parse),
     readFile(path.join(root, "packaging", "distribution", "node-license-evidence.lock.json"), "utf8").then(JSON.parse),
+    loadNativeLauncherToolchain(root),
   ]);
   const componentPaths = validatePayloadLayout(layout, contracts, locks.platform);
   const embeddedComponentSpecs = validateEmbeddedComponentLayout(layout, contracts);
   const sharedComponentSpecs = validateSharedComponentLayout(layout, contracts);
   invariant(licenseEvidenceLocks.schemaVersion === 1 && Array.isArray(licenseEvidenceLocks.inputs), "license evidence lock is invalid");
   invariant(nodeLicenseEvidenceLocks.schemaVersion === 1 && Array.isArray(nodeLicenseEvidenceLocks.inputs), "Node license evidence lock is invalid");
-  return { ...contracts, layout, locks, providerPackLocks, licenseEvidenceLocks, nodeLicenseEvidenceLocks, componentPaths, embeddedComponentSpecs, sharedComponentSpecs, platform: contracts.platformsById.get(locks.platform) };
+  return { ...contracts, layout, locks, providerPackLocks, licenseEvidenceLocks, nodeLicenseEvidenceLocks, launcherToolchain, componentPaths, embeddedComponentSpecs, sharedComponentSpecs, platform: contracts.platformsById.get(locks.platform) };
 }
 
 async function copyTree(source, destination, { exclude = () => false } = {}) {
@@ -374,6 +422,7 @@ async function downloadLockedArchive(lock, cacheDirectory) {
   const cached = path.join(cacheDirectory, `${lock.id}-${lock.sha256}${suffix}`);
   if (await exists(cached)) {
     await verifyLockedArchive(cached, lock);
+    if (lock.sizeBytes !== undefined) invariant((await stat(cached)).size === lock.sizeBytes, `${lock.id}: archive size mismatch`);
     return cached;
   }
   const partial = `${cached}.partial-${process.pid}`;
@@ -383,6 +432,7 @@ async function downloadLockedArchive(lock, cacheDirectory) {
   try {
     await pipeline(Readable.fromWeb(response.body), createWriteStream(partial, { mode: 0o644, flags: "wx" }));
     await verifyLockedArchive(partial, lock);
+    if (lock.sizeBytes !== undefined) invariant((await stat(partial)).size === lock.sizeBytes, `${lock.id}: archive size mismatch`);
     await rename(partial, cached);
   } catch (error) {
     await rm(partial, { force: true });
@@ -998,15 +1048,86 @@ async function measureProviderPackInstalledTrees(payloadRoot, root, contracts, s
   return measurement;
 }
 
-async function writeGeneratedComponents(payloadRoot, contracts) {
+export function createNativeLauncherBuildPlan({ payloadRoot, root, platform, sourceDateEpoch, goExecutable, goRoot }) {
+  invariant(platform?.os === "darwin" && platform?.arch === "arm64", "native launcher build target must be darwin-arm64");
+  invariant(Number.isInteger(sourceDateEpoch) && sourceDateEpoch >= 0, "native launcher SOURCE_DATE_EPOCH must be non-negative");
+  invariant(typeof goExecutable === "string" && path.isAbsolute(goExecutable), "native launcher compiler executable must be an absolute verified path");
+  invariant(typeof goRoot === "string" && path.isAbsolute(goRoot), "native launcher GOROOT must be an absolute verified path");
+  return {
+    command: goExecutable,
+    args: ["build", "-buildvcs=false", "-trimpath", "-ldflags=-s -w -buildid=", "-o", path.join(payloadRoot, "launcher", "jobctrl"), "./cmd/jobctrl"],
+    cwd: path.join(root, "launcher"),
+    environment: {
+      CGO_ENABLED: "0",
+      GOOS: "darwin",
+      GOARCH: "arm64",
+      // The extracted, checksum-verified official archive is the only GOROOT
+      // accepted by the release builder. This blocks ambient Go installations,
+      // user configuration, experiments, and architecture tuning from changing
+      // launcher bytes.
+      GOROOT: goRoot,
+      GOENV: "off",
+      GOFLAGS: "",
+      GOWORK: "off",
+      GOTOOLCHAIN: "local",
+      GOEXPERIMENT: "",
+      GOARM64: "v8.0",
+      SOURCE_DATE_EPOCH: String(sourceDateEpoch),
+    },
+  };
+}
+
+async function prepareNativeGoToolchain(root, cacheDirectory, scratchDirectory, toolchain) {
+  const lock = nativeGoArchiveLock(toolchain);
+  const archivePath = await downloadLockedArchive(lock, cacheDirectory);
+  const goRoot = path.join(scratchDirectory, "go-toolchain");
+  const entries = await extractVerifiedArchive({
+    archivePath,
+    lock,
+    destination: goRoot,
+    stripComponents: 1,
+    // The official Go archive's `go/test` corpus is not needed to compile the
+    // launcher. It contains upstream regression fixtures with non-ASCII names
+    // that intentionally violate the portable payload path policy, so discard
+    // only that fixed top-level test subtree before extraction.
+    skipEntry: (rawPath) => rawPath.startsWith("go/test/"),
+  });
+  await assertSymlinksPreserved(goRoot, entries);
+  const goExecutable = await requireFile(path.join(goRoot, "bin", "go"), "pinned Go compiler executable");
+  await chmod(goExecutable, 0o755);
+  const licensePath = await requireFile(path.join(goRoot, "LICENSE"), "pinned Go compiler license");
+  invariant(await sha256File(licensePath) === toolchain.licenseSha256, "pinned Go compiler license does not match the toolchain contract");
+  const environment = {
+    ...process.env,
+    GOROOT: goRoot,
+    GOENV: "off",
+    GOFLAGS: "",
+    GOWORK: "off",
+    GOTOOLCHAIN: "local",
+    GOEXPERIMENT: "",
+    GOARM64: "v8.0",
+  };
+  const version = (await run(goExecutable, ["version"], { cwd: root, env: environment })).stdout.trim();
+  invariant(version === `go version ${toolchain.goVersion} darwin/arm64`, `pinned Go compiler version is ${version}, expected ${toolchain.goVersion} darwin/arm64`);
+  return { archivePath, lock, goExecutable, goRoot, version };
+}
+
+async function writeGeneratedComponents(payloadRoot, root, contracts, sourceDateEpoch, nativeGoToolchain) {
   const launcherRoot = componentRoot(payloadRoot, contracts, "jobctrl-launcher");
   await mkdir(launcherRoot, { recursive: true, mode: 0o755 });
-  await writeFile(
-    path.join(launcherRoot, "jobctrl"),
-    "#!/bin/sh\necho 'This P1 payload requires the P2 native JobCtrl launcher.' >&2\nexit 70\n",
-    { mode: 0o755 },
-  );
+  invariant(nativeGoToolchain?.lock?.sha256 === contracts.launcherToolchain.archive.sha256, "native launcher compiler does not match the locked toolchain contract");
+  const plan = createNativeLauncherBuildPlan({
+    payloadRoot,
+    root,
+    platform: contracts.platform,
+    sourceDateEpoch,
+    goExecutable: nativeGoToolchain.goExecutable,
+    goRoot: nativeGoToolchain.goRoot,
+  });
+  await run(plan.command, plan.args, { cwd: plan.cwd, env: { ...process.env, ...plan.environment } });
   await chmod(path.join(launcherRoot, "jobctrl"), 0o755);
+  await copyFile(path.join(root, "launcher", "runtime-manifest.json"), path.join(launcherRoot, "runtime-manifest.json"));
+  await chmod(path.join(launcherRoot, "runtime-manifest.json"), 0o644);
 
   const pdfjsRoot = componentRoot(payloadRoot, contracts, "pdfjs-renderer");
   await mkdir(pdfjsRoot, { recursive: true, mode: 0o755 });
@@ -1420,6 +1541,7 @@ async function collectTopLevelLicenseEvidence(payloadRoot, root, contracts) {
   const sources = [];
   const add = async (subject, candidates) => sources.push({ subject, source: await firstExisting(candidates, subject) });
   await add("jobctrl", [path.join(root, "LICENSE")]);
+  await add("go-standard-library", [path.join(root, "launcher", "GO-LICENSE")]);
   await add("node-runtime", [path.join(nodeRoot, "LICENSE"), path.join(nodeRoot, "LICENSE.md"), path.join(nodeRoot, "LICENSE.txt")]);
   await add("python-runtime", [
     path.join(pythonRoot, "LICENSE.txt"),
@@ -1890,6 +2012,101 @@ async function terminateExtractedRuntimeStack(stack) {
   };
 }
 
+async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockEnvironment }) {
+  const launcher = path.join(payloadRoot, "launcher", "jobctrl");
+  await requireFile(launcher, "native JobCtrl launcher");
+  const environment = {
+    ...stockEnvironment,
+    JOBCTRL_RUNTIME_HOME: path.join(extractedRoot, "runtime"),
+  };
+  const statusJson = async () => JSON.parse((await runLoopbackSandboxed(launcher, ["status", "--json"], { cwd: extractedRoot, env: environment })).stdout);
+  const waitForStatus = async (expected, label) => {
+    let observed = null;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      observed = await statusJson();
+      if (expected.includes(observed.status)) return observed;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`${label}: lifecycle status remained ${observed?.status}`);
+  };
+  const start = async () => runLoopbackSandboxed(launcher, ["start", "--no-open"], { cwd: extractedRoot, env: environment });
+  const stop = async () => runLoopbackSandboxed(launcher, ["stop"], { cwd: extractedRoot, env: environment });
+  let lifecycleStarted = false;
+  try {
+    const firstStart = await start();
+    lifecycleStarted = true;
+    invariant(firstStart.stdout.includes("http://127.0.0.1:8766"), "native launcher did not report fixed API URL");
+    let health = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      try {
+        const response = await fetch("http://127.0.0.1:8766/v1/health");
+        if (response.ok) {
+          health = await response.json();
+          if (health?.worker?.status === "healthy") break;
+        }
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    invariant(health?.worker?.status === "healthy", "native launcher API health was not healthy");
+    let status = await statusJson();
+    invariant(status.status === "running", `native launcher status is ${status.status}`);
+    for (const component of ["temporal", "worker", "api"]) invariant(status.components?.[component]?.state === "running", `native launcher ${component} status is not running`);
+    const logs = await runLoopbackSandboxed(launcher, ["logs"], { cwd: extractedRoot, env: environment });
+    invariant(logs.stdout.includes("== temporal ==") && logs.stdout.includes("== worker ==") && logs.stdout.includes("== api =="), "native launcher logs did not route all bounded component logs");
+    const version = JSON.parse((await runLoopbackSandboxed(launcher, ["version", "--json"], { cwd: extractedRoot, env: environment })).stdout);
+    invariant(typeof version.buildId === "string" && /^[a-f0-9]{64}$/.test(version.manifestSha256), "native launcher version JSON is incomplete");
+    await runLoopbackSandboxed(launcher, ["doctor"], { cwd: extractedRoot, env: environment });
+    const digest = await runLoopbackSandboxed(launcher, ["digest", "--json"], { cwd: extractedRoot, env: environment });
+    invariant(digest.stdout.trim().startsWith("{"), "native launcher did not transparently dispatch JSON Python CLI command");
+    await runLoopbackSandboxed(launcher, ["pipeline-status"], { cwd: extractedRoot, env: environment });
+    await runLoopbackSandboxed(launcher, ["status", "--pipeline"], { cwd: extractedRoot, env: environment });
+    // A killed owned worker leaves a degraded registry rather than a misleading
+    // healthy status. stop then obtains a clean restart from that evidence.
+    process.kill(status.components.worker.pid, "SIGKILL");
+    const degraded = await waitForStatus(["degraded"], "worker-kill recovery");
+    invariant(degraded.components.worker.state !== "running", "killed worker remained reported as running");
+    await stop();
+    await waitForStatus(["stopped"], "worker-kill stop");
+    await start();
+    status = await waitForStatus(["running"], "worker-kill restart");
+    // SIGKILL of the supervisor cannot run its cleanup handler. Status must
+    // report the still-owned component trees as orphaned, and stop must clean
+    // only the identity-matching recorded groups before restart.
+    invariant(Number.isInteger(status.supervisorPid) && status.supervisorPid > 0, "native status omitted supervisor PID");
+    process.kill(status.supervisorPid, "SIGKILL");
+    const orphaned = await waitForStatus(["orphaned"], "supervisor-kill recovery");
+    invariant(orphaned.components.api.state === "running", "orphaned API ownership was not reported");
+    await stop();
+    await waitForStatus(["stopped"], "supervisor-kill stop");
+    await start();
+    status = await waitForStatus(["running"], "supervisor-kill restart");
+    await stop();
+    const stopped = await waitForStatus(["stopped"], "final stop");
+    return { startUrl: "http://127.0.0.1:8766", components: Object.keys(status.components).sort(bytewiseCompare), manifestSha256: version.manifestSha256, pipelineStatusCompatibility: "passed", pythonDispatch: ["doctor", "digest --json"], recovery: { workerKill: "degraded-stop-restart", supervisorKill: "orphaned-stop-restart" } };
+  } finally {
+    if (lifecycleStarted) await stop().catch(() => null);
+  }
+}
+
+async function cleanupNativeLauncherRuntime(extractedRoot) {
+  const canonicalRoot = await realpath(extractedRoot).catch(() => null);
+  if (!canonicalRoot) return { status: "not-created" };
+  const launcher = path.join(canonicalRoot, "payload", "launcher", "jobctrl");
+  if (!(await exists(launcher))) return { status: "launcher-not-created" };
+  const environment = {
+    HOME: path.join(canonicalRoot, "home"),
+    JOBCTRL_DIR: path.join(canonicalRoot, "home", ".jobctrl"),
+    JOBCTRL_RUNTIME_HOME: path.join(canonicalRoot, "runtime"),
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+  };
+  try {
+    await runLoopbackSandboxed(launcher, ["stop"], { cwd: canonicalRoot, env: environment });
+    return { status: "stopped" };
+  } catch (error) {
+    return { status: "stop-failed", error: error.message };
+  }
+}
+
 async function requireJsonResponse(url, options, label) {
   const response = await fetch(url, options);
   const text = await response.text();
@@ -2127,15 +2344,20 @@ async function smokeExtractedPayload(archivePath, outputRoot, contracts) {
   await rm(extractedRoot, { recursive: true, force: true });
   await mkdir(extractedRoot, { recursive: true, mode: 0o755 });
   await run("/usr/bin/tar", ["-xzf", archivePath, "-C", extractedRoot], { cwd: outputRoot });
-  const payloadRoot = path.join(extractedRoot, "payload");
+  // Python resolves the state directory before writing its heartbeat while
+  // Node's path.resolve does not collapse macOS /tmp -> /private/tmp. Anchor
+  // the full extracted runtime to one canonical identity before either child
+  // starts so the API correctly accepts its worker heartbeat.
+  const canonicalExtractedRoot = await realpath(extractedRoot);
+  const payloadRoot = path.join(canonicalExtractedRoot, "payload");
   const manifest = JSON.parse(await readFile(path.join(payloadRoot, "manifest.json"), "utf8"));
   validateDistributionManifest(manifest, contracts);
   await verifyExactPayloadTree(payloadRoot, manifest);
   const extractionForbiddenAudit = await scanForbiddenPayload(payloadRoot, { forbiddenAbsolutePaths: [REPO_ROOT, outputRoot] });
 
   const stockEnvironment = {
-    HOME: path.join(extractedRoot, "home"),
-    JOBCTRL_DIR: path.join(extractedRoot, "home", ".jobctrl"),
+    HOME: path.join(canonicalExtractedRoot, "home"),
+    JOBCTRL_DIR: path.join(canonicalExtractedRoot, "home", ".jobctrl"),
     JOBCTRL_PAYLOAD_DIR: payloadRoot,
     JOBCTRL_RUNTIME_MODE: "bundled",
     JOBCTRL_WEB_ASSETS_DIR: path.join(payloadRoot, contracts.componentPaths.get("jobctrl-web")),
@@ -2175,7 +2397,7 @@ finally:
     [
       "--headless",
       "--isolated",
-      "--output-dir", path.join(extractedRoot, "playwright-mcp-smoke-output"),
+      "--output-dir", path.join(canonicalExtractedRoot, "playwright-mcp-smoke-output"),
       "--executable-path", await managedMcpChromiumExecutable(payloadRoot, contracts),
       "--output-mode", "stdout",
       "--codegen", "none",
@@ -2243,7 +2465,7 @@ print(json.dumps({"pdfPath": str(pdf_path), "pdfBytes": len(pdf_bytes)}, sort_ke
   const temporalPort = await reserveLoopbackPort();
   const runtimePlan = createExtractedRuntimeStackPlan({
     payloadRoot,
-    stateRoot: extractedRoot,
+    stateRoot: canonicalExtractedRoot,
     temporalPort,
     apiPort,
     contracts,
@@ -2430,6 +2652,7 @@ with sync_playwright() as playwright:
     secondTermination = await terminateExtractedRuntimeStack(secondStack);
   }
   invariant(secondTermination?.api?.status === "exited" && secondTermination.worker?.status === "exited" && secondTermination.temporal?.status === "exited", "restarted extracted runtime stack did not terminate");
+  const nativeLauncherLifecycle = await smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot: canonicalExtractedRoot, stockEnvironment });
   await verifyExactPayloadTree(payloadRoot, manifest);
   return {
     status: "pass",
@@ -2449,6 +2672,7 @@ with sync_playwright() as playwright:
     pdfPreview: pdfPreviewEvidence,
     runtimeRestart: restartEvidence,
     runtimeTermination: { first: firstTermination, second: secondTermination },
+    nativeLauncherLifecycle,
     networkIsolation,
     postSmokePayloadTree: "exact-manifest-match",
     extractionForbiddenAudit,
@@ -2708,6 +2932,18 @@ async function generateReleaseMetadata(payloadRoot, contracts, {
 
   const preliminaryFiles = (await buildFileInventory(payloadRoot)).filter((file) => !file.path.startsWith(`${contracts.componentPaths.get("jobctrl-release-metadata")}/`));
   const components = topLevelSbomComponents(contracts, preliminaryFiles);
+  if (mode === "real") {
+    components.push({
+      type: "framework",
+      "bom-ref": `pkg:golang/go@${GO_TOOLCHAIN_VERSION.slice(2)}`,
+      name: "Go standard library",
+      version: GO_TOOLCHAIN_VERSION.slice(2),
+      supplier: { name: "The Go Authors" },
+      licenses: [{ expression: "BSD-3-Clause" }],
+      externalReferences: [{ type: "distribution", url: "https://go.dev/" }],
+      properties: [{ name: "jobctrl:launcher-closure", value: "standard-library-only" }],
+    });
+  }
   if (pythonSbom) {
     const python = JSON.parse(await readFile(pythonSbom, "utf8"));
     for (const component of python.components ?? []) components.push(component);
@@ -2783,6 +3019,15 @@ async function generateReleaseMetadata(payloadRoot, contracts, {
     sourceDateEpoch,
     platform: contracts.platform.id,
     source: "https://github.com/ebarti/JobCtrl",
+    launcherToolchain: {
+      version: contracts.launcherToolchain.goVersion,
+      moduleClosure: contracts.launcherToolchain.moduleClosure,
+      license: contracts.launcherToolchain.license,
+      licenseSource: contracts.launcherToolchain.licenseSource,
+      licenseSha256: contracts.launcherToolchain.licenseSha256,
+      archive: nativeGoArchiveLock(contracts.launcherToolchain),
+      officialMetadataUrl: contracts.launcherToolchain.archive.officialMetadataUrl,
+    },
     providerPacks: {
       included: false,
       policy: "official-download",
@@ -3230,13 +3475,17 @@ export async function buildRealPayload({
   await rm(outputRoot, { recursive: true, force: true });
   await mkdir(payloadRoot, { recursive: true, mode: 0o755 });
   try {
-    const externalInputs = await assembleExternalRuntimes(payloadRoot, contracts, path.resolve(cacheDirectory), scratchDirectory);
+    const resolvedCacheDirectory = path.resolve(cacheDirectory);
+    const [externalInputs, nativeGoToolchain] = await Promise.all([
+      assembleExternalRuntimes(payloadRoot, contracts, resolvedCacheDirectory, scratchDirectory),
+      prepareNativeGoToolchain(root, resolvedCacheDirectory, scratchDirectory, contracts.launcherToolchain),
+    ]);
     const pythonRuntimePrune = await pruneUnusedPythonRuntime(componentRoot(payloadRoot, contracts, "python-runtime"));
     await prepareStandardProductionInputs(root, contracts, externalInputs);
     await copyPreparedApplicationInputs(payloadRoot, root, contracts);
     await Promise.all([
       assemblePlaywrightMcp(payloadRoot, root, contracts, externalInputs),
-      writeGeneratedComponents(payloadRoot, contracts),
+      writeGeneratedComponents(payloadRoot, root, contracts, sourceDateEpoch, nativeGoToolchain),
     ]);
     const pythonSbom = await preparePythonWorker(payloadRoot, root, contracts, scratchDirectory);
     const providerPackMeasurement = await measureProviderPackInstalledTrees(payloadRoot, root, contracts, scratchDirectory);
@@ -3362,6 +3611,17 @@ export async function buildRealPayload({
     };
     await writeJson(path.join(outputRoot, "build-result.json"), result);
     return { ...result, manifest, sizeReport };
+  } catch (error) {
+    const nativeLifecycleCleanup = await cleanupNativeLauncherRuntime(path.join(outputRoot, "clean-extraction"));
+    await writeJson(path.join(outputRoot, "build-failure.json"), {
+      schemaVersion: 1,
+      mode: "real",
+      buildId,
+      status: "failed",
+      error: error.message,
+      nativeLifecycleCleanup,
+    });
+    throw error;
   } finally {
     await rm(scratchDirectory, { recursive: true, force: true });
   }
@@ -3386,6 +3646,18 @@ function parseCliOptions(argv) {
 async function main(argv = process.argv.slice(2)) {
   const command = argv[0] ?? "fixture";
   const options = parseCliOptions(argv.slice(1));
+  if (command === "audit") {
+    invariant(Object.keys(options).length === 0, "distribution audit accepts no options");
+    const contracts = await loadBuildContracts(REPO_ROOT);
+    process.stdout.write(canonicalJson({
+      status: "pass",
+      launcherToolchain: {
+        version: contracts.launcherToolchain.goVersion,
+        archive: nativeGoArchiveLock(contracts.launcherToolchain),
+      },
+    }));
+    return;
+  }
   if (command === "fixture") {
     const result = await buildFixturePayload({
       outputDirectory: path.resolve(options.output ?? path.join(REPO_ROOT, "dist", "distribution-fixture")),

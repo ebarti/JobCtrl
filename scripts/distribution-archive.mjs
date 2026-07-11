@@ -110,7 +110,7 @@ export async function verifyLockedArchive(archivePath, lock) {
   return actual;
 }
 
-export function parseTarGzArchive(archive, { stripComponents = 0 } = {}) {
+export function parseTarGzArchive(archive, { stripComponents = 0, skipEntry = null } = {}) {
   invariant(Number.isInteger(stripComponents) && stripComponents >= 0, "stripComponents must be non-negative");
   const tar = gunzipSync(archive);
   const entries = [];
@@ -150,6 +150,17 @@ export function parseTarGzArchive(archive, { stripComponents = 0 } = {}) {
       continue;
     }
 
+    // A caller may discard an explicitly non-runtime upstream subtree before
+    // path normalization. This is deliberately a raw-path hook: it lets a
+    // verified toolchain archive omit its test corpus, including filenames
+    // outside the payload's portable ASCII path policy, without weakening that
+    // policy for any entry that can be extracted.
+    if (skipEntry?.(rawPath, { type, rawLink })) {
+      nextPax = {};
+      nextLongPath = null;
+      nextLongLink = null;
+      continue;
+    }
     const relativePath = stripArchivePath(rawPath, stripComponents, "tar entry path");
     nextPax = {};
     nextLongPath = null;
@@ -304,12 +315,12 @@ export async function extractArchiveEntries(entries, destination) {
   return entries;
 }
 
-export async function extractVerifiedArchive({ archivePath, lock, destination, stripComponents = 0, include = null }) {
+export async function extractVerifiedArchive({ archivePath, lock, destination, stripComponents = 0, include = null, skipEntry = null }) {
   await verifyLockedArchive(archivePath, lock);
   const archive = await readFile(archivePath);
   let entries;
   if (lock.archiveType === "tar.gz") {
-    entries = parseTarGzArchive(archive, { stripComponents });
+    entries = parseTarGzArchive(archive, { stripComponents, skipEntry });
   } else if (lock.archiveType === "zip") {
     entries = parseZipArchive(archive, { stripComponents });
   } else {

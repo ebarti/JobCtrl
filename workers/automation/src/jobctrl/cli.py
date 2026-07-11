@@ -1722,8 +1722,8 @@ def _budget_note(budget: dict[str, Any]) -> str:
     return f"${estimated:.2f} estimated, ${float(remaining):.2f} remaining of ${daily:.2f}"
 
 
-@app.command()
-def status() -> None:
+@app.command("pipeline-status")
+def pipeline_status() -> None:
     """Show pipeline statistics from the database."""
     _bootstrap()
 

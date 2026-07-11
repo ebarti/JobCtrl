@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "launcherProtocol": 1,
+  "ports": { "temporalGrpc": 7233, "temporalUi": 8233, "api": 8766 },
+  "components": [
+    { "name": "temporal", "executable": "temporal/temporal", "arguments": ["server", "start-dev", "--ip", "127.0.0.1", "--port", "${TEMPORAL_GRPC_PORT}", "--ui-ip", "127.0.0.1", "--ui-port", "${TEMPORAL_UI_PORT}", "--db-filename", "${TEMPORAL_DB}", "--log-level", "error", "--disable-config-file", "--disable-config-env"] },
+    { "name": "worker", "executable": "python/bin/python3", "arguments": ["-I", "-B", "-m", "jobctrl", "worker"] },
+    { "name": "api", "executable": "node/bin/node", "arguments": ["${PAYLOAD_ROOT}/api/server.mjs"] }
+  ],
+  "health": {
+    "temporal": { "component": "temporal", "arguments": ["operator", "cluster", "health", "--address", "127.0.0.1:${TEMPORAL_GRPC_PORT}", "--command-timeout", "2s", "--output", "json", "--disable-config-file", "--disable-config-env"] },
+    "api": { "path": "/v1/health", "requireWorkerHealthy": true, "requireWorkerPid": true }
+  }
+}
