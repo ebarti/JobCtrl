@@ -9,6 +9,7 @@ import type {
 import type {
   DemoWorkspaceClock,
   DemoWorkspaceNotification,
+  DemoScenarioInvocation,
   DemoWorkspaceSnapshot,
 } from "./contracts.js";
 import { DemoWorkspaceEventStreamAdapter } from "./DemoWorkspaceEventStreamAdapter.js";
@@ -176,7 +177,156 @@ function buildRepository(
   });
 }
 
+function queuedInvocation(
+  overrides: Partial<DemoScenarioInvocation> = {},
+): DemoScenarioInvocation {
+  return {
+    invocationVersion: 1,
+    scenarioId: "scenario-live-discovery",
+    operation: "runPipelineStages",
+    phase: "queued",
+    dedupeKey: "runPipelineStages:discover",
+    runId: "run-live-discovery",
+    actionId: "action-live-discovery",
+    attempt: 1,
+    targetRefs: {
+      jobKey: null,
+      jobKeys: [],
+      draftId: null,
+      artifactId: null,
+      contactId: null,
+      taskId: null,
+      threadId: null,
+      stage: "discover",
+    },
+    safeCommand: {
+      stages: ["discover"],
+      dryRun: false,
+      force: false,
+      allMatching: false,
+      limit: null,
+      generation: null,
+      kind: null,
+    },
+    requestedAt: new Date(0).toISOString(),
+    deadlineAt: new Date(25).toISOString(),
+    resetEpoch: 0,
+    definition: {
+      queuedMessage: "Discover queued",
+      runningMessage: "Discover running",
+      runningDelayMs: 25,
+      terminalDelayMs: 25,
+      outcome: { state: "succeeded", summary: "Discover succeeded" },
+    },
+    recoveryInput: { kind: "none" },
+    ...overrides,
+  };
+}
+
 describe("DemoWorkspaceRepository", () => {
+  it("exposes a stable receipt snapshot and notifies after authoritative adoption", async () => {
+    const repository = buildRepository(new SharedPersistentStore());
+    await repository.initialize();
+    const initial = repository.getReceiptsSnapshot();
+    expect(repository.getReceiptsSnapshot()).toBe(initial);
+    const listener = vi.fn();
+    const unsubscribe = repository.subscribeReceipts(listener);
+
+    await repository.mutate((draft) => {
+      (draft.state.receipts as Array<(typeof draft.state.receipts)[number]>).push({
+        receiptId: "receipt-live-open",
+        kind: "os_open",
+        simulated: true,
+        externalEffectOccurred: false,
+        recordedAt: "2026-07-11T12:00:00.000Z",
+        wouldHaveDone: "Opened an artifact preview.",
+        didNotDo: "No host OS process was invoked.",
+        operation: "openArtifact",
+        entityType: "artifact",
+        entityId: "artifact-tailored-resume",
+      });
+    });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(repository.getReceiptsSnapshot()).not.toBe(initial);
+    expect(repository.getReceiptsSnapshot().at(-1)).toMatchObject({
+      receiptId: "receipt-live-open",
+      operation: "openArtifact",
+    });
+    unsubscribe();
+  });
+
+  it("persists queued projection and invocation atomically, dedupes, and advances durable phases", async () => {
+    vi.useFakeTimers();
+    try {
+      let now = 0;
+      const schedulerClock: DemoSchedulerClock = {
+        now: () => now,
+        setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
+        clearTimeout: (timer) => clearTimeout(timer),
+      };
+      const repository = buildRepository(new SharedPersistentStore());
+      await repository.initialize();
+      const scheduler = new DemoWorkspaceScheduler(repository, schedulerClock);
+      const invocation = queuedInvocation();
+      const onEnqueue = vi.fn((_pending, draft: DemoWorkspaceSnapshot) => {
+        (draft.state as { title: string }).title = "Discover queued";
+      });
+      const onDeadline = vi.fn((pending, draft: DemoWorkspaceSnapshot) => {
+        if ("phase" in pending && pending.phase === "queued") {
+          (draft.state as { title: string }).title = "Discover running";
+          return {
+            ...pending,
+            phase: "running" as const,
+            deadlineAt: new Date(50).toISOString(),
+          };
+        }
+        (draft.state as { title: string }).title = "Discover succeeded";
+        return null;
+      });
+
+      await expect(
+        scheduler.scheduleInvocation(invocation, onEnqueue, onDeadline),
+      ).resolves.toMatchObject({ kind: "scheduled" });
+      expect(await repository.snapshot()).toMatchObject({
+        revision: 1,
+        state: { title: "Discover queued" },
+        pendingScenarios: [{ phase: "queued", operation: "runPipelineStages" }],
+      });
+
+      await expect(
+        scheduler.scheduleInvocation(
+          queuedInvocation({ scenarioId: "duplicate-id" }),
+          onEnqueue,
+          onDeadline,
+        ),
+      ).resolves.toMatchObject({
+        kind: "active",
+        pending: { scenarioId: invocation.scenarioId },
+      });
+      expect((await repository.snapshot()).revision).toBe(1);
+      expect(onEnqueue).toHaveBeenCalledTimes(1);
+
+      now = 25;
+      await vi.advanceTimersByTimeAsync(25);
+      expect(await repository.snapshot()).toMatchObject({
+        revision: 2,
+        state: { title: "Discover running" },
+        pendingScenarios: [{ phase: "running", deadlineAt: new Date(50).toISOString() }],
+      });
+
+      now = 50;
+      await vi.advanceTimersByTimeAsync(25);
+      expect(await repository.snapshot()).toMatchObject({
+        revision: 3,
+        state: { title: "Discover succeeded" },
+        pendingScenarios: [],
+      });
+      scheduler.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("exposes an immutable synchronous clone only after initialization", async () => {
     const repository = buildRepository(new SharedPersistentStore());
     expect(() => repository.snapshotNow()).toThrow(
@@ -201,7 +351,7 @@ describe("DemoWorkspaceRepository", () => {
     expect(initial.kind).toBe("ready");
     if (initial.kind !== "ready") return;
     expect(initial.snapshot).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       seedVersion: "2026-07-11.1",
       workspaceId: "workspace-1",
       resetCount: 0,
@@ -705,7 +855,7 @@ describe("DemoWorkspaceRepository", () => {
     await builder.initialize();
     const future = {
       ...(await builder.snapshot()),
-      schemaVersion: 3,
+      schemaVersion: 4,
       workspaceId: "future-workspace",
     };
     const store = new InMemoryDemoWorkspaceStore(future);
@@ -714,8 +864,8 @@ describe("DemoWorkspaceRepository", () => {
     await expect(repository.initialize()).resolves.toMatchObject({
       kind: "upgrade_required",
       scope: "workspace_schema",
-      foundSchemaVersion: 3,
-      supportedSchemaVersion: 2,
+      foundSchemaVersion: 4,
+      supportedSchemaVersion: 3,
     });
     expect((await store.readSnapshot())?.workspaceId).toBe("future-workspace");
   });
@@ -729,7 +879,7 @@ describe("DemoWorkspaceRepository", () => {
     await store.memory.transact((_stored, transaction) => {
       transaction.putSnapshot({
         ...current,
-        schemaVersion: 3,
+        schemaVersion: 4,
         revision: 1,
       });
     });
@@ -748,7 +898,7 @@ describe("DemoWorkspaceRepository", () => {
       status: "upgrade_required",
       upgrade: {
         scope: "workspace_schema",
-        foundSchemaVersion: 3,
+        foundSchemaVersion: 4,
       },
     });
   });
@@ -774,7 +924,7 @@ describe("DemoWorkspaceRepository", () => {
     expect(ready).toMatchObject({
       kind: "ready",
       snapshot: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         workspaceId: "legacy-workspace",
         revision: 2,
         blobIds: ["legacy-preview"],
@@ -808,7 +958,7 @@ describe("DemoWorkspaceRepository", () => {
       kind: "ready",
       storageMode: "memory",
       snapshot: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         workspaceId: "legacy-quota-workspace",
         blobIds: ["legacy-quota-preview"],
       },

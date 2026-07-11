@@ -68,7 +68,8 @@ function artifactOptionLabel(artifact: ArtifactSummary): string {
 export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
   const navigate = useNavigate();
   const search = useSearch({ from: "/artifacts" });
-  const { api } = usePorts();
+  const { api, featureFlags } = usePorts();
+  const isDemo = featureFlags.get("demoMode", false);
   const close = useCallback(() => {
     void navigate({ to: "/artifacts", search });
   }, [navigate, search]);
@@ -172,7 +173,11 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                     disabled={openArtifact.isPending || detail.artifact.status === "missing"}
                     onClick={() => openArtifact.mutate({ artifactId: detail.artifact.artifactId })}
                   >
-                    {openArtifact.isPending ? "opening" : "open"}
+                    {openArtifact.isPending
+                      ? "opening"
+                      : isDemo
+                        ? "preview in browser"
+                        : "open"}
                   </button>
                   <button
                     className="tab"

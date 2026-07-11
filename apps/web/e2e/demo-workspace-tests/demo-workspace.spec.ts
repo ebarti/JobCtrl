@@ -1,4 +1,10 @@
-import { expect, test, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type Route,
+} from "@playwright/test";
 
 import type {
   DemoWorkspaceInitialization,
@@ -13,9 +19,45 @@ const MODULE_URLS = {
 } as const;
 const STATIC_HOST = "/demo/source-preview.html";
 
+const scenarioTest = test.extend<{ demoNetworkBoundary: void }>({
+  demoNetworkBoundary: [
+    async ({ baseURL, context }, use) => {
+      if (!baseURL) throw new Error("Demo Playwright baseURL is required.");
+      const demoOrigin = new URL(baseURL).origin;
+      const forbiddenRequests: string[] = [];
+      const guard = async (route: Route) => {
+        const requestUrl = new URL(route.request().url());
+        const forbidden =
+          requestUrl.pathname === "/v1" ||
+          requestUrl.pathname === "/v1/events/stream" ||
+          requestUrl.pathname.startsWith("/v1/") ||
+          requestUrl.origin !== demoOrigin;
+        if (forbidden) {
+          forbiddenRequests.push(route.request().url());
+          await route.abort("blockedbyclient");
+          return;
+        }
+        await route.continue();
+      };
+      await context.route("**/*", guard);
+      try {
+        await use();
+      } finally {
+        await context.unroute("**/*", guard);
+        expect(
+          forbiddenRequests,
+          "demo journeys must not request the product API, SSE, or an external origin",
+        ).toEqual([]);
+      }
+    },
+    { auto: true },
+  ],
+});
+
 declare global {
   interface Window {
     __jobctrlDemoWorkspace?: DemoWorkspaceRepository;
+    __jobctrlDemoOpenedUrls?: string[];
   }
 }
 
@@ -43,9 +85,215 @@ async function snapshot(page: Page): Promise<DemoWorkspaceSnapshot> {
   });
 }
 
+function jobRow(page: Page, title: string): Locator {
+  return page.getByRole("row").filter({
+    has: page.getByText(title, { exact: true }),
+  });
+}
+
+async function expectJobState(
+  page: Page,
+  title: string,
+  state: "queued" | "running" | "failed" | "succeeded",
+  timeout = 3_000,
+): Promise<void> {
+  await expect
+    .poll(() => jobRow(page, title).innerText(), {
+      intervals: [10, 20, 30, 50, 100],
+      timeout,
+    })
+    .toMatch(new RegExp(`\\b${state}\\b`, "i"));
+}
+
+async function receiptCount(page: Page): Promise<number> {
+  const summary = page.getByText(/^Receipt history \(\d+\)$/).first();
+  await expect(summary).toBeVisible();
+  const match = /\((\d+)\)/.exec((await summary.textContent()) ?? "");
+  if (!match) throw new Error("Simulation receipt count was not rendered.");
+  return Number(match[1]);
+}
+
+async function expectReceiptCount(page: Page, count: number): Promise<void> {
+  await expect.poll(() => receiptCount(page)).toBe(count);
+}
+
+async function latestReceipt(page: Page): Promise<Locator> {
+  const region = page.getByRole("region", { name: "Simulation receipts" });
+  const details = region.locator("details");
+  if (!(await details.evaluate((element) => element.hasAttribute("open")))) {
+    // A job/artifact detail drawer can cover the shell ledger. Expand the
+    // durable ledger directly, then assert its rendered contents.
+    await details.evaluate((element) => element.setAttribute("open", ""));
+  }
+  return details.getByRole("listitem").first();
+}
+
+function acceptNextConfirmation(page: Page): void {
+  page.once("dialog", async (dialog) => dialog.accept());
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto(STATIC_HOST);
 });
+
+scenarioTest(
+  "J1 run-current-stage shows durable queued, running, and terminal state across tabs",
+  async ({ page, context }) => {
+    const second = await context.newPage();
+    await Promise.all([
+      page.goto("/jobs/job-fabrikam-systems"),
+      second.goto("/jobs"),
+    ]);
+    await expect(
+      page.getByRole("dialog", { name: "Job details" }),
+    ).toBeVisible();
+    await expectJobState(second, "Systems delivery director", "succeeded");
+
+    acceptNextConfirmation(page);
+    await page
+      .getByRole("button", { name: "run current stage", exact: true })
+      .click();
+
+    await expectJobState(second, "Systems delivery director", "queued", 1_000);
+    await expectJobState(second, "Systems delivery director", "running");
+    await expect(
+      page
+        .getByRole("dialog", { name: "Job details" })
+        .getByText("running", { exact: true }),
+    ).toBeVisible();
+    await expectJobState(second, "Systems delivery director", "succeeded");
+    await expect(
+      page
+        .getByRole("dialog", { name: "Job details" })
+        .getByText("succeeded", { exact: true }),
+    ).toBeVisible();
+
+    await second.reload();
+    await expectJobState(second, "Systems delivery director", "succeeded");
+  },
+);
+
+scenarioTest(
+  "J2 Contoso re-tailoring fails first, preserves accepted material, and retries successfully",
+  async ({ page }) => {
+    await page.goto("/jobs/job-contoso-reliability");
+    const drawer = page.getByRole("dialog", { name: "Job details" });
+    await expect(
+      drawer.getByRole("heading", { name: "Reliability engineering manager" }),
+    ).toBeVisible();
+    await expect(drawer.getByText("accepted", { exact: true })).toHaveCount(2);
+
+    acceptNextConfirmation(page);
+    await drawer
+      .getByRole("button", { name: "re-tailor current policy", exact: true })
+      .click();
+    await expect(drawer.getByText("failed", { exact: true })).toBeVisible({
+      timeout: 3_000,
+    });
+    await expect(drawer.getByText("accepted", { exact: true })).toHaveCount(2);
+    await expect(drawer.getByText("suppressed", { exact: true })).toHaveCount(
+      0,
+    );
+
+    await drawer.getByRole("button", { name: "retry", exact: true }).click();
+    await expect(drawer.getByText("succeeded", { exact: true })).toBeVisible({
+      timeout: 3_000,
+    });
+    await expect(drawer.getByText("accepted", { exact: true })).toHaveCount(2);
+    await expect(drawer.getByText("suppressed", { exact: true })).toHaveCount(
+      2,
+    );
+
+    await page.reload();
+    const reloadedDrawer = page.getByRole("dialog", { name: "Job details" });
+    await expect(
+      reloadedDrawer.getByText("succeeded", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      reloadedDrawer.getByText("accepted", { exact: true }),
+    ).toHaveCount(2);
+    await expect(
+      reloadedDrawer.getByText("suppressed", { exact: true }),
+    ).toHaveCount(2);
+  },
+);
+
+scenarioTest(
+  "application rehearsals append durable no-effect receipts",
+  async ({ page, context }) => {
+    const second = await context.newPage();
+    await Promise.all([
+      page.goto("/jobs/job-fabrikam-systems"),
+      second.goto("/jobs/job-fabrikam-systems"),
+    ]);
+    const drawer = page.getByRole("dialog", { name: "Job details" });
+    const initialCount = await receiptCount(page);
+    await expectReceiptCount(second, initialCount);
+
+    await drawer
+      .getByRole("button", { name: "rehearse application", exact: true })
+      .click();
+    await expectReceiptCount(page, initialCount + 1);
+    const applyReceipt = await latestReceipt(page);
+    await expect(applyReceipt).toContainText("Apply job");
+    await expect(applyReceipt).toContainText(
+      /no browser automation.*application destination.*accessed/i,
+    );
+
+    await drawer
+      .getByRole("button", { name: "record simulated applied", exact: true })
+      .click();
+    await expectReceiptCount(page, initialCount + 2);
+    const markAppliedReceipt = await latestReceipt(page);
+    await expect(markAppliedReceipt).toContainText("Mark applied");
+    await expect(markAppliedReceipt).toContainText(
+      /no application was submitted/i,
+    );
+    await expectReceiptCount(second, initialCount + 2);
+
+    await second.reload();
+    await expectReceiptCount(second, initialCount + 2);
+    await expect(await latestReceipt(second)).toContainText("Mark applied");
+  },
+);
+
+scenarioTest(
+  "artifact rehearsal opens only the validated same-origin preview and records no host-OS effect",
+  async ({ page, context }) => {
+    await page.goto("/artifacts/artifact-tailored-resume");
+    const drawer = page.getByRole("dialog", { name: "Artifact details" });
+    await expect(
+      page.getByRole("region", { name: "Artifact PDF preview" }),
+    ).toBeVisible();
+    const initialCount = await receiptCount(page);
+    await page.evaluate(() => {
+      const originalOpen = window.open.bind(window);
+      window.__jobctrlDemoOpenedUrls = [];
+      window.open = (url, target, features) => {
+        window.__jobctrlDemoOpenedUrls?.push(String(url));
+        return originalOpen(url, target, features);
+      };
+    });
+
+    const popupPromise = context.waitForEvent("page");
+    await drawer
+      .getByRole("button", { name: "preview in browser", exact: true })
+      .click();
+    const popup = await popupPromise;
+    await expect
+      .poll(() => page.evaluate(() => window.__jobctrlDemoOpenedUrls))
+      .toEqual(["/demo/tailored-resume.pdf"]);
+
+    await expectReceiptCount(page, initialCount + 1);
+    const receipt = await latestReceipt(page);
+    await expect(receipt).toContainText("Open artifact");
+    await expect(receipt).toContainText(/same-origin.*preview.*opened/i);
+    await expect(receipt).toContainText(
+      /no .*host.*(?:os|operating system|local path)/i,
+    );
+    await popup.close();
+  },
+);
 
 test("demo shell renders the shared-profile and personal-data boundary without product network", async ({
   page,

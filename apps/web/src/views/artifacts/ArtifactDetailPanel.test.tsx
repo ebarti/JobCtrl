@@ -1,4 +1,8 @@
-import type { ArtifactSummary, ArtifactTailoringExplanation } from "@jobctrl/contracts";
+import type {
+  ArtifactOpenResponse,
+  ArtifactSummary,
+  ArtifactTailoringExplanation,
+} from "@jobctrl/contracts";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -7,11 +11,13 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { artifactsSearchSchema } from "../../routes/-artifacts.search.js";
+import { DemoArtifactPreviewError } from "../../demo/DemoExternalRehearsalExecutor.js";
+import { DemoFeatureFlagAdapter } from "../../demo/ports.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { makeArtifactsPage, sampleArtifact } from "../../test/fixtures/projections.js";
 import { ArtifactDetailPanel } from "./ArtifactDetailPanel.js";
@@ -25,11 +31,17 @@ vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
   ),
 }));
 
+interface RenderArtifactRouteOptions {
+  readonly demo?: boolean;
+  readonly openArtifact?: (artifactId: string) => Promise<ArtifactOpenResponse>;
+}
+
 function renderArtifactRoute(
   children: ReactNode,
   status = "approved",
   tailoringExplanation: ArtifactTailoringExplanation | null = null,
   comparisonArtifacts: readonly ArtifactSummary[] = [],
+  options: RenderArtifactRouteOptions = {},
 ) {
   const artifact = {
     ...sampleArtifact,
@@ -56,6 +68,12 @@ function renderArtifactRoute(
         })),
         artifactPreviewPdfUrl,
       }),
+      openInOs: options.openArtifact
+        ? { open: options.openArtifact }
+        : ports.openInOs,
+      featureFlags: options.demo
+        ? new DemoFeatureFlagAdapter()
+        : ports.featureFlags,
     },
   });
 
@@ -81,6 +99,39 @@ function renderArtifactRoute(
 }
 
 describe("<ArtifactDetailPanel>", () => {
+  it("surfaces a blocked demo popup without claiming that the preview opened", async () => {
+    const openArtifact = vi.fn(async () => {
+      throw new DemoArtifactPreviewError(
+        "demo_preview_blocked",
+        "/demo/tailored-resume.pdf",
+      );
+    });
+    renderArtifactRoute(
+      <ArtifactDetailPanel artifactId="artifact-preview" />,
+      "approved",
+      null,
+      [],
+      { demo: true, openArtifact },
+    );
+
+    const button = await screen.findByRole("button", {
+      name: "preview in browser",
+    });
+    fireEvent.click(button);
+
+    expect(
+      await screen.findByText(
+        "The browser blocked the new tab. Use the embedded same-origin preview instead.",
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "preview in browser" }),
+      ).toBeEnabled(),
+    );
+    expect(openArtifact).toHaveBeenCalledWith("artifact-preview");
+  });
+
   it("explains approved status and renders PDF artifacts in the detail drawer", async () => {
     const { artifactPreviewPdfUrl } = renderArtifactRoute(
       <ArtifactDetailPanel artifactId="artifact-preview" />,

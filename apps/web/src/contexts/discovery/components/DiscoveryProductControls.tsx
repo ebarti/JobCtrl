@@ -21,6 +21,7 @@ import {
 } from "@tabler/icons-react";
 import { type FormEvent, useMemo, useState } from "react";
 
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import {
   useDiscoveryQuarantineQuery,
   useDiscoverySourcePreviewQuery,
@@ -482,6 +483,8 @@ function SourceRegistryPanel({
   loading: boolean;
   defaultStateFilter?: SourceRegistryStateFilter;
 }) {
+  const { featureFlags } = usePorts();
+  const isDemo = featureFlags.get("demoMode", false);
   const upsert = useUpsertDiscoverySourceMutation();
   const patchState = usePatchDiscoverySourceStateMutation();
   const [previewSourceId, setPreviewSourceId] = useState<string | null>(null);
@@ -759,8 +762,16 @@ function SourceRegistryPanel({
               type="button"
               size="icon"
               variant="ghost"
-              aria-label={`Preview ${source.displayName}`}
-              title="Preview observed leads"
+              aria-label={
+                isDemo
+                  ? `Bundled preview — no fetch for ${source.displayName}`
+                  : `Preview ${source.displayName}`
+              }
+              title={
+                isDemo
+                  ? "Bundled preview — no fetch"
+                  : "Preview observed leads"
+              }
               disabled={
                 preview.isFetching && previewSourceId === source.sourceId
               }
@@ -772,7 +783,7 @@ function SourceRegistryPanel({
         ),
       },
     ],
-    [patchState, preview.isFetching, previewSourceId],
+    [isDemo, patchState, preview.isFetching, previewSourceId],
   );
 
   const submit = (event: FormEvent<HTMLFormElement>) => {

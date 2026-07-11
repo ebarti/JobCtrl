@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useOpenArtifactMutation } from "../hooks/useOpenArtifactMutation.js";
 
 export interface OpenArtifactButtonProps {
@@ -12,11 +13,14 @@ export interface OpenArtifactButtonProps {
 export function OpenArtifactButton({
   artifactId,
   disabled,
-  label = "open",
+  label,
   className = "tab on",
 }: OpenArtifactButtonProps): JSX.Element {
+  const { featureFlags } = usePorts();
+  const isDemo = featureFlags.get("demoMode", false);
   const openArtifact = useOpenArtifactMutation();
   const isPending = openArtifact.isPending;
+  const actionLabel = label ?? (isDemo ? "preview in browser" : "open");
   return (
     <button
       type="button"
@@ -27,7 +31,7 @@ export function OpenArtifactButton({
         openArtifact.mutate({ artifactId });
       }}
     >
-      {isPending ? "opening" : label}
+      {isPending ? "opening" : actionLabel}
     </button>
   );
 }

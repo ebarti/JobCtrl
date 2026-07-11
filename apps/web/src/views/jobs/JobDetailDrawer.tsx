@@ -47,6 +47,10 @@ function canRetryStage(stage: StageSummary | undefined): boolean {
   return Boolean(stage && ["failed", "exhausted"].includes(stage.state));
 }
 
+function canRunCurrentStage(stage: StageSummary | undefined): boolean {
+  return Boolean(stage && !["queued", "running"].includes(stage.state));
+}
+
 function JobAuditHistorySection({
   entries,
 }: {
@@ -114,6 +118,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   jobId={detail.job.jobKey}
                   currentStage={detail.job.currentSubstage}
                   canRetryStage={canRetryStage(currentSubstage)}
+                  canRunCurrentStage={canRunCurrentStage(currentSubstage)}
                   canRetailor={detail.artifacts.length > 0}
                   applyApprovalRequired={applyApprovalRequired}
                 />

@@ -10,6 +10,11 @@ import { scanDemoPrivacy } from "./privacy.js";
 import { DEMO_SEED } from "./seed.js";
 
 const CLOCK = { anchor: "2031-01-02T03:04:05.000Z" } as const;
+const CONTOSO_JOB_KEY = "job-contoso-reliability";
+const CONTOSO_GENERATION_ONE_ARTIFACT_IDS = [
+  "artifact-contoso-resume-g1",
+  "artifact-contoso-resume-pdf-g1",
+] as const;
 
 describe("canonical public demo seed", () => {
   it("has a complete classified API capability manifest", () => {
@@ -19,7 +24,7 @@ describe("canonical public demo seed", () => {
 
   it("is deterministic, immutable by type, and covers the required lifecycle arms", () => {
     expect(() => assertDemoSeedInvariants(DEMO_SEED)).not.toThrow();
-    expect(demoSeedDigest(DEMO_SEED)).toBe("fnv1a-04d7c62c");
+    expect(demoSeedDigest(DEMO_SEED)).toBe("fnv1a-9bdbb172");
     expect(demoSeedDigest({ b: 2, a: ["seed", true] })).toBe(demoSeedDigest({ a: ["seed", true], b: 2 }));
   });
 
@@ -44,6 +49,72 @@ describe("canonical public demo seed", () => {
     expect(model.contacts.list.items).not.toHaveLength(0);
     expect(model.outreach.thread.thread?.drafts).not.toHaveLength(0);
     expect(model.outreach.dueFollowUps.followUps).not.toHaveLength(0);
+  });
+
+  it("keeps Contoso generation-one materials accepted, previewable, and blocked from apply", () => {
+    const model = DEMO_SEED.readModel;
+    const contoso = model.jobs.list.items.find((item) => item.jobKey === CONTOSO_JOB_KEY);
+    const detail = model.jobs.details[CONTOSO_JOB_KEY];
+    const artifacts = model.materials.list.items.filter((item) => item.jobKey === CONTOSO_JOB_KEY);
+    const allowedAssetUrls: ReadonlySet<string> = new Set(
+      Object.values(DEMO_ARTIFACTS).map((asset) => asset.url),
+    );
+
+    expect(contoso).toMatchObject({
+      artifactCount: 2,
+      currentStage: "tailor",
+      currentState: "blocked",
+      errorCode: "demo_missing_requirement",
+    });
+    expect(detail?.job.artifactCount).toBe(2);
+    expect(detail?.artifacts.map((artifact) => artifact.artifactId)).toEqual(
+      CONTOSO_GENERATION_ONE_ARTIFACT_IDS,
+    );
+    expect(artifacts.map((artifact) => artifact.artifactId)).toEqual(
+      CONTOSO_GENERATION_ONE_ARTIFACT_IDS,
+    );
+    expect(artifacts.every((artifact) => artifact.status === "accepted")).toBe(true);
+    expect(artifacts.every((artifact) => allowedAssetUrls.has(artifact.localPath))).toBe(true);
+    expect(artifacts.every((artifact) => !artifact.localPath.includes("://"))).toBe(true);
+    for (const artifact of artifacts) {
+      expect(model.materials.details[artifact.artifactId]?.artifact).toEqual(artifact);
+    }
+
+    expect(detail?.applyAudit.state).toBe("blocked");
+    expect(detail?.applyAudit.hardBlockers).toContainEqual(
+      expect.objectContaining({ code: "missing_requirement", severity: "blocking" }),
+    );
+    expect(detail?.applyAudit.sources).toEqual([
+      expect.objectContaining({ kind: "materials.resume", status: "present" }),
+      expect.objectContaining({ kind: "materials.resume_pdf", status: "present" }),
+    ]);
+    expect(model.apply.queue.items.some((item) => item.jobKey === CONTOSO_JOB_KEY)).toBe(false);
+    expect(scanDemoPrivacy(JSON.stringify({ contoso, artifacts }))).toEqual([]);
+  });
+
+  it("materializes reset truth with the same accepted Contoso generation-one references", () => {
+    const resetSeed = materializeDemoSeed(DEMO_SEED, CLOCK).readModel;
+    const contoso = resetSeed.jobs.list.items.find((item) => item.jobKey === CONTOSO_JOB_KEY);
+    const artifacts = resetSeed.materials.list.items.filter((item) => item.jobKey === CONTOSO_JOB_KEY);
+
+    expect(contoso).toMatchObject({ artifactCount: 2, currentStage: "tailor", currentState: "blocked" });
+    expect(artifacts.map((artifact) => [artifact.artifactId, artifact.status])).toEqual([
+      ["artifact-contoso-resume-g1", "accepted"],
+      ["artifact-contoso-resume-pdf-g1", "accepted"],
+    ]);
+    expect(resetSeed.jobs.details[CONTOSO_JOB_KEY]?.artifacts).toEqual(artifacts);
+  });
+
+  it("keeps Fabrikam's runnable current stage and substage aligned", () => {
+    const fabrikam = DEMO_SEED.readModel.jobs.details["job-fabrikam-systems"];
+
+    expect(fabrikam?.job).toMatchObject({
+      currentStage: "score",
+      currentSubstage: "score",
+    });
+    expect(fabrikam?.stages).toContainEqual(
+      expect.objectContaining({ stage: "score" }),
+    );
   });
 
   it("materializes every seed timestamp from one injected reference anchor", () => {
@@ -122,6 +193,47 @@ describe("canonical public demo seed", () => {
     danglingSourceRun.readModel.discovery.sources.sources[0]!.lastRunId = "run-missing";
     expect(() => assertDemoSeedInvariants(danglingSourceRun as unknown as typeof DEMO_SEED)).toThrow(
       "source demo-source:northwind workflow run run-missing is missing its direct-link detail",
+    );
+
+    const missingContosoArtifact = structuredClone(DEMO_SEED) as unknown as {
+      readModel: { materials: { details: Record<string, unknown> } };
+    };
+    delete missingContosoArtifact.readModel.materials.details["artifact-contoso-resume-g1"];
+    expect(() => assertDemoSeedInvariants(missingContosoArtifact as unknown as typeof DEMO_SEED)).toThrow(
+      "artifact artifact-contoso-resume-g1 is missing its direct-link detail",
+    );
+  });
+
+  it("rejects inconsistent artifact counts, states, and preview paths", () => {
+    const wrongCount = structuredClone(DEMO_SEED) as unknown as {
+      readModel: { jobs: { list: { items: Array<{ jobKey: string; artifactCount: number }> } } };
+    };
+    const contoso = wrongCount.readModel.jobs.list.items.find((item) => item.jobKey === CONTOSO_JOB_KEY)!;
+    contoso.artifactCount = 1;
+    expect(() => assertDemoSeedInvariants(wrongCount as unknown as typeof DEMO_SEED)).toThrow(
+      `job ${CONTOSO_JOB_KEY} artifact count must match its material projections`,
+    );
+
+    const wrongStatus = structuredClone(DEMO_SEED) as unknown as {
+      readModel: {
+        materials: { details: Record<string, { artifact: { status: string } }> };
+      };
+    };
+    const artifactDetail = wrongStatus.readModel.materials.details["artifact-contoso-resume-g1"]!;
+    artifactDetail.artifact = { ...artifactDetail.artifact, status: "suppressed" };
+    expect(() => assertDemoSeedInvariants(wrongStatus as unknown as typeof DEMO_SEED)).toThrow(
+      "artifact artifact-contoso-resume-g1 has inconsistent list and detail status",
+    );
+
+    const externalPreview = structuredClone(DEMO_SEED) as unknown as {
+      readModel: { materials: { list: { items: Array<{ artifactId: string; localPath: string }> } } };
+    };
+    const preview = externalPreview.readModel.materials.list.items.find(
+      (item) => item.artifactId === "artifact-contoso-resume-pdf-g1",
+    )!;
+    preview.localPath = "https://demo.invalid/contoso-resume.pdf";
+    expect(() => assertDemoSeedInvariants(externalPreview as unknown as typeof DEMO_SEED)).toThrow(
+      "artifact artifact-contoso-resume-pdf-g1 references a missing bundled preview asset",
     );
   });
 });

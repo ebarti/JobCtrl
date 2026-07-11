@@ -180,6 +180,7 @@ export class FakeFeatureFlagPort implements FeatureFlagPort {
 export interface BuildTestPortsOptions {
   readonly api?: Partial<Ports["api"]>;
   readonly eventStream?: EventStreamPort;
+  readonly openInOs?: OpenInOsPort;
 }
 
 export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
@@ -265,7 +266,7 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
     storage: new InMemoryStoragePort(),
     session: new FakeSessionPort(),
     clipboard: new FakeClipboardPort(),
-    openInOs: new FakeOpenInOsPort(),
+    openInOs: overrides.openInOs ?? new FakeOpenInOsPort(),
     telemetry: new FakeTelemetryPort(),
     featureFlags: new FakeFeatureFlagPort(),
   };

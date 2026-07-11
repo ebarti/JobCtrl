@@ -17,6 +17,12 @@ import "./styles/globals.css";
 
 const queryClient = createQueryClient();
 const root = createRoot(document.getElementById("root")!);
+let disposeComposition: () => void = () => undefined;
+
+window.addEventListener("pagehide", () => disposeComposition(), { once: true });
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => disposeComposition());
+}
 
 void mount();
 
@@ -25,6 +31,8 @@ async function mount(): Promise<void> {
     mode: resolveAppMode(import.meta.env.VITE_JOBCTRL_APP_MODE),
     apiBaseUrl: import.meta.env.VITE_JOBCTRL_API_BASE_URL ?? "",
   });
+  disposeComposition();
+  disposeComposition = composition.dispose;
   if (
     composition.kind === "demo" &&
     composition.initialization.kind === "upgrade_required"

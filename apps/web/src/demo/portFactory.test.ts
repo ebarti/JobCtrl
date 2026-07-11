@@ -80,15 +80,18 @@ describe("port factory", () => {
     expect(direct.featureFlags.get("activityDetailDirectLoad", false)).toBe(
       false,
     );
+    expect(direct.featureFlags.get("demoMode", false)).toBe(false);
     expect(composition.ports.api).toBeInstanceOf(FetchApiClientAdapter);
   });
 
   it("selects demo only explicitly and constructs no product-network, SSE, or host-OS adapter", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const previewOpener = vi.fn(() => ({ close: vi.fn() }));
     try {
       expect(resolveAppMode("demo")).toBe("demo");
       const composition = await createAppComposition({
         mode: "demo",
+        demoPreviewOpener: previewOpener,
         demoWorkspace: { store: new InMemoryDemoWorkspaceStore() },
       });
 
@@ -113,12 +116,23 @@ describe("port factory", () => {
       expect(
         composition.ports.featureFlags.get("activityDetailDirectLoad", false),
       ).toBe(true);
+      expect(composition.ports.featureFlags.get("demoMode", false)).toBe(true);
       expect(composition.ports.api).toBeInstanceOf(DemoApiClientAdapter);
       await expect(composition.ports.api.health()).resolves.toMatchObject({
         ok: true,
         appDir: "browser-local-demo",
       });
+      await expect(
+        composition.ports.openInOs.open("artifact-tailored-resume"),
+      ).resolves.toMatchObject({
+        opened: true,
+        path: "/demo/tailored-resume.pdf",
+      });
+      expect(previewOpener).toHaveBeenCalledWith(
+        "/demo/tailored-resume.pdf",
+      );
       expect(fetchSpy).not.toHaveBeenCalled();
+      composition.dispose();
     } finally {
       fetchSpy.mockRestore();
     }

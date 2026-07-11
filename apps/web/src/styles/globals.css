@@ -90,6 +90,57 @@ code,
   color: var(--warning-foreground);
 }
 
+.demo-receipt-history {
+  margin: 8px 16px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--card);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.demo-receipt-latest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+}
+
+.demo-receipt-latest strong {
+  color: var(--success);
+}
+
+.demo-receipt-history summary {
+  width: fit-content;
+  margin-top: 6px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.demo-receipt-list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.demo-receipt-list li {
+  display: grid;
+  gap: 2px;
+}
+
+.demo-receipt-list-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.demo-receipt-list time {
+  color: var(--muted-foreground);
+}
+
 .side-rail {
   position: sticky;
   top: 0;

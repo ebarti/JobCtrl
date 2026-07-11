@@ -47,8 +47,22 @@ describe("purgeDemoJobProjections", () => {
       OTHER_JOB,
       "job-fabrikam-systems",
     ]);
-    expect(model.materials.list.items).toEqual([]);
-    expect(model.materials.details).toEqual({});
+    expect(model.materials.list.items).toEqual([
+      expect.objectContaining({
+        artifactId: "artifact-contoso-resume-g1",
+        jobKey: OTHER_JOB,
+        status: "accepted",
+      }),
+      expect.objectContaining({
+        artifactId: "artifact-contoso-resume-pdf-g1",
+        jobKey: OTHER_JOB,
+        status: "accepted",
+      }),
+    ]);
+    expect(Object.keys(model.materials.details)).toEqual([
+      "artifact-contoso-resume-g1",
+      "artifact-contoso-resume-pdf-g1",
+    ]);
     expect(model.materials.resumeReviewDrafts[JOB]).toBeUndefined();
     expect(model.materials.resumeReviewFeedback[JOB]).toBeUndefined();
     expect(model.apply.queue.items).toEqual([]);

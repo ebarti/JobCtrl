@@ -49,6 +49,8 @@ import {
 } from "./purgeDemoJobProjections.js";
 import {
   DemoWorkspaceRepository,
+  isDemoScenarioInvocation,
+  type DemoPendingScenario,
   type DemoWorkspaceMutationContext,
   type DemoWorkspaceSnapshot,
 } from "./workspace/index.js";
@@ -1241,6 +1243,10 @@ export class DemoLocalCommandExecutor {
       case "cancelWorkflowRun": {
         const runId = requiredString(args[0], "runId");
         const { detail, changed } = cancelDemoRun(draft, runId, now);
+        removePendingScenarios(
+          draft,
+          (pending) => pending.runId === runId,
+        );
         if (!changed) {
           return actionResponse("cancel", detail.jobKey, runId, detail.finishedAt ?? now, { runId }, "canceled");
         }
@@ -1611,7 +1617,9 @@ export class DemoLocalCommandExecutor {
           ? requireMapValue(draft.state.readModel.runs.details, requestedRunId)
           : method === "cancelJobAction"
             ? Object.values(draft.state.readModel.runs.details).find(
-                (run) => run.jobKey === jobKey && run.status === "in_progress",
+                (run) =>
+                  run.jobKey === jobKey &&
+                  (run.status === "starting" || run.status === "in_progress"),
               )
             : undefined;
         if (activeRun && activeRun.jobKey !== jobKey) {
@@ -1622,6 +1630,12 @@ export class DemoLocalCommandExecutor {
         }
         if (method === "cancelJobAction" && activeRun) {
           const canceled = cancelDemoRun(draft, activeRun.runId, now);
+          removePendingScenarios(
+            draft,
+            (pending) =>
+              pending.runId === activeRun.runId ||
+              pending.targetRefs.jobKey === jobKey,
+          );
           if (!canceled.changed) {
             return actionResponse("cancel", jobKey, activeRun.runId, activeRun.finishedAt ?? now, {
               runId: activeRun.runId,
@@ -2058,7 +2072,7 @@ function durationBetween(startedAt: string | null, finishedAt: string): number |
 
 function cancelDemoRun(draft: DemoWorkspaceSnapshot, runId: string, now: string) {
   const detail = requireMapValue(draft.state.readModel.runs.details, runId);
-  if (detail.status !== "in_progress") {
+  if (detail.status !== "starting" && detail.status !== "in_progress") {
     if (detail.status === "canceled") return { detail, changed: false } as const;
     throw new TypeError(`Demo workflow run ${runId} is already terminal.`);
   }
@@ -2125,6 +2139,16 @@ function cancelDemoRun(draft: DemoWorkspaceSnapshot, runId: string, now: string)
     stage.nextAction = null;
   }
   return { detail, changed: true } as const;
+}
+
+function removePendingScenarios(
+  draft: DemoWorkspaceSnapshot,
+  predicate: (pending: Extract<DemoPendingScenario, { invocationVersion: 1 }>) => boolean,
+): void {
+  (draft as unknown as { pendingScenarios: DemoPendingScenario[] }).pendingScenarios =
+    draft.pendingScenarios.filter(
+      (pending) => !isDemoScenarioInvocation(pending) || !predicate(pending),
+    );
 }
 
 function contactSummary(

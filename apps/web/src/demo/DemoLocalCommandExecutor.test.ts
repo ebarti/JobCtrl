@@ -240,9 +240,9 @@ describe("DemoLocalCommandExecutor", () => {
     expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(118);
     expect(counts).toEqual({
       browser_local: 89,
-      simulated_async: 16,
-      rehearsed_external: 8,
-      unavailable: 5,
+      simulated_async: 4,
+      rehearsed_external: 4,
+      unavailable: 21,
     });
   });
 
