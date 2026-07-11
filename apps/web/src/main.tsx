@@ -25,6 +25,7 @@ import "./styles/globals.css";
 const queryClient = createQueryClient();
 const root = createRoot(document.getElementById("root")!);
 let disposeComposition: () => void = () => undefined;
+let demoAdmission: Promise<void> | undefined;
 
 window.addEventListener("pagehide", () => disposeComposition(), { once: true });
 if (import.meta.hot) {
@@ -41,28 +42,35 @@ async function bootstrap(): Promise<void> {
   }
 
   const client = new DemoConsentClient();
-  let initialChoice: DemoConsentChoice = "unknown";
+  renderConsentGate(client, "unknown");
   try {
     const state = await client.getChoice();
-    initialChoice = state.choice;
     if (state.choice === "granted") {
-      await mountApplication(client);
+      await enterDemo(client);
       return;
     }
+    if (state.choice === "denied") renderConsentGate(client, "denied");
   } catch {
-    // The static gate remains usable and acceptance stays retryable.
+    // The already-rendered static gate remains usable and acceptance stays retryable.
   }
+}
 
+function renderConsentGate(client: DemoConsentClient, initialChoice: DemoConsentChoice): void {
   root.render(
     <React.StrictMode>
       <DemoConsentGate
         client={client}
         initialChoice={initialChoice}
         onDeclined={() => window.location.assign("https://jobctrl.dev")}
-        onGranted={() => mountApplication(client)}
+        onGranted={() => enterDemo(client)}
       />
     </React.StrictMode>,
   );
+}
+
+function enterDemo(client: DemoConsentClient): Promise<void> {
+  demoAdmission ??= mountApplication(client);
+  return demoAdmission;
 }
 
 async function mountApplication(consentClient?: DemoConsentClient): Promise<void> {

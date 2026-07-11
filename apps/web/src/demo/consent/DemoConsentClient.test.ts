@@ -54,6 +54,38 @@ describe("DemoConsentClient", () => {
     );
     await expect(client.getChoice()).rejects.toBeInstanceOf(DemoConsentUnavailableError);
   });
+
+  it("bounds a never-settling consent read", async () => {
+    const fetcher = vi.fn(
+      (_input: RequestInfo | URL, _init?: RequestInit) => new Promise<Response>(() => undefined),
+    );
+    const client = new DemoConsentClient({
+      fetcher: fetcher as typeof fetch,
+      requestTimeoutMs: 5,
+    });
+
+    await expect(client.getChoice()).rejects.toBeInstanceOf(DemoConsentUnavailableError);
+    expect(fetcher.mock.calls[0]?.[1]?.signal).toMatchObject({ aborted: true });
+  });
+
+  it("bounds a never-settling grant and retains its operation key for retry", async () => {
+    const fetcher = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>(() => undefined))
+      .mockResolvedValueOnce(json({ choice: "granted", version: "v1" }));
+    const client = new DemoConsentClient({
+      fetcher: fetcher as typeof fetch,
+      createOperationKey: () => KEY,
+      requestTimeoutMs: 5,
+    });
+
+    await expect(client.submitChoice("granted")).rejects.toBeInstanceOf(DemoConsentUnavailableError);
+    await expect(client.submitChoice("granted")).resolves.toMatchObject({ choice: "granted" });
+    const bodies = fetcher.mock.calls.map((call) => JSON.parse(String(call[1]?.body)) as unknown);
+    expect(bodies).toEqual([
+      { choice: "granted", operationKey: KEY },
+      { choice: "granted", operationKey: KEY },
+    ]);
+  });
 });
 
 function json(value: unknown): Response {

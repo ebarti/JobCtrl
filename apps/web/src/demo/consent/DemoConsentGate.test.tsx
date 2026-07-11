@@ -54,6 +54,25 @@ describe("DemoConsentGate", () => {
       operationKey: KEY,
     });
   });
+
+  it("recovers the accept controls when the consent service never settles", async () => {
+    const fetcher = vi.fn(
+      (_input: RequestInfo | URL, _init?: RequestInit) => new Promise<Response>(() => undefined),
+    );
+    render(
+      <DemoConsentGate
+        client={new DemoConsentClient({ fetcher: fetcher as typeof fetch, requestTimeoutMs: 5 })}
+        initialChoice="unknown"
+        onDeclined={vi.fn()}
+        onGranted={vi.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Accept cookies and enter demo" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/try again/i);
+    expect(screen.getByRole("button", { name: "Accept cookies and enter demo" })).toBeEnabled();
+  });
 });
 
 function json(value: unknown): Response {

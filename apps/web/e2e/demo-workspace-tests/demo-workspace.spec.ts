@@ -272,6 +272,35 @@ test("a denied revisit reopens the acceptance-required gate", async ({ page, con
   )).toBe(false);
 });
 
+test("a stalled consent read still renders the static gate without creating a workspace", async ({
+  page,
+  context,
+}) => {
+  let releaseRequest: (() => void) | undefined;
+  const stalled = new Promise<void>((resolve) => {
+    releaseRequest = resolve;
+  });
+  await context.route("**/api/demo-consent", async (route) => {
+    await stalled;
+    await route.abort("failed");
+  });
+
+  try {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: /Explore JobCtrl/i })).toBeVisible({
+      timeout: 1_000,
+    });
+    await expect(
+      page.getByRole("button", { name: "Accept cookies and enter demo" }),
+    ).toBeEnabled();
+    expect(await page.evaluate(async () =>
+      (await indexedDB.databases()).some((database) => database.name === "jobctrl-demo"),
+    )).toBe(false);
+  } finally {
+    releaseRequest?.();
+  }
+});
+
 scenarioTest(
   "J1 run-current-stage shows durable queued, running, and terminal state across tabs",
   async ({ page, context }) => {

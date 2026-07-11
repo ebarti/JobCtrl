@@ -1,4 +1,5 @@
 export const DEMO_CONSENT_VERSION = "v1" as const;
+export const DEMO_CONSENT_REQUEST_TIMEOUT_MS = 3_000;
 
 export type DemoConsentChoice = "unknown" | "granted" | "denied";
 export type DemoConsentDecision = Exclude<DemoConsentChoice, "unknown">;
@@ -13,6 +14,7 @@ export interface DemoConsentState {
 export interface DemoConsentClientOptions {
   readonly fetcher?: typeof fetch;
   readonly createOperationKey?: () => string;
+  readonly requestTimeoutMs?: number;
 }
 
 export class DemoConsentUnavailableError extends Error {
@@ -26,33 +28,41 @@ export class DemoConsentUnavailableError extends Error {
 export class DemoConsentClient {
   private readonly fetcher: typeof fetch;
   private readonly createOperationKey: () => string;
+  private readonly requestTimeoutMs: number;
   private readonly choiceKeys = new Map<DemoConsentDecision, string>();
   private healthKey: string | undefined;
 
   constructor(options: DemoConsentClientOptions = {}) {
     this.fetcher = options.fetcher ?? ((input, init) => globalThis.fetch(input, init));
     this.createOperationKey = options.createOperationKey ?? randomOperationKey;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEMO_CONSENT_REQUEST_TIMEOUT_MS;
   }
 
   async getChoice(): Promise<DemoConsentState> {
-    const response = await this.fetcher("/api/demo-consent", {
-      method: "GET",
-      credentials: "same-origin",
-      headers: { accept: "application/json" },
+    return this.withRequestTimeout(async (signal) => {
+      const response = await this.fetcher("/api/demo-consent", {
+        method: "GET",
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+        signal,
+      });
+      return readConsentState(response);
     });
-    return readConsentState(response);
   }
 
   async submitChoice(choice: DemoConsentDecision): Promise<DemoConsentState> {
     const operationKey = this.choiceKeys.get(choice) ?? this.createOperationKey();
     this.choiceKeys.set(choice, operationKey);
-    const response = await this.fetcher("/api/demo-consent", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { accept: "application/json", "content-type": "application/json" },
-      body: JSON.stringify({ choice, operationKey }),
+    const state = await this.withRequestTimeout(async (signal) => {
+      const response = await this.fetcher("/api/demo-consent", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ choice, operationKey }),
+        signal,
+      });
+      return readConsentState(response);
     });
-    const state = await readConsentState(response);
     if (state.choice !== choice) throw new DemoConsentUnavailableError();
     this.choiceKeys.delete(choice);
     return state;
@@ -64,19 +74,44 @@ export class DemoConsentClient {
   ): Promise<void> {
     const operationKey = this.healthKey ?? this.createOperationKey();
     this.healthKey = operationKey;
-    const response = await this.fetcher("/api/demo-health", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        choice: "granted",
-        result,
-        storageMode,
-        operationKey,
-      }),
+    await this.withRequestTimeout(async (signal) => {
+      const response = await this.fetcher("/api/demo-health", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          choice: "granted",
+          result,
+          storageMode,
+          operationKey,
+        }),
+        signal,
+      });
+      if (!response.ok) throw new DemoConsentUnavailableError();
     });
-    if (!response.ok) throw new DemoConsentUnavailableError();
     this.healthKey = undefined;
+  }
+
+  private async withRequestTimeout<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    const controller = new AbortController();
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timeoutId = setTimeout(() => {
+        controller.abort();
+        reject(new DemoConsentUnavailableError());
+      }, this.requestTimeoutMs);
+    });
+
+    try {
+      return await Promise.race([operation(controller.signal), timeout]);
+    } catch (error) {
+      if (error instanceof DemoConsentUnavailableError) throw error;
+      throw new DemoConsentUnavailableError();
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
   }
 }
 
