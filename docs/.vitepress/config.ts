@@ -238,7 +238,6 @@ export default withMermaid(
       logo: { src: "/assets/brand/app-icon.png", alt: "JobCtrl" },
       siteTitle: 'Job<span class="jh-site-title-accent">Ctrl</span>',
       nav: [
-        { text: "Live Demo", link: "https://demo.jobctrl.dev" },
         { text: "Guide", link: "/user/getting-started" },
         { text: "Architecture", link: "/architecture/" },
       ],

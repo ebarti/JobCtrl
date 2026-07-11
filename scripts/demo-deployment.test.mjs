@@ -30,6 +30,8 @@ test("demo build and Pages files select the fail-closed demo composition", async
   ]) {
     assert.match(headers, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  assert.doesNotMatch(headers, /Cache-Control: public, max-age=0, must-revalidate/);
+  assert.match(headers, /\/assets\/\*\n  Cache-Control: public, max-age=31536000, immutable/);
 });
 
 test("production Workers share the provisioned EU D1 database", async () => {
@@ -53,6 +55,10 @@ test("deployment workflow pins Wrangler, gates production, and deploys in safe o
   assert.match(workflow, /vars\.DEMO_DEPLOY_ENABLED == 'true'/);
   assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
   assert.doesNotMatch(workflow, /pull_request_target/);
+
+  const previewJob = workflow.slice(workflow.indexOf("  preview:"), workflow.indexOf("  production:"));
+  assert.match(previewJob, /uses: actions\/checkout@v4/);
+  assert.ok(previewJob.indexOf("actions/checkout@v4") < previewJob.indexOf("pnpm/action-setup@v4"));
 
   const migrate = workflow.indexOf("Apply telemetry migrations");
   const api = workflow.indexOf("Deploy consent and telemetry API");
