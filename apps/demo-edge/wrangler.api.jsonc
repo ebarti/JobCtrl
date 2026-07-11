@@ -1,0 +1,53 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "jobctrl-demo-api",
+  "main": "./workers/api.ts",
+  "compatibility_date": "2026-07-08",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "demo.jobctrl.dev/api/*",
+      "zone_name": "jobctrl.dev"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": false
+    }
+  },
+  "vars": {
+    "DEMO_RELEASE": "local-dev"
+  },
+  "d1_databases": [
+    {
+      "binding": "DEMO_TELEMETRY_DB",
+      "database_name": "jobctrl-demo-telemetry",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "PUBLIC_INGRESS_LIMITER",
+      "namespace_id": "2026071101",
+      "simple": {
+        "limit": 240,
+        "period": 60
+      }
+    },
+    {
+      "name": "TELEMETRY_EDGE_LIMITER",
+      "namespace_id": "2026071102",
+      "simple": {
+        "limit": 2000,
+        "period": 60
+      }
+    }
+  ]
+}

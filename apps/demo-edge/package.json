@@ -1,0 +1,21 @@
+{
+  "name": "@jobctrl/demo-edge",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit --project tsconfig.json",
+    "test": "node --test scripts/wrangler-config.test.mjs && vitest run --config vitest.config.ts",
+    "types": "wrangler types --config wrangler.api.jsonc --env-interface DemoEdgeEnv",
+    "dry-run": "wrangler deploy --config wrangler.api.jsonc --dry-run && wrangler deploy --config wrangler.retention.jsonc --dry-run && wrangler types --config wrangler.api.jsonc --env-interface DemoEdgeEnv",
+    "migrate:local": "wrangler d1 migrations apply DEMO_TELEMETRY_DB --local --config wrangler.api.jsonc"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.18.0",
+    "@jobctrl/tsconfig": "workspace:*",
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5",
+    "wrangler": "4.107.0"
+  }
+}

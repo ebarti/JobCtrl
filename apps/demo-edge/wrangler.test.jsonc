@@ -1,0 +1,52 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "jobctrl-demo-edge-tests",
+  "main": "./workers/api.ts",
+  "compatibility_date": "2026-07-08",
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": false
+    }
+  },
+  "vars": {
+    "DEMO_RELEASE": "test-release"
+  },
+  "d1_databases": [
+    {
+      "binding": "DEMO_TELEMETRY_DB",
+      "database_name": "jobctrl-demo-edge-tests",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "./migrations"
+    },
+    {
+      "binding": "MIGRATION_TEST_DB",
+      "database_name": "jobctrl-demo-edge-migration-tests",
+      "database_id": "00000000-0000-0000-0000-000000000002",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "PUBLIC_INGRESS_LIMITER",
+      "namespace_id": "2026071101",
+      "simple": {
+        "limit": 240,
+        "period": 60
+      }
+    },
+    {
+      "name": "TELEMETRY_EDGE_LIMITER",
+      "namespace_id": "2026071102",
+      "simple": {
+        "limit": 2000,
+        "period": 60
+      }
+    }
+  ]
+}

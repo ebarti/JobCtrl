@@ -170,6 +170,24 @@ in the MVP. The receipt history stays inspectable in the demo shell. The demo
 never falls back to the product API, SSE, an external origin, or a host-OS
 opener.
 
+### Public demo edge workers
+
+The public demo uses Cloudflare Pages for the Vite SPA, a same-origin Worker at
+`demo.jobctrl.dev/api/*` for consent and telemetry, and an hourly retention
+Worker. Run the edge checks with:
+
+```bash
+corepack pnpm demo-edge:check
+corepack pnpm demo-edge:test
+corepack pnpm demo-edge:migrate:local
+corepack pnpm demo-edge:dry-run
+```
+
+The zero D1 UUID in the checked-in Wrangler configs is a rollout placeholder;
+public deployment must provision D1 and replace it first. Generated Wrangler
+bindings are intentionally ignored—the checked-in environment contract contains
+only the four bindings used by this package.
+
 ## Verify
 
 ```bash

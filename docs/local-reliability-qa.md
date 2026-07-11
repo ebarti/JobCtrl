@@ -17,6 +17,7 @@ changed, then add a browser/product-path check for user-visible behavior.
 | Frontend types | `corepack pnpm --filter @jobctrl/web test-d` |
 | Browser flow | `corepack pnpm --filter @jobctrl/web e2e -- tests/<flow>.spec.ts` |
 | Public demo browser workspace | `corepack pnpm --filter @jobctrl/web e2e:demo-workspace` |
+| Public demo edge | `corepack pnpm demo-edge:check`, `corepack pnpm demo-edge:test`, and `corepack pnpm demo-edge:dry-run` |
 | Python worker | `uv --project workers/automation run --extra dev ruff check .` and `uv --project workers/automation run --extra dev pytest -q` |
 | Any patch | `git diff --check` |
 
@@ -53,6 +54,16 @@ containment, workflow durability, projection correctness, schema compatibility,
 and accepted-artifact preservation. The
 [Regression Catalog](developer/qa/regression-catalog.md) explains which layer
 proves each class of invariant; the complete page maps every risk to exact tests.
+
+### Public demo privacy and edge gate
+
+When consent, cookies, telemetry, D1, retention, or Cloudflare configuration
+changes, the edge suite must prove that decline creates no analytics identity,
+grant is required before telemetry, cookie attributes and versioning remain
+exact, event fields stay allowlisted, retries do not double-count, rate limits
+fail closed, and expired identities/events/counters are deleted. Before public
+cutover, also repeat the consent and retention paths through local Wrangler and
+the production-mode browser lane.
 
 <a id="scoring-policy-eval-gate"></a>
 <a id="saved-views-smoke"></a>

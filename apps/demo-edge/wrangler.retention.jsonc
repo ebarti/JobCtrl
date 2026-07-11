@@ -1,0 +1,32 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "jobctrl-demo-retention",
+  "main": "./workers/retention.ts",
+  "compatibility_date": "2026-07-08",
+  "workers_dev": false,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": false
+    }
+  },
+  "triggers": {
+    "crons": ["17 * * * *"]
+  },
+  "vars": {
+    "DEMO_RELEASE": "local-dev"
+  },
+  "d1_databases": [
+    {
+      "binding": "DEMO_TELEMETRY_DB",
+      "database_name": "jobctrl-demo-telemetry",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "./migrations"
+    }
+  ]
+}

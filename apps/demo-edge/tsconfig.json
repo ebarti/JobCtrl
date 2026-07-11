@@ -1,0 +1,15 @@
+{
+  "extends": "../../packages/tsconfig/base.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "WebWorker"],
+    "types": ["node", "vitest/globals", "@cloudflare/vitest-pool-workers/types"],
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "workers/**/*.ts",
+    "test/**/*.ts",
+    "vitest.config.ts",
+    "env.d.ts"
+  ]
+}
