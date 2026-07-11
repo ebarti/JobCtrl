@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "stableReleaseStatus": "blocked-awaiting-credentials",
+  "manifestSigning": {
+    "algorithm": "ed25519",
+    "keyId": "jobctrl-release-v1",
+    "publicKeyStatus": "unprovisioned",
+    "privateKeySecret": "JOBCTRL_RELEASE_SIGNING_KEY"
+  },
+  "appleSigning": {
+    "identityType": "Developer ID Application",
+    "teamIdStatus": "unprovisioned",
+    "certificateSecret": "JOBCTRL_APPLE_DEVELOPER_ID_P12",
+    "certificatePasswordSecret": "JOBCTRL_APPLE_DEVELOPER_ID_PASSWORD",
+    "notaryProfileSecret": "JOBCTRL_APPLE_NOTARY_PROFILE"
+  },
+  "channelRequirements": {
+    "local": {
+      "manifestKey": "local-development",
+      "codeSigning": "unsigned-local",
+      "notarized": false
+    },
+    "prerelease": {
+      "manifestKey": "release",
+      "codeSigning": "developer-id",
+      "notarized": true
+    },
+    "stable": {
+      "manifestKey": "release",
+      "codeSigning": "developer-id",
+      "notarized": true
+    }
+  },
+  "promotionRequirements": [
+    "manifest public key is embedded in the launcher and matches the protected private key",
+    "every nested Mach-O has a valid preserved vendor signature or an explicit JobCtrl signature",
+    "the outer archive passes Apple notarization and Gatekeeper verification",
+    "the downloaded candidate passes clean-machine QA before stable release publication"
+  ]
+}

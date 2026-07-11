@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "capabilities": [
+    {
+      "id": "core-browser",
+      "defaultEnabled": true,
+      "componentIds": ["chromium-core", "playwright-python"]
+    },
+    {
+      "id": "auto-apply-browser",
+      "defaultEnabled": false,
+      "componentIds": ["jobctrl-worker", "playwright-mcp"]
+    },
+    {
+      "id": "authenticated-linkedin-browser",
+      "defaultEnabled": false,
+      "componentIds": ["jobctrl-worker"]
+    }
+  ]
+}

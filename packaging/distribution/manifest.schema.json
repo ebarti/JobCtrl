@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobctrl.dev/schemas/distribution-manifest-v1.json",
+  "title": "JobCtrl distribution manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "appVersion",
+    "buildId",
+    "releaseChannel",
+    "sourceDateEpoch",
+    "platform",
+    "launcherCompatibility",
+    "components",
+    "capabilities",
+    "files",
+    "signing"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "appVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "buildId": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z][0-9A-Za-z._-]{7,127}$"
+    },
+    "releaseChannel": {
+      "enum": ["local", "prerelease", "stable"]
+    },
+    "sourceDateEpoch": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "os", "arch", "minimumOsVersion"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+-[a-z0-9_]+$"
+        },
+        "os": {
+          "enum": ["darwin", "linux", "windows"]
+        },
+        "arch": {
+          "enum": ["arm64", "amd64"]
+        },
+        "minimumOsVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){1,2}$"
+        }
+      }
+    },
+    "launcherCompatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "maximum"],
+      "properties": {
+        "minimum": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maximum": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/component"
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    },
+    "signing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestAlgorithm",
+        "manifestKeyId",
+        "codeSigning",
+        "notarized"
+      ],
+      "properties": {
+        "manifestAlgorithm": {
+          "enum": ["ed25519"]
+        },
+        "manifestKeyId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "codeSigning": {
+          "enum": ["unsigned-local", "developer-id"]
+        },
+        "notarized": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "classification",
+        "version",
+        "owner",
+        "source",
+        "license",
+        "redistribution",
+        "path",
+        "sha256",
+        "sizeBytes",
+        "required"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+        },
+        "classification": {
+          "enum": ["core-runtime", "optional-capability", "provider-pack"]
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "license": {
+          "type": "string",
+          "minLength": 1
+        },
+        "redistribution": {
+          "const": "bundle"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[ -~]+$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "required": {
+          "type": "boolean"
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "defaultEnabled", "componentIds"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+        },
+        "defaultEnabled": {
+          "type": "boolean"
+        },
+        "componentIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "file": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/regularFile"
+        },
+        {
+          "$ref": "#/$defs/symlinkFile"
+        }
+      ]
+    },
+    "regularFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path", "sha256", "sizeBytes", "mode"],
+      "properties": {
+        "type": {
+          "const": "file"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[ -~]+$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["0644", "0755"]
+        }
+      }
+    },
+    "symlinkFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path", "target", "sizeBytes"],
+      "properties": {
+        "type": {
+          "const": "symlink"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[ -~]+$"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[ -~]+$"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}
