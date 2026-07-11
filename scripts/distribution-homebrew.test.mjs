@@ -23,6 +23,8 @@ function stableDescriptor() {
     schemaVersion: 1,
     channel: "stable",
     sequence: 42,
+    minimumSafeSequence: 1,
+    revokedBuildIds: [],
     buildId: "stable-build-0000042",
     appVersion: "2.0.0",
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
@@ -61,12 +63,15 @@ test("Homebrew render uses the exact signed curl ZIP identity without a toolchai
   const rendered = await renderHomebrewFormula({ descriptorRaw, signatureRaw, descriptorUrl, trust: signed.trust });
   const formulaPath = path.join(root, "jobctrl.rb");
   await writeFile(formulaPath, rendered.formula);
-  assert.equal(validateRenderedHomebrewFormula({ formula: rendered.formula, descriptor: stableDescriptor(), descriptorRaw, descriptorUrl }), true);
+  assert.equal(validateRenderedHomebrewFormula({ formula: rendered.formula, descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }), true);
   assert.match(rendered.formula, /url "https:\/\/releases\.jobctrl\.dev\/v1\/stable\/jobctrl-2\.0\.0-darwin-arm64\.zip"/);
   assert.match(rendered.formula, /JOBCTRL_MANIFEST_SHA256 = "b{64}"/);
   assert.match(rendered.formula, /JOBCTRL_BUILD_ID = "stable-build-0000042"/);
-  assert.match(rendered.formula, /libexec\.install Dir\["\*"\]/);
-  assert.match(rendered.formula, /bin\.install_symlink libexec\/"launcher\/jobctrl"/);
+  assert.match(rendered.formula, /resource "jobctrl-release-descriptor"/);
+  assert.match(rendered.formula, /bootstrap\.install cached_download => "jobctrl-release\.zip"/);
+  assert.match(rendered.formula, /homebrew-bootstrap\.json/);
+  assert.match(rendered.formula, /bin\.install_symlink bootstrap\/"jobctrl"/);
+  assert.doesNotMatch(rendered.formula, /Pathname\.new\(Dir\.home\)/);
   assert.match(rendered.formula, /Open3\.capture2e/);
   assert.match(rendered.formula, /--verify", "--deep", "--strict", "--check-notarization", "-R=notarized/);
   assert.match(rendered.formula, /--assess", "--type", "execute", "--verbose=4/);
@@ -126,7 +131,7 @@ test("Homebrew promotion verification fails closed without P6 signature and publ
       'desc "Local-first job search mission control: discover, score, tailor, apply"',
       'desc "Tampered JobCtrl formula"',
     ),
-    rendered.formula.replace('    version = shell_output("#{bin}/jobctrl version --json")\n', ""),
+    rendered.formula.replace('    verify_notarized_bundle!(buildpath/"launcher/jobctrl-installer")\n', ""),
   ];
   for (const mutatedFormula of mutations) {
     assert.notEqual(mutatedFormula, rendered.formula);
@@ -193,15 +198,15 @@ test("Homebrew formula validation rejects a render that omits launcher or Chromi
   const descriptorUrl = "https://releases.jobctrl.dev/v1/stable/darwin-arm64.json";
   const rendered = await renderHomebrewFormula({ descriptorRaw, signatureRaw, descriptorUrl, trust: signed.trust });
   assert.throws(
-    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('verify_notarized_bundle!(buildpath/"launcher/jobctrl")', ""), descriptor: stableDescriptor(), descriptorRaw, descriptorUrl }),
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('verify_notarized_bundle!(buildpath/"launcher/jobctrl")', ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
     /launcher\/jobctrl/,
   );
   assert.throws(
-    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('gatekeeper_output.include?("source=Notarized Developer ID")', "true"), descriptor: stableDescriptor(), descriptorRaw, descriptorUrl }),
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('gatekeeper_output.include?("source=Notarized Developer ID")', "true"), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
     /source=Notarized Developer ID/,
   );
   assert.throws(
-    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replaceAll("outermost_chromium_apps", "chromium_apps"), descriptor: stableDescriptor(), descriptorRaw, descriptorUrl }),
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replaceAll("outermost_chromium_apps", "chromium_apps"), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
     /outermost_chromium_apps/,
   );
 });

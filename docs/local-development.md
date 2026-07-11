@@ -181,8 +181,11 @@ promoted as a stable release. It includes both native binaries at
 `payload/launcher/jobctrl` and `payload/launcher/jobctrl-installer`, compiled
 with the locked official Go toolchain. Its local descriptor, detached
 unsigned-local envelope, and curl fixture contract bind the ZIP's build ID,
-manifest SHA-256, size, and archive SHA-256; those fixtures are file-only and
-cannot select a network channel. The launcher's private runtime manifest starts the fixed
+manifest SHA-256, size, archive SHA-256, an explicit minimum-safe sequence
+(`0` locally), and an explicit empty revocation list; those fixtures are
+file-only and cannot select a network channel. Signed stable/prerelease
+descriptors use the same canonical fields with a positive floor and sorted,
+unique revocation tombstones. The launcher's private runtime manifest starts the fixed
 loopback Temporal (`7233`/`8233`), worker, and API (`8766`) fleet without Vite,
 and records each canonical `JOBCTRL_DIR` under
 `~/Library/Application Support/JobCtrl/instances/<sha256>` (override with

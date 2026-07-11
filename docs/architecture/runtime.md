@@ -80,6 +80,25 @@ reused PID. The local artifact remains unsigned/non-promotable until later
 signing and installer phases, so this is still build evidence rather than a
 public install surface.
 
+The P5 lifecycle store is user-owned (`JOBCTRL_RUNTIME_HOME`), not a package
+manager Cellar. `active.json` atomically records the selected payload, the
+compatible immutable selector build, and the current acquisition adapter;
+immutable release receipts never contain acquisition ownership. A durable
+transition journal records selector handoff, database-pair backup, pending and
+finalized channel policy, and promotion. Acquisition, update, rollback,
+backup, retention, and uninstall serialize through transition then selection
+locking; selector resolution holds a shared selection lock through supervisor
+readiness. Before a candidate is promoted, the old process tree is quiesced
+with the registry's PID/PGID identity checks and both `JOBCTRL_DIR/jobctrl.db`
+and `JOBCTRL_DIR/temporal.db` receive online, hash-verified paired backups.
+Policy finalization happens only after the candidate has passed readiness and
+the paired backup is durable, so a failed health gate cannot revoke the only
+runnable release. A pre-finalization failure restores the full pair and
+restarts the still-permitted prior release. An interruption after a healthy
+candidate finalizes a revocation fails closed to that authenticated candidate
+instead of executing revoked code. This remains an internal release-engineering
+seam until P6 publishes signing and notarization evidence.
+
 ## Frontend
 
 The web app under `apps/web` owns user interaction:

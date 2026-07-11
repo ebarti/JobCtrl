@@ -8,6 +8,7 @@ import test from "node:test";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const GET = path.join(ROOT, "scripts", "get");
+const PUBLIC_INSTALL = path.join(ROOT, "docs", "public", "install.sh");
 const SYSTEM_BASH = "/bin/bash";
 
 function makeTmp() { return mkdtempSync(path.join(os.tmpdir(), "jobctrl-get-test-")); }
@@ -55,10 +56,20 @@ test("get is transport-only and delegates an explicit local fixture to the nativ
     const firstProfile = readFileSync(profile, "utf8");
     assert.match(firstProfile, /JobCtrl managed path/);
     assert.equal(statSync(profile).mode & 0o777, 0o600);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(value.runtime, "acquisition.json"), "utf8")), {
+      schemaVersion: 1,
+      source: "curl",
+      publicLink: link,
+      selector: path.join(value.runtime, "bin", "jobctrl"),
+      profile,
+      pathLine: `export PATH="${path.dirname(link)}:$PATH" # JobCtrl managed path`,
+    });
     const repeated = run(["--local-fixture-contract", value.contract, "--home", value.runtime], value.env);
     assert.equal(repeated.status, 0, repeated.stderr);
     assert.equal(readFileSync(profile, "utf8"), firstProfile);
     const source = readFileSync(GET, "utf8");
+    assert.ok(source.lastIndexOf("persist_curl_acquisition \"$RELEASE_HOME\" \"$BIN_DIR\"") < source.lastIndexOf("expose_command \"$RELEASE_HOME\" \"$BIN_DIR\""));
+    assert.equal(readFileSync(PUBLIC_INSTALL, "utf8"), source);
     assert.doesNotMatch(source, /git clone|git pull|corepack|pnpm|uv sync|scripts\/install/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

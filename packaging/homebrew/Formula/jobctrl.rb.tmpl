@@ -4,6 +4,7 @@
 # It intentionally has no HEAD/source-build path and no developer toolchain
 # dependencies. The ZIP is the same immutable payload resolved by curl.
 require "open3"
+require "json"
 
 class Jobctrl < Formula
   desc "Local-first job search mission control: discover, score, tailor, apply"
@@ -18,6 +19,17 @@ class Jobctrl < Formula
   JOBCTRL_MANIFEST_SHA256 = "{{MANIFEST_SHA256}}"
   JOBCTRL_DESCRIPTOR_URL = "{{DESCRIPTOR_URL}}"
   JOBCTRL_DESCRIPTOR_SHA256 = "{{DESCRIPTOR_SHA256}}"
+  JOBCTRL_SIGNATURE_SHA256 = "{{SIGNATURE_SHA256}}"
+
+  resource "jobctrl-release-descriptor" do
+    url JOBCTRL_DESCRIPTOR_URL
+    sha256 JOBCTRL_DESCRIPTOR_SHA256
+  end
+
+  resource "jobctrl-release-descriptor-signature" do
+    url "#{JOBCTRL_DESCRIPTOR_URL}.sig"
+    sha256 JOBCTRL_SIGNATURE_SHA256
+  end
 
   def verify_notarized_bundle!(bundle)
     codesign_output, codesign_status = Open3.capture2e(
@@ -39,16 +51,31 @@ class Jobctrl < Formula
   end
 
   def install
-    # The release ZIP has a payload root, not a source checkout. Keep that
-    # exact verified payload together under libexec and expose its one native
-    # launcher through Homebrew's normal bin symlink. P5 moves selection and
-    # updates into the user-owned release store transactionally.
+    # Formula installation remains entirely prefix-owned. The executable in
+    # libexec/bootstrap is a native bootstrap, not the runtime selector: on its first
+    # normal-user invocation it authenticates these resources into the user
+    # store, then re-execs that stable selector.
     verify_notarized_bundle!(buildpath/"launcher/jobctrl")
+    verify_notarized_bundle!(buildpath/"launcher/jobctrl-installer")
     chromium_apps = outermost_chromium_apps
     odie "JobCtrl release has no managed Chromium app bundle to verify" if chromium_apps.empty?
     chromium_apps.each { |bundle| verify_notarized_bundle!(Pathname.new(bundle)) }
-    libexec.install Dir["*"]
-    bin.install_symlink libexec/"launcher/jobctrl"
+    bootstrap = libexec/"bootstrap"
+    bootstrap.install buildpath/"launcher/jobctrl"
+    bootstrap.install buildpath/"launcher/jobctrl-installer"
+    bootstrap.install cached_download => "jobctrl-release.zip"
+    resource("jobctrl-release-descriptor").stage { bootstrap.install "darwin-arm64.json" => "homebrew-release.json" }
+    resource("jobctrl-release-descriptor-signature").stage { bootstrap.install "darwin-arm64.json.sig" => "homebrew-release.json.sig" }
+    (bootstrap/"homebrew-bootstrap.json").write(JSON.generate({
+      schemaVersion: 1,
+      descriptorUrl: JOBCTRL_DESCRIPTOR_URL,
+      descriptor: "homebrew-release.json",
+      signature: "homebrew-release.json.sig",
+      archive: "jobctrl-release.zip",
+      buildId: JOBCTRL_BUILD_ID,
+      descriptorSha256: JOBCTRL_DESCRIPTOR_SHA256
+    }))
+    bin.install_symlink bootstrap/"jobctrl"
   end
 
   def caveats
@@ -63,10 +90,7 @@ class Jobctrl < Formula
   end
 
   test do
-    assert_predicate libexec/"launcher/jobctrl", :executable?
+    assert_predicate libexec/"bootstrap"/"homebrew-bootstrap.json", :exist?
     assert_predicate bin/"jobctrl", :symlink?
-    version = shell_output("#{bin}/jobctrl version --json")
-    assert_match %Q("buildId":"#{JOBCTRL_BUILD_ID}"), version.delete(" ")
-    assert_match %Q("manifestSha256":"#{JOBCTRL_MANIFEST_SHA256}"), version.delete(" ")
   end
 end

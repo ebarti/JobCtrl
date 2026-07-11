@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/ebarti/jobctrl/launcher/internal/launcher"
+	"github.com/ebarti/jobctrl/launcher/internal/release"
 )
 
 func TestReleaseDescriptorAuthenticatesExactBytesAndOrigin(t *testing.T) {
@@ -91,14 +93,40 @@ func TestStablePayloadRequiresCodeSigningAndNotarizationAssessment(t *testing.T)
 	if err := verifyMacOSPayloadTrust(payload, runner); err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) != 4 || !strings.Contains(calls[2], "Chromium.app") || !strings.Contains(calls[3], "Chromium.app") {
+	if len(calls) != 4 || !strings.Contains(strings.Join(calls, "\n"), "Chromium.app") {
 		t.Fatalf("Chromium app was not independently assessed: %#v", calls)
+	}
+	for _, path := range []string{"node/bin/node", "python/bin/python3", "temporal/temporal", "components/native/addon.node"} {
+		full := filepath.Join(payload, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte{0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 0}, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls = nil
+	if err := verifyMacOSPayloadTrust(payload, runner); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"node", "python3", "temporal", "addon.node"} {
+		found := false
+		for _, call := range calls {
+			if strings.Contains(call, name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("native executable %s was not independently code-trust assessed: %#v", name, calls)
+		}
 	}
 }
 
 func TestUnsignedLocalDescriptorCannotCrossNetworkBoundary(t *testing.T) {
 	descriptor := stableDescriptor("https://example.test/jobctrl.zip")
 	descriptor.Channel = "local"
+	descriptor.Artifact.URL = "file:///jobctrl-local-release/fixture.zip"
 	raw, _ := json.Marshal(descriptor)
 	signatureRaw, _ := json.Marshal(descriptorSignature{SchemaVersion: 1, Status: "unsigned-local", Algorithm: "ed25519", KeyID: "local-development"})
 	source, _ := validateTransportURL("https://example.test/release.json", false)
@@ -110,6 +138,28 @@ func TestUnsignedLocalDescriptorCannotCrossNetworkBoundary(t *testing.T) {
 	}
 	if _, err := verifyDescriptor(raw, signatureRaw, nil, true, nil, false); err != nil {
 		t.Fatalf("explicit local fixture rejected: %v", err)
+	}
+}
+
+func TestDescriptorValidationMatchesSafeIntegerAndCanonicalLocalFileRules(t *testing.T) {
+	descriptor := stableDescriptor("file:///jobctrl-local-release/fixture.zip")
+	descriptor.Channel = "local"
+	descriptor.MinimumSafeSequence = 0
+	raw, _ := json.Marshal(descriptor)
+	signatureRaw, _ := json.Marshal(descriptorSignature{SchemaVersion: 1, Status: "unsigned-local", Algorithm: "ed25519", KeyID: "local-development"})
+	if _, err := verifyDescriptor(raw, signatureRaw, nil, true, nil, false); err != nil {
+		t.Fatalf("canonical local descriptor rejected: %v", err)
+	}
+	descriptor.Artifact.URL = "file://attacker.example/jobctrl.zip"
+	raw, _ = json.Marshal(descriptor)
+	if _, err := verifyDescriptor(raw, signatureRaw, nil, true, nil, false); err == nil {
+		t.Fatal("local descriptor with file authority accepted")
+	}
+	descriptor.Artifact.URL = "file:///jobctrl-local-release/fixture.zip"
+	descriptor.Sequence = maxJSONSafeInteger + 1
+	raw, _ = json.Marshal(descriptor)
+	if _, err := verifyDescriptor(raw, signatureRaw, nil, true, nil, false); err == nil {
+		t.Fatal("unsafe JSON sequence accepted")
 	}
 }
 
@@ -146,11 +196,12 @@ func TestArchiveDownloadAllowsSlowProgressBeyondMetadataDeadline(t *testing.T) {
 	defer server.Close()
 	metadata := server.Client()
 	metadata.Timeout = 25 * time.Millisecond
-	path, err := downloadArchiveWithStallTimeout(archiveHTTPClient(metadata), server.URL, int64(len(archive)), digestBytes(archive), 250*time.Millisecond)
+	descriptor, descriptorRaw := signedLoopbackArchiveDescriptor(t, server.URL, archive)
+	stage := descriptorStageForTest(t, descriptorRaw)
+	path, err := downloadArchiveToStage(archiveHTTPClient(metadata), descriptor.Artifact.URL, descriptor.Artifact.SizeBytes, descriptor.Artifact.SHA256, stage)
 	if err != nil {
 		t.Fatalf("slow but progressing archive was rejected: %v", err)
 	}
-	defer os.Remove(path)
 	if downloaded, err := os.ReadFile(path); err != nil || !bytes.Equal(downloaded, archive) {
 		t.Fatalf("downloaded archive = %q, %v", downloaded, err)
 	}
@@ -165,10 +216,190 @@ func TestArchiveDownloadCancelsAStalledBody(t *testing.T) {
 		<-request.Context().Done()
 	}))
 	defer server.Close()
-	_, err := downloadArchiveWithStallTimeout(server.Client(), server.URL, int64(len(archive)), digestBytes(archive), 25*time.Millisecond)
+	descriptor, descriptorRaw := signedLoopbackArchiveDescriptor(t, server.URL, archive)
+	stage := descriptorStageForTest(t, descriptorRaw)
+	archiveStallTimeoutForTest := 25 * time.Millisecond
+	_, err := downloadArchiveToStageWithStallTimeout(server.Client(), descriptor.Artifact.URL, descriptor.Artifact.SizeBytes, descriptor.Artifact.SHA256, stage, archiveStallTimeoutForTest)
 	if err == nil || !strings.Contains(err.Error(), "archive download stalled") {
 		t.Fatalf("stalled archive result = %v", err)
 	}
+	partial, readErr := os.ReadFile(filepath.Join(stage, partialArchiveName))
+	if readErr != nil || !bytes.Equal(partial, archive[:1]) {
+		t.Fatalf("stalled archive did not preserve resumable bytes: %q, %v", partial, readErr)
+	}
+}
+
+func TestDescriptorBoundArchiveCacheResumesInterruptedLoopbackDownload(t *testing.T) {
+	archive := []byte("a resumable signed archive payload")
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		calls = append(calls, request.Header.Get("Range"))
+		response.Header().Set("Content-Length", fmt.Sprintf("%d", len(archive)))
+		if len(calls) == 1 {
+			_, _ = response.Write(archive[:7])
+			return
+		}
+		if got := request.Header.Get("Range"); got != "bytes=7-" {
+			t.Fatalf("resume Range = %q", got)
+		}
+		response.Header().Set("Content-Range", fmt.Sprintf("bytes 7-%d/%d", len(archive)-1, len(archive)))
+		response.Header().Set("Content-Length", fmt.Sprintf("%d", len(archive)-7))
+		response.WriteHeader(http.StatusPartialContent)
+		_, _ = response.Write(archive[7:])
+	}))
+	defer server.Close()
+	descriptor, descriptorRaw := signedLoopbackArchiveDescriptor(t, server.URL, archive)
+	stage := descriptorStageForTest(t, descriptorRaw)
+	if _, err := downloadArchiveToStage(server.Client(), descriptor.Artifact.URL, descriptor.Artifact.SizeBytes, descriptor.Artifact.SHA256, stage); err == nil {
+		t.Fatal("interrupted archive download accepted")
+	}
+	partial, err := os.ReadFile(filepath.Join(stage, partialArchiveName))
+	if err != nil || !bytes.Equal(partial, archive[:7]) {
+		t.Fatalf("resumable partial = %q, %v", partial, err)
+	}
+	path, err := downloadArchiveToStage(server.Client(), descriptor.Artifact.URL, descriptor.Artifact.SizeBytes, descriptor.Artifact.SHA256, stage)
+	if err != nil {
+		t.Fatalf("resume signed archive: %v", err)
+	}
+	completed, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(completed, archive) || len(calls) != 2 {
+		t.Fatalf("completed archive = %q, calls=%v, err=%v", completed, calls, err)
+	}
+}
+
+func TestDescriptorBoundArchiveCacheRestartsWhenRangeIsIgnored(t *testing.T) {
+	archive := []byte("full archive returned after the server ignores Range")
+	var sawRange string
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		sawRange = request.Header.Get("Range")
+		response.Header().Set("Content-Length", fmt.Sprintf("%d", len(archive)))
+		_, _ = response.Write(archive)
+	}))
+	defer server.Close()
+	descriptor, descriptorRaw := signedLoopbackArchiveDescriptor(t, server.URL, archive)
+	stage := descriptorStageForTest(t, descriptorRaw)
+	if err := os.WriteFile(filepath.Join(stage, partialArchiveName), archive[:9], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path, err := downloadArchiveToStage(server.Client(), descriptor.Artifact.URL, descriptor.Artifact.SizeBytes, descriptor.Artifact.SHA256, stage)
+	if err != nil {
+		t.Fatalf("restart after ignored Range: %v", err)
+	}
+	completed, err := os.ReadFile(path)
+	if sawRange != "bytes=9-" || err != nil || !bytes.Equal(completed, archive) {
+		t.Fatalf("ignored Range restart=%q archive=%q err=%v", sawRange, completed, err)
+	}
+}
+
+func TestDescriptorBoundArchiveCacheRejectsTamperAndOversize(t *testing.T) {
+	archive := []byte("exactly signed archive bytes")
+	for _, testCase := range []struct {
+		name    string
+		respond func(http.ResponseWriter)
+	}{
+		{
+			name: "tamper",
+			respond: func(response http.ResponseWriter) {
+				response.Header().Set("Content-Length", fmt.Sprintf("%d", len(archive)))
+				_, _ = response.Write(bytes.Repeat([]byte("x"), len(archive)))
+			},
+		},
+		{
+			name: "oversize",
+			respond: func(response http.ResponseWriter) {
+				response.Header().Set("Content-Length", fmt.Sprintf("%d", len(archive)+1))
+				_, _ = response.Write(append(append([]byte{}, archive...), '!'))
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) { testCase.respond(response) }))
+			defer server.Close()
+			descriptor, descriptorRaw := signedLoopbackArchiveDescriptor(t, server.URL, archive)
+			stage := descriptorStageForTest(t, descriptorRaw)
+			if _, err := downloadArchiveToStage(server.Client(), descriptor.Artifact.URL, descriptor.Artifact.SizeBytes, descriptor.Artifact.SHA256, stage); err == nil {
+				t.Fatalf("%s archive was accepted", testCase.name)
+			}
+		})
+	}
+}
+
+func TestImmutableReleaseDoesNotRetainDescriptorArchiveCache(t *testing.T) {
+	root := t.TempDir()
+	archivePath, descriptorPath, _ := localFixture(t, root)
+	descriptorRaw, err := os.ReadFile(descriptorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var descriptor Descriptor
+	if err := json.Unmarshal(descriptorRaw, &descriptor); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(root, "runtime")
+	shared, err := release.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := prepareDescriptorStage(shared, descriptorRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagedArchive := filepath.Join(stage, stagedArchiveName)
+	if err := os.WriteFile(stagedArchive, archive, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := installArchive(Options{Home: home, Policy: localAcquisitionPolicy(), AllowUnsignedLocal: true}, descriptor, descriptorRaw, "local-fixture", stagedArchive); err != nil {
+		t.Fatalf("install staged local archive: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(home, "releases", descriptor.BuildID, stagedArchiveName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("immutable release retained archive cache: %v", err)
+	}
+}
+
+func signedLoopbackArchiveDescriptor(t *testing.T, origin string, archive []byte) (Descriptor, []byte) {
+	t.Helper()
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor := stableDescriptor(origin + "/archive.zip")
+	digest := sha256.Sum256(archive)
+	descriptor.Artifact.SHA256 = hex.EncodeToString(digest[:])
+	descriptor.Artifact.SizeBytes = int64(len(archive))
+	raw, err := json.Marshal(descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signatureRaw, err := json.Marshal(signedDescriptorSignature(private, raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := validateTransportURL(origin+"/descriptor.json", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := verifyDescriptor(raw, signatureRaw, map[string]ed25519.PublicKey{"jobctrl-release-v1": public}, false, source, true)
+	if err != nil {
+		t.Fatalf("generated Ed25519 loopback descriptor rejected: %v", err)
+	}
+	return verified, raw
+}
+
+func descriptorStageForTest(t *testing.T, descriptorRaw []byte) string {
+	t.Helper()
+	store, err := release.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := prepareDescriptorStage(store, descriptorRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stage
 }
 
 func TestZIPExtractionRejectsTraversalLinksSpecialEntriesAndCollisions(t *testing.T) {
@@ -233,6 +464,10 @@ func TestLocalInstallIsAtomicIdempotentConcurrentAndRecoversPointer(t *testing.T
 	if _, err := os.Stat(filepath.Join(home, "staging", "stage-interrupted")); !os.IsNotExist(err) {
 		t.Fatalf("interrupted stage survived: %v", err)
 	}
+	activeBefore, err := os.ReadFile(filepath.Join(home, release.ActiveFile))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var group sync.WaitGroup
 	errs := make(chan error, 2)
 	for range 2 {
@@ -249,6 +484,10 @@ func TestLocalInstallIsAtomicIdempotentConcurrentAndRecoversPointer(t *testing.T
 		if err != nil {
 			t.Fatalf("concurrent/idempotent install: %v", err)
 		}
+	}
+	activeAfter, err := os.ReadFile(filepath.Join(home, release.ActiveFile))
+	if err != nil || !bytes.Equal(activeBefore, activeAfter) {
+		t.Fatalf("idempotent concurrent install changed active selection: %v", err)
 	}
 	var current Receipt
 	raw, err := os.ReadFile(filepath.Join(home, "current.json"))
@@ -337,6 +576,56 @@ func TestExistingReleaseRejectsChangedDescriptorIdentityWithoutReactivation(t *t
 	immutableAfter, _ := os.ReadFile(filepath.Join(home, "releases", first.BuildID, "receipt.json"))
 	if !bytes.Equal(currentBefore, currentAfter) || !bytes.Equal(immutableBefore, immutableAfter) {
 		t.Fatal("descriptor mismatch mutated current or immutable receipt")
+	}
+}
+
+func TestStageOnlyNeverReplacesAnExistingSelector(t *testing.T) {
+	root := t.TempDir()
+	archive, descriptor, signature := localFixture(t, root)
+	home := filepath.Join(root, "runtime")
+	options := Options{Home: home, Policy: localAcquisitionPolicy(), AllowUnsignedLocal: true}
+	if _, err := InstallFromLocalFiles(options, descriptor, signature, archive); err != nil {
+		t.Fatal(err)
+	}
+	selector := filepath.Join(home, "bin", "jobctrl")
+	before, err := os.ReadFile(selector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallFromLocalFiles(Options{Home: home, Policy: localAcquisitionPolicy(), AllowUnsignedLocal: true, StageOnly: true}, descriptor, signature, archive); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(selector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("stage-only acquisition replaced the existing stable selector")
+	}
+}
+
+func TestRejectedChannelMetadataLeavesReleaseAndSelectorUntouched(t *testing.T) {
+	root := t.TempDir()
+	archive, descriptorPath, signaturePath := localFixture(t, root)
+	home := filepath.Join(root, "runtime")
+	store, err := release.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordMetadata("local", 2, 0, "fixture-build-0002", strings.Repeat("d", 64), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallFromLocalFiles(Options{Home: home, Policy: localAcquisitionPolicy(), AllowUnsignedLocal: true}, descriptorPath, signaturePath, archive); err == nil || !strings.Contains(err.Error(), "below recorded maximum") {
+		t.Fatalf("downgrade result = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "releases", "fixture-build-0001")); !os.IsNotExist(err) {
+		t.Fatalf("rejected metadata committed release: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "bin", "jobctrl")); !os.IsNotExist(err) {
+		t.Fatalf("rejected metadata changed selector: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "active.json")); !os.IsNotExist(err) {
+		t.Fatalf("rejected metadata changed active pointer: %v", err)
 	}
 }
 
@@ -527,6 +816,7 @@ func writeZIP(t *testing.T, entries []zipEntry) string {
 func stableDescriptor(archiveURL string) Descriptor {
 	var descriptor Descriptor
 	descriptor.SchemaVersion, descriptor.Channel, descriptor.Sequence, descriptor.BuildID, descriptor.AppVersion = 1, "stable", 1, "fixture-build-0001", "2.0.0"
+	descriptor.MinimumSafeSequence, descriptor.RevokedBuildIDs = 1, []string{}
 	descriptor.Platform.ID, descriptor.Platform.OS, descriptor.Platform.Arch = "darwin-arm64", "darwin", "arm64"
 	descriptor.Artifact.URL, descriptor.Artifact.SHA256, descriptor.Artifact.SizeBytes, descriptor.Artifact.ArchiveType, descriptor.Artifact.ManifestSHA256 = archiveURL, strings.Repeat("a", 64), 1, "zip", strings.Repeat("b", 64)
 	return descriptor
@@ -592,6 +882,8 @@ func localFixture(t *testing.T, root string) (archivePath, descriptorPath, signa
 	}
 	descriptor := stableDescriptor("")
 	descriptor.Channel = "local"
+	descriptor.Artifact.URL = "file:///jobctrl-local-release/fixture.zip"
+	descriptor.MinimumSafeSequence, descriptor.RevokedBuildIDs = 0, []string{}
 	descriptor.Artifact.SHA256 = digestBytes(archiveBytes)
 	descriptor.Artifact.SizeBytes = int64(len(archiveBytes))
 	descriptor.Artifact.ManifestSHA256 = digestBytes(manifestRaw)

@@ -26,6 +26,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/ebarti/jobctrl/launcher/internal/release"
 )
 
 var (
@@ -153,8 +155,10 @@ type selectorReceipt struct {
 	ArtifactSHA256   string `json:"artifactSha256"`
 	ManifestSHA256   string `json:"manifestSha256"`
 	DescriptorSHA256 string `json:"descriptorSha256"`
+	PolicySHA256     string `json:"policySha256,omitempty"`
 	DescriptorURL    string `json:"descriptorUrl"`
 	InstalledAt      string `json:"installedAt"`
+	Source           string `json:"source,omitempty"`
 }
 
 // DistributionManifest is the native release-payload contract shared by the
@@ -254,6 +258,7 @@ type launchContext struct {
 	Distribution distributionManifest
 	Instance     instance
 	Environment  []string
+	selection    *release.Lock
 }
 type readyMessage struct {
 	Error string `json:"error,omitempty"`
@@ -271,14 +276,40 @@ var startCommand = executeStart
 // Run is the only public CLI entrypoint. __supervise is reachable only through
 // the re-exec made by `jobctrl start`.
 func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && args[0] == "rollback" {
+		if handled, recoveryErr := recoverRevokedTransitionBeforePrepare(inheritedEnv, stdout); handled {
+			return recoveryErr
+		}
+		if handled, recoveryErr := recoverInterruptedTransitionBeforeBootstrap(inheritedEnv, stdout); handled {
+			return recoveryErr
+		}
+	}
+	if handled, uninstallErr := uninstallUnsafeActiveBeforePrepare(args, inheritedEnv, stdout); handled {
+		return uninstallErr
+	}
+	if bootstrapped, bootstrapErr := maybeHomebrewBootstrap(executable, args, inheritedEnv, stdout, stderr); bootstrapped {
+		return bootstrapErr
+	}
 	ctx, err := prepare(executable, inheritedEnv)
 	if err != nil {
 		return err
+	}
+	defer func() { _ = ctx.selection.Close() }()
+	if store, storeErr := release.Open(ctx.Instance.RuntimeHome); storeErr == nil {
+		if journal, journalErr := store.ReadJournal(); journalErr == nil && journal.Resumable() && !transitionRecoveryCommand(args) {
+			return fmt.Errorf("unfinished %s transition at %s; run `jobctrl rollback` to recover before starting or dispatching commands", journal.Operation, journal.State)
+		} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
+			return fmt.Errorf("read release transition journal: %w", journalErr)
+		}
 	}
 	if len(args) > 0 && args[0] == "__supervise" {
 		return supervise(ctx, readyWriterFromEnv(inheritedEnv))
 	}
 	return dispatchCommand(ctx, args, stdout, stderr)
+}
+
+func transitionRecoveryCommand(args []string) bool {
+	return len(args) > 0 && (args[0] == "rollback" || args[0] == "uninstall")
 }
 
 // dispatchCommand keeps the one-release dev compatibility alias on the exact
@@ -324,6 +355,14 @@ func dispatchCommand(ctx launchContext, args []string, stdout, stderr io.Writer)
 			return err
 		}
 		return version(ctx, stdout, jsonOutput)
+	case "update":
+		return update(ctx, args[1:], stdout)
+	case "rollback":
+		return rollback(ctx, args[1:], stdout)
+	case "backup":
+		return backup(ctx, args[1:], stdout)
+	case "uninstall":
+		return uninstall(ctx, args[1:], stdout)
 	default:
 		return dispatchPython(ctx, args)
 	}
@@ -360,7 +399,7 @@ func ExitCode(err error) int {
 	return 1
 }
 func printHelp(out io.Writer) {
-	fmt.Fprint(out, "JobCtrl bundled launcher\n\nUsage:\n  jobctrl start [--no-open] [--foreground]\n  jobctrl dev [--no-open] [--foreground]  (deprecated alias for start)\n  jobctrl stop\n  jobctrl status [--pipeline] [--json]\n  jobctrl logs [temporal|worker|api]\n  jobctrl open\n  jobctrl version [--json]\n  jobctrl pipeline-status\n  jobctrl <Python domain command>\n")
+	fmt.Fprint(out, "JobCtrl bundled launcher\n\nUsage:\n  jobctrl start [--no-open] [--foreground]\n  jobctrl dev [--no-open] [--foreground]  (deprecated alias for start)\n  jobctrl stop\n  jobctrl status [--pipeline] [--json]\n  jobctrl logs [temporal|worker|api]\n  jobctrl open\n  jobctrl version [--json]\n  jobctrl update\n  jobctrl rollback [--to BUILD_ID]\n  jobctrl backup [--output DIRECTORY]\n  jobctrl uninstall [--remove-data]\n  jobctrl pipeline-status\n  jobctrl <Python domain command>\n")
 }
 func parseStartArgs(args []string) (foreground, noOpen bool, err error) {
 	for _, arg := range args {
@@ -395,13 +434,24 @@ func parseVersionArgs(args []string) (bool, error) {
 }
 
 func prepare(executable string, inheritedEnv []string) (launchContext, error) {
-	payloadRoot, receipt, err := locatePayloadRoot(executable, inheritedEnv)
+	payloadRoot, receipt, selection, err := locatePayloadRootLocked(executable, inheritedEnv)
 	if err != nil {
 		return launchContext{}, err
 	}
+	keepSelection := false
+	defer func() {
+		if !keepSelection && selection != nil {
+			_ = selection.Close()
+		}
+	}()
 	distribution, err := loadAndVerifyDistributionManifest(payloadRoot)
 	if err != nil {
 		return launchContext{}, err
+	}
+	if receipt == nil && distribution.ReleaseChannel != "local" {
+		if err := verifyDirectTransitionExecution(payloadRoot, distribution, inheritedEnv); err != nil {
+			return launchContext{}, err
+		}
 	}
 	if receipt != nil {
 		if err := verifySelectorReceipt(payloadRoot, distribution, *receipt); err != nil {
@@ -419,48 +469,223 @@ func prepare(executable string, inheritedEnv []string) (launchContext, error) {
 	if err != nil {
 		return launchContext{}, err
 	}
-	return launchContext{executable, payloadRoot, manifest, distribution, inst, childEnvironment(inheritedEnv, payloadRoot, inst.StateDir, manifest)}, nil
+	keepSelection = true
+	return launchContext{executable, payloadRoot, manifest, distribution, inst, childEnvironment(inheritedEnv, payloadRoot, inst.StateDir, manifest), selection}, nil
 }
+
+// Stable and prerelease payload launchers are never a second public command
+// surface. They may execute only from a durable, authenticated transition
+// journal; local standalone fixtures retain their contributor-only direct
+// invocation path.
+func verifyDirectTransitionExecution(payloadRoot string, distribution distributionManifest, env []string) error {
+	values := environmentMap(env)
+	journalID := values["JOBCTRL_TRANSITION_JOURNAL"]
+	if journalID == "" {
+		return errors.New("signed payload launchers may execute only through the authenticated public selector")
+	}
+	home, err := runtimeHomeFromEnv(env)
+	if err != nil {
+		return err
+	}
+	store, err := release.Open(home)
+	if err != nil {
+		return err
+	}
+	journal, err := store.ReadJournal()
+	if err != nil || journal.ID != journalID {
+		return errors.New("payload transition authorization does not match a durable journal")
+	}
+	var expected *release.Receipt
+	switch journal.State {
+	case release.CandidateStarting:
+		expected = journal.Candidate
+	case release.RollbackRestoring:
+		expected = journal.Old
+	default:
+		return errors.New("payload transition authorization is not in an executable state")
+	}
+	if expected == nil || expected.BuildID != distribution.BuildID || expected.Channel != distribution.ReleaseChannel {
+		return errors.New("payload does not match authorized transition release")
+	}
+	if err := store.Permit(*expected); err != nil {
+		return fmt.Errorf("authorized transition release is no longer permitted: %w", err)
+	}
+	digest, err := sha256Path(filepath.Join(payloadRoot, "manifest.json"))
+	if err != nil || digest != expected.ManifestSHA256 {
+		return errors.New("authorized transition manifest differs from immutable receipt")
+	}
+	return nil
+}
+
+// locatePayloadRoot is retained as an inspection-compatible seam. The actual
+// launcher holds the selection lock through its start/readiness boundary.
 func locatePayloadRoot(executable string, inheritedEnv []string) (string, *selectorReceipt, error) {
+	payload, receipt, lock, err := locatePayloadRootLocked(executable, inheritedEnv)
+	if lock != nil {
+		_ = lock.Close()
+	}
+	return payload, receipt, err
+}
+
+func locatePayloadRootLocked(executable string, inheritedEnv []string) (string, *selectorReceipt, *release.Lock, error) {
 	path, err := filepath.EvalSymlinks(executable)
 	if err != nil {
-		return "", nil, fmt.Errorf("resolve launcher executable: %w", err)
+		return "", nil, nil, fmt.Errorf("resolve launcher executable: %w", err)
 	}
 	path, err = filepath.Abs(path)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	if filepath.Base(path) == "jobctrl" && filepath.Base(filepath.Dir(path)) == "launcher" {
-		return filepath.Dir(filepath.Dir(path)), nil, nil
+		return filepath.Dir(filepath.Dir(path)), nil, nil, nil
 	}
 	values := environmentMap(inheritedEnv)
 	home := values["JOBCTRL_RUNTIME_HOME"]
 	if home == "" {
 		if values["HOME"] == "" {
-			return "", nil, errors.New("HOME is required to resolve the installed JobCtrl selector")
+			return "", nil, nil, errors.New("HOME is required to resolve the installed JobCtrl selector")
 		}
 		home = filepath.Join(values["HOME"], "Library", "Application Support", "JobCtrl")
 	}
 	home, err = filepath.Abs(home)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
-	home, err = filepath.EvalSymlinks(home)
+	store, err := release.Open(home)
 	if err != nil {
-		return "", nil, fmt.Errorf("canonicalize JobCtrl runtime home: %w", err)
+		return "", nil, nil, fmt.Errorf("open JobCtrl release store: %w", err)
+	}
+	// Open has already rejected a symlinked management root. Canonicalizing now
+	// also normalizes macOS's system /var -> /private/var alias before comparing
+	// the kernel executable path with the stable selector path.
+	home, err = filepath.EvalSymlinks(store.Home)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("canonicalize JobCtrl runtime home: %w", err)
+	}
+	store.Home = home
+	lock, err := store.SelectionLock(false)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("acquire release selection lock: %w", err)
+	}
+	fail := func(cause error) (string, *selectorReceipt, *release.Lock, error) {
+		_ = lock.Close()
+		return "", nil, nil, cause
 	}
 	selector := filepath.Join(home, "bin", "jobctrl")
 	if path != selector {
-		return "", nil, fmt.Errorf("launcher must be installed as <payload>/launcher/jobctrl or the JobCtrl runtime selector, got %q", path)
+		return fail(fmt.Errorf("launcher must be installed as <payload>/launcher/jobctrl or the JobCtrl runtime selector, got %q", path))
 	}
-	var current selectorReceipt
-	if err := decodeStrictRegular(filepath.Join(home, "current.json"), &current); err != nil {
-		return "", nil, fmt.Errorf("read installed JobCtrl selector: %w", err)
+	active, err := store.ReadActive()
+	hasActiveRecord := err == nil
+	if err != nil {
+		// A P4 store has no active record. Read its legacy receipt only as a
+		// one-time migration source; P5 never uses it as a selector pointer.
+		var legacy selectorReceipt
+		if legacyErr := decodeStrictRegular(filepath.Join(home, "current.json"), &legacy); legacyErr != nil {
+			return fail(fmt.Errorf("read installed JobCtrl selector: %w", err))
+		}
+		active = release.Active{SchemaVersion: 1, Generation: 1, Receipt: release.Receipt{SchemaVersion: legacy.SchemaVersion, BuildID: legacy.BuildID, Channel: legacy.Channel, Sequence: uint64(legacy.Sequence), ArtifactSHA256: legacy.ArtifactSHA256, ManifestSHA256: legacy.ManifestSHA256, DescriptorSHA256: legacy.DescriptorSHA256, PolicySHA256: legacy.PolicySHA256, DescriptorURL: legacy.DescriptorURL, InstalledAt: legacy.InstalledAt}, SelectorBuildID: legacy.BuildID, Acquisition: legacy.Source}
 	}
-	if current.SchemaVersion != 1 || !buildIDPattern.MatchString(current.BuildID) || (current.Channel != "local" && current.Channel != "stable" && current.Channel != "prerelease") || current.Sequence < 1 || !sha256Pattern.MatchString(current.ArtifactSHA256) || !sha256Pattern.MatchString(current.ManifestSHA256) || !sha256Pattern.MatchString(current.DescriptorSHA256) {
-		return "", nil, errors.New("installed JobCtrl selector receipt is invalid")
+	current := selectorReceipt{SchemaVersion: active.Receipt.SchemaVersion, BuildID: active.Receipt.BuildID, Channel: active.Receipt.Channel, Sequence: int64(active.Receipt.Sequence), ArtifactSHA256: active.Receipt.ArtifactSHA256, ManifestSHA256: active.Receipt.ManifestSHA256, DescriptorSHA256: active.Receipt.DescriptorSHA256, PolicySHA256: active.Receipt.PolicySHA256, DescriptorURL: active.Receipt.DescriptorURL, InstalledAt: active.Receipt.InstalledAt}
+	if err := store.Permit(active.Receipt); err != nil {
+		return fail(fmt.Errorf("active release is no longer safe to launch: %w", err))
 	}
-	return filepath.Join(home, "releases", current.BuildID, "payload"), &current, nil
+	if hasActiveRecord {
+		if _, verifyErr := verifyInstalledReleaseForExecution(store, active.Receipt); verifyErr != nil {
+			return fail(fmt.Errorf("active release immutable evidence is not executable: %w", verifyErr))
+		}
+	}
+	versionValid := (current.SchemaVersion == 1 && current.PolicySHA256 == "") || (current.SchemaVersion == 2 && sha256Pattern.MatchString(current.PolicySHA256))
+	if !versionValid || !buildIDPattern.MatchString(current.BuildID) || (current.Channel != "local" && current.Channel != "stable" && current.Channel != "prerelease") || current.Sequence < 1 || !sha256Pattern.MatchString(current.ArtifactSHA256) || !sha256Pattern.MatchString(current.ManifestSHA256) || !sha256Pattern.MatchString(current.DescriptorSHA256) {
+		return fail(errors.New("installed JobCtrl selector receipt is invalid"))
+	}
+	if hasActiveRecord {
+		if err := verifyPublicSelector(home, selector, active); err != nil {
+			return fail(err)
+		}
+	}
+	return filepath.Join(home, "releases", current.BuildID, "payload"), &current, lock, nil
+}
+
+// verifyPublicSelector proves the stable executable is byte-for-byte the
+// launcher committed by its own immutable signed payload. active.json names
+// this selector separately from the selected payload because a compatible
+// newer selector may intentionally continue supervising an older payload
+// after a failed promotion.
+func verifyPublicSelector(home, selector string, active release.Active) error {
+	builds := []string{active.SelectorBuildID}
+	store, err := release.Open(home)
+	if err == nil {
+		if journal, journalErr := store.ReadJournal(); journalErr == nil && journal.Resumable() && journal.Candidate != nil && (journal.State == release.SelectorHandoffPending || journal.State == release.SelectorReplaced) {
+			// Between durable selector replacement and active-record handoff the
+			// journal is the recovery authority. Both candidate and old selector
+			// must be accepted only if their exact signed executable matches.
+			builds = append(builds, journal.Candidate.BuildID)
+		}
+	}
+	for _, build := range builds {
+		if selectorMatchesRelease(store, selector, build) {
+			return nil
+		}
+	}
+	return errors.New("public selector executable does not match an authenticated compatible selector release")
+}
+
+func selectorMatchesRelease(store *release.Store, selector, build string) bool {
+	if build == "" {
+		return false
+	}
+	receipt, err := readInstalledReceipt(store.Home, build)
+	if err != nil {
+		return false
+	}
+	verified, err := verifyInstalledReleaseForExecution(store, receipt)
+	if err != nil || !protocolSupports(verified.distribution, launcherProtocol) {
+		return false
+	}
+	expected, err := manifestExecutableDigest(verified.distribution, "launcher/jobctrl")
+	if err != nil {
+		return false
+	}
+	info, err := os.Lstat(selector)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode()&0o111 == 0 {
+		return false
+	}
+	actual, err := sha256Path(selector)
+	return err == nil && actual == expected
+}
+
+// VerifyPublicSelectorForExecution is the narrow acquisition boundary used by
+// curl/Homebrew bootstrap code immediately before it execs the user-store
+// selector. It rejects a symlink, tampered regular file, unsafe active receipt,
+// or selector/active protocol mismatch before any untrusted bytes execute.
+func VerifyPublicSelectorForExecution(home string) error {
+	store, err := release.Open(home)
+	if err != nil {
+		return err
+	}
+	lock, err := store.SelectionLock(false)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	active, err := store.ReadActive()
+	if err != nil {
+		return err
+	}
+	if err := store.Permit(active.Receipt); err != nil {
+		return err
+	}
+	return verifyPublicSelector(store.Home, filepath.Join(store.Home, "bin", "jobctrl"), active)
+}
+
+func manifestExecutableDigest(manifest distributionManifest, path string) (string, error) {
+	for _, file := range manifest.Files {
+		if file.Path == path && file.Type == "file" && file.Mode == "0755" {
+			return file.SHA256, nil
+		}
+	}
+	return "", fmt.Errorf("manifest does not declare executable %q", path)
 }
 
 func verifySelectorReceipt(payloadRoot string, manifest distributionManifest, current selectorReceipt) error {
@@ -533,11 +758,30 @@ func isPrintableASCII(value string) bool {
 }
 
 func loadRuntimeManifest(path string) (runtimeManifest, error) {
+	return loadRuntimeManifestShape(path)
+}
+
+// loadRuntimeManifestForProtocol keeps the structural contract independent of
+// the running launcher binary. The lifecycle reads a staged launcher's own
+// protocol before replacing bin/jobctrl, so it can prove the replacement can
+// supervise both the old and candidate payloads.
+func loadRuntimeManifestForProtocol(path string, protocol int) (runtimeManifest, error) {
+	manifest, err := loadRuntimeManifestShape(path)
+	if err != nil {
+		return manifest, err
+	}
+	if manifest.LauncherProtocol != protocol {
+		return manifest, errors.New("unsupported runtime manifest protocol")
+	}
+	return manifest, nil
+}
+
+func loadRuntimeManifestShape(path string) (runtimeManifest, error) {
 	var manifest runtimeManifest
 	if err := decodeStrict(path, &manifest); err != nil {
 		return manifest, err
 	}
-	if manifest.SchemaVersion != 1 || manifest.LauncherProtocol != launcherProtocol {
+	if manifest.SchemaVersion != 1 || manifest.LauncherProtocol < 1 {
 		return manifest, errors.New("unsupported runtime manifest protocol")
 	}
 	if manifest.Ports.TemporalGRPC != 7233 || manifest.Ports.TemporalUI != 8233 || manifest.Ports.API != 8766 {
@@ -1465,6 +1709,14 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 		return err
 	}
 	sendReady(ready, nil)
+	// The shared selection lock protects resolution through the point at which
+	// this supervisor has claimed the instance and proved readiness. Keeping it
+	// for the full daemon lifetime would deadlock an updater: update needs the
+	// exclusive selection lock before it can issue the PID-safe stop request.
+	if ctx.selection != nil {
+		_ = ctx.selection.Close()
+		ctx.selection = nil
+	}
 	for {
 		select {
 		case <-signals:

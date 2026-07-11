@@ -110,6 +110,19 @@ func TestLifecycleExitCodesAreStable(t *testing.T) {
 	}
 }
 
+func TestUninstallRemainsAvailableDuringInterruptedTransition(t *testing.T) {
+	for _, args := range [][]string{{"rollback"}, {"uninstall"}, {"uninstall", "--remove-data"}} {
+		if !transitionRecoveryCommand(args) {
+			t.Fatalf("recovery command was blocked by transition journal: %v", args)
+		}
+	}
+	for _, args := range [][]string{nil, {"start"}, {"update"}, {"status"}} {
+		if transitionRecoveryCommand(args) {
+			t.Fatalf("ordinary command bypassed transition journal: %v", args)
+		}
+	}
+}
+
 func TestAcquisitionBuildPolicyFailsClosedOutsideItsCompiledChannel(t *testing.T) {
 	previousChannel, previousKey := releaseChannel, releaseTrustKeyBase64
 	t.Cleanup(func() { releaseChannel, releaseTrustKeyBase64 = previousChannel, previousKey })

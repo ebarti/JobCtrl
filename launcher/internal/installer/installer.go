@@ -24,11 +24,14 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/ebarti/jobctrl/launcher/internal/launcher"
+	"github.com/ebarti/jobctrl/launcher/internal/release"
 )
 
 const (
@@ -42,21 +45,30 @@ const (
 	maxCompressionRatio = uint64(100)
 	metadataTimeout     = 45 * time.Second
 	archiveStallTimeout = 60 * time.Second
+	maxJSONSafeInteger  = uint64(1<<53 - 1)
+	stagedArchiveName   = "archive.zip"
+	partialArchiveName  = "archive.zip.part"
 )
 
 var (
-	sha256Pattern  = regexp.MustCompile(`^[a-f0-9]{64}$`)
-	buildIDPattern = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]{7,127}$`)
-	semverPattern  = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`)
+	sha256Pattern       = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	buildIDPattern      = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]{7,127}$`)
+	semverPattern       = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`)
+	contentRangePattern = regexp.MustCompile(`^bytes ([0-9]+)-([0-9]+)/([0-9]+)$`)
 )
 
 type Descriptor struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	Channel       string `json:"channel"`
 	Sequence      uint64 `json:"sequence"`
-	BuildID       string `json:"buildId"`
-	AppVersion    string `json:"appVersion"`
-	Platform      struct {
+	// MinimumSafeSequence and RevokedBuildIDs are signed channel tombstones.
+	// They are optional for local fixtures, but non-local channels persist and
+	// enforce them as a monotonic security boundary.
+	MinimumSafeSequence uint64   `json:"minimumSafeSequence"`
+	RevokedBuildIDs     []string `json:"revokedBuildIds"`
+	BuildID             string   `json:"buildId"`
+	AppVersion          string   `json:"appVersion"`
+	Platform            struct {
 		ID   string `json:"id"`
 		OS   string `json:"os"`
 		Arch string `json:"arch"`
@@ -86,6 +98,7 @@ type Receipt struct {
 	ArtifactSHA256   string `json:"artifactSha256"`
 	ManifestSHA256   string `json:"manifestSha256"`
 	DescriptorSHA256 string `json:"descriptorSha256"`
+	PolicySHA256     string `json:"policySha256"`
 	DescriptorURL    string `json:"descriptorUrl"`
 	InstalledAt      string `json:"installedAt"`
 }
@@ -98,6 +111,14 @@ type Options struct {
 	HTTPClient         *http.Client
 	AllowHTTPLoopback  bool
 	AllowUnsignedLocal bool
+	// AcquisitionSource is a short adapter identifier (curl, homebrew, or
+	// local-fixture), not a filesystem path. It is persisted in active.json,
+	// never in immutable release receipt.json.
+	AcquisitionSource string
+	// StageOnly commits an authenticated immutable release but leaves active
+	// selection untouched. The launcher uses it for Homebrew's first-invocation
+	// bootstrap before running the shared health-gated promoter.
+	StageOnly bool
 	// RunCommand is a test seam for macOS code-signing/notarization checks.
 	// Production leaves it nil and executes the system tools by absolute path.
 	RunCommand func(string, ...string) (string, error)
@@ -261,6 +282,17 @@ func validateTransportURL(rawURL string, allowHTTPLoopback bool) (*url.URL, erro
 	return nil, errors.New("must use HTTPS (HTTP is permitted only for explicit loopback tests)")
 }
 
+func validateDescriptorArtifactURL(rawURL, channel string, allowHTTPLoopback bool) (*url.URL, error) {
+	if channel == "local" {
+		parsed, err := url.Parse(rawURL)
+		if err != nil || parsed == nil || parsed.Scheme != "file" || parsed.Host != "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" || !strings.HasPrefix(parsed.Path, "/") {
+			return nil, errors.New("local release artifact URL must be a canonical absolute file:// URL")
+		}
+		return parsed, nil
+	}
+	return validateTransportURL(rawURL, allowHTTPLoopback)
+}
+
 func isLoopbackHost(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
@@ -286,18 +318,43 @@ func verifyDescriptor(raw, signatureRaw []byte, trust map[string]ed25519.PublicK
 	if err := decodeStrict(raw, "release descriptor", &descriptor); err != nil {
 		return descriptor, err
 	}
+	var descriptorFields map[string]json.RawMessage
+	if err := decodeStrict(raw, "release descriptor fields", &descriptorFields); err != nil {
+		return descriptor, err
+	}
+	for _, required := range []string{"minimumSafeSequence", "revokedBuildIds"} {
+		if _, exists := descriptorFields[required]; !exists {
+			return descriptor, fmt.Errorf("release descriptor is missing %s", required)
+		}
+	}
+	var canonicalRevocations []string
+	if err := json.Unmarshal(descriptorFields["revokedBuildIds"], &canonicalRevocations); err != nil || canonicalRevocations == nil {
+		return descriptor, errors.New("release descriptor revokedBuildIds must be an array")
+	}
 	var signature descriptorSignature
 	if err := decodeStrict(signatureRaw, "release descriptor signature", &signature); err != nil {
 		return descriptor, err
 	}
-	if descriptor.SchemaVersion != 1 || descriptor.Sequence == 0 || !buildIDPattern.MatchString(descriptor.BuildID) || !semverPattern.MatchString(descriptor.AppVersion) || descriptor.Platform.ID != "darwin-arm64" || descriptor.Platform.OS != "darwin" || descriptor.Platform.Arch != "arm64" {
+	if descriptor.SchemaVersion != 1 || descriptor.Sequence == 0 || descriptor.Sequence > maxJSONSafeInteger || !buildIDPattern.MatchString(descriptor.BuildID) || !semverPattern.MatchString(descriptor.AppVersion) || descriptor.Platform.ID != "darwin-arm64" || descriptor.Platform.OS != "darwin" || descriptor.Platform.Arch != "arm64" {
 		return descriptor, errors.New("invalid release descriptor identity")
 	}
 	if descriptor.Channel != "local" && descriptor.Channel != "stable" && descriptor.Channel != "prerelease" {
 		return descriptor, errors.New("invalid release descriptor channel")
 	}
+	if descriptor.MinimumSafeSequence > maxJSONSafeInteger || descriptor.MinimumSafeSequence > descriptor.Sequence || (descriptor.Channel != "local" && descriptor.MinimumSafeSequence == 0) {
+		return descriptor, errors.New("invalid release minimum-safe sequence")
+	}
+	for index, build := range descriptor.RevokedBuildIDs {
+		if !buildIDPattern.MatchString(build) || (index > 0 && descriptor.RevokedBuildIDs[index-1] >= build) {
+			return descriptor, errors.New("invalid release revocation tombstones")
+		}
+	}
 	if descriptor.Artifact.ArchiveType != "zip" || !sha256Pattern.MatchString(descriptor.Artifact.SHA256) || !sha256Pattern.MatchString(descriptor.Artifact.ManifestSHA256) || descriptor.Artifact.SizeBytes <= 0 || descriptor.Artifact.SizeBytes > maxArchiveBytes {
 		return descriptor, errors.New("invalid release artifact contract")
+	}
+	artifactURL, err := validateDescriptorArtifactURL(descriptor.Artifact.URL, descriptor.Channel, allowHTTPLoopback)
+	if err != nil {
+		return descriptor, fmt.Errorf("artifact URL: %w", err)
 	}
 	if signature.SchemaVersion != 1 || signature.Algorithm != "ed25519" || signature.KeyID == "" {
 		return descriptor, errors.New("invalid release descriptor signature envelope")
@@ -310,10 +367,6 @@ func verifyDescriptor(raw, signatureRaw []byte, trust map[string]ed25519.PublicK
 	}
 	if sourceURL == nil || signature.Status != "signed" || signature.Signature == nil {
 		return descriptor, errors.New("network release descriptor must have a detached Ed25519 signature")
-	}
-	artifactURL, err := validateTransportURL(descriptor.Artifact.URL, allowHTTPLoopback)
-	if err != nil {
-		return descriptor, fmt.Errorf("artifact URL: %w", err)
 	}
 	if !strings.EqualFold(artifactURL.Host, sourceURL.Host) || artifactURL.Scheme != sourceURL.Scheme {
 		return descriptor, errors.New("artifact URL must stay on the authenticated release origin")
@@ -331,64 +384,36 @@ func verifyDescriptor(raw, signatureRaw []byte, trust map[string]ed25519.PublicK
 
 func downloadAndInstall(options Options, descriptor Descriptor, descriptorBytes []byte, descriptorURL string, client *http.Client) (Receipt, error) {
 	artifactURL, _ := url.Parse(descriptor.Artifact.URL)
-	archivePath, err := downloadArchive(client, artifactURL.String(), descriptor.Artifact.SizeBytes, descriptor.Artifact.SHA256)
+	home, err := RuntimeHome(options.Home)
 	if err != nil {
 		return Receipt{}, fmt.Errorf("download release archive: %w", err)
 	}
-	defer os.Remove(archivePath)
-	return installArchive(options, descriptor, descriptorBytes, descriptorURL, archivePath)
-}
-
-// downloadArchive streams an archive to disk while hashing it. A release may
-// be hundreds of MiB; keeping it in memory would turn a valid signed download
-// into an avoidable denial-of-service vector.
-func downloadArchive(client *http.Client, rawURL string, expectedSize int64, expectedSHA256 string) (string, error) {
-	return downloadArchiveWithStallTimeout(client, rawURL, expectedSize, expectedSHA256, archiveStallTimeout)
-}
-
-func downloadArchiveWithStallTimeout(client *http.Client, rawURL string, expectedSize int64, expectedSHA256 string, stallTimeout time.Duration) (string, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	shared, err := release.Open(home)
 	if err != nil {
-		return "", err
+		return Receipt{}, err
 	}
-	response, err := client.Do(request)
+	transition, err := shared.TransitionLock()
 	if err != nil {
-		return "", err
+		return Receipt{}, err
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unexpected HTTP status %s", response.Status)
-	}
-	if response.ContentLength != expectedSize {
-		return "", fmt.Errorf("archive content length mismatch: expected %d, received %d", expectedSize, response.ContentLength)
-	}
-	cache, err := os.CreateTemp("", "jobctrl-release-*.zip")
+	defer transition.Close()
+	store, err := openStore(home)
 	if err != nil {
-		return "", err
+		return Receipt{}, err
 	}
-	path := cache.Name()
-	hash := sha256.New()
-	written, copyErr := copyWithProgressTimeout(io.MultiWriter(cache, hash), io.LimitReader(response.Body, expectedSize+1), stallTimeout, cancel)
-	if copyErr != nil || written != expectedSize || hex.EncodeToString(hash.Sum(nil)) != expectedSHA256 {
-		cache.Close()
-		os.Remove(path)
-		if copyErr != nil {
-			return "", copyErr
-		}
-		return "", errors.New("archive size or SHA-256 does not match signed release descriptor")
+	defer store.Close()
+	if err := store.cleanupStaging(); err != nil {
+		return Receipt{}, err
 	}
-	if err := cache.Sync(); err != nil {
-		cache.Close()
-		os.Remove(path)
-		return "", err
+	stage, err := prepareDescriptorStage(shared, descriptorBytes)
+	if err != nil {
+		return Receipt{}, err
 	}
-	if err := cache.Close(); err != nil {
-		os.Remove(path)
-		return "", err
+	archivePath, err := downloadArchiveToStage(client, artifactURL.String(), descriptor.Artifact.SizeBytes, descriptor.Artifact.SHA256, stage)
+	if err != nil {
+		return Receipt{}, fmt.Errorf("download release archive: %w", err)
 	}
-	return path, nil
+	return installArchiveLocked(options, descriptor, descriptorBytes, descriptorURL, archivePath, shared, store)
 }
 
 type progressReader struct {
@@ -444,38 +469,297 @@ func copyWithProgressTimeout(destination io.Writer, source io.Reader, stallTimeo
 	}
 }
 
-func installArchive(options Options, descriptor Descriptor, descriptorBytes []byte, descriptorURL, archivePath string) (Receipt, error) {
-	if info, err := os.Lstat(archivePath); err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return Receipt{}, errors.New("release archive must be a regular non-symlink file")
-	} else if info.Size() != descriptor.Artifact.SizeBytes {
-		return Receipt{}, fmt.Errorf("archive size mismatch: expected %d, received %d", descriptor.Artifact.SizeBytes, info.Size())
+// downloadArchiveToStage keeps both its partial and completed cache under the
+// signed descriptor digest. Callers hold the shared transition lock for the
+// whole acquisition, so uninstall, promotion, and a second installer cannot
+// mutate the same release store while an archive is being resumed.
+func downloadArchiveToStage(client *http.Client, rawURL string, expectedSize int64, expectedSHA256, stage string) (string, error) {
+	return downloadArchiveToStageWithStallTimeout(client, rawURL, expectedSize, expectedSHA256, stage, archiveStallTimeout)
+}
+
+func downloadArchiveToStageWithStallTimeout(client *http.Client, rawURL string, expectedSize int64, expectedSHA256, stage string, stallTimeout time.Duration) (string, error) {
+	if expectedSize <= 0 || !sha256Pattern.MatchString(expectedSHA256) {
+		return "", errors.New("invalid signed archive identity")
 	}
-	if digest, err := digestFile(archivePath); err != nil || digest != descriptor.Artifact.SHA256 {
-		if err != nil {
-			return Receipt{}, err
+	final := filepath.Join(stage, stagedArchiveName)
+	partial := filepath.Join(stage, partialArchiveName)
+	if info, err := os.Lstat(final); err == nil {
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("descriptor-bound archive cache is not a regular file")
 		}
-		return Receipt{}, errors.New("archive SHA-256 does not match release descriptor")
+		if err := verifyArchiveFile(final, expectedSize, expectedSHA256); err != nil {
+			return "", fmt.Errorf("cached archive does not match signed release descriptor: %w", err)
+		}
+		return final, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
 	}
-	home, err := runtimeHome(options.Home)
+
+	offset := int64(0)
+	if info, err := os.Lstat(partial); err == nil {
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("descriptor-bound partial archive is not a regular file")
+		}
+		offset = info.Size()
+		if offset > expectedSize {
+			return "", fmt.Errorf("partial archive size %d exceeds signed size %d", offset, expectedSize)
+		}
+		if offset == expectedSize {
+			if err := verifyArchiveFile(partial, expectedSize, expectedSHA256); err != nil {
+				return "", fmt.Errorf("partial archive does not match signed release descriptor: %w", err)
+			}
+			if err := finalizeArchiveCache(partial, final, stage); err != nil {
+				return "", err
+			}
+			return final, nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	if offset > 0 {
+		request.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	appendToPartial := offset > 0 && response.StatusCode == http.StatusPartialContent
+	if offset == 0 {
+		if response.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("unexpected HTTP status %s", response.Status)
+		}
+		if err := requireFullArchiveResponse(response, expectedSize); err != nil {
+			return "", err
+		}
+	} else if appendToPartial {
+		if err := requirePartialArchiveResponse(response, offset, expectedSize); err != nil {
+			return "", err
+		}
+	} else if response.StatusCode == http.StatusOK {
+		// A server is allowed to ignore Range. Its full response is safe only if
+		// it is descriptor-sized and replaces (rather than appends to) the cache.
+		if err := requireFullArchiveResponse(response, expectedSize); err != nil {
+			return "", err
+		}
+		offset, appendToPartial = 0, false
+	} else {
+		return "", fmt.Errorf("unexpected HTTP status %s while resuming archive", response.Status)
+	}
+	if err := writeArchiveResponse(partial, response.Body, offset, expectedSize, appendToPartial, stallTimeout, cancel); err != nil {
+		return "", err
+	}
+	if err := verifyArchiveFile(partial, expectedSize, expectedSHA256); err != nil {
+		return "", fmt.Errorf("archive size or SHA-256 does not match signed release descriptor: %w", err)
+	}
+	if err := finalizeArchiveCache(partial, final, stage); err != nil {
+		return "", err
+	}
+	return final, nil
+}
+
+func requireFullArchiveResponse(response *http.Response, expectedSize int64) error {
+	if response.ContentLength != expectedSize {
+		return fmt.Errorf("archive content length mismatch: expected %d, received %d", expectedSize, response.ContentLength)
+	}
+	return nil
+}
+
+func requirePartialArchiveResponse(response *http.Response, offset, expectedSize int64) error {
+	remaining := expectedSize - offset
+	if response.ContentLength != remaining {
+		return fmt.Errorf("partial archive content length mismatch: expected %d, received %d", remaining, response.ContentLength)
+	}
+	parts := contentRangePattern.FindStringSubmatch(response.Header.Get("Content-Range"))
+	if len(parts) != 4 {
+		return errors.New("partial archive Content-Range does not bind the signed descriptor size")
+	}
+	start, startErr := strconv.ParseInt(parts[1], 10, 64)
+	end, endErr := strconv.ParseInt(parts[2], 10, 64)
+	total, totalErr := strconv.ParseInt(parts[3], 10, 64)
+	if startErr != nil || endErr != nil || totalErr != nil || start != offset || end != expectedSize-1 || total != expectedSize {
+		return errors.New("partial archive Content-Range does not bind the signed descriptor size")
+	}
+	return nil
+}
+
+func writeArchiveResponse(path string, body io.Reader, offset, expectedSize int64, appendToPartial bool, stallTimeout time.Duration, cancel context.CancelFunc) error {
+	flags := os.O_WRONLY | os.O_CREATE | syscall.O_NOFOLLOW
+	if appendToPartial {
+		flags |= os.O_APPEND
+	} else {
+		flags |= os.O_TRUNC
+	}
+	file, err := os.OpenFile(path, flags, 0o600)
+	if err != nil {
+		return err
+	}
+	if info, statErr := file.Stat(); statErr != nil || !info.Mode().IsRegular() || (appendToPartial && info.Size() != offset) {
+		_ = file.Close()
+		if statErr != nil {
+			return statErr
+		}
+		return errors.New("partial archive changed while resuming")
+	}
+	remaining := expectedSize - offset
+	written, copyErr := copyWithProgressTimeout(file, io.LimitReader(body, remaining+1), stallTimeout, cancel)
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if syncErr != nil {
+		return syncErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if written != remaining {
+		return fmt.Errorf("archive body length mismatch: expected %d, received %d", remaining, written)
+	}
+	return nil
+}
+
+func verifyArchiveFile(path string, expectedSize int64, expectedSHA256 string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("archive cache is not a regular file")
+	}
+	if info.Size() != expectedSize {
+		return fmt.Errorf("archive size mismatch: expected %d, received %d", expectedSize, info.Size())
+	}
+	digest, err := digestFile(path)
+	if err != nil {
+		return err
+	}
+	if digest != expectedSHA256 {
+		return errors.New("archive SHA-256 mismatch")
+	}
+	return nil
+}
+
+func finalizeArchiveCache(partial, final, stage string) error {
+	if _, err := os.Lstat(final); err == nil {
+		return errors.New("descriptor-bound final archive appeared during download")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	// Link first so a same-user process cannot race this cache finalization by
+	// planting a final path between Lstat and a replacement-style rename.
+	// Both names are in one descriptor directory, so the link is atomic and
+	// cannot cross filesystems.
+	if err := os.Link(partial, final); err != nil {
+		return err
+	}
+	if err := os.Remove(partial); err != nil {
+		return err
+	}
+	return syncDirectory(stage)
+}
+
+// prepareDescriptorStage creates or verifies the sole staging location that
+// may be associated with descriptorBytes. Its metadata is deliberately small
+// and exact: the path is not enough evidence if a user-owned directory was
+// prepositioned or reused for a different descriptor.
+func prepareDescriptorStage(shared *release.Store, descriptorBytes []byte) (string, error) {
+	descriptorDigest := digestBytes(descriptorBytes)
+	stage, err := shared.StageDir(descriptorDigest)
+	if err != nil {
+		return "", err
+	}
+	if info, statErr := os.Lstat(stage); statErr == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("descriptor-bound staging path is not a regular directory")
+		}
+		var staged struct {
+			DescriptorSHA256 string `json:"descriptorSha256"`
+		}
+		metaRaw, metaErr := readBoundedFile(filepath.Join(stage, "stage.json"), maxSignatureBytes)
+		if metaErr != nil || decodeStrict(metaRaw, "staging metadata", &staged) != nil || staged.DescriptorSHA256 != descriptorDigest {
+			return "", errors.New("staging metadata does not bind the authenticated descriptor")
+		}
+		return stage, nil
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return "", statErr
+	}
+	if err := os.Mkdir(stage, 0o700); err != nil {
+		return "", err
+	}
+	if err := writeBytesAtomic(filepath.Join(stage, "stage.json"), []byte(`{"descriptorSha256":"`+descriptorDigest+`"}`+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	if err := syncDirectory(filepath.Dir(stage)); err != nil {
+		return "", err
+	}
+	return stage, nil
+}
+
+func installArchive(options Options, descriptor Descriptor, descriptorBytes []byte, descriptorURL, archivePath string) (Receipt, error) {
+	home, err := RuntimeHome(options.Home)
 	if err != nil {
 		return Receipt{}, err
 	}
+	// Acquisition participates in the same transition -> selection hierarchy as
+	// promotion, rollback, backup, retention, and uninstall. There is no
+	// independent installer flock that can deadlock or race an active record.
+	shared, err := release.Open(home)
+	if err != nil {
+		return Receipt{}, err
+	}
+	transition, err := shared.TransitionLock()
+	if err != nil {
+		return Receipt{}, err
+	}
+	defer transition.Close()
 	store, err := openStore(home)
 	if err != nil {
 		return Receipt{}, err
 	}
 	defer store.Close()
+	return installArchiveLocked(options, descriptor, descriptorBytes, descriptorURL, archivePath, shared, store)
+}
+
+func installArchiveLocked(options Options, descriptor Descriptor, descriptorBytes []byte, descriptorURL, archivePath string, shared *release.Store, store *store) (Receipt, error) {
+	if err := verifyArchiveFile(archivePath, descriptor.Artifact.SizeBytes, descriptor.Artifact.SHA256); err != nil {
+		return Receipt{}, fmt.Errorf("release archive does not match signed descriptor: %w", err)
+	}
+	// P4's random stage-* directories have no authenticated identity and cannot
+	// be resumed. Descriptor-digest directories are intentionally retained.
 	if err := store.cleanupStaging(); err != nil {
 		return Receipt{}, err
 	}
-	stage, err := os.MkdirTemp(filepath.Join(store.home, "staging"), "stage-")
+	descriptorDigest := digestBytes(descriptorBytes)
+	stage, err := prepareDescriptorStage(shared, descriptorBytes)
 	if err != nil {
 		return Receipt{}, err
 	}
-	defer os.RemoveAll(stage)
 	payload := filepath.Join(stage, "payload")
-	if err := extractZIP(archivePath, payload); err != nil {
-		return Receipt{}, err
+	// A complete payload can be reused after interruption only after re-running
+	// the full verifier. A partial payload remains descriptor-bound, but is
+	// discarded before a fresh extraction rather than being trusted by shape.
+	reuse := false
+	if _, err := os.Lstat(payload); err == nil {
+		trust := launcher.DistributionTrust{PublicKeys: options.Trust, AllowUnsignedLocal: options.AllowUnsignedLocal, ExpectedChannel: descriptor.Channel}
+		if _, verifyErr := launcher.VerifyDistributionPayload(payload, trust); verifyErr == nil {
+			reuse = true
+		} else if removeErr := os.RemoveAll(payload); removeErr != nil {
+			return Receipt{}, removeErr
+		}
+	}
+	if !reuse {
+		if err := extractZIP(archivePath, payload); err != nil {
+			return Receipt{}, err
+		}
 	}
 	trust := launcher.DistributionTrust{PublicKeys: options.Trust, AllowUnsignedLocal: options.AllowUnsignedLocal, ExpectedChannel: descriptor.Channel}
 	manifest, err := launcher.VerifyDistributionPayload(payload, trust)
@@ -495,18 +779,29 @@ func installArchive(options Options, descriptor Descriptor, descriptorBytes []by
 			return Receipt{}, err
 		}
 	}
-	receipt := Receipt{1, descriptor.BuildID, descriptor.Channel, descriptor.Sequence, descriptor.Artifact.SHA256, manifestDigest, digestBytes(descriptorBytes), descriptorURL, time.Now().UTC().Format(time.RFC3339Nano)}
+	// The archive cache is useful only until the authenticated payload is fully
+	// verified. Never move it into releases/<build>: immutable releases contain
+	// the payload, receipts, and policy evidence—not a duplicate mutable cache.
+	if archivePath == filepath.Join(stage, stagedArchiveName) {
+		if err := os.Remove(archivePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return Receipt{}, err
+		}
+		if err := syncDirectory(stage); err != nil {
+			return Receipt{}, err
+		}
+	}
+	metadata := release.ChannelMetadata{Channel: descriptor.Channel, Sequence: descriptor.Sequence, Minimum: descriptor.MinimumSafeSequence, BuildID: descriptor.BuildID, DescriptorDigest: descriptorDigest, Revoked: descriptor.RevokedBuildIDs}
+	policyBytes, err := encodeJSON(metadata)
+	if err != nil {
+		return Receipt{}, err
+	}
+	receipt := Receipt{SchemaVersion: 2, BuildID: descriptor.BuildID, Channel: descriptor.Channel, Sequence: descriptor.Sequence, ArtifactSHA256: descriptor.Artifact.SHA256, ManifestSHA256: manifestDigest, DescriptorSHA256: descriptorDigest, PolicySHA256: digestBytes(policyBytes), DescriptorURL: descriptorURL, InstalledAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	receiptBytes, err := encodeJSON(receipt)
 	if err != nil {
 		return Receipt{}, err
 	}
-	if err := syncDirectory(payload); err != nil {
-		return Receipt{}, err
-	}
-	if err := syncDirectory(stage); err != nil {
-		return Receipt{}, err
-	}
 	releasePath := filepath.Join(store.home, "releases", descriptor.BuildID)
+	releaseExists := false
 	if _, err := os.Lstat(releasePath); err == nil {
 		if info, statErr := os.Lstat(releasePath); statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return Receipt{}, errors.New("existing release path is not a regular directory")
@@ -516,10 +811,28 @@ func installArchive(options Options, descriptor Descriptor, descriptorBytes []by
 			return Receipt{}, fmt.Errorf("existing release %q is not idempotent-safe: %w", descriptor.BuildID, err)
 		}
 		receipt, receiptBytes = immutableReceipt, immutableBytes
+		releaseExists = true
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Receipt{}, err
-	} else {
+	}
+	// Validate authenticated policy before writing, but do not make it durable
+	// yet. Durable policy finalization is journaled by the shared promoter only
+	// after this candidate is immutable and a coherent predecessor pair exists.
+	// This is the critical crash boundary for security revocations.
+	if _, err := shared.ValidateMetadata(metadata); err != nil {
+		return Receipt{}, err
+	}
+	if !releaseExists {
+		if err := syncDirectory(payload); err != nil {
+			return Receipt{}, err
+		}
+		if err := syncDirectory(stage); err != nil {
+			return Receipt{}, err
+		}
 		if err := writeBytesAtomic(filepath.Join(stage, "receipt.json"), receiptBytes, 0o600); err != nil {
+			return Receipt{}, err
+		}
+		if err := writeBytesAtomic(filepath.Join(stage, "policy.json"), policyBytes, 0o600); err != nil {
 			return Receipt{}, err
 		}
 		if err := syncDirectory(stage); err != nil {
@@ -532,10 +845,75 @@ func installArchive(options Options, descriptor Descriptor, descriptorBytes []by
 			return Receipt{}, err
 		}
 	}
+	if options.StageOnly {
+		// Staging never writes bin/jobctrl. In particular, an upgraded Homebrew
+		// formula must not replace a selector that may be supervising an older
+		// protocol payload; the shared promoter performs the compatible handoff.
+		return receipt, nil
+	}
+	source := options.AcquisitionSource
+	if source == "" {
+		source = "curl"
+	}
+	if descriptor.Channel == "local" {
+		source = "local-fixture"
+	}
+	// First installation has no predecessor to protect. It still takes the
+	// common transition -> selection lock order and journals policy before
+	// finalization. Existing installations must remain staged for the shared
+	// health-gated launcher promoter; acquisition is never an activation path.
+	selection, err := shared.SelectionLock(true)
+	if err != nil {
+		return Receipt{}, err
+	}
+	defer selection.Close()
+	prior := uint64(0)
+	if active, activeErr := shared.ReadActive(); activeErr == nil {
+		if active.Receipt.BuildID == receipt.BuildID {
+			if active.Receipt != (release.Receipt{SchemaVersion: receipt.SchemaVersion, BuildID: receipt.BuildID, Channel: receipt.Channel, Sequence: receipt.Sequence, ArtifactSHA256: receipt.ArtifactSHA256, ManifestSHA256: receipt.ManifestSHA256, DescriptorSHA256: receipt.DescriptorSHA256, PolicySHA256: receipt.PolicySHA256, DescriptorURL: receipt.DescriptorURL, InstalledAt: receipt.InstalledAt}) {
+				return Receipt{}, errors.New("active build identity conflicts with authenticated immutable receipt")
+			}
+			if active.Acquisition != source {
+				if _, err := shared.WriteSelectedActive(active.Receipt, active.Generation, active.SelectorBuildID, source); err != nil {
+					return Receipt{}, err
+				}
+			}
+		}
+		return receipt, nil
+	} else if !errors.Is(activeErr, os.ErrNotExist) {
+		return Receipt{}, activeErr
+	}
+	journal, err := shared.Begin("install", nil, &release.Receipt{SchemaVersion: receipt.SchemaVersion, BuildID: receipt.BuildID, Channel: receipt.Channel, Sequence: receipt.Sequence, ArtifactSHA256: receipt.ArtifactSHA256, ManifestSHA256: receipt.ManifestSHA256, DescriptorSHA256: receipt.DescriptorSHA256, PolicySHA256: receipt.PolicySHA256, DescriptorURL: receipt.DescriptorURL, InstalledAt: receipt.InstalledAt}, receipt.DescriptorSHA256)
+	if err != nil {
+		return Receipt{}, err
+	}
+	journal.PendingPolicy = &metadata
+	if err := shared.Advance(&journal, release.PolicyPending, nil); err != nil {
+		return Receipt{}, err
+	}
+	state, err := shared.ValidateMetadata(metadata)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if err := shared.CommitMetadata(state); err != nil {
+		return Receipt{}, err
+	}
+	if err := shared.Advance(&journal, release.PolicyFinalized, nil); err != nil {
+		return Receipt{}, err
+	}
 	if err := installPublicSelector(store.home, releasePath, descriptor.Channel); err != nil {
 		return Receipt{}, err
 	}
+	if _, err := shared.WriteSelectedActive(release.Receipt{SchemaVersion: receipt.SchemaVersion, BuildID: receipt.BuildID, Channel: receipt.Channel, Sequence: receipt.Sequence, ArtifactSHA256: receipt.ArtifactSHA256, ManifestSHA256: receipt.ManifestSHA256, DescriptorSHA256: receipt.DescriptorSHA256, PolicySHA256: receipt.PolicySHA256, DescriptorURL: receipt.DescriptorURL, InstalledAt: receipt.InstalledAt}, prior, receipt.BuildID, source); err != nil {
+		return Receipt{}, err
+	}
+	// current.json is a read-only P4 compatibility artifact. P5 resolution
+	// exclusively reads active.json, so this second write cannot form a pointer
+	// pair with the public selector.
 	if err := writeBytesAtomic(filepath.Join(store.home, "current.json"), receiptBytes, 0o600); err != nil {
+		return Receipt{}, err
+	}
+	if err := shared.Advance(&journal, release.Promoted, nil); err != nil {
 		return Receipt{}, err
 	}
 	return receipt, nil
@@ -598,7 +976,10 @@ func installPublicSelector(home, releasePath, channel string) error {
 	return syncDirectory(bin)
 }
 
-func runtimeHome(explicit string) (string, error) {
+// RuntimeHome resolves the user-owned store for the command front-end after a
+// successful acquisition. It intentionally exposes only the path, never a
+// mutable package-manager location.
+func RuntimeHome(explicit string) (string, error) {
 	if explicit != "" {
 		return filepath.Abs(explicit)
 	}
@@ -614,7 +995,6 @@ func runtimeHome(explicit string) (string, error) {
 
 type store struct {
 	home string
-	lock *os.File
 }
 
 func openStore(home string) (*store, error) {
@@ -626,21 +1006,7 @@ func openStore(home string) (*store, error) {
 			return nil, err
 		}
 	}
-	lockPath := filepath.Join(home, "install.lock")
-	if info, err := os.Lstat(lockPath); err == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
-		return nil, errors.New("release store lock is not a regular file")
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		lock.Close()
-		return nil, fmt.Errorf("lock release store: %w", err)
-	}
-	return &store{home, lock}, nil
+	return &store{home: home}, nil
 }
 
 func ensureManagedDirectory(path string) error {
@@ -667,10 +1033,7 @@ func ensureManagedDirectory(path string) error {
 	}
 	return os.Chmod(path, 0o700)
 }
-func (s *store) Close() error {
-	defer s.lock.Close()
-	return syscall.Flock(int(s.lock.Fd()), syscall.LOCK_UN)
-}
+func (s *store) Close() error { return nil }
 func (s *store) cleanupStaging() error {
 	entries, err := os.ReadDir(filepath.Join(s.home, "staging"))
 	if err != nil {
@@ -720,10 +1083,41 @@ func verifyInstalledRelease(releasePath string, descriptor Descriptor, trust lau
 	if err := decodeStrict(raw, "release receipt", &receipt); err != nil {
 		return receipt, nil, err
 	}
-	if receipt.SchemaVersion != expected.SchemaVersion || receipt.BuildID != expected.BuildID || receipt.Channel != expected.Channel || receipt.Sequence != expected.Sequence || receipt.ArtifactSHA256 != expected.ArtifactSHA256 || receipt.ManifestSHA256 != expected.ManifestSHA256 || receipt.DescriptorSHA256 != expected.DescriptorSHA256 || receipt.DescriptorURL != expected.DescriptorURL || receipt.InstalledAt == "" {
+	if receipt.SchemaVersion != expected.SchemaVersion || receipt.BuildID != expected.BuildID || receipt.Channel != expected.Channel || receipt.Sequence != expected.Sequence || receipt.ArtifactSHA256 != expected.ArtifactSHA256 || receipt.ManifestSHA256 != expected.ManifestSHA256 || receipt.DescriptorSHA256 != expected.DescriptorSHA256 || receipt.PolicySHA256 != expected.PolicySHA256 || receipt.DescriptorURL != expected.DescriptorURL || receipt.InstalledAt == "" {
 		return receipt, nil, errors.New("release receipt does not match descriptor identity")
 	}
+	policyPath := filepath.Join(releasePath, "policy.json")
+	policyInfo, err := os.Lstat(policyPath)
+	if err != nil || !policyInfo.Mode().IsRegular() || policyInfo.Mode()&os.ModeSymlink != 0 {
+		return receipt, nil, errors.New("release policy is not a regular file")
+	}
+	policyRaw, err := os.ReadFile(policyPath)
+	if err != nil {
+		return receipt, nil, err
+	}
+	var policy release.ChannelMetadata
+	if err := decodeStrict(policyRaw, "release policy", &policy); err != nil {
+		return receipt, nil, err
+	}
+	if digestBytes(policyRaw) != receipt.PolicySHA256 {
+		return receipt, nil, errors.New("release policy digest does not match immutable receipt")
+	}
+	if policy.Channel != descriptor.Channel || policy.Sequence != descriptor.Sequence || policy.Minimum != descriptor.MinimumSafeSequence || policy.BuildID != descriptor.BuildID || policy.DescriptorDigest != expected.DescriptorSHA256 || !sameStrings(policy.Revoked, descriptor.RevokedBuildIDs) {
+		return receipt, nil, errors.New("release policy does not match descriptor identity")
+	}
 	return receipt, raw, nil
+}
+
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func extractZIP(archivePath, destination string) error {
@@ -964,24 +1358,47 @@ func verifyMacOSPayloadTrust(payloadRoot string, runner func(string, ...string) 
 			return string(output), err
 		}
 	}
-	targets := []string{launcherPath}
+	targets := map[string]bool{launcherPath: true}
 	err := filepath.WalkDir(payloadRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if path == payloadRoot || !entry.IsDir() {
+		if path == payloadRoot {
 			return nil
 		}
-		if strings.Contains(strings.ToLower(entry.Name()), "chrom") && strings.HasSuffix(entry.Name(), ".app") {
-			targets = append(targets, path)
-			return filepath.SkipDir
+		if entry.IsDir() {
+			if strings.HasSuffix(entry.Name(), ".app") {
+				targets[path] = true
+			}
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
+			machO, err := isMachO(path)
+			if err != nil {
+				return err
+			}
+			if machO {
+				targets[path] = true
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	for _, target := range targets {
+	ordered := make([]string, 0, len(targets))
+	for target := range targets {
+		ordered = append(ordered, target)
+	}
+	sort.Strings(ordered)
+	for _, target := range ordered {
 		if _, err := runner("/usr/bin/codesign", "--verify", "--deep", "--strict", "--check-notarization", "-R=notarized", target); err != nil {
 			return fmt.Errorf("Developer ID/notarization verification failed for %s: %w", filepath.Base(target), err)
 		}
@@ -994,4 +1411,26 @@ func verifyMacOSPayloadTrust(payloadRoot string, runner func(string, ...string) 
 		}
 	}
 	return nil
+}
+
+func isMachO(path string) (bool, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	var header [4]byte
+	read, err := io.ReadFull(file, header[:])
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return false, err
+	}
+	if read < len(header) {
+		return false, nil
+	}
+	switch header {
+	case [4]byte{0xfe, 0xed, 0xfa, 0xce}, [4]byte{0xce, 0xfa, 0xed, 0xfe}, [4]byte{0xfe, 0xed, 0xfa, 0xcf}, [4]byte{0xcf, 0xfa, 0xed, 0xfe}, [4]byte{0xca, 0xfe, 0xba, 0xbe}, [4]byte{0xbe, 0xba, 0xfe, 0xca}, [4]byte{0xca, 0xfe, 0xba, 0xbf}, [4]byte{0xbf, 0xba, 0xfe, 0xca}:
+		return true, nil
+	default:
+		return false, nil
+	}
 }

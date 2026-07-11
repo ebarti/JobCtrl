@@ -87,7 +87,7 @@ export function verifyReleaseDescriptorSignature({ descriptorRaw, signatureRaw, 
   return descriptor;
 }
 
-function templateValues({ descriptor, descriptorRaw, descriptorUrl }) {
+function templateValues({ descriptor, descriptorRaw, signatureRaw, descriptorUrl }) {
   validateReleaseDescriptor(descriptor);
   invariant(descriptor.channel === "stable", "Homebrew formula rendering requires a stable descriptor");
   const descriptorOrigin = requireCanonicalReleaseUrl(descriptorUrl, "Homebrew descriptor URL");
@@ -101,16 +101,17 @@ function templateValues({ descriptor, descriptorRaw, descriptorUrl }) {
     MANIFEST_SHA256: descriptor.artifact.manifestSha256,
     DESCRIPTOR_URL: descriptorUrl,
     DESCRIPTOR_SHA256: sha256(descriptorRaw),
+    SIGNATURE_SHA256: sha256(signatureRaw ?? ""),
   };
 }
 
 export async function renderHomebrewFormula({ descriptorRaw, signatureRaw, descriptorUrl, trust }) {
   const descriptor = verifyReleaseDescriptorSignature({ descriptorRaw, signatureRaw, trust });
-  const values = templateValues({ descriptor, descriptorRaw, descriptorUrl });
+  const values = templateValues({ descriptor, descriptorRaw, signatureRaw, descriptorUrl });
   let formula = await readFile(FORMULA_TEMPLATE_PATH, "utf8");
   for (const [token, value] of Object.entries(values)) formula = formula.replaceAll(`{{${token}}}`, value);
   invariant(!/{{[A-Z_]+}}/.test(formula), "Homebrew formula template has an unresolved token");
-  validateRenderedHomebrewFormula({ formula, descriptor, descriptorRaw, descriptorUrl });
+  validateRenderedHomebrewFormula({ formula, descriptor, descriptorRaw, signatureRaw, descriptorUrl });
   return { formula, descriptor, descriptorSha256: values.DESCRIPTOR_SHA256, publicationInputs: releasePublicationInputs({ descriptorRaw, descriptorUrl }) };
 }
 
@@ -118,9 +119,9 @@ export function homebrewPublicationInputs({ descriptorRaw, descriptorUrl }) {
   return releasePublicationInputs({ descriptorRaw, descriptorUrl });
 }
 
-export function validateRenderedHomebrewFormula({ formula, descriptor, descriptorRaw, descriptorUrl }) {
+export function validateRenderedHomebrewFormula({ formula, descriptor, descriptorRaw, signatureRaw = "", descriptorUrl }) {
   validateReleaseDescriptor(descriptor);
-  const values = templateValues({ descriptor, descriptorRaw, descriptorUrl });
+  const values = templateValues({ descriptor, descriptorRaw, signatureRaw, descriptorUrl });
   const required = [
     `url "${values.ARTIFACT_URL}"`,
     `sha256 "${values.ARTIFACT_SHA256}"`,
@@ -129,17 +130,24 @@ export function validateRenderedHomebrewFormula({ formula, descriptor, descripto
     `JOBCTRL_MANIFEST_SHA256 = "${values.MANIFEST_SHA256}"`,
     `JOBCTRL_DESCRIPTOR_URL = "${values.DESCRIPTOR_URL}"`,
     `JOBCTRL_DESCRIPTOR_SHA256 = "${values.DESCRIPTOR_SHA256}"`,
+    `JOBCTRL_SIGNATURE_SHA256 = "${values.SIGNATURE_SHA256}"`,
     'require "open3"',
     '"/usr/bin/codesign", "--verify", "--deep", "--strict", "--check-notarization", "-R=notarized", "--verbose=2", bundle.to_s',
     '"/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", bundle.to_s',
     'gatekeeper_output.include?("source=Notarized Developer ID")',
     "verify_notarized_bundle!(buildpath/\"launcher/jobctrl\")",
+    "verify_notarized_bundle!(buildpath/\"launcher/jobctrl-installer\")",
     "outermost_chromium_apps",
     "chromium_apps.each { |bundle| verify_notarized_bundle!(Pathname.new(bundle)) }",
-    "libexec.install Dir[\"*\"]",
-    "bin.install_symlink libexec/\"launcher/jobctrl\"",
+    'resource "jobctrl-release-descriptor"',
+    'resource "jobctrl-release-descriptor-signature"',
+    'bootstrap.install cached_download => "jobctrl-release.zip"',
+    'bootstrap/"homebrew-bootstrap.json"',
+    'bin.install_symlink bootstrap/"jobctrl"',
   ];
   for (const marker of required) invariant(formula.includes(marker), `rendered Homebrew formula is missing ${marker}`);
+  invariant(formula.includes("Formula installation remains entirely prefix-owned"), "rendered Homebrew formula must use first-invocation bootstrap");
+  invariant(!formula.includes('Pathname.new(Dir.home)'), "rendered Homebrew formula must not write the user home during install");
   invariant(!/\bhead\s+/.test(formula), "rendered Homebrew formula must not have a HEAD/source path");
   invariant(!/depends_on\s+/.test(formula), "rendered Homebrew formula must not install a developer-toolchain dependency");
   for (const forbidden of ["corepack", "git", "node", "uv", "temporal", "poppler", "chrome"]) {

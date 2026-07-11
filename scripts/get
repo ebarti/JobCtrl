@@ -73,6 +73,7 @@ login_profile() {
 append_managed_path() {
   local bin_dir="$1" profile mode temporary line
   profile="$(login_profile)"
+  require_safe_profile_path "$profile" "login profile"
   line="export PATH=\"$bin_dir:\$PATH\" # JobCtrl managed path"
   if [[ -L "$profile" ]]; then fail "refusing to modify symlinked login profile $profile"; fi
   if [[ -e "$profile" && ! -f "$profile" ]]; then fail "login profile is not a regular file: $profile"; fi
@@ -112,6 +113,22 @@ expose_command() {
   else
     append_managed_path "$bin_dir"
   fi
+}
+persist_curl_acquisition() {
+  local release_home="$1" bin_dir="$2" profile encoded_line record temporary
+  profile=""
+  encoded_line=""
+  if [[ "$NO_MODIFY_PATH" -eq 0 ]] && ! path_contains "$bin_dir"; then
+    profile="$(login_profile)"
+    require_safe_profile_path "$profile" "login profile"
+    encoded_line="export PATH=\\\"$bin_dir:\$PATH\\\" # JobCtrl managed path"
+  fi
+  record="$release_home/acquisition.json"
+  [[ ! -L "$record" ]] || fail "refusing symlinked acquisition record $record"
+  temporary="$(/usr/bin/mktemp "$release_home/.acquisition.XXXXXX")"
+  /usr/bin/printf '{"schemaVersion":1,"source":"curl","publicLink":"%s/jobctrl","selector":"%s/bin/jobctrl","profile":"%s","pathLine":"%s"}\n' "$bin_dir" "$release_home" "$profile" "$encoded_line" > "$temporary" || { /bin/rm -f "$temporary"; fail "could not write acquisition record"; }
+  /bin/chmod 0600 "$temporary"
+  /bin/mv -f "$temporary" "$record" || { /bin/rm -f "$temporary"; fail "could not commit acquisition record"; }
 }
 
 HOME_OVERRIDE=""
@@ -169,4 +186,5 @@ else
   [[ -n "$RELEASE_URL" ]] && installer_args+=(--release-url "$RELEASE_URL")
   "$INSTALLER_PATH" ${installer_args[@]+"${installer_args[@]}"}
 fi
+persist_curl_acquisition "$RELEASE_HOME" "$BIN_DIR"
 expose_command "$RELEASE_HOME" "$BIN_DIR"

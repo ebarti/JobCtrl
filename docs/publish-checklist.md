@@ -151,7 +151,10 @@ claim. P6 renders it from the signed stable descriptor, independently verifies
 that descriptor against `packaging/distribution/release-keys.json`, smoke-tests
 the published ZIP, and supplies matching promotion evidence to the reusable
 tap workflow. The workflow never triggers from `main` or merely from a
-published GitHub Release.
+published GitHub Release. The formula writes only its Homebrew prefix: its
+`bin/jobctrl` target is a native first-invocation bootstrap holding the signed
+descriptor resources and cached ZIP. It must not create `~/.jobctrl`, mutate a
+Cellar payload, or link a runtime payload from the Cellar during `brew install`.
 
 - **Action.** Run P6's signed descriptor, published-ZIP smoke, formula render,
   Ruby syntax, and Homebrew audit/test gates; then call the reusable sync

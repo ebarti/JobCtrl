@@ -36,6 +36,8 @@ test("local fixture release descriptor, signature, and curl contract bind one ZI
     schemaVersion: 1,
     channel: "local",
     sequence: 1,
+    minimumSafeSequence: 0,
+    revokedBuildIds: [],
     buildId: "fixture-build-0001",
     appVersion: "2.0.0",
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
@@ -67,14 +69,36 @@ test("local descriptor rejects network transport and signed channels reject an u
     schemaVersion: 1,
     channel: "local",
     sequence: 1,
+    minimumSafeSequence: 0,
+    revokedBuildIds: [],
     buildId: "fixture-build-0001",
     appVersion: "2.0.0",
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
     artifact: { url: "https://releases.example.test/jobctrl.zip", sha256: "a".repeat(64), sizeBytes: 1, archiveType: "zip", manifestSha256: "b".repeat(64) },
   };
   assert.throws(() => validateReleaseDescriptor(descriptor), /file:\/\//);
+  assert.throws(() => validateReleaseDescriptor({ ...descriptor, minimumSafeSequence: 2 }), /minimumSafeSequence/);
+  assert.throws(() => validateReleaseDescriptor({ ...descriptor, revokedBuildIds: ["fixture-build-0002", "fixture-build-0002"] }), /sorted and unique/);
   assert.throws(
     () => validateReleaseDescriptorSignature({ schemaVersion: 1, status: "unsigned-local", algorithm: "ed25519", keyId: "local-development", signature: null }, { channel: "stable" }),
     /network release descriptor requires a release signature/,
   );
+});
+
+test("descriptor bounds and local file URLs match the native installer contract", () => {
+  const descriptor = {
+    schemaVersion: 1,
+    channel: "local",
+    sequence: 1,
+    minimumSafeSequence: 0,
+    revokedBuildIds: [],
+    buildId: "fixture-build-0001",
+    appVersion: "2.0.0",
+    platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
+    artifact: { url: "file:///jobctrl-local-release/fixture.zip", sha256: "a".repeat(64), sizeBytes: 1, archiveType: "zip", manifestSha256: "b".repeat(64) },
+  };
+  assert.doesNotThrow(() => validateReleaseDescriptor(descriptor));
+  assert.throws(() => validateReleaseDescriptor({ ...descriptor, artifact: { ...descriptor.artifact, url: "file://attacker.example/fixture.zip" } }), /canonical absolute file/);
+  assert.throws(() => validateReleaseDescriptor({ ...descriptor, sequence: Number.MAX_SAFE_INTEGER + 1 }), /positive integer/);
+  assert.throws(() => validateReleaseDescriptor({ ...descriptor, artifact: { ...descriptor.artifact, sizeBytes: 4 * 1024 * 1024 * 1024 + 1 } }), /sizeBytes/);
 });
