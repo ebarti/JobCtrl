@@ -301,6 +301,45 @@ test("a stalled consent read still renders the static gate without creating a wo
   }
 });
 
+test("a fresh grant wins over a stale denied consent read", async ({ page, context }) => {
+  let releaseRead: (() => void) | undefined;
+  let confirmReadResponse: (() => void) | undefined;
+  const stalledRead = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  const readResponseSent = new Promise<void>((resolve) => {
+    confirmReadResponse = resolve;
+  });
+  await context.route("**/api/demo-consent", async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ choice: "granted", version: "v1" }),
+      });
+      return;
+    }
+    await stalledRead;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ choice: "denied", version: "v1" }),
+    });
+    confirmReadResponse?.();
+  });
+  await context.route("**/api/demo-health", (route) => route.fulfill({ status: 204 }));
+  await context.route("**/api/demo-telemetry", (route) => route.fulfill({ status: 204 }));
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Accept cookies and enter demo" }).click();
+  await expect(page.getByText("Demo mode — shared browser profile")).toBeVisible();
+  releaseRead?.();
+  await readResponseSent;
+  await page.evaluate(() => new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  ));
+  await expect(page.getByText("Demo mode — shared browser profile")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Explore JobCtrl/i })).toHaveCount(0);
+});
+
 scenarioTest(
   "J1 run-current-stage shows durable queued, running, and terminal state across tabs",
   async ({ page, context }) => {

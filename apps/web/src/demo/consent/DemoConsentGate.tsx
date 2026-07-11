@@ -1,11 +1,16 @@
 import { useState, type JSX } from "react";
 
-import type { DemoConsentChoice, DemoConsentClient } from "./DemoConsentClient.js";
+import type {
+  DemoConsentChoice,
+  DemoConsentClient,
+  DemoConsentDecision,
+} from "./DemoConsentClient.js";
 import "./DemoConsentGate.css";
 
 export interface DemoConsentGateProps {
   readonly client: DemoConsentClient;
   readonly initialChoice: DemoConsentChoice;
+  readonly onDecisionStarted?: (choice: DemoConsentDecision) => void;
   readonly onGranted: () => void | Promise<void>;
   readonly onDeclined: () => void;
 }
@@ -13,6 +18,7 @@ export interface DemoConsentGateProps {
 export function DemoConsentGate({
   client,
   initialChoice,
+  onDecisionStarted,
   onGranted,
   onDeclined,
 }: DemoConsentGateProps): JSX.Element {
@@ -20,6 +26,7 @@ export function DemoConsentGate({
   const [error, setError] = useState<string | null>(null);
 
   const accept = async (): Promise<void> => {
+    onDecisionStarted?.("granted");
     setPending("granted");
     setError(null);
     try {
@@ -32,6 +39,7 @@ export function DemoConsentGate({
   };
 
   const decline = async (): Promise<void> => {
+    onDecisionStarted?.("denied");
     setPending("denied");
     setError(null);
     await Promise.race([

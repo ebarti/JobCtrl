@@ -26,6 +26,7 @@ const queryClient = createQueryClient();
 const root = createRoot(document.getElementById("root")!);
 let disposeComposition: () => void = () => undefined;
 let demoAdmission: Promise<void> | undefined;
+let demoChoiceStarted = false;
 
 window.addEventListener("pagehide", () => disposeComposition(), { once: true });
 if (import.meta.hot) {
@@ -45,6 +46,7 @@ async function bootstrap(): Promise<void> {
   renderConsentGate(client, "unknown");
   try {
     const state = await client.getChoice();
+    if (demoChoiceStarted) return;
     if (state.choice === "granted") {
       await enterDemo(client);
       return;
@@ -61,6 +63,7 @@ function renderConsentGate(client: DemoConsentClient, initialChoice: DemoConsent
       <DemoConsentGate
         client={client}
         initialChoice={initialChoice}
+        onDecisionStarted={() => { demoChoiceStarted = true; }}
         onDeclined={() => window.location.assign("https://jobctrl.dev")}
         onGranted={() => enterDemo(client)}
       />
