@@ -100,6 +100,22 @@ async function snapshot(page: Page): Promise<DemoWorkspaceSnapshot> {
   });
 }
 
+async function resetEpoch(page: Page): Promise<number> {
+  return page.evaluate(async (moduleUrls) => {
+    const [repositoryModule, storageModule] = await Promise.all([
+      import(moduleUrls.repository),
+      import(moduleUrls.storage),
+    ]);
+    const workspace = new repositoryModule.DemoWorkspaceRepository({
+      store: new storageModule.IndexedDbDemoWorkspaceStore(),
+    });
+    await workspace.initialize();
+    const value = (await workspace.snapshot()).resetEpoch;
+    workspace.dispose();
+    return value;
+  }, MODULE_URLS);
+}
+
 function jobRow(page: Page, title: string): Locator {
   return page.getByRole("row").filter({
     has: page.getByText(title, { exact: true }),
@@ -523,6 +539,51 @@ scenarioTest("demo shell renders the shared-profile and personal-data boundary w
     page.getByText("Demo mode — shared browser profile"),
   ).toBeVisible();
   expect(productRequests).toEqual([]);
+});
+
+scenarioTest("Demo guide shortcuts navigate through seeded surfaces and confirm reset", async ({ page }) => {
+  await page.goto("/dashboard");
+  const guide = page.getByRole("complementary", {
+    name: "Try the synthetic workflow",
+  });
+  await expect(guide).toContainText("Every record and action in this demo is simulated and synthetic");
+
+  await guide.getByRole("link", { name: "Inspect synthetic scoring evidence" }).click();
+  await expect(page).toHaveURL(/\/jobs\/job-northwind-platform(?:\?|$)/);
+  await expect(page.getByText("Preparation diagnostics", { exact: false })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Job details" })).toBeHidden();
+
+  await guide.getByRole("link", { name: "Review synthetic tailored materials" }).click();
+  await expect(page).toHaveURL(/\/artifacts\/artifact-tailored-resume(?:\?|$)/);
+  await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeHidden();
+
+  await guide.getByRole("link", { name: "Open simulated Apply Review and dry run" }).click();
+  await expect(page).toHaveURL(/\/apply-review\?jobKey=job-northwind-platform(?:&|$)/);
+  await expect(page.getByRole("heading", { name: "Application review" })).toBeVisible();
+
+  await guide.getByRole("link", { name: "See simulated run history" }).click();
+  await expect(page).toHaveURL(/\/runs(?:\?|$)/);
+  await expect(page.getByRole("heading", { name: "Workflow runs" })).toBeVisible();
+
+  const before = await resetEpoch(page);
+  await guide.getByRole("button", { name: "Reset synthetic demo data" }).click();
+  await expect(page.getByRole("dialog", { name: "Reset synthetic demo data?" })).toBeVisible();
+  await page.getByRole("button", { name: "Reset demo data" }).click();
+  await expect(guide.getByRole("status")).toContainText(
+    "Synthetic demo data reset. The seeded examples are ready again.",
+  );
+  await expect.poll(() => resetEpoch(page)).toBe(before + 1);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(guide).toBeVisible();
+  const guideBounds = await guide.boundingBox();
+  expect(guideBounds).not.toBeNull();
+  expect(guideBounds!.x).toBeGreaterThanOrEqual(0);
+  expect(guideBounds!.x + guideBounds!.width).toBeLessThanOrEqual(390);
+  expect(guideBounds!.y + guideBounds!.height).toBeLessThanOrEqual(844);
 });
 
 scenarioTest("every P2 product route and seeded deep link renders populated across direct refreshes", async ({

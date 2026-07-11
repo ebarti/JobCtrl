@@ -1,5 +1,6 @@
 import { Outlet } from "@tanstack/react-router";
 
+import { DemoGuide } from "../../demo/guide/DemoGuide.js";
 import { DemoReceiptHistory } from "../../demo/workspace/DemoReceiptHistory.js";
 import { DemoWorkspaceNotice } from "../../demo/workspace/DemoWorkspaceNotice.js";
 import { useDensity } from "../hooks/useDensity.js";
@@ -15,6 +16,7 @@ export function AppShell() {
       <SideRail />
       <div className="main-shell">
         <DemoWorkspaceNotice />
+        <DemoGuide />
         <DemoReceiptHistory />
         <Topbar />
         <main className="main">

@@ -92,7 +92,9 @@ drives deterministic queued, running, and terminal stage scenarios through
 accessible product controls; covers the Contoso fail-first tailoring retry;
 checks receipt history across reload and same-profile tabs; and rehearses
 artifact preview, application dry-run, and mark-applied actions without an
-external effect. Every scenario test installs a strict
+external effect. It also proves the admitted Demo guide reaches the seeded
+scoring, materials, Apply Review, and run-history shortcuts before a confirmed
+workspace reset. Every scenario test installs a strict
 request guard that rejects product API, SSE, and external-origin traffic. Unit
 and component tests cover injected quota/security fallbacks, schema revalidation,
 reset-epoch races, event-log loss, read-adapter query/404/capability parity,
