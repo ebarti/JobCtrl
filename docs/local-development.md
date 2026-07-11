@@ -187,12 +187,28 @@ corepack pnpm demo-edge:check
 corepack pnpm demo-edge:test
 corepack pnpm demo-edge:migrate:local
 corepack pnpm demo-edge:dry-run
+corepack pnpm demo:build
 ```
 
-The zero D1 UUID in the checked-in Wrangler configs is a rollout placeholder;
-public deployment must provision D1 and replace it first. Generated Wrangler
-bindings are intentionally ignored—the checked-in environment contract contains
-only the four bindings used by this package.
+The production Wrangler configs bind the EU-scoped
+`jobctrl-demo-telemetry` D1 database. Generated Wrangler bindings are
+intentionally ignored—the checked-in environment contract contains only the
+four bindings used by this package.
+
+`.github/workflows/demo-site.yml` always builds and verifies the demo. Same-repo
+pull requests publish a static Pages preview only when
+`DEMO_PREVIEW_DEPLOY_ENABLED=true`. Production runs only from `main` when
+`DEMO_DEPLOY_ENABLED=true`, applies D1 migrations, deploys both Workers, and
+then publishes Pages. The workflow uses the existing
+`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` secrets.
+
+Rollback the static site from the Cloudflare Pages deployment history, then
+redeploy the prior Worker versions if the fault crosses the `/api/*` boundary.
+Do not roll D1 backward destructively; migrations are forward-only and the
+90-day retention worker remains safe to run during a frontend rollback.
+After deployment, `DEMO_BASE_URL=https://demo.jobctrl.dev corepack pnpm
+demo:smoke` checks the security headers, a direct SPA deep link, the anonymous
+consent read, and exact denied/granted cookie boundary.
 
 ## Verify
 

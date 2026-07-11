@@ -28,7 +28,7 @@
     {
       "binding": "DEMO_TELEMETRY_DB",
       "database_name": "jobctrl-demo-telemetry",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "144dfa55-bdbd-4961-860b-5688c68c61af",
       "migrations_dir": "./migrations"
     }
   ],

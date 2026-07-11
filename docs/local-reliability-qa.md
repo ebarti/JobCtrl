@@ -63,7 +63,9 @@ grant is required before telemetry, cookie attributes and versioning remain
 exact, event fields stay allowlisted, retries do not double-count, rate limits
 fail closed, and expired identities/events/counters are deleted. Before public
 cutover, also repeat the consent and retention paths through local Wrangler and
-the production-mode browser lane.
+the production-mode browser lane. Verify direct SPA deep links, Pages security
+headers, the same-origin `/api/*` route, D1 migration state, and one Pages
+rollback before calling the public deployment healthy.
 
 <a id="scoring-policy-eval-gate"></a>
 <a id="saved-views-smoke"></a>
