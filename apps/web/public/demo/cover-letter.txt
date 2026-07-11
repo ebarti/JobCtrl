@@ -1,0 +1,4 @@
+Bundled synthetic cover-letter preview
+
+This material exists only to demonstrate JobCtrl review and artifact flows.
+It is not addressed to a real person or organization, and it is never sent.

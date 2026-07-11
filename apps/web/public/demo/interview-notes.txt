@@ -1,0 +1,5 @@
+Bundled synthetic interview preparation notes
+
+- Explain the reliability improvement with its audit trail.
+- Distinguish verified evidence from a documented gap.
+- Confirm that the application rehearsal did not submit anything.
