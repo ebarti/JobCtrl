@@ -30,12 +30,13 @@ https://jobctrl.dev
         +-- Live Demo --> https://demo.jobctrl.dev
 ```
 
-Every fresh browser storage profile receives the same immutable, versioned
-synthetic starting scenario and an isolated browser-local mutable copy. The web
-app is the real JobCtrl React application. Its local HTTP and SSE adapters are
-replaced at the composition root by deterministic demo adapters; feature
-components, views, query hooks, mutations, query keys, and invalidation handlers
-remain the same.
+Before consent, every fresh browser storage profile receives only the static
+consent shell. After a confirmed grant, it receives the same immutable,
+versioned synthetic starting scenario and an isolated browser-local mutable
+copy. The web app is the real JobCtrl React application. Its local HTTP and SSE
+adapters are replaced at the composition root by deterministic demo adapters;
+feature components, views, query hooks, mutations, query keys, and invalidation
+handlers remain the same.
 
 The public deployment has one deliberately narrow server-side surface:
 same-origin consent, non-linkable operational counters, and consented telemetry
@@ -284,7 +285,9 @@ do not provide the simplest per-visitor erasure path.
 **Decision:** Deploy the static demo as the separate Pages project
 `jobctrl-demo` on `demo.jobctrl.dev`, linked from the docs site. Route only
 `demo.jobctrl.dev/api/*` to a dedicated Worker because Pages Functions do not
-support the required Rate Limiting bindings under the pinned Wrangler version.
+support the required Rate Limiting bindings under verified Wrangler 4.107.0.
+The P4 package and deployment workflow must pin that exact version; a later
+upgrade requires rerunning both configuration and deployment tests.
 
 Do not deploy under `/demo` inside `jobctrl-docs`. Separate projects provide
 independent preview deployments, bindings, headers, rollout, incident response,
@@ -306,13 +309,19 @@ live QA PR lands.
 flowchart TD
     Docs["jobctrl.dev docs"] -->|"Live Demo"| Demo["demo.jobctrl.dev"]
 
-    subgraph Pages["Cloudflare Pages: jobctrl-demo"]
-      SPA["JobCtrl Vite SPA"]
+    subgraph Pages["Cloudflare Pages: jobctrl-demo (static)"]
+      SPA["Consent shell + JobCtrl Vite SPA"]
+    end
+
+    subgraph ApiWorker["Dedicated Worker route: demo.jobctrl.dev/api/*"]
       ConsentFn["/api/demo-consent"]
       HealthFn["/api/demo-health"]
       TelemetryFn["/api/demo-telemetry"]
       DeleteFn["/api/demo-telemetry/me"]
-      Cleanup["Scheduled retention Worker"]
+    end
+
+    subgraph RetentionWorker["Scheduled retention Worker"]
+      Cleanup["Hourly expiry cleanup"]
     end
 
     Demo --> SPA
@@ -531,7 +540,10 @@ stateDiagram-v2
     Unknown --> Granted: Accept cookies and server confirms
     Unknown --> Denied: Decline and redirect
     Denied --> Unknown: Revisit demo
-    Granted --> Denied: Withdraw, erase, and redirect
+    Granted --> Denied: Withdraw; erase succeeds; redirect
+    Granted --> ErasurePending: Withdraw; erase fails; redirect
+    ErasurePending --> Denied: Retry succeeds
+    ErasurePending --> ErasurePending: Retry fails or visitor leaves
     Granted --> Unknown: Consent version changes
     Denied --> Unknown: Consent version changes
 ```
@@ -553,9 +565,14 @@ Rules:
   sole exception.
 - `Denied` redirects to `https://jobctrl.dev`; returning to the demo renders the
   consent gate again.
+- `ErasurePending` renders the static shell, retries erasure with the retained
+  HttpOnly lookup keys, and blocks re-grant and workspace initialization until
+  deletion succeeds and the old identifiers expire. Leaving still redirects to
+  `https://jobctrl.dev`; returning resumes the retry state.
 - “Manage privacy” remains available from the app shell.
 - Withdrawing is no harder than accepting.
-- A consent-contract version change returns the visitor to `Unknown`.
+- A consent-contract version change returns a non-pending visitor to `Unknown`;
+  it never bypasses an existing `ErasurePending` retry.
 - An API Worker outage never blocks the static consent shell. Declining still
   redirects without creating an identifier even if the best-effort choice
   counter cannot be confirmed. Acceptance shows a retryable unavailable state
@@ -608,8 +625,9 @@ record `denied` in the browser first; send the still-present HttpOnly visitor ID
 to the same-origin endpoint; delete matching D1 rows; only then expire visitor
 and session cookies. If deletion fails, the choice remains denied, no optional
 event is accepted, and the inert visitor cookie is retained solely so an
-idempotent retry can complete erasure. Never clear the lookup key before a
-successful delete.
+idempotent retry can complete erasure. The shell must not accept a new grant or
+initialize a workspace while that retry is pending. Never clear or replace the
+lookup key before a successful delete.
 
 ### 6.4 Optional event catalog
 
@@ -748,7 +766,9 @@ a unique-all-visitor metric that the design deliberately does not collect.
   consented event rows in report queries.
 - Cap event rate per session and globally; silently drop excess telemetry rather
   than affecting the demo.
-- Telemetry failures never block product interaction after consent choice.
+- Optional event-delivery failures never block product interaction after a
+  confirmed grant. Consent confirmation and pending erasure stay fail-closed at
+  the static shell.
 
 ### 7.3 Synthetic-data release gate
 
@@ -948,6 +968,8 @@ The complete core journey is interactive and visibly updates across views.
 - Add the same-origin `/api/*` Worker endpoints, separate non-linkable aggregate
   and consented event D1 schemas/migrations, rate limiting, retention, deletion,
   and population-labelled query/report scripts.
+- Pin Wrangler 4.107.0 exactly in the edge package and deployment workflow; a
+  dependency upgrade must rerun Worker config and dry-run deployment coverage.
 - Collect coarse route names and browser-computed Web Vitals/timing buckets
   through the typed same-origin event contract only after consent.
 - Add consent, funnel, error, and data-leak tests.
@@ -955,6 +977,8 @@ The complete core journey is interactive and visibly updates across views.
 **Tests**
 
 - Unknown/granted/denied/withdrawn/version-changed state machine.
+- Erasure-pending reload/retry state blocks a new grant and workspace
+  initialization until delete-before-expire succeeds.
 - Banner copy explicitly says the demo requires cookie acceptance.
 - Confirmed grant opens the demo; decline records the choice when possible,
   creates no analytics identifier, and redirects to `https://jobctrl.dev`.
@@ -979,8 +1003,10 @@ The complete core journey is interactive and visibly updates across views.
 - Granted events are allowlisted, rate-limited, and queryable.
 - Forbidden attributes are rejected client- and server-side.
 - Withdrawal disables collection first, deletes D1 rows before identifier
-  expiry, and retries idempotently without losing the erasure key.
-- Telemetry outage does not affect the demo.
+  expiry, retries idempotently without losing the erasure key, and blocks
+  re-acceptance while erasure is pending.
+- Optional event-delivery outage does not affect an admitted demo session;
+  consent/erasure outage remains visibly retryable at the static shell.
 
 **Exit criterion**
 
@@ -1187,8 +1213,9 @@ required for the first release.
 This plan is complete only when:
 
 1. `https://demo.jobctrl.dev` is public and independently deployable.
-2. Every fresh browser profile receives a populated isolated browser-local
-   workspace, with shared-profile behavior disclosed and tested.
+2. After a confirmed grant, every fresh browser profile receives a populated
+   isolated browser-local workspace, with shared-profile behavior disclosed and
+   tested; before grant it receives only the static consent shell.
 3. All major JobCtrl routes and the core guided journey are interactive.
 4. Reads, mutations, workflow lifecycles, failures, retries, cancellations, and
    audit history remain coherent across views.
