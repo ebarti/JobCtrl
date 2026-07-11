@@ -19,6 +19,7 @@ import { Link } from "@tanstack/react-router";
 
 import { cn } from "../lib/cn.js";
 import { BrandMark } from "./BrandMark.js";
+import { LegalNotice } from "./LegalNotice.js";
 
 type NavTarget =
   | "/dashboard"
@@ -138,6 +139,7 @@ export function SideRail() {
       <RailNav />
       <span className="side-rail__spacer" />
       <LocalModeCard />
+      <LegalNotice className="legal-notice legal-notice--rail" />
     </aside>
   );
 }

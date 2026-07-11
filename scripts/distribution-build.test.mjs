@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -48,6 +48,39 @@ import { buildFileInventory } from "./distribution-manifest.mjs";
 import { parseExportedRequirements } from "./distribution-provider-lock.mjs";
 
 const execFileAsync = promisify(execFile);
+
+const FIXTURE_BUILD_ROOT_FILES = [
+  "LICENSE",
+  "NOTICE",
+  "package.json",
+  "pnpm-lock.yaml",
+  "apps/api/package.json",
+  "apps/web/package.json",
+  "workers/automation/pyproject.toml",
+  "workers/automation/uv.lock",
+  "launcher/GO-LICENSE",
+  "launcher/toolchain.json",
+  "packaging/distribution/capability-policy.json",
+  "packaging/distribution/component-inventory.json",
+  "packaging/distribution/components.lock.json",
+  "packaging/distribution/license-evidence.lock.json",
+  "packaging/distribution/manifest.schema.json",
+  "packaging/distribution/node-license-evidence.lock.json",
+  "packaging/distribution/payload-layout.json",
+  "packaging/distribution/platforms.json",
+  "packaging/distribution/provider-packs.lock.json",
+  "packaging/distribution/signing-policy.json",
+  "packaging/distribution/source-baseline.json",
+];
+
+async function createFixtureBuildRoot(root) {
+  for (const relativePath of FIXTURE_BUILD_ROOT_FILES) {
+    const destination = path.join(root, relativePath);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await copyFile(path.join(process.cwd(), relativePath), destination);
+  }
+  return root;
+}
 
 test("native launcher build pins an official verified darwin-arm64 compiler contract", async (context) => {
   const root = process.cwd();
@@ -572,6 +605,43 @@ test("fixture builds are bytewise reproducible in different directories", async 
   assert.ok(first.manifest.files.some((file) => file.path === "launcher/jobctrl"));
   assert.ok(first.manifest.files.some((file) => file.path === "launcher/jobctrl-installer"));
   assert.ok(first.manifest.files.every((file) => !/claude|openai.codex|antigravity/i.test(file.path)));
+});
+
+test("fixture release metadata preserves the selected root legal files and requires NOTICE", async (context) => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "jobctrl-fixture-legal-root-"));
+  context.after(async () => rm(parent, { recursive: true, force: true }));
+  const fixtureRoot = await createFixtureBuildRoot(path.join(parent, "root"));
+  const license = "fixture root license\n";
+  const notice = "fixture root notice\n";
+  await writeFile(path.join(fixtureRoot, "LICENSE"), license, { mode: 0o644 });
+  await writeFile(path.join(fixtureRoot, "NOTICE"), notice, { mode: 0o644 });
+
+  const build = await buildFixturePayload({
+    outputDirectory: path.join(parent, "build"),
+    root: fixtureRoot,
+  });
+  const licensesRoot = path.join(build.payloadRoot, "release", "licenses");
+  const licensePath = path.join(licensesRoot, "JobCtrl-AGPL-3.0.txt");
+  const noticePath = path.join(licensesRoot, "JobCtrl-NOTICE.txt");
+  assert.equal(await readFile(licensePath, "utf8"), license);
+  assert.equal(await readFile(noticePath, "utf8"), notice);
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(licensesRoot, "index.json"), "utf8")).projectLegalFiles,
+    [
+      { path: "JobCtrl-AGPL-3.0.txt", sha256: await sha256File(licensePath) },
+      { path: "JobCtrl-NOTICE.txt", sha256: await sha256File(noticePath) },
+    ],
+  );
+  const manifestPaths = new Set(build.manifest.files.map((file) => file.path));
+  assert.ok(manifestPaths.has("release/licenses/JobCtrl-AGPL-3.0.txt"));
+  assert.ok(manifestPaths.has("release/licenses/JobCtrl-NOTICE.txt"));
+
+  const missingNoticeRoot = await createFixtureBuildRoot(path.join(parent, "missing-notice-root"));
+  await rm(path.join(missingNoticeRoot, "NOTICE"));
+  await assert.rejects(
+    buildFixturePayload({ outputDirectory: path.join(parent, "missing-notice-build"), root: missingNoticeRoot }),
+    /JobCtrl NOTICE is missing/,
+  );
 });
 
 test("fixture manifest covers the exact payload tree", async (context) => {

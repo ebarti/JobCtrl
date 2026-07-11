@@ -10220,6 +10220,7 @@ async function collectTopLevelLicenseEvidence(payloadRoot, root, contracts) {
   const sources = [];
   const add = async (subject, candidates) => sources.push({ subject, source: await firstExisting(candidates, subject) });
   await add("jobctrl", [path3.join(root, "LICENSE")]);
+  await add("jobctrl-notice", [path3.join(root, "NOTICE")]);
   await add("go-standard-library", [path3.join(root, "launcher", "GO-LICENSE")]);
   await add("node-runtime", [path3.join(nodeRoot, "LICENSE"), path3.join(nodeRoot, "LICENSE.md"), path3.join(nodeRoot, "LICENSE.txt")]);
   await add("python-runtime", [
@@ -11568,6 +11569,7 @@ function topLevelSbomComponents(contracts, preliminaryFiles) {
   });
 }
 async function generateReleaseMetadata(payloadRoot, contracts, {
+  root,
   mode,
   sourceDateEpoch,
   pythonSbom = null,
@@ -11577,6 +11579,7 @@ async function generateReleaseMetadata(payloadRoot, contracts, {
   attributionEvidence = null,
   licenseSources = []
 }) {
+  invariant3(typeof root === "string" && root.length > 0, "release metadata requires a source root");
   const releaseRoot = componentRoot(payloadRoot, contracts, "jobctrl-release-metadata");
   await rm2(releaseRoot, { recursive: true, force: true });
   await mkdir2(path3.join(releaseRoot, "licenses"), { recursive: true, mode: 493 });
@@ -11641,6 +11644,17 @@ async function generateReleaseMetadata(payloadRoot, contracts, {
       licenseFiles: licenseRecords
     });
   }
+  const projectLegalFiles = [
+    { source: path3.join(root, "LICENSE"), path: "JobCtrl-AGPL-3.0.txt", label: "JobCtrl LICENSE" },
+    { source: path3.join(root, "NOTICE"), path: "JobCtrl-NOTICE.txt", label: "JobCtrl NOTICE" }
+  ];
+  for (const legalFile of projectLegalFiles) {
+    await requireFile(legalFile.source, legalFile.label);
+    const destination = path3.join(releaseRoot, "licenses", legalFile.path);
+    await copyFile(legalFile.source, destination);
+    await chmod2(destination, 420);
+    legalFile.sha256 = await sha256File2(destination);
+  }
   const attributions = topLevelSbomComponents(contracts, preliminaryFiles).map((component) => ({
     id: component.name,
     version: component.version,
@@ -11652,15 +11666,9 @@ async function generateReleaseMetadata(payloadRoot, contracts, {
   await writeJson(path3.join(releaseRoot, "licenses", "index.json"), {
     schemaVersion: 1,
     status: mode === "fixture" ? "fixture-contract" : "collected-from-production-inputs",
-    components: attributions
+    components: attributions,
+    projectLegalFiles: projectLegalFiles.map(({ path: legalPath, sha256 }) => ({ path: legalPath, sha256 }))
   });
-  const rootLicense = path3.join(REPO_ROOT, "LICENSE");
-  if (await exists(rootLicense)) {
-    await copyFile(rootLicense, path3.join(releaseRoot, "licenses", "JobCtrl-AGPL-3.0.txt"));
-    await chmod2(path3.join(releaseRoot, "licenses", "JobCtrl-AGPL-3.0.txt"), 420);
-  } else {
-    await writeFile2(path3.join(releaseRoot, "licenses", "fixture-notice.txt"), "Fixture build: consult component-inventory.json for declared license expressions.\n", { mode: 420 });
-  }
   await writeJson(path3.join(releaseRoot, "provenance.json"), {
     schemaVersion: 1,
     buildMode: mode,
@@ -11685,7 +11693,7 @@ async function generateReleaseMetadata(payloadRoot, contracts, {
   });
   await writeJson(path3.join(releaseRoot, "provider-packs.lock.json"), contracts.providerPackLocks);
   await copyFile(
-    path3.join(REPO_ROOT, "packaging", "distribution", "capability-policy.json"),
+    path3.join(root, "packaging", "distribution", "capability-policy.json"),
     path3.join(releaseRoot, "capability-policy.json")
   );
   await chmod2(path3.join(releaseRoot, "capability-policy.json"), 420);
@@ -12128,7 +12136,7 @@ async function buildFixturePayload({
   await rm2(outputRoot, { recursive: true, force: true });
   await mkdir2(payloadRoot, { recursive: true, mode: 493 });
   await writeFixtureComponents(payloadRoot, contracts);
-  await generateReleaseMetadata(payloadRoot, contracts, { mode: "fixture", sourceDateEpoch });
+  await generateReleaseMetadata(payloadRoot, contracts, { root, mode: "fixture", sourceDateEpoch });
   const manifest = await createLocalManifest(payloadRoot, contracts, { buildId, sourceDateEpoch });
   await verifyExactPayloadTree(payloadRoot, manifest);
   await scanForbiddenPayload(payloadRoot, { forbiddenAbsolutePaths: [root, outputRoot] });
@@ -12256,6 +12264,7 @@ async function buildRealPayload({
       { subject: "chromium-core-third-party-credits", source: chromiumCredits }
     ];
     await generateReleaseMetadata(payloadRoot, contracts, {
+      root,
       mode: "real",
       sourceDateEpoch,
       pythonSbom,

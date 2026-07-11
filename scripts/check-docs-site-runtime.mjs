@@ -184,7 +184,12 @@ try {
     console.log("ok    /user/screenshots section outline");
   }
   const footerText = await page.locator(".VPFooter").innerText();
-  if (!/AGPL-3\.0-only|synthetic data/.test(footerText)) {
+  if (
+    !footerText.includes("Copyright © 2026 Eloi Barti")
+    || !footerText.includes("AGPL-3.0-only")
+    || !footerText.includes("Source code")
+    || !footerText.includes("synthetic data")
+  ) {
     fail("/user/screenshots: copyright/license footer is missing or incomplete");
   } else {
     console.log("ok    /user/screenshots footer notice");
