@@ -229,7 +229,7 @@
       "license": "GPL-2.0-only OR GPL-3.0-only",
       "redistribution": "exclude",
       "requiredInCore": false,
-      "notes": "Temporary source-install compatibility only. Phase 1 removes the API pdftoppm route before the bundled user artifact is built."
+      "notes": "Historical source-compatibility record only. Phase 1 removed the API pdftoppm route; Poppler is not a source or bundled-product prerequisite."
     }
   ]
 }

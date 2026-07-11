@@ -5,8 +5,12 @@ Temporal worker process that executes workflows). This page is the local loop
 end to end: install dependencies, run the full stack, verify a change, and the
 frontend, docs-site, and documentation-screenshot workflows.
 
-**Read this if** you are setting JobCtrl up on your machine, or you changed
-code and need the commands that prove it still works.
+**Read this if** you are running or changing a source checkout. These commands
+install contributor dependencies and are deliberately different from the
+installed product contract. After the first signed bundled release is
+published, installed users will run `jobctrl start` and plain
+`jobctrl <command>` from any directory; they will not use this page's Git,
+pnpm, Corepack, uv, or checkout-relative commands.
 
 ## Install
 
@@ -32,11 +36,12 @@ partial, or CLI-diagnostic runs.
 
 `scripts/get` is now the transport-only bootstrap boundary for the planned
 bundled distribution; it neither clones a checkout nor provisions contributor
-tools. Until P6 publishes a signed descriptor and native-installer pin, its
-normal network path fails closed. Use `scripts/install` and the source commands
-on this page for contributor work. `docs/public/install.sh` must stay
-byte-for-byte identical to `scripts/get`; `pnpm docs:build` checks that before
-building the site.
+tools. The P0–P6 implementation exists, but no signed and notarized public
+artifact, authenticated release pointer, or stable Homebrew formula has been
+published. Its normal network path therefore still fails closed. Use
+`scripts/install` and the source commands on this page for contributor work.
+`docs/public/install.sh` must stay byte-for-byte identical to `scripts/get`;
+`pnpm docs:build` checks that before building the site.
 
 For machines that already have the system tools and browsers installed, use the
 non-interactive dependency sync:
@@ -52,6 +57,13 @@ the Python dev tools used by local checks. It does not install Temporal or
 Playwright browser binaries. System Chrome/Chromium is optional; contributor
 testing of apply behavior must explicitly enable a browser capability first.
 
+The source installer downloads separate web/E2E and Python-worker Playwright
+Chromium revisions. The bundled release candidate instead contains exactly one
+managed Playwright Chromium headless shell for core discovery, enrichment, and
+PDF rendering, with no full Chrome/Chromium application. A system browser stays
+optional unless an authenticated-browser or auto-apply capability is explicitly
+enabled.
+
 Run the Python setup command directly when you only need to refresh vendor auth
 or analysis-leg configuration:
 
@@ -66,7 +78,8 @@ uv --project workers/automation run jobctrl setup --non-interactive --json --ski
 pnpm dev
 ```
 
-`pnpm dev` starts the full local fleet in dependency order: Temporal dev server,
+`pnpm dev` is the source-development counterpart of installed
+`jobctrl start`. It starts the full local fleet in dependency order: Temporal dev server,
 TypeScript API, Vite web app, and the Python worker. Before each
 component starts, the launcher stops the existing tracked JobCtrl process
 tree for that component, so rerunning `pnpm dev` starts from a clean owned

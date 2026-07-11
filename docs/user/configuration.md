@@ -17,6 +17,17 @@ SQLite database, set through the web app; working runtime credentials and
 runtime switches are read from environment variables. Everything here is
 optional unless a feature you want depends on it.
 
+::: info Command spelling
+Command blocks on this page use the canonical installed spelling,
+`jobctrl <command>`. The signed bundle is not public yet, so current
+source-checkout users invoke those commands through the source-only uv prefix
+shown in [Getting Started](getting-started.md#source-cli).
+That prefix syncs the checkout's Python environment when needed and selects it;
+it is not a different CLI. Once the bundle is published, the native `jobctrl`
+executable is both the app launcher and the domain CLI from any directory after
+either curl or Homebrew acquisition.
+:::
+
 ## Start Here
 
 | You want to change… | Use |
@@ -116,11 +127,11 @@ stage or UI control overrides it.
 
 ## Employer-Analysis Ensemble
 
-Run this after first install or whenever vendor auth changes:
+Run this after first setup or whenever vendor auth changes:
 
 ```bash
-uv --project workers/automation run jobctrl setup
-uv --project workers/automation run jobctrl doctor
+jobctrl setup
+jobctrl doctor
 ```
 
 The ensemble legs use vendor SDK runtimes pinned in the Python environment. The
@@ -156,6 +167,12 @@ printenv OPENAI_API_KEY | codex login --with-api-key
 ```
 
 or run the Codex device login locally, then rerun `jobctrl setup`.
+
+Those `CODEX_HOME` instructions describe the current source mode. Bundled mode
+accepts `OPENAI_API_KEY` for its verified managed Codex provider pack, performs
+an isolated ephemeral API login, and never reads or copies ambient
+`CODEX_HOME/auth.json`. The signed bundle is not public yet, so source users
+still follow the source-mode instructions above.
 
 ## LLM Spend Budget
 
@@ -283,10 +300,13 @@ tied to the same material generation.
 | `JOBCTRL_LINKEDIN_APPLY_CHROME_PROFILE` | browser default | Chrome profile name inside the resolver user-data directory. |
 | `JOBCTRL_LINKEDIN_APPLY_HEADLESS` | visible Chrome | Set to `1` to run the resolver headless. |
 
-The managed Playwright Chromium is the required core browser for discovery,
-enrichment, and PDF rendering. System Chrome/Chromium is optional and is never
-auto-detected or adopted for authenticated operations. Its choices are stored in
-`$JOBCTRL_DIR/browser-capabilities.json` with private `0600` permissions:
+The current source checkout installs managed Playwright Chromium for discovery,
+enrichment, and PDF rendering. The bundled release candidate contains exactly
+one managed Playwright Chromium headless shell for those core paths and no full
+Chrome/Chromium application. System Chrome/Chromium is optional in both modes
+and is never auto-detected or adopted for authenticated operations. Its choices
+are stored in `$JOBCTRL_DIR/browser-capabilities.json` with private `0600`
+permissions:
 
 ```bash
 jobctrl capability list
@@ -338,8 +358,8 @@ Combinations matter:
 Authenticate with:
 
 ```bash
-uv --project workers/automation run jobctrl gmail-auth
-uv --project workers/automation run jobctrl doctor
+jobctrl gmail-auth
+jobctrl doctor
 ```
 
 The first runs the Gmail sign-in and writes your local token; the second

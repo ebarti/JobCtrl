@@ -36,19 +36,19 @@ required notice is denied by default. Update both this review and
 | `codex-provider-runtime` | `provider-pack` | `Apache-2.0` | `official-download` | The exact wheel omits all license/notice files while embedding Codex, ripgrep, and patched zsh with separate terms. P1 may fetch and hash-verify it as a managed provider pack. Republishing remains denied until the Codex, ripgrep, zsh, and Rust transitive license/notice closure is recorded and shipped. |
 | `antigravity-provider-runtime` | `provider-pack` | `Apache-2.0` | `official-download` | The exact wheel includes its top-level license but embeds an internal-MPM `localharness` binary without a recoverable Go module or third-party notice closure. P1 may fetch and hash-verify it as a managed provider pack. Republishing remains denied until Google supplies the closure or written permission. |
 | `source-development-toolchain` | `developer-only` | `NOASSERTION` | `exclude` | Git, Go, pnpm, Corepack, uv, test, docs, and development tools never enter the user artifact. |
-| `poppler-source-compatibility` | `developer-only` | `GPL-2.0-only OR GPL-3.0-only` | `exclude` | P1 removes the Poppler-only preview route. Poppler must not enter the bundled user artifact. |
+| `poppler-source-compatibility` | `developer-only` | `GPL-2.0-only OR GPL-3.0-only` | `exclude` | P1 removed the Poppler-only preview route. Poppler is not a source or bundled-product prerequisite and must not enter the artifact. |
 
 ## Transitive gate
 
-P0 records top-level ownership and the default distribution decision. It does
-not claim that a production payload's transitive closure has been cleared.
+P0 records top-level ownership and the default distribution decision; the
+production and release builders own the transitive proof.
 
-- P1 must generate a complete CycloneDX SBOM and attribution directory from the
-  actual production payload. The builder fails on an unclassified file,
+- The P1 production builder generates a complete CycloneDX SBOM and attribution
+  directory from the actual payload. It fails on an unclassified file,
   dependency, dynamic library, browser notice, font notice, or missing license.
-- P6 must rerun that policy on the exact signed artifact and block stable
-  promotion when the SBOM, attribution set, pinned-source evidence, or this
-  top-level decision is incomplete.
+- The protected P6 release job reruns that policy on the exact signed artifact
+  and blocks stable promotion when the SBOM, attribution set, pinned-source
+  evidence, or this top-level decision is incomplete.
 - Provider terms are checked independently of an open-source package label.
   Ambiguity resolves to `official-download` or `exclude`, never implicit
   republication.

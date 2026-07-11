@@ -1,7 +1,9 @@
 # Bundled JobCtrl Distribution Plan
 
 - **Date:** 2026-07-10
-- **Status:** Accepted / not yet delivered.
+- **Status:** Active. P0–P6 implementation is prepared and locally verified;
+  signed publication and P7 published-artifact product QA remain blocked on
+  external release authority and hosted execution.
 - **Anchors:** Current behavior and file ownership verified against
   `main @ 771f40c0`. Re-verify all paths against the implementation base before
   starting each phase.
@@ -126,25 +128,30 @@ payload from clean builds before any packaged-size claim is published.
 
 | Current source-install component | Observed logical footprint / count |
 | --- | --- |
-| pnpm workspace | 81 unique direct JavaScript packages; 1,428 lock records / 1,321 installed package instances; approximately 897 MiB in `node_modules` |
-| Python worker environment | 22 direct runtime dependencies plus 5 direct dev dependencies; 97 installed third-party distributions; approximately 909 MiB |
+| pnpm workspace | 83 unique direct JavaScript packages (44 runtime-direct, 41 development-direct, with cross-workspace overlap); 1,428 lock records; approximately 897 MiB in the preserved source observation |
+| Python worker environment | 18 core-runtime, 4 provider-runtime, and 6 development direct dependencies; 103 uv lock records; approximately 909 MiB in the preserved source observation |
 | Playwright browsers | Node Playwright 1.59.1 revision 1217 plus Python Playwright 1.58.0 revision 1208; approximately 1.0 GiB combined |
 | uv-managed Python | approximately 319 MiB when uv must provision Python |
 | Homebrew dependency closure | 72 formulae; approximately 1.18 GiB on the reference machine |
 | Google Chrome | approximately 1.3 GiB on the reference machine; should be excluded when authenticated browser features are disabled |
 | Source archive | approximately 23 MiB compressed |
 
-The JavaScript count in that planning snapshot predates the Phase 0 manifest
-validator. The checked-in Phase 0 audit reports 82 unique direct packages and
-40 direct development packages because it adds Ajv for full JSON Schema 2020-12
-validation; runtime-direct dependencies remain 44 and pnpm lock records remain
-1,428. `source-baseline.json` records that reproducible current count separately
-from the historical footprint observation.
+The direct-dependency counts above are the current post-P6 values in
+`source-baseline.json`. They supersede the original planning count and the
+intermediate Phase 0 count: the checked-in audit now reports 83 unique direct
+JavaScript packages, 44 runtime-direct packages, 41 development-direct
+packages, 1,428 pnpm lock records, and 103 uv lock records. The footprint
+observations remain historical and directional; their mixed accounting context
+is recorded separately from those reproducible counts.
 
-The current cold-machine path is therefore roughly **5–6 GiB before download
-caches**, depending on what was already present. This is not the target package
-size; it is evidence that the installer is provisioning a development
-environment.
+A simple sum of the preserved source observations is roughly **4.28 GiB with
+system Chrome excluded**, or **5.58 GiB** when the separately optional 1.3 GiB
+Chrome from the reference machine is included. The installer never installs
+system Chrome. The sum also includes the whole observed 1.18 GiB Homebrew
+formula closure and mixes accounting contexts, so it is directional rather
+than a reproducible additive install size. It still demonstrates that the
+source path provisions a development environment rather than the target
+package boundary.
 
 The release pipeline must publish, for every artifact:
 
@@ -210,7 +217,7 @@ manages it, but JobCtrl does not become an unauthorized redistributor.
 
 | Capability | Default | Browser source | Purpose |
 | --- | --- | --- | --- |
-| `core-browser` | Installed and enabled | One JobCtrl-managed Python Playwright Chromium revision | Discovery scraping, enrichment, and HTML/CSS PDF rendering |
+| `core-browser` | Installed and enabled | One JobCtrl-managed Python Playwright Chromium headless-shell revision | Discovery scraping, enrichment, and HTML/CSS PDF rendering |
 | `auto-apply-browser` | Disabled | Explicitly adopted system Chrome/Chromium or a separately installed managed capability pack | Authenticated application submission |
 | `authenticated-linkedin-browser` | Disabled | Explicitly adopted system Chrome profile | Best-effort authenticated apply-URL resolution |
 | Web/extension E2E browsers | Never shipped | Contributor dependency only | Test and documentation workflows |
@@ -309,7 +316,7 @@ may not.
 - Include the Temporal server binary privately; it is never required on `PATH`.
 - Replace the sole Poppler-backed PDF-page image route with the web app's
   existing PDF.js renderer. Poppler is neither bundled nor a user prerequisite.
-- Install exactly one Python Playwright Chromium revision under a private,
+- Install exactly one Python Playwright Chromium headless-shell revision under a private,
   versioned `PLAYWRIGHT_BROWSERS_PATH`.
 - Include the pinned `@playwright/mcp` package under the embedded Node runtime;
   apply must not invoke `npx` or download code at execution time.
@@ -374,7 +381,7 @@ hash, size, and capability classification.
 - Build the relocatable Python worker/CLI runtime without the dev extra.
 - Embed Temporal and remove the Poppler-only server preview route in favor of
   the existing client-side PDF.js renderer.
-- Bundle one Python Playwright Chromium revision and remove the Node Playwright
+- Bundle one Python Playwright Chromium headless-shell revision and remove the Node Playwright
   browser install from the user artifact.
 - Bundle Playwright MCP with the private Node runtime and replace runtime `npx`
   dispatch with an absolute manifest-resolved command.
@@ -471,7 +478,7 @@ CLI commands from any directory.
   not `missing` or `failed`.
 - Remove system Chrome from base installation prompts, base tier calculation,
   and core startup gates.
-- Preserve the managed Playwright Chromium preflight for discovery and PDF
+- Preserve the managed Playwright Chromium headless-shell preflight for discovery and PDF
   rendering, but rewrite its remediation in `jobctrl` terms.
 - Enabling an authenticated-browser capability offers two explicit choices:
   adopt an existing Chrome/Chromium path or install a separate managed
@@ -656,7 +663,7 @@ repository’s review and QA loops; user-facing claims remain “planned” unti
 | No user toolchain | Clean-machine run passes with Git, Homebrew, Node, pnpm, Corepack, uv, Python, Temporal, Poppler, and npx absent |
 | Same distribution | Both channels report identical build ID and manifest digest |
 | No source clone | No `.git` directory or source checkout is created |
-| No duplicated browser | Artifact inventory contains one core Playwright Chromium revision and no E2E browser |
+| No duplicated browser | Artifact inventory contains one core Playwright Chromium headless-shell revision and no E2E browser |
 | Chrome is optional | With no system Chrome and optional capabilities disabled, install/start/doctor/core browser flows pass |
 | Apply remains explicit | Auto-apply capability cannot become ready without explicit enablement and browser consent |
 | Offline restart | After installation/provider setup, restart works without package-registry access |
@@ -692,7 +699,7 @@ repository’s review and QA loops; user-facing claims remain “planned” unti
 | Proprietary runtime redistribution | Never copy a component into the artifact until license review allows it; use official-channel provider pack otherwise |
 | Relocatable Python/native wheels | Clean extraction test on a machine without build tools; fail P1 if any path leaks the build runner |
 | Node native module compatibility | Build per target platform and test `better-sqlite3` from the extracted artifact |
-| Temporal/Chromium/Poppler size | Publish component sizes; eliminate duplicate/dev closure before debating feature removal |
+| Temporal/Chromium payload size | Publish component sizes, keep only the headless-shell browser revision, and preserve P1's removal of the Poppler route |
 | Homebrew vs self-update ownership | One public `jobctrl update` contract; user-owned runtime store and private channel adapter |
 | macOS trust warnings | Developer ID signing and notarization are release blockers |
 | Database rollback after one-way migration | Pre-migration backup plus runtime/schema pairing; never run an older runtime against a newer unsupported schema |
@@ -725,8 +732,8 @@ This plan is complete only when:
 2. Curl and stable Homebrew install that exact artifact without cloning source.
 3. `jobctrl start` and the full CLI work identically from any directory.
 4. Clean-machine QA passes with no developer toolchain and no system Chrome.
-5. The core payload contains one managed Playwright Chromium and no user E2E
-   browser.
+5. The core payload contains one managed Playwright Chromium headless shell,
+   no full Chrome/Chromium application, and no user E2E browser.
 6. Provider packs are legally sourced, pinned, verified, and managed entirely by
    JobCtrl.
 7. Update, rollback, migration, and uninstall/data-preservation gates pass.

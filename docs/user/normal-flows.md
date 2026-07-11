@@ -9,6 +9,16 @@ review → Apply. The web app is the main way you work; the command line stays
 available for maintenance and diagnostics. For a screen-by-screen walkthrough of
 each page below, see the [Product Tour](screenshots.md).
 
+::: info Command spelling
+This guide uses the canonical installed spelling, `jobctrl <command>`. The
+signed bundle is not public yet, so current source-checkout users invoke those
+commands through the source-only uv prefix shown in
+[Getting Started](getting-started.md#source-cli).
+That prefix is not a different CLI. Once published, the same native executable
+also owns `jobctrl start`, `stop`, and `status`, regardless of whether curl or
+Homebrew acquired it.
+:::
+
 ```mermaid
 flowchart LR
   subgraph Setup["One-time setup"]
@@ -55,8 +65,8 @@ Use the CLI route only when you want terminal workflows. Initialize and check th
 local workspace first:
 
 ```bash
-uv --project workers/automation run jobctrl init
-uv --project workers/automation run jobctrl doctor
+jobctrl init
+jobctrl doctor
 ```
 
 `jobctrl init` creates the local CLI workspace, starter profile, resume, and
@@ -100,7 +110,7 @@ For CLI workflows, review configuration and runtime readiness before starting
 work:
 
 ```bash
-uv --project workers/automation run jobctrl doctor
+jobctrl doctor
 ```
 
 Discovery targets and automation preferences are normally edited in the
@@ -131,7 +141,7 @@ count, source, and dry-run mode, then start the run.
 Start the same Discover workflow from the terminal:
 
 ```bash
-uv --project workers/automation run jobctrl run discover
+jobctrl run discover
 ```
 
 Per-stage commands (`jobctrl enrich`, `score`, `tailor`, `cover`) and the
@@ -175,8 +185,8 @@ Use the CLI to inspect workflow health, then review the jobs themselves in the
 web app:
 
 ```bash
-uv --project workers/automation run jobctrl pipeline-status
-uv --project workers/automation run jobctrl runs --failed-only
+jobctrl pipeline-status
+jobctrl runs --failed-only
 ```
 
 The Jobs table and job detail drawer are the review surfaces for score evidence,
@@ -245,8 +255,8 @@ Run a narrower material-generation path from the terminal when you do not want a
 full Discover run:
 
 ```bash
-uv --project workers/automation run jobctrl tailor
-uv --project workers/automation run jobctrl cover
+jobctrl tailor
+jobctrl cover
 ```
 
 Inspect the generated records, validation, and accepted artifact history in the
@@ -352,8 +362,8 @@ or blocked.
 <WorkflowSurfacePanel surface="cli">
 
 ```bash
-uv --project workers/automation run jobctrl apply --dry-run --limit 1
-uv --project workers/automation run jobctrl apply --url https://example.com/job/123 --dry-run
+jobctrl apply --dry-run --limit 1
+jobctrl apply --url https://example.com/job/123 --dry-run
 ```
 
 The first dry-runs Apply for one eligible job; the second dry-runs a specific job
@@ -405,10 +415,10 @@ Useful web app views:
 <WorkflowSurfacePanel surface="cli">
 
 ```bash
-uv --project workers/automation run jobctrl pipeline-status
-uv --project workers/automation run jobctrl digest
-uv --project workers/automation run jobctrl runs
-uv --project workers/automation run jobctrl runs --failed-only
+jobctrl pipeline-status
+jobctrl digest
+jobctrl runs
+jobctrl runs --failed-only
 ```
 
 These print your pipeline status, show the local daily digest, list all workflow

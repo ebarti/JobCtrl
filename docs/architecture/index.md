@@ -35,7 +35,7 @@ flowchart TD
   subgraph Ext["🌍 Outside world"]
     Boards(["Job boards / ATSes"])
     LLM(["LLM providers"])
-    Browser(["Browser automation<br/>(local Chrome)"])
+    Browser(["Browser automation<br/>(managed headless shell;<br/>optional system Chrome)"])
   end
 
   Web -- "HTTP + SSE" --> Api
@@ -213,6 +213,10 @@ vanishes from the funnel.
    database the API and web app read.
 
 ## Local Commands
+
+These are source-development commands. The unpublished bundled product uses
+one native `jobctrl` executable for lifecycle and domain commands and does not
+expose uv, pnpm, or checkout paths.
 
 Python CLI:
 

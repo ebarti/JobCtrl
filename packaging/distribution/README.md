@@ -31,8 +31,11 @@ development and the installed product.
 - `signing-policy.json` names the required trust identities and records whether
   stable promotion is externally unblocked; it never stores private material.
 - `release-keys.json` is the single public-key registry consumed by release
-  transports. It is intentionally empty in P4, so any stable descriptor or
-  Homebrew tap sync fails closed until P6 provisions the audited key.
+  transports in local source flows and remains intentionally empty/fail-closed.
+  The protected signer generates a candidate-local
+  `release/release-keys.json` from the audited release key; it does not mutate
+  this tracked registry. Stable descriptor publication and Homebrew tap sync
+  require that generated candidate evidence.
 - `scripts/distribution-manifest.mjs` validates these contracts and generates
   deterministic file inventories and source/payload footprint reports.
 - `scripts/distribution-build.mjs` assembles either a tiny deterministic test
@@ -45,7 +48,7 @@ development and the installed product.
   Their ZIP/build/manifest identity is checked by the native installer; they
   are deliberately not promotable or usable for a network channel.
 - `scripts/distribution-homebrew.mjs` renders one stable Homebrew formula from
-  a P6-verified descriptor. The checked-in source is a template, not a fake
+  a release-workflow-verified descriptor. The checked-in source is a template, not a fake
   SHA-pinned release formula; promotion verification independently validates
   the descriptor Ed25519 signature against `release-keys.json` and requires
   published-asset smoke evidence before the tap workflow can write.
@@ -199,9 +202,10 @@ smoke processes exit.
 
 `SOURCE_DATE_EPOCH` controls ZIP timestamps and defaults to `0`. The local
 builder deliberately emits an unsigned, non-promotable artifact; signing and
-notarization are a separate P6 release stage. Homebrew rendering has the same
-boundary: P4 only validates fixtures, while P6 supplies the trusted release key,
-signed descriptor, and verified published-artifact evidence before synchronization.
+notarization run only in the protected P6 release stage. Homebrew rendering has
+the same boundary: local fixtures prove the contract, while protected release
+jobs must supply the trusted release key, signed descriptor, and verified
+published-artifact evidence before synchronization.
 
 ## Commands
 

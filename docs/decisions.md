@@ -1769,7 +1769,7 @@ Consequences until the owner fills the verdict:
 
 ## 2026-07-10: Bundled JobCtrl Distribution With One Public Command
 
-Status: accepted; implementation pending
+Status: accepted; P0–P6 implemented locally, signed publication pending
 
 Decision: proceed with the bundled distribution (the “Go” verdict named in the
 2026-07-06 ADR). Curl and Homebrew will acquire the same signed platform
@@ -1791,7 +1791,8 @@ The production contract is:
   channel;
 - no production dependency on user-installed Git, Node, pnpm, Corepack, uv,
   Python, Temporal, Poppler, Playwright, or npx;
-- one managed Playwright Chromium revision for core scraping and PDF rendering;
+- one managed Playwright Chromium headless-shell revision for core scraping and
+  PDF rendering, with no full Chrome/Chromium application in the core payload;
 - system Chrome and authenticated browser-profile access are disabled unless
   the user explicitly enables auto-apply or authenticated LinkedIn resolution;
 - all legally redistributable runtimes ship in the artifact, while
