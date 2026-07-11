@@ -12,6 +12,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const BUILD_ID_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._-]{7,127}$/;
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/;
 const CHANNELS = new Set(["local", "prerelease", "stable"]);
+const MAX_ARCHIVE_BYTES = 4 * 1024 * 1024 * 1024;
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
@@ -55,10 +56,16 @@ function validateDescriptorPlatform(platform) {
 }
 
 export function validateReleaseDescriptor(descriptor, { requireLocalFileTransport = false } = {}) {
-  assertExactKeys(descriptor, ["schemaVersion", "channel", "sequence", "buildId", "appVersion", "platform", "artifact"], "release descriptor");
+  assertExactKeys(descriptor, ["schemaVersion", "channel", "sequence", "minimumSafeSequence", "revokedBuildIds", "buildId", "appVersion", "platform", "artifact"], "release descriptor");
   invariant(descriptor.schemaVersion === 1, "release descriptor schemaVersion must be 1");
   invariant(CHANNELS.has(descriptor.channel), "release descriptor channel is invalid");
   invariant(Number.isSafeInteger(descriptor.sequence) && descriptor.sequence > 0, "release descriptor sequence must be a positive integer");
+  invariant(Number.isSafeInteger(descriptor.minimumSafeSequence) && descriptor.minimumSafeSequence >= 0 && descriptor.minimumSafeSequence <= descriptor.sequence, "release descriptor minimumSafeSequence is invalid");
+  invariant(Array.isArray(descriptor.revokedBuildIds), "release descriptor revokedBuildIds must be an array");
+  const sortedRevocations = [...descriptor.revokedBuildIds].sort(bytewiseCompare);
+  invariant(JSON.stringify(sortedRevocations) === JSON.stringify(descriptor.revokedBuildIds) && new Set(descriptor.revokedBuildIds).size === descriptor.revokedBuildIds.length, "release descriptor revokedBuildIds must be bytewise sorted and unique");
+  for (const buildId of descriptor.revokedBuildIds) invariant(typeof buildId === "string" && BUILD_ID_PATTERN.test(buildId), "release descriptor revoked buildId is invalid");
+  if (descriptor.channel !== "local") invariant(descriptor.minimumSafeSequence > 0, "network release descriptor minimumSafeSequence must be positive");
   invariant(BUILD_ID_PATTERN.test(descriptor.buildId), "release descriptor buildId is invalid");
   invariant(VERSION_PATTERN.test(descriptor.appVersion), "release descriptor appVersion is invalid");
   validateDescriptorPlatform(descriptor.platform);
@@ -66,7 +73,7 @@ export function validateReleaseDescriptor(descriptor, { requireLocalFileTranspor
   invariant(descriptor.artifact.archiveType === "zip", "release artifact must be a ZIP");
   invariant(SHA256_PATTERN.test(descriptor.artifact.sha256), "release artifact SHA-256 is invalid");
   invariant(SHA256_PATTERN.test(descriptor.artifact.manifestSha256), "release artifact manifest SHA-256 is invalid");
-  invariant(Number.isSafeInteger(descriptor.artifact.sizeBytes) && descriptor.artifact.sizeBytes > 0, "release artifact sizeBytes is invalid");
+  invariant(Number.isSafeInteger(descriptor.artifact.sizeBytes) && descriptor.artifact.sizeBytes > 0 && descriptor.artifact.sizeBytes <= MAX_ARCHIVE_BYTES, "release artifact sizeBytes is invalid");
   let artifactUrl;
   try {
     artifactUrl = new URL(descriptor.artifact.url);
@@ -74,7 +81,7 @@ export function validateReleaseDescriptor(descriptor, { requireLocalFileTranspor
     throw new Error("release artifact URL is invalid");
   }
   if (descriptor.channel === "local") {
-    invariant(artifactUrl.protocol === "file:", "local release descriptor requires a file:// artifact URL");
+    invariant(artifactUrl.protocol === "file:" && artifactUrl.host === "" && artifactUrl.username === "" && artifactUrl.password === "" && artifactUrl.hash === "" && artifactUrl.search === "" && artifactUrl.pathname.startsWith("/"), "local release descriptor requires a canonical absolute file:// artifact URL");
   } else {
     invariant(artifactUrl.protocol === "https:", "network release descriptor requires an HTTPS artifact URL");
   }
@@ -177,6 +184,8 @@ export async function writeLocalReleaseBundle({ outputDirectory, archivePath, ma
     schemaVersion: 1,
     channel: "local",
     sequence,
+    minimumSafeSequence: 0,
+    revokedBuildIds: [],
     buildId,
     appVersion,
     platform: { id: platform.id, os: platform.os, arch: platform.arch },

@@ -304,6 +304,9 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
 
 - `jobctrl.db` — local SQLite database with profile, jobs, events,
   projections, settings, and artifact metadata.
+- `temporal.db` — bundled-runtime Temporal persistence. It is rollback-critical
+  alongside `jobctrl.db`: a bundled release transition snapshots and restores
+  the two databases as one verified pair, never as independent files.
 - `.env` — plaintext, cross-platform fallback for provider/API credentials
   and local runtime settings; it is not encrypted at rest.
 - `tailored_resumes/`, `cover_letters/`, `logs/` — generated artifacts and
@@ -312,7 +315,8 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
 - `codex_home/` — JobCtrl-owned Codex home for local analysis. The adapter
   copies Codex auth here from the user's regular Codex home and runs
   prompt-driven commands from `codex_home/workspace/` only.
-- `backups/` — timestamped database snapshots written by `jobctrl backup`.
+- `backups/` — source-mode `jobctrl backup` snapshots and, once the P6-signed
+  bundled channel is public, verified paired lifecycle snapshots.
 
 Unless noted otherwise, those paths are relative to `JOBCTRL_DIR`, whose
 default is `~/.jobctrl/`. On macOS, the three provider settings supported by
@@ -349,7 +353,7 @@ rate-limit, or bot-control gates.
 
 ### Back Up And Restore
 
-All product state lives in `jobctrl.db`. Snapshot it any time — even while
+Application records live in `jobctrl.db`. Snapshot them any time — even while
 the app runs:
 
 ```bash
@@ -379,6 +383,11 @@ database piecemeal, delete the watermark row so projections rebuild:
 sqlite3 ~/.jobctrl/jobctrl.db \
   "DELETE FROM event_watermarks WHERE projection_name = 'operations_projections';"
 ```
+
+The P6-gated bundled distribution adds a separate `temporal.db` runtime store.
+Its native update, rollback, and backup boundary treats `jobctrl.db` and
+`temporal.db` as one hash-verified pair. That channel is not public yet; do
+not use local distribution fixtures as a production upgrade path.
 
 </details>
 
