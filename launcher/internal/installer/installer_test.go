@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ebarti/jobctrl/launcher/internal/launcher"
 )
@@ -130,6 +131,43 @@ func TestNetworkTransportRejectsRedirectDowngradeAndOversizedResponse(t *testing
 	defer overflow.Close()
 	if _, err := fetchBounded(strictHTTPClient(), overflow.URL, 32); err == nil {
 		t.Fatal("oversized response accepted")
+	}
+}
+
+func TestArchiveDownloadAllowsSlowProgressBeyondMetadataDeadline(t *testing.T) {
+	archive := []byte("a signed archive that arrives in two slow chunks")
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Length", fmt.Sprintf("%d", len(archive)))
+		_, _ = response.Write(archive[:len(archive)/2])
+		response.(http.Flusher).Flush()
+		time.Sleep(75 * time.Millisecond)
+		_, _ = response.Write(archive[len(archive)/2:])
+	}))
+	defer server.Close()
+	metadata := server.Client()
+	metadata.Timeout = 25 * time.Millisecond
+	path, err := downloadArchiveWithStallTimeout(archiveHTTPClient(metadata), server.URL, int64(len(archive)), digestBytes(archive), 250*time.Millisecond)
+	if err != nil {
+		t.Fatalf("slow but progressing archive was rejected: %v", err)
+	}
+	defer os.Remove(path)
+	if downloaded, err := os.ReadFile(path); err != nil || !bytes.Equal(downloaded, archive) {
+		t.Fatalf("downloaded archive = %q, %v", downloaded, err)
+	}
+}
+
+func TestArchiveDownloadCancelsAStalledBody(t *testing.T) {
+	archive := []byte("a signed archive that stalls")
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Length", fmt.Sprintf("%d", len(archive)))
+		_, _ = response.Write(archive[:1])
+		response.(http.Flusher).Flush()
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+	_, err := downloadArchiveWithStallTimeout(server.Client(), server.URL, int64(len(archive)), digestBytes(archive), 25*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "archive download stalled") {
+		t.Fatalf("stalled archive result = %v", err)
 	}
 }
 

@@ -6,6 +6,7 @@ package installer
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -39,6 +40,8 @@ const (
 	maxZipEntries       = 100000
 	maxZipFileBytes     = uint64(2 << 30)
 	maxCompressionRatio = uint64(100)
+	metadataTimeout     = 45 * time.Second
+	archiveStallTimeout = 60 * time.Second
 )
 
 var (
@@ -135,7 +138,7 @@ func InstallFromNetwork(options Options) (Receipt, error) {
 	if descriptor.Channel != options.Policy.ExpectedChannel {
 		return Receipt{}, fmt.Errorf("release channel %q does not match compiled installer channel %q", descriptor.Channel, options.Policy.ExpectedChannel)
 	}
-	return downloadAndInstall(options, descriptor, descriptorBytes, releaseURL.String(), client)
+	return downloadAndInstall(options, descriptor, descriptorBytes, releaseURL.String(), archiveHTTPClient(client))
 }
 
 // InstallFromLocalFiles is the only unsigned-local route. It is intentionally
@@ -197,12 +200,28 @@ func InstallFromCachedFiles(options Options, descriptorURL, descriptorPath, sign
 }
 
 func strictHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	transport.TLSHandshakeTimeout = 15 * time.Second
+	transport.ResponseHeaderTimeout = 30 * time.Second
 	return &http.Client{
-		Timeout: 45 * time.Second,
+		Transport: transport,
+		Timeout:   metadataTimeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return errors.New("redirects are forbidden for release acquisition")
 		},
 	}
+}
+
+// archiveHTTPClient preserves the authenticated transport and redirect policy
+// used for release metadata, but removes its whole-request deadline. Archive
+// bodies are bounded by the signed size and hash plus a progress watchdog;
+// applying the metadata timeout to hundreds of MiB would reject healthy slow
+// connections.
+func archiveHTTPClient(metadata *http.Client) *http.Client {
+	archive := *metadata
+	archive.Timeout = 0
+	return &archive
 }
 
 func fetchBounded(client *http.Client, rawURL string, maximum int64) ([]byte, error) {
@@ -324,7 +343,17 @@ func downloadAndInstall(options Options, descriptor Descriptor, descriptorBytes 
 // be hundreds of MiB; keeping it in memory would turn a valid signed download
 // into an avoidable denial-of-service vector.
 func downloadArchive(client *http.Client, rawURL string, expectedSize int64, expectedSHA256 string) (string, error) {
-	response, err := client.Get(rawURL)
+	return downloadArchiveWithStallTimeout(client, rawURL, expectedSize, expectedSHA256, archiveStallTimeout)
+}
+
+func downloadArchiveWithStallTimeout(client *http.Client, rawURL string, expectedSize int64, expectedSHA256 string, stallTimeout time.Duration) (string, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return "", err
 	}
@@ -341,7 +370,7 @@ func downloadArchive(client *http.Client, rawURL string, expectedSize int64, exp
 	}
 	path := cache.Name()
 	hash := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(cache, hash), io.LimitReader(response.Body, expectedSize+1))
+	written, copyErr := copyWithProgressTimeout(io.MultiWriter(cache, hash), io.LimitReader(response.Body, expectedSize+1), stallTimeout, cancel)
 	if copyErr != nil || written != expectedSize || hex.EncodeToString(hash.Sum(nil)) != expectedSHA256 {
 		cache.Close()
 		os.Remove(path)
@@ -360,6 +389,59 @@ func downloadArchive(client *http.Client, rawURL string, expectedSize int64, exp
 		return "", err
 	}
 	return path, nil
+}
+
+type progressReader struct {
+	reader   io.Reader
+	progress chan<- struct{}
+}
+
+func (reader progressReader) Read(buffer []byte) (int, error) {
+	count, err := reader.reader.Read(buffer)
+	if count > 0 {
+		select {
+		case reader.progress <- struct{}{}:
+		default:
+		}
+	}
+	return count, err
+}
+
+type copyResult struct {
+	written int64
+	err     error
+}
+
+func copyWithProgressTimeout(destination io.Writer, source io.Reader, stallTimeout time.Duration, cancel context.CancelFunc) (int64, error) {
+	if stallTimeout <= 0 {
+		return 0, errors.New("archive stall timeout must be positive")
+	}
+	progress := make(chan struct{}, 1)
+	finished := make(chan copyResult, 1)
+	go func() {
+		written, err := io.Copy(destination, progressReader{reader: source, progress: progress})
+		finished <- copyResult{written: written, err: err}
+	}()
+	timer := time.NewTimer(stallTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case result := <-finished:
+			return result.written, result.err
+		case <-progress:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(stallTimeout)
+		case <-timer.C:
+			cancel()
+			result := <-finished
+			return result.written, fmt.Errorf("archive download stalled for %s", stallTimeout)
+		}
+	}
 }
 
 func installArchive(options Options, descriptor Descriptor, descriptorBytes []byte, descriptorURL, archivePath string) (Receipt, error) {
