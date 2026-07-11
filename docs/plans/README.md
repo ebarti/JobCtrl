@@ -8,9 +8,9 @@ at the top of `docs/`.
   that has landed, been superseded by canonical docs, or been closed with a
   recorded outcome.
 
-As of 2026-07-10, the bundled distribution plan below is the only active dated
-plan at the top level. Earlier dated plans have landed or been closed with a
-recorded outcome and live under `implemented/`. Add new
+As of 2026-07-11, the bundled distribution and public live-demo plans below are
+the active dated plans at the top level. Earlier dated plans have landed or
+been closed with a recorded outcome and live under `implemented/`. Add new
 accepted-but-not-yet-delivered plans at the top level.
 
 When a plan is fully implemented, move it into `implemented/` with a status
@@ -24,6 +24,7 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 | Date | Plan | Status |
 | --- | --- | --- |
 | 2026-07-10 | [Bundled JobCtrl Distribution](2026-07-10-bundled-jobctrl-distribution-plan.md) | Active — P0–P6 implementation stack prepared; signed publication and P7 published-artifact QA remain external gates |
+| 2026-07-11 | [Public JobCtrl Live Demo](2026-07-11-public-live-demo-plan.md) | Accepted / not yet delivered — isolated browser-local synthetic workspaces, consent-aware telemetry, and `demo.jobctrl.dev` delivered as stacked PRs |
 
 ## Historical Spec Ledger
 
