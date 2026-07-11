@@ -1022,6 +1022,16 @@ run, run history, and install CTA without prior JobCtrl knowledge.
 
 ### Phase 6 — Cloudflare deployment and public cutover
 
+**Hosted-run sequencing**
+
+The owner-approved open-source sequence does not include purchasing private
+GitHub Actions minutes. A zero-step billing failure while the repository is
+private is expected and does not count as validation. The exact release tree
+must first pass the complete local privacy/release gate, then the owner makes
+the repository public and reruns the hosted workflows on the same `main` SHA.
+Only a real hosted pass, together with the demo privacy approvals below,
+authorizes the production deployment and public CTA.
+
 **Scope**
 
 - Add demo build scripts and a separate deployment workflow.
