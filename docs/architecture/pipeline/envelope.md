@@ -82,6 +82,7 @@ execution instead of spawning a duplicate.
 | `ApplyWorkflow` (per-job) | `apply-{tenant}-{jobKey}` | one live apply per job |
 | `ApplyWorkflow` (child of pipeline) | `{parent}-apply` | scoped to the parent |
 | `JobPreparationWorkflow` | `prep-{idempotency_key}` | `USE_EXISTING` |
+| `ManualCaptureImportWorkflow` | `manual-capture-import-{sha256(tenant)}-{sha256(itemId)}` | one live import per tenant queue item; raw capture ids never enter Temporal ids |
 | `JobPipelineWorkflow`, `ProfileImportWorkflow`, `CompensationRefreshWorkflow` | server-generated | — |
 
 The preparation idempotency key
@@ -121,7 +122,7 @@ anything that slips past.
 
 ## Activities
 
-Nineteen activities are registered in `registry.py` (`ACTIVITIES`).
+Twenty-two activities are registered in `registry.py` (`ACTIVITIES`).
 
 | Activity (callable) | Module | Purpose | Timeout · retry |
 | --- | --- | --- | --- |
@@ -139,8 +140,11 @@ Nineteen activities are registered in `registry.py` (`ACTIVITIES`).
 | `render_pdf_activity` | `materials/activities.py` | Render missing PDFs (prep step) | 30 min · ×3 |
 | `derive_preparation_targets` | `pipeline/preparation.py` | Deterministic per-job target list (sync) | invoked within fan-out |
 | `apply_activity` | `apply/activities.py` | Drive the apply launcher (browser/agent) | 2 h / 1 h · live 1, dry 2 |
+| `manual_capture_import_activity` | `discovery/manual_capture_workflow.py` | Import a queued capture; validate and reconstruct an identical committed retry | 10 min · ×2 |
 | `profile_import_activity` | `profile/activities.py` | Import resume PDF → profile draft | 10 min · ×2 |
 | `refresh_compensation_activity` | `infrastructure/compensation/workflow.py` | Refresh posted comp + market estimate | 20 min · ×2 |
+| `generate_interview_prep_activity` | `interview/activities.py` | Generate stored interview preparation | 20 min · ×2 |
+| `run_contact_research_activity` | `contact/activities.py` | Fetch approved sources and extract review candidates | 30 min · ×3 |
 | `check_spend_budget` | `llm.py` | Preflight daily-spend gate | 30 s · 1 |
 | `record_workflow_started` | `infrastructure/temporal/finalize.py` | Emit `WorkflowStarted` | 30 s · ×5 |
 | `record_workflow_outcome` | `infrastructure/temporal/finalize.py` | Emit terminal `Workflow*` | 30 s · ×5 (ABANDON on cancel) |

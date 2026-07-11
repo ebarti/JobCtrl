@@ -1,11 +1,8 @@
 import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { type ZodType } from "zod";
 
 import {
@@ -179,12 +176,13 @@ import {
 import {
   type ActionDispatchResult,
   buildActionResponse,
-  defaultActionDispatcher,
+  createActionDispatcher,
+  createContactResearchStarter,
+  createOutreachDraftGenerator,
+  createProfileImporter,
+  createProfilePreviewRenderer,
+  createRuntimeJsonRpcDispatcherFactory,
   defaultArtifactOpener,
-  defaultContactResearchStarter,
-  defaultOutreachDraftGenerator,
-  defaultProfilePreviewRenderer,
-  defaultProfileImporter,
   type ActionDispatcher,
   type ArtifactOpener,
   type ContactResearchStarter,
@@ -221,7 +219,11 @@ import {
   readSettingsConfig,
 } from "./read-model.js";
 import { refreshProjections } from "./projections.js";
-import { defaultResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
+import { createResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
+import {
+  defaultSourcePythonRuntime,
+  type PythonRuntimeCommandResolver,
+} from "./python-runtime.js";
 import {
   createOrLoadResumeReviewDraft,
   getResumeReviewDraftForJob,
@@ -307,18 +309,18 @@ const EXTENSION_API_PREFIX = "/v1/extension/";
 const EXTENSION_PAIRING_TOKEN_PATH = "/v1/extension/pairing-token";
 const EXTENSION_PAIRING_TOKEN_ROTATE_PATH = "/v1/extension/pairing-token/rotate";
 const SEC_FETCH_HEADER_NAMES = ["sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "sec-fetch-user"] as const;
-const execFileAsync = promisify(execFile);
-
-export type ArtifactPdfPageRenderer = (pdfPath: string, pageNumber: number) => Promise<Buffer>;
 
 export interface BuildAppOptions {
   appDir?: string;
   dbPath: string;
   settingsPath: string;
+  /** Absolute path to the prebuilt web root. Omit in source development. */
+  webAssetsDir?: string;
+  /** Private Python runtime command resolver. Defaults to source-checkout uv. */
+  pythonRuntime?: PythonRuntimeCommandResolver;
   actionDispatcher?: ActionDispatcher;
   contactResearchStarter?: ContactResearchStarter;
   outreachDraftGenerator?: OutreachDraftGenerator;
-  artifactPdfPageRenderer?: ArtifactPdfPageRenderer;
   artifactOpener?: ArtifactOpener;
   credentialStore?: CredentialStore;
   manualCaptureImporter?: ManualCaptureImporter;
@@ -336,17 +338,21 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger: options.logger ?? false, routerOptions: { maxParamLength: 4096 } });
   installVitestInjectMutationDefaults(app);
   const appDir = options.appDir ?? path.dirname(options.dbPath);
-  const actionDispatcher = options.actionDispatcher ?? defaultActionDispatcher;
-  const contactResearchStarter = options.contactResearchStarter ?? defaultContactResearchStarter;
-  const outreachDraftGenerator = options.outreachDraftGenerator ?? defaultOutreachDraftGenerator;
-  const artifactPdfPageRenderer = options.artifactPdfPageRenderer ?? defaultArtifactPdfPageRenderer;
+  const pythonRuntime = options.pythonRuntime ?? defaultSourcePythonRuntime;
+  const actionDispatcher =
+    options.actionDispatcher ??
+    createActionDispatcher(undefined, createRuntimeJsonRpcDispatcherFactory(pythonRuntime));
+  const contactResearchStarter = options.contactResearchStarter ?? createContactResearchStarter(pythonRuntime);
+  const outreachDraftGenerator = options.outreachDraftGenerator ?? createOutreachDraftGenerator(pythonRuntime);
   const artifactOpener = options.artifactOpener ?? defaultArtifactOpener;
   const credentialStore = options.credentialStore ?? new KeychainCredentialStore();
-  const manualCaptureImporter = options.manualCaptureImporter ?? createWorkerManualCaptureImporter();
-  const gmailFeedbackScanner = options.gmailFeedbackScanner ?? createWorkerGmailFeedbackScanner();
-  const profileImporter = options.profileImporter ?? defaultProfileImporter;
-  const profilePreviewRenderer = options.profilePreviewRenderer ?? defaultProfilePreviewRenderer;
-  const resumePdfRenderer = options.resumePdfRenderer ?? defaultResumeHtmlPdfRenderer;
+  const manualCaptureImporter =
+    options.manualCaptureImporter ?? createWorkerManualCaptureImporter({ pythonRuntime });
+  const gmailFeedbackScanner =
+    options.gmailFeedbackScanner ?? createWorkerGmailFeedbackScanner({ pythonRuntime });
+  const profileImporter = options.profileImporter ?? createProfileImporter(pythonRuntime);
+  const profilePreviewRenderer = options.profilePreviewRenderer ?? createProfilePreviewRenderer(pythonRuntime);
+  const resumePdfRenderer = options.resumePdfRenderer ?? createResumeHtmlPdfRenderer(pythonRuntime, appDir);
   const actionContext = { appDir, dbPath: options.dbPath };
   const requireHealthyWorkerForActions =
     options.requireHealthyWorkerForActions ?? !options.actionDispatcher;
@@ -1980,59 +1986,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       .send(fs.createReadStream(preview.htmlPath));
   });
 
-  app.get<{ Params: { artifactId: string; pageNumber: string } }>(
-    "/v1/artifacts/:artifactId/preview/page/:pageNumber.png",
-    async (request, reply) => {
-      const pageNumber = Number.parseInt(request.params.pageNumber, 10);
-      if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > 50) {
-        void reply.code(400);
-        return { ok: false, error: "invalid_pdf_page" };
-      }
-      const detail = withDb(reply, options.dbPath, (db) =>
-        getArtifactDetail(db, decodeRouteParam(request.params.artifactId)),
-      );
-      if (!detail) {
-        void reply.code(404);
-        return { ok: false, error: "artifact_not_found" };
-      }
-      if ("ok" in detail && detail.ok === false) {
-        return detail;
-      }
-      if (!isPdfArtifact(detail.artifact.type, detail.artifact.localPath)) {
-        void reply.code(415);
-        return { ok: false, error: "artifact_preview_unsupported" };
-      }
-      if (!fs.existsSync(detail.artifact.localPath) || !fs.statSync(detail.artifact.localPath).isFile()) {
-        void reply.code(404);
-        return { ok: false, error: "artifact_missing" };
-      }
-      if (!artifactPathWithinAppDir(appDir, detail.artifact.localPath)) {
-        void reply.code(403);
-        return {
-          ok: false,
-          error: "artifact_path_forbidden",
-          message: "Artifact path resolves outside the JobCtrl app directory.",
-        };
-      }
-
-      try {
-        const png = await artifactPdfPageRenderer(detail.artifact.localPath, pageNumber);
-        return reply
-          .type("image/png")
-          .header("cache-control", "no-store")
-          .send(png);
-      } catch (error) {
-        request.log.warn({ err: error, artifactId: detail.artifact.artifactId, pageNumber }, "PDF page preview failed");
-        void reply.code(502);
-        return {
-          ok: false,
-          error: "artifact_page_preview_failed",
-          message: error instanceof Error ? error.message : "Unable to render PDF page preview.",
-        };
-      }
-    },
-  );
-
   app.post<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId/open", async (request, reply) => {
     const resolvedArtifactId = await withWritableDb(reply, options.dbPath, (db) =>
       resolveCurrentResumeArtifactIdForOpen(db, decodeRouteParam(request.params.artifactId), resumePdfRenderer),
@@ -2701,7 +2654,151 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => ({ ok: true, followUps: getDueFollowUps(db) })),
   );
 
+  if (options.webAssetsDir) {
+    installWebAssetsNotFoundHandler(app, options.webAssetsDir);
+  }
+
   return app;
+}
+
+const STATIC_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".css": "text/css; charset=utf-8",
+  ".gif": "image/gif",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".txt": "text/plain; charset=utf-8",
+  ".wasm": "application/wasm",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
+
+function installWebAssetsNotFoundHandler(app: FastifyInstance, configuredRoot: string): void {
+  if (!path.isAbsolute(configuredRoot)) {
+    throw new Error("Web assets directory must be an absolute path.");
+  }
+  if (!fs.existsSync(configuredRoot) || !fs.statSync(configuredRoot).isDirectory()) {
+    throw new Error(`Web assets directory does not exist: ${configuredRoot}`);
+  }
+  const root = fs.realpathSync(configuredRoot);
+  const indexPath = resolveStaticFile(root, "index.html");
+  if (!indexPath) {
+    throw new Error(`Web assets directory is missing index.html: ${configuredRoot}`);
+  }
+
+  app.setNotFoundHandler(async (request, reply) => {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return reply.code(404).send({ ok: false, error: "not_found" });
+    }
+
+    const decodedPath = decodeStaticRequestPath(request.raw.url ?? request.url);
+    if (decodedPath === null) {
+      return reply.code(400).send({ ok: false, error: "invalid_static_path" });
+    }
+    if (decodedPath === "/v1" || decodedPath.startsWith("/v1/")) {
+      return reply.code(404).send({ ok: false, error: "not_found" });
+    }
+
+    const relativePath = decodedPath.replace(/^\/+/, "");
+    const requestedFile = relativePath ? resolveStaticFile(root, relativePath) : indexPath;
+    if (requestedFile) {
+      return sendStaticFile(reply, requestedFile, requestedFile === indexPath, relativePath);
+    }
+
+    // Never answer a missing asset or fetch with HTML. Only browser document
+    // navigations that explicitly accept HTML receive the SPA shell.
+    if (decodedPath.startsWith("/assets/") || path.posix.extname(decodedPath)) {
+      return reply.code(404).send({ ok: false, error: "static_asset_not_found" });
+    }
+    if (!acceptsHtmlNavigation(request)) {
+      return reply.code(404).send({ ok: false, error: "not_found" });
+    }
+    return sendStaticFile(reply, indexPath, true, "index.html");
+  });
+}
+
+function acceptsHtmlNavigation(request: FastifyRequest): boolean {
+  const accept = request.headers.accept;
+  if (!accept || !accept.split(",").some(isAcceptedHtmlMediaRange)) return false;
+
+  const fetchMode = singleHeaderValue(request.headers["sec-fetch-mode"]);
+  if (fetchMode && fetchMode !== "navigate") return false;
+  const fetchDestination = singleHeaderValue(request.headers["sec-fetch-dest"]);
+  return !fetchDestination || fetchDestination === "document";
+}
+
+function isAcceptedHtmlMediaRange(range: string): boolean {
+  const [rawType, ...rawParameters] = range.split(";");
+  const type = rawType?.trim().toLowerCase();
+  if (type !== "text/html" && type !== "application/xhtml+xml") return false;
+  const quality = rawParameters
+    .map((parameter) => parameter.trim().toLowerCase())
+    .find((parameter) => parameter.startsWith("q="));
+  return quality ? Number.parseFloat(quality.slice(2)) > 0 : true;
+}
+
+function singleHeaderValue(value: string | string[] | undefined): string | undefined {
+  const firstValue = Array.isArray(value) ? value[0] : value;
+  return firstValue?.trim().toLowerCase();
+}
+
+function decodeStaticRequestPath(rawUrl: string): string | null {
+  const rawPath = rawUrl.split("?", 1)[0] ?? "/";
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(rawPath);
+  } catch {
+    return null;
+  }
+  if (
+    !decodedPath.startsWith("/") ||
+    decodedPath.includes("\0") ||
+    decodedPath.includes("\\") ||
+    decodedPath.split("/").some((segment) => segment === "..")
+  ) {
+    return null;
+  }
+  return decodedPath;
+}
+
+function resolveStaticFile(root: string, relativePath: string): string | null {
+  const candidate = path.resolve(root, relativePath);
+  if (!pathWithinRoot(root, candidate)) return null;
+  if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) return null;
+  const realCandidate = fs.realpathSync(candidate);
+  return pathWithinRoot(root, realCandidate) ? realCandidate : null;
+}
+
+function pathWithinRoot(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function sendStaticFile(
+  reply: FastifyReply,
+  filePath: string,
+  isIndex: boolean,
+  requestPath: string,
+): FastifyReply {
+  const extension = path.extname(filePath).toLowerCase();
+  const contentType = STATIC_CONTENT_TYPES[extension] ?? "application/octet-stream";
+  const immutable = !isIndex && isViteHashedAsset(requestPath);
+  return reply
+    .type(contentType)
+    .header("cache-control", immutable ? "public, max-age=31536000, immutable" : "no-cache")
+    .header("x-content-type-options", "nosniff")
+    .send(fs.createReadStream(filePath));
+}
+
+function isViteHashedAsset(requestPath: string): boolean {
+  return /^assets\/(?:[^/]+\/)*[^/]+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+(?:\.map)?$/.test(requestPath);
 }
 
 function normalizeExistingDatabase(dbPath: string): void {
@@ -2973,27 +3070,6 @@ function safeJsonObject(value: string | null | undefined): Record<string, unknow
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
   } catch {
     return null;
-  }
-}
-
-async function defaultArtifactPdfPageRenderer(pdfPath: string, pageNumber: number): Promise<Buffer> {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-pdf-preview-"));
-  const outputPrefix = path.join(tempDir, "page");
-  const outputPath = `${outputPrefix}.png`;
-  try {
-    await execFileAsync(
-      "pdftoppm",
-      ["-png", "-r", "144", "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", pdfPath, outputPrefix],
-      { timeout: 15_000, maxBuffer: 1024 * 1024 },
-    );
-    return fs.readFileSync(outputPath);
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      throw new Error("PDF page preview renderer is unavailable. Install Poppler so pdftoppm is on PATH.");
-    }
-    throw error;
-  } finally {
-    fs.rmSync(tempDir, { force: true, recursive: true });
   }
 }
 

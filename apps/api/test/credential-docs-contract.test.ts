@@ -34,7 +34,7 @@ describe("credential and browser privacy documentation contract", () => {
 
   it("keeps the API and runtime process boundary explicit", () => {
     const runtime = normalizeWhitespace(readRepoFile("docs/architecture/runtime.md"));
-    const localApi = normalizeWhitespace(readRepoFile("docs/local-ts-api.md"));
+    const completeApi = normalizeWhitespace(readRepoFile("docs/api/complete-contract.md"));
 
     expect(runtime).toContain("### Provider Credential Boundary");
     expect(runtime).toContain("passes that value to the `JobCtrl` macOS Keychain service");
@@ -44,11 +44,11 @@ describe("credential and browser privacy documentation contract", () => {
     expect(runtime).toContain("sanitized `503 credential_store_unavailable`");
     expect(runtime).toContain("only into that process's environment");
     expect(runtime).toContain("There is no hot reload");
-    expect(localApi).toContain("`PATCH /v1/credentials` receives the submitted value");
-    expect(localApi).toContain("`GET` and `DELETE` never return stored values");
-    expect(localApi).toContain("never reads a stored value back for provider runtime use");
-    expect(localApi).toContain("`unavailableReason` as `unsupported_platform`, `inspection_failed`, or `null`");
-    expect(localApi).toContain("`503 credential_store_unavailable` with reason `operational_failure`");
+    expect(completeApi).toContain("`PATCH /v1/credentials` receives the submitted value");
+    expect(completeApi).toContain("`GET` and `DELETE` never return stored values");
+    expect(completeApi).toContain("never reads a stored value back for provider runtime use");
+    expect(completeApi).toContain("`unavailableReason` as `unsupported_platform`, `inspection_failed`, or `null`");
+    expect(completeApi).toContain("`503 credential_store_unavailable` with reason `operational_failure`");
   });
 
   it("preserves owner-signoff state for credential claims", () => {

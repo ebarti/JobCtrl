@@ -5,8 +5,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildApp } from "../src/server.js";
-import type { ManualCaptureImportRequest } from "../src/contracts.js";
-import { ManualCaptureImportError, type ManualCaptureImporter } from "../src/manual-capture-worker.js";
+import type { JsonRpcResponse, ManualCaptureImportRequest, RpcMethod } from "../src/contracts.js";
+import {
+  createWorkerManualCaptureImporter,
+  ManualCaptureImportError,
+  type ManualCaptureImporter,
+} from "../src/manual-capture-worker.js";
 
 const CHROME_EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -1221,29 +1225,43 @@ describe("discovery product controls API", () => {
     }
   });
 
-  it("runs the default manual capture importer through the worker pipeline", async () => {
+  it("keeps the manual-capture route response unchanged when importing through JSON-RPC", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
-    const app = buildApp(options(dbPath, dir));
+    const calls: Array<{ method: RpcMethod; params: Record<string, unknown> }> = [];
+    const manualCaptureImporter = createWorkerManualCaptureImporter({
+      dispatcherFactory: () => ({
+        async call(method, params): Promise<JsonRpcResponse> {
+          calls.push({ method, params });
+          return {
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              runId: "manual-capture-import-local-manual-2",
+              workflowId: "manual-capture-import-local-manual-2",
+              firstExecutionRunId: "run-manual-2",
+              result: {
+                status: "succeeded",
+                item_id: "manual-2",
+                job_id: "https://example.com/protected/job",
+                imported_at: "2026-05-12T10:05:00Z",
+                retry_context: {
+                  manual_capture_provenance: {
+                    originating_url: "https://example.com/protected/job",
+                  },
+                },
+                error: null,
+                error_code: null,
+              },
+            },
+          };
+        },
+        async close(): Promise<void> {
+          // The injected dispatcher has no subprocess lifecycle.
+        },
+      }),
+    });
+    const app = buildApp({ ...options(dbPath, dir), manualCaptureImporter });
     try {
-      await app.inject({ method: "GET", url: "/v1/discovery/manual-capture" });
-      const db = new Database(dbPath);
-      db.prepare(
-        `INSERT INTO manual_capture_queue (
-           tenant_id, item_id, originating_url, source_id, reason,
-           retry_context_json, required_at, status
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        "local",
-        "manual-2",
-        "https://example.com/protected/job",
-        "greenhouse-example",
-        "login_required",
-        "{}",
-        "2026-05-12T10:00:00+00:00",
-        "pending",
-      );
-      db.close();
-
       const contentText = manualCaptureHtml().trim();
       const response = await app.inject({
         method: "POST",
@@ -1256,61 +1274,36 @@ describe("discovery product controls API", () => {
         },
       });
       expect(response.statusCode, response.body).toBe(200);
-      expect(response.json()).toMatchObject({
+      expect(response.json()).toEqual({
+        ok: true,
         itemId: "manual-2",
         jobKey: "https://example.com/protected/job",
+        importedAt: "2026-05-12T10:05:00Z",
         provenance: {
           sourceKind: "user_mediated_capture",
+          originatingUrl: "https://example.com/protected/job",
           captureMode: "saved_html",
           futureManualActionRequired: true,
         },
       });
-
-      const verifyDb = new Database(dbPath);
-      const row = verifyDb
-        .prepare(
-          "SELECT status, content_sha256, content_length, captured_url, retry_context_json FROM manual_capture_queue WHERE item_id = ?",
-        )
-        .get("manual-2") as {
-        status: string;
-        content_sha256: string;
-        content_length: number;
-        captured_url: string;
-        retry_context_json: string;
-      };
-      const job = verifyDb
-        .prepare("SELECT title, strategy FROM jobs WHERE url = ?")
-        .get("https://example.com/protected/job") as { title: string; strategy: string };
-      const observation = verifyDb
-        .prepare("SELECT source_id FROM job_source_observations WHERE job_url = ?")
-        .get("https://example.com/protected/job") as { source_id: string };
-      const enrichment = verifyDb
-        .prepare("SELECT current_status, extraction_tier FROM job_enrichments WHERE job_url = ?")
-        .get("https://example.com/protected/job") as { current_status: string; extraction_tier: string };
-      const snapshot = verifyDb
-        .prepare("SELECT latest_snapshot_version, latest_active_state FROM posting_snapshot_sets WHERE job_url = ?")
-        .get("https://example.com/protected/job") as {
-        latest_snapshot_version: number;
-        latest_active_state: string;
-      };
-      verifyDb.close();
-
-      expect(row.status).toBe("imported");
-      expect(row.content_sha256).toHaveLength(64);
-      expect(row.content_length).toBe(contentText.trim().length);
-      expect(row.captured_url).toBe("https://example.com/protected/job");
-      expect(JSON.parse(row.retry_context_json).manual_capture_provenance).toMatchObject({
-        source_kind: "user_mediated_capture",
-        capture_mode: "saved_html",
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({
+        method: "manual_capture_import",
+        params: {
+          tenantId: "local",
+          itemId: "manual-2",
+          captureMode: "saved_html",
+          contentText,
+          capturedUrl: "https://example.com/protected/job",
+          futureManualActionRequired: true,
+          expectedAppDir: dir,
+          expectedDbPath: dbPath,
+          awaitResult: true,
+        },
       });
-      expect(job).toMatchObject({ title: "VP Engineering", strategy: "manual" });
-      expect(observation.source_id).toBe("greenhouse-example");
-      expect(enrichment).toMatchObject({ current_status: "enriched", extraction_tier: "json_ld" });
-      expect(snapshot).toMatchObject({ latest_snapshot_version: 1, latest_active_state: "active" });
-      expect(JSON.stringify(row)).not.toContain("Lead engineering teams");
     } finally {
       await app.close();
       cleanup();
     }
-  }, 30_000);
+  });
 });

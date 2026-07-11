@@ -20,6 +20,10 @@ from jobctrl.discovery.activities import (
     discovery_source_family_activity,
     plan_discovery_sources,
 )
+from jobctrl.discovery.manual_capture_workflow import (
+    ManualCaptureImportWorkflow,
+    manual_capture_import_activity,
+)
 from jobctrl.discovery.workflow import DiscoverWorkflow
 from jobctrl.enrichment.activities import enrich_activity
 from jobctrl.infrastructure.compensation.workflow import (
@@ -53,6 +57,7 @@ WORKFLOWS: list[type] = [
     JobPipelineWorkflow,
     JobPreparationWorkflow,
     ApplyWorkflow,
+    ManualCaptureImportWorkflow,
     ProfileImportWorkflow,
     CompensationRefreshWorkflow,
     InterviewPrepWorkflow,
@@ -75,6 +80,7 @@ ACTIVITIES: list[Callable[..., Any]] = [
     render_pdf_activity,
     derive_preparation_targets,
     apply_activity,
+    manual_capture_import_activity,
     profile_import_activity,
     refresh_compensation_activity,
     generate_interview_prep_activity,

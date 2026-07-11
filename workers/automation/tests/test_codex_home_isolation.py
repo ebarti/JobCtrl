@@ -41,6 +41,9 @@ def test_config_overrides_select_workspace_only_permission_profile() -> None:
 
     assert "features.plugins=false" in overrides
     assert "features.apps=false" in overrides
+    assert "features.shell_tool=false" in overrides
+    assert "allow_login_shell=false" in overrides
+    assert 'shell_environment_policy={inherit="none"}' in overrides
     assert f'default_permissions="{profile}"' in overrides
 
     profile_override = next(value for value in overrides if value.startswith(f"permissions.{profile}="))
@@ -80,6 +83,80 @@ def test_isolated_codex_env_is_minimal_for_jobctrl_home(tmp_path: Path) -> None:
     env = adapter._isolated_codex_env(codex_home, process_home)
 
     assert env == {"CODEX_HOME": str(codex_home), "HOME": str(process_home)}
+
+
+def test_bundled_codex_uses_only_api_key_and_never_reads_or_copies_consumer_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir, source_codex_home = _isolate_homes(monkeypatch, tmp_path)
+    (source_codex_home / "auth.json").write_text(
+        '{"tokens":{"access_token":"consumer"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "bundled")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-bundled")
+    monkeypatch.setenv("CODEX_API_KEY", "consumer-alias")
+    monkeypatch.setenv("CODEX_ACCESS_TOKEN", "consumer-access")
+    monkeypatch.setenv("CODEX_AGENT_IDENTITY_AUTH", "consumer-identity")
+    monkeypatch.setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", "https://consumer.test/refresh")
+    monkeypatch.setenv("CODEX_REVOKE_TOKEN_URL_OVERRIDE", "https://consumer.test/revoke")
+
+    def unexpected_consumer_auth_read() -> Path:
+        raise AssertionError("bundled Codex must not resolve ambient CODEX_HOME/auth.json")
+
+    monkeypatch.setattr(adapter, "codex_auth_path", unexpected_consumer_auth_read)
+
+    dirs = adapter._prepare_isolated_codex_home()
+    env = adapter._isolated_codex_env(dirs.codex_home, dirs.process_home)
+
+    assert dirs.codex_home == app_dir / "provider-runtime/codex"
+    assert not (dirs.codex_home / "auth.json").exists()
+    assert (source_codex_home / "auth.json").is_file()
+    assert env == {
+        "CODEX_HOME": str(dirs.codex_home),
+        "HOME": str(dirs.process_home),
+        "OPENAI_API_KEY": "sk-bundled",
+        "CODEX_API_KEY": "",
+        "CODEX_ACCESS_TOKEN": "",
+        "CODEX_AGENT_IDENTITY_AUTH": "",
+        "CODEX_REFRESH_TOKEN_URL_OVERRIDE": "",
+        "CODEX_REVOKE_TOKEN_URL_OVERRIDE": "",
+    }
+
+
+def test_bundled_codex_factory_forces_api_login_with_ephemeral_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jobctrl.runtime
+    import openai_codex
+
+    app_dir = tmp_path / "jobctrl"
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "bundled")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-bundled")
+    monkeypatch.setattr(jobctrl.runtime, "activate_provider_pack", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: tmp_path / "codex-bin")
+
+    class FakeAsyncCodex:
+        def __init__(self, *, config: Any) -> None:
+            self.config = config
+
+    monkeypatch.setattr(openai_codex, "AsyncCodex", FakeAsyncCodex)
+
+    codex = adapter._load_async_codex_factory()()
+
+    assert codex.config.config_overrides == (
+        *adapter._CODEX_CONFIG_OVERRIDES,
+        'forced_login_method="api"',
+        'cli_auth_credentials_store="ephemeral"',
+    )
+    assert codex.config.env["OPENAI_API_KEY"] == "sk-bundled"
+    assert all(
+        codex.config.env[key] == ""
+        for key in adapter._CODEX_BUNDLED_NEUTRALIZED_AUTH_ENV
+    )
 
 
 @pytest.mark.asyncio
@@ -169,11 +246,12 @@ async def test_live_factory_uses_same_jobctrl_codex_home_when_contexts_overlap(
 
 
 @pytest.mark.asyncio
-async def test_pinned_app_server_permission_profile_denies_jobctrl_codex_home_auth(
+async def test_pinned_app_server_denies_auth_file_and_strips_provider_key_from_commands(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _app_dir, source_codex_home = _isolate_homes(monkeypatch, tmp_path)
     (source_codex_home / "auth.json").write_text('{"OPENAI_API_KEY":"sk-fake-runtime"}')
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-command-must-not-see-this")
 
     from openai_codex.generated.v2_all import CommandExecResponse
 
@@ -190,7 +268,9 @@ async def test_pinned_app_server_permission_profile_denies_jobctrl_codex_home_au
                 "command": [
                     "/bin/sh",
                     "-c",
-                    'if cat "$CODEX_HOME/auth.json" >/dev/null 2>&1; then printf READABLE; else printf DENIED; fi',
+                    'if cat "$CODEX_HOME/auth.json" >/dev/null 2>&1; '
+                    'then printf "FILE:READABLE "; else printf "FILE:DENIED "; fi; '
+                    'printf "ENV:%s" "${OPENAI_API_KEY-}"',
                 ],
                 "cwd": config.cwd,
                 "permissionProfile": adapter._CODEX_PERMISSION_PROFILE,
@@ -201,5 +281,6 @@ async def test_pinned_app_server_permission_profile_denies_jobctrl_codex_home_au
 
     assert response.exit_code == 0
     assert "sk-fake-runtime" not in response.stdout
-    assert response.stdout == "DENIED"
+    assert "sk-command-must-not-see-this" not in response.stdout
+    assert response.stdout == "FILE:DENIED ENV:"
     assert codex_home.exists()

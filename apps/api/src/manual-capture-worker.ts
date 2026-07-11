@@ -1,14 +1,14 @@
-import { spawn } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
 import type {
   ManualCaptureImportRequest,
   ManualCaptureImportResponse,
+  ManualCaptureImportWorkflowResult,
 } from "./contracts.js";
-
-const API_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
-const AUTOMATION_PROJECT_DIR = path.resolve(API_SRC_DIR, "../../../workers/automation");
+import { ManualCaptureImportWorkflowResultSchema } from "./contracts.js";
+import {
+  getDefaultJsonRpcDispatcher,
+  type JsonRpcDispatcher,
+} from "./json-rpc-adapter.js";
+import { createSourcePythonRuntime, type PythonRuntimeCommandResolver } from "./python-runtime.js";
 
 export interface ManualCaptureImportContext {
   appDir: string;
@@ -21,9 +21,16 @@ export type ManualCaptureImporter = (
   context: ManualCaptureImportContext,
 ) => Promise<ManualCaptureImportResponse>;
 
+export type ManualCaptureJsonRpcDispatcherFactory = (
+  context: ManualCaptureImportContext,
+) => JsonRpcDispatcher;
+
 export interface WorkerManualCaptureImporterOptions {
   projectDir?: string;
   uvBinary?: string;
+  pythonRuntime?: PythonRuntimeCommandResolver;
+  /** Test seam for the long-lived JSON-RPC dispatcher. */
+  dispatcherFactory?: ManualCaptureJsonRpcDispatcherFactory;
 }
 
 export class ManualCaptureImportError extends Error {
@@ -36,124 +43,98 @@ export class ManualCaptureImportError extends Error {
   }
 }
 
+/**
+ * Production importer for user-mediated captures.
+ *
+ * Importing routes through the long-lived ``jobctrl rpc`` process, which starts
+ * and awaits the supervised Temporal workflow. The REST endpoint remains
+ * synchronous so its pre-existing public material/provenance response stays
+ * unchanged.
+ */
 export function createWorkerManualCaptureImporter(
   options: WorkerManualCaptureImporterOptions = {},
 ): ManualCaptureImporter {
-  const projectDir = options.projectDir ?? AUTOMATION_PROJECT_DIR;
-  const uvBinary = options.uvBinary ?? "uv";
+  const pythonRuntime =
+    options.pythonRuntime ??
+    createSourcePythonRuntime({
+      ...(options.projectDir ? { projectDir: options.projectDir } : {}),
+      ...(options.uvBinary ? { uvBinary: options.uvBinary } : {}),
+    });
+  const dispatcherFactory =
+    options.dispatcherFactory ??
+    ((context: ManualCaptureImportContext) =>
+      getDefaultJsonRpcDispatcher({
+        appDir: context.appDir,
+        pythonRuntime,
+      }));
 
   return async (itemId, input, context) => {
-    const output = await runWorkerImport(
-      {
+    let response;
+    try {
+      response = await dispatcherFactory(context).call("manual_capture_import", {
+        tenantId: "local",
         itemId,
-        ...input,
-      },
-      {
-        appDir: context.appDir,
-        dbPath: context.dbPath,
-        projectDir,
-        uvBinary,
-      },
-    );
-    return workerOutputToResponse(output, input);
+        captureMode: input.captureMode,
+        ...(input.contentText !== undefined ? { contentText: input.contentText } : {}),
+        ...(input.contentHtmlBase64 !== undefined ? { contentHtmlBase64: input.contentHtmlBase64 } : {}),
+        ...(input.capturedUrl !== undefined ? { capturedUrl: input.capturedUrl } : {}),
+        ...(input.note !== undefined ? { note: input.note } : {}),
+        futureManualActionRequired: input.futureManualActionRequired,
+        expectedAppDir: context.appDir,
+        expectedDbPath: context.dbPath,
+        awaitResult: true,
+      });
+    } catch {
+      // JSON-RPC transport rejection means the local RPC/Temporal runtime could
+      // not accept the import. Never expose command lines, worker logs, or input.
+      throw new ManualCaptureImportError("Manual capture import is temporarily unavailable.", 503);
+    }
+
+    if (response.error) {
+      throw jsonRpcImportError(response.error.message, response.error.data);
+    }
+
+    const workflowResult = extractWorkflowResult(response.result);
+    if (workflowResult.status === "failed") {
+      throw workflowImportError(workflowResult.error_code);
+    }
+    return workflowResultToResponse(workflowResult, input);
   };
 }
 
-interface WorkerRunOptions extends ManualCaptureImportContext {
-  projectDir: string;
-  uvBinary: string;
+function extractWorkflowResult(result: unknown): ManualCaptureImportWorkflowResult {
+  if (!isRecord(result)) {
+    throw invalidWorkflowResultError();
+  }
+  const parsed = ManualCaptureImportWorkflowResultSchema.safeParse(result.result);
+  if (!parsed.success) {
+    throw invalidWorkflowResultError();
+  }
+  return parsed.data;
 }
 
-function runWorkerImport(
-  payload: Record<string, unknown>,
-  options: WorkerRunOptions,
-): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      options.uvBinary,
-      [
-        "--project",
-        options.projectDir,
-        "run",
-        "python",
-        "-m",
-        "jobctrl.discovery.manual_capture_import",
-        "--db-path",
-        options.dbPath,
-      ],
-      {
-        cwd: options.appDir,
-        env: {
-          ...process.env,
-          JOBCTRL_DIR: options.appDir,
-        },
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    );
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code !== 0) {
-        const message = stderr.trim() || stdout.trim() || `Worker exited with code ${code ?? "unknown"}.`;
-        reject(new ManualCaptureImportError(message, manualCaptureErrorStatus(message)));
-        return;
-      }
-      try {
-        const line = stdout
-          .trim()
-          .split("\n")
-          .findLast((candidate) => candidate.trim().startsWith("{"));
-        if (!line) {
-          throw new Error("Worker did not return a JSON object.");
-        }
-        const parsed: unknown = JSON.parse(line);
-        if (!isRecord(parsed)) {
-          throw new Error("Worker response was not a JSON object.");
-        }
-        resolve(parsed);
-      } catch (error) {
-        reject(
-          new ManualCaptureImportError(
-            error instanceof Error ? error.message : "Unable to parse worker response.",
-            500,
-          ),
-        );
-      }
-    });
-    child.stdin.end(`${JSON.stringify(payload)}\n`);
-  });
-}
-
-function workerOutputToResponse(
-  output: Record<string, unknown>,
+function workflowResultToResponse(
+  result: ManualCaptureImportWorkflowResult,
   input: ManualCaptureImportRequest,
 ): ManualCaptureImportResponse {
-  const retryContext = isRecord(output.retryContext) ? output.retryContext : {};
-  const provenance = isRecord(retryContext.manual_capture_provenance)
-    ? retryContext.manual_capture_provenance
-    : {};
+  const itemId = requiredText(result.item_id);
+  const jobKey = requiredText(result.job_id);
+  const importedAt = requiredText(result.imported_at);
+  const provenance = recordValue(result.retry_context.manual_capture_provenance);
+  if (!provenance) {
+    throw invalidWorkflowResultError();
+  }
+  const originatingUrl = requiredText(provenance.originating_url ?? provenance.originatingUrl);
   const captureClient = optionalText(provenance.capture_client ?? provenance.captureClient);
   const extensionVersion = optionalText(provenance.extension_version ?? provenance.extensionVersion);
   return {
     ok: true,
-    itemId: requiredText(output.itemId, "itemId"),
-    jobKey: optionalText(output.jobId),
-    importedAt: requiredText(output.importedAt, "importedAt"),
+    itemId,
+    jobKey,
+    importedAt,
     provenance: {
       sourceKind: "user_mediated_capture",
-      originatingUrl: requiredText(
-        provenance.originating_url ?? provenance.originatingUrl,
-        "originatingUrl",
-      ),
+      originatingUrl,
       captureMode: input.captureMode,
       futureManualActionRequired: input.futureManualActionRequired,
       ...(captureClient ? { captureClient } : {}),
@@ -162,21 +143,63 @@ function workerOutputToResponse(
   };
 }
 
-function manualCaptureErrorStatus(message: string): number {
-  return /was not found|not found/i.test(message) ? 404 : 500;
+function jsonRpcImportError(message: unknown, data: unknown): ManualCaptureImportError {
+  if (hasTemporalUnavailableSignal(message) || hasTemporalUnavailableSignal(data)) {
+    return new ManualCaptureImportError("Manual capture import is temporarily unavailable.", 503);
+  }
+  // JSON-RPC errors identify a failed start/wait, but their data may contain
+  // runtime details. The HTTP contract deliberately returns a stable message.
+  return new ManualCaptureImportError("Manual capture import could not be completed.", 500);
 }
 
-function requiredText(value: unknown, name: string): string {
+function workflowImportError(errorCode: string | null): ManualCaptureImportError {
+  switch (errorCode) {
+    case "not_found":
+      return new ManualCaptureImportError("Manual capture item was not found.", 404);
+    case "capture_replay_mismatch":
+      return new ManualCaptureImportError(
+        "This capture conflicts with an already imported item. Submit the original capture again or create a new capture.",
+        409,
+      );
+    default:
+      if (hasTemporalUnavailableSignal(errorCode)) {
+        return new ManualCaptureImportError("Manual capture import is temporarily unavailable.", 503);
+      }
+      return new ManualCaptureImportError("Manual capture import could not be completed.", 500);
+  }
+}
+
+function invalidWorkflowResultError(): ManualCaptureImportError {
+  return new ManualCaptureImportError("Manual capture workflow returned an invalid result.", 500);
+}
+
+function requiredText(value: unknown): string {
   if (typeof value === "string" && value.trim()) {
     return value;
   }
-  throw new ManualCaptureImportError(`Worker response missing ${name}.`, 500);
+  throw invalidWorkflowResultError();
 }
 
 function optionalText(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasTemporalUnavailableSignal(value: unknown): boolean {
+  if (typeof value === "string") {
+    return /(?:temporal|econnrefused|connection refused|failed to connect|service unavailable|unavailable|deadline exceeded)/i.test(
+      value,
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.some(hasTemporalUnavailableSignal);
+  }
+  return isRecord(value) && Object.values(value).some(hasTemporalUnavailableSignal);
 }

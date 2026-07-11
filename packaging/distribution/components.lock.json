@@ -3,6 +3,15 @@
   "platform": "darwin-arm64",
   "inputs": [
     {
+      "id": "better-sqlite3-node22-prebuild",
+      "componentId": "better-sqlite3-native",
+      "version": "12.9.0",
+      "url": "https://github.com/WiseLibs/better-sqlite3/releases/download/v12.9.0/better-sqlite3-v12.9.0-node-v127-darwin-arm64.tar.gz",
+      "sha256": "2205dd7b299657e156802bc583282225ec8e444b852840bd5b3d4ab97c6af72c",
+      "archiveType": "tar.gz",
+      "license": "MIT"
+    },
+    {
       "id": "node-runtime-archive",
       "componentId": "node-runtime",
       "version": "22.21.1",

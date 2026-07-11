@@ -187,7 +187,8 @@ class TestClaudeAdapter:
         await adapter.draft("system", JD)
         opts = captured[0]["options"].kwargs
         assert opts["max_turns"] is None  # D-19: unbounded
-        assert opts["allowed_tools"] == []  # no agent file/shell tools
+        assert opts["tools"] == []  # built-in file/shell tools are absent
+        assert opts["allowed_tools"] == []  # no tools are auto-approved
         assert opts["output_format"]["type"] == "json_schema"
 
     async def test_raises_on_structured_output_retry_exhaustion(self) -> None:
@@ -324,6 +325,7 @@ class TestCodexAdapter:
         assert run_kwargs["effort"] == "high"
         assert run_kwargs["output_schema"]["type"] == "object"
         assert fake.thread_start_calls[0]["config"] == {"model_reasoning_effort": "high"}
+        assert fake.thread_start_calls[0]["approval_mode"].value == "deny_all"
         assert "sandbox" not in fake.thread_start_calls[0]
 
     async def test_raises_on_failed_turn(self) -> None:

@@ -2,11 +2,12 @@
   "schemaVersion": 1,
   "reproducibleCounts": {
     "javascriptPackageFiles": 8,
-    "javascriptUniqueDirect": 82,
+    "javascriptUniqueDirect": 83,
     "javascriptUniqueRuntimeDirect": 44,
-    "javascriptUniqueDevelopmentDirect": 40,
+    "javascriptUniqueDevelopmentDirect": 41,
     "pnpmPackageRecords": 1428,
-    "pythonRuntimeDirect": 22,
+    "pythonCoreRuntimeDirect": 18,
+    "pythonProviderRuntimeDirect": 4,
     "pythonDevelopmentDirect": 5,
     "uvPackageRecords": 100
   },

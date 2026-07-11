@@ -7,7 +7,11 @@
  */
 import { z } from "zod";
 
-import { DEFAULT_PIPELINE_LLM_MODEL, STAGES } from "./schemas.js";
+import {
+  DEFAULT_PIPELINE_LLM_MODEL,
+  MANUAL_CAPTURE_MODE_VALUES,
+  STAGES,
+} from "./schemas.js";
 
 /* ------------------------------------------------------------------ codes */
 
@@ -73,6 +77,7 @@ export const RpcMethods = {
   GenerateOutreachDraft: "generate_outreach_draft",
   Apply: "apply",
   ProfileImport: "profile_import",
+  ManualCaptureImport: "manual_capture_import",
   CancelRun: "cancel_run",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
@@ -106,6 +111,67 @@ export const RunStageParamsSchema = z
   })
   .strict();
 export type RunStageParams = z.infer<typeof RunStageParamsSchema>;
+
+/**
+ * Import one user-mediated capture through the supervised Temporal worker.
+ * The TypeScript API always awaits the result so the existing REST endpoint
+ * retains its synchronous, imported-material response contract.
+ */
+export const ManualCaptureImportParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
+    itemId: z.string().trim().min(1),
+    captureMode: z.enum(MANUAL_CAPTURE_MODE_VALUES),
+    contentText: z.string().trim().max(200_000).optional(),
+    contentHtmlBase64: z.string().trim().max(8_000_000).optional(),
+    capturedUrl: z
+      .string()
+      .trim()
+      .max(2048)
+      .regex(/^https?:\/\/[^\s]+$/i, "capturedUrl must be a valid http(s) URL")
+      .optional(),
+    note: z.string().trim().max(400).optional(),
+    futureManualActionRequired: z.boolean().default(false),
+    awaitResult: z.literal(true),
+  })
+  .strict()
+  .refine(
+    (params) =>
+      params.capturedUrl !== undefined ||
+      params.contentText !== undefined ||
+      params.contentHtmlBase64 !== undefined,
+    { message: "provide capturedUrl, contentText, or contentHtmlBase64" },
+  );
+export type ManualCaptureImportParams = z.infer<typeof ManualCaptureImportParamsSchema>;
+
+/** Nested result returned by the awaited manual-capture Temporal workflow. */
+export const ManualCaptureImportWorkflowResultSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("succeeded"),
+      item_id: z.string().trim().min(1),
+      job_id: z.string().trim().min(1),
+      imported_at: z.string().trim().min(1),
+      retry_context: z.record(z.string(), z.unknown()),
+      error: z.null(),
+      error_code: z.null(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("failed"),
+      item_id: z.null(),
+      job_id: z.null(),
+      imported_at: z.null(),
+      retry_context: z.record(z.string(), z.unknown()),
+      error: z.string().nullable(),
+      error_code: z.string().nullable(),
+    })
+    .strict(),
+]);
+export type ManualCaptureImportWorkflowResult = z.infer<typeof ManualCaptureImportWorkflowResultSchema>;
 
 export const RescoreJobParamsSchema = z
   .object({

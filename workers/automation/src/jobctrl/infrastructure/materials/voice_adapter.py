@@ -27,6 +27,8 @@ from typing import Any
 from jobctrl.domain.materials.voice import VoicePayload, VoiceRequest, VoiceResult
 from jobctrl.infrastructure.materials.voice_prompts import build_voice_user_prompt
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+from jobctrl.infrastructure.setup_probes import bundled_claude_sdk_options
+from jobctrl.runtime import activate_provider_pack, is_bundled_runtime
 
 # A query callable: (prompt, options) -> async iterator of SDK messages.
 QueryFn = Callable[..., AsyncIterator[Any] | Awaitable[AsyncIterator[Any]]]
@@ -42,12 +44,20 @@ _VOICE_SCOPE = "jobctrl.materials.voice"
 
 def _load_sdk_query() -> QueryFn:
     """Lazy-import ``claude_agent_sdk.query`` so the package imports without it."""
+    if is_bundled_runtime():
+        from jobctrl.config import APP_DIR
+
+        activate_provider_pack("claude-agent-sdk", app_dir=APP_DIR)
     from claude_agent_sdk import query  # type: ignore[import-untyped]
 
     return query
 
 
 def _load_options_factory() -> OptionsFactory:
+    if is_bundled_runtime():
+        from jobctrl.config import APP_DIR
+
+        activate_provider_pack("claude-agent-sdk", app_dir=APP_DIR)
     from claude_agent_sdk import ClaudeAgentOptions  # type: ignore[import-untyped]
 
     return ClaudeAgentOptions
@@ -148,12 +158,15 @@ class ClaudeVoiceAdapter:
             system_prompt=system_prompt,
             # D-19: unbounded; nothing kills a healthy run. D-18: no budget ceiling.
             max_turns=None,
-            # No agent file/shell tools — constrained rewrite, structured output only.
+            # Disable the built-in tool set itself. `allowed_tools=[]` only
+            # controls auto-approval and does not remove Bash/Read/etc.
+            tools=[],
             allowed_tools=[],
             output_format={
                 "type": "json_schema",
                 "schema": VoicePayload.model_json_schema(),
             },
+            **bundled_claude_sdk_options(),
         )
         user_prompt = build_voice_user_prompt(request)
         span_input = [

@@ -124,6 +124,86 @@ afterEach(() => {
 });
 
 describe("local TypeScript API", () => {
+  it("serves production web assets with SPA fallback and cache-safe headers", async () => {
+    const webDir = path.join(tempDir, "web");
+    fs.mkdirSync(path.join(webDir, "assets"), { recursive: true });
+    fs.writeFileSync(path.join(webDir, "index.html"), "<!doctype html><main>JobCtrl app</main>");
+    fs.writeFileSync(path.join(webDir, "assets", "app-C0FFEE123.js"), "export const ready = true;");
+    fs.writeFileSync(path.join(webDir, "assets", "app.12345678.js"), "export const notVite = true;");
+    fs.writeFileSync(path.join(webDir, "favicon.svg"), "<svg></svg>");
+    fs.writeFileSync(path.join(webDir, "favicon-C0FFEE123.svg"), "<svg></svg>");
+    const app = buildApp({ ...options, webAssetsDir: webDir });
+
+    const index = await app.inject({ method: "GET", url: "/" });
+    const route = await app.inject({
+      method: "GET",
+      url: "/jobs/example",
+      headers: { accept: "text/html", "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" },
+    });
+    const hashedAsset = await app.inject({ method: "GET", url: "/assets/app-C0FFEE123.js" });
+    const dotHashedAsset = await app.inject({ method: "GET", url: "/assets/app.12345678.js" });
+    const unhashedAsset = await app.inject({ method: "GET", url: "/favicon.svg" });
+    const rootHashedAsset = await app.inject({ method: "GET", url: "/favicon-C0FFEE123.svg" });
+    const missingAsset = await app.inject({ method: "GET", url: "/assets/missing.js" });
+    const missingNestedAsset = await app.inject({ method: "GET", url: "/images/missing.png" });
+    const missingFetch = await app.inject({
+      method: "GET",
+      url: "/jobs/fetched",
+      headers: { accept: "application/json" },
+    });
+    const nonNavigationHtmlFetch = await app.inject({
+      method: "GET",
+      url: "/jobs/fetched-html",
+      headers: { accept: "text/html", "sec-fetch-mode": "cors" },
+    });
+    const missingApi = await app.inject({ method: "GET", url: "/v1/missing" });
+
+    expect(index.statusCode, index.body).toBe(200);
+    expect(index.body).toContain("JobCtrl app");
+    expect(index.headers["cache-control"]).toBe("no-cache");
+    expect(route.statusCode, route.body).toBe(200);
+    expect(route.body).toContain("JobCtrl app");
+    expect(route.headers["cache-control"]).toBe("no-cache");
+    expect(hashedAsset.statusCode, hashedAsset.body).toBe(200);
+    expect(hashedAsset.headers["content-type"]).toContain("text/javascript");
+    expect(hashedAsset.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    expect(hashedAsset.headers["x-content-type-options"]).toBe("nosniff");
+    expect(dotHashedAsset.headers["cache-control"]).toBe("no-cache");
+    expect(unhashedAsset.headers["cache-control"]).toBe("no-cache");
+    expect(rootHashedAsset.headers["cache-control"]).toBe("no-cache");
+    expect(missingAsset.statusCode, missingAsset.body).toBe(404);
+    expect(missingNestedAsset.statusCode, missingNestedAsset.body).toBe(404);
+    expect(missingFetch.statusCode, missingFetch.body).toBe(404);
+    expect(missingFetch.body).not.toContain("JobCtrl app");
+    expect(nonNavigationHtmlFetch.statusCode, nonNavigationHtmlFetch.body).toBe(404);
+    expect(nonNavigationHtmlFetch.body).not.toContain("JobCtrl app");
+    expect(missingApi.statusCode, missingApi.body).toBe(404);
+
+    await app.close();
+  });
+
+  it("rejects production web traversal and keeps loopback host enforcement", async () => {
+    const webDir = path.join(tempDir, "web");
+    fs.mkdirSync(webDir, { recursive: true });
+    fs.writeFileSync(path.join(webDir, "index.html"), "<!doctype html><main>JobCtrl app</main>");
+    fs.writeFileSync(path.join(tempDir, "outside.txt"), "must not be served");
+    const app = buildApp({ ...options, webAssetsDir: webDir });
+
+    const traversal = await app.inject({ method: "GET", url: "/..%2Foutside.txt" });
+    const forbiddenHost = await app.inject({
+      method: "GET",
+      url: "/",
+      headers: { host: "example.test" },
+    });
+
+    expect(traversal.statusCode, traversal.body).toBe(400);
+    expect(traversal.body).not.toContain("must not be served");
+    expect(forbiddenHost.statusCode, forbiddenHost.body).toBe(403);
+    expect(forbiddenHost.json()).toMatchObject({ ok: false, error: "forbidden_host" });
+
+    await app.close();
+  });
+
   it("defaults the shared API client to the local API origin under Node.js", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ ok: true, dbPath: options.dbPath, dbExists: true }), {
@@ -5651,36 +5731,6 @@ describe("local TypeScript API", () => {
     }
   });
 
-  it("refuses to render a PDF page preview for an artifact whose path resolves outside the app directory", async () => {
-    const rendered: Array<{ path: string; pageNumber: number }> = [];
-    const isolatedAppDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-appdir-"));
-    const app = buildApp({
-      ...options,
-      appDir: isolatedAppDir,
-      artifactPdfPageRenderer: async (artifactPath, pageNumber) => {
-        rendered.push({ path: artifactPath, pageNumber });
-        return Buffer.from("png page");
-      },
-    });
-    try {
-      const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
-      const artifact = listResponse.json().items[0];
-      fs.writeFileSync(artifact.localPath, "%PDF test");
-
-      const response = await app.inject({
-        method: "GET",
-        url: `/v1/artifacts/${encodeURIComponent(artifact.artifactId)}/preview/page/2.png`,
-      });
-
-      expect(response.statusCode, response.body).toBe(403);
-      expect(response.json()).toMatchObject({ ok: false, error: "artifact_path_forbidden" });
-      expect(rendered).toEqual([]);
-    } finally {
-      await app.close();
-      fs.rmSync(isolatedAppDir, { force: true, recursive: true });
-    }
-  });
-
   it("resolves legacy artifact ids with slashes for detail and open routes", async () => {
     const opened: string[] = [];
     const app = buildApp({
@@ -5856,15 +5906,8 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("serves a rendered PNG page preview for a known PDF artifact", async () => {
-    const rendered: Array<{ path: string; pageNumber: number }> = [];
-    const app = buildApp({
-      ...options,
-      artifactPdfPageRenderer: async (artifactPath, pageNumber) => {
-        rendered.push({ path: artifactPath, pageNumber });
-        return Buffer.from("png page");
-      },
-    });
+  it("does not expose the retired Poppler-backed PDF page preview route", async () => {
+    const app = buildApp(options);
     const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
     const artifact = listResponse.json().items[0];
     fs.writeFileSync(artifact.localPath, "%PDF test");
@@ -5874,11 +5917,7 @@ describe("local TypeScript API", () => {
       url: `/v1/artifacts/${encodeURIComponent(artifact.artifactId)}/preview/page/2.png`,
     });
 
-    expect(response.statusCode, response.body).toBe(200);
-    expect(response.headers["content-type"]).toContain("image/png");
-    expect(response.headers["cache-control"]).toBe("no-store");
-    expect(response.body).toBe("png page");
-    expect(rendered).toEqual([{ path: artifact.localPath, pageNumber: 2 }]);
+    expect(response.statusCode, response.body).toBe(404);
 
     await app.close();
   });

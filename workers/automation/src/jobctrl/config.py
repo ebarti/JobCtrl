@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from jobctrl.runtime import is_bundled_runtime, owned_env_path
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.domain.discovery.source_registry import (
     ATS_API_POLICY,
@@ -1538,16 +1539,32 @@ def load_macos_keychain_fallbacks(
     return tuple(diagnostics[key] for key in KEYCHAIN_PROVIDER_KEYS)
 
 
+def get_env_path() -> Path:
+    """Return the state-owned environment file for the active runtime mode."""
+
+    if is_bundled_runtime():
+        return owned_env_path(app_dir=APP_DIR)
+    return ENV_PATH
+
+
 def load_env() -> tuple[KeychainFallbackDiagnostic, ...]:
-    """Load env files, then fill missing provider settings from Keychain."""
+    """Load approved env files, then fill missing provider settings from Keychain.
+
+    A source checkout retains its historical CWD ``.env`` fallback.  The
+    installed payload reads exactly one JobCtrl-owned env file and never asks
+    python-dotenv to search the current directory or its parents.
+    """
     from dotenv import load_dotenv
 
     global _KEYCHAIN_FALLBACK_DIAGNOSTICS
 
-    if ENV_PATH.exists():
-        load_dotenv(ENV_PATH)
-    # Also try CWD .env as fallback
-    load_dotenv()
+    env_path = get_env_path()
+    if env_path.exists():
+        load_dotenv(env_path)
+    if not is_bundled_runtime():
+        # Source-install compatibility: contributors may keep checkout-local
+        # values in CWD .env. This discovery path is forbidden in bundled mode.
+        load_dotenv()
     if _KEYCHAIN_FALLBACK_DIAGNOSTICS is None or not KEYCHAIN_REQUIRES_WORKER_RESTART:
         _KEYCHAIN_FALLBACK_DIAGNOSTICS = load_macos_keychain_fallbacks()
     return _KEYCHAIN_FALLBACK_DIAGNOSTICS

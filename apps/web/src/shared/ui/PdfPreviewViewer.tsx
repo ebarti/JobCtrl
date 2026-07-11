@@ -7,6 +7,9 @@ export type { PdfAuditLineTarget } from "./pdf-audit-lines.js";
 
 type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 type PdfLoadingTask = ReturnType<PdfJsModule["getDocument"]>;
+type PdfDocument = Awaited<PdfLoadingTask["promise"]>;
+type PdfPage = Awaited<ReturnType<PdfDocument["getPage"]>>;
+type PdfViewport = ReturnType<PdfPage["getViewport"]>;
 
 interface RenderedPage {
   height: number;
@@ -14,6 +17,11 @@ interface RenderedPage {
   pageNumber: number;
   src: string;
   width: number;
+}
+
+export interface RenderedPdfPageImage {
+  readonly src: string;
+  revoke(): void;
 }
 
 type PreviewState =
@@ -89,21 +97,50 @@ async function loadingTaskForUrl(
   return pdfjs.getDocument({ data });
 }
 
-export function pageImageUrlForPreview(pdfUrl: string, pageNumber: number): string | null {
-  try {
-    const url = new URL(pdfUrl, window.location.href);
-    if (!/^\/v1\/artifacts\/[^/]+\/preview\.pdf$/.test(url.pathname)) {
-      return null;
-    }
-    const nextPath = url.pathname.replace(/\/preview\.pdf$/, `/preview/page/${pageNumber}.png`);
-    if (nextPath === url.pathname) {
-      return null;
-    }
-    url.pathname = nextPath;
-    return url.toString();
-  } catch {
-    return null;
+export async function renderPdfPageToObjectUrl(
+  page: PdfPage,
+  renderViewport: PdfViewport,
+  createCanvas: () => HTMLCanvasElement = () => window.document.createElement("canvas"),
+  objectUrl: Pick<typeof URL, "createObjectURL" | "revokeObjectURL"> = URL,
+): Promise<RenderedPdfPageImage> {
+  const canvas = createCanvas();
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Canvas rendering is unavailable.");
   }
+  canvas.width = Math.floor(renderViewport.width);
+  canvas.height = Math.floor(renderViewport.height);
+  try {
+    await page.render({ canvas, canvasContext: context, viewport: renderViewport }).promise;
+    const blob = await canvasToPngBlob(canvas);
+    const src = objectUrl.createObjectURL(blob);
+    let active = true;
+    return {
+      src,
+      revoke() {
+        if (!active) return;
+        active = false;
+        objectUrl.revokeObjectURL(src);
+      },
+    };
+  } finally {
+    // The Blob owns the encoded pixels after toBlob resolves. Release the
+    // high-density canvas backing store immediately rather than retaining both.
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+}
+
+function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob);
+      } else {
+        reject(new Error("Unable to encode the rendered PDF page."));
+      }
+    }, "image/png");
+  });
 }
 
 export function PdfPreviewViewer({
@@ -124,8 +161,23 @@ export function PdfPreviewViewer({
   useEffect(() => {
     let cancelled = false;
     let loadingTask: PdfLoadingTask | undefined;
+    let document: PdfDocument | undefined;
+    let destroyPromise: Promise<void> | undefined;
+    const pageImages = new Set<RenderedPdfPageImage>();
     const abortController = new AbortController();
     setState({ status: "loading", pages: [], message: loadingMessage });
+
+    const revokePageImages = () => {
+      for (const image of pageImages) image.revoke();
+      pageImages.clear();
+    };
+    const destroyDocument = () => {
+      if (destroyPromise) return destroyPromise;
+      const pendingDestroy = document?.destroy() ?? loadingTask?.destroy();
+      if (!pendingDestroy) return Promise.resolve();
+      destroyPromise = pendingDestroy.catch(() => undefined);
+      return destroyPromise;
+    };
 
     async function renderPreview() {
       const showProgress = (message: string, pages: readonly RenderedPage[] = []) => {
@@ -139,38 +191,36 @@ export function PdfPreviewViewer({
         const pdfjs = await loadPdfJs();
         showProgress("Loading PDF bytes.");
         loadingTask = await loadingTaskForUrl(pdfjs, url, abortController.signal);
+        if (cancelled) return;
         showProgress("Opening PDF.");
-        const document = await loadingTask.promise;
+        document = await loadingTask.promise;
+        if (cancelled) return;
         const pages: RenderedPage[] = [];
         const outputScale = window.devicePixelRatio || 1;
 
         for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
           showProgress(`Rendering page ${pageNumber} of ${document.numPages}.`, pages);
           const page = await document.getPage(pageNumber);
-          const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
-          const renderViewport = page.getViewport({ scale: PDF_RENDER_SCALE * outputScale });
-          const pageImageUrl = pageImageUrlForPreview(url, pageNumber);
-          let src = pageImageUrl;
-          if (!src) {
-            const canvas = window.document.createElement("canvas");
-            const context = canvas.getContext("2d");
-            if (!context) {
-              throw new Error("Canvas rendering is unavailable.");
+          try {
+            if (cancelled) break;
+            const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
+            const renderViewport = page.getViewport({ scale: PDF_RENDER_SCALE * outputScale });
+            const image = await renderPdfPageToObjectUrl(page, renderViewport);
+            if (cancelled) {
+              image.revoke();
+              break;
             }
-
-            canvas.width = Math.floor(renderViewport.width);
-            canvas.height = Math.floor(renderViewport.height);
-            await page.render({ canvas, canvasContext: context, viewport: renderViewport }).promise;
-            src = canvas.toDataURL("image/png");
+            pageImages.add(image);
+            pages.push({
+              height: viewport.height,
+              pageNumber,
+              src: image.src,
+              width: viewport.width,
+            });
+            showProgress(`Rendered page ${pageNumber} of ${document.numPages}.`, pages);
+          } finally {
+            page.cleanup();
           }
-          pages.push({
-            height: viewport.height,
-            pageNumber,
-            src,
-            width: viewport.width,
-          });
-          showProgress(`Rendered page ${pageNumber} of ${document.numPages}.`, pages);
-          page.cleanup();
         }
 
         if (!cancelled) {
@@ -180,15 +230,17 @@ export function PdfPreviewViewer({
             message: `${document.numPages} page${document.numPages === 1 ? "" : "s"}`,
           });
         }
-        await document.destroy();
       } catch (error) {
         if (!cancelled) {
+          revokePageImages();
           setState({
             status: "error",
             pages: [],
             message: error instanceof Error ? error.message : "Unable to render PDF preview.",
           });
         }
+      } finally {
+        await destroyDocument();
       }
     }
 
@@ -196,7 +248,8 @@ export function PdfPreviewViewer({
     return () => {
       cancelled = true;
       abortController.abort();
-      void loadingTask?.destroy();
+      revokePageImages();
+      void destroyDocument();
     };
   }, [cacheKey, loadingMessage, url]);
 
@@ -264,8 +317,23 @@ export function PdfAuditPreviewViewer({
   useEffect(() => {
     let cancelled = false;
     let loadingTask: PdfLoadingTask | undefined;
+    let document: PdfDocument | undefined;
+    let destroyPromise: Promise<void> | undefined;
+    const pageImages = new Set<RenderedPdfPageImage>();
     const abortController = new AbortController();
     setState({ status: "loading", pages: [], message: loadingMessage });
+
+    const revokePageImages = () => {
+      for (const image of pageImages) image.revoke();
+      pageImages.clear();
+    };
+    const destroyDocument = () => {
+      if (destroyPromise) return destroyPromise;
+      const pendingDestroy = document?.destroy() ?? loadingTask?.destroy();
+      if (!pendingDestroy) return Promise.resolve();
+      destroyPromise = pendingDestroy.catch(() => undefined);
+      return destroyPromise;
+    };
 
     async function renderPreview() {
       const showProgress = (message: string, pages: readonly RenderedPage[] = []) => {
@@ -279,43 +347,41 @@ export function PdfAuditPreviewViewer({
         const pdfjs = await loadPdfJs();
         showProgress("Loading PDF bytes.");
         loadingTask = await loadingTaskForUrl(pdfjs, url, abortController.signal);
+        if (cancelled) return;
         showProgress("Opening PDF.");
-        const document = await loadingTask.promise;
+        document = await loadingTask.promise;
+        if (cancelled) return;
         const pages: RenderedPage[] = [];
         const outputScale = window.devicePixelRatio || 1;
 
         for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
           showProgress(`Mapping selectable text for page ${pageNumber} of ${document.numPages}.`, pages);
           const page = await document.getPage(pageNumber);
-          const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
-          const renderViewport = page.getViewport({ scale: PDF_RENDER_SCALE * outputScale });
-          const pdfLines = layoutBoxes.length
-            ? renderedLinesFromLayoutBoxes(pageNumber, layoutBoxes)
-            : pdfTextLines(pdfjs, (await page.getTextContent()).items, viewport, lineTargets);
-          const pageImageUrl = pageImageUrlForPreview(url, pageNumber);
-          let src = pageImageUrl;
-          if (!src) {
+          try {
+            if (cancelled) break;
+            const viewport = page.getViewport({ scale: PDF_RENDER_SCALE });
+            const renderViewport = page.getViewport({ scale: PDF_RENDER_SCALE * outputScale });
+            const pdfLines = layoutBoxes.length
+              ? renderedLinesFromLayoutBoxes(pageNumber, layoutBoxes)
+              : pdfTextLines(pdfjs, (await page.getTextContent()).items, viewport, lineTargets);
             showProgress(`Rendering page ${pageNumber} of ${document.numPages}.`, pages);
-            const canvas = window.document.createElement("canvas");
-            const context = canvas.getContext("2d");
-            if (!context) {
-              throw new Error("Canvas rendering is unavailable.");
+            const image = await renderPdfPageToObjectUrl(page, renderViewport);
+            if (cancelled) {
+              image.revoke();
+              break;
             }
-
-            canvas.width = Math.floor(renderViewport.width);
-            canvas.height = Math.floor(renderViewport.height);
-            await page.render({ canvas, canvasContext: context, viewport: renderViewport }).promise;
-            src = canvas.toDataURL("image/png");
+            pageImages.add(image);
+            pages.push({
+              height: viewport.height,
+              lines: pdfLines,
+              pageNumber,
+              src: image.src,
+              width: viewport.width,
+            });
+            showProgress(`Rendered page ${pageNumber} of ${document.numPages}.`, pages);
+          } finally {
+            page.cleanup();
           }
-          pages.push({
-            height: viewport.height,
-            lines: pdfLines,
-            pageNumber,
-            src,
-            width: viewport.width,
-          });
-          showProgress(`Rendered page ${pageNumber} of ${document.numPages}.`, pages);
-          page.cleanup();
         }
 
         if (!cancelled) {
@@ -325,15 +391,17 @@ export function PdfAuditPreviewViewer({
             message: `${document.numPages} page${document.numPages === 1 ? "" : "s"}`,
           });
         }
-        await document.destroy();
       } catch (error) {
         if (!cancelled) {
+          revokePageImages();
           setState({
             status: "error",
             pages: [],
             message: error instanceof Error ? error.message : "Unable to render PDF preview.",
           });
         }
+      } finally {
+        await destroyDocument();
       }
     }
 
@@ -341,7 +409,8 @@ export function PdfAuditPreviewViewer({
     return () => {
       cancelled = true;
       abortController.abort();
-      void loadingTask?.destroy();
+      revokePageImages();
+      void destroyDocument();
     };
   }, [cacheKey, layoutBoxes, lineTargets, loadingMessage, url]);
 

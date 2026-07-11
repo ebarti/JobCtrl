@@ -3,6 +3,7 @@
 The method set covers:
 
 * Workflow starters — ``run_stage``, ``apply``, ``profile_import``,
+  ``manual_capture_import``,
   ``refresh_compensation``, and current-policy maintenance methods return
   :class:`WorkflowStartSpec` values. The server starts them on the Temporal task
   queue and ships back
@@ -40,6 +41,7 @@ from jobctrl.workflow_specs import (
     build_compensation_refresh_workflow_spec,
     build_contact_research_workflow_spec,
     build_interview_prep_workflow_spec,
+    build_manual_capture_import_workflow_spec,
     build_pipeline_workflow_spec,
     build_profile_import_workflow_spec,
     build_run_stage_workflow_spec,
@@ -311,6 +313,13 @@ def profile_import(params: dict[str, Any]) -> WorkflowStartSpec:
         raise invalid_params(str(exc)) from exc
 
 
+def manual_capture_import(params: dict[str, Any]) -> WorkflowStartSpec:
+    try:
+        return build_manual_capture_import_workflow_spec(params)
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
+
+
 # ---------------------------------------------------------------------------
 # Workflow handlers
 # ---------------------------------------------------------------------------
@@ -484,6 +493,7 @@ def make_cancel_run(canceler: WorkflowCanceler):
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
     server.register("profile_import", profile_import, mode="workflow")
+    server.register("manual_capture_import", manual_capture_import, mode="workflow")
     # Workflow starters.
     server.register("run_stage", run_stage, mode="workflow")
     server.register("rescore_job", rescore_job, mode="workflow")

@@ -18,6 +18,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from jobctrl.runtime import (
+    RuntimeConfigurationError,
+    activate_provider_pack,
+    is_bundled_runtime,
+    provider_runtime_home,
+)
+
 ANALYSIS_LEGS_ENV = "JOBCTRL_ANALYSIS_LEGS"
 CODEX_BIN_ENV = "JOBCTRL_CODEX_BIN"
 CLAUDE_BIN_ENV = "JOBCTRL_CLAUDE_BIN"
@@ -29,6 +36,32 @@ _LEG_ALIASES = {
     "gemini": "antigravity",
     "google": "antigravity",
 }
+
+_CLAUDE_CLOUD_FLAGS = (
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+)
+_CLAUDE_CONSUMER_AUTH_ENV = (
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_IDENTITY_TOKEN",
+    "ANTHROPIC_IDENTITY_TOKEN_FILE",
+    "CCR_OAUTH_TOKEN_FILE",
+    "CLAUDE_BG_AUTH_SNAPSHOT_PATH",
+    "CLAUDE_CODE_HOST_AUTH_ENV_VAR",
+    "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+    "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+    "CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR",
+    "CLAUDE_SESSION_INGRESS_TOKEN_FILE",
+    "CLAUDE_TRUSTED_DEVICE_TOKEN",
+)
+_ANTIGRAVITY_CONSUMER_AUTH_ENV = (
+    "ANTIGRAVITY_OAUTH_TOKEN",
+    "GOOGLE_ANTIGRAVITY_OAUTH_TOKEN",
+    "GOOGLE_ANTIGRAVITY_SESSION",
+)
 
 
 @dataclass(frozen=True)
@@ -123,9 +156,22 @@ def probe_claude_auth(env: Mapping[str, str] | None = None) -> ProbeResult:
     values = _env(env)
     if values.get("ANTHROPIC_API_KEY"):
         return ProbeResult("Claude analysis auth", True, "ANTHROPIC_API_KEY")
-    for key in ("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"):
+    for key in _CLAUDE_CLOUD_FLAGS:
         if _truthy(values.get(key)):
             return ProbeResult("Claude analysis auth", True, key)
+    if is_bundled_runtime(values):
+        unsupported = next((key for key in _CLAUDE_CONSUMER_AUTH_ENV if values.get(key)), None)
+        note = (
+            f"{unsupported} is consumer OAuth and is not supported by bundled JobCtrl; "
+            if unsupported
+            else ""
+        )
+        return ProbeResult(
+            "Claude analysis auth",
+            False,
+            note
+            + "set ANTHROPIC_API_KEY or configure Claude Code for Bedrock, Vertex, or Foundry",
+        )
     if values.get("ANTHROPIC_AUTH_TOKEN"):
         return ProbeResult("Claude analysis auth", True, "ANTHROPIC_AUTH_TOKEN")
     if values.get("CLAUDE_CODE_OAUTH_TOKEN"):
@@ -158,12 +204,92 @@ def probe_claude_synthesis_auth(env: Mapping[str, str] | None = None) -> ProbeRe
         "Claude synthesis auth",
         False,
         "required for ensemble synthesis even when the claude leg is disabled; "
-        "set ANTHROPIC_API_KEY or enroll local Claude credentials",
+        + (
+            "set ANTHROPIC_API_KEY or configure Bedrock, Vertex, or Foundry"
+            if is_bundled_runtime(_env(env))
+            else "set ANTHROPIC_API_KEY or enroll local Claude credentials"
+        ),
     )
+
+
+def bundled_claude_sdk_options(env: Mapping[str, str] | None = None) -> dict[str, object]:
+    """Return SDK options that prevent consumer credential reuse in bundled mode."""
+
+    values = _env(env)
+    if not is_bundled_runtime(values):
+        return {}
+    probe = probe_claude_auth(values)
+    if not probe.ok:
+        raise RuntimeError(probe.note)
+    from jobctrl.config import APP_DIR
+
+    home = provider_runtime_home("claude", app_dir=APP_DIR)
+    isolated_env = {
+        "HOME": str(home),
+        "CLAUDE_CONFIG_DIR": str(home / "config"),
+        # The Claude SDK merges overrides over os.environ. Empty values
+        # explicitly neutralize ambient consumer OAuth variables while the
+        # supported API/cloud settings remain inherited.
+        **{key: "" for key in _CLAUDE_CONSUMER_AUTH_ENV},
+    }
+    (home / "config").mkdir(mode=0o700, parents=True, exist_ok=True)
+    return {
+        "cwd": str(APP_DIR),
+        "env": isolated_env,
+        # `--bare` is the pinned Claude binary's explicit contract for no
+        # Keychain, OAuth, settings, or consumer-account credential discovery.
+        "extra_args": {"bare": None},
+        "setting_sources": [],
+    }
+
+
+def bundled_claude_process_auth_env(
+    env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Return only supported Claude API/cloud auth for a direct child process."""
+
+    values = _env(env)
+    if not is_bundled_runtime(values):
+        return {}
+    probe = probe_claude_auth(values)
+    if not probe.ok:
+        raise RuntimeError(probe.note)
+    prefixes = ("AWS_", "AZURE_", "ANTHROPIC_FOUNDRY_")
+    explicit = {
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_VERTEX_PROJECT_ID",
+        "ANTHROPIC_VERTEX_REGION",
+        "CLOUD_ML_REGION",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOGLE_CLOUD_PROJECT",
+        "GOOGLE_CLOUD_QUOTA_PROJECT",
+        *_CLAUDE_CLOUD_FLAGS,
+    }
+    result = {
+        key: value
+        for key, value in values.items()
+        if value and (key in explicit or key.startswith(prefixes))
+    }
+    from jobctrl.config import APP_DIR
+
+    home = provider_runtime_home("claude", app_dir=APP_DIR)
+    result.update({"HOME": str(home), "CLAUDE_CONFIG_DIR": str(home / "config")})
+    (home / "config").mkdir(mode=0o700, parents=True, exist_ok=True)
+    return result
 
 
 def probe_codex_auth(env: Mapping[str, str] | None = None) -> ProbeResult:
     values = _env(env)
+    if is_bundled_runtime(values):
+        if values.get("OPENAI_API_KEY", "").strip():
+            return ProbeResult("Codex analysis auth", True, "OPENAI_API_KEY")
+        unsupported = "CODEX_API_KEY is not supported; " if values.get("CODEX_API_KEY") else ""
+        return ProbeResult(
+            "Codex analysis auth",
+            False,
+            unsupported
+            + "set OPENAI_API_KEY; bundled JobCtrl does not read or copy CODEX_HOME/auth.json",
+        )
     auth_path = codex_auth_path(values)
     if auth_path.exists():
         return ProbeResult("Codex analysis auth", True, f"auth.json at {auth_path}")
@@ -212,9 +338,19 @@ def antigravity_auth_kwargs(env: Mapping[str, str] | None = None) -> dict[str, o
             kwargs["location"] = location
         return kwargs
 
+    unsupported = next(
+        (key for key in _ANTIGRAVITY_CONSUMER_AUTH_ENV if values.get(key)),
+        None,
+    )
+    unsupported_note = (
+        f"; {unsupported} consumer/session credentials are not reused"
+        if is_bundled_runtime(values) and unsupported
+        else ""
+    )
     raise RuntimeError(
         "Antigravity analysis auth requires GEMINI_API_KEY/GOOGLE_API_KEY, "
-        "or Vertex AI ADC with GOOGLE_GENAI_USE_VERTEXAI=1."
+        "or Vertex AI ADC with GOOGLE_GENAI_USE_VERTEXAI=1"
+        f"{unsupported_note}."
     )
 
 
@@ -237,6 +373,10 @@ def probe_antigravity_auth(env: Mapping[str, str] | None = None) -> ProbeResult:
 
 
 def resolve_bundled_claude_path() -> Path:
+    if is_bundled_runtime():
+        from jobctrl.config import APP_DIR
+
+        activate_provider_pack("claude-agent-sdk", app_dir=APP_DIR)
     module = importlib.import_module("claude_agent_sdk")
     return Path(module.__file__).resolve().parent / "_bundled" / "claude"
 
@@ -248,7 +388,15 @@ def resolve_claude_apply_binary(env: Mapping[str, str] | None = None) -> str:
         # Expand ~ so a `~/...` override reaches Popen as a spawnable path, for
         # parity with resolve_codex_binary and the _has_claude_apply_runtime
         # existence probe (which both expanduser()).
-        return str(Path(override).expanduser())
+        if is_bundled_runtime(values):
+            raise RuntimeConfigurationError(
+                f"{CLAUDE_BIN_ENV} overrides are disabled in bundled mode; "
+                "the active hash-verified provider pack owns the Claude binary"
+            )
+        path = Path(override).expanduser()
+        return str(path)
+    if is_bundled_runtime(values):
+        return str(resolve_bundled_claude_path())
     path_cli = shutil.which("claude")
     if path_cli:
         return path_cli
@@ -259,6 +407,10 @@ def resolve_claude_apply_binary(env: Mapping[str, str] | None = None) -> str:
 
 
 def resolve_bundled_codex_path() -> Path:
+    if is_bundled_runtime():
+        from jobctrl.config import APP_DIR
+
+        activate_provider_pack("codex-provider-runtime", app_dir=APP_DIR)
     from codex_cli_bin import bundled_codex_path  # type: ignore[import-untyped]
 
     return Path(bundled_codex_path())
@@ -268,15 +420,24 @@ def resolve_codex_binary(env: Mapping[str, str] | None = None) -> Path:
     values = _env(env)
     override = values.get(CODEX_BIN_ENV)
     if override:
-        return Path(override).expanduser()
+        if is_bundled_runtime(values):
+            raise RuntimeConfigurationError(
+                f"{CODEX_BIN_ENV} overrides are disabled in bundled mode; "
+                "the active hash-verified provider pack owns the Codex binary"
+            )
+        path = Path(override).expanduser()
+        return path
     return resolve_bundled_codex_path()
 
 
 def probe_claude_sdk() -> ProbeResult:
     try:
+        # In bundled mode the provider SDK is intentionally absent from the
+        # core payload. Resolving its managed binary activates and verifies the
+        # installed provider pack before either Claude module is imported.
+        bundled = resolve_bundled_claude_path()
         version_module = importlib.import_module("claude_agent_sdk._cli_version")
         version = str(getattr(version_module, "__cli_version__", "unknown"))
-        bundled = resolve_bundled_claude_path()
     except Exception as exc:  # noqa: BLE001 - diagnostic surface
         return ProbeResult("Claude analysis SDK", False, f"unavailable: {exc}")
     if not bundled.exists():
@@ -298,8 +459,11 @@ def _binary_version(binary: Path, args: tuple[str, ...]) -> str:
 
 def probe_codex_sdk(env: Mapping[str, str] | None = None) -> ProbeResult:
     try:
-        importlib.import_module("openai_codex")
+        # resolve_codex_binary activates and verifies the managed provider pack
+        # before importing codex_cli_bin in bundled mode. Only then is it safe
+        # to probe the separately packaged openai_codex module.
         binary = resolve_codex_binary(env)
+        importlib.import_module("openai_codex")
     except Exception as exc:  # noqa: BLE001 - diagnostic surface
         return ProbeResult("Codex analysis SDK", False, f"unavailable: {exc}")
     if not binary.exists():
@@ -319,6 +483,10 @@ def _antigravity_harness_path() -> Path:
 
 def probe_antigravity_sdk() -> ProbeResult:
     try:
+        if is_bundled_runtime():
+            from jobctrl.config import APP_DIR
+
+            activate_provider_pack("antigravity-provider-runtime", app_dir=APP_DIR)
         version = importlib.metadata.version("google-antigravity")
         harness = _antigravity_harness_path()
     except Exception as exc:  # noqa: BLE001 - diagnostic surface
@@ -360,6 +528,8 @@ __all__ = [
     "ProbeResult",
     "analysis_sdk_set_version",
     "antigravity_auth_kwargs",
+    "bundled_claude_process_auth_env",
+    "bundled_claude_sdk_options",
     "claude_credentials_path",
     "codex_auth_path",
     "effective_codex_home",

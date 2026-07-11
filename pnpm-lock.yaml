@@ -25,6 +25,9 @@ importers:
       ajv:
         specifier: 8.20.0
         version: 8.20.0
+      esbuild:
+        specifier: 0.28.1
+        version: 0.28.1
       mermaid:
         specifier: ^11.16.0
         version: 11.16.0

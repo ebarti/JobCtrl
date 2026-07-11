@@ -23,6 +23,15 @@ from jobctrl.infrastructure.apply.claude_code_cli import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_apply_tests_from_host_keychain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep Popen fakes from intercepting config's unrelated Keychain probe."""
+
+    from jobctrl import config
+
+    monkeypatch.setattr(config, "_KEYCHAIN_FALLBACK_DIAGNOSTICS", ())
+
+
 class _FakeStdin:
     def __init__(self) -> None:
         self.text = ""
@@ -105,7 +114,11 @@ def _session() -> BrowserSession:
 
 @pytest.fixture(autouse=True)
 def _budget_flag_supported(monkeypatch):
-    monkeypatch.setattr(claude_code_cli, "_claude_supports_budget_flag", lambda _bin: True)
+    monkeypatch.setattr(
+        claude_code_cli,
+        "_claude_supports_budget_flag",
+        lambda _bin, *, bare=False: True,
+    )
 
 
 def test_default_model_uses_local_claude_default(monkeypatch, tmp_path) -> None:
@@ -162,6 +175,42 @@ def test_explicit_model_is_forwarded_to_claude(monkeypatch, tmp_path) -> None:
 
     assert result.submission_result.kind == "dry_run_complete"
     assert _FakePopen.calls[0][1:3] == ["--model", "opus"]
+
+
+def test_bundled_apply_forces_bare_mode_and_excludes_consumer_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from jobctrl import config
+
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "bundled")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "api-key")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_REFRESH_TOKEN", "consumer-refresh")
+    monkeypatch.setenv("CCR_OAUTH_TOKEN_FILE", "/tmp/consumer-token")
+    monkeypatch.setattr(config, "APP_DIR", tmp_path)
+    monkeypatch.setattr(claude_code_cli, "resolve_claude_apply_binary", lambda: "/bin/claude")
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    _FakePopen.calls.clear()
+    _FakePopen.kwargs.clear()
+
+    adapter = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    )
+    result = adapter.submit_application(
+        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        browser=_session(),
+        model="default",
+        dry_run=True,
+    )
+
+    assert result.submission_result.kind == "dry_run_complete"
+    assert _FakePopen.calls[0][1] == "--bare"
+    forwarded_env = _FakePopen.kwargs[0]["env"]
+    assert forwarded_env["ANTHROPIC_API_KEY"] == "api-key"
+    assert "CLAUDE_CODE_OAUTH_REFRESH_TOKEN" not in forwarded_env
+    assert "CCR_OAUTH_TOKEN_FILE" not in forwarded_env
 
 
 def test_apply_adapter_uses_tool_allowlist_and_filtered_env(monkeypatch, tmp_path) -> None:
