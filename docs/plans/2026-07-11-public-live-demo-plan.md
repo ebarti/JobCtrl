@@ -10,8 +10,10 @@
   demo with consent-aware first-party telemetry; require confirmed analytics
   consent before demo initialization; redirect visitors who decline to
   `https://jobctrl.dev`; prompt them again if they later revisit the demo; and
-  deliver implementation as a bottom-up stack of reviewable PRs. Public cutover
-  of this acceptance-required gate remains a legal/privacy stop gate.
+  deliver implementation as a bottom-up stack of reviewable PRs. Post-accept
+  withdrawal and current-visitor erasure are explicitly deferred to a later
+  delivery. Public cutover of this acceptance-required gate remains a
+  legal/privacy stop gate.
 - **Goal:** A visitor can open `https://demo.jobctrl.dev`, explore the real
   JobCtrl web application, drive representative workflows end to end, inspect
   audit and failure behavior, and understand the product without installing it
@@ -79,8 +81,9 @@ The public demo must prove all of the following at the same time:
    health, while consented product analytics can answer whether visitors reach
    and understand the key workflows. Neither lane collects profile, job,
    resume, document, or free-text content.
-9. Analytics consent is informed, versioned, reversible, and enforced before
-   either tracking or demo workspace initialization begins.
+9. Analytics consent is informed, versioned, and enforced before either
+   tracking or demo workspace initialization begins; post-accept withdrawal is
+   an explicit deferred follow-up, not a shipped claim.
 10. The local JobCtrl application remains behaviorally unchanged.
 
 ### 1.2 Current frontend seam
@@ -217,9 +220,14 @@ The gate must state plainly that the live demo is available only after cookie
 acceptance. Declining records the non-linkable denied choice when the edge is
 available, creates no analytics identifier, and redirects to
 `https://jobctrl.dev`. A visitor who later opens `demo.jobctrl.dev` sees the
-gate again rather than being auto-admitted or silently redirected. Withdrawal
-stops collection, runs delete-before-expire erasure, redirects away, and causes
-the gate to reappear on return.
+gate again rather than being auto-admitted or silently redirected.
+
+**Owner scope amendment (2026-07-11):** Post-accept withdrawal, a “Manage
+privacy” control, current-visitor deletion, and retryable erasure state are
+deferred to a later delivery. They are not implemented or claimed by this
+stack. The approved notice must disclose the shipped lifetime/expiry behavior,
+and legal/privacy approval must explicitly accept this deferred boundary before
+public cutover.
 
 This owner decision is implementation authority, not legal approval. Public
 cutover remains stopped until the controller approves a lawful basis and the
@@ -257,8 +265,8 @@ analytics and make their schemas impossible to join:
    cannot be reused across choices, initialization attempts, or analytics.
 2. **A same-origin `/api/*` Worker plus D1**, enabled only after consent, accepts
    a small allowlisted product-event schema with pseudonymous consented
-   visitor/session IDs, exact retention, withdrawal, per-visitor deletion,
-   coarse route names, and browser-computed Web Vitals/timing buckets.
+   visitor/session IDs, exact retention, coarse route names, and
+   browser-computed Web Vitals/timing buckets.
 
 Cloudflare Web Analytics is deliberately excluded from the first release. Its
 generic browser beacon can receive landing-page URLs and SPA referrers before
@@ -278,7 +286,8 @@ queries to consented traffic; never replace it with an identifier.
 
 Workers Analytics Engine is a later scale option for aggregate custom metrics.
 It is not the first store because its fixed retention and append-oriented model
-do not provide the simplest per-visitor erasure path.
+make the initial retention and population-labelled reporting contract harder to
+verify locally.
 
 ### D7. Separate Cloudflare project and subdomain
 
@@ -540,10 +549,6 @@ stateDiagram-v2
     Unknown --> Granted: Accept cookies and server confirms
     Unknown --> Denied: Decline and redirect
     Denied --> Unknown: Revisit demo
-    Granted --> Denied: Withdraw; erase succeeds; redirect
-    Granted --> ErasurePending: Withdraw; erase fails; redirect
-    ErasurePending --> Denied: Retry succeeds
-    ErasurePending --> ErasurePending: Retry fails or visitor leaves
     Granted --> Unknown: Consent version changes
     Denied --> Unknown: Consent version changes
 ```
@@ -565,14 +570,9 @@ Rules:
   sole exception.
 - `Denied` redirects to `https://jobctrl.dev`; returning to the demo renders the
   consent gate again.
-- `ErasurePending` renders the static shell, retries erasure with the retained
-  HttpOnly lookup keys, and blocks re-grant and workspace initialization until
-  deletion succeeds and the old identifiers expire. Leaving still redirects to
-  `https://jobctrl.dev`; returning resumes the retry state.
-- “Manage privacy” remains available from the app shell.
-- Withdrawing is no harder than accepting.
-- A consent-contract version change returns a non-pending visitor to `Unknown`;
-  it never bypasses an existing `ErasurePending` retry.
+- A consent-contract version change returns a visitor to `Unknown`.
+- Post-accept withdrawal and current-visitor deletion are deferred and absent
+  from this delivery; the published notice must not claim otherwise.
 - An API Worker outage never blocks the static consent shell. Declining still
   redirects without creating an identifier even if the best-effort choice
   counter cannot be confirmed. Acceptance shows a retryable unavailable state
@@ -586,8 +586,8 @@ Use first-party cookies on `demo.jobctrl.dev` only:
 | Cookie | When present | Attributes | Purpose |
 | --- | --- | --- | --- |
 | `__Host-jobctrl_demo_consent` | After either choice | `Secure; SameSite=Lax; Path=/`; no `Domain`; readable only if the client must gate startup | Versioned `granted` or `denied` choice; no visitor ID |
-| `__Host-jobctrl_demo_vid` | After confirmed grant until successful erasure | `Secure; HttpOnly; SameSite=Lax; Path=/`; no `Domain`; bounded `Max-Age` | Random pseudonymous returning-visitor key used only by the telemetry function; inert if consent is denied and retained temporarily only as a failed-erasure retry handle |
-| `__Host-jobctrl_demo_session` | After confirmed grant until withdrawal response | `Secure; HttpOnly; SameSite=Lax; Path=/`; no `Domain`; session lifetime | Random per-browser-session funnel key |
+| `__Host-jobctrl_demo_vid` | After confirmed grant until bounded expiry | `Secure; HttpOnly; SameSite=Lax; Path=/`; no `Domain`; bounded `Max-Age` | Random pseudonymous returning-visitor key used only by the telemetry function |
+| `__Host-jobctrl_demo_session` | After confirmed grant for the browser session | `Secure; HttpOnly; SameSite=Lax; Path=/`; no `Domain`; session lifetime | Random per-browser-session funnel key |
 
 The implementation PR must document the exact lifetime. Initial target: six
 months for consent and visitor ID, session lifetime for the session key. A
@@ -601,11 +601,10 @@ random identifiers.
 
 | Endpoint | Method | Behavior |
 | --- | --- | --- |
-| `/api/demo-consent` | `POST` | Validate `granted` or `denied`; idempotently increment the non-linkable daily choice counter; for withdrawal, delete rows keyed by the still-present visitor cookie before expiring identifiers; return the effective versioned choice or `erasure_pending` |
+| `/api/demo-consent` | `POST` | Validate `granted` or `denied`; idempotently increment the non-linkable daily choice counter; return the effective versioned choice |
 | `/api/demo-consent` | `GET` | Return effective choice without exposing HttpOnly IDs |
 | `/api/demo-health` | `POST` | Once after confirmed grant and initialization, idempotently increment a non-linkable daily `init_success` or `init_failure` counter using only release, consent version/choice, and persistent-or-memory storage mode |
 | `/api/demo-telemetry` | `POST` | Accept one bounded allowlisted event only when consent cookie is granted |
-| `/api/demo-telemetry/me` | `DELETE` | Idempotent explicit withdrawal: delete rows using the current visitor cookie before expiring identifiers and set consent to denied |
 
 All endpoints require same-origin `Origin`/Fetch Metadata, strict JSON content
 type, small request bodies, schema validation, and rate limiting. Consent and
@@ -620,14 +619,12 @@ into a unique 24-hour dedupe table, and increments the matching daily counter
 only when that insert is new, as one atomic operation. The dedupe table has no
 foreign key or query path to consented events and is unavailable to reports.
 
-Withdrawal sequencing is a tested invariant: disable optional collection and
-record `denied` in the browser first; send the still-present HttpOnly visitor ID
-to the same-origin endpoint; delete matching D1 rows; only then expire visitor
-and session cookies. If deletion fails, the choice remains denied, no optional
-event is accepted, and the inert visitor cookie is retained solely so an
-idempotent retry can complete erasure. The shell must not accept a new grant or
-initialize a workspace while that retry is pending. Never clear or replace the
-lookup key before a successful delete.
+Post-accept withdrawal and current-visitor deletion endpoints are intentionally
+absent from this delivery. The edge must instead enforce the documented cookie
+lifetimes and scheduled raw-event expiry exactly. A later withdrawal slice must
+add delete-before-expire behavior, re-acceptance semantics, and its own failure
+state as a separately reviewed contract; this release must not expose a
+non-functional control or claim that capability.
 
 ### 6.4 Optional event catalog
 
@@ -694,11 +691,9 @@ remain bfcache-safe, bounded, and invisible to product behavior.
 - Aggregate reports may outlive raw events only when they cannot be traced back
   to a visitor ID.
 - A scheduled cleanup deletes expired rows and is monitored.
-- Withdrawal stops new collection immediately, deletes associated rows before
-  expiring identifiers, and exposes a retryable `erasure_pending` state if D1
-  is unavailable.
-- Both the denied transition and delete endpoint use the same idempotent
-  delete-before-expire operation.
+- Post-accept withdrawal and current-visitor deletion are deferred; the notice
+  states the actual expiry boundary and does not claim an in-product erasure
+  control.
 - The privacy notice explains Cloudflare's necessary edge processing separately
   from optional analytics.
 - No session replay, heatmaps, advertising pixels, cross-site identity, or data
@@ -767,8 +762,7 @@ a unique-all-visitor metric that the design deliberately does not collect.
 - Cap event rate per session and globally; silently drop excess telemetry rather
   than affecting the demo.
 - Optional event-delivery failures never block product interaction after a
-  confirmed grant. Consent confirmation and pending erasure stay fail-closed at
-  the static shell.
+  confirmed grant. Consent confirmation stays fail-closed at the static shell.
 
 ### 7.3 Synthetic-data release gate
 
@@ -961,13 +955,13 @@ The complete core journey is interactive and visibly updates across views.
 
 **Scope**
 
-- Add the acceptance-required consent gate, decline/withdraw redirects, revisit
-  prompt behavior, and privacy controls.
+- Add the acceptance-required consent gate, decline redirect, revisit prompt
+  behavior, and privacy-notice links.
 - Implement consent and identifier cookies.
 - Add a typed consent-aware telemetry adapter.
 - Add the same-origin `/api/*` Worker endpoints, separate non-linkable aggregate
-  and consented event D1 schemas/migrations, rate limiting, retention, deletion,
-  and population-labelled query/report scripts.
+  and consented event D1 schemas/migrations, rate limiting, scheduled retention
+  cleanup, and population-labelled query/report scripts.
 - Pin Wrangler 4.107.0 exactly in the edge package and deployment workflow; a
   dependency upgrade must rerun Worker config and dry-run deployment coverage.
 - Collect coarse route names and browser-computed Web Vitals/timing buckets
@@ -976,14 +970,12 @@ The complete core journey is interactive and visibly updates across views.
 
 **Tests**
 
-- Unknown/granted/denied/withdrawn/version-changed state machine.
-- Erasure-pending reload/retry state blocks a new grant and workspace
-  initialization until delete-before-expire succeeds.
+- Unknown/granted/denied/version-changed state machine.
 - Banner copy explicitly says the demo requires cookie acceptance.
 - Confirmed grant opens the demo; decline records the choice when possible,
   creates no analytics identifier, and redirects to `https://jobctrl.dev`.
-- Revisiting after denial or withdrawal reopens the banner instead of admitting
-  or silently redirecting the visitor.
+- Revisiting after denial reopens the banner instead of admitting or silently
+  redirecting the visitor.
 - Consent endpoint unavailable on first choice and on reload: acceptance stays
   at a retryable gate until confirmed; decline still creates no analytics
   identifier and redirects away.
@@ -992,7 +984,7 @@ The complete core journey is interactive and visibly updates across views.
   initialization-health event is sent for a decline.
 - Browser inspection proves exact `Secure`, `HttpOnly`, `SameSite=Lax`,
   `Path=/`, no-`Domain`, host scoping, and lifetime behavior before choice,
-  after decline, after grant, after withdrawal, and after a version change.
+  after decline, after grant, after expiry, and after a version change.
 - Operational counter tests prove aggregate-only storage, no identifier/header
   persistence beyond the isolated short-lived operation digest,
   non-joinability, bounded retention, correct grant/deny choice queries, and
@@ -1002,11 +994,8 @@ The complete core journey is interactive and visibly updates across views.
   initialization attempt uses a different key and increments separately.
 - Granted events are allowlisted, rate-limited, and queryable.
 - Forbidden attributes are rejected client- and server-side.
-- Withdrawal disables collection first, deletes D1 rows before identifier
-  expiry, retries idempotently without losing the erasure key, and blocks
-  re-acceptance while erasure is pending.
 - Optional event-delivery outage does not affect an admitted demo session;
-  consent/erasure outage remains visibly retryable at the static shell.
+  a consent outage remains visibly retryable at the static shell.
 
 **Exit criterion**
 
@@ -1020,7 +1009,7 @@ later visit.
 
 - Add persistent Demo Mode identity and simulated-action language.
 - Add a concise guided tour and scenario shortcuts.
-- Add reset, install, docs, and privacy controls.
+- Add reset, install, docs, and privacy-notice controls.
 - Cover desktop/mobile, light/dark, keyboard, reduced-motion, and screen-reader
   paths.
 - Add per-state Storybook stories and a11y coverage.
@@ -1136,8 +1125,8 @@ required for the first release.
 | Honest simulation | External-effect receipts always say simulated/no external effect |
 | Consent before telemetry | No analytics identifier, script, or product-event request exists before explicit grant; the only pre-grant measurement is the aggregate-only consent-choice counter |
 | Functional denial | Declining creates no analytics ID, redirects to `https://jobctrl.dev`, and a later demo visit opens the banner again |
-| Cookie boundary | Browser assertions prove exact host-only attributes/lifetimes through unknown, denied, granted, withdrawn, and version-changed states |
-| Reversible consent | Withdraw stops telemetry, expires IDs, and deletes D1 rows |
+| Cookie boundary | Browser assertions prove exact host-only attributes/lifetimes through unknown, denied, granted, expired, and version-changed states |
+| Deferred withdrawal boundary | No post-accept withdrawal/current-visitor erasure control or claim ships in this stack; the notice discloses expiry and the follow-up remains explicit |
 | Data minimization | Forbidden product fields fail client/server telemetry tests and release scans |
 | Useful telemetry | Population-labelled aggregate consent/init queries and typed consented funnel, coarse route, action, error, Web Vitals/timing, and CTA queries return expected synthetic results without claiming unique non-consenting visitors or transmitting route URLs |
 | Secure delivery | CSP/security headers enforce after report-only preview validation |
@@ -1158,8 +1147,8 @@ required for the first release.
 | Browser storage | Demo workspace repository, schema, migration, reset |
 | Event simulation | Demo event stream, clock, scheduler, scenarios |
 | Telemetry client | Existing `TelemetryPort` adapter plus typed safe-event catalog and consent provider |
-| Consent UI | App-shell provider/gate, privacy settings/control, stories and a11y tests |
-| Telemetry edge | Same-origin `/api/*` Worker, retention Worker, D1 schema/migrations, query/cleanup/delete utilities |
+| Consent UI | Pre-initialization provider/gate, privacy-notice links, stories and a11y tests |
+| Telemetry edge | Same-origin `/api/*` Worker, retention Worker, D1 schema/migrations, query/cleanup utilities |
 | Artifact demo | Bundled synthetic HTML/PDF assets and preview/download adapter |
 | Deployment | Demo Wrangler configuration, `.github/workflows/`, Pages `_headers`/redirects |
 | Docs | README, `docs/user/`, local development, reliability QA, frontend architecture, requirements, decisions |
@@ -1179,7 +1168,8 @@ required for the first release.
 | Acceptance-required consent may not be freely given | Banner discloses the condition and offers a clear decline-and-leave action; public cutover requires explicit legal/privacy approval of the lawful basis and copy |
 | Telemetry blocks or degrades an admitted session | Grant must be confirmed before entry; after entry, telemetry delivery is fail-open and never owns product state |
 | Analytics ID becomes identity | Random first-party ID only; no login, fingerprint, enrichment, or cross-site join |
-| Retention or erasure fails | D1 exact retention/deletion tests and monitored cleanup before launch |
+| Retention cleanup fails | D1 exact-expiry tests and monitored cleanup before launch |
+| Deferred withdrawal is mistaken for shipped behavior | No control, endpoint, test claim, or notice claim ships; track a later delete-before-expire slice explicitly |
 | CSP breaks the app | Preview report-only discovery without network reports, then enforcement and live browser QA |
 | Cloudflare access is incomplete | Reversible write preflight; owner updates only the missing least-privilege permission |
 | Stack conflicts after squash merge | Merge bottom-up and restack every descendant onto updated `origin/main` |
@@ -1203,6 +1193,8 @@ required for the first release.
   until pre-transmission URL/referrer redaction is proven in production-browser
   payload tests.
 - No service-worker/MSW production fake API.
+- No post-accept withdrawal or current-visitor erasure control in this delivery;
+  that contract is deferred to a later reviewed slice.
 - No replacement of existing local fixtures/tests with demo-only behavior.
 - No public “live demo” claim until production and telemetry consent QA pass.
 
@@ -1221,13 +1213,16 @@ This plan is complete only when:
    audit history remain coherent across views.
 5. Every external/irreversible capability is impossible and honestly simulated.
 6. No product-state value crosses the telemetry boundary.
-7. Consent is explicit, versioned, reversible, required before entry, and the
-   decline/withdraw paths redirect and re-prompt on return exactly as disclosed.
+7. Consent is explicit, versioned, required before entry, and the decline path
+   redirects and re-prompts on return exactly as disclosed; this release makes
+   no post-accept withdrawal or current-visitor erasure claim.
 8. Non-linkable operational counters answer choice and granted-initialization
    health questions, and typed consented D1 events answer the agreed consented
    funnel, reliability, Web Vitals/timing, and CTA questions without route URLs
    or claims about unique non-consenting visitors.
-9. Retention, withdrawal, and current-visitor deletion pass production tests.
+9. Cookie and raw-event retention/expiry pass production tests, and the
+   deferred withdrawal boundary is reflected consistently in UI, API, tests,
+   and the published notice.
 10. Cloudflare custom domain, DNS, bindings, deployment, security headers,
     preview, production smoke, and rollback all pass.
 11. The local JobCtrl application retains its current security and behavior.
