@@ -13,8 +13,8 @@ on your machine.
 [![TypeScript CI](https://github.com/ebarti/JobCtrl/actions/workflows/typescript.yml/badge.svg)](https://github.com/ebarti/JobCtrl/actions/workflows/typescript.yml)
 [![Release Privacy Gate](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml/badge.svg)](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
-![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB)
-![Node 20.19+](https://img.shields.io/badge/node-20.19%2B-339933)
+![Source Python 3.11+](https://img.shields.io/badge/source-Python%203.11%2B-3776AB)
+![Source Node 20.19+](https://img.shields.io/badge/source-Node%2020.19%2B-339933)
 
 <img src="docs/assets/screenshots/dashboard.png" alt="JobCtrl dashboard with pipeline, spend, and review queues (synthetic data)" width="880" />
 
@@ -38,59 +38,107 @@ a daily spend ceiling, and shows its work at every step.
 
 ## Get Started
 
-**Source install (current)** — clone the repository, then run the guided
-contributor setup:
+**Current public path: run the source checkout.** The first signed bundled
+release is not published yet, so today the supported public setup is:
 
 ```bash
 git clone https://github.com/ebarti/JobCtrl.git
 cd JobCtrl
 scripts/install
+corepack pnpm dev   # open the printed loopback URL
 ```
 
-The bundled curl installer and stable Homebrew formula are implementation work,
-not a published install channel yet: P4 emits only unsigned local fixtures and
-P6 must publish and verify signed release metadata first. Do not treat a local
-distribution fixture as a public install URL.
+Git is used only to download and update this source checkout. JobCtrl's product
+runtime does not use Git. `scripts/install` checks the source-development
+toolchain and can offer missing tools through an existing Homebrew install;
+otherwise it reports what you must install yourself. It installs both workspace
+dependency closures and runs `jobctrl setup`. Keep the `corepack pnpm dev`
+terminal open while using the app; stop it with Ctrl-C.
 
-Then choose how you want to start:
-
-```bash
-cd ~/JobCtrl
-pnpm dev        # web app — open http://127.0.0.1:5173
-```
-
-The web app can start without `jobctrl init`. If you want to use CLI workflows
-directly, create the local CLI profile and check the setup first:
+The web app does not require `jobctrl init`. Initialize the local CLI profile
+only if you want to drive workflows directly from a terminal:
 
 ```bash
 uv --project workers/automation run jobctrl init
 uv --project workers/automation run jobctrl doctor
 ```
 
-`scripts/install` runs `jobctrl setup`; rerun it only when vendor auth or
-analysis-leg choices change.
+`uv --project workers/automation run` is source-checkout plumbing: it syncs the
+repository's Python environment when needed, selects it, and invokes the
+existing `jobctrl` console entry point. It is not a separate CLI and it is not
+the installed command surface.
 
-<details>
-<summary><b>Manual install & requirements</b> (clone it yourself)</summary>
+**Bundled distribution status.** P0–P6 implement one native `jobctrl`
+executable plus a private runtime payload, but no signed and notarized public
+artifact or stable Homebrew formula has been published. Until that release is
+available, do not treat `jobctrl.dev/install.sh`, a local release fixture, or a
+generated formula as a live install channel.
+
+After publication, curl and Homebrew will be acquisition choices for the same
+bundle. They will not select different ways to start JobCtrl. From any
+directory, every installed user will use the same executable for both app
+lifecycle and domain CLI commands:
 
 ```bash
-git clone https://github.com/ebarti/JobCtrl.git
-cd JobCtrl
-scripts/install  # guided system checks + Node/Python deps + Playwright Chromium
+jobctrl start
+jobctrl init
+jobctrl doctor
+jobctrl <domain-command>
+```
+
+The first bundle targets Apple-silicon macOS 15 or newer. Its payload carries
+the API/web/worker, Node, Python, Temporal, PDF.js, Python Playwright, and
+Playwright MCP runtimes. It neither creates a source checkout nor needs Git,
+Node, pnpm, Corepack, uv, Python, Temporal, Poppler, Playwright, or `npx` on the
+user's `PATH`. `jobctrl dev` remains only a deprecated alias for `jobctrl start`.
+
+The bundled core browser is exactly one managed Playwright Chromium headless
+shell for discovery, enrichment, and PDF rendering. It does **not** include a
+full Chrome/Chromium application. A system Chrome/Chromium installation is
+optional and can be skipped unless the user explicitly enables an
+authenticated-browser or auto-apply capability and selects that browser.
+
+The tracked bundle inventory declares 15 core runtime components, one bundled
+optional-capability adapter, three provider packs fetched only from their
+official channels when selected, and two developer-only components excluded
+from the artifact. Every release gate emits a fresh per-component size report;
+there is no public download-size claim until a signed artifact publishes that
+evidence.
+
+<details>
+<summary><b>Source-checkout requirements and footprint</b></summary>
+
+Running from source requires Git for clone/update; Python 3.11+; Node.js 20.19+
+with pnpm through Corepack; uv; Temporal CLI; two source-development Playwright
+Chromium installs; and an LLM provider key or local LLM endpoint (plus vendor
+auth for any enabled employer-analysis ensemble legs). `scripts/install`
+reports missing prerequisites and can offer Homebrew installs where supported.
+A machine without Git cannot run the clone command; Git is not needed after
+moving to the future bundled install.
+
+The reproducible source audit currently records 83 unique direct JavaScript
+packages, 1,428 pnpm lock records, and 103 uv lock records. A simple sum of the
+preserved 2026-07-10 source-planning observations is about 4.28 GiB with system
+Chrome skipped, or 5.58 GiB with the separately optional 1.3 GiB Chrome from
+that reference machine included. `scripts/install` never installs system
+Chrome. Those observations also include the whole 1.18 GiB reference-machine
+Homebrew closure and mix accounting contexts, so they are directional—not a
+reproducible additive install size or the bundle inventory above.
+
+For an already provisioned source machine, sync dependencies without the
+guided checks, or rerun setup after vendor-auth choices change:
+
+```bash
+corepack pnpm dev:setup
 uv --project workers/automation run jobctrl setup
 ```
 
-Requirements: Python 3.11+, Node.js 20.19+ (pnpm via Corepack), uv, Temporal
-CLI, Playwright Chromium, Poppler (`pdftoppm`), and an LLM
-provider key or local LLM endpoint (plus vendor auth for any enabled
-employer-analysis ensemble legs). `corepack pnpm dev:setup` is the non-interactive
-dependency sync for provisioned machines.
-
-Playwright Chromium is the managed core browser, installed per Python virtualenv; a bare `uv sync` or a
-fresh git worktree needs `uv --project workers/automation run playwright
-install chromium` (set `PLAYWRIGHT_SKIP_BROWSER_GC=1` when installing from
-another checkout that shares the browser cache). `jobctrl doctor` validates
-the browser and the worker refuses to start without it
+Playwright Chromium is the managed source browser, installed per Python
+virtualenv. A bare `uv sync` or a fresh git worktree needs
+`uv --project workers/automation run playwright install chromium` (set
+`PLAYWRIGHT_SKIP_BROWSER_GC=1` when installing from another checkout that
+shares the browser cache). `jobctrl doctor` validates the browser and the
+worker refuses to start without it
 (`JOBCTRL_SKIP_BROWSER_PREFLIGHT=1` overrides for non-browser workers).
 
 </details>
@@ -182,8 +230,9 @@ ceiling, at-most-once submit intent tracking, CAPTCHA fail-closed behavior,
 and the dry-run guard when a dry-run apply path is used. Use dry-run paths
 and narrow targets before allowing live submission.
 
-System Chrome/Chromium is never a core requirement. Discovery, enrichment, and
-PDF rendering use the managed Playwright Chromium. Inspect the split with
+System Chrome/Chromium is never a core requirement. A source checkout uses its
+managed Playwright Chromium installs; the bundled candidate carries exactly one
+Playwright Chromium headless shell. Inspect the split with
 `jobctrl capability list`; adopt a system browser only for authenticated apply
 features:
 
@@ -292,11 +341,13 @@ storage-and-privacy inventory:
 ## Current vs Roadmap
 
 Everything in [What It Does](#what-it-does) above is **shipped and runs on
-your machine today**. Work that is planned but **not built yet** — desktop
-packaging, workspace export/import, and any hosted or multi-user deployment
-(accounts, billing, managed browsers, object storage, cloud sync) — lives in
-[ROADMAP.md](ROADMAP.md) and is never presented as current here. Nothing
-above the roadmap boundary depends on a hosted service.
+your machine today** through the source path. [Get Started](#get-started)
+separately labels the bundled distribution implementation as **not published**;
+its install channel and clean-machine QA remain Roadmap until signed release
+evidence exists. Workspace export/import and any hosted or multi-user
+deployment (accounts, billing, hosted browsers, object storage, cloud sync)
+also live in [ROADMAP.md](ROADMAP.md). Nothing presented as current depends on
+a hosted service.
 
 ## Local Data And Safety
 
@@ -357,8 +408,12 @@ Application records live in `jobctrl.db`. Snapshot them any time — even while
 the app runs:
 
 ```bash
-uv --project workers/automation run jobctrl backup
+jobctrl backup
 ```
+
+The command above is the canonical installed spelling. While the source
+checkout remains the only public path, invoke it with the source prefix shown
+in [Get Started](#get-started).
 
 This writes `~/.jobctrl/backups/jobctrl-<timestamp>.db` via SQLite
 `VACUUM INTO` and never deletes anything (`--output <path>` to choose a
@@ -367,8 +422,9 @@ target).
 <details>
 <summary><b>Restore steps</b></summary>
 
-Stop the app (Ctrl-C on `pnpm dev`), clear stale WAL sidecars, and copy a
-backup over the live database:
+Stop the app (`jobctrl stop` when installed, or Ctrl-C on `corepack pnpm dev`
+from a source checkout), clear stale WAL sidecars, and copy a backup over the
+live database:
 
 ```bash
 rm -f ~/.jobctrl/jobctrl.db-wal ~/.jobctrl/jobctrl.db-shm
@@ -384,10 +440,11 @@ sqlite3 ~/.jobctrl/jobctrl.db \
   "DELETE FROM event_watermarks WHERE projection_name = 'operations_projections';"
 ```
 
-The P6-gated bundled distribution adds a separate `temporal.db` runtime store.
-Its native update, rollback, and backup boundary treats `jobctrl.db` and
-`temporal.db` as one hash-verified pair. That channel is not public yet; do
-not use local distribution fixtures as a production upgrade path.
+The bundled distribution adds a separate `temporal.db` runtime store. Its
+native update, rollback, and backup boundary treats `jobctrl.db` and
+`temporal.db` as one hash-verified pair. The implementation exists, but the
+signed channel is not public yet; do not use local distribution fixtures as a
+production upgrade path.
 
 </details>
 
@@ -435,14 +492,19 @@ truth:
 Commands that start work (`jobctrl run`, per-stage commands, `jobctrl job
 <url>`, `jobctrl apply`, `jobctrl action profile_import`,
 `jobctrl compensation-refresh`) start Temporal workflows and require a
-reachable Temporal server plus a running JobCtrl worker — `pnpm dev` provides
-both. Architecture deep dives: [system architecture](https://jobctrl.dev/architecture/)
+reachable Temporal server plus a running JobCtrl worker — `corepack pnpm dev`
+provides both in a source checkout, while `jobctrl start` owns the complete
+installed runtime. Architecture deep dives: [system architecture](https://jobctrl.dev/architecture/)
 and the [pipeline walkthrough](https://jobctrl.dev/architecture/pipeline/).
 
 ## CLI Reference
 
-All commands run as `uv --project workers/automation run jobctrl <command>`
-(or through the Homebrew launcher as plain `jobctrl <command>`).
+The command table omits the invocation prefix. The current source checkout runs
+commands as `uv --project workers/automation run jobctrl <command>`. After the
+first signed bundled release, the same native executable that owns
+`jobctrl start` dispatches every domain command as plain
+`jobctrl <command>` from any directory. Homebrew does not create a different
+CLI surface.
 
 <details>
 <summary><b>Command table</b></summary>

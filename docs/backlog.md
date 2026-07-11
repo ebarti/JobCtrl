@@ -28,8 +28,10 @@ The active local-product backlog is the remaining validation and hardening
 work below: realtime cache patching beyond apply-run timeline events, cleanup
 of legacy `jobs.*` storage fallbacks, table/artifact/profile UX improvements,
 browser QA gaps, frontend a11y deferrals, and tooling / CI enforcement gaps.
-Hosted product, hosted data, hosted automation, packaging, and cloud-mode
-frontend adapters remain deferred until the local product is solid.
+Hosted product, hosted data, hosted automation, and cloud-mode frontend adapters
+remain deferred until the local product is solid. Native distribution is now
+an active release lane: the P0–P6 implementation stack exists, while signed
+publication and P7 clean-machine product QA remain open.
 
 ## Release Hardening Follow-Ups
 
@@ -280,10 +282,17 @@ These items are intentionally deferred until local validation is solid.
 
 ### Packaging And Distribution
 
-- Signed local desktop package.
-- Auto-update channel.
-- License/entitlement check in the local app.
-- Clear local/cloud boundary in user-facing documentation.
+- Provision the Developer ID, notarization, Ed25519, release-origin, immutable
+  Release, and protected tap/PyPI publication authorities without exposing
+  credentials to build jobs.
+- Execute the signed Apple-silicon release workflow and read back immutable
+  assets, the authenticated channel pointer, and the stable Homebrew formula.
+- Run the P7 clean-machine curl/Homebrew, no-toolchain/no-system-Chrome,
+  upgrade, provider-auth, capability, update/rollback, uninstall, and real-path
+  TTFV matrix against published bytes.
+- Promote the installation claim only after both acquisition paths report the
+  same build and manifest identity; keep the active plan outside
+  `docs/plans/implemented/` until then.
 
 ## Frontend Cloud-Mode Adapters
 

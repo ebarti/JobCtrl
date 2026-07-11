@@ -220,13 +220,13 @@ prepared but cannot produce a signed, notarized, published candidate yet; no
 user-facing curl or Homebrew stable-install claim may be made until the hosted
 path has completed.
 
-### 9.5 — Homebrew tap publication (P6-gated)
+### 9.5 — Homebrew tap publication (signed-release-gated)
 
 `packaging/homebrew/Formula/jobctrl.rb.tmpl` is the one canonical formula
-template. P4 has no checked-in rendered formula or public stable install
-claim. P6 renders the formula once on the signer from the signed stable
-descriptor and exports its exact SHA-256. A credential-free job smoke-tests
-that formula and published ZIP without re-rendering either. The reusable tap
+template. There is no checked-in rendered formula or public stable install
+claim. The implemented P6 signer job renders the formula once from the signed
+stable descriptor and exports its exact SHA-256. A credential-free job
+smoke-tests that formula and published ZIP without re-rendering either. The reusable tap
 workflow receives the untouched signed candidate and separate smoke evidence,
 re-verifies the signer-rooted formula digest, and seals the exact formula
 without tap credentials before handing only the formula and checksum to a
@@ -237,7 +237,8 @@ native first-invocation bootstrap holding the signed descriptor resources and
 cached ZIP. It must not create `~/.jobctrl`, mutate a Cellar payload, or link a
 runtime payload from the Cellar during `brew install`.
 
-- **Action.** Run P6's signed descriptor, published-ZIP smoke, formula render,
+- **Action.** Configure the external signing/publication gates, then run the
+  implemented signed-descriptor, published-ZIP smoke, formula render,
   Ruby syntax, and Homebrew audit/test gates; atomically promote or confirm the
   signer-authored channel pointer; only then call the reusable sync workflow
   with the verified render. Do not edit the tap copy by hand.
@@ -252,4 +253,4 @@ runtime payload from the Cellar during `brew install`.
 | 9.2 Docs-site deploy | Yes | No | Blocked until the post-public hosted gates are green; owner executes |
 | 9.3 Rename redirect | Yes | Landed 2026-07-07 | Redirect verify at flip; owner executes |
 | 9.4 Release tagging | Yes | Landed 2026-07-07 | v2.0.0 selected and mechanics ready; blocked until post-public hosted gates pass |
-| 9.5 Homebrew tap | P6 signed artifact only | No | P4 template/generator and fail-closed reusable sync are ready; rendering, publication, and install verification remain blocked on P6 |
+| 9.5 Homebrew tap | Signed artifact only | No | P0–P6 workflow, canonical template/generator, and fail-closed reusable sync are implemented; execution remains blocked on Apple signing/notarization, release-origin publication, immutable Releases, and hosted Actions availability |

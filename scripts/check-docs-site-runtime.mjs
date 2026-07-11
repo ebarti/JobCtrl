@@ -754,6 +754,11 @@ try {
     console.log("ok    /user/data-and-safety mobile privacy table");
   }
 
+  // The responsive checks above deliberately leave the page at the mobile
+  // breakpoint after opening the stock navigation drawer. Search privacy is a
+  // separate semantic check, so establish its own clean viewport precondition
+  // instead of inheriting drawer state from an unrelated interaction.
+  await page.setViewportSize(BASE_VIEWPORT);
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
   await page.locator(".DocSearch-Button").click();
   await page.locator("input.search-input").fill("privacy");

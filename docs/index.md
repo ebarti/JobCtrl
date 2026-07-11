@@ -13,7 +13,7 @@ hero:
       text: Product Tour
       link: /user/screenshots
     - theme: alt
-      text: Install & Get Started
+      text: Run From Source / Release Status
       link: /user/getting-started
     - theme: alt
       text: Developer Guide

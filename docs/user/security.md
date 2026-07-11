@@ -93,14 +93,16 @@ choosing not to click Submit.
 
 ### Authenticated Browser Capabilities Are Explicit
 
-The managed Playwright Chromium supports core discovery, enrichment, and PDF
-rendering without a system browser. Auto-apply and authenticated LinkedIn
-resolution are disabled separately. JobCtrl will not launch, read, or copy an
-authenticated system browser profile until the relevant capability has an
-explicitly adopted Chrome/Chromium executable. LinkedIn additionally requires a
-separate affirmative profile-copy consent; `--yes` is not consent. The copied
-profile lives only in JobCtrl-owned storage, and JobCtrl records consent metadata
-but never the source-profile path.
+The source checkout uses its managed Playwright Chromium installs for core
+discovery, enrichment, and PDF rendering. The bundled payload uses exactly one
+managed Playwright Chromium headless shell and includes no full Chrome/Chromium
+application. Auto-apply and authenticated LinkedIn resolution are disabled
+separately. JobCtrl will not launch, read, or copy an authenticated system
+browser profile until the relevant capability has an explicitly adopted
+Chrome/Chromium executable. LinkedIn additionally requires a separate
+affirmative profile-copy consent; `--yes` is not consent. The copied profile
+lives only in JobCtrl-owned storage, and JobCtrl records consent metadata but
+never the source-profile path.
 
 ### Applications Submit At Most Once
 

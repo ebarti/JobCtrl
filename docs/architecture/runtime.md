@@ -31,7 +31,8 @@ checkout or asking the user for a language/runtime toolchain:
 - the worker and CLI run under an embedded CPython with only the core runtime
   closure; fixed relative system-site entries expose the separately owned
   worker and Python Playwright component roots;
-- Temporal, one Python Playwright Chromium revision, and Playwright MCP are
+- Temporal, one Python Playwright Chromium headless-shell revision, and
+  Playwright MCP are
   addressed through absolute payload paths and never through user `PATH`,
   `npx`, `uv`, or a package registry at execution time; and
 - PDF page previews are rendered by PDF.js in the web client. The installed
@@ -76,9 +77,10 @@ and waits for Temporal plus API worker-heartbeat health. Each canonical
 `~/Library/Application Support/JobCtrl/instances/<sha256>` (or
 `JOBCTRL_RUNTIME_HOME`); records bind PID, PGID, start identity, executable,
 build ID, manifest digest, and ports so lifecycle cleanup cannot target a
-reused PID. The local artifact remains unsigned/non-promotable until later
-signing and installer phases, so this is still build evidence rather than a
-public install surface.
+reused PID. The P6 workflow now makes Developer ID signing, notarization, and
+authenticated publication mandatory for promotion. Those external gates have
+not executed for a public artifact, so the checked-in build remains candidate
+evidence rather than a public install surface.
 
 The P5 lifecycle store is user-owned (`JOBCTRL_RUNTIME_HOME`), not a package
 manager Cellar. `active.json` atomically records the selected payload, the
@@ -97,7 +99,8 @@ runnable release. A pre-finalization failure restores the full pair and
 restarts the still-permitted prior release. An interruption after a healthy
 candidate finalizes a revocation fails closed to that authenticated candidate
 instead of executing revoked code. This remains an internal release-engineering
-seam until P6 publishes signing and notarization evidence.
+seam until a Developer ID-signed and notarized artifact is published and the
+clean-machine acquisition gates pass.
 
 ## Frontend
 

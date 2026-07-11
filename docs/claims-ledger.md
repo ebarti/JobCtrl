@@ -230,17 +230,19 @@ source and a resolving pointer.
 
 | Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
 | --- | --- | --- | --- | --- | --- | --- |
-| CL-081 | The current public setup path is a source checkout plus `scripts/install`; it runs the guided contributor-tool setup and reports what it skipped. The bundled network installer intentionally fails closed until P6 publishes a signed pin. | README (Get Started); Getting Started (Install Dependencies) | Current | repo owner | `scripts/install`; `scripts/get`; `docs/local-development.md` | 2026-07-10 |
-| CL-082 | P4 provides a deterministic ZIP fixture, local-only descriptor contract, and one Homebrew formula template/generator. There is no public stable formula or curl release URL yet: P6 must provision the release public key, sign the descriptor, smoke-test the published ZIP, render the formula, and call the fail-closed reusable tap workflow. | Publish checklist §9.5; Local Development | Roadmap | repo owner | `packaging/homebrew/Formula/jobctrl.rb.tmpl`; `scripts/distribution-homebrew.mjs`; `packaging/distribution/release-keys.json`; `.github/workflows/sync-homebrew-tap.yml` | 2026-07-10 |
+| CL-081 | The current public setup path is a source checkout plus `scripts/install`, followed by `corepack pnpm dev`. Git is required only to clone/update that checkout; uv is source-only plumbing that syncs and selects its Python environment for `jobctrl` CLI commands. The source audit records 83 unique direct JavaScript packages, 1,428 pnpm lock records, 103 uv lock records, and two Playwright browser revisions. Preserved mixed-context observations sum directionally to about 4.28 GiB with system Chrome skipped or 5.58 GiB with the separately optional 1.3 GiB reference-machine Chrome included; `scripts/install` never installs system Chrome. These are contributor-path observations, not the installed-product contract or a reproducible additive install size. | README (Get Started); Getting Started (Source-Checkout Requirements; Prepare The Source Checkout) | Current | repo owner | `scripts/install`; `packaging/distribution/source-baseline.json`; `docs/local-development.md` | 2026-07-11 |
+| CL-082 | P0–P6 implement a deterministic Apple-silicon bundle, one native launcher/CLI, the explicit browser-capability split, immutable acquisition/lifecycle contracts, and a fail-closed signed release workflow. The tracked inventory declares 15 core components, one bundled optional-capability adapter, three official-channel provider packs, and two excluded developer-only components. This is not a public installation claim: no signed and notarized artifact, authenticated release pointer, stable Homebrew formula, or published-artifact clean-machine QA exists yet. Once published, curl and Homebrew must resolve the same payload and plain `jobctrl` command surface, with no source clone or user-installed toolchain. | ROADMAP (Now); README (Bundled distribution status); Getting Started (current source path versus installed contract); Local Development | Roadmap | repo owner | `launcher/internal/launcher/launcher.go`; `packaging/distribution/component-inventory.json`; `.github/workflows/release-distribution.yml`; `scripts/get`; `packaging/homebrew/Formula/jobctrl.rb.tmpl` | 2026-07-11 |
 | CL-083 | Contact records are kept per company or application with per-fact provenance and CSV import; outreach drafts are truthful and reviewable under the same anti-fabrication gates as resumes; the user sends messages themselves and logs the send (date + channel) — the only way an outreach thread is marked sent; follow-up reminders are surfaced-only suggestions; there is no outreach send transport. This does not describe the separately approval-bound Gmail email-application path in CL-062. | README (What It Does — contacts/outreach); Normal Flows §11 (Keep Contacts); Configuration (Contact Research; Outreach Follow-Ups) | Current | repo owner | Outreach planner close-out (`plans/implemented/2026-07-05-outreach-planner-plan.md`, INV-1 no-auto-send, four-layer enforcement + fixtures); [normal flows](user/normal-flows.md) §11; [configuration](user/configuration.md) (Contact Research, Outreach Follow-Ups) | 2026-07-09 |
 | CL-084 | JobCtrl's source is distributed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). | README (License); Comparison (Open-source license) | Current | repo owner | [`LICENSE`](../LICENSE); `package.json`; `workers/automation/pyproject.toml` | 2026-07-09 |
 | CL-085 | Native Windows Credential Manager and Linux Secret Service/keyring adapters are planned with parity to the shipped macOS Keychain boundary: environment precedence, presence-only API responses, restart-to-activate lifecycle, bounded failure behavior, and platform-host validation before promotion. | ROADMAP (Next) | Roadmap | repo owner | [`ROADMAP.md`](../ROADMAP.md) | 2026-07-10 |
 
-> **Why CL-082 remains roadmap work.** The checked-in artifact is a template
-> and P4's descriptor is deliberately unsigned and local-file-only. Promote it
-> only after P6 has independently verified a signed descriptor, published ZIP,
-> formula render, tap synchronization, and end-to-end install; a workflow file
-> plus credentials is not execution evidence.
+> **Why CL-082 remains roadmap work.** The bundle, launcher, installer,
+> lifecycle, and release authority now have local implementation and QA
+> evidence, but publication is the missing product fact. Promote the claim only
+> after a Developer ID-signed and notarized artifact, authenticated release
+> pointer, stable formula, immutable release, and both clean-machine acquisition
+> paths have been executed and read back successfully. Checked-in workflows and
+> local candidates are not public-install evidence.
 
 ## Maintenance cadence and re-review
 
@@ -304,7 +306,7 @@ altered the `Current`/`Beta` verdict.
 | **CL-055** | `Beta` | Outcome rates are descriptive and small-sample gated, not causal measurements. | `Current` would remove the maturity signal while the load-bearing qualifiers remain necessary. |
 | **CL-062** | `Current` | Gmail changed after the prior freeze from read-only to approval-bound application sending. | `Beta` requires Gmail-send claims in README/Security/Data & Safety to carry the label; `Current` accepts the deterministic gates as sufficient maturity. |
 | **CL-072** | `Current` | Public PR CI is intentionally manual after review, not automatic; the claim now states the real policy. | `Beta` would imply the scanner itself is rough rather than distinguish trigger policy from capability. |
-| **CL-082** | `Roadmap` | P4's formula is an unrendered template and the only descriptor is unsigned/local. | Promote only after P6 signed-descriptor verification, published-ZIP smoke, tap sync readback, and end-to-end install evidence. |
+| **CL-082** | `Roadmap` | P0–P6 are implemented locally, but signing/notarization, public pointer publication, stable formula promotion, and published-artifact QA have not executed. | Promote only after both acquisition paths resolve the same signed artifact and the clean-machine/readback gates pass. |
 
 ### Claim-by-claim guided-review checklist
 
@@ -362,7 +364,7 @@ altered the `Current`/`Beta` verdict.
 - [x] CL-073 — owner-approved `Current` on 2026-07-09
 - [x] CL-080 — owner-approved `Current` on 2026-07-09
 - [x] CL-081 — owner-approved `Current` on 2026-07-09
-- [x] CL-082 — owner-approved `Beta` on 2026-07-09
+- [x] CL-082 — owner-approved `Roadmap` on 2026-07-09
 - [x] CL-083 — owner-approved `Current` on 2026-07-09
 - [x] CL-084 — owner-approved `Current` on 2026-07-09
 - [x] CL-085 — owner-approved `Roadmap` on 2026-07-10

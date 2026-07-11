@@ -6,6 +6,12 @@ recorded in the git log and in [docs/plans/implemented/](docs/plans/implemented/
 
 ## Now
 
+- Publish and clean-machine validate the native Apple-silicon distribution.
+  P0–P6 implementation is prepared, but the public channel remains blocked on
+  Developer ID signing/notarization, authenticated release-origin publication,
+  immutable Releases, hosted Actions availability, and the P7 curl/Homebrew
+  acquisition matrix. Until those gates execute, the source checkout is the
+  only public setup path.
 - Tighten public documentation for local-first setup, configuration, normal
   flows, safety boundaries, and architecture onboarding.
 - Keep the local stack reliable: Temporal dev server, TypeScript API, Vite web
@@ -39,7 +45,9 @@ recorded in the git log and in [docs/plans/implemented/](docs/plans/implemented/
 
 ## Later
 
-- Package the local app for easier desktop installation and updates.
+- Extend the bundled distribution to additional platforms after the
+  Apple-silicon signing, publication, update/rollback, and clean-machine gates
+  pass.
 - Add export/import flows for local workspaces and generated artifacts.
 - Design hosted deployment only after the local product loop is reliable:
   authentication, tenant isolation, Postgres, object storage, managed workflow

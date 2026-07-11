@@ -103,15 +103,15 @@ artifacts. HTML/CSS-rendered resume PDFs also expose
 sibling HTML file used by the Plate-backed Apply Review editor. That route is
 limited to `render_format = 'html_pdf'` resume PDF artifacts and rejects
 historical `latex_pdf` rows with `415`; operators can create HTML siblings for
-approved legacy resume PDFs with
-`uv --project workers/automation run jobctrl migrate-resume-html` after
-checking `--dry-run`, or refresh already-HTML PDFs after renderer CSS changes
-with `--force`. `GET /v1/artifacts/:artifactId/preview/page/:pageNumber.png`
-renders a single registered PDF artifact page through local Poppler
-`pdftoppm` for page-image previews. The preview routes serve only
-known PDF artifact files from the local artifact projection; they return `404`
-for missing metadata/files, `415` for unsupported artifact/renderer formats,
-and `400` for invalid page numbers. The separate
+approved legacy resume PDFs with `jobctrl migrate-resume-html` after checking
+`--dry-run`, or refresh already-HTML PDFs after renderer CSS changes with
+`--force` (a source checkout uses the uv prefix documented in
+[Local Development](../local-development.md)). PDF pages are rendered in the
+web client through PDF.js; the retired
+`GET /v1/artifacts/:artifactId/preview/page/:pageNumber.png` Poppler route is
+not exposed. The preview routes serve only known PDF artifact files from the
+local artifact projection; they return `404` for missing metadata/files and
+`415` for unsupported artifact/renderer formats. The separate
 `POST /v1/artifacts/:artifactId/open` route delegates to the local OS opener;
 for resume text/PDF artifacts it first runs the resume-template ensure-current
 path and opens the newest approved same-type artifact when a render-only
