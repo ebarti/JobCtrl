@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 
 from jobctrl import cli
 from jobctrl.infrastructure.preflight import (
+    BUNDLED_PLAYWRIGHT_REMEDIATION,
     PLAYWRIGHT_INSTALL_COMMAND,
     PLAYWRIGHT_WORKTREE_GC_WARNING,
     check_playwright_chromium,
@@ -154,6 +155,27 @@ def test_check_reports_failure_when_driver_raises(
     assert "Executable doesn't exist" in message
     assert PLAYWRIGHT_INSTALL_COMMAND in message
     assert PLAYWRIGHT_WORKTREE_GC_WARNING in message
+
+
+@pytest.mark.parametrize("failure", ["missing", "launch"])
+def test_bundled_preflight_uses_jobctrl_repair_without_uv_guidance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
+) -> None:
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "bundled")
+    monkeypatch.setenv("JOBCTRL_PAYLOAD_DIR", str(tmp_path / "payload"))
+    if failure == "missing":
+        _patch_sync_playwright(monkeypatch, str(tmp_path / "missing-chromium"))
+    else:
+        binary = tmp_path / "chromium"
+        binary.write_bytes(b"#!/bin/sh\n")
+        _patch_sync_playwright(monkeypatch, str(binary), launch_error=RuntimeError("headless shell missing"))
+
+    ok, message = check_playwright_chromium()
+
+    assert ok is False
+    assert BUNDLED_PLAYWRIGHT_REMEDIATION in message
+    assert PLAYWRIGHT_INSTALL_COMMAND not in message
+    assert PLAYWRIGHT_WORKTREE_GC_WARNING not in message
 
 
 # --- worker startup gate -------------------------------------------------------

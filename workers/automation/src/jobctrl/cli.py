@@ -41,6 +41,8 @@ app = typer.Typer(
     help="AI-powered end-to-end job application pipeline.",
     no_args_is_help=True,
 )
+capability_app = typer.Typer(help="Inspect and explicitly manage optional browser capabilities.")
+app.add_typer(capability_app, name="capability")
 console = Console()
 log = logging.getLogger(__name__)
 
@@ -249,7 +251,6 @@ def _node_status() -> tuple[bool, str]:
 
 
 def _setup_toolchain_rows() -> list[tuple[str, bool, str]]:
-    from jobctrl.config import get_chrome_path
     from jobctrl.infrastructure.preflight import check_playwright_chromium
 
     rows: list[tuple[str, bool, str]] = []
@@ -262,12 +263,8 @@ def _setup_toolchain_rows() -> list[tuple[str, bool, str]]:
     ):
         ok, note = _tool_available(command)
         rows.append((label, ok, note))
-    try:
-        rows.append(("Chrome/Chromium", True, get_chrome_path()))
-    except FileNotFoundError as exc:
-        rows.append(("Chrome/Chromium", False, str(exc)))
     chromium_ok, chromium_note = check_playwright_chromium()
-    rows.append(("Playwright Chromium", chromium_ok, chromium_note))
+    rows.append(("Managed Playwright Chromium", chromium_ok, chromium_note))
     return rows
 
 
@@ -713,6 +710,150 @@ def main(
     ),
 ) -> None:
     """JobCtrl — AI-powered end-to-end job application pipeline."""
+
+
+@capability_app.command("list")
+def capability_list() -> None:
+    """Show managed core and optional authenticated-browser readiness."""
+
+    from jobctrl.browser_capabilities import list_browser_capabilities
+
+    table = Table(title="JobCtrl browser capabilities")
+    table.add_column("Capability")
+    table.add_column("Status")
+    table.add_column("Details")
+    marks = {
+        "ready": "[green]READY[/green]",
+        "disabled": "[dim]DISABLED[/dim]",
+        "missing": "[yellow]MISSING[/yellow]",
+        "failed": "[red]FAILED[/red]",
+        "unavailable": "[red]UNAVAILABLE[/red]",
+    }
+    for capability in list_browser_capabilities():
+        detail = capability.detail
+        if capability.executable is not None:
+            detail = f"{detail} {capability.executable}"
+        table.add_row(capability.id, marks[capability.status], detail)
+    console.print(table)
+
+
+@capability_app.command("enable")
+def capability_enable(
+    name: str = typer.Argument(..., help="Capability to enable."),
+    browser_path: Path | None = typer.Option(
+        None,
+        "--browser-path",
+        help="Explicit Chrome or Chromium executable to adopt.",
+    ),
+    managed_pack: bool = typer.Option(
+        False,
+        "--managed-pack",
+        help="Request a managed browser pack (currently unavailable; nothing is downloaded).",
+    ),
+    copy_profile_from: Path | None = typer.Option(
+        None,
+        "--copy-profile-from",
+        help="Existing profile to copy into JobCtrl-owned LinkedIn resolver storage.",
+    ),
+    consent_copy_profile: bool = typer.Option(
+        False,
+        "--consent-copy-profile",
+        help="Affirm separately that JobCtrl may copy the supplied browser profile.",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Accept safe non-profile prompts."),
+    non_interactive: bool = typer.Option(False, "--non-interactive", help="Do not prompt."),
+) -> None:
+    """Enable an optional browser only after choosing its executable explicitly."""
+
+    from jobctrl.browser_capabilities import (
+        BrowserCapabilityError,
+        BrowserCapabilityUnavailableError,
+        copy_authenticated_linkedin_profile,
+        enable_system_browser_capability,
+        managed_optional_browser_pack_unavailable,
+    )
+
+    if copy_profile_from is not None and name != "authenticated-linkedin-browser":
+        console.print("[red]Profile copying is only available for authenticated-linkedin-browser.[/red]")
+        raise typer.Exit(code=2)
+    if consent_copy_profile and copy_profile_from is None:
+        console.print("[red]--consent-copy-profile requires --copy-profile-from.[/red]")
+        raise typer.Exit(code=2)
+    if managed_pack and browser_path is not None:
+        console.print("[red]Choose either --managed-pack or --browser-path, not both.[/red]")
+        raise typer.Exit(code=2)
+    if managed_pack:
+        try:
+            managed_optional_browser_pack_unavailable(name)
+        except BrowserCapabilityUnavailableError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            raise typer.Exit(code=2) from exc
+
+    if browser_path is None:
+        if non_interactive or yes:
+            console.print(
+                "[red]Enabling a browser capability requires --browser-path with an explicit Chrome/Chromium executable.[/red]"
+            )
+            raise typer.Exit(code=2)
+        source = typer.prompt("Browser source (system or managed-pack)", default="system").strip().lower()
+        if source == "managed-pack":
+            try:
+                managed_optional_browser_pack_unavailable(name)
+            except BrowserCapabilityUnavailableError as exc:
+                console.print(f"[yellow]{exc}[/yellow]")
+                raise typer.Exit(code=2) from exc
+        if source != "system":
+            console.print("[red]Choose system or managed-pack.[/red]")
+            raise typer.Exit(code=2)
+        browser_path = Path(typer.prompt("Chrome/Chromium executable path")).expanduser()
+
+    if copy_profile_from is not None and not consent_copy_profile:
+        # ``--yes`` is deliberately not accepted as profile-copy consent.
+        if yes or non_interactive:
+            console.print(
+                "[red]Copying an existing browser profile requires --consent-copy-profile; --yes cannot grant this consent.[/red]"
+            )
+            raise typer.Exit(code=2)
+        consent_copy_profile = typer.confirm(
+            "Copy this existing browser profile into JobCtrl-owned storage?",
+            default=False,
+        )
+        if not consent_copy_profile:
+            console.print("[yellow]Browser capability was not enabled because profile-copy consent was not granted.[/yellow]")
+            raise typer.Exit(code=2)
+
+    try:
+        status = enable_system_browser_capability(name, browser_path)
+        if copy_profile_from is not None:
+            destination = copy_authenticated_linkedin_profile(
+                copy_profile_from,
+                consent=consent_copy_profile,
+            )
+            console.print(f"[green]{name} ready.[/green] Profile copied to JobCtrl-owned storage: {destination}")
+        else:
+            level = "green" if status.status == "ready" else "yellow"
+            console.print(f"[{level}]{name} {status.status}.[/{level}] {status.detail}")
+            if name == "authenticated-linkedin-browser":
+                console.print(
+                    "[yellow]A separate consented profile copy is still required before authenticated LinkedIn resolution can run.[/yellow]"
+                )
+    except BrowserCapabilityError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+
+
+@capability_app.command("disable")
+def capability_disable(name: str = typer.Argument(..., help="Optional capability to disable.")) -> None:
+    """Disable an optional authenticated-browser capability immediately."""
+
+    from jobctrl.browser_capabilities import BrowserCapabilityError, disable_browser_capability
+
+    try:
+        status = disable_browser_capability(name)
+    except BrowserCapabilityError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+    console.print(f"[green]{name} {status.status}.[/green] {status.detail}")
 
 
 @app.command()
@@ -1374,7 +1515,7 @@ def apply(
 
     # --- Full apply mode ---
 
-    # Check 1: Tier 3 required (Claude apply runtime + Chrome)
+    # Check 1: Tier 3 required (Claude apply runtime + explicitly enabled browser capability)
     check_tier(3, "auto-apply")
 
     # Check 2: Profile exists
@@ -2473,7 +2614,7 @@ def doctor() -> None:
     import shutil
     from jobctrl.config import (
         load_env, DB_PATH, RESUME_PATH, RESUME_PDF_PATH,
-        get_chrome_path, load_search_config,
+        load_search_config,
         gmail_mcp_auth_status,
     )
     from jobctrl.domain.tenant import LOCAL_TENANT
@@ -2585,28 +2726,30 @@ def doctor() -> None:
     else:
         results.append(("resume.txt", fail_mark, "Run 'jobctrl init' to add your resume"))
 
-    try:
-        from playwright.sync_api import sync_playwright
+    from jobctrl.browser_capabilities import list_browser_capabilities
 
-        with sync_playwright() as playwright:
-            chromium_path = str(playwright.chromium.executable_path)
-        if Path(chromium_path).exists():
-            results.append(("resume PDF renderer", ok_mark, f"HTML/CSS via Playwright Chromium at {chromium_path}"))
-        else:
-            results.append(("resume PDF renderer", fail_mark, "Run 'playwright install chromium'"))
-    except Exception as exc:  # noqa: BLE001 - doctor should report setup issues, not crash.
-        results.append(("resume PDF renderer", fail_mark, f"Playwright Chromium unavailable: {exc}"))
-
-    # Playwright Chromium is required for discovery scraping and HTML/CSS PDF
-    # rendering. This is the same check the worker runs at startup to fail fast.
-    from jobctrl.infrastructure.preflight import check_playwright_chromium
-
-    chromium_ok, chromium_note = check_playwright_chromium()
+    browser_capabilities = {item.id: item for item in list_browser_capabilities()}
+    core_browser = browser_capabilities["core-browser"]
     results.append((
-        "playwright chromium (scraping + PDF)",
-        ok_mark if chromium_ok else fail_mark,
-        chromium_note,
+        "core browser (scraping + PDF)",
+        ok_mark if core_browser.status == "ready" else fail_mark,
+        core_browser.detail,
     ))
+    auto_apply_browser = browser_capabilities["auto-apply-browser"]
+    linkedin_browser = browser_capabilities["authenticated-linkedin-browser"]
+    capability_marks = {
+        "ready": ok_mark,
+        "disabled": "[dim]DISABLED[/dim]",
+        "missing": warn_mark,
+        "failed": fail_mark,
+        "unavailable": fail_mark,
+    }
+    for capability in (auto_apply_browser, linkedin_browser):
+        results.append((
+            f"{capability.id} capability",
+            capability_marks[capability.status],
+            capability.detail,
+        ))
 
     try:
         search_cfg = load_search_config()
@@ -2670,14 +2813,6 @@ def doctor() -> None:
             results.append(("Claude apply runtime", fail_mark, "set JOBCTRL_CLAUDE_BIN or install dependencies"))
     except Exception as exc:  # noqa: BLE001 - doctor is diagnostic
         results.append(("Claude apply runtime", fail_mark, f"unavailable: {exc}"))
-
-    # Chrome
-    try:
-        chrome_path = get_chrome_path()
-        results.append(("Chrome/Chromium", ok_mark, chrome_path))
-    except FileNotFoundError:
-        results.append(("Chrome/Chromium", fail_mark,
-                        "Install Chrome or set CHROME_PATH env var (needed for auto-apply)"))
 
     # Playwright MCP uses the payload-owned Node/runtime wrapper in bundled
     # mode; only source checkouts need a machine-level npx executable.
@@ -2825,10 +2960,10 @@ def doctor() -> None:
 
     if tier == 1:
         console.print("[dim]  → Tier 2 unlocks: scoring, tailoring, cover letters (needs an LLM provider)[/dim]")
-        tier3_tools = "Claude apply runtime + Chrome" + ("" if bundled else " + Node.js")
+        tier3_tools = "Claude apply runtime + an explicitly enabled auto-apply browser capability" + ("" if bundled else " + Node.js")
         console.print(f"[dim]  → Tier 3 unlocks: auto-apply (needs {tier3_tools})[/dim]")
     elif tier == 2:
-        tier3_tools = "Claude apply runtime + Chrome" + ("" if bundled else " + Node.js")
+        tier3_tools = "Claude apply runtime + an explicitly enabled auto-apply browser capability" + ("" if bundled else " + Node.js")
         console.print(f"[dim]  → Tier 3 unlocks: auto-apply (needs {tier3_tools})[/dim]")
 
     console.print()

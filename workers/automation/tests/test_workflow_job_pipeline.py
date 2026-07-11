@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -46,6 +47,19 @@ from jobctrl.pipeline.workflow import (
 )
 from jobctrl.scoring.activities import score_activity
 from jobctrl.llm import SpendBudgetStatus
+
+
+@pytest.fixture(autouse=True)
+def permit_browser_for_existing_pipeline_workflow_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pipeline workflow tests exercise child-workflow behavior after policy validation."""
+
+    from jobctrl import browser_capabilities
+
+    monkeypatch.setattr(
+        browser_capabilities,
+        "require_system_browser_capability",
+        lambda _capability: Path("/test/Chromium"),
+    )
 
 
 _OK_OBSERVED = ({"status": "ok"}, 0.0, "ok")

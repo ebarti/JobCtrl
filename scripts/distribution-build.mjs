@@ -3036,6 +3036,13 @@ async function generateReleaseMetadata(payloadRoot, contracts, {
     lockedInputs: contracts.locks.inputs.map(({ id, componentId, version, url, sha256 }) => ({ id, componentId, version, url, sha256 })),
   });
   await writeJson(path.join(releaseRoot, "provider-packs.lock.json"), contracts.providerPackLocks);
+  // The Python worker reads this immutable catalog in bundled mode. It lives
+  // below signed release metadata, never in mutable JOBCTRL_DIR state.
+  await copyFile(
+    path.join(REPO_ROOT, "packaging", "distribution", "capability-policy.json"),
+    path.join(releaseRoot, "capability-policy.json"),
+  );
+  await chmod(path.join(releaseRoot, "capability-policy.json"), 0o644);
 
   const allowedUnmaterialized = new Set(["jobctrl-release-metadata"]);
   if (mode === "fixture") {

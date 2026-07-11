@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -25,6 +26,19 @@ from jobctrl.infrastructure.temporal.finalize import (
     record_workflow_started,
 )
 from jobctrl.llm import SpendBudgetStatus
+
+
+@pytest.fixture(autouse=True)
+def permit_browser_for_existing_apply_workflow_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Workflow retry tests execute after the capability gate has passed."""
+
+    from jobctrl import browser_capabilities
+
+    monkeypatch.setattr(
+        browser_capabilities,
+        "require_system_browser_capability",
+        lambda _capability: Path("/test/Chromium"),
+    )
 
 
 @activity.defn(name="check_spend_budget")

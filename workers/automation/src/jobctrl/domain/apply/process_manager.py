@@ -45,7 +45,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from jobctrl.domain.apply.aggregate import ApplyRun
 from jobctrl.domain.apply.value_objects import (
@@ -143,12 +143,17 @@ class ApplySaga:
         repository: ApplyRunRepository,
         email_sender: EmailApplicationSenderPort | None = None,
         timeout_seconds: int | None = None,
+        submission_authorizer: Callable[[], None] | None = None,
     ) -> None:
         self._browser = browser_port
         self._agent = agent_port
         self._repository = repository
         self._email_sender = email_sender
         self._timeout_seconds = timeout_seconds
+        # This is deliberately a port-shaped callback rather than an
+        # infrastructure import: immediately before a live agent can use the
+        # browser, the composition root must re-authorize the capability.
+        self._submission_authorizer = submission_authorizer or (lambda: None)
 
     # ------------------------------------------------------------------
     # Public API
@@ -244,6 +249,34 @@ class ApplySaga:
             # 3. Drive the agent
             try:
                 if not run.dry_run:
+                    # The initial launch gate is not enough for a long-running
+                    # saga. Re-check at the durable intent + agent boundary so
+                    # revocation after Chrome starts cannot create an intent or
+                    # start an autonomous submission process.
+                    try:
+                        self._submission_authorizer()
+                    except Exception as exc:  # noqa: BLE001 - external authorization port
+                        log.info("ApplySaga: submission authorization was revoked: %s", exc)
+                        run = run.record_event(
+                            event_type="ApplySubmissionBlocked",
+                            occurred_at=_utc_now(),
+                            level="warn",
+                            message="live apply submission was blocked by the active capability policy",
+                            payload={"reason": "submission_authorization_revoked"},
+                        )
+                        run = self._compensate_failure(
+                            run,
+                            error_code="SUBMISSION_AUTHORIZATION_REVOKED",
+                            message="live browser capability is no longer enabled",
+                            retryable=True,
+                            duration_ms=int((time.time() - start) * 1000),
+                        )
+                        self._repository.save(run)
+                        return SagaOutcome(
+                            apply_run=run,
+                            browser_launched=browser_launched,
+                            agent_invoked=False,
+                        )
                     intended_at = _utc_now()
                     run = run.record_event(
                         event_type="ApplySubmitIntended",

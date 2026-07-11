@@ -538,6 +538,7 @@ test("fixture builds are bytewise reproducible in different directories", async 
     ["better-sqlite3-native", "font-jetbrains-mono", "font-plus-jakarta-sans", "system-browser-adapter"],
   );
   assert.ok(first.manifest.files.some((file) => file.path === "release/sbom.cdx.json"));
+  assert.ok(first.manifest.files.some((file) => file.path === "release/capability-policy.json"));
   assert.ok(first.manifest.files.every((file) => !/claude|openai.codex|antigravity/i.test(file.path)));
 });
 

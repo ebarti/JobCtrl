@@ -413,6 +413,7 @@ def test_authenticated_linkedin_session_skips_robots_but_keeps_budget(
         _seed_pending(conn, url, "linkedin")
         sink: list[str] = []
         monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "1")
+        monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: True)
         monkeypatch.setattr(
             detail, "LinkedInApplyUrlResolver", lambda **kw: _FakeResolver(sink, **kw)
         )
@@ -453,6 +454,7 @@ def test_non_linkedin_url_with_linkedin_substring_uses_anonymous_context(
             return _FakeResolver([], **kwargs)
 
         monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "1")
+        monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: True)
         monkeypatch.setattr(detail, "LinkedInApplyUrlResolver", _resolver_factory)
         monkeypatch.setattr(detail, "sync_playwright", lambda: anonymous_playwright)
 
@@ -485,6 +487,7 @@ def test_mixed_linkedin_batch_does_not_reuse_authenticated_page_for_other_hosts(
             "LinkedInApplyUrlResolver",
             lambda **kw: _FakeResolver(authenticated_gotos, **kw),
         )
+        monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: True)
         monkeypatch.setattr(detail, "sync_playwright", lambda: anonymous_playwright)
 
         stats = scrape_site_batch(

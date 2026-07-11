@@ -15,6 +15,22 @@ from jobctrl.apply import chrome
 from jobctrl.infrastructure.network import PublicUrlDecision
 
 
+@pytest.fixture(autouse=True)
+def permit_browser_for_existing_guard_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests exercise CDP guards after capability enforcement has passed."""
+
+    monkeypatch.setattr(
+        chrome,
+        "require_system_browser_capability",
+        lambda _capability: chrome.config.get_chrome_path(),
+    )
+    monkeypatch.setattr(
+        chrome,
+        "system_browser_capability_is_enabled",
+        lambda _capability: True,
+    )
+
+
 class _HostileEmployerHandler(BaseHTTPRequestHandler):
     posts: list[str] = []
     deletes: list[str] = []
@@ -115,6 +131,14 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkey
         try:
             _wait_for_page_target(dry_port)
             _wait_for_dry_run_guard(dry_port)
+            _create_page_target(dry_port, "about:blank")
+            deadline = time.time() + 5
+            while (
+                chrome.get_dry_run_cdp_guard_evidence(dry_port)["protected_targets"] < 2
+                and time.time() < deadline
+            ):
+                time.sleep(0.05)
+            assert chrome.get_dry_run_cdp_guard_evidence(dry_port)["protected_targets"] >= 2
             blocked = _navigate_and_read_blocked_flag(
                 dry_port,
                 f"http://127.0.0.1:{server.server_port}/",
@@ -232,12 +256,12 @@ def test_launch_chrome_installs_public_destination_guard_for_live_runs(tmp_path,
     monkeypatch.setattr(
         chrome,
         "install_public_destination_cdp_guard",
-        lambda port: calls.append(("public", port)),
+        lambda port, **_ownership: calls.append(("public", port)),
     )
     monkeypatch.setattr(
         chrome,
         "install_dry_run_cdp_guard",
-        lambda port: calls.append(("dry_run", port)),
+        lambda port, **_ownership: calls.append(("dry_run", port)),
     )
 
     chrome.launch_chrome(worker_id=903, port=9555, headless=True, dry_run=False)
@@ -268,12 +292,12 @@ def test_launch_chrome_uses_combined_dry_run_guard_for_dry_runs(tmp_path, monkey
     monkeypatch.setattr(
         chrome,
         "install_public_destination_cdp_guard",
-        lambda port: calls.append(("public", port)),
+        lambda port, **_ownership: calls.append(("public", port)),
     )
     monkeypatch.setattr(
         chrome,
         "install_dry_run_cdp_guard",
-        lambda port: calls.append(("dry_run", port)),
+        lambda port, **_ownership: calls.append(("dry_run", port)),
     )
 
     chrome.launch_chrome(worker_id=904, port=9666, headless=True, dry_run=True)
@@ -281,6 +305,161 @@ def test_launch_chrome_uses_combined_dry_run_guard_for_dry_runs(tmp_path, monkey
     assert calls == [("dry_run", 9666)]
     assert chrome._DryRunCdpGuard(port=1).enforce_dry_run is True
     assert chrome._PublicDestinationCdpGuard(port=1).enforce_dry_run is False
+
+
+def test_browser_guard_waits_for_initial_fetch_ack_and_pauses_new_pages() -> None:
+    class _Timeout(Exception):
+        pass
+
+    class _FakeWebsocketModule:
+        WebSocketTimeoutException = _Timeout
+
+    class _FakeBrowserWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict] = []
+            self._messages: list[str] = []
+            self._condition = threading.Condition()
+            self._held_fetch_id: int | None = None
+            self.fetch_sent = threading.Event()
+
+        def _enqueue(self, message: dict) -> None:
+            with self._condition:
+                self._messages.append(json.dumps(message))
+                self._condition.notify_all()
+
+        def send(self, payload: str) -> None:
+            message = json.loads(payload)
+            self.sent.append(message)
+            method = message["method"]
+            message_id = message["id"]
+            if method == "Target.getTargets":
+                self._enqueue(
+                    {
+                        "id": message_id,
+                        "result": {
+                            "targetInfos": [
+                                {"targetId": "initial-page", "type": "page"},
+                            ]
+                        },
+                    }
+                )
+                return
+            if method == "Target.attachToTarget":
+                self._enqueue(
+                    {"id": message_id, "result": {"sessionId": "initial-session"}}
+                )
+                return
+            if method == "Fetch.enable" and self._held_fetch_id is None:
+                self._held_fetch_id = message_id
+                self.fetch_sent.set()
+                return
+            self._enqueue({"id": message_id, "sessionId": message.get("sessionId"), "result": {}})
+
+        def release_initial_fetch(self) -> None:
+            assert self._held_fetch_id is not None
+            self._enqueue(
+                {
+                    "id": self._held_fetch_id,
+                    "sessionId": "initial-session",
+                    "result": {},
+                }
+            )
+
+        def recv(self) -> str:
+            with self._condition:
+                if not self._messages:
+                    self._condition.wait(timeout=0.02)
+                if not self._messages:
+                    raise _Timeout
+                return self._messages.pop(0)
+
+        def close(self) -> None:
+            return None
+
+    websocket_connection = _FakeBrowserWebSocket()
+    guard = chrome._PublicDestinationCdpGuard(port=1, capability_checker=lambda: True)
+    session = chrome._BrowserApplyGuardSession(
+        _FakeWebsocketModule,
+        websocket_connection,
+        guard,
+    )
+    errors: list[BaseException] = []
+
+    def arm() -> None:
+        try:
+            session.arm_and_wait_until_ready(timeout=2)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    arm_thread = threading.Thread(target=arm)
+    arm_thread.start()
+    assert websocket_connection.fetch_sent.wait(timeout=2)
+    arm_thread.join(timeout=0.1)
+    assert arm_thread.is_alive(), "guard startup must wait for the Fetch.enable response"
+    assert guard.evidence()["protected_targets"] == 0
+
+    websocket_connection.release_initial_fetch()
+    arm_thread.join(timeout=2)
+    assert not arm_thread.is_alive()
+    assert errors == []
+    assert guard.evidence()["protected_targets"] == 1
+    assert any(message["method"] == "Target.attachToTarget" for message in websocket_connection.sent)
+    auto_attach = next(
+        message
+        for message in websocket_connection.sent
+        if message["method"] == "Target.setAutoAttach"
+    )
+    assert auto_attach["params"] == {
+        "autoAttach": True,
+        "waitForDebuggerOnStart": True,
+        "flatten": True,
+    }
+
+    session._handle_message(
+        {
+            "method": "Target.attachedToTarget",
+            "params": {
+                "sessionId": "new-session",
+                "waitingForDebugger": True,
+                "targetInfo": {"targetId": "new-page", "type": "page"},
+            },
+        }
+    )
+    deadline = time.time() + 2
+    while "new-page" not in session._resumed_targets and time.time() < deadline:
+        session._receive_one()
+    new_session_methods = [
+        message["method"]
+        for message in websocket_connection.sent
+        if message.get("sessionId") == "new-session"
+    ]
+    assert "Fetch.enable" in new_session_methods
+    assert new_session_methods.index("Fetch.enable") < new_session_methods.index(
+        "Runtime.runIfWaitingForDebugger"
+    )
+    assert guard.evidence()["protected_targets"] == 2
+    session._close()
+
+
+def test_cleanup_worker_terminates_the_tracked_chrome_process(monkeypatch):
+    class _RunningProcess:
+        pid = 9182
+
+        def poll(self) -> None:
+            return None
+
+    worker_id = 918
+    process = _RunningProcess()
+    killed: list[int] = []
+    monkeypatch.setattr(chrome, "_kill_process_tree", lambda pid: killed.append(pid))
+    with chrome._chrome_lock:
+        chrome._chrome_procs[worker_id] = process
+
+    chrome.cleanup_worker(worker_id, process)
+
+    assert killed == [9182]
+    with chrome._chrome_lock:
+        assert worker_id not in chrome._chrome_procs
 
 
 def test_public_destination_cdp_guard_fails_loopback_requests(monkeypatch):
@@ -318,7 +497,7 @@ def test_public_destination_cdp_guard_fails_loopback_requests(monkeypatch):
 
     monkeypatch.setattr(websocket, "create_connection", lambda *_args, **_kwargs: _FakeWebSocket())
 
-    guard = chrome._PublicDestinationCdpGuard(port=1)
+    guard = chrome._PublicDestinationCdpGuard(port=1, capability_checker=lambda: True)
     chrome._run_apply_page_session("target-1", "ws://example.invalid/devtools/page/1", guard)
 
     assert {
@@ -367,7 +546,7 @@ def test_public_destination_cdp_guard_continues_public_requests(monkeypatch):
     monkeypatch.setattr(websocket, "create_connection", lambda *_args, **_kwargs: _FakeWebSocket())
     monkeypatch.setattr(chrome, "validate_public_http_url", lambda _url: PublicUrlDecision(True))
 
-    guard = chrome._PublicDestinationCdpGuard(port=1)
+    guard = chrome._PublicDestinationCdpGuard(port=1, capability_checker=lambda: True)
     chrome._run_apply_page_session("target-2", "ws://example.invalid/devtools/page/2", guard)
 
     assert {
@@ -377,6 +556,127 @@ def test_public_destination_cdp_guard_continues_public_requests(monkeypatch):
     } in sent
     assert all(message.get("method") != "Fetch.failRequest" for message in sent)
     assert guard.evidence()["protected_targets"] == 1
+
+
+def test_public_destination_guard_fails_live_http_submit_after_capability_revocation(monkeypatch):
+    """Revocation is enforced at the paused HTTP request, not next job claim."""
+
+    websocket = pytest.importorskip("websocket")
+    sent: list[dict] = []
+    killed_processes: list[int] = []
+
+    class _RunningProcess:
+        pid = 7319
+
+        def poll(self) -> None:
+            return None
+
+    class _FakeWebSocket:
+        def __init__(self) -> None:
+            self._delivered = False
+
+        def send(self, payload: str) -> None:
+            sent.append(json.loads(payload))
+
+        def recv(self) -> str:
+            if self._delivered:
+                raise RuntimeError("end test session")
+            self._delivered = True
+            return json.dumps(
+                {
+                    "method": "Fetch.requestPaused",
+                    "params": {
+                        "requestId": "submit-after-revoke",
+                        "networkId": "network-submit",
+                        "resourceType": "Document",
+                        "request": {
+                            "method": "POST",
+                            "url": "https://careers.example.com/apply/submit",
+                        },
+                    },
+                }
+            )
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(websocket, "create_connection", lambda *_args, **_kwargs: _FakeWebSocket())
+    monkeypatch.setattr(chrome, "_kill_process_tree", lambda pid: killed_processes.append(pid))
+    monkeypatch.setattr(
+        chrome,
+        "_kill_on_port",
+        lambda _port: (_ for _ in ()).throw(AssertionError("revocation must not kill a port owner")),
+    )
+
+    worker_id = 731
+    process = _RunningProcess()
+    with chrome._chrome_lock:
+        chrome._chrome_procs[worker_id] = process
+    guard = chrome._PublicDestinationCdpGuard(
+        port=8123,
+        capability_checker=lambda: False,
+        worker_id=worker_id,
+        process=process,
+    )
+    try:
+        chrome._run_apply_page_session(
+            "target-revoked",
+            "ws://example.invalid/devtools/page/1",
+            guard,
+        )
+    finally:
+        with chrome._chrome_lock:
+            chrome._chrome_procs.pop(worker_id, None)
+
+    assert {
+        "id": 4,
+        "method": "Fetch.failRequest",
+        "params": {"requestId": "submit-after-revoke", "errorReason": "BlockedByClient"},
+    } in sent
+    assert {"id": 5, "method": "Page.close", "params": {}} in sent
+    assert all(message.get("method") != "Fetch.continueRequest" for message in sent)
+    assert killed_processes == [7319]
+    assert guard.evidence()["blocked_channels"] == ("capability_revoked:POST",)
+
+
+def test_guard_revocation_preserves_foreign_listener_when_process_is_not_tracked(monkeypatch):
+    class _RunningProcess:
+        pid = 8181
+
+        def poll(self) -> None:
+            return None
+
+    worker_id = 818
+    owned_process = _RunningProcess()
+    replaced_process = _RunningProcess()
+    killed_processes: list[int] = []
+    monkeypatch.setattr(chrome, "_kill_process_tree", lambda pid: killed_processes.append(pid))
+    monkeypatch.setattr(
+        chrome,
+        "_kill_on_port",
+        lambda _port: (_ for _ in ()).throw(AssertionError("revocation must not scan listeners")),
+    )
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = int(listener.getsockname()[1])
+        with chrome._chrome_lock:
+            chrome._chrome_procs[worker_id] = replaced_process
+        guard = chrome._PublicDestinationCdpGuard(
+            port=port,
+            capability_checker=lambda: False,
+            worker_id=worker_id,
+            process=owned_process,
+        )
+        try:
+            guard.close_owned_browser()
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
+                assert client.connect_ex(("127.0.0.1", port)) == 0
+        finally:
+            with chrome._chrome_lock:
+                chrome._chrome_procs.pop(worker_id, None)
+
+    assert killed_processes == []
 
 
 def test_dry_run_guard_evidence_reports_unprotected_when_guard_is_missing():
@@ -468,6 +768,35 @@ def _wait_for_page_target(port: int) -> str:
                     return ws_url
         time.sleep(0.1)
     raise AssertionError("Chrome did not expose a page CDP target")
+
+
+def _create_page_target(port: int, url: str) -> str:
+    websocket = pytest.importorskip("websocket")
+    version = chrome._cdp_json(port, "/json/version")
+    assert isinstance(version, dict)
+    ws_url = str(version.get("webSocketDebuggerUrl") or "")
+    assert ws_url
+    ws = websocket.create_connection(ws_url, timeout=5, suppress_origin=True)
+    try:
+        ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Target.createTarget",
+                    "params": {"url": url},
+                }
+            )
+        )
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            message = json.loads(ws.recv())
+            if message.get("id") == 1:
+                target_id = str(message.get("result", {}).get("targetId") or "")
+                assert target_id
+                return target_id
+    finally:
+        ws.close()
+    raise AssertionError("Chrome did not create the requested page target")
 
 
 def _navigate_and_read_blocked_flag(port: int, url: str) -> bool:

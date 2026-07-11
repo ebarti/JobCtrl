@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from jobctrl.apply import launcher as launcher_module
+from jobctrl import browser_capabilities
 from jobctrl.apply.launcher import (
     _kill_claude_processes_for_interrupt,
     acquire_job,
@@ -31,6 +32,17 @@ from jobctrl.database import close_connection, get_connection, init_db
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
 from jobctrl.workflow_specs import StartedWorkflowResult
+
+
+@pytest.fixture(autouse=True)
+def permit_browser_for_existing_apply_launcher_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Launcher regression tests run after the browser capability gate."""
+
+    monkeypatch.setattr(
+        browser_capabilities,
+        "require_system_browser_capability",
+        lambda _capability: Path("/test/Chromium"),
+    )
 
 
 def _insert_ready_job(

@@ -10,14 +10,19 @@ from __future__ import annotations
 import logging
 import os
 import re
-import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qsl, unquote, urljoin, urlparse
 
-from jobctrl import config
+from jobctrl.browser_capabilities import (
+    BrowserCapabilityError,
+    browser_capability_status,
+    capability_profile_dir,
+    require_authenticated_linkedin_profile,
+    require_system_browser_capability,
+)
 from jobctrl.infrastructure.network import (
     PublicHttpUrlRouteGuard,
     PublicUrlDecision,
@@ -28,8 +33,6 @@ from jobctrl.infrastructure.network.proxy import ProxyConfig
 log = logging.getLogger(__name__)
 
 LINKEDIN_APPLY_RESOLVER_ENABLED_ENV = "JOBCTRL_LINKEDIN_APPLY_RESOLVER"
-LINKEDIN_APPLY_PROFILE_DIR_ENV = "JOBCTRL_LINKEDIN_APPLY_PROFILE_DIR"
-LINKEDIN_APPLY_SOURCE_PROFILE_DIR_ENV = "JOBCTRL_LINKEDIN_APPLY_SOURCE_PROFILE_DIR"
 LINKEDIN_APPLY_CHROME_PROFILE_ENV = "JOBCTRL_LINKEDIN_APPLY_CHROME_PROFILE"
 LINKEDIN_APPLY_HEADLESS_ENV = "JOBCTRL_LINKEDIN_APPLY_HEADLESS"
 LINKEDIN_APPLY_TIMEOUT_SECONDS_ENV = "JOBCTRL_LINKEDIN_APPLY_TIMEOUT_SECONDS"
@@ -68,21 +71,24 @@ class LinkedInApplyResolution:
 
 
 def linkedin_apply_resolver_enabled() -> bool:
-    """Return whether authenticated LinkedIn apply resolution should run."""
+    """Return whether the explicit capability permits authenticated resolution."""
 
     raw = os.environ.get(LINKEDIN_APPLY_RESOLVER_ENABLED_ENV)
-    if raw is None:
-        return True
-    return raw.strip().lower() not in {"0", "false", "no", "off"}
+    env_enabled = raw is None or raw.strip().lower() not in {"0", "false", "no", "off"}
+    if not env_enabled:
+        return False
+    try:
+        return browser_capability_status("authenticated-linkedin-browser").status == "ready"
+    except BrowserCapabilityError:
+        # A corrupt/missing local capability record must never turn into an
+        # authenticated browser attempt or break otherwise anonymous enrichment.
+        return False
 
 
 def default_linkedin_apply_profile_dir() -> Path:
-    """Dedicated persistent Chrome profile used for LinkedIn apply resolving."""
+    """Return only the JobCtrl-owned LinkedIn resolver profile directory."""
 
-    configured = os.environ.get(LINKEDIN_APPLY_PROFILE_DIR_ENV)
-    if configured:
-        return Path(configured).expanduser()
-    return config.CHROME_WORKER_DIR / "linkedin-apply-url-resolver"
+    return capability_profile_dir("authenticated-linkedin-browser")
 
 
 def linkedin_apply_headless_default() -> bool:
@@ -153,8 +159,9 @@ class LinkedInApplyUrlResolver:
     def start(self) -> None:
         if self._context is not None:
             return
-        self._profile_dir.mkdir(parents=True, exist_ok=True)
-        _bootstrap_profile_dir(self._profile_dir, chrome_profile=self._chrome_profile)
+        # This guard must precede both profile access and Playwright startup.
+        chrome_executable = self._require_active_capability()
+        profile_dir = require_authenticated_linkedin_profile(profile_dir=self._profile_dir)
         if self._external_playwright is None:
             from playwright.sync_api import sync_playwright
 
@@ -164,7 +171,7 @@ class LinkedInApplyUrlResolver:
             playwright = self._external_playwright
         launch_opts: dict[str, Any] = {
             "headless": self._headless,
-            "executable_path": config.get_chrome_path(),
+            "executable_path": str(chrome_executable),
             "args": (
                 "--no-first-run",
                 "--no-default-browser-check",
@@ -180,7 +187,7 @@ class LinkedInApplyUrlResolver:
         if self._user_agent:
             launch_opts["user_agent"] = self._user_agent
         self._context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(self._profile_dir),
+            user_data_dir=str(profile_dir),
             **launch_opts,
         )
 
@@ -201,6 +208,7 @@ class LinkedInApplyUrlResolver:
                 log.debug("LinkedIn apply resolver playwright stop failed", exc_info=True)
 
     def new_page(self) -> Any:
+        self._require_active_capability()
         if self._context is None:
             self.start()
         assert self._context is not None
@@ -209,6 +217,7 @@ class LinkedInApplyUrlResolver:
     def resolve(self, job_url: str) -> LinkedInApplyResolution:
         """Navigate to ``job_url`` and capture the external apply target."""
 
+        self._require_active_capability()
         initial_safety = self._url_safety_checker(job_url)
         if not initial_safety.allowed:
             return _unsafe_url_resolution(initial_safety.reason)
@@ -241,6 +250,7 @@ class LinkedInApplyUrlResolver:
     def resolve_loaded_page(self, page: Any, job_url: str) -> LinkedInApplyResolution:
         """Capture the apply target from an already-loaded LinkedIn page."""
 
+        self._require_active_capability()
         route_guard = _install_public_route_guard(page)
         try:
             result = self._resolve_loaded_page(page, job_url)
@@ -249,6 +259,15 @@ class LinkedInApplyUrlResolver:
             return result
         finally:
             route_guard.close()
+
+    def _require_active_capability(self) -> Path:
+        """Re-check a long-lived context and close it as soon as it is disabled."""
+
+        try:
+            return require_system_browser_capability("authenticated-linkedin-browser")
+        except BrowserCapabilityError:
+            self.close()
+            raise
 
     def _resolve_loaded_page(self, page: Any, job_url: str) -> LinkedInApplyResolution:
         direct = _extract_external_from_redirect_url(
@@ -323,71 +342,6 @@ def _install_public_route_guard(page: Any, *, context: Any | None = None) -> Pub
     if route_target is None:
         route_target = page
     return PublicHttpUrlRouteGuard(route_target).install()
-
-
-def _bootstrap_profile_dir(profile_dir: Path, *, chrome_profile: str) -> None:
-    """Initialize the dedicated resolver profile from an existing Chrome profile."""
-
-    if (profile_dir / chrome_profile).exists():
-        return
-    source = _source_profile_dir()
-    if source is None or not source.exists():
-        return
-    try:
-        if source.resolve() == profile_dir.resolve():
-            return
-    except OSError:
-        pass
-    log.info("Initializing LinkedIn apply resolver Chrome profile from %s", source)
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    skip = {
-        "ShaderCache",
-        "GrShaderCache",
-        "Service Worker",
-        "Cache",
-        "Code Cache",
-        "GPUCache",
-        "CacheStorage",
-        "Crashpad",
-        "BrowserMetrics",
-        "SafeBrowsing",
-        "Crowd Deny",
-        "MEIPreload",
-        "SSLErrorAssistant",
-        "recovery",
-        "Temp",
-        "SingletonLock",
-        "SingletonSocket",
-        "SingletonCookie",
-    }
-    for item in source.iterdir():
-        if item.name in skip:
-            continue
-        destination = profile_dir / item.name
-        try:
-            if item.is_dir():
-                shutil.copytree(
-                    item,
-                    destination,
-                    dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns(
-                        "Cache",
-                        "Code Cache",
-                        "GPUCache",
-                        "Service Worker",
-                    ),
-                )
-            else:
-                shutil.copy2(item, destination)
-        except (OSError, PermissionError):
-            log.debug("Skipped Chrome profile item during LinkedIn resolver bootstrap: %s", item)
-
-
-def _source_profile_dir() -> Path | None:
-    configured = os.environ.get(LINKEDIN_APPLY_SOURCE_PROFILE_DIR_ENV)
-    if configured:
-        return Path(configured).expanduser()
-    return config.get_chrome_user_data()
 
 
 def _locator_href(locator: Any, base_url: str) -> str | None:
@@ -561,9 +515,7 @@ def _is_linkedin_host(host: str) -> bool:
 __all__ = [
     "LINKEDIN_APPLY_CHROME_PROFILE_ENV",
     "LINKEDIN_APPLY_HEADLESS_ENV",
-    "LINKEDIN_APPLY_PROFILE_DIR_ENV",
     "LINKEDIN_APPLY_RESOLVER_ENABLED_ENV",
-    "LINKEDIN_APPLY_SOURCE_PROFILE_DIR_ENV",
     "LinkedInApplyResolution",
     "LinkedInApplyUrlResolver",
     "default_linkedin_apply_profile_dir",

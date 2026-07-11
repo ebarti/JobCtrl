@@ -92,7 +92,7 @@ def test_doctor_reports_owned_captcha_solver_when_configured(monkeypatch) -> Non
 
     assert result.exit_code == 0, result.output
     assert "CapSolver API key" in result.output
-    assert "owned solve_captcha tool" in result.output
+    assert "owned solve_captcha tool" in " ".join(result.output.split())
 
 
 def test_doctor_warns_when_apply_approval_gate_is_disabled(monkeypatch) -> None:

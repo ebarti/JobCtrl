@@ -51,6 +51,8 @@ class StartedWorkflowResult:
 def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = _tenant_id(params)
     stages = _stage_list(params)
+    if "apply" in stages:
+        _require_auto_apply_browser_capability()
     raw_judge_min_score = params.get("tailorJudgeMinScore")
     if stages == ["discover"]:
         payload = DiscoverWorkflowInput(
@@ -116,6 +118,8 @@ def build_pipeline_workflow_spec(
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
+    if "apply" in stages:
+        _require_auto_apply_browser_capability()
     tenant_id = _tenant_id(params)
     raw_judge_min_score = params.get("tailorJudgeMinScore")
     payload = JobPipelineWorkflowInput(
@@ -147,6 +151,7 @@ def build_pipeline_workflow_spec(
 
 
 def build_apply_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
+    _require_auto_apply_browser_capability()
     tenant_id = _tenant_id(params)
     job_url = params.get("jobUrl")
     payload = ApplyWorkflowInput(
@@ -165,6 +170,14 @@ def build_apply_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
     )
     workflow_id = apply_workflow_id(tenant_id, str(job_url)) if job_url else None
     return WorkflowStartSpec(workflow=ApplyWorkflow, args=(payload,), workflow_id=workflow_id)
+
+
+def _require_auto_apply_browser_capability() -> None:
+    """Guard every non-Temporal apply workflow start request."""
+
+    from jobctrl.browser_capabilities import require_system_browser_capability
+
+    require_system_browser_capability("auto-apply-browser")
 
 
 def build_interview_prep_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:

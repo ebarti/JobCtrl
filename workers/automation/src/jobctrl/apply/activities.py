@@ -61,12 +61,17 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
         read_apply_concurrency,
         read_min_fit_score,
     )
+    from jobctrl.browser_capabilities import require_system_browser_capability
     from jobctrl.apply.launcher import main as apply_main
 
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
+    # A caller may have bypassed the CLI/API workflow builder. Re-check at the
+    # worker execution boundary before importing the apply launcher or touching
+    # a browser profile.
+    require_system_browser_capability("auto-apply-browser")
     workflow_id = activity.info().workflow_id
 
     def _run_apply() -> tuple[int, int]:

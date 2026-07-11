@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from jobctrl.runtime import is_bundled_runtime
+
 # Shared remediation text so the worker gate, ``doctor``, and the error message
 # all point users at exactly one fix. The GC warning matters because multiple
 # git worktrees share ``~/Library/Caches/ms-playwright``: running
@@ -25,6 +27,21 @@ PLAYWRIGHT_WORKTREE_GC_WARNING = (
     "version's browsers from the shared ~/Library/Caches/ms-playwright cache; "
     "set PLAYWRIGHT_SKIP_BROWSER_GC=1 when installing elsewhere"
 )
+BUNDLED_PLAYWRIGHT_REMEDIATION = (
+    "The managed core browser is missing or damaged in the JobCtrl runtime payload. "
+    "Run 'jobctrl update' to repair the installed runtime; if it persists, reinstall JobCtrl."
+)
+
+
+def _playwright_remediation() -> str:
+    """Give installed users a product action and contributors the source action."""
+
+    if is_bundled_runtime():
+        return BUNDLED_PLAYWRIGHT_REMEDIATION
+    return (
+        f"Install it with '{PLAYWRIGHT_INSTALL_COMMAND}'. "
+        f"Note: {PLAYWRIGHT_WORKTREE_GC_WARNING}."
+    )
 
 
 def check_playwright_chromium() -> tuple[bool, str]:
@@ -42,8 +59,9 @@ def check_playwright_chromium() -> tuple[bool, str]:
     Returns ``(ok, message)``. On success the message names the resolved path.
     On any failure (browsers never installed, the resolved binary missing, the
     headless-shell binary missing so launch fails, or the driver raising) the
-    message is actionable: it names the missing path when known, the install
-    command, and the shared-cache GC gotcha that bites multi-worktree setups.
+    message is actionable: installed users receive a JobCtrl runtime repair
+    action, while source contributors receive the pinned Playwright command and
+    the shared-cache GC warning that bites multi-worktree setups.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -53,8 +71,7 @@ def check_playwright_chromium() -> tuple[bool, str]:
             if not Path(executable_path).exists():
                 return False, (
                     f"Playwright Chromium binary is missing at {executable_path}. "
-                    f"Install it with '{PLAYWRIGHT_INSTALL_COMMAND}'. "
-                    f"Note: {PLAYWRIGHT_WORKTREE_GC_WARNING}."
+                    f"{_playwright_remediation()}"
                 )
             # A launch(headless=True) uses chromium_headless_shell, a different
             # binary from the one executable_path resolves. Launch + close is the
@@ -64,8 +81,7 @@ def check_playwright_chromium() -> tuple[bool, str]:
     except Exception as exc:  # noqa: BLE001 - any resolution or launch failure is a preflight failure.
         return False, (
             f"Playwright Chromium unavailable: {exc}. "
-            f"Install it with '{PLAYWRIGHT_INSTALL_COMMAND}'. "
-            f"Note: {PLAYWRIGHT_WORKTREE_GC_WARNING}."
+            f"{_playwright_remediation()}"
         )
 
     return True, f"Playwright Chromium available at {executable_path}"

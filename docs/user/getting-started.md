@@ -40,10 +40,10 @@ downloads. Each line says what the tool is for.
 - **uv** — a fast installer and environment manager for Python.
 - **Temporal CLI** — runs a local Temporal (the workflow engine) with
   `temporal server start-dev`.
-- **Chrome or Chromium** — the browser JobCtrl automates and uses to render
-  PDFs.
-- **Playwright Chromium** — a browser build that Playwright controls to turn
-  tailored resumes into PDFs.
+- **Playwright Chromium** — the managed core browser that JobCtrl controls for
+  discovery and tailored-resume PDF rendering.
+- **Chrome or Chromium** (optional) — adopt one explicitly only if you enable
+  authenticated apply capabilities; it is not required for core setup.
 - **Poppler** (with `pdftoppm` on your `PATH`) — turns PDF pages into the
   preview images shown in the app.
 

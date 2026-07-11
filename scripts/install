@@ -174,57 +174,12 @@ ensure_command() {
   record_missing "$label" "$hint" "$required"
 }
 
-chrome_found() {
-  if [[ -n "${CHROME_PATH:-}" && -x "${CHROME_PATH:-}" ]]; then
-    return 0
-  fi
-
-  local command_name
-  for command_name in google-chrome google-chrome-stable chromium chromium-browser chrome; do
-    if command -v "$command_name" >/dev/null 2>&1; then
-      return 0
-    fi
-  done
-
-  local app_path
-  for app_path in \
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-    "/Applications/Chromium.app/Contents/MacOS/Chromium"; do
-    if [[ -x "$app_path" ]]; then
-      return 0
-    fi
-  done
-
-  return 1
-}
-
-ensure_chrome() {
-  if chrome_found; then
-    ok "Chrome/Chromium browser found"
-    return 0
-  fi
-
-  warn "Chrome or Chromium was not found."
-  if command -v brew >/dev/null 2>&1 && confirm "Install Google Chrome with Homebrew now?"; then
-    run brew install --cask google-chrome
-    hash -r
-  fi
-
-  if chrome_found; then
-    ok "Chrome/Chromium browser found"
-    return 0
-  fi
-
-  record_missing "Chrome or Chromium" "install Google Chrome/Chromium or set CHROME_PATH in ~/.jobctrl/.env" 0
-}
-
 check_system_dependencies() {
   heading "Checking system tools"
   ensure_node
   ensure_command "corepack" "Corepack" "install Corepack directly or with Homebrew (brew install corepack)" 1 corepack
   ensure_command "uv" "uv" "install uv from https://docs.astral.sh/uv/ or Homebrew" 1 uv
   ensure_command "temporal" "Temporal CLI" "install the Temporal CLI so pnpm dev can start temporal server start-dev" 0 temporal
-  ensure_chrome
 }
 
 enable_corepack() {

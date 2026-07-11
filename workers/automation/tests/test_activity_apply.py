@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -16,6 +17,19 @@ from jobctrl.apply.activities import (
     ApplyActivityOutput,
     apply_activity,
 )
+
+
+@pytest.fixture(autouse=True)
+def permit_browser_for_existing_apply_activity_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Activity behavior tests run after the separate capability check."""
+
+    from jobctrl import browser_capabilities
+
+    monkeypatch.setattr(
+        browser_capabilities,
+        "require_system_browser_capability",
+        lambda _capability: Path("/test/Chromium"),
+    )
 
 
 @workflow.defn(name="ApplyHarness")

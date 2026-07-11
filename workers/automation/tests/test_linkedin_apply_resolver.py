@@ -1,13 +1,28 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from jobctrl.infrastructure.enrichment import linkedin_apply_resolver as resolver_module
 from jobctrl.infrastructure.network import PublicUrlDecision
 from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
     LinkedInApplyUrlResolver,
     _extract_external_from_redirect_url,
     _is_external_apply_url,
 )
+
+
+@pytest.fixture(autouse=True)
+def permit_browser_for_existing_resolver_parsing_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests exercise URL safety after authenticated capability validation."""
+
+    monkeypatch.setattr(
+        resolver_module,
+        "require_system_browser_capability",
+        lambda _capability: Path("/test/Chromium"),
+    )
 
 
 def _allow_public_url(_url: str) -> PublicUrlDecision:

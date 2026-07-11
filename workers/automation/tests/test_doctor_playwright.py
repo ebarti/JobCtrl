@@ -16,7 +16,14 @@ from typer.testing import CliRunner
 from jobctrl.cli import app
 
 _CHECK_TARGET = "jobctrl.infrastructure.preflight.check_playwright_chromium"
-_CHECK_LABEL = "playwright chromium (scraping + PDF)"
+_CHECK_LABEL = "core browser (scraping + PDF)"
+
+
+def _write_bundled_capability_policy(payload: Path) -> None:
+    source = Path(__file__).parents[3] / "packaging/distribution/capability-policy.json"
+    destination = payload / "release/capability-policy.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def test_doctor_reports_playwright_chromium_available(
@@ -52,11 +59,34 @@ def test_doctor_reports_playwright_chromium_missing(
     assert "MISSING" in normalized
 
 
+def test_doctor_reports_disabled_optional_browsers_without_probing_system_chrome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobctrl import config
+
+    monkeypatch.setattr(_CHECK_TARGET, lambda: (True, "managed Chromium"))
+    monkeypatch.setattr(
+        config,
+        "get_chrome_path",
+        lambda: (_ for _ in ()).throw(AssertionError("system Chrome must not be probed")),
+    )
+
+    result = CliRunner().invoke(app, ["doctor"])
+
+    assert result.exit_code == 0, result.output
+    normalized = " ".join(result.output.split())
+    assert "auto-apply-browser capability" in normalized
+    assert "authenticated-linkedin-browser capability" in normalized
+    assert "DISABLED" in normalized
+    assert "Chrome/Chromium" not in normalized
+
+
 def test_bundled_doctor_uses_embedded_playwright_mcp_without_system_npx(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     payload = tmp_path / "payload"
+    _write_bundled_capability_policy(payload)
     wrapper = payload / "playwright-mcp/bin/playwright-mcp"
     wrapper.parent.mkdir(parents=True)
     wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -85,6 +115,7 @@ def test_bundled_doctor_rejects_non_executable_playwright_mcp_wrapper(
     tmp_path: Path,
 ) -> None:
     payload = tmp_path / "payload"
+    _write_bundled_capability_policy(payload)
     wrapper = payload / "playwright-mcp/bin/playwright-mcp"
     wrapper.parent.mkdir(parents=True)
     wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")

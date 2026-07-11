@@ -364,7 +364,10 @@ anything.
 
 Auto apply is separate from a one-off dry run. When the Discovery automation
 setting `autoApply` is on, a running worker keeps one continuous Apply workflow
-active and the Runs page shows it as the standing apply loop. With
+active only after you explicitly enable `auto-apply-browser` with
+`jobctrl capability enable auto-apply-browser --browser-path /path/to/Chrome`;
+otherwise the reconciler leaves the loop stopped and reports the capability as
+disabled. The Runs page shows the standing apply loop. With
 `applyApprovalRequired` still on, that loop live-submits only jobs already
 approved in Apply Review and parks the rest as awaiting approval. If you also
 turn approval off, the same loop may submit eligible prepared jobs
