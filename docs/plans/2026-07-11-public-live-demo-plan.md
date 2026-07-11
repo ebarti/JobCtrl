@@ -326,7 +326,6 @@ flowchart TD
       ConsentFn["/api/demo-consent"]
       HealthFn["/api/demo-health"]
       TelemetryFn["/api/demo-telemetry"]
-      DeleteFn["/api/demo-telemetry/me"]
     end
 
     subgraph RetentionWorker["Scheduled retention Worker"]
@@ -337,7 +336,6 @@ flowchart TD
     Demo --> ConsentFn
     Demo --> HealthFn
     Demo --> TelemetryFn
-    Demo --> DeleteFn
 
     SPA --> Root["createPorts(APP_MODE=demo)"]
     Root --> DemoApi["DemoApiClientAdapter"]
