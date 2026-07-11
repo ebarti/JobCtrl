@@ -896,6 +896,28 @@ describe("DemoLocalCommandExecutor", () => {
     });
   });
 
+  it("cancels the newest pending job action without orphaning it behind a seeded active run", async () => {
+    const { adapter, repository } = await harness();
+    const queued = await adapter.rescoreJob(JOB, {});
+
+    expect(repository.snapshotNow().state.readModel.runs.details["run-materials-progress"]?.status)
+      .toBe("in_progress");
+    expect(repository.snapshotNow().pendingScenarios).toContainEqual(
+      expect.objectContaining({ runId: queued.runId, targetRefs: expect.objectContaining({ jobKey: JOB }) }),
+    );
+
+    const canceled = await adapter.cancelJobAction(JOB, {});
+    adapter.dispose();
+    const snapshot = repository.snapshotNow();
+
+    expect(canceled).toMatchObject({ runId: queued.runId, status: "canceled" });
+    expect(snapshot.state.readModel.runs.details[queued.runId]?.status).toBe("canceled");
+    expect(snapshot.state.readModel.runs.details["run-materials-progress"]?.status).toBe("in_progress");
+    expect(snapshot.pendingScenarios).not.toContainEqual(
+      expect.objectContaining({ runId: queued.runId }),
+    );
+  });
+
   it("keeps template, visibility, outreach pointer, and due-follow-up projections truthful", async () => {
     const { adapter, repository } = await harness();
     const before = repository.snapshotNow();

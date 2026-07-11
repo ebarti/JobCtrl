@@ -1613,10 +1613,23 @@ export class DemoLocalCommandExecutor {
         const action = method === "cancelJobAction" ? "cancel" : "mark_skipped";
         const body = record(args[1]);
         const requestedRunId = stringValue(body.runId);
+        const pendingActiveRun = [...draft.pendingScenarios]
+          .reverse()
+          .map((pending) =>
+            isDemoScenarioInvocation(pending) &&
+            (pending.targetRefs.jobKey === jobKey || pending.targetRefs.jobKeys.includes(jobKey))
+              ? draft.state.readModel.runs.details[pending.runId]
+              : undefined,
+          )
+          .find(
+            (run) =>
+              run?.jobKey === jobKey &&
+              (run.status === "starting" || run.status === "in_progress"),
+          );
         const activeRun = requestedRunId
           ? requireMapValue(draft.state.readModel.runs.details, requestedRunId)
           : method === "cancelJobAction"
-            ? Object.values(draft.state.readModel.runs.details).find(
+            ? pendingActiveRun ?? Object.values(draft.state.readModel.runs.details).find(
                 (run) =>
                   run.jobKey === jobKey &&
                   (run.status === "starting" || run.status === "in_progress"),
@@ -1632,9 +1645,7 @@ export class DemoLocalCommandExecutor {
           const canceled = cancelDemoRun(draft, activeRun.runId, now);
           removePendingScenarios(
             draft,
-            (pending) =>
-              pending.runId === activeRun.runId ||
-              pending.targetRefs.jobKey === jobKey,
+            (pending) => pending.runId === activeRun.runId,
           );
           if (!canceled.changed) {
             return actionResponse("cancel", jobKey, activeRun.runId, activeRun.finishedAt ?? now, {
