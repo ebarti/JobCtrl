@@ -5,8 +5,8 @@ import {
   IconSparkles,
   IconX,
 } from "@tabler/icons-react";
-import { Link, useLocation } from "@tanstack/react-router";
-import { useState } from "react";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
 
 import { classifyDemoRoute } from "../consent/DemoTelemetryAdapter.js";
 import { useDemoWorkspace } from "../workspace/DemoWorkspaceProvider.js";
@@ -33,11 +33,11 @@ interface DemoGuideState {
 }
 
 function isGuideOpen(value: unknown): boolean {
-  return !(
+  return (
     typeof value === "object" &&
     value !== null &&
     "open" in value &&
-    (value as DemoGuideState).open === false
+    (value as DemoGuideState).open === true
   );
 }
 
@@ -50,6 +50,7 @@ export function DemoGuide() {
   const workspaceContext = useDemoWorkspace();
   const { storage, telemetry } = usePorts();
   const location = useLocation();
+  const navigate = useNavigate();
   const toast = useToastStore((state) => state.toast);
   const [open, setOpen] = useState(() =>
     isGuideOpen(storage.get(GUIDE_STATE_KEY)),
@@ -57,6 +58,15 @@ export function DemoGuide() {
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [resetStatus, setResetStatus] = useState<string | null>(null);
+  const launcherRef = useRef<HTMLButtonElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const previousOpen = useRef(open);
+
+  useEffect(() => {
+    if (open && !previousOpen.current) closeRef.current?.focus();
+    if (!open && previousOpen.current) launcherRef.current?.focus();
+    previousOpen.current = open;
+  }, [open]);
 
   if (workspaceContext.mode === "local") return null;
 
@@ -67,6 +77,7 @@ export function DemoGuide() {
   };
   const recordFeatureShortcut = (feature: DemoGuideFeature) => {
     telemetry.event("demo_feature_opened", { route, feature });
+    setGuideOpen(false);
   };
   const resetWorkspace = async () => {
     setIsResetting(true);
@@ -79,10 +90,12 @@ export function DemoGuide() {
       setResetStatus(message);
       toast({ title: "Demo data reset", message, variant: "success" });
       setConfirmResetOpen(false);
+      await navigate({ to: "/dashboard" });
     } catch {
       const message = "Demo data could not be reset. Try again.";
       setResetStatus(message);
       toast({ title: "Demo reset unavailable", message, variant: "error" });
+      setConfirmResetOpen(false);
     } finally {
       setIsResetting(false);
     }
@@ -92,6 +105,7 @@ export function DemoGuide() {
     return (
       <div className="fixed bottom-4 right-4 z-40 motion-reduce:transition-none">
         <Button
+          ref={launcherRef}
           type="button"
           variant="secondary"
           onClick={() => setGuideOpen(true)}
@@ -121,6 +135,7 @@ export function DemoGuide() {
           </h2>
         </div>
         <Button
+          ref={closeRef}
           type="button"
           variant="ghost"
           size="icon"

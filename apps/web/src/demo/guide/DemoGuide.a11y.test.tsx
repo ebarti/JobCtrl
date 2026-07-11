@@ -6,7 +6,8 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { axe } from "jest-axe";
 import { expect, it } from "vitest";
 
@@ -76,6 +77,9 @@ it("has no automated accessibility violations", async () => {
     </PortsProvider>,
   );
   await router.load();
+  await userEvent.setup().click(
+    screen.getByRole("button", { name: "Open demo guide" }),
+  );
 
   expect(await axe(view.container)).toHaveNoViolations();
 });

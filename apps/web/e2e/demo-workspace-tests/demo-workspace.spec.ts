@@ -546,6 +546,8 @@ scenarioTest("Demo guide shortcuts navigate through seeded surfaces and confirm 
   const guide = page.getByRole("complementary", {
     name: "Try the synthetic workflow",
   });
+  const openGuide = page.getByRole("button", { name: "Open demo guide" });
+  await openGuide.click();
   await expect(guide).toContainText("Every record and action in this demo is simulated and synthetic");
 
   await guide.getByRole("link", { name: "Inspect synthetic scoring evidence" }).click();
@@ -554,27 +556,32 @@ scenarioTest("Demo guide shortcuts navigate through seeded surfaces and confirm 
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "Job details" })).toBeHidden();
 
+  await openGuide.click();
   await guide.getByRole("link", { name: "Review synthetic tailored materials" }).click();
   await expect(page).toHaveURL(/\/artifacts\/artifact-tailored-resume(?:\?|$)/);
   await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeHidden();
 
+  await openGuide.click();
   await guide.getByRole("link", { name: "Open simulated Apply Review and dry run" }).click();
   await expect(page).toHaveURL(/\/apply-review\?jobKey=job-northwind-platform(?:&|$)/);
   await expect(page.getByRole("heading", { name: "Application review" })).toBeVisible();
 
+  await openGuide.click();
   await guide.getByRole("link", { name: "See simulated run history" }).click();
   await expect(page).toHaveURL(/\/runs(?:\?|$)/);
   await expect(page.getByRole("heading", { name: "Workflow runs" })).toBeVisible();
 
   const before = await resetEpoch(page);
+  await openGuide.click();
   await guide.getByRole("button", { name: "Reset synthetic demo data" }).click();
   await expect(page.getByRole("dialog", { name: "Reset synthetic demo data?" })).toBeVisible();
   await page.getByRole("button", { name: "Reset demo data" }).click();
   await expect(guide.getByRole("status")).toContainText(
     "Synthetic demo data reset. The seeded examples are ready again.",
   );
+  await expect(page).toHaveURL(/\/dashboard(?:\?|$)/);
   await expect.poll(() => resetEpoch(page)).toBe(before + 1);
 
   await page.setViewportSize({ width: 390, height: 844 });

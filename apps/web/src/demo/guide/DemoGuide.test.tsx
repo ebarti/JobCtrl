@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   PortsProvider,
@@ -111,6 +111,8 @@ describe("<DemoGuide>", () => {
   it("shows the seeded synthetic shortcuts and records a typed feature CTA", async () => {
     const { ports, router, user } = await renderGuide();
 
+    await user.click(screen.getByRole("button", { name: "Open demo guide" }));
+
     expect(screen.getByRole("complementary")).toHaveTextContent(
       "Every record and action in this demo is simulated and synthetic",
     );
@@ -141,15 +143,22 @@ describe("<DemoGuide>", () => {
       "demo_feature_opened",
       { route: "dashboard", feature: "scoring" },
     );
+    expect(screen.getByRole("button", { name: "Open demo guide" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open demo guide" })).toHaveFocus();
   });
 
   it("keeps the compact control available after the panel is dismissed", async () => {
     const { ports, user } = await renderGuide();
 
+    expect(screen.getByRole("button", { name: "Open demo guide" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Open demo guide" }));
+    expect(screen.getByRole("button", { name: "Hide demo guide" })).toHaveFocus();
+    expect(screen.getByRole("complementary")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Hide demo guide" }));
     expect(
       screen.getByRole("button", { name: "Open demo guide" }),
     ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open demo guide" })).toHaveFocus();
     expect(ports.storage.get("demo.guide.state")).toEqual({ open: false });
 
     await user.click(screen.getByRole("button", { name: "Open demo guide" }));
@@ -158,11 +167,13 @@ describe("<DemoGuide>", () => {
   });
 
   it("confirms and visibly completes a reset through the workspace authority", async () => {
-    const { ports, user, workspace } = await renderGuide();
+    const { ports, router, user, workspace } = await renderGuide();
     if (!workspace)
       throw new Error("The demo workspace is required for this test.");
     const before = await workspace.snapshot();
+    await router.navigate({ to: "/runs" });
 
+    await user.click(screen.getByRole("button", { name: "Open demo guide" }));
     await user.click(
       screen.getByRole("button", { name: "Reset synthetic demo data" }),
     );
@@ -181,7 +192,29 @@ describe("<DemoGuide>", () => {
     });
     expect((ports.telemetry as FakeTelemetryPort).event).toHaveBeenCalledWith(
       "demo_workspace_reset",
-      { route: "dashboard" },
+      { route: "runs" },
     );
+    expect(router.state.location.pathname).toBe("/dashboard");
+  });
+
+  it("closes the modal and reports a reset failure without navigating", async () => {
+    const workspace = await createWorkspace();
+    vi.spyOn(workspace, "reset").mockRejectedValueOnce(new Error("quota"));
+    const { router, user } = await renderGuide({ workspace });
+    await router.navigate({ to: "/runs" });
+
+    await user.click(screen.getByRole("button", { name: "Open demo guide" }));
+    await user.click(
+      screen.getByRole("button", { name: "Reset synthetic demo data" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Reset demo data" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Demo data could not be reset. Try again.",
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "Reset synthetic demo data?" }),
+    ).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/runs");
   });
 });
