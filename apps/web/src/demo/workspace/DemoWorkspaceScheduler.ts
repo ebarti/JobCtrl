@@ -108,7 +108,9 @@ export class DemoWorkspaceScheduler {
       .catch(() => {
         // A later workspace notification or explicit recovery can retry. The
         // safe failure mode is to leave no unfenced deadline callback armed.
-        this.clearTimers();
+        if (!this.disposed && generation === this.reconcileGeneration) {
+          this.clearTimers();
+        }
       });
   }
 
@@ -118,10 +120,7 @@ export class DemoWorkspaceScheduler {
       return;
     }
     const persisted = new Map(
-      snapshot.pendingScenarios.map((pending) => [
-        pending.scenarioId,
-        pending,
-      ]),
+      snapshot.pendingScenarios.map((pending) => [pending.scenarioId, pending]),
     );
 
     for (const [scenarioId, registration] of this.registrations) {

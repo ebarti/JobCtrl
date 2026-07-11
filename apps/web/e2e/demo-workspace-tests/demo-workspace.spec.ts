@@ -73,6 +73,88 @@ test("demo shell renders the shared-profile and personal-data boundary without p
   expect(productRequests).toEqual([]);
 });
 
+test("every P2 product route and seeded deep link renders populated across direct refreshes", async ({
+  page,
+  context,
+}) => {
+  const productRequests: string[] = [];
+  const externalRequests: string[] = [];
+  const runtimeErrors: string[] = [];
+  context.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/v1/")) {
+      productRequests.push(url.pathname);
+    }
+    if (url.origin !== "http://127.0.0.1:5198") {
+      externalRequests.push(request.url());
+    }
+  });
+  page.on("pageerror", (error) => runtimeErrors.push(error.message));
+
+  const routes = [
+    ["/dashboard", "Dashboard", "3 jobs"],
+    ["/jobs", "Jobs", "Platform systems lead"],
+    ["/jobs/job-northwind-platform", "Jobs", "Preparation diagnostics"],
+    ["/evidence-map", "Career evidence map", "Delivery improvement evidence"],
+    ["/artifacts", "Artifacts", "Platform systems lead"],
+    ["/artifacts/artifact-tailored-resume", "Artifacts", "Artifact details"],
+    [
+      "/apply-review?jobKey=job-northwind-platform",
+      "Application review",
+      "Materials ready",
+    ],
+    ["/runs", "Workflow runs", "Platform systems lead"],
+    ["/runs/run-materials-progress", "Workflow runs", "Run details"],
+    ["/analytics", "Outcome analytics", "bundled-capture"],
+    ["/profile", "Profile", "Baseline resume editor"],
+    ["/settings", "Settings", "Config"],
+    ["/settings/credentials", "Settings", "OpenAI API Key"],
+    ["/outreach", "Contacts", "Synthetic hiring partner"],
+    [
+      "/outreach/contact-demo-hiring-partner",
+      "Contacts",
+      "Facts and provenance",
+    ],
+    ["/discovery", "Discovery", "Bundled synthetic source"],
+    ["/pipelines", "Pipelines", "Configuring"],
+    ["/debug", "Debug", "Synthetic score recorded."],
+    [
+      "/activity/event-demo-score",
+      "Activity details",
+      "Event details",
+      "dialog",
+    ],
+  ] as const;
+
+  for (const [route, identity, populatedText, role = "heading"] of routes) {
+    await page.goto(STATIC_HOST);
+    await page.goto(route);
+    const identityLocator =
+      role === "dialog"
+        ? page.getByRole("dialog", { name: identity })
+        : page.getByRole("heading", { name: identity }).first();
+    await expect(identityLocator).toBeVisible();
+    await expect(
+      page.getByText(populatedText, { exact: false }).first(),
+    ).toBeVisible();
+    expect(page.url()).toContain(route);
+
+    await page.reload();
+    await expect(
+      role === "dialog"
+        ? page.getByRole("dialog", { name: identity })
+        : page.getByRole("heading", { name: identity }).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText(populatedText, { exact: false }).first(),
+    ).toBeVisible();
+  }
+
+  expect(runtimeErrors).toEqual([]);
+  expect(productRequests).toEqual([]);
+  expect(externalRequests).toEqual([]);
+});
+
 test("same-context tabs share, serialize concurrent writes, and survive reload without product network", async ({
   page,
   context,

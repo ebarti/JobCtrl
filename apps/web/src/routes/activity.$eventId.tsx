@@ -12,7 +12,11 @@ export const Route = createFileRoute("/activity/$eventId")({
         return response.event;
       },
     });
-    if (event.jobKey) {
+    const directDetail = context.ports.featureFlags.get(
+      "activityDetailDirectLoad",
+      false,
+    );
+    if (event.jobKey && !directDetail) {
       throw redirect({
         to: "/jobs/$jobId",
         params: { jobId: event.jobKey },

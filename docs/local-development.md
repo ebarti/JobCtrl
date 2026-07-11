@@ -157,7 +157,10 @@ demo actions, and deletes generated demo blobs in the same transaction. If
 IndexedDB is unavailable or full, the page warns that it has switched to
 tab-local memory; those fallback changes are neither shared nor retained after
 the tab closes. The demo contains synthetic data, but visitors should still not
-enter personal data or secrets.
+enter personal data or secrets. Product reads, filtering, sorting, pagination,
+details, and bundled previews are served from that browser-local workspace;
+write actions remain intentionally unavailable until their simulated demo
+transitions are implemented.
 
 ## Verify
 
