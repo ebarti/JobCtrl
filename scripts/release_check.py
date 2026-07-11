@@ -212,6 +212,12 @@ FORBIDDEN_TEXT = (
     ),
 )
 
+PUBLIC_COPYRIGHT_HOLDER = "El" + "oi Barti"
+PUBLIC_COPYRIGHT_SNIPPETS = (
+    f"Copyright (C) 2026 {PUBLIC_COPYRIGHT_HOLDER}",
+    f"Copyright © 2026 {PUBLIC_COPYRIGHT_HOLDER}",
+)
+
 
 def candidate_files(root: Path = ROOT) -> list[Path]:
     """Return files that Git would consider for commit."""
@@ -345,12 +351,35 @@ def scan_text(
     """Scan text content for forbidden strings and non-empty secret assignments."""
     findings = []
     for needle in needles:
-        if _contains_needle(text, needle):
+        scan_target = _redact_public_attribution(text, rel, needle)
+        if _contains_needle(scan_target, needle):
             findings.append(f"{label}: contains {needle.reason}")
 
     if _is_secret_assignment_file(rel):
         findings.extend(scan_secret_assignments(label, text))
     return findings
+
+
+def _redact_public_attribution(text: str, rel: Path, needle: ForbiddenNeedle) -> str:
+    """Exclude explicit public legal metadata from the private-name tripwire."""
+    if needle.reason != "private first name":
+        return text
+
+    redacted = text
+    for snippet in PUBLIC_COPYRIGHT_SNIPPETS:
+        redacted = redacted.replace(snippet, "<public copyright holder>")
+
+    if rel.name in {"METADATA", "PKG-INFO"}:
+        redacted = redacted.replace(
+            f"Author: {PUBLIC_COPYRIGHT_HOLDER}",
+            "Author: <public copyright holder>",
+        )
+    if rel.name == "pyproject.toml":
+        redacted = redacted.replace(
+            f'authors = [{{ name = "{PUBLIC_COPYRIGHT_HOLDER}" }}]',
+            'authors = [{ name = "<public copyright holder>" }]',
+        )
+    return redacted
 
 
 def _contains_needle(haystack: str, needle: ForbiddenNeedle) -> bool:

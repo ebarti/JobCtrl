@@ -615,4 +615,9 @@ workflow: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-JobCtrl is licensed under AGPL-3.0-only. See [LICENSE](LICENSE).
+Copyright (C) 2026 Eloi Barti.
+
+JobCtrl is licensed under **AGPL-3.0-only**. See [LICENSE](LICENSE) and
+[NOTICE](NOTICE). The license and copyright notices must be preserved in
+redistributions. The complete corresponding source is published in this
+[repository](https://github.com/ebarti/JobCtrl).

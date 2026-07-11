@@ -58,11 +58,20 @@ describe("<SideRail>", () => {
     }
   });
 
-  it("exposes the brand link and local-mode footer", async () => {
+  it("exposes the brand link, local-mode status, and legal attribution", async () => {
     renderRail();
 
     expect(await screen.findByRole("link", { name: "JobCtrl" })).toHaveAttribute("href", "/dashboard");
     expect(screen.getByText("Local mode — all data stays on device")).toBeInTheDocument();
+    expect(screen.getByText("Copyright © 2026 Eloi Barti")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "AGPL-3.0-only" })).toHaveAttribute(
+      "href",
+      "https://github.com/ebarti/JobCtrl/blob/main/LICENSE",
+    );
+    expect(screen.getByRole("link", { name: "Source code" })).toHaveAttribute(
+      "href",
+      "https://github.com/ebarti/JobCtrl",
+    );
   });
 
   it("marks the current route active with aria-current for accent styling", async () => {

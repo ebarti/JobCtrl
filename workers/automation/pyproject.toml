@@ -5,7 +5,7 @@ description = "AI-powered end-to-end job application pipeline"
 readme = "README.md"
 license = "AGPL-3.0-only"
 requires-python = ">=3.11"
-authors = [{name = "ebarti"}]
+authors = [{ name = "Eloi Barti" }]
 keywords = ["job-search", "automation", "ai", "resume", "apply", "job-application"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -84,6 +84,10 @@ packages = ["src/jobctrl"]
 
 [tool.hatch.build]
 artifacts = ["src/jobctrl/config/*.yaml"]
+
+[tool.hatch.build.targets.sdist.force-include]
+"../../LICENSE" = "LICENSE"
+"../../NOTICE" = "NOTICE"
 
 [tool.ruff]
 target-version = "py311"

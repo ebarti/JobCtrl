@@ -7,6 +7,7 @@ import type { Density } from "../stores/ui-preferences.js";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "../ui/sheet.js";
 import { BrandMark } from "./BrandMark.js";
 import { ConnectionStatusPill } from "./ConnectionStatusPill.js";
+import { LegalNotice } from "./LegalNotice.js";
 import { RailNav } from "./SideRail.js";
 import { ThemeToggle } from "./ThemeToggle.js";
 
@@ -32,6 +33,7 @@ export function Topbar() {
             </SheetTitle>
           </SheetHeader>
           <RailNav className="sheet-nav" onNavigate={() => setNavOpen(false)} />
+          <LegalNotice className="legal-notice legal-notice--sheet" />
         </SheetContent>
       </Sheet>
       <input
@@ -60,6 +62,7 @@ export function Topbar() {
       </select>
       <ThemeToggle />
       <ConnectionStatusPill />
+      <LegalNotice className="legal-notice legal-notice--topbar" />
     </header>
   );
 }

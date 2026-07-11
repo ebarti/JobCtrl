@@ -152,7 +152,7 @@ async function expectPaintedStatus(locator: Locator, label: string): Promise<voi
 }
 
 async function focusByKeyboard(page: Page, target: Locator): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 24; attempt += 1) {
     const isFocused = await target.evaluate((element) => element === document.activeElement);
     if (isFocused) {
       return;
@@ -375,6 +375,26 @@ test("shell chrome collapses navigation into a sheet on the mobile viewport", as
   await expect(navSheet.locator(".side-rail__group-label", { hasText: "Pipeline" })).toBeVisible();
   await navSheet.getByRole("link", { name: "Dashboard" }).click();
   await expect(page).toHaveURL(/\/dashboard\b/);
+});
+
+test("legal attribution remains visible while the side rail is icon-only", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 844 });
+  await page.goto("/jobs");
+
+  const legalNotice = page.locator(".legal-notice--topbar");
+  await expect(legalNotice).toBeVisible({ timeout: 30_000 });
+  await expect(legalNotice).toContainText("Copyright © 2026 Eloi Barti");
+  await expect(legalNotice.getByRole("link", { name: "AGPL-3.0-only" })).toHaveAttribute(
+    "href",
+    "https://github.com/ebarti/JobCtrl/blob/main/LICENSE",
+  );
+  await expect(legalNotice.getByRole("link", { name: "Source code" })).toHaveAttribute(
+    "href",
+    "https://github.com/ebarti/JobCtrl",
+  );
+  await expect(page.locator(".legal-notice--rail")).toBeHidden();
+  await expect(page.getByRole("button", { name: "Open navigation" })).toBeHidden();
+  await expectNoDocumentInlineOverflow(page);
 });
 
 test("domain status surfaces use painted semantic token classes", async ({ page }) => {

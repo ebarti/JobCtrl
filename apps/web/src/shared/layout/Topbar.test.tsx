@@ -5,7 +5,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -78,6 +78,9 @@ describe("<Topbar>", () => {
     expect(screen.getByRole("option", { name: "compact" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "regular" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "comfy" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Copyright © 2026 Eloi Barti", { selector: ".legal-notice--topbar span" }),
+    ).toBeInTheDocument();
   });
 
   it("opens the responsive navigation sheet with the grouped nav links", async () => {
@@ -90,6 +93,16 @@ describe("<Topbar>", () => {
     for (const label of ["Dashboard", "Apply review", "Jobs", "Contacts", "Settings"]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Copyright © 2026 Eloi Barti")).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "AGPL-3.0-only" })).toHaveAttribute(
+      "href",
+      "https://github.com/ebarti/JobCtrl/blob/main/LICENSE",
+    );
+    expect(within(dialog).getByRole("link", { name: "Source code" })).toHaveAttribute(
+      "href",
+      "https://github.com/ebarti/JobCtrl",
+    );
     expect(nav).toBeInTheDocument();
   });
 

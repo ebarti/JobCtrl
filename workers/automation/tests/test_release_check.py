@@ -30,6 +30,22 @@ def test_public_byline_files_do_not_trigger_default_needles() -> None:
         assert release_check.scan_text(label, text, rel) == []
 
 
+def test_public_copyright_attribution_does_not_disable_private_name_detection() -> None:
+    holder = "El" + "oi Barti"
+    first_name = "El" + "oi"
+
+    assert release_check.scan_text(
+        "NOTICE",
+        f"Copyright (C) 2026 {holder}\n",
+        Path("NOTICE"),
+    ) == []
+    assert release_check.scan_text(
+        "README.md",
+        f"Candidate profile: {first_name}\n",
+        Path("README.md"),
+    ) == ["README.md: contains private first name"]
+
+
 def test_release_check_catches_synthetic_violation_per_class(tmp_path: Path) -> None:
     blocked_distribution = "job" + "hunter"
     _write(
