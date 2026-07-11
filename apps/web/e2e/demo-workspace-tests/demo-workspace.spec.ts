@@ -439,6 +439,34 @@ scenarioTest(
 );
 
 scenarioTest(
+  "blocked Contoso Apply Review handoff preserves the requested job identity",
+  async ({ page }) => {
+    const runtimeErrors: string[] = [];
+    page.on("pageerror", (error) => runtimeErrors.push(error.message));
+
+    await page.goto("/jobs/job-contoso-reliability");
+    const drawer = page.getByRole("dialog", { name: "Job details" });
+    await drawer
+      .getByRole("link", {
+        name: "Open Apply Review for Reliability engineering manager",
+      })
+      .click();
+
+    await expect(page).toHaveURL(
+      /\/apply-review\?jobKey=job-contoso-reliability(?:&|$)/,
+    );
+    await expect(
+      page.getByText("This job is not in the application review queue."),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Application review" }),
+    ).toBeVisible();
+    await expect(page.getByText("Something went wrong!", { exact: true })).toHaveCount(0);
+    expect(runtimeErrors).toEqual([]);
+  },
+);
+
+scenarioTest(
   "application rehearsals append durable no-effect receipts",
   async ({ page, context }) => {
     const second = await context.newPage();

@@ -92,8 +92,9 @@ jobs:
           path: dist/web
 
       - name: Publish static preview
-        run: corepack pnpm dlx wrangler@4.107.0 pages deploy dist/web --project-name=jobctrl-demo --branch="${{ github.head_ref }}"
+        run: corepack pnpm dlx wrangler@4.107.0 pages deploy dist/web --project-name=jobctrl-demo --branch="$HEAD_REF"
         env:
+          HEAD_REF: ${{ github.head_ref }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 

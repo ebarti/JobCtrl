@@ -813,6 +813,41 @@ const pinnedTailoringExplanation: ArtifactTailoringExplanation = {
 };
 
 describe("<ApplyReviewView>", () => {
+  it("preserves an explicit job target that is absent from the review queue", async () => {
+    const onTargetJobKeyChange = vi.fn();
+    const northwindOnlyQueue = {
+      ...sampleApplyReviewQueue,
+      items: [
+        {
+          ...sampleApplyReviewQueue.items[0]!,
+          jobKey: "job-northwind-platform",
+          title: "Platform systems lead",
+          company: "Northwind Workshop",
+        },
+      ],
+    };
+
+    renderWithProviders(
+      <ApplyReviewView
+        targetJobKey="job-contoso-reliability"
+        onTargetJobKeyChange={onTargetJobKeyChange}
+      />,
+      {
+        ports: buildTestPorts({
+          api: {
+            applyReviewQueue: vi.fn(async () => northwindOnlyQueue),
+          },
+        }),
+      },
+    );
+
+    expect(
+      await screen.findByText("This job is not in the application review queue."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /Review evidence for Platform systems lead/i })).not.toBeInTheDocument();
+    expect(onTargetJobKeyChange).not.toHaveBeenCalled();
+  });
+
   it("renders the review workspace with job evidence and tailored materials", async () => {
     renderWithProviders(<ApplyReviewView />);
 
@@ -1339,6 +1374,31 @@ describe("<ApplyReviewView>", () => {
     expect(page?.querySelector(".resume-section-title")).toHaveTextContent("Experience");
     expect(page?.querySelector(".resume-line")).toHaveTextContent("Restored incident response automation.");
     expect(shadow.querySelector(".resume-document")).toBeNull();
+  });
+
+  it("discards injected executable HTML while preserving resume content", async () => {
+    htmlPreviewOverride = `<!doctype html><html><body>
+      <main>
+        <h1 data-resume-line-number="1">Platform systems lead</h1>
+        <p data-resume-line-number="2">Preserved synthetic resume content.</p>
+      </main>
+      <script src="/cdn-cgi/scripts/beacon.min.js">challenge-platform injected text</script>
+    </body></html>`;
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+        },
+      }),
+    });
+
+    await waitFor(() => expect(document.querySelector(".resume-plate-document")).toBeTruthy());
+    const shadow = document.querySelector(".resume-plate-document") as HTMLElement;
+    expect(shadowText(shadow)).toContain("Platform systems lead");
+    expect(shadowText(shadow)).toContain("Preserved synthetic resume content.");
+    expect(shadowText(shadow)).not.toContain("challenge-platform injected text");
+    expect(shadow.querySelector("script")).toBeNull();
   });
 
   it("normalizes saved entry heading rows so editing does not add spacer grid tracks", async () => {

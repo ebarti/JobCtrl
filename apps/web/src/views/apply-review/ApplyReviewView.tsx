@@ -78,8 +78,12 @@ function auditTone(state: ApplyReviewQueueItem["applyAudit"]["state"]): Material
   return "warn";
 }
 
-function selectedItem(items: readonly ApplyReviewQueueItem[], selectedJobKey: string | null) {
-  return items.find((item) => item.jobKey === selectedJobKey) ?? items[0] ?? null;
+function selectedItem(
+  items: readonly ApplyReviewQueueItem[],
+  selectedJobKey: string | null,
+  fallbackToFirst: boolean,
+) {
+  return items.find((item) => item.jobKey === selectedJobKey) ?? (fallbackToFirst ? items[0] : null) ?? null;
 }
 
 function reviewStateLabel(item: ApplyReviewQueueItem): string | null {
@@ -1306,25 +1310,22 @@ export function ApplyReviewView({
   const queueError = queue.error instanceof Error ? queue.error.message : null;
   const items = queue.data?.items ?? [];
   const [selectedJobKey, setSelectedJobKey] = useState<string | null>(targetJobKey);
-  const selected = selectedItem(items, selectedJobKey);
+  const selected = selectedItem(items, selectedJobKey, !targetJobKey);
 
   useEffect(() => {
-    if (!items.length) {
-      setSelectedJobKey(null);
+    if (targetJobKey) {
+      setSelectedJobKey(targetJobKey);
       return;
     }
-    if (targetJobKey && items.some((item) => item.jobKey === targetJobKey)) {
-      setSelectedJobKey(targetJobKey);
+    if (!items.length) {
+      setSelectedJobKey(null);
       return;
     }
     if (!selectedJobKey || !items.some((item) => item.jobKey === selectedJobKey)) {
       const fallbackJobKey = items[0]?.jobKey ?? null;
       setSelectedJobKey(fallbackJobKey);
-      if (targetJobKey && fallbackJobKey !== targetJobKey) {
-        onTargetJobKeyChange?.(fallbackJobKey);
-      }
     }
-  }, [items, onTargetJobKeyChange, selectedJobKey, targetJobKey]);
+  }, [items, selectedJobKey, targetJobKey]);
 
   const handleSelectJob = (jobKey: string) => {
     setSelectedJobKey(jobKey);
@@ -1352,7 +1353,10 @@ export function ApplyReviewView({
             <SelectedReview item={selected} />
           </div>
         ) : null}
-        {queue.data && !items.length ? <Empty title="No application review items." /> : null}
+        {queue.data && targetJobKey && !selected ? (
+          <Empty title="This job is not in the application review queue." />
+        ) : null}
+        {queue.data && !targetJobKey && !items.length ? <Empty title="No application review items." /> : null}
       </section>
     </div>
   );

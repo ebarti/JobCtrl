@@ -319,6 +319,14 @@ const RESUME_PLATE_BLOCK_TAGS = new Set([
 
 const RESUME_PLATE_INLINE_TAGS = new Set(["a", "b", "span", "strong"]);
 
+const RESUME_PLATE_DISCARDED_TAGS = new Set([
+  "iframe",
+  "noscript",
+  "script",
+  "style",
+  "template",
+]);
+
 const RESUME_PLATE_BLOCK_CLASS_TOKENS = new Set([
   "resume-entry-company",
   "resume-entry-date",
@@ -905,7 +913,9 @@ function normalizeResumePlateDescendant(node: Descendant): Descendant | null {
 }
 
 function normalizeResumePlateValue(value: Value): Value {
-  const normalized = value.map(normalizeResumePlateDescendant).filter((node): node is Descendant => Boolean(node));
+  const normalized = value
+    .map(normalizeResumePlateDescendant)
+    .filter((node): node is Descendant & { children: Descendant[] } => Boolean(node && "children" in node));
   return normalized.length ? (normalized as Value) : [{ type: "resume_block", tagName: "main", className: "resume-page", children: [{ text: "" }] }];
 }
 
@@ -922,6 +932,7 @@ function resumePlateNodeFromDom(node: Node): Descendant | null {
   }
   if (!(node instanceof HTMLElement)) return null;
   const tagName = node.tagName.toLowerCase();
+  if (RESUME_PLATE_DISCARDED_TAGS.has(tagName)) return null;
   const className = resumePlateClassNameFromDom(node);
   const isBlock = shouldRenderResumeElementAsBlock(tagName, className);
   const isInline = !isBlock && RESUME_PLATE_INLINE_TAGS.has(tagName);
@@ -975,7 +986,7 @@ function resumePlateValueFromHtml(html: string): Value {
   const page = doc.querySelector<HTMLElement>(".resume-page");
   const nodes = Array.from((page ? [page] : Array.from(doc.body.children)) as Iterable<Element>)
     .map((node) => resumePlateNodeFromDom(node))
-    .filter((node): node is Descendant => Boolean(node));
+    .filter((node): node is Descendant & { children: Descendant[] } => Boolean(node && "children" in node));
   return nodes.length
     ? normalizeResumePlateValue(nodes as Value)
     : [{ type: "resume_block", tagName: "main", className: "resume-page", children: [{ text: "" }] }];

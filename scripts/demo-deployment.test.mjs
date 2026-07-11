@@ -21,6 +21,7 @@ test("demo build and Pages files select the fail-closed demo composition", async
   assert.match(await read("apps/web/public/theme-init.js"), /jh:ui-preferences/);
 
   const headers = await read("apps/web/public/_headers");
+  assert.match(headers, /\/\*\n  Cache-Control: no-transform/);
   for (const required of [
     "Content-Security-Policy: default-src 'self'",
     "connect-src 'self'",
@@ -59,6 +60,9 @@ test("deployment workflow pins Wrangler, gates production, and deploys in safe o
   const previewJob = workflow.slice(workflow.indexOf("  preview:"), workflow.indexOf("  production:"));
   assert.match(previewJob, /uses: actions\/checkout@v4/);
   assert.ok(previewJob.indexOf("actions/checkout@v4") < previewJob.indexOf("pnpm/action-setup@v4"));
+  assert.match(previewJob, /^\s+HEAD_REF: \$\{\{ github\.head_ref \}\}$/m);
+  assert.match(previewJob, /run: .*--branch="\$HEAD_REF"/);
+  assert.doesNotMatch(previewJob, /run: .*\$\{\{\s*github\.head_ref\s*\}\}/);
 
   const migrate = workflow.indexOf("Apply telemetry migrations");
   const api = workflow.indexOf("Deploy consent and telemetry API");
