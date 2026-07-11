@@ -1,16 +1,17 @@
 # Public JobCtrl Live Demo Plan
 
 - **Date:** 2026-07-11
-- **Status:** Accepted / not yet delivered.
+- **Status:** Accepted, amended by the owner on 2026-07-11 / not yet delivered.
 - **Anchors:** Current behavior and file ownership verified against
   `main @ b513b356`. Re-verify all cited paths and contracts against the base of
   each implementation PR before coding.
 - **Owner decisions:** Ship a public, browser-local JobCtrl demo backed only by
   synthetic data; isolate mutable workspaces by browser profile; instrument the
-  demo with consent-aware first-party telemetry; require a cookie decision
-  before demo initialization; deliver implementation as a bottom-up stack of
-  reviewable PRs. An acceptance-only consent wall remains a legal stop gate,
-  not an accepted implementation decision.
+  demo with consent-aware first-party telemetry; require confirmed analytics
+  consent before demo initialization; redirect visitors who decline to
+  `https://jobctrl.dev`; prompt them again if they later revisit the demo; and
+  deliver implementation as a bottom-up stack of reviewable PRs. Public cutover
+  of this acceptance-required gate remains a legal/privacy stop gate.
 - **Goal:** A visitor can open `https://demo.jobctrl.dev`, explore the real
   JobCtrl web application, drive representative workflows end to end, inspect
   audit and failure behavior, and understand the product without installing it
@@ -38,9 +39,10 @@ remain the same.
 
 The public deployment has one deliberately narrow server-side surface:
 same-origin consent, non-linkable operational counters, and consented telemetry
-Pages Functions. They are not a JobCtrl product API. They cannot read the
-browser-local demo workspace. The operational lane stores only aggregate
-counters; the optional lane accepts only a small, typed, allowlisted analytics
+served by a dedicated Worker routed only at `demo.jobctrl.dev/api/*`. It is not
+a JobCtrl product API and cannot read the browser-local demo workspace. Static
+application assets remain on Pages. The operational lane stores only aggregate
+counters; the consented lane accepts only a small, typed, allowlisted analytics
 event contract after consent.
 
 The demo must make this boundary unmistakable:
@@ -59,8 +61,9 @@ proxy, or the first increment of the multi-tenant SaaS architecture.
 
 The public demo must prove all of the following at the same time:
 
-1. After the required cookie choice, a visitor reaches a populated product
-   without installation or a product API.
+1. After confirmed cookie acceptance, a visitor reaches a populated product
+   without installation or a product API; declining redirects to
+   `https://jobctrl.dev`, and revisiting opens the consent gate again.
 2. The visitor can interact with JobCtrl's core discovery, scoring, evidence,
    tailoring, review, run-history, dry-run apply, outcome, and outreach
    surfaces.
@@ -76,7 +79,7 @@ The public demo must prove all of the following at the same time:
    and understand the key workflows. Neither lane collects profile, job,
    resume, document, or free-text content.
 9. Analytics consent is informed, versioned, reversible, and enforced before
-   optional tracking begins.
+   either tracking or demo workspace initialization begins.
 10. The local JobCtrl application remains behaviorally unchanged.
 
 ### 1.2 Current frontend seam
@@ -201,28 +204,33 @@ No button may appear to submit an application, send an email, scrape a live
 site, contact an LLM, save a secret, or open a host OS file without an adjacent
 demo explanation and a simulated receipt.
 
-### D5. Consent decision gate, not an acceptance-only cookie wall
+### D5. Acceptance-required access gate
 
-**Decision:** Block demo initialization until the visitor makes an explicit
-cookie choice. Offer equally prominent actions:
+**Owner decision (amended 2026-07-11):** Block demo initialization until the
+visitor explicitly accepts analytics cookies. The gate has two clear actions:
 
-- **Accept analytics**;
-- **Continue without analytics**.
+- **Accept cookies and enter the demo**;
+- **Decline and return to JobCtrl.dev**.
 
-An acceptance-only wall is a legal and trust stop condition unless counsel
-explicitly approves a different lawful basis and implementation. GDPR Article
-7 requires consent to be freely given and makes service access conditioned on
-unnecessary processing a central validity consideration. The EDPB's consent
-guidance and cookie-banner taskforce likewise reject designs without a genuine
-refusal path:
+The gate must state plainly that the live demo is available only after cookie
+acceptance. Declining records the non-linkable denied choice when the edge is
+available, creates no analytics identifier, and redirects to
+`https://jobctrl.dev`. A visitor who later opens `demo.jobctrl.dev` sees the
+gate again rather than being auto-admitted or silently redirected. Withdrawal
+stops collection, runs delete-before-expire erasure, redirects away, and causes
+the gate to reappear on return.
+
+This owner decision is implementation authority, not legal approval. Public
+cutover remains stopped until the controller approves a lawful basis and the
+published notice. GDPR Article 7 makes conditionality relevant when assessing
+whether consent is freely given, and current EDPB guidance gives an explicit
+cookie-wall example in which consent is not valid because access depends on
+acceptance:
 
 - [GDPR Article 7 and recitals 42–43](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32016R0679)
 - [EDPB Guidelines 05/2020 on consent](https://www.edpb.europa.eu/documents/guideline/guidelines-052020-on-consent-under-regulation-2016679_en)
+- [EDPB 2026 consent summary and cookie-wall example](https://www.edpb.europa.eu/system/files/2026-04/edpb-summary-consent_en.pdf)
 - [EDPB cookie-banner taskforce report](https://www.edpb.europa.eu/system/files/2023-01/edpb_20230118_report_cookie_banner_taskforce_en.pdf)
-
-This satisfies the owner's intent to force a cookie decision before entry
-without making analytics acceptance coercive. Declining analytics does not
-reduce demo functionality.
 
 ### D6. First-party telemetry with data minimization
 
@@ -231,12 +239,14 @@ analytics and make their schemas impossible to join:
 
 1. **Non-linkable operational counters in D1** record an aggregate consent
    choice inside the required consent transaction and one aggregate
-   initialization result after that choice. These counters contain only UTC
-   day, release, consent-contract version, a closed metric/dimension enum, and
-   count. They have no request row, timestamp below day granularity, visitor or
-   session ID, IP, user agent, referrer, URL, or product data. The edge must not
-   log request bodies or identifying headers. They operate for both choices,
-   are disclosed as necessary service measurement, and require privacy-owner
+   initialization result after a confirmed grant. These counters contain only
+   UTC day, release, consent-contract version, a closed metric/dimension enum,
+   and count. They have no request row, timestamp below day granularity, visitor
+   or session ID, IP, user agent, referrer, URL, or product data. The edge must
+   not log request bodies or identifying headers. Consent-choice counters
+   operate for grants and denials; initialization-health counters exist only
+   after a confirmed grant because a decline never initializes the demo. Both
+   are disclosed as necessary service measurement and require privacy-owner
    approval before launch.
    Each consent or health operation carries a fresh random idempotency key that
    is reused only for retries of that operation. D1 stores only its digest in a
@@ -244,7 +254,7 @@ analytics and make their schemas impossible to join:
    and atomic insert-plus-increment make a committed operation count once even
    when the response is lost. This operation key is not a visitor/session ID and
    cannot be reused across choices, initialization attempts, or analytics.
-2. **A same-origin Pages Function plus D1**, enabled only after consent, accepts
+2. **A same-origin `/api/*` Worker plus D1**, enabled only after consent, accepts
    a small allowlisted product-event schema with pseudonymous consented
    visitor/session IDs, exact retention, withdrawal, per-visitor deletion,
    coarse route names, and browser-computed Web Vitals/timing buckets.
@@ -271,8 +281,10 @@ do not provide the simplest per-visitor erasure path.
 
 ### D7. Separate Cloudflare project and subdomain
 
-**Decision:** Deploy the demo as the separate Pages project `jobctrl-demo` on
-`demo.jobctrl.dev`, linked from the docs site.
+**Decision:** Deploy the static demo as the separate Pages project
+`jobctrl-demo` on `demo.jobctrl.dev`, linked from the docs site. Route only
+`demo.jobctrl.dev/api/*` to a dedicated Worker because Pages Functions do not
+support the required Rate Limiting bindings under the pinned Wrangler version.
 
 Do not deploy under `/demo` inside `jobctrl-docs`. Separate projects provide
 independent preview deployments, bindings, headers, rollout, incident response,
@@ -516,10 +528,10 @@ blob URLs. They never reveal filesystem paths.
 ```mermaid
 stateDiagram-v2
     [*] --> Unknown
-    Unknown --> Granted: Accept analytics
-    Unknown --> Denied: Continue without analytics
-    Granted --> Denied: Withdraw consent
-    Denied --> Granted: Accept later
+    Unknown --> Granted: Accept cookies and server confirms
+    Unknown --> Denied: Decline and redirect
+    Denied --> Unknown: Revisit demo
+    Granted --> Denied: Withdraw, erase, and redirect
     Granted --> Unknown: Consent version changes
     Denied --> Unknown: Consent version changes
 ```
@@ -527,25 +539,28 @@ stateDiagram-v2
 Rules:
 
 - The demo shell may render branding, the concise explanation, policy links,
-  and the two choices while consent is `Unknown`.
-- The demo workspace does not initialize until a choice is recorded.
+  the acceptance-required disclosure, and both actions while consent is
+  `Unknown` or `Denied`.
+- The demo workspace does not initialize until a grant is confirmed by the
+  same-origin consent endpoint.
 - No optional script, visitor ID, product telemetry event, RUM beacon, or
   optional telemetry request starts while consent is `Unknown` or `Denied`.
 - The only measurement allowed without analytics consent is the non-linkable
-  counter update inside `POST /api/demo-consent` and one
-  `POST /api/demo-health` initialization result after the choice. Neither may
-  create a raw event row or include a visitor, session, product, route, or
-  workspace identifier; the short-lived retry-dedupe digest is the sole
-  exception.
-- `Denied` receives the complete demo.
+  choice counter update inside `POST /api/demo-consent`. The initialization
+  health counter is sent only after confirmed grant and demo initialization.
+  Neither may create a raw event row or include a visitor, session, product,
+  route, or workspace identifier; the short-lived retry-dedupe digest is the
+  sole exception.
+- `Denied` redirects to `https://jobctrl.dev`; returning to the demo renders the
+  consent gate again.
 - “Manage privacy” remains available from the app shell.
 - Withdrawing is no harder than accepting.
 - A consent-contract version change returns the visitor to `Unknown`.
-- A Pages Function outage never blocks the static demo. The browser records the
-  selected choice locally first. A decline proceeds with the complete demo and
-  no optional analytics; a grant proceeds with analytics disabled until the
-  server confirms identifiers. Consent synchronization retries in the
-  background without delaying workspace initialization.
+- An API Worker outage never blocks the static consent shell. Declining still
+  redirects without creating an identifier even if the best-effort choice
+  counter cannot be confirmed. Acceptance shows a retryable unavailable state
+  and does not initialize the workspace until the server confirms identifiers.
+- Once admitted, telemetry delivery failures never affect product interaction.
 
 ### 6.2 Cookie contract
 
@@ -571,7 +586,7 @@ random identifiers.
 | --- | --- | --- |
 | `/api/demo-consent` | `POST` | Validate `granted` or `denied`; idempotently increment the non-linkable daily choice counter; for withdrawal, delete rows keyed by the still-present visitor cookie before expiring identifiers; return the effective versioned choice or `erasure_pending` |
 | `/api/demo-consent` | `GET` | Return effective choice without exposing HttpOnly IDs |
-| `/api/demo-health` | `POST` | Once after a choice, idempotently increment a non-linkable daily `init_success` or `init_failure` counter using only release, consent version/choice, and persistent-or-memory storage mode |
+| `/api/demo-health` | `POST` | Once after confirmed grant and initialization, idempotently increment a non-linkable daily `init_success` or `init_failure` counter using only release, consent version/choice, and persistent-or-memory storage mode |
 | `/api/demo-telemetry` | `POST` | Accept one bounded allowlisted event only when consent cookie is granted |
 | `/api/demo-telemetry/me` | `DELETE` | Idempotent explicit withdrawal: delete rows using the current visitor cookie before expiring identifiers and set consent to denied |
 
@@ -678,7 +693,7 @@ The initial dashboard/query set must answer:
 1. Landing-request volume from Cloudflare delivery analytics, explicitly
    labelled as requests rather than unique people.
 2. Consent grant/deny share among recorded choices and initialization
-   success/failure by choice from the non-linkable daily counters.
+   success/failure among confirmed grants from the non-linkable daily counters.
 3. Unique consented visitors and sessions.
 4. Route and feature reach.
 5. Guided-tour start and completion.
@@ -690,11 +705,10 @@ The initial dashboard/query set must answer:
 10. Core Web Vitals and route timings.
 11. Docs/demo/install CTA movement.
 
-Never optimize conversion by hiding the decline choice or by degrading the
-non-consented product path. Reports must label population and denominator:
-`all choices`, `all initialization attempts`, or `consented traffic`. They must
-never imply a unique-all-visitor metric that the design deliberately does not
-collect.
+Never hide the decline-and-leave action or obscure that acceptance is required
+for entry. Reports must label population and denominator: `all choices`,
+`granted initialization attempts`, or `consented traffic`. They must never imply
+a unique-all-visitor metric that the design deliberately does not collect.
 
 ---
 
@@ -761,7 +775,8 @@ Before production:
   necessary service measurement, or remove them and narrow the metrics before
   launch;
 - verify processor/transfer terms for Cloudflare and any later provider;
-- do not launch an acceptance-only wall without explicit legal approval.
+- do not launch the owner-requested acceptance-required gate without explicit
+  legal/privacy approval of its lawful basis and copy.
 
 This plan is engineering guidance, not legal advice.
 
@@ -776,8 +791,9 @@ This plan is engineering guidance, not legal advice.
 - No Pages project named `jobctrl-demo` exists.
 - No `demo.jobctrl.dev` DNS record exists.
 - The connected Cloudflare MCP can read the account, zone, Pages projects, and
-  DNS state. The exposed permission set includes Workers/Pages, DNS, and D1 edit
-  capabilities.
+  DNS state. Reversible implementation preflights successfully created and
+  deleted an EU D1 database, a Pages project, and a temporary TXT record; exact
+  follow-up queries confirmed that no preflight resource remained.
 - The Cloudflare Web Analytics API currently returns an authentication error
   through this connector. Web Analytics is out of scope for the initial release,
   so this does not block the planned deployment.
@@ -785,7 +801,7 @@ This plan is engineering guidance, not legal advice.
   `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. Secret values are not and
   should not be readable.
 
-No Cloudflare state is changed by this plan PR.
+No persistent Cloudflare state is changed by this plan PR.
 
 ### 8.2 What the agent can own during implementation
 
@@ -795,7 +811,7 @@ connector and existing GitHub path should allow the agent to:
 - create the `jobctrl-demo` Pages project;
 - create and migrate the D1 telemetry database;
 - deploy the scheduled retention Worker and its D1 binding;
-- configure Pages Function bindings through versioned Wrangler configuration;
+- configure the versioned same-origin API Worker and retention Worker bindings;
 - deploy preview and production builds;
 - attach `demo.jobctrl.dev` to the project;
 - create/update the required DNS record;
@@ -813,9 +829,9 @@ The owner must provide or approve:
 
 1. **Privacy identity:** controller/legal name, privacy contact, and the public
    privacy/cookie-policy URL or approved copy.
-2. **Measurement policy confirmation:** approve the equal-choice consent gate
-   and disclosed non-linkable choice/init counters, or obtain legal approval
-   before requesting an acceptance-only alternative.
+2. **Measurement and access-gate approval:** obtain explicit legal/privacy
+   approval for the owner-requested acceptance-required gate and disclosed
+   non-linkable choice/granted-initialization counters.
 3. **GitHub token fallback:** if the existing `CLOUDFLARE_API_TOKEN` cannot
    deploy the new Pages project and bindings, replace it with a least-privilege
    token. Its value must be entered by the owner directly into GitHub Actions;
@@ -921,16 +937,17 @@ Every read-only route is populated and coherent.
 
 The complete core journey is interactive and visibly updates across views.
 
-### Phase 4 — Consent and telemetry
+### Phase 4 — Consent access gate and telemetry
 
 **Scope**
 
-- Add consent-choice gate and privacy controls.
+- Add the acceptance-required consent gate, decline/withdraw redirects, revisit
+  prompt behavior, and privacy controls.
 - Implement consent and identifier cookies.
 - Add a typed consent-aware telemetry adapter.
-- Add Pages Function endpoints, separate non-linkable aggregate and consented
-  event D1 schemas/migrations, rate limiting, retention, deletion, and
-  population-labelled query/report scripts.
+- Add the same-origin `/api/*` Worker endpoints, separate non-linkable aggregate
+  and consented event D1 schemas/migrations, rate limiting, retention, deletion,
+  and population-labelled query/report scripts.
 - Collect coarse route names and browser-computed Web Vitals/timing buckets
   through the typed same-origin event contract only after consent.
 - Add consent, funnel, error, and data-leak tests.
@@ -938,20 +955,24 @@ The complete core journey is interactive and visibly updates across views.
 **Tests**
 
 - Unknown/granted/denied/withdrawn/version-changed state machine.
-- Accept and decline have equal access and equivalent prominence.
-- Consent endpoint unavailable on first choice and on reload: both choices open
-  the demo; grant remains analytics-disabled until confirmed; decline creates
-  no analytics identifier or optional request.
+- Banner copy explicitly says the demo requires cookie acceptance.
+- Confirmed grant opens the demo; decline records the choice when possible,
+  creates no analytics identifier, and redirects to `https://jobctrl.dev`.
+- Revisiting after denial or withdrawal reopens the banner instead of admitting
+  or silently redirecting the visitor.
+- Consent endpoint unavailable on first choice and on reload: acceptance stays
+  at a retryable gate until confirmed; decline still creates no analytics
+  identifier and redirects away.
 - Zero optional request/cookie before consent; after denial, the network
-  allowlist contains only static app delivery, consent management, and the one
-  non-linkable initialization-health increment.
+  allowlist contains only static shell delivery and consent management; no
+  initialization-health event is sent for a decline.
 - Browser inspection proves exact `Secure`, `HttpOnly`, `SameSite=Lax`,
   `Path=/`, no-`Domain`, host scoping, and lifetime behavior before choice,
   after decline, after grant, after withdrawal, and after a version change.
 - Operational counter tests prove aggregate-only storage, no identifier/header
   persistence beyond the isolated short-lived operation digest,
-  non-joinability, bounded retention, and correct choice/init queries for both
-  consent choices.
+  non-joinability, bounded retention, correct grant/deny choice queries, and
+  granted-only initialization queries.
 - Commit-before-response-loss tests retry the same operation key and prove the
   consent or health counter increments exactly once; a later distinct choice or
   initialization attempt uses a different key and increments separately.
@@ -963,8 +984,9 @@ The complete core journey is interactive and visibly updates across views.
 
 **Exit criterion**
 
-The approved telemetry funnel works without collecting product-state content or
-degrading the non-consented path.
+The approved access gate and telemetry funnel work without collecting
+product-state content; denial consistently leaves the demo and re-prompts on a
+later visit.
 
 ### Phase 5 — Guided demo experience
 
@@ -1025,7 +1047,7 @@ canonical documentation matches the live behavior.
 | P1 | `feat/demo-p1-browser-workspace` | Phase 1 composition + persistence | P0 |
 | P2 | `feat/demo-p2-read-api` | Phase 2 complete read adapter | P1 |
 | P3 | `feat/demo-p3-workflows` | Phase 3 mutations + scenarios | P2 |
-| P4 | `feat/demo-p4-telemetry` | Phase 4 consent + Pages Function + D1 | P3 |
+| P4 | `feat/demo-p4-telemetry` | Phase 4 consent gate + API Worker + D1 | P3 |
 | P5 | `feat/demo-p5-guided-experience` | Phase 5 demo UX | P4 |
 | P6 | `feat/demo-p6-cloudflare-launch` | Phases 6–7 deployment, docs, launch QA | P5 |
 
@@ -1068,15 +1090,15 @@ python3 scripts/release_check.py
 git diff --check
 ```
 
-The demo build and Pages Functions also need a production-mode build plus local
-Wrangler/Miniflare tests with local D1. Analytics Engine is not required for
-the first release.
+The demo build, API Worker, and retention Worker also need a production-mode
+build plus local Wrangler/Miniflare tests with local D1. Analytics Engine is not
+required for the first release.
 
 ### 11.2 Acceptance matrix
 
 | Requirement | Proof |
 | --- | --- |
-| Populated after choice | In production-mode Playwright, a fresh browser makes either cookie choice, records `init_success`, and reaches the populated dashboard within two seconds without installation or a product API |
+| Populated after acceptance | In production-mode Playwright, a fresh browser accepts cookies, receives confirmed identifiers, records `init_success`, and reaches the populated dashboard within two seconds without installation or a product API |
 | Browser-profile isolation | Two clean browser profiles/private contexts mutate/reset independently; a same-profile test proves shared state and the UI explains that boundary |
 | Persistence | Reload preserves workspace and in-flight scenario policy |
 | Deterministic reset | Reset returns the same seed digest and cancels timers |
@@ -1086,8 +1108,8 @@ the first release.
 | Failure value | Retry, cancellation, blocker, and accepted-artifact-preservation scenarios are inspectable |
 | No side effects | Network tripwire observes no LLM, Gmail, ATS, job-board, local API, or OS action |
 | Honest simulation | External-effect receipts always say simulated/no external effect |
-| Consent before telemetry | No optional cookie/script/request exists before explicit grant; the only pre-grant measurement is the aggregate-only consent/init contract |
-| Functional denial | Declining analytics grants the complete demo |
+| Consent before telemetry | No analytics identifier, script, or product-event request exists before explicit grant; the only pre-grant measurement is the aggregate-only consent-choice counter |
+| Functional denial | Declining creates no analytics ID, redirects to `https://jobctrl.dev`, and a later demo visit opens the banner again |
 | Cookie boundary | Browser assertions prove exact host-only attributes/lifetimes through unknown, denied, granted, withdrawn, and version-changed states |
 | Reversible consent | Withdraw stops telemetry, expires IDs, and deletes D1 rows |
 | Data minimization | Forbidden product fields fail client/server telemetry tests and release scans |
@@ -1111,7 +1133,7 @@ the first release.
 | Event simulation | Demo event stream, clock, scheduler, scenarios |
 | Telemetry client | Existing `TelemetryPort` adapter plus typed safe-event catalog and consent provider |
 | Consent UI | App-shell provider/gate, privacy settings/control, stories and a11y tests |
-| Telemetry edge | Pages Functions, D1 schema/migrations, query/cleanup/delete utilities |
+| Telemetry edge | Same-origin `/api/*` Worker, retention Worker, D1 schema/migrations, query/cleanup/delete utilities |
 | Artifact demo | Bundled synthetic HTML/PDF assets and preview/download adapter |
 | Deployment | Demo Wrangler configuration, `.github/workflows/`, Pages `_headers`/redirects |
 | Docs | README, `docs/user/`, local development, reliability QA, frontend architecture, requirements, decisions |
@@ -1128,8 +1150,8 @@ the first release.
 | Shared visitor state | Isolation is explicitly browser-profile scoped; cross-profile E2E is a release blocker; same-profile warning, private-session guidance, and complete reset are required |
 | “Simulated” is mistaken for real AI/apply | Persistent demo identity, action-level labels, immutable no-effect receipts |
 | Sensitive input enters telemetry | Closed event/attribute schema at client and edge; never send raw errors/content |
-| Cookie consent is coercive | Equal accept/decline; full functionality after decline; acceptance-only requires legal approval |
-| Analytics blocks the app | Telemetry is fail-open after choice and never owns product state |
+| Acceptance-required consent may not be freely given | Banner discloses the condition and offers a clear decline-and-leave action; public cutover requires explicit legal/privacy approval of the lawful basis and copy |
+| Telemetry blocks or degrades an admitted session | Grant must be confirmed before entry; after entry, telemetry delivery is fail-open and never owns product state |
 | Analytics ID becomes identity | Random first-party ID only; no login, fingerprint, enrichment, or cross-site join |
 | Retention or erasure fails | D1 exact retention/deletion tests and monitored cleanup before launch |
 | CSP breaks the app | Preview report-only discovery without network reports, then enforcement and live browser QA |
@@ -1172,12 +1194,12 @@ This plan is complete only when:
    audit history remain coherent across views.
 5. Every external/irreversible capability is impossible and honestly simulated.
 6. No product-state value crosses the telemetry boundary.
-7. Consent is explicit, equal-choice, versioned, reversible, and enforced before
-   optional telemetry begins.
-8. Non-linkable operational counters answer choice/init health questions, and
-   typed consented D1 events answer the agreed consented funnel, reliability,
-   Web Vitals/timing, and CTA questions without route URLs or claims about
-   unique non-consenting visitors.
+7. Consent is explicit, versioned, reversible, required before entry, and the
+   decline/withdraw paths redirect and re-prompt on return exactly as disclosed.
+8. Non-linkable operational counters answer choice and granted-initialization
+   health questions, and typed consented D1 events answer the agreed consented
+   funnel, reliability, Web Vitals/timing, and CTA questions without route URLs
+   or claims about unique non-consenting visitors.
 9. Retention, withdrawal, and current-visitor deletion pass production tests.
 10. Cloudflare custom domain, DNS, bindings, deployment, security headers,
     preview, production smoke, and rollback all pass.
