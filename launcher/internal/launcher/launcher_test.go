@@ -994,6 +994,13 @@ func TestStartupSignalIsCleanCancellation(t *testing.T) {
 	}
 }
 
+func TestDetachedReadinessBudgetCoversBothSequentialStartupPhases(t *testing.T) {
+	minimum := 2 * startupTimeout
+	if detachedStartupTimeout <= minimum {
+		t.Fatalf("detached readiness budget = %s, must exceed both sequential startup phases (%s)", detachedStartupTimeout, minimum)
+	}
+}
+
 func TestStatusActivelyProbesAPIWorkerReadiness(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:8766")
 	if err != nil {

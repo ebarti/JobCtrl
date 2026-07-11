@@ -40,7 +40,11 @@ const (
 	stateSchemaVersion = 1
 	logLineLimit       = 200
 	startupTimeout     = 30 * time.Second
-	shutdownTimeout    = 5 * time.Second
+	// Detached start spans two sequential supervisor health phases: Temporal,
+	// then API/worker. The parent must not kill a supervisor that is still
+	// within those valid phase deadlines.
+	detachedStartupTimeout = 2*startupTimeout + 5*time.Second
+	shutdownTimeout        = 5 * time.Second
 )
 
 var (
@@ -1121,7 +1125,7 @@ func startDetached(ctx launchContext) error {
 		// a successful `start` cannot leave a waitable child behind.
 		_ = command.Process.Release()
 		return nil
-	case <-time.After(startupTimeout + 5*time.Second):
+	case <-time.After(detachedStartupTimeout):
 		_ = syscall.Kill(command.Process.Pid, syscall.SIGTERM)
 		_ = command.Wait()
 		return errors.New("timed out waiting for detached JobCtrl supervisor")
