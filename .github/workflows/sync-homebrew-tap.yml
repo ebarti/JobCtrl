@@ -1,54 +1,33 @@
 name: Sync Homebrew Tap
 
-# P6 calls this workflow only after it has verified the descriptor signature
-# and smoke-tested the published signed ZIP. There is intentionally no push or
-# `release: published` trigger: neither an unrendered template nor a merely
-# published GitHub release is authorization to change the public tap.
+# This is deliberately reusable only after P6 has downloaded the candidate
+# from the public HTTPS origin. Callers pass an Actions artifact name, never
+# workspace file paths: the formula, descriptor, trust registry, and smoke
+# evidence are authenticated again on this clean runner before tap credentials
+# are loaded.
 on:
   workflow_call:
     inputs:
-      descriptor_path:
+      release_artifact_name:
         required: true
         type: string
-      descriptor_signature_path:
-        required: true
-        type: string
-      descriptor_url:
-        required: true
-        type: string
-      formula_path:
-        required: true
-        type: string
-      promotion_evidence_path:
-        required: true
-        type: string
-    secrets:
-      HOMEBREW_TAP_DEPLOY_KEY:
-        required: true
-  workflow_dispatch:
-    inputs:
-      descriptor_path:
-        description: P6 signed stable descriptor path in this checkout
-        required: true
-        type: string
-      descriptor_signature_path:
-        description: Detached P6 descriptor signature path in this checkout
+      smoke_artifact_name:
         required: true
         type: string
       descriptor_url:
-        description: Canonical HTTPS descriptor URL
         required: true
         type: string
-      formula_path:
-        description: P6-rendered stable formula path in this checkout
+      release_ref:
         required: true
         type: string
-      promotion_evidence_path:
-        description: P6 signature and published-asset smoke evidence path
+      release_tag:
         required: true
         type: string
-
+      expected_formula_sha256:
+        required: true
+        type: string
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -56,55 +35,138 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sync:
-    name: Publish verified rendered formula
-    runs-on: ubuntu-latest
+  verify:
+    name: Verify and seal the rendered formula without tap credentials
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
     env:
-      DESCRIPTOR_PATH: ${{ inputs.descriptor_path }}
-      DESCRIPTOR_SIGNATURE_PATH: ${{ inputs.descriptor_signature_path }}
+      RELEASE_ARTIFACT_NAME: ${{ inputs.release_artifact_name }}
+      SMOKE_ARTIFACT_NAME: ${{ inputs.smoke_artifact_name }}
       DESCRIPTOR_URL: ${{ inputs.descriptor_url }}
-      FORMULA_PATH: ${{ inputs.formula_path }}
-      PROMOTION_EVIDENCE_PATH: ${{ inputs.promotion_evidence_path }}
-      VERIFIED_FORMULA_PATH: ${{ runner.temp }}/jobctrl-verified.rb
+      RELEASE_REF: ${{ inputs.release_ref }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      EXPECTED_FORMULA_SHA256: ${{ inputs.expected_formula_sha256 }}
 
     steps:
-      - name: Check out JobCtrl
-        uses: actions/checkout@v4
+      - name: Check out JobCtrl verification code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.release_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the propagated audited commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_REF"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
+
+      - name: Set up pinned Node for signed-render verification
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.21.1
+
+      - name: Install locked signed-render dependencies
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Download the immutable P6 promotion artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.release_artifact_name }}
+          path: ${{ runner.temp }}/jobctrl-p6-release
+
+      - name: Download credential-free smoke evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.smoke_artifact_name }}
+          path: ${{ runner.temp }}/jobctrl-p6-release
 
       - name: Run strict release privacy gate
         run: python3 scripts/release_check.py --strict-prompt
 
-      - name: Require P6 signed render and publication evidence
+      - name: Require the signed render and published-candidate evidence
+        env:
+          DESCRIPTOR_PATH: ${{ runner.temp }}/jobctrl-p6-release/release-descriptor.json
+          DESCRIPTOR_SIGNATURE_PATH: ${{ runner.temp }}/jobctrl-p6-release/release-descriptor.json.sig
+          TRUST_PATH: ${{ runner.temp }}/jobctrl-p6-release/release-keys.json
+          FORMULA_PATH: ${{ runner.temp }}/jobctrl-p6-release/jobctrl.rb
+          PROMOTION_EVIDENCE_PATH: ${{ runner.temp }}/jobctrl-p6-release/homebrew-promotion-evidence.json
         run: |
           set -euo pipefail
-          workspace="$(realpath "$GITHUB_WORKSPACE")"
-          resolve_workspace_file() {
-            case "$1" in *$'\n'*|*$'\r'*) echo "release evidence path contains a newline" >&2; exit 1 ;; esac
-            case "$1" in
-              /*) candidate="$1" ;;
-              *) candidate="$workspace/$1" ;;
-            esac
-            resolved="$(realpath -e "$candidate")"
-            case "$resolved" in
-              "$workspace"/*) printf '%s\n' "$resolved" ;;
-              *) echo "release evidence path escapes GITHUB_WORKSPACE: $1" >&2; exit 1 ;;
-            esac
-          }
-          descriptor="$(resolve_workspace_file "$DESCRIPTOR_PATH")"
-          signature="$(resolve_workspace_file "$DESCRIPTOR_SIGNATURE_PATH")"
-          formula="$(resolve_workspace_file "$FORMULA_PATH")"
-          evidence="$(resolve_workspace_file "$PROMOTION_EVIDENCE_PATH")"
+          for path in "$DESCRIPTOR_PATH" "$DESCRIPTOR_SIGNATURE_PATH" "$TRUST_PATH" "$FORMULA_PATH" "$PROMOTION_EVIDENCE_PATH"; do
+            test -f "$path" && test ! -L "$path"
+          done
+          test "$(shasum -a 256 "$FORMULA_PATH" | awk '{print $1}')" = "$EXPECTED_FORMULA_SHA256"
           node scripts/distribution-homebrew.mjs verify-promotion \
-            --descriptor "$descriptor" \
-            --signature "$signature" \
+            --descriptor "$DESCRIPTOR_PATH" \
+            --signature "$DESCRIPTOR_SIGNATURE_PATH" \
             --descriptor-url "$DESCRIPTOR_URL" \
-            --formula "$formula" \
-            --evidence "$evidence"
-          ruby -c "$formula"
-          install -m 0644 "$formula" "$VERIFIED_FORMULA_PATH"
+            --formula "$FORMULA_PATH" \
+            --evidence "$PROMOTION_EVIDENCE_PATH" \
+            --trust "$TRUST_PATH"
+          ruby -c "$FORMULA_PATH"
+          verified="$RUNNER_TEMP/jobctrl-verified"
+          mkdir -p "$verified"
+          install -m 0644 "$FORMULA_PATH" "$verified/jobctrl.rb"
+          (
+            cd "$verified"
+            shasum -a 256 jobctrl.rb > jobctrl.rb.sha256
+          )
+
+      - name: Upload the exact verified formula and checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: jobctrl-homebrew-verified-${{ github.run_id }}
+          path: ${{ runner.temp }}/jobctrl-verified
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish only the sealed formula on a fresh runner
+    needs: verify
+    runs-on: ubuntu-24.04
+    environment: release-publication
+    permissions:
+      actions: read
+      contents: read
+    env:
+      RELEASE_REF: ${{ inputs.release_ref }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      EXPECTED_FORMULA_SHA256: ${{ inputs.expected_formula_sha256 }}
+    steps:
+      - name: Download the exact verified formula
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: jobctrl-homebrew-verified-${{ github.run_id }}
+          path: ${{ runner.temp }}/jobctrl-verified
+
+      - name: Verify the sealed formula checksum
+        run: |
+          set -euo pipefail
+          verified="$RUNNER_TEMP/jobctrl-verified"
+          test -f "$verified/jobctrl.rb" && test ! -L "$verified/jobctrl.rb"
+          test -f "$verified/jobctrl.rb.sha256" && test ! -L "$verified/jobctrl.rb.sha256"
+          (
+            cd "$verified"
+            shasum -a 256 -c jobctrl.rb.sha256
+          )
+          test "$(shasum -a 256 "$verified/jobctrl.rb" | awk '{print $1}')" = "$EXPECTED_FORMULA_SHA256"
+
+      - name: Reassert the audited source before loading the tap deploy key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Check out Homebrew tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: ebarti/homebrew-tap
           path: homebrew-tap
@@ -113,11 +175,16 @@ jobs:
       - name: Synchronize the verified rendered formula
         run: |
           set -euo pipefail
-          install -m 0644 \
-            "$VERIFIED_FORMULA_PATH" \
-            homebrew-tap/Formula/jobctrl.rb
-          ruby -c homebrew-tap/Formula/jobctrl.rb
+          install -m 0644 "$RUNNER_TEMP/jobctrl-verified/jobctrl.rb" homebrew-tap/Formula/jobctrl.rb
           git -C homebrew-tap diff --check
+
+      - name: Reassert the audited source immediately before tap publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Commit synchronized formula
         working-directory: homebrew-tap

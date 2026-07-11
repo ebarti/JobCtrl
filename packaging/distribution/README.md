@@ -6,7 +6,7 @@ development and the installed product.
 - `manifest.schema.json` defines the signed per-artifact manifest.
 - `component-inventory.json` classifies top-level runtime, optional-capability,
   provider-pack, and developer-only components.
-- `components.lock.json` pins the seven external runtime/browser/native
+- `components.lock.json` pins the external runtime/browser/native
   archives that sit outside pnpm and uv ecosystem lockfiles by immutable URL
   and SHA-256.
 - `payload-layout.json` assigns every bundled top-level component exactly one
@@ -72,7 +72,10 @@ Component roots may not overlap,
 regular-file modes are normalized to `0644` or `0755`, and symlinks must be
 relative, normalized, non-cyclic, resolvable, and confined to their owning
 component. The ASCII path contract makes JavaScript and Go byte ordering
-identical while preserving the pinned Chromium app's signed framework links.
+identical while preserving the pinned Chromium headless-shell payload's signed
+links. The core deliberately excludes the full Chrome-for-Testing app and its
+Widevine CDM; system Chrome is an explicit optional authenticated-browser
+capability, never a hidden core dependency.
 All three current provider runtimes remain `official-download`: JobCtrl may
 fetch and verify their official artifacts into managed provider packs, but it
 cannot republish them until the component-specific evidence in
@@ -103,6 +106,58 @@ Stable artifacts require:
 - a complete CycloneDX SBOM and attribution directory;
 - checksums and provenance published beside the archive.
 
+## P6 release transport and recovery
+
+The owner-only `release-distribution.yml` path builds the unsigned candidate on
+two independent macOS runners and byte-compares their data on a third runner
+before any signing credentials are available. Tracked, checksum-bound bundles
+are the only JobCtrl authority code executed by the comparison and signing
+jobs. It must be dispatched from `refs/tags/<release_tag>`, with the workflow
+SHA equal to that audited tag's current-main commit; every release environment
+admits protected `v*` tags and no branches. The path separates
+`release-signing` (the Ed25519 private key, Developer
+ID certificate, and notary credentials) from `release-publication`
+(release-origin upload and GitHub/tap side effects). It builds the full release
+ID from the exact 40-character audited commit,
+uploads ZIP, native installer, pinned `install.sh`, signed descriptor, and
+signature under `v1/artifacts/<build-id>/`, then runs the native lifecycle and
+Homebrew audit/install/test from those immutable URLs. A formula therefore pins
+one immutable descriptor rather than a later channel selection.
+
+Only after those gates pass does the workflow compare-and-swap the single
+`v1/<channel>/darwin-arm64.json` channel-pointer object. That object contains
+the paired immutable descriptor and signature URLs/digests plus the signed
+descriptor's channel, platform, source commit, build ID, and sequence. The
+native installer must fetch the pair, verify both digests, then verify the
+descriptor with its compiled Ed25519 key; it must reject a pointer whose fields
+do not exactly match the fetched signed descriptor. The release origin must
+honour HTTP `If-Match` and `If-None-Match: *` on this pointer path. A rerun
+accepts an exact pointer already present, otherwise rejects a changed pointer
+instead of overwriting it. Rollback is a new explicitly revoking release, not
+an untracked pointer overwrite. Release runs are serialized per
+channel/platform, and stable Homebrew synchronization depends on this CAS;
+therefore a stale release fails before it can overwrite the tap formula.
+
+`install.sh` is never a mutable channel file: it remains under its build ID
+and pins its matching installer URL and SHA-256. Retain at least two immutable
+release trees so an install script from either of the prior two releases stays
+downloadable and byte-valid. GitHub draft retries verify every existing
+candidate asset byte-for-byte before reuse; repository immutable Releases must
+be enabled before draft creation, and the final publisher waits for the lock
+before verifying each asset against its trusted local bytes. The audit tar is
+generated with a fixed source epoch and extracted only after strict member
+validation.
+
+Stable PyPI publication is the last lane of the same workflow. A clean gate
+first checks out the exact immutable-release source, checksum-verifies the
+tracked finalizer bundle and its third-party notice, safely extracts the signed
+release audit, and verifies the candidate with the protected Ed25519 key and
+key ID before any project dependencies run. Two independent builders then
+install only the locked `release-build` group under Python 3.12.13, build
+fixed-epoch wheel and source archives, and hand only package bytes to a fresh
+byte-comparison job. The minimal OIDC publisher consumes only that
+compare-sealed artifact.
+
 Local artifacts remain explicitly unsigned and cannot be promoted to the stable
 channel. Prerelease artifacts use the same release manifest key, Developer ID
 code signature, and notarization gate as stable artifacts; stable promotion
@@ -110,7 +165,7 @@ also requires `stableReleaseStatus` to be `ready`.
 
 ## Production payload builder
 
-The real builder downloads only the seven locked archives, verifies every
+The real builder downloads only the locked archives, verifies every
 SHA-256 before extraction, and caches verified inputs under
 `~/Library/Caches/JobCtrl/distribution`. It builds the API and web app, installs
 the Python core closure without provider extras, embeds the pinned browser and

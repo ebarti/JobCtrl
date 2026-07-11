@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -252,6 +253,7 @@ type homebrewFixtureDescriptor struct {
 	Sequence      uint64 `json:"sequence"`
 	BuildID       string `json:"buildId"`
 	AppVersion    string `json:"appVersion"`
+	SourceCommit  string `json:"sourceCommit"`
 	Artifact      struct {
 		URL            string `json:"url"`
 		SHA256         string `json:"sha256"`
@@ -324,9 +326,9 @@ func newSignedHomebrewBootstrapFixture(t *testing.T, private ed25519.PrivateKey,
 	manifestDigest := sha256.Sum256(manifestRaw)
 	archive := []byte("signed Homebrew cache fixture for " + buildID + "\n")
 	archiveDigest := sha256.Sum256(archive)
-	descriptorURL := "https://releases.example.test/v1/stable/darwin-arm64.json"
-	descriptor := homebrewFixtureDescriptor{SchemaVersion: 1, Channel: "stable", Sequence: sequence, BuildID: buildID, AppVersion: "2.0.0"}
-	descriptor.Artifact.URL = "https://releases.example.test/v1/stable/" + buildID + ".zip"
+	descriptorURL := "https://releases.jobctrl.dev/v1/artifacts/" + buildID + "/release-descriptor.json"
+	descriptor := homebrewFixtureDescriptor{SchemaVersion: 1, Channel: "stable", Sequence: sequence, BuildID: buildID, AppVersion: "2.0.0", SourceCommit: strings.Repeat("a", 40)}
+	descriptor.Artifact.URL = "https://releases.jobctrl.dev/v1/artifacts/" + buildID + "/jobctrl-2.0.0-darwin-arm64.zip"
 	descriptor.Artifact.SHA256 = hex.EncodeToString(archiveDigest[:])
 	descriptor.Artifact.SizeBytes = int64(len(archive))
 	descriptor.Artifact.ArchiveType = "zip"
@@ -334,7 +336,7 @@ func newSignedHomebrewBootstrapFixture(t *testing.T, private ed25519.PrivateKey,
 	// Keep the descriptor in the same exact public shape the cached installer
 	// receives, including its minimum-safe and revocation policy fields.
 	descriptorEnvelope := map[string]any{
-		"schemaVersion": 1, "channel": "stable", "sequence": sequence, "minimumSafeSequence": sequence, "revokedBuildIds": []string{}, "buildId": buildID, "appVersion": "2.0.0",
+		"schemaVersion": 1, "channel": "stable", "sequence": sequence, "minimumSafeSequence": sequence, "revokedBuildIds": []string{}, "buildId": buildID, "appVersion": "2.0.0", "sourceCommit": descriptor.SourceCommit,
 		"platform": map[string]any{"id": "darwin-arm64", "os": "darwin", "arch": "arm64"},
 		"artifact": map[string]any{"url": descriptor.Artifact.URL, "sha256": descriptor.Artifact.SHA256, "sizeBytes": descriptor.Artifact.SizeBytes, "archiveType": descriptor.Artifact.ArchiveType, "manifestSha256": descriptor.Artifact.ManifestSHA256},
 	}
@@ -441,7 +443,7 @@ func verifyHomebrewFixtureDescriptor(public ed25519.PublicKey, fixture homebrewB
 		return errors.New("Homebrew fixture descriptor is not signed by injected release trust")
 	}
 	archiveDigest := sha256.Sum256(fixture.archive)
-	if descriptor.SchemaVersion != 1 || descriptor.Channel != "stable" || descriptor.Sequence != fixture.receipt.Sequence || descriptor.BuildID != fixture.receipt.BuildID || descriptor.AppVersion != "2.0.0" || descriptor.Artifact.URL == "" || descriptor.Artifact.ArchiveType != "zip" || descriptor.Artifact.SizeBytes != int64(len(fixture.archive)) || descriptor.Artifact.SHA256 != hex.EncodeToString(archiveDigest[:]) || descriptor.Artifact.ManifestSHA256 != fixture.receipt.ManifestSHA256 {
+	if descriptor.SchemaVersion != 1 || descriptor.Channel != "stable" || descriptor.Sequence != fixture.receipt.Sequence || descriptor.BuildID != fixture.receipt.BuildID || descriptor.AppVersion != "2.0.0" || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(descriptor.SourceCommit) || descriptor.Artifact.URL == "" || descriptor.Artifact.ArchiveType != "zip" || descriptor.Artifact.SizeBytes != int64(len(fixture.archive)) || descriptor.Artifact.SHA256 != hex.EncodeToString(archiveDigest[:]) || descriptor.Artifact.ManifestSHA256 != fixture.receipt.ManifestSHA256 {
 		return errors.New("Homebrew fixture descriptor does not bind the stable receipt and archive")
 	}
 	return nil

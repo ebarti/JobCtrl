@@ -92,7 +92,7 @@ test("distribution contracts are complete and every version source resolves", as
   const report = await auditDistributionContracts();
   assert.equal(report.schemaVersion, 1);
   assert.ok(report.componentCount >= 20);
-  assert.equal(report.lockedInputCount, 7);
+  assert.equal(report.lockedInputCount, 6);
   assert.equal(report.pythonLicenseEvidenceCount, 2);
   assert.equal(report.nodeLicenseEvidenceCount, 18);
   assert.equal(report.capabilityCount, 3);

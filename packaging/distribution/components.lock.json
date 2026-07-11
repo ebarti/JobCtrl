@@ -39,15 +39,6 @@
       "license": "MIT"
     },
     {
-      "id": "chromium-core-browser-archive",
-      "componentId": "chromium-core",
-      "version": "145.0.7632.6",
-      "url": "https://cdn.playwright.dev/chrome-for-testing-public/145.0.7632.6/mac-arm64/chrome-mac-arm64.zip",
-      "sha256": "3dbf04e28a02079148e9c7417840a0c1d3903361eceeee7e7eb59ef77021bdb2",
-      "archiveType": "zip",
-      "license": "BSD-3-Clause"
-    },
-    {
       "id": "chromium-core-headless-archive",
       "componentId": "chromium-core",
       "version": "145.0.7632.6",

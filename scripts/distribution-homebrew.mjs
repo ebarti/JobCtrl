@@ -6,7 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { releasePublicationInputs, validateReleaseDescriptor, validateReleaseDescriptorSignature } from "./distribution-release.mjs";
+import { assertCandidateIdentity, candidateIdentityFromDescriptor, releasePublicationInputs, validateReleaseDescriptor, validateReleaseDescriptorSignature } from "./distribution-release.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -43,6 +43,12 @@ function requireCanonicalReleaseUrl(value, label) {
   invariant(parsed.protocol === "https:" && parsed.username === "" && parsed.password === "" && parsed.hash === "", `${label} must be an absolute HTTPS URL without credentials or fragments`);
   invariant(parsed.origin === RELEASE_ORIGIN && parsed.port === "", `${label} must use the canonical ${RELEASE_ORIGIN} origin`);
   invariant(parsed.href === value, `${label} must be canonical before it can be rendered into Ruby`);
+  return parsed;
+}
+
+function requireImmutableReleaseUrl(value, label, expectedPath) {
+  const parsed = requireCanonicalReleaseUrl(value, label);
+  invariant(parsed.pathname === expectedPath && parsed.search === "" && parsed.href === value, `${label} must select the exact immutable build path`);
   return parsed;
 }
 
@@ -90,8 +96,9 @@ export function verifyReleaseDescriptorSignature({ descriptorRaw, signatureRaw, 
 function templateValues({ descriptor, descriptorRaw, signatureRaw, descriptorUrl }) {
   validateReleaseDescriptor(descriptor);
   invariant(descriptor.channel === "stable", "Homebrew formula rendering requires a stable descriptor");
-  const descriptorOrigin = requireCanonicalReleaseUrl(descriptorUrl, "Homebrew descriptor URL");
-  const artifactOrigin = requireCanonicalReleaseUrl(descriptor.artifact.url, "Homebrew artifact URL");
+  const immutableBase = `/v1/artifacts/${descriptor.buildId}`;
+  const descriptorOrigin = requireImmutableReleaseUrl(descriptorUrl, "Homebrew descriptor URL", `${immutableBase}/release-descriptor.json`);
+  const artifactOrigin = requireImmutableReleaseUrl(descriptor.artifact.url, "Homebrew artifact URL", `${immutableBase}/jobctrl-${descriptor.appVersion}-darwin-arm64.zip`);
   invariant(descriptorOrigin.origin === artifactOrigin.origin, "Homebrew descriptor and artifact must share one release origin");
   return {
     ARTIFACT_URL: descriptor.artifact.url,
@@ -133,20 +140,24 @@ export function validateRenderedHomebrewFormula({ formula, descriptor, descripto
     `JOBCTRL_SIGNATURE_SHA256 = "${values.SIGNATURE_SHA256}"`,
     'require "open3"',
     '"/usr/bin/codesign", "--verify", "--deep", "--strict", "--check-notarization", "-R=notarized", "--verbose=2", bundle.to_s',
+    '"/usr/bin/codesign", "--verify", "--strict", "--check-notarization", "-R=notarized", "--verbose=2", executable.to_s',
     '"/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", bundle.to_s',
     'gatekeeper_output.include?("source=Notarized Developer ID")',
-    "verify_notarized_bundle!(buildpath/\"launcher/jobctrl\")",
-    "verify_notarized_bundle!(buildpath/\"launcher/jobctrl-installer\")",
-    "outermost_chromium_apps",
-    "chromium_apps.each { |bundle| verify_notarized_bundle!(Pathname.new(bundle)) }",
+    "verify_notarized_executable!(buildpath/\"launcher/jobctrl\")",
+    "verify_notarized_executable!(buildpath/\"launcher/jobctrl-installer\")",
+    "managed_headless_shell",
+    "verify_notarized_executable!(managed_headless_shell)",
     'resource "jobctrl-release-descriptor"',
     'resource "jobctrl-release-descriptor-signature"',
+    'bootstrap.install "release-descriptor.json" => "homebrew-release.json"',
+    'bootstrap.install "release-descriptor.json.sig" => "homebrew-release.json.sig"',
     'bootstrap.install cached_download => "jobctrl-release.zip"',
     'bootstrap/"homebrew-bootstrap.json"',
     'bin.install_symlink bootstrap/"jobctrl"',
   ];
   for (const marker of required) invariant(formula.includes(marker), `rendered Homebrew formula is missing ${marker}`);
   invariant(formula.includes("Formula installation remains entirely prefix-owned"), "rendered Homebrew formula must use first-invocation bootstrap");
+  invariant(!formula.includes('verify_notarized_app!(buildpath/"launcher/jobctrl")'), "rendered Homebrew formula must not Gatekeeper-assess raw launcher executables");
   invariant(!formula.includes('Pathname.new(Dir.home)'), "rendered Homebrew formula must not write the user home during install");
   invariant(!/\bhead\s+/.test(formula), "rendered Homebrew formula must not have a HEAD/source path");
   invariant(!/depends_on\s+/.test(formula), "rendered Homebrew formula must not install a developer-toolchain dependency");
@@ -164,7 +175,7 @@ export async function verifyHomebrewPromotionEvidence({ descriptorRaw, signature
     "Homebrew promotion formula must match the canonical checked-in template render byte-for-byte",
   );
   const evidence = JSON.parse(evidenceRaw);
-  assertExactKeys(evidence, ["schemaVersion", "status", "signatureVerified", "publishedArtifactSmoke", "descriptorSha256", "formulaSha256", "artifact"], "Homebrew promotion evidence");
+  assertExactKeys(evidence, ["schemaVersion", "status", "signatureVerified", "publishedArtifactSmoke", "descriptorSha256", "formulaSha256", "artifact", "publishedCandidate"], "Homebrew promotion evidence");
   invariant(evidence.schemaVersion === 1 && evidence.status === "verified" && evidence.signatureVerified === true && evidence.publishedArtifactSmoke === "passed", "Homebrew promotion evidence is not verified after signed artifact smoke");
   const descriptorSha256 = sha256(descriptorRaw);
   const canonicalFormulaSha256 = sha256(canonicalRender.formula);
@@ -178,6 +189,7 @@ export async function verifyHomebrewPromotionEvidence({ descriptorRaw, signature
       && evidence.artifact.appVersion === descriptor.appVersion,
     "Homebrew promotion evidence does not match the descriptor artifact identity",
   );
+  assertCandidateIdentity(candidateIdentityFromDescriptor(descriptorRaw), evidence.publishedCandidate);
   return { descriptorSha256, formulaSha256: canonicalFormulaSha256, artifact: evidence.artifact };
 }
 
@@ -200,7 +212,7 @@ function assertOptionKeys(options, allowed, command) {
   invariant(unknown.length === 0, `${command} contains unsupported options: ${unknown.join(", ")}`);
 }
 
-async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2)) {
   const command = argv[0];
   const options = parseOptions(argv.slice(1));
   const required = (name) => {
@@ -235,7 +247,7 @@ async function main(argv = process.argv.slice(2)) {
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
-if (import.meta.url === invokedPath) {
+if (import.meta.url === invokedPath && path.basename(process.argv[1] ?? "") === "distribution-homebrew.mjs") {
   main().catch((error) => {
     process.stderr.write(`distribution homebrew: ${error.message}\n`);
     process.exitCode = 1;

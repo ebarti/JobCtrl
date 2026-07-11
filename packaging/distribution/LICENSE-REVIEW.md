@@ -29,7 +29,7 @@ required notice is denied by default. Update both this review and
 | `temporal-runtime` | `core-runtime` | `MIT` | `bundle` | Use the pinned upstream source/artifact built for the declared target; ship Temporal notices. |
 | `pdfjs-renderer` | `core-runtime` | `Apache-2.0` | `bundle` | Ship Apache-2.0 and required PDF.js notices. Poppler is not part of this component. |
 | `playwright-python` | `core-runtime` | `Apache-2.0` | `bundle` | Resolve the exact locked package and ship Playwright notices. |
-| `chromium-core` | `core-runtime` | `BSD-3-Clause` | `bundle` | Verify the pinned Playwright browser artifact and ship Chromium's complete third-party notices. |
+| `chromium-core` | `core-runtime` | `BSD-3-Clause` | `bundle` | Ship the pinned Playwright headless-shell artifact and Chromium's complete third-party notices. The full Chrome-for-Testing bundle is excluded because its Widevine CDM has separate commercial redistribution terms. |
 | `playwright-mcp` | `core-runtime` | `Apache-2.0` | `bundle` | Verify the exact locked npm artifact and ship its license and transitive notices. |
 | `system-browser-adapter` | `optional-capability` | `AGPL-3.0-only` | `bundle` | Embedded in `jobctrl-worker`; the adapter contains no browser or profile. Browser adoption requires explicit user enablement and consent. |
 | `claude-agent-sdk` | `provider-pack` | `MIT AND LicenseRef-Anthropic-Commercial-Terms` | `official-download` | The SDK package is MIT, while the included provider runtime remains subject to Anthropic's terms. No explicit redistribution grant for that runtime has been established. P1 may fetch and hash-verify the official wheel into a managed provider pack; JobCtrl releases must not republish it unless an explicit grant is recorded here. |

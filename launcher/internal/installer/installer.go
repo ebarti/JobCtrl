@@ -35,25 +35,27 @@ import (
 )
 
 const (
-	DefaultReleaseURL   = "https://releases.jobctrl.dev/v1/stable/darwin-arm64.json"
-	maxDescriptorBytes  = 1 << 20
-	maxSignatureBytes   = 16 << 10
-	maxArchiveBytes     = int64(4 << 30)
-	maxExtractedBytes   = uint64(8 << 30)
-	maxZipEntries       = 100000
-	maxZipFileBytes     = uint64(2 << 30)
-	maxCompressionRatio = uint64(100)
-	metadataTimeout     = 45 * time.Second
-	archiveStallTimeout = 60 * time.Second
-	maxJSONSafeInteger  = uint64(1<<53 - 1)
-	stagedArchiveName   = "archive.zip"
-	partialArchiveName  = "archive.zip.part"
+	canonicalReleaseOrigin = "https://releases.jobctrl.dev"
+	canonicalReleaseHost   = "releases.jobctrl.dev"
+	maxDescriptorBytes     = 1 << 20
+	maxSignatureBytes      = 16 << 10
+	maxArchiveBytes        = int64(4 << 30)
+	maxExtractedBytes      = uint64(8 << 30)
+	maxZipEntries          = 100000
+	maxZipFileBytes        = uint64(2 << 30)
+	maxCompressionRatio    = uint64(100)
+	metadataTimeout        = 45 * time.Second
+	archiveStallTimeout    = 60 * time.Second
+	maxJSONSafeInteger     = uint64(1<<53 - 1)
+	stagedArchiveName      = "archive.zip"
+	partialArchiveName     = "archive.zip.part"
 )
 
 var (
 	sha256Pattern       = regexp.MustCompile(`^[a-f0-9]{64}$`)
 	buildIDPattern      = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]{7,127}$`)
 	semverPattern       = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`)
+	gitCommitPattern    = regexp.MustCompile(`^[a-f0-9]{40}$`)
 	contentRangePattern = regexp.MustCompile(`^bytes ([0-9]+)-([0-9]+)/([0-9]+)$`)
 )
 
@@ -68,7 +70,10 @@ type Descriptor struct {
 	RevokedBuildIDs     []string `json:"revokedBuildIds"`
 	BuildID             string   `json:"buildId"`
 	AppVersion          string   `json:"appVersion"`
-	Platform            struct {
+	// SourceCommit is signed network-release provenance. Local fixtures remain
+	// intentionally portable and omit it.
+	SourceCommit string `json:"sourceCommit,omitempty"`
+	Platform     struct {
 		ID   string `json:"id"`
 		OS   string `json:"os"`
 		Arch string `json:"arch"`
@@ -88,6 +93,31 @@ type descriptorSignature struct {
 	Algorithm     string  `json:"algorithm"`
 	KeyID         string  `json:"keyId"`
 	Signature     *string `json:"signature"`
+}
+
+// channelPointer is the sole mutable release object. It is deliberately not
+// signed: its authority is limited to selecting two immutable byte strings
+// whose SHA-256 values it carries. The descriptor remains the actual release
+// trust root because its detached Ed25519 signature is checked after both
+// pointer hashes have been verified.
+type channelPointer struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Channel       string `json:"channel"`
+	Platform      struct {
+		ID   string `json:"id"`
+		OS   string `json:"os"`
+		Arch string `json:"arch"`
+	} `json:"platform"`
+	SourceCommit string       `json:"sourceCommit"`
+	BuildID      string       `json:"buildId"`
+	Sequence     uint64       `json:"sequence"`
+	Descriptor   pointerAsset `json:"descriptor"`
+	Signature    pointerAsset `json:"signature"`
+}
+
+type pointerAsset struct {
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
 }
 
 type Receipt struct {
@@ -124,8 +154,9 @@ type Options struct {
 	RunCommand func(string, ...string) (string, error)
 }
 
-// InstallFromNetwork performs the stable network path. Its caller must supply
-// a release key (normally embedded at P6); unsigned-local is never accepted.
+// InstallFromNetwork resolves exactly one mutable channel pointer, then
+// downloads its immutable descriptor/signature pair. Its caller must supply a
+// release key (normally embedded at P6); unsigned-local is never accepted.
 func InstallFromNetwork(options Options) (Receipt, error) {
 	if !options.Policy.AllowNetwork {
 		return Receipt{}, errors.New("network acquisition is unavailable in this compiled installer build")
@@ -133,33 +164,15 @@ func InstallFromNetwork(options Options) (Receipt, error) {
 	if options.AllowUnsignedLocal {
 		return Receipt{}, errors.New("unsigned-local mode is restricted to local descriptor and archive files")
 	}
-	if options.ReleaseURL == "" {
-		options.ReleaseURL = DefaultReleaseURL
-	}
-	releaseURL, err := validateTransportURL(options.ReleaseURL, options.AllowHTTPLoopback)
-	if err != nil {
-		return Receipt{}, fmt.Errorf("release descriptor URL: %w", err)
-	}
 	client := options.HTTPClient
 	if client == nil {
 		client = strictHTTPClient()
 	}
-	descriptorBytes, err := fetchBounded(client, releaseURL.String(), maxDescriptorBytes)
-	if err != nil {
-		return Receipt{}, fmt.Errorf("download release descriptor: %w", err)
-	}
-	signatureBytes, err := fetchBounded(client, releaseURL.String()+".sig", maxSignatureBytes)
-	if err != nil {
-		return Receipt{}, fmt.Errorf("download release descriptor signature: %w", err)
-	}
-	descriptor, err := verifyDescriptor(descriptorBytes, signatureBytes, options.Trust, false, releaseURL, options.AllowHTTPLoopback)
+	descriptor, descriptorBytes, descriptorURL, err := resolveNetworkRelease(options, client)
 	if err != nil {
 		return Receipt{}, err
 	}
-	if descriptor.Channel != options.Policy.ExpectedChannel {
-		return Receipt{}, fmt.Errorf("release channel %q does not match compiled installer channel %q", descriptor.Channel, options.Policy.ExpectedChannel)
-	}
-	return downloadAndInstall(options, descriptor, descriptorBytes, releaseURL.String(), archiveHTTPClient(client))
+	return downloadAndInstall(options, descriptor, descriptorBytes, descriptorURL, archiveHTTPClient(client))
 }
 
 // InstallFromLocalFiles is the only unsigned-local route. It is intentionally
@@ -198,7 +211,7 @@ func InstallFromCachedFiles(options Options, descriptorURL, descriptorPath, sign
 	if options.AllowUnsignedLocal {
 		return Receipt{}, errors.New("signed cached installation cannot enable unsigned-local mode")
 	}
-	sourceURL, err := validateTransportURL(descriptorURL, false)
+	sourceURL, expectedBuildID, err := validateImmutableDescriptorURL(descriptorURL)
 	if err != nil {
 		return Receipt{}, fmt.Errorf("cached release descriptor URL: %w", err)
 	}
@@ -214,10 +227,80 @@ func InstallFromCachedFiles(options Options, descriptorURL, descriptorPath, sign
 	if err != nil {
 		return Receipt{}, err
 	}
+	if err := validateCanonicalArtifactURL(descriptor, sourceURL); err != nil {
+		return Receipt{}, err
+	}
+	if descriptor.BuildID != expectedBuildID {
+		return Receipt{}, errors.New("cached immutable descriptor URL does not match descriptor build identity")
+	}
 	if descriptor.Channel != options.Policy.ExpectedChannel {
 		return Receipt{}, fmt.Errorf("release channel %q does not match compiled installer channel %q", descriptor.Channel, options.Policy.ExpectedChannel)
 	}
 	return installArchive(options, descriptor, descriptorBytes, sourceURL.String(), archivePath)
+}
+
+// DefaultReleaseURL returns the exact mutable channel-pointer URL compiled
+// into a signed installer. It is intentionally channel-derived rather than a
+// stable constant: a prerelease installer must never silently follow stable.
+func DefaultReleaseURL(channel string) (string, error) {
+	if channel != "stable" && channel != "prerelease" {
+		return "", fmt.Errorf("invalid network release channel %q", channel)
+	}
+	return fmt.Sprintf("%s/v1/%s/darwin-arm64.json", canonicalReleaseOrigin, channel), nil
+}
+
+func resolveNetworkRelease(options Options, client *http.Client) (Descriptor, []byte, string, error) {
+	pointerURLRaw := options.ReleaseURL
+	if pointerURLRaw == "" {
+		var err error
+		pointerURLRaw, err = DefaultReleaseURL(options.Policy.ExpectedChannel)
+		if err != nil {
+			return Descriptor{}, nil, "", err
+		}
+	}
+	pointerURL, err := validateChannelPointerTransportURL(pointerURLRaw, options.Policy.ExpectedChannel, options.AllowHTTPLoopback)
+	if err != nil {
+		return Descriptor{}, nil, "", fmt.Errorf("release channel pointer URL: %w", err)
+	}
+	pointerRaw, err := fetchBounded(client, pointerURL.String(), maxDescriptorBytes)
+	if err != nil {
+		return Descriptor{}, nil, "", fmt.Errorf("download release channel pointer: %w", err)
+	}
+	pointer, descriptorURL, signatureURL, err := validateReleaseChannelPointerAtOrigin(pointerRaw, options.Policy.ExpectedChannel, pointerURL)
+	if err != nil {
+		return Descriptor{}, nil, "", err
+	}
+	if stagedBuildID, staged := channelPointerStagingBuildID(pointerURL.Path); staged && stagedBuildID != pointer.BuildID {
+		return Descriptor{}, nil, "", errors.New("immutable channel pointer URL does not match pointer build identity")
+	}
+	descriptorBytes, err := fetchBounded(client, descriptorURL.String(), maxDescriptorBytes)
+	if err != nil {
+		return Descriptor{}, nil, "", fmt.Errorf("download immutable release descriptor: %w", err)
+	}
+	signatureBytes, err := fetchBounded(client, signatureURL.String(), maxSignatureBytes)
+	if err != nil {
+		return Descriptor{}, nil, "", fmt.Errorf("download immutable release descriptor signature: %w", err)
+	}
+	// Compare both immutable byte identities before invoking Ed25519. This
+	// keeps a pointer from mixing a descriptor from one release with the
+	// signature from another, even if both happen to be individually signed.
+	if digestBytes(descriptorBytes) != pointer.Descriptor.SHA256 {
+		return Descriptor{}, nil, "", errors.New("immutable release descriptor SHA-256 does not match channel pointer")
+	}
+	if digestBytes(signatureBytes) != pointer.Signature.SHA256 {
+		return Descriptor{}, nil, "", errors.New("immutable release descriptor signature SHA-256 does not match channel pointer")
+	}
+	descriptor, err := verifyDescriptor(descriptorBytes, signatureBytes, options.Trust, false, descriptorURL, options.AllowHTTPLoopback)
+	if err != nil {
+		return Descriptor{}, nil, "", err
+	}
+	if err := validateCanonicalArtifactURL(descriptor, pointerURL); err != nil {
+		return Descriptor{}, nil, "", err
+	}
+	if err := verifyPointerDescriptorIdentity(pointer, descriptor); err != nil {
+		return Descriptor{}, nil, "", err
+	}
+	return descriptor, descriptorBytes, descriptorURL.String(), nil
 }
 
 func strictHTTPClient() *http.Client {
@@ -282,6 +365,212 @@ func validateTransportURL(rawURL string, allowHTTPLoopback bool) (*url.URL, erro
 	return nil, errors.New("must use HTTPS (HTTP is permitted only for explicit loopback tests)")
 }
 
+// validateChannelPointerURL permits only the one mutable selector path for
+// the compiled channel. In particular it rejects a direct descriptor URL, so
+// curl cannot opt out of the atomic descriptor/signature binding.
+func validateChannelPointerURL(rawURL, channel string) (*url.URL, error) {
+	if channel != "stable" && channel != "prerelease" {
+		return nil, fmt.Errorf("invalid network release channel %q", channel)
+	}
+	parsed, err := parseCanonicalReleaseURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := validateChannelPointerPath(parsed.Path, channel); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
+func validateChannelPointerTransportURL(rawURL, channel string, allowHTTPLoopback bool) (*url.URL, error) {
+	if parsed, err := validateChannelPointerURL(rawURL, channel); err == nil {
+		return parsed, nil
+	}
+	if !allowHTTPLoopback {
+		return validateChannelPointerURL(rawURL, channel)
+	}
+	if channel != "stable" && channel != "prerelease" {
+		return nil, fmt.Errorf("invalid network release channel %q", channel)
+	}
+	parsed, err := parseLoopbackReleaseURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := validateChannelPointerPath(parsed.Path, channel); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
+func validateChannelPointerPath(path, channel string) (string, error) {
+	if path == fmt.Sprintf("/v1/%s/darwin-arm64.json", channel) {
+		return "", nil
+	}
+	prefix := "/v1/artifacts/"
+	suffix := "/channel-pointer.json"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return "", errors.New("must use the compiled channel pointer or immutable staged channel-pointer path")
+	}
+	buildID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	if buildID == "" || strings.Contains(buildID, "/") || !buildIDPattern.MatchString(buildID) || path != fmt.Sprintf("/v1/artifacts/%s/channel-pointer.json", buildID) {
+		return "", errors.New("immutable channel pointer URL has an invalid build ID")
+	}
+	return buildID, nil
+}
+
+func channelPointerStagingBuildID(path string) (string, bool) {
+	buildID, err := validateChannelPointerPath(path, "stable")
+	if err != nil || buildID == "" {
+		return "", false
+	}
+	return buildID, true
+}
+
+// validateImmutableDescriptorURL accepts the direct, immutable form used by
+// Homebrew. It returns the build ID encoded by the path so cache metadata
+// cannot claim a different descriptor after its bytes have been checked.
+func validateImmutableDescriptorURL(rawURL string) (*url.URL, string, error) {
+	parsed, err := parseCanonicalReleaseURL(rawURL)
+	if err != nil {
+		return nil, "", err
+	}
+	prefix := "/v1/artifacts/"
+	suffix := "/release-descriptor.json"
+	if !strings.HasPrefix(parsed.Path, prefix) || !strings.HasSuffix(parsed.Path, suffix) {
+		return nil, "", errors.New("must select an immutable release descriptor URL")
+	}
+	buildID := strings.TrimSuffix(strings.TrimPrefix(parsed.Path, prefix), suffix)
+	if buildID == "" || strings.Contains(buildID, "/") || !buildIDPattern.MatchString(buildID) {
+		return nil, "", errors.New("immutable release descriptor URL has an invalid build ID")
+	}
+	if parsed.Path != fmt.Sprintf("/v1/artifacts/%s/release-descriptor.json", buildID) {
+		return nil, "", errors.New("immutable release descriptor URL is not canonical")
+	}
+	return parsed, buildID, nil
+}
+
+func validateReleaseChannelPointer(raw []byte, expectedChannel string) (channelPointer, *url.URL, *url.URL, error) {
+	origin, err := url.Parse(canonicalReleaseOrigin)
+	if err != nil {
+		return channelPointer{}, nil, nil, err
+	}
+	return validateReleaseChannelPointerAtOrigin(raw, expectedChannel, origin)
+}
+
+func validateReleaseChannelPointerAtOrigin(raw []byte, expectedChannel string, origin *url.URL) (channelPointer, *url.URL, *url.URL, error) {
+	var pointer channelPointer
+	if origin == nil {
+		return pointer, nil, nil, errors.New("release channel pointer origin is required")
+	}
+	if err := decodeStrict(raw, "release channel pointer", &pointer); err != nil {
+		return pointer, nil, nil, err
+	}
+	if pointer.SchemaVersion != 1 || (pointer.Channel != "stable" && pointer.Channel != "prerelease") || pointer.Channel != expectedChannel || pointer.Sequence == 0 || pointer.Sequence > maxJSONSafeInteger || !gitCommitPattern.MatchString(pointer.SourceCommit) || !buildIDPattern.MatchString(pointer.BuildID) || pointer.Platform.ID != "darwin-arm64" || pointer.Platform.OS != "darwin" || pointer.Platform.Arch != "arm64" {
+		return pointer, nil, nil, errors.New("invalid release channel pointer identity")
+	}
+	descriptorURL, err := validateReleaseURLAtOrigin(pointer.Descriptor.URL, fmt.Sprintf("/v1/artifacts/%s/release-descriptor.json", pointer.BuildID), origin)
+	if err != nil {
+		return pointer, nil, nil, fmt.Errorf("release channel pointer descriptor URL: %w", err)
+	}
+	signatureURL, err := validateReleaseURLAtOrigin(pointer.Signature.URL, fmt.Sprintf("/v1/artifacts/%s/release-descriptor.json.sig", pointer.BuildID), origin)
+	if err != nil {
+		return pointer, nil, nil, fmt.Errorf("release channel pointer signature URL: %w", err)
+	}
+	if !sha256Pattern.MatchString(pointer.Descriptor.SHA256) || !sha256Pattern.MatchString(pointer.Signature.SHA256) {
+		return pointer, nil, nil, errors.New("invalid release channel pointer SHA-256")
+	}
+	return pointer, descriptorURL, signatureURL, nil
+}
+
+func verifyPointerDescriptorIdentity(pointer channelPointer, descriptor Descriptor) error {
+	if pointer.Channel != descriptor.Channel {
+		return errors.New("release channel pointer channel does not match descriptor")
+	}
+	if pointer.Platform.ID != descriptor.Platform.ID {
+		return errors.New("release channel pointer platform ID does not match descriptor")
+	}
+	if pointer.Platform.OS != descriptor.Platform.OS {
+		return errors.New("release channel pointer platform OS does not match descriptor")
+	}
+	if pointer.Platform.Arch != descriptor.Platform.Arch {
+		return errors.New("release channel pointer platform architecture does not match descriptor")
+	}
+	if pointer.SourceCommit != descriptor.SourceCommit {
+		return errors.New("release channel pointer source commit does not match descriptor")
+	}
+	if pointer.BuildID != descriptor.BuildID {
+		return errors.New("release channel pointer build ID does not match descriptor")
+	}
+	if pointer.Sequence != descriptor.Sequence {
+		return errors.New("release channel pointer sequence does not match descriptor")
+	}
+	return nil
+}
+
+func validateCanonicalReleaseURL(rawURL, expectedPath string) (*url.URL, error) {
+	parsed, err := parseCanonicalReleaseURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Path != expectedPath {
+		return nil, fmt.Errorf("must use canonical path %q", expectedPath)
+	}
+	return parsed, nil
+}
+
+func validateReleaseURLAtOrigin(rawURL, expectedPath string, origin *url.URL) (*url.URL, error) {
+	if origin.Scheme == "https" && origin.Host == canonicalReleaseHost {
+		return validateCanonicalReleaseURL(rawURL, expectedPath)
+	}
+	parsed, err := parseLoopbackReleaseURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Scheme != origin.Scheme || parsed.Host != origin.Host {
+		return nil, errors.New("must stay on the channel-pointer origin")
+	}
+	if parsed.Path != expectedPath {
+		return nil, fmt.Errorf("must use exact immutable path %q", expectedPath)
+	}
+	return parsed, nil
+}
+
+func validateCanonicalArtifactURL(descriptor Descriptor, origin *url.URL) error {
+	expectedPath := fmt.Sprintf("/v1/artifacts/%s/jobctrl-%s-darwin-arm64.zip", descriptor.BuildID, descriptor.AppVersion)
+	if _, err := validateReleaseURLAtOrigin(descriptor.Artifact.URL, expectedPath, origin); err != nil {
+		return fmt.Errorf("release artifact URL: %w", err)
+	}
+	return nil
+}
+
+func parseCanonicalReleaseURL(rawURL string) (*url.URL, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed == nil {
+		return nil, errors.New("must be a valid canonical HTTPS URL")
+	}
+	if parsed.Scheme != "https" || parsed.Host != canonicalReleaseHost || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.RawPath != "" || parsed.Opaque != "" || parsed.Path == "" {
+		return nil, errors.New("must use canonical HTTPS without credentials, port, query, fragment, or encoded path")
+	}
+	// url.Parse normalizes some values when String is called. Requiring a byte
+	// exact round-trip prevents alternate spellings such as an escaped path,
+	// a capitalized host, or a trailing authority dot from becoming aliases.
+	if parsed.String() != rawURL || parsed.EscapedPath() != parsed.Path {
+		return nil, errors.New("must use an exact canonical release URL")
+	}
+	return parsed, nil
+}
+
+func parseLoopbackReleaseURL(rawURL string) (*url.URL, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed == nil || parsed.Scheme != "http" || !isLoopbackHost(parsed.Hostname()) || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.RawPath != "" || parsed.Opaque != "" || parsed.Path == "" {
+		return nil, errors.New("must use exact HTTP loopback without credentials, query, fragment, or encoded path")
+	}
+	if parsed.String() != rawURL || parsed.EscapedPath() != parsed.Path {
+		return nil, errors.New("must use an exact loopback release URL")
+	}
+	return parsed, nil
+}
+
 func validateDescriptorArtifactURL(rawURL, channel string, allowHTTPLoopback bool) (*url.URL, error) {
 	if channel == "local" {
 		parsed, err := url.Parse(rawURL)
@@ -340,6 +629,13 @@ func verifyDescriptor(raw, signatureRaw []byte, trust map[string]ed25519.PublicK
 	}
 	if descriptor.Channel != "local" && descriptor.Channel != "stable" && descriptor.Channel != "prerelease" {
 		return descriptor, errors.New("invalid release descriptor channel")
+	}
+	_, hasSourceCommit := descriptorFields["sourceCommit"]
+	if descriptor.Channel == "local" && hasSourceCommit {
+		return descriptor, errors.New("local release descriptor must not declare sourceCommit")
+	}
+	if descriptor.Channel != "local" && (!hasSourceCommit || !gitCommitPattern.MatchString(descriptor.SourceCommit)) {
+		return descriptor, errors.New("network release descriptor requires a full sourceCommit SHA")
 	}
 	if descriptor.MinimumSafeSequence > maxJSONSafeInteger || descriptor.MinimumSafeSequence > descriptor.Sequence || (descriptor.Channel != "local" && descriptor.MinimumSafeSequence == 0) {
 		return descriptor, errors.New("invalid release minimum-safe sequence")
@@ -1348,18 +1644,79 @@ func signingMessage(domain string, raw []byte) []byte {
 }
 
 func verifyMacOSPayloadTrust(payloadRoot string, runner func(string, ...string) (string, error)) error {
-	launcherPath := filepath.Join(payloadRoot, "launcher", "jobctrl")
-	if info, err := os.Lstat(launcherPath); err != nil || !info.Mode().IsRegular() {
-		return errors.New("signed payload does not contain a regular launcher/jobctrl executable")
-	}
 	if runner == nil {
 		runner = func(path string, args ...string) (string, error) {
 			output, err := exec.Command(path, args...).CombinedOutput()
 			return string(output), err
 		}
 	}
-	targets := map[string]bool{launcherPath: true}
-	err := filepath.WalkDir(payloadRoot, func(path string, entry os.DirEntry, walkErr error) error {
+	targets, err := discoverMacOSPayloadTrustTargets(payloadRoot)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets.machO {
+		if _, err := runner("/usr/bin/codesign", "--verify", "--strict", "--verbose=4", target); err != nil {
+			return fmt.Errorf("code signature verification failed for %s: %w", filepath.Base(target), err)
+		}
+	}
+	for _, bundle := range targets.codeBundles {
+		if _, err := runner("/usr/bin/codesign", "--verify", "--strict", "--verbose=4", bundle); err != nil {
+			return fmt.Errorf("nested code-bundle signature verification failed for %s: %w", filepath.Base(bundle), err)
+		}
+	}
+	// Gatekeeper assesses application bundles, not arbitrary signed command-line
+	// Mach-O executables. Node and Chrome's headless shell are valid notarized
+	// executables but spctl --type execute rejects their non-app shape. Keep the
+	// notarization check on those binaries while reserving Gatekeeper for the
+	// outer app bundle that owns any nested helpers and frameworks.
+	for _, target := range targets.standaloneExecutables {
+		// `--check-notarization` by itself accepts an ad-hoc raw executable on
+		// current macOS. Require the notarized designated requirement for this
+		// non-app shape; Gatekeeper remains reserved for outer app bundles.
+		if _, err := runner("/usr/bin/codesign", "--verify", "--strict", "--check-notarization", "-R=notarized", "--verbose=4", target); err != nil {
+			return fmt.Errorf("Developer ID/notarization verification failed for %s: %w", filepath.Base(target), err)
+		}
+	}
+	for _, bundle := range targets.outermostAppBundles {
+		// --deep is verification-only. Every nested bundle and Mach-O was
+		// independently verified above, so a nested helper cannot hide behind
+		// the outer bundle's assessment.
+		if _, err := runner("/usr/bin/codesign", "--verify", "--deep", "--strict", "--check-notarization", "-R=notarized", "--verbose=4", bundle); err != nil {
+			return fmt.Errorf("Developer ID/notarization verification failed for %s: %w", filepath.Base(bundle), err)
+		}
+		output, err := runner("/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", bundle)
+		if err != nil {
+			return fmt.Errorf("Gatekeeper assessment failed for %s: %w", filepath.Base(bundle), err)
+		}
+		if !strings.Contains(output, "source=Notarized Developer ID") {
+			return fmt.Errorf("Gatekeeper did not report Notarized Developer ID source for %s", filepath.Base(bundle))
+		}
+	}
+	return nil
+}
+
+type macOSPayloadTrustTargets struct {
+	machO                 []string
+	codeBundles           []string
+	standaloneExecutables []string
+	outermostAppBundles   []string
+}
+
+func discoverMacOSPayloadTrustTargets(payloadRoot string) (macOSPayloadTrustTargets, error) {
+	launcherPath := filepath.Join(payloadRoot, "launcher", "jobctrl")
+	if info, err := os.Lstat(launcherPath); err != nil || !info.Mode().IsRegular() {
+		return macOSPayloadTrustTargets{}, errors.New("signed payload does not contain a regular launcher/jobctrl executable")
+	}
+	launcherIsMachO, err := isMachO(launcherPath)
+	if err != nil {
+		return macOSPayloadTrustTargets{}, fmt.Errorf("inspect launcher/jobctrl executable: %w", err)
+	}
+	if !launcherIsMachO {
+		return macOSPayloadTrustTargets{}, errors.New("signed payload launcher/jobctrl is not a Mach-O executable")
+	}
+
+	var targets macOSPayloadTrustTargets
+	err = filepath.WalkDir(payloadRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -1367,8 +1724,11 @@ func verifyMacOSPayloadTrust(payloadRoot string, runner func(string, ...string) 
 			return nil
 		}
 		if entry.IsDir() {
+			if isMacOSCodeBundle(entry.Name()) {
+				targets.codeBundles = append(targets.codeBundles, path)
+			}
 			if strings.HasSuffix(entry.Name(), ".app") {
-				targets[path] = true
+				targets.outermostAppBundles = append(targets.outermostAppBundles, path)
 			}
 			return nil
 		}
@@ -1379,38 +1739,82 @@ func verifyMacOSPayloadTrust(payloadRoot string, runner func(string, ...string) 
 		if err != nil {
 			return err
 		}
-		if info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
+		if info.Mode().IsRegular() {
 			machO, err := isMachO(path)
 			if err != nil {
 				return err
 			}
 			if machO {
-				targets[path] = true
+				targets.machO = append(targets.machO, path)
+				if info.Mode()&0o111 != 0 {
+					targets.standaloneExecutables = append(targets.standaloneExecutables, path)
+				}
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return err
+		return macOSPayloadTrustTargets{}, err
 	}
-	ordered := make([]string, 0, len(targets))
-	for target := range targets {
-		ordered = append(ordered, target)
+	targets.machO = sortedUniquePaths(targets.machO)
+	targets.codeBundles = sortedUniquePaths(targets.codeBundles)
+	targets.standaloneExecutables = sortedUniquePaths(targets.standaloneExecutables)
+	allApps := sortedUniquePaths(targets.outermostAppBundles)
+	targets.outermostAppBundles = targets.outermostAppBundles[:0]
+	for _, app := range allApps {
+		if !containedInAnotherApp(app, allApps) {
+			targets.outermostAppBundles = append(targets.outermostAppBundles, app)
+		}
+	}
+	standaloneExecutables := make([]string, 0, len(targets.standaloneExecutables))
+	for _, executable := range targets.standaloneExecutables {
+		if containedInAnyApp(executable, allApps) {
+			continue
+		}
+		standaloneExecutables = append(standaloneExecutables, executable)
+	}
+	targets.standaloneExecutables = standaloneExecutables
+	return targets, nil
+}
+
+func isMacOSCodeBundle(name string) bool {
+	return strings.HasSuffix(name, ".app") || strings.HasSuffix(name, ".framework") || strings.HasSuffix(name, ".xpc") || strings.HasSuffix(name, ".appex")
+}
+
+func sortedUniquePaths(paths []string) []string {
+	set := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		set[path] = struct{}{}
+	}
+	ordered := make([]string, 0, len(set))
+	for path := range set {
+		ordered = append(ordered, path)
 	}
 	sort.Strings(ordered)
-	for _, target := range ordered {
-		if _, err := runner("/usr/bin/codesign", "--verify", "--deep", "--strict", "--check-notarization", "-R=notarized", target); err != nil {
-			return fmt.Errorf("Developer ID/notarization verification failed for %s: %w", filepath.Base(target), err)
-		}
-		output, err := runner("/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", target)
-		if err != nil {
-			return fmt.Errorf("Gatekeeper assessment failed for %s: %w", filepath.Base(target), err)
-		}
-		if !strings.Contains(output, "source=Notarized Developer ID") {
-			return fmt.Errorf("Gatekeeper did not report Notarized Developer ID source for %s", filepath.Base(target))
+	return ordered
+}
+
+func containedInAnotherApp(candidate string, apps []string) bool {
+	for _, app := range apps {
+		if app != candidate && containsPayloadPath(app, candidate) {
+			return true
 		}
 	}
-	return nil
+	return false
+}
+
+func containedInAnyApp(candidate string, apps []string) bool {
+	for _, app := range apps {
+		if containsPayloadPath(app, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPayloadPath(root, candidate string) bool {
+	relative, err := filepath.Rel(root, candidate)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func isMachO(path string) (bool, error) {

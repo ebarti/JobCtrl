@@ -108,20 +108,19 @@ to the rename train / post-rename launch assets (R7b).
 
 ### 9.4 — Release tagging (owner-only; rename landed 2026-07-07)
 
-> **Update 2026-07-10.** The distribution is renamed (`pyproject` name
-> `jobctrl`) and package publishing lives in the new
-> `.github/workflows/release-pypi.yml` path. It runs only when a non-prerelease
-> GitHub Release is published. The new path is absent from historical commits,
-> and `.github/workflows/publish.yml` stays disabled, so older tagged commits
-> cannot supply its former tag-push publication logic.
+> **Update 2026-07-11.** The distribution is renamed (`pyproject` name
+> `jobctrl`) and stable-only package publishing is integrated into
+> `.github/workflows/release-distribution.yml`. It runs only after that same
+> owner-dispatched workflow has published and verified an immutable,
+> non-prerelease GitHub Release. The standalone `release-pypi.yml` path is
+> intentionally absent, and `.github/workflows/publish.yml` stays disabled, so
+> older tagged commits cannot supply the former tag-push publication logic.
 > `release_check` enforces the distribution name, one version across every
 > shipped manifest and built distribution, and an exact `v<version>` tag.
 > Unrestricted manual and tag-push publishing are disabled. The
 > GitHub `pypi` environment exists and admits only `v*` tags; add a required
 > reviewer after the visibility/plan change makes that protection available.
-> The historical "Publish to PyPI" workflow remains `disabled_manually`; once
-> the new path first appears on `main`, explicitly disable "Release to PyPI"
-> too until every release gate below is satisfied.
+> The historical "Publish to PyPI" workflow remains `disabled_manually`.
 > The owner selected **v2.0.0** as the first public release version on
 > 2026-07-10. All shipped manifests are prepared at that version before the
 > tag; publishing the tag remains an owner-only action after hosted gates pass.
@@ -131,34 +130,117 @@ to the rename train / post-rename launch assets (R7b).
   publisher can create the project on first publish but does **not** reserve the
   name ([PyPI documentation](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)).
   Confirm the owner-approved first version and configure the Trusted Publisher
-  for workflow `release-pypi.yml` and environment `pypi`. Prepare a GitHub
-  Release with that exact tag targeting the audited current `main` commit, and
-  review its notes. Enable only the new "Release to PyPI" workflow, then publish
-  that GitHub Release (not a prerelease). The job rejects a tag on any other
-  commit, builds the wheel and source archive, runs the strict-prompt release
-  scanner and version/tag parity gate against both the checkout and those exact
-  archives, and only then uploads them; the separate strict release-check
-  workflow remains the pre-release repository gate. Verify the PyPI package and
-  GitHub Release after the workflow succeeds.
-- **Rollback.** Delete the tag; if a bad artifact published to PyPI, yank it;
-  re-disable the workflow.
+  for workflow `release-distribution.yml` and environment `pypi`. Dispatch the
+  signed distribution workflow with an exact tag targeting audited current
+  `main`. After immutable GitHub publication, its clean `pypi-resolve` job
+  checks out that exact ref without credentials, verifies the tracked finalizer
+  bundle and license notice, verifies the immutable Release attestation, safely
+  extracts the audit evidence with system Python, and validates the signed P6
+  candidate against the protected public key and key ID before any project
+  dependency runs. Two independent builders then install only the locked
+  `release-build` group (`build` and Hatchling), create fixed-epoch wheel and
+  source archives without isolation, and run the strict scanner. A fresh job
+  byte-compares both inventories and authors the publication checksum. The
+  separate `pypi` job has no checkout, build tools, or release-key inputs: it
+  re-resolves the tag and current `main`, verifies only the compare-sealed
+  artifact, and uses OIDC to publish those unchanged bytes. Verify the PyPI
+  package and immutable GitHub Release after the workflow succeeds.
+- **Rollback.** Preserve the immutable Release and tag as audit evidence. Yank
+  a bad PyPI file/version when necessary, then publish a new higher-sequence
+  signed release that explicitly revokes or supersedes the affected build.
+
+### 9.4a — Signed distribution environments (owner-only)
+
+Before dispatching `Release distribution`, configure the following protected
+GitHub environments. Keep private values in environment secrets; keep the
+public Ed25519 trust anchor in protected environment variables. Do not write
+either into the tracked signing policy. Configure **every** environment below
+with a deployment tag rule matching only protected `v*` tags; do not admit
+branches. Dispatch the workflow at `refs/tags/<release_tag>` so its own
+`GITHUB_REF` and `GITHUB_SHA` are the same audited tag/commit checked out by
+the resolver. These environment rules are the server-side defense against a
+modified branch workflow removing the in-workflow identity check:
+
+- `release-signing`: `JOBCTRL_RELEASE_SIGNING_KEY`,
+  `JOBCTRL_APPLE_DEVELOPER_ID_P12`,
+  `JOBCTRL_APPLE_DEVELOPER_ID_PASSWORD`, `JOBCTRL_APPLE_SIGNING_IDENTITY`,
+  `JOBCTRL_APPLE_NOTARY_PROFILE`, `JOBCTRL_APPLE_NOTARY_API_KEY`,
+  `JOBCTRL_APPLE_NOTARY_KEY_ID`, and `JOBCTRL_APPLE_NOTARY_ISSUER`. Require an
+  owner approval. The signing job starts on a fresh runner only after locked
+  dependencies and both unsigned comparison builds have passed; it performs no
+  package installation and runs only the sealed finalizer plus system signing
+  and notarization tools.
+- `release-publication`: `JOBCTRL_RELEASE_UPLOAD_BASE_URL`,
+  `JOBCTRL_RELEASE_ADMIN_READ_TOKEN` (a fine-grained token with repository
+  Administration read access), and `HOMEBREW_TAP_DEPLOY_KEY`. Keep all three
+  as environment secrets; the reusable Homebrew workflow resolves the tap key
+  only inside its `publish` job after the environment approval, rather than
+  accepting it through `workflow_call`. Require a separate owner approval. Its release origin
+  must support TLS, read-after-write verification, and conditional `PUT`
+  (`If-Match` / `If-None-Match: *`) for the one channel-pointer object.
+- `release-verification`: protected environment variables
+  `JOBCTRL_RELEASE_PUBLIC_KEY` and `JOBCTRL_RELEASE_KEY_ID`, the non-secret but
+  integrity-sensitive release trust anchor. Require an owner approval. The
+  credential-free distribution-prepare jobs embed this key. After immutable
+  GitHub publication, the clean PyPI resolution gate checks against the same
+  protected values before dependency execution; the two builders receive
+  neither value. None of those jobs receives an OIDC token or publication
+  authority.
+- `pypi`: configure only the PyPI Trusted Publisher. Require an owner approval
+  and the same protected `v*` tag-only deployment rule.
+  The OIDC-only publish job receives no checkout, build tooling, dependencies,
+  or release-key inputs; it receives only the compare-sealed package bytes and
+  checksum.
+
+Dispatch supplies the full expected SHA-256 of the currently served channel
+pointer (or `absent` only for the first one). Two fresh macOS runners build
+unsigned candidates independently; a third runner compares them before the
+credentialed signer receives either. Fresh runners then isolate signing,
+immutable draft publication, pointer CAS, tap publication, and final GitHub
+Release publication from dependency installation and repository execution. A
+separate credential-free runner smoke-tests the public build-scoped assets and
+runs Homebrew audit/install/test. Only then does the minimal CAS job promote
+the signer-authored channel pointer. The top-level concurrency key serializes
+each channel/platform, and the stable tap job cannot start until that pointer
+promotion succeeds or proves the exact pointer is already live. An exact
+existing pointer is a safe resume; a different or stale pointer is a deliberate
+conflict that fails before Homebrew can be changed. The workflow publishes and
+post-lock verifies the immutable GitHub Release after pointer and tap
+publication; only the stable channel can then enter the clean two-builder PyPI
+lane.
+
+**Current external blockers.** No protected Apple signing/notarization
+credentials or release-publication origin are configured, and the canonical
+origin currently fails its TLS handshake. The repository immutable-Releases
+API currently reports `enabled=false`; the owner must enable immutable
+Releases and provision `JOBCTRL_RELEASE_ADMIN_READ_TOKEN` before the workflow
+can create or publish a draft. GitHub Actions jobs are also zero-step blocked
+by the repository account billing/spending state. Therefore this workflow is
+prepared but cannot produce a signed, notarized, published candidate yet; no
+user-facing curl or Homebrew stable-install claim may be made until the hosted
+path has completed.
 
 ### 9.5 — Homebrew tap publication (P6-gated)
 
 `packaging/homebrew/Formula/jobctrl.rb.tmpl` is the one canonical formula
 template. P4 has no checked-in rendered formula or public stable install
-claim. P6 renders it from the signed stable descriptor, independently verifies
-that descriptor against `packaging/distribution/release-keys.json`, smoke-tests
-the published ZIP, and supplies matching promotion evidence to the reusable
-tap workflow. The workflow never triggers from `main` or merely from a
-published GitHub Release. The formula writes only its Homebrew prefix: its
-`bin/jobctrl` target is a native first-invocation bootstrap holding the signed
-descriptor resources and cached ZIP. It must not create `~/.jobctrl`, mutate a
-Cellar payload, or link a runtime payload from the Cellar during `brew install`.
+claim. P6 renders the formula once on the signer from the signed stable
+descriptor and exports its exact SHA-256. A credential-free job smoke-tests
+that formula and published ZIP without re-rendering either. The reusable tap
+workflow receives the untouched signed candidate and separate smoke evidence,
+re-verifies the signer-rooted formula digest, and seals the exact formula
+without tap credentials before handing only the formula and checksum to a
+fresh deploy-key job. It never triggers from `main` or merely from a published
+GitHub Release.
+The formula writes only its Homebrew prefix: its `bin/jobctrl` target is a
+native first-invocation bootstrap holding the signed descriptor resources and
+cached ZIP. It must not create `~/.jobctrl`, mutate a Cellar payload, or link a
+runtime payload from the Cellar during `brew install`.
 
 - **Action.** Run P6's signed descriptor, published-ZIP smoke, formula render,
-  Ruby syntax, and Homebrew audit/test gates; then call the reusable sync
-  workflow with the verified render. Do not edit the tap copy by hand.
+  Ruby syntax, and Homebrew audit/test gates; atomically promote or confirm the
+  signer-authored channel pointer; only then call the reusable sync workflow
+  with the verified render. Do not edit the tap copy by hand.
 - **Rollback.** Revert `Formula/jobctrl.rb` in the tap after coordinating a
   signed release revocation; the source-development instructions are separate.
 

@@ -1,11 +1,9 @@
 """Unit tests for the worker startup browser preflight and its worker gate.
 
 These are hermetic: ``playwright.sync_api.sync_playwright`` is monkeypatched so
-no real browser (or browser install) is needed. The preflight resolves the
-Chromium path, checks it exists, and then does a real headless launch (the
-headless-shell binary is separate from the full chromium binary and was the
-thing missing in the incident), so the fakes model both the resolved path and
-the launch outcome.
+no real browser (or browser install) is needed. The preflight performs a real
+headless launch only: the full Chromium executable is intentionally absent from
+the bundled headless-shell core.
 """
 
 from __future__ import annotations
@@ -86,32 +84,30 @@ def _patch_sync_playwright(
 # --- check_playwright_chromium -------------------------------------------------
 
 
-def test_check_reports_available_when_binary_exists(
+def test_check_reports_available_when_headless_launch_succeeds_even_without_full_browser(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    binary = tmp_path / "chrome-headless-shell"
-    binary.write_bytes(b"#!/bin/sh\n")
-    _patch_sync_playwright(monkeypatch, str(binary))
+    missing_full_browser = tmp_path / "chromium-1208" / "chrome"
+    _patch_sync_playwright(monkeypatch, str(missing_full_browser))
 
     ok, message = check_playwright_chromium()
 
     assert ok is True
-    assert message == f"Playwright Chromium available at {binary}"
+    assert message == "Playwright Chromium headless launch succeeded"
 
 
-def test_check_reports_missing_binary_with_actionable_message(
+def test_check_reports_failure_when_headless_launch_raises_even_if_full_browser_path_is_present(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # A resolvable path whose file does not exist — the exact incident shape:
-    # the revision directory was garbage-collected out from under this venv.
-    missing = tmp_path / "chromium_headless_shell-1208" / "chrome-headless-shell"
-    _patch_sync_playwright(monkeypatch, str(missing))
+    full_browser = tmp_path / "chromium-1208" / "chrome"
+    full_browser.parent.mkdir()
+    full_browser.write_bytes(b"#!/bin/sh\n")
+    _patch_sync_playwright(monkeypatch, str(full_browser), launch_error=RuntimeError("headless shell missing"))
 
     ok, message = check_playwright_chromium()
 
     assert ok is False
-    # Actionable: names the missing path, the fix command, and the GC gotcha.
-    assert str(missing) in message
+    assert "headless shell missing" in message
     assert PLAYWRIGHT_INSTALL_COMMAND in message
     assert PLAYWRIGHT_WORKTREE_GC_WARNING in message
 
@@ -157,18 +153,14 @@ def test_check_reports_failure_when_driver_raises(
     assert PLAYWRIGHT_WORKTREE_GC_WARNING in message
 
 
-@pytest.mark.parametrize("failure", ["missing", "launch"])
-def test_bundled_preflight_uses_jobctrl_repair_without_uv_guidance(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
+def test_bundled_preflight_uses_jobctrl_repair_without_uv_guidance_when_launch_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "bundled")
     monkeypatch.setenv("JOBCTRL_PAYLOAD_DIR", str(tmp_path / "payload"))
-    if failure == "missing":
-        _patch_sync_playwright(monkeypatch, str(tmp_path / "missing-chromium"))
-    else:
-        binary = tmp_path / "chromium"
-        binary.write_bytes(b"#!/bin/sh\n")
-        _patch_sync_playwright(monkeypatch, str(binary), launch_error=RuntimeError("headless shell missing"))
+    binary = tmp_path / "chromium"
+    binary.write_bytes(b"#!/bin/sh\n")
+    _patch_sync_playwright(monkeypatch, str(binary), launch_error=RuntimeError("headless shell missing"))
 
     ok, message = check_playwright_chromium()
 

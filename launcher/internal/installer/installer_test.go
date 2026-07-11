@@ -11,11 +11,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -61,17 +63,15 @@ func TestReleaseDescriptorAuthenticatesExactBytesAndOrigin(t *testing.T) {
 	}
 }
 
-func TestStablePayloadRequiresCodeSigningAndNotarizationAssessment(t *testing.T) {
-	payload := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(payload, "launcher"), 0o755); err != nil {
-		t.Fatal(err)
+func TestMacOSPayloadTrustUsesGatekeeperOnlyForOutermostApps(t *testing.T) {
+	payload, launcherPath, nodePath, headlessShellPath, outerApp, nestedApp := macOSPayloadTrustFixture(t)
+	type command struct {
+		path string
+		args []string
 	}
-	if err := os.WriteFile(filepath.Join(payload, "launcher", "jobctrl"), []byte("binary"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	var calls []string
+	var calls []command
 	runner := func(path string, args ...string) (string, error) {
-		calls = append(calls, path+" "+strings.Join(args, " "))
+		calls = append(calls, command{path: path, args: append([]string(nil), args...)})
 		if path == "/usr/sbin/spctl" {
 			return "source=Notarized Developer ID\n", nil
 		}
@@ -80,52 +80,128 @@ func TestStablePayloadRequiresCodeSigningAndNotarizationAssessment(t *testing.T)
 	if err := verifyMacOSPayloadTrust(payload, runner); err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) != 2 || !strings.Contains(calls[0], "/usr/bin/codesign") || !strings.Contains(calls[0], "--check-notarization") || !strings.Contains(calls[1], "/usr/sbin/spctl") {
-		t.Fatalf("missing trust checks: %#v", calls)
-	}
-	if err := verifyMacOSPayloadTrust(payload, func(_ string, _ ...string) (string, error) { return "", os.ErrPermission }); err == nil {
-		t.Fatal("failed Gatekeeper check accepted")
-	}
-	if err := os.MkdirAll(filepath.Join(payload, "components", "Chromium.app"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	calls = nil
-	if err := verifyMacOSPayloadTrust(payload, runner); err != nil {
-		t.Fatal(err)
-	}
-	if len(calls) != 4 || !strings.Contains(strings.Join(calls, "\n"), "Chromium.app") {
-		t.Fatalf("Chromium app was not independently assessed: %#v", calls)
-	}
-	for _, path := range []string{"node/bin/node", "python/bin/python3", "temporal/temporal", "components/native/addon.node"} {
-		full := filepath.Join(payload, path)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
+
+	var gatekeeperTargets []string
+	standaloneNotarizationTargets := map[string]bool{}
+	codeSignatureTargets := map[string]bool{}
+	nestedBundleVerified := false
+	for _, call := range calls {
+		target := call.args[len(call.args)-1]
+		if call.path == "/usr/sbin/spctl" {
+			gatekeeperTargets = append(gatekeeperTargets, target)
 		}
-		if err := os.WriteFile(full, []byte{0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 0}, 0o755); err != nil {
-			t.Fatal(err)
+		if call.path != "/usr/bin/codesign" {
+			continue
+		}
+		if containsString(call.args, "--check-notarization") && !containsString(call.args, "-R=notarized") {
+			t.Fatalf("notarization check lacks an explicit notarized requirement: %#v", call)
+		}
+		if containsString(call.args, "--check-notarization") && !containsString(call.args, "--deep") {
+			standaloneNotarizationTargets[target] = true
+		}
+		if containsString(call.args, "--strict") && !containsString(call.args, "--deep") {
+			codeSignatureTargets[target] = true
+		}
+		if target == nestedApp && containsString(call.args, "--strict") && !containsString(call.args, "--check-notarization") {
+			nestedBundleVerified = true
 		}
 	}
-	calls = nil
-	if err := verifyMacOSPayloadTrust(payload, runner); err != nil {
-		t.Fatal(err)
+	if got, want := strings.Join(gatekeeperTargets, ","), outerApp; got != want {
+		t.Fatalf("Gatekeeper targets = %q, want only outer app %q (calls: %#v)", got, want, calls)
 	}
-	for _, name := range []string{"node", "python3", "temporal", "addon.node"} {
-		found := false
-		for _, call := range calls {
-			if strings.Contains(call, name) {
-				found = true
-				break
+	for _, target := range []string{launcherPath, nodePath, headlessShellPath} {
+		if !codeSignatureTargets[target] {
+			t.Fatalf("raw executable missed strict codesign verification: %q (calls: %#v)", target, calls)
+		}
+		if !standaloneNotarizationTargets[target] {
+			t.Fatalf("raw executable missed codesign notarization verification: %q (calls: %#v)", target, calls)
+		}
+	}
+	if standaloneNotarizationTargets[outerApp] || standaloneNotarizationTargets[nestedApp] {
+		t.Fatalf("app bundle used raw-executable notarization path: %#v", calls)
+	}
+	if !nestedBundleVerified {
+		t.Fatalf("nested app bundle was not independently signature verified: %#v", calls)
+	}
+}
+
+func TestMacOSPayloadTrustRejectsInvalidCodeSignatureOrNotarization(t *testing.T) {
+	payload, _, nodePath, headlessShellPath, _, _ := macOSPayloadTrustFixture(t)
+	for _, testCase := range []struct {
+		name      string
+		failsCall func(path string, args []string) bool
+		contains  string
+	}{
+		{
+			name: "invalid code signature",
+			failsCall: func(path string, args []string) bool {
+				return path == "/usr/bin/codesign" && args[len(args)-1] == headlessShellPath && !containsString(args, "--check-notarization")
+			},
+			contains: "code signature verification failed",
+		},
+		{
+			name: "invalid standalone notarization",
+			failsCall: func(path string, args []string) bool {
+				return path == "/usr/bin/codesign" && args[len(args)-1] == nodePath && containsString(args, "--check-notarization")
+			},
+			contains: "Developer ID/notarization verification failed",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := verifyMacOSPayloadTrust(payload, func(path string, args ...string) (string, error) {
+				if testCase.failsCall(path, args) {
+					return "", errors.New("fixture verification failure")
+				}
+				if path == "/usr/sbin/spctl" {
+					return "source=Notarized Developer ID\n", nil
+				}
+				return "", nil
+			})
+			if err == nil || !strings.Contains(err.Error(), testCase.contains) {
+				t.Fatalf("invalid trust check accepted: %v", err)
 			}
+		})
+	}
+}
+
+func macOSPayloadTrustFixture(t *testing.T) (payload, launcherPath, nodePath, headlessShellPath, outerApp, nestedApp string) {
+	t.Helper()
+	payload = t.TempDir()
+	launcherPath = filepath.Join(payload, "launcher", "jobctrl")
+	nodePath = filepath.Join(payload, "node", "bin", "node")
+	headlessShellPath = filepath.Join(payload, "chromium", "chrome-headless-shell-mac-arm64", "chrome-headless-shell")
+	outerApp = filepath.Join(payload, "components", "Browser.app")
+	nestedApp = filepath.Join(outerApp, "Contents", "Frameworks", "Browser Framework.framework", "Helpers", "Browser Helper.app")
+	for _, executable := range []string{
+		launcherPath,
+		nodePath,
+		headlessShellPath,
+		filepath.Join(outerApp, "Contents", "MacOS", "Browser"),
+		filepath.Join(nestedApp, "Contents", "MacOS", "Browser Helper"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(executable), 0o755); err != nil {
+			t.Fatal(err)
 		}
-		if !found {
-			t.Fatalf("native executable %s was not independently code-trust assessed: %#v", name, calls)
+		if err := os.WriteFile(executable, []byte{0xcf, 0xfa, 0xed, 0xfe, 0, 0, 0, 0}, 0o755); err != nil {
+			t.Fatal(err)
 		}
 	}
+	return payload, launcherPath, nodePath, headlessShellPath, outerApp, nestedApp
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestUnsignedLocalDescriptorCannotCrossNetworkBoundary(t *testing.T) {
 	descriptor := stableDescriptor("https://example.test/jobctrl.zip")
 	descriptor.Channel = "local"
+	descriptor.SourceCommit = ""
 	descriptor.Artifact.URL = "file:///jobctrl-local-release/fixture.zip"
 	raw, _ := json.Marshal(descriptor)
 	signatureRaw, _ := json.Marshal(descriptorSignature{SchemaVersion: 1, Status: "unsigned-local", Algorithm: "ed25519", KeyID: "local-development"})
@@ -144,6 +220,7 @@ func TestUnsignedLocalDescriptorCannotCrossNetworkBoundary(t *testing.T) {
 func TestDescriptorValidationMatchesSafeIntegerAndCanonicalLocalFileRules(t *testing.T) {
 	descriptor := stableDescriptor("file:///jobctrl-local-release/fixture.zip")
 	descriptor.Channel = "local"
+	descriptor.SourceCommit = ""
 	descriptor.MinimumSafeSequence = 0
 	raw, _ := json.Marshal(descriptor)
 	signatureRaw, _ := json.Marshal(descriptorSignature{SchemaVersion: 1, Status: "unsigned-local", Algorithm: "ed25519", KeyID: "local-development"})
@@ -633,10 +710,324 @@ func localAcquisitionPolicy() launcher.AcquisitionPolicy {
 	return launcher.AcquisitionPolicy{ExpectedChannel: "local", AllowUnsignedLocal: true}
 }
 
+func TestNetworkChannelPointerResolvesOnlyItsImmutablePair(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, descriptorRaw, signatureRaw, pointer, pointerRaw := signedChannelPointerFixture(t, private, "stable")
+	client, requests := channelPointerClient(map[string][]byte{
+		mustDefaultReleaseURL(t, "stable"): pointerRaw,
+		pointer.Descriptor.URL:             descriptorRaw,
+		pointer.Signature.URL:              signatureRaw,
+	})
+	resolved, resolvedRaw, resolvedURL, err := resolveNetworkRelease(Options{
+		Policy:     launcher.AcquisitionPolicy{ExpectedChannel: "stable", AllowNetwork: true},
+		Trust:      map[string]ed25519.PublicKey{"jobctrl-release-v1": public},
+		HTTPClient: client,
+	}, client)
+	if err != nil {
+		t.Fatalf("resolve channel pointer: %v", err)
+	}
+	if resolved.BuildID != descriptor.BuildID || resolved.Channel != descriptor.Channel || resolved.Sequence != descriptor.Sequence || !bytes.Equal(resolvedRaw, descriptorRaw) || resolvedURL != pointer.Descriptor.URL {
+		t.Fatalf("resolved immutable release = %#v, %q, %q", resolved, resolvedRaw, resolvedURL)
+	}
+	for url, want := range map[string]int{mustDefaultReleaseURL(t, "stable"): 1, pointer.Descriptor.URL: 1, pointer.Signature.URL: 1, mustDefaultReleaseURL(t, "stable") + ".sig": 0} {
+		if got := requests[url]; got != want {
+			t.Fatalf("requests for %s = %d, want %d (all: %#v)", url, got, want, requests)
+		}
+	}
+}
+
+func TestNetworkChannelPointerHashesBothImmutableFilesBeforeSignatureVerification(t *testing.T) {
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, descriptorRaw, signatureRaw, pointer, _ := signedChannelPointerFixture(t, private, "stable")
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*channelPointer)
+		body   map[string][]byte
+	}{
+		{
+			name:   "descriptor",
+			mutate: func(pointer *channelPointer) { pointer.Descriptor.SHA256 = strings.Repeat("0", 64) },
+			body:   map[string][]byte{},
+		},
+		{
+			name:   "signature",
+			mutate: func(pointer *channelPointer) { pointer.Signature.SHA256 = strings.Repeat("0", 64) },
+			body:   map[string][]byte{},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			mutated := pointer
+			testCase.mutate(&mutated)
+			mutatedRaw, err := json.Marshal(mutated)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := map[string][]byte{
+				mustDefaultReleaseURL(t, "stable"): mutatedRaw,
+				pointer.Descriptor.URL:             descriptorRaw,
+				pointer.Signature.URL:              signatureRaw,
+			}
+			for url, value := range testCase.body {
+				body[url] = value
+			}
+			client, _ := channelPointerClient(body)
+			_, _, _, err = resolveNetworkRelease(Options{Policy: launcher.AcquisitionPolicy{ExpectedChannel: "stable", AllowNetwork: true}, HTTPClient: client}, client)
+			if err == nil || !strings.Contains(err.Error(), "SHA-256") {
+				t.Fatalf("mismatched %s digest reached signature verification: %v", testCase.name, err)
+			}
+		})
+	}
+}
+
+func TestChannelPointerIdentityMustEqualDescriptor(t *testing.T) {
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, _, _, pointer, _ := signedChannelPointerFixture(t, private, "stable")
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*channelPointer)
+	}{
+		{"channel", func(pointer *channelPointer) { pointer.Channel = "prerelease" }},
+		{"platform-id", func(pointer *channelPointer) { pointer.Platform.ID = "darwin-x64" }},
+		{"platform-os", func(pointer *channelPointer) { pointer.Platform.OS = "linux" }},
+		{"platform-arch", func(pointer *channelPointer) { pointer.Platform.Arch = "amd64" }},
+		{"source-commit", func(pointer *channelPointer) { pointer.SourceCommit = strings.Repeat("b", 40) }},
+		{"build-id", func(pointer *channelPointer) { pointer.BuildID = "fixture-build-0002" }},
+		{"sequence", func(pointer *channelPointer) { pointer.Sequence++ }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			mutated := pointer
+			testCase.mutate(&mutated)
+			if err := verifyPointerDescriptorIdentity(mutated, descriptor); err == nil {
+				t.Fatal("pointer identity mismatch accepted")
+			}
+		})
+	}
+}
+
+func TestChannelPointerRejectsExtraFieldsAndURLAliases(t *testing.T) {
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, pointer, pointerRaw := signedChannelPointerFixture(t, private, "stable")
+	var document map[string]any
+	if err := json.Unmarshal(pointerRaw, &document); err != nil {
+		t.Fatal(err)
+	}
+	document["unexpected"] = true
+	extraRaw, _ := json.Marshal(document)
+	if _, _, _, err := validateReleaseChannelPointer(extraRaw, "stable"); err == nil {
+		t.Fatal("channel pointer accepted an extra root field")
+	}
+	document = map[string]any{}
+	if err := json.Unmarshal(pointerRaw, &document); err != nil {
+		t.Fatal(err)
+	}
+	descriptorDocument := document["descriptor"].(map[string]any)
+	descriptorDocument["unexpected"] = true
+	extraRaw, _ = json.Marshal(document)
+	if _, _, _, err := validateReleaseChannelPointer(extraRaw, "stable"); err == nil {
+		t.Fatal("channel pointer accepted an extra nested field")
+	}
+	for _, attack := range []string{
+		"https://attacker@releases.jobctrl.dev/v1/artifacts/fixture-build-0001/release-descriptor.json",
+		"https://releases.jobctrl.dev:443/v1/artifacts/fixture-build-0001/release-descriptor.json",
+		"https://releases.jobctrl.dev/v1/artifacts/fixture-build-0001/release-descriptor.json?next=attacker",
+		"https://releases.jobctrl.dev/v1/artifacts/fixture-build-0001/release-descriptor.json#fragment",
+		"https://releases.jobctrl.dev/v1/artifacts/fixture-build-0001/%72elease-descriptor.json",
+	} {
+		mutated := pointer
+		mutated.Descriptor.URL = attack
+		raw, _ := json.Marshal(mutated)
+		if _, _, _, err := validateReleaseChannelPointer(raw, "stable"); err == nil {
+			t.Fatalf("channel pointer accepted URL attack %q", attack)
+		}
+	}
+	for _, attack := range []string{
+		"https://releases.jobctrl.dev:443/v1/stable/darwin-arm64.json",
+		"https://releases.jobctrl.dev/v1/stable/darwin-arm64.json?next=attacker",
+		"https://releases.jobctrl.dev/v1/stable/%64arwin-arm64.json",
+	} {
+		if _, err := validateChannelPointerURL(attack, "stable"); err == nil {
+			t.Fatalf("channel pointer URL accepted alias %q", attack)
+		}
+	}
+}
+
+func TestInvalidChannelPointerNeverDownloadsArchiveOrCreatesState(t *testing.T) {
+	invalidPointer := []byte(`{"schemaVersion":1,"channel":"stable","platform":{"id":"darwin-arm64","os":"darwin","arch":"arm64"},"sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","buildId":"short","sequence":1,"descriptor":{"url":"https://releases.jobctrl.dev/v1/artifacts/fixture-build-0001/release-descriptor.json","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"signature":{"url":"https://releases.jobctrl.dev/v1/artifacts/fixture-build-0001/release-descriptor.json.sig","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}`)
+	client, requests := channelPointerClient(map[string][]byte{mustDefaultReleaseURL(t, "stable"): invalidPointer})
+	home := filepath.Join(t.TempDir(), "runtime")
+	_, err := InstallFromNetwork(Options{Home: home, Policy: launcher.AcquisitionPolicy{ExpectedChannel: "stable", AllowNetwork: true}, HTTPClient: client})
+	if err == nil || !strings.Contains(err.Error(), "pointer") {
+		t.Fatalf("invalid pointer accepted: %v", err)
+	}
+	if len(requests) != 1 || requests[mustDefaultReleaseURL(t, "stable")] != 1 {
+		t.Fatalf("invalid pointer fetched immutable bytes or archive: %#v", requests)
+	}
+	if _, statErr := os.Stat(home); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid pointer changed installer state: %v", statErr)
+	}
+}
+
+func TestCachedFilesRejectChannelPointerURL(t *testing.T) {
+	_, err := InstallFromCachedFiles(Options{Policy: launcher.AcquisitionPolicy{ExpectedChannel: "stable", AllowNetwork: true}}, mustDefaultReleaseURL(t, "stable"), "never-read.json", "never-read.sig", "never-read.zip")
+	if err == nil || !strings.Contains(err.Error(), "immutable") {
+		t.Fatalf("cached acquisition accepted a mutable channel pointer URL: %v", err)
+	}
+}
+
+func TestNetworkDefaultPointerUsesCompiledPrereleaseChannel(t *testing.T) {
+	if got, want := mustDefaultReleaseURL(t, "prerelease"), "https://releases.jobctrl.dev/v1/prerelease/darwin-arm64.json"; got != want {
+		t.Fatalf("prerelease default pointer = %q, want %q", got, want)
+	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, descriptorRaw, signatureRaw, pointer, pointerRaw := signedChannelPointerFixture(t, private, "prerelease")
+	client, requests := channelPointerClient(map[string][]byte{
+		mustDefaultReleaseURL(t, "prerelease"): pointerRaw,
+		pointer.Descriptor.URL:                 descriptorRaw,
+		pointer.Signature.URL:                  signatureRaw,
+	})
+	if _, _, _, err := resolveNetworkRelease(Options{Policy: launcher.AcquisitionPolicy{ExpectedChannel: "prerelease", AllowNetwork: true}, Trust: map[string]ed25519.PublicKey{"jobctrl-release-v1": public}, HTTPClient: client}, client); err != nil {
+		t.Fatalf("resolve prerelease default pointer: %v", err)
+	}
+	if requests[mustDefaultReleaseURL(t, "prerelease")] != 1 || requests[mustDefaultReleaseURL(t, "stable")] != 0 {
+		t.Fatalf("compiled prerelease installer followed the wrong pointer: %#v", requests)
+	}
+}
+
+func TestNetworkChannelPointerAllowsOnlyOneExplicitLoopbackOrigin(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pointerRaw, descriptorRaw, signatureRaw []byte
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests = append(requests, request.URL.Path)
+		var body []byte
+		switch request.URL.Path {
+		case "/v1/stable/darwin-arm64.json":
+			body = pointerRaw
+		case "/v1/artifacts/fixture-build-0001/release-descriptor.json":
+			body = descriptorRaw
+		case "/v1/artifacts/fixture-build-0001/release-descriptor.json.sig":
+			body = signatureRaw
+		default:
+			http.NotFound(response, request)
+			return
+		}
+		response.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		_, _ = response.Write(body)
+	}))
+	defer server.Close()
+	_, descriptorRaw, signatureRaw, pointer, pointerRaw := signedChannelPointerFixtureAtOrigin(t, private, "stable", server.URL)
+	resolved, _, descriptorURL, err := resolveNetworkRelease(Options{
+		ReleaseURL:        server.URL + "/v1/stable/darwin-arm64.json",
+		Policy:            launcher.AcquisitionPolicy{ExpectedChannel: "stable", AllowNetwork: true},
+		Trust:             map[string]ed25519.PublicKey{"jobctrl-release-v1": public},
+		HTTPClient:        server.Client(),
+		AllowHTTPLoopback: true,
+	}, server.Client())
+	if err != nil || resolved.BuildID != pointer.BuildID || descriptorURL != pointer.Descriptor.URL {
+		t.Fatalf("loopback pointer resolution = %#v, %q, %v", resolved, descriptorURL, err)
+	}
+	if got, want := strings.Join(requests, ","), "/v1/stable/darwin-arm64.json,/v1/artifacts/fixture-build-0001/release-descriptor.json,/v1/artifacts/fixture-build-0001/release-descriptor.json.sig"; got != want {
+		t.Fatalf("loopback requests = %q, want %q", got, want)
+	}
+
+	other := httptest.NewServer(http.NotFoundHandler())
+	defer other.Close()
+	pointer.Descriptor.URL = other.URL + "/v1/artifacts/fixture-build-0001/release-descriptor.json"
+	pointerRaw, err = json.Marshal(pointer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests = nil
+	_, _, _, err = resolveNetworkRelease(Options{
+		ReleaseURL:        server.URL + "/v1/stable/darwin-arm64.json",
+		Policy:            launcher.AcquisitionPolicy{ExpectedChannel: "stable", AllowNetwork: true},
+		Trust:             map[string]ed25519.PublicKey{"jobctrl-release-v1": public},
+		HTTPClient:        server.Client(),
+		AllowHTTPLoopback: true,
+	}, server.Client())
+	if err == nil || !strings.Contains(err.Error(), "origin") {
+		t.Fatalf("cross-origin loopback pointer accepted: %v", err)
+	}
+	if got, want := strings.Join(requests, ","), "/v1/stable/darwin-arm64.json"; got != want {
+		t.Fatalf("cross-origin pointer fetched immutable content: %q", got)
+	}
+}
+
+func TestImmutableStagingChannelPointerMustNameItsBuild(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, descriptorRaw, signatureRaw, pointer, pointerRaw := signedChannelPointerFixture(t, private, "stable")
+	stagingURL := "https://releases.jobctrl.dev/v1/artifacts/fixture-build-0001/channel-pointer.json"
+	client, _ := channelPointerClient(map[string][]byte{
+		stagingURL:             pointerRaw,
+		pointer.Descriptor.URL: descriptorRaw,
+		pointer.Signature.URL:  signatureRaw,
+	})
+	if _, _, resolvedURL, err := resolveNetworkRelease(Options{ReleaseURL: stagingURL, Policy: launcher.AcquisitionPolicy{ExpectedChannel: "stable", AllowNetwork: true}, Trust: map[string]ed25519.PublicKey{"jobctrl-release-v1": public}, HTTPClient: client}, client); err != nil || resolvedURL != pointer.Descriptor.URL {
+		t.Fatalf("staging pointer resolution = %q, %v", resolvedURL, err)
+	}
+	mismatchURL := "https://releases.jobctrl.dev/v1/artifacts/fixture-build-0002/channel-pointer.json"
+	client, requests := channelPointerClient(map[string][]byte{mismatchURL: pointerRaw})
+	if _, _, _, err := resolveNetworkRelease(Options{ReleaseURL: mismatchURL, Policy: launcher.AcquisitionPolicy{ExpectedChannel: "stable", AllowNetwork: true}, Trust: map[string]ed25519.PublicKey{"jobctrl-release-v1": public}, HTTPClient: client}, client); err == nil || !strings.Contains(err.Error(), "build identity") {
+		t.Fatalf("mismatched staging pointer URL accepted: %v", err)
+	}
+	if len(requests) != 1 || requests[mismatchURL] != 1 {
+		t.Fatalf("mismatched staging pointer fetched immutable content: %#v", requests)
+	}
+}
+
+func TestCachedImmutableDescriptorRejectsSameOriginWrongArtifactPath(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor := stableDescriptor("https://releases.jobctrl.dev/v1/artifacts/fixture-build-0001/not-jobctrl.zip")
+	descriptorRaw, err := json.Marshal(descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signatureRaw, err := json.Marshal(signedDescriptorSignature(private, descriptorRaw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	descriptorPath, signaturePath := filepath.Join(root, "descriptor.json"), filepath.Join(root, "descriptor.json.sig")
+	if err := os.WriteFile(descriptorPath, descriptorRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(signaturePath, signatureRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = InstallFromCachedFiles(Options{Policy: launcher.AcquisitionPolicy{ExpectedChannel: "stable", AllowNetwork: true}, Trust: map[string]ed25519.PublicKey{"jobctrl-release-v1": public}}, "https://releases.jobctrl.dev/v1/artifacts/fixture-build-0001/release-descriptor.json", descriptorPath, signaturePath, filepath.Join(root, "never-read.zip"))
+	if err == nil || !strings.Contains(err.Error(), "artifact URL") {
+		t.Fatalf("cached descriptor accepted same-origin wrong artifact path: %v", err)
+	}
+}
+
 func TestSignedCachedFilesNeverAcceptUnsignedLocalFixtures(t *testing.T) {
 	root := t.TempDir()
 	archive, descriptor, signature := localFixture(t, root)
-	_, err := InstallFromCachedFiles(Options{Home: filepath.Join(root, "runtime")}, "https://releases.example.test/v1/stable/darwin-arm64.json", descriptor, signature, archive)
+	_, err := InstallFromCachedFiles(Options{Home: filepath.Join(root, "runtime")}, "https://releases.jobctrl.dev/v1/artifacts/fixture-build-0001/release-descriptor.json", descriptor, signature, archive)
 	if err == nil || (!strings.Contains(err.Error(), "unsigned-local descriptor") && !strings.Contains(err.Error(), "unavailable")) {
 		t.Fatalf("unsigned local cache crossed signed boundary: %v", err)
 	}
@@ -673,7 +1064,7 @@ func TestCompiledNetworkChannelRejectsValidOtherChannelBeforeArchiveUse(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	descriptor := stableDescriptor("https://releases.example.test/jobctrl.zip")
+	descriptor := stableDescriptor("https://releases.jobctrl.dev/v1/artifacts/fixture-build-0001/jobctrl-2.0.0-darwin-arm64.zip")
 	descriptor.Channel = "prerelease"
 	raw, _ := json.Marshal(descriptor)
 	signatureRaw, _ := json.Marshal(signedDescriptorSignature(private, raw))
@@ -685,7 +1076,7 @@ func TestCompiledNetworkChannelRejectsValidOtherChannelBeforeArchiveUse(t *testi
 		t.Fatal(err)
 	}
 	options := Options{Policy: launcher.AcquisitionPolicy{ExpectedChannel: "stable", AllowNetwork: true}, Trust: map[string]ed25519.PublicKey{"jobctrl-release-v1": public}}
-	if _, err := InstallFromCachedFiles(options, "https://releases.example.test/v1/stable/darwin-arm64.json", descriptorPath, signaturePath, filepath.Join(root, "never-read.zip")); err == nil || !strings.Contains(err.Error(), "does not match compiled installer channel") {
+	if _, err := InstallFromCachedFiles(options, "https://releases.jobctrl.dev/v1/artifacts/fixture-build-0001/release-descriptor.json", descriptorPath, signaturePath, filepath.Join(root, "never-read.zip")); err == nil || !strings.Contains(err.Error(), "does not match compiled installer channel") {
 		t.Fatalf("stable installer accepted prerelease descriptor: %v", err)
 	}
 	if _, err := InstallFromNetwork(Options{Policy: localAcquisitionPolicy()}); err == nil || !strings.Contains(err.Error(), "network acquisition is unavailable") {
@@ -815,12 +1206,87 @@ func writeZIP(t *testing.T, entries []zipEntry) string {
 
 func stableDescriptor(archiveURL string) Descriptor {
 	var descriptor Descriptor
-	descriptor.SchemaVersion, descriptor.Channel, descriptor.Sequence, descriptor.BuildID, descriptor.AppVersion = 1, "stable", 1, "fixture-build-0001", "2.0.0"
+	descriptor.SchemaVersion, descriptor.Channel, descriptor.Sequence, descriptor.BuildID, descriptor.AppVersion, descriptor.SourceCommit = 1, "stable", 1, "fixture-build-0001", "2.0.0", strings.Repeat("a", 40)
 	descriptor.MinimumSafeSequence, descriptor.RevokedBuildIDs = 1, []string{}
 	descriptor.Platform.ID, descriptor.Platform.OS, descriptor.Platform.Arch = "darwin-arm64", "darwin", "arm64"
 	descriptor.Artifact.URL, descriptor.Artifact.SHA256, descriptor.Artifact.SizeBytes, descriptor.Artifact.ArchiveType, descriptor.Artifact.ManifestSHA256 = archiveURL, strings.Repeat("a", 64), 1, "zip", strings.Repeat("b", 64)
 	return descriptor
 }
+
+func signedChannelPointerFixture(t *testing.T, private ed25519.PrivateKey, channel string) (Descriptor, []byte, []byte, channelPointer, []byte) {
+	return signedChannelPointerFixtureAtOrigin(t, private, channel, "https://releases.jobctrl.dev")
+}
+
+func signedChannelPointerFixtureAtOrigin(t *testing.T, private ed25519.PrivateKey, channel, origin string) (Descriptor, []byte, []byte, channelPointer, []byte) {
+	t.Helper()
+	descriptor := stableDescriptor(origin + "/v1/artifacts/fixture-build-0001/jobctrl-2.0.0-darwin-arm64.zip")
+	descriptor.Channel = channel
+	descriptorRaw, err := json.Marshal(descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signatureRaw, err := json.Marshal(signedDescriptorSignature(private, descriptorRaw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pointer := channelPointer{
+		SchemaVersion: 1,
+		Channel:       descriptor.Channel,
+		SourceCommit:  descriptor.SourceCommit,
+		BuildID:       descriptor.BuildID,
+		Sequence:      descriptor.Sequence,
+		Descriptor: pointerAsset{
+			URL:    origin + "/v1/artifacts/fixture-build-0001/release-descriptor.json",
+			SHA256: digestBytes(descriptorRaw),
+		},
+		Signature: pointerAsset{
+			URL:    origin + "/v1/artifacts/fixture-build-0001/release-descriptor.json.sig",
+			SHA256: digestBytes(signatureRaw),
+		},
+	}
+	pointer.Platform.ID, pointer.Platform.OS, pointer.Platform.Arch = descriptor.Platform.ID, descriptor.Platform.OS, descriptor.Platform.Arch
+	pointerRaw, err := json.Marshal(pointer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return descriptor, descriptorRaw, signatureRaw, pointer, pointerRaw
+}
+
+func mustDefaultReleaseURL(t *testing.T, channel string) string {
+	t.Helper()
+	url, err := DefaultReleaseURL(channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return url
+}
+
+type channelPointerRoundTripper func(*http.Request) (*http.Response, error)
+
+func (roundTrip channelPointerRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return roundTrip(request)
+}
+
+func channelPointerClient(responses map[string][]byte) (*http.Client, map[string]int) {
+	requests := map[string]int{}
+	return &http.Client{Transport: channelPointerRoundTripper(func(request *http.Request) (*http.Response, error) {
+		key := request.URL.String()
+		requests[key]++
+		body, exists := responses[key]
+		if !exists {
+			return nil, fmt.Errorf("unexpected request for %s", key)
+		}
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Status:        "200 OK",
+			Header:        http.Header{"Content-Length": []string{strconv.Itoa(len(body))}},
+			Body:          io.NopCloser(bytes.NewReader(body)),
+			ContentLength: int64(len(body)),
+			Request:       request,
+		}, nil
+	})}, requests
+}
+
 func signedDescriptorSignature(private ed25519.PrivateKey, raw []byte) descriptorSignature {
 	return signedDescriptorSignatureWithDomain(private, raw, "jobctrl:release-descriptor:v1\x00")
 }
@@ -882,6 +1348,7 @@ func localFixture(t *testing.T, root string) (archivePath, descriptorPath, signa
 	}
 	descriptor := stableDescriptor("")
 	descriptor.Channel = "local"
+	descriptor.SourceCommit = ""
 	descriptor.Artifact.URL = "file:///jobctrl-local-release/fixture.zip"
 	descriptor.MinimumSafeSequence, descriptor.RevokedBuildIDs = 0, []string{}
 	descriptor.Artifact.SHA256 = digestBytes(archiveBytes)
