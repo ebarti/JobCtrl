@@ -1,0 +1,113 @@
+.demo-consent-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: clamp(1.25rem, 4vw, 3rem);
+  color: #18231f;
+  background:
+    radial-gradient(circle at 14% 8%, rgb(235 118 65 / 18%), transparent 32rem),
+    radial-gradient(circle at 88% 86%, rgb(44 99 79 / 18%), transparent 34rem),
+    #f5f1e8;
+}
+
+.demo-consent-card {
+  width: min(100%, 42rem);
+  padding: clamp(1.5rem, 4vw, 3rem);
+  border: 1px solid rgb(24 35 31 / 14%);
+  border-radius: 1.5rem;
+  background: rgb(255 253 247 / 94%);
+  box-shadow: 0 1.5rem 4rem rgb(24 35 31 / 12%);
+}
+
+.demo-consent-mark {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 0.8rem;
+  color: #fffaf1;
+  background: #234c3e;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.demo-consent-kicker {
+  margin: 1.35rem 0 0.4rem;
+  color: #b24e28;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.demo-consent-card h1 {
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 3.6rem);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+}
+
+.demo-consent-card p {
+  line-height: 1.65;
+}
+
+.demo-consent-requirement {
+  margin-top: 1.4rem;
+  font-size: 1.08rem;
+  font-weight: 750;
+}
+
+.demo-consent-return-note,
+.demo-consent-error {
+  padding: 0.8rem 1rem;
+  border-radius: 0.8rem;
+  background: #f8e8dc;
+}
+
+.demo-consent-error {
+  color: #842f22;
+  border: 1px solid rgb(132 47 34 / 22%);
+}
+
+.demo-consent-links a {
+  color: #234c3e;
+  font-weight: 700;
+}
+
+.demo-consent-actions {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.6rem;
+}
+
+.demo-consent-actions button {
+  min-height: 3rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.8rem;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.demo-consent-actions button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.demo-consent-accept {
+  border: 1px solid #234c3e;
+  color: #fffaf1;
+  background: #234c3e;
+}
+
+.demo-consent-decline {
+  border: 1px solid rgb(24 35 31 / 24%);
+  color: #26352f;
+  background: transparent;
+}
+
+@media (min-width: 38rem) {
+  .demo-consent-actions {
+    grid-template-columns: 1.25fr 1fr;
+  }
+}

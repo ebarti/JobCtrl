@@ -29,6 +29,29 @@ settings, read [Configuration](configuration.md).
 Local-first does not mean offline. Discovery fetches sources, generation calls
 models, and live apply contacts an employer only when you use those features.
 
+## Public Demo
+
+The hosted synthetic demo is separate from the local product described above.
+It can only be used after accepting first-party analytics cookies. Declining
+returns to `https://jobctrl.dev`; opening the demo again shows the choice again.
+The demo does not initialize its browser-local workspace until the consent
+service confirms acceptance.
+
+After acceptance, Cloudflare sets a versioned consent cookie plus random
+HttpOnly visitor and session identifiers. The persistent cookies expire within
+six months, the session cookie at the end of the browser session, and raw demo
+events and non-linkable operational counters expire within 90 days. Events use
+closed route/action/result categories: they exclude names, contact details,
+profile or resume text, job/company content, URLs, searches, comments, local
+paths, raw errors, and demo entity/workspace identifiers. IP addresses may be
+used transiently by Cloudflare rate limiting but are not written to D1 or
+application logs.
+
+The demo contains synthetic data. Do not enter personal data, credentials, or
+secrets. Post-accept withdrawal and immediate visitor-event deletion are not
+yet available in this MVP; retained data expires on the schedules above. The
+consent screen links to this disclosure before entry.
+
 ## Local Data
 
 Default workspace:

@@ -39,13 +39,23 @@ export type TelemetryEventName = (typeof telemetryEventNames)[number];
 
 export const routeNames = [
   "dashboard",
+  "discovery",
   "jobs",
   "job_detail",
   "evidence",
   "tailor",
+  "artifacts",
+  "artifact_detail",
   "apply_review",
   "apply_dry_run",
   "runs",
+  "pipelines",
+  "analytics",
+  "profile",
+  "preferences",
+  "outreach",
+  "contact_detail",
+  "activity",
   "settings",
   "docs",
 ] as const;
@@ -54,8 +64,10 @@ export type RouteName = (typeof routeNames)[number];
 export const featureNames = [
   "discovery",
   "scoring",
+  "pipeline",
   "evidence",
   "materials",
+  "artifacts",
   "apply_review",
   "apply",
   "outreach",
@@ -73,6 +85,13 @@ export const actionNames = [
   "reset",
   "install_cta",
   "docs_cta",
+  "rescore",
+  "retailor",
+  "retry_stage",
+  "run_stage",
+  "open_artifact",
+  "apply_dry_run",
+  "mark_applied",
 ] as const;
 export type ActionName = (typeof actionNames)[number];
 

@@ -27,6 +27,21 @@ const scenarioTest = test.extend<{ demoNetworkBoundary: void }>({
       const forbiddenRequests: string[] = [];
       const guard = async (route: Route) => {
         const requestUrl = new URL(route.request().url());
+        if (requestUrl.origin === demoOrigin && requestUrl.pathname === "/api/demo-consent") {
+          await route.fulfill({
+            contentType: "application/json",
+            body: JSON.stringify({ choice: "granted", version: "v1" }),
+          });
+          return;
+        }
+        if (
+          requestUrl.origin === demoOrigin &&
+          (requestUrl.pathname === "/api/demo-health" ||
+            requestUrl.pathname === "/api/demo-telemetry")
+        ) {
+          await route.fulfill({ status: 204, body: "" });
+          return;
+        }
         const forbidden =
           requestUrl.pathname === "/v1" ||
           requestUrl.pathname === "/v1/events/stream" ||
@@ -134,6 +149,127 @@ function acceptNextConfirmation(page: Page): void {
 
 test.beforeEach(async ({ page }) => {
   await page.goto(STATIC_HOST);
+});
+
+test("consent grant precedes IndexedDB, health, telemetry, and populated demo entry", async ({
+  page,
+  context,
+}) => {
+  const requests: Array<{ path: string; method: string; body: unknown }> = [];
+  await context.route("**/api/demo-consent", async (route) => {
+    const request = route.request();
+    requests.push({
+      path: "/api/demo-consent",
+      method: request.method(),
+      body: request.postData() ? (request.postDataJSON() as unknown) : null,
+    });
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        choice: request.method() === "POST" ? "granted" : "unknown",
+        version: "v1",
+      }),
+    });
+  });
+  for (const path of ["/api/demo-health", "/api/demo-telemetry"] as const) {
+    await context.route(`**${path}`, async (route) => {
+      requests.push({
+        path,
+        method: route.request().method(),
+        body: route.request().postDataJSON() as unknown,
+      });
+      await route.fulfill({ status: 204, body: "" });
+    });
+  }
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: /Explore JobCtrl/i })).toBeVisible();
+  await expect(page.getByText(/demo can only be used after accepting.*analytics cookies/i)).toBeVisible();
+  expect(requests.map(({ path }) => path)).toEqual(["/api/demo-consent"]);
+  expect(await page.evaluate(async () =>
+    (await indexedDB.databases()).some((database) => database.name === "jobctrl-demo"),
+  )).toBe(false);
+
+  await page.getByRole("button", { name: "Accept cookies and enter demo" }).click();
+  await expect(page.getByText("Demo mode — shared browser profile")).toBeVisible();
+  await expect.poll(async () => page.evaluate(async () =>
+    (await indexedDB.databases()).some((database) => database.name === "jobctrl-demo"),
+  )).toBe(true);
+  await expect.poll(() => requests.some(({ path }) => path === "/api/demo-health")).toBe(true);
+  await expect.poll(() => requests.some(({ path }) => path === "/api/demo-telemetry")).toBe(true);
+
+  const grantIndex = requests.findIndex(({ path, method }) =>
+    path === "/api/demo-consent" && method === "POST");
+  const healthIndex = requests.findIndex(({ path }) => path === "/api/demo-health");
+  const telemetryIndex = requests.findIndex(({ path }) => path === "/api/demo-telemetry");
+  expect(grantIndex).toBeGreaterThan(0);
+  expect(healthIndex).toBeGreaterThan(grantIndex);
+  expect(telemetryIndex).toBeGreaterThan(grantIndex);
+  expect(requests[grantIndex]?.body).toMatchObject({ choice: "granted" });
+});
+
+test("decline stays anonymous and redirects even when consent measurement fails", async ({
+  page,
+  context,
+}) => {
+  const requests: Array<{ path: string; body: unknown }> = [];
+  await context.route("**/api/demo-consent", async (route) => {
+    const request = route.request();
+    requests.push({
+      path: "/api/demo-consent",
+      body: request.postData() ? (request.postDataJSON() as unknown) : null,
+    });
+    if (request.method() === "POST") {
+      await route.abort("failed");
+      return;
+    }
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ choice: "unknown", version: "v1" }),
+    });
+  });
+  await context.route("https://jobctrl.dev/**", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<h1>JobCtrl</h1>" }),
+  );
+  await context.route("**/api/demo-health", (route) => route.abort("blockedbyclient"));
+  await context.route("**/api/demo-telemetry", (route) => route.abort("blockedbyclient"));
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Decline and return to jobctrl.dev" }).click();
+  await expect(page).toHaveURL("https://jobctrl.dev/");
+  expect(requests).toHaveLength(2);
+  expect(requests[1]?.body).toEqual({
+    choice: "denied",
+    operationKey: expect.stringMatching(/^[A-Za-z0-9_-]{32,128}$/),
+  });
+  expect(await page.evaluate(async () =>
+    (await indexedDB.databases()).some((database) => database.name === "jobctrl-demo"),
+  )).toBe(false);
+});
+
+test("a denied revisit reopens the acceptance-required gate", async ({ page, context }) => {
+  const optionalRequests: string[] = [];
+  await context.route("**/api/demo-consent", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ choice: "denied", version: "v1" }),
+    }),
+  );
+  for (const path of ["/api/demo-health", "/api/demo-telemetry"] as const) {
+    await context.route(`**${path}`, (route) => {
+      optionalRequests.push(path);
+      return route.abort("blockedbyclient");
+    });
+  }
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: /Explore JobCtrl/i })).toBeVisible();
+  await expect(page.getByText(/previously declined/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept cookies and enter demo" })).toBeVisible();
+  expect(optionalRequests).toEqual([]);
+  expect(await page.evaluate(async () =>
+    (await indexedDB.databases()).some((database) => database.name === "jobctrl-demo"),
+  )).toBe(false);
 });
 
 scenarioTest(
@@ -295,7 +431,7 @@ scenarioTest(
   },
 );
 
-test("demo shell renders the shared-profile and personal-data boundary without product network", async ({
+scenarioTest("demo shell renders the shared-profile and personal-data boundary without product network", async ({
   page,
   context,
 }) => {
@@ -321,7 +457,7 @@ test("demo shell renders the shared-profile and personal-data boundary without p
   expect(productRequests).toEqual([]);
 });
 
-test("every P2 product route and seeded deep link renders populated across direct refreshes", async ({
+scenarioTest("every P2 product route and seeded deep link renders populated across direct refreshes", async ({
   page,
   context,
 }) => {
@@ -403,7 +539,7 @@ test("every P2 product route and seeded deep link renders populated across direc
   expect(externalRequests).toEqual([]);
 });
 
-test("same-context tabs share, serialize concurrent writes, and survive reload without product network", async ({
+scenarioTest("same-context tabs share, serialize concurrent writes, and survive reload without product network", async ({
   page,
   context,
 }) => {
@@ -466,7 +602,7 @@ test("same-context tabs share, serialize concurrent writes, and survive reload w
   expect(productRequests).toEqual([]);
 });
 
-test("eventless discovery and settings writes resync across tabs and survive reload", async ({
+scenarioTest("eventless discovery and settings writes resync across tabs and survive reload", async ({
   page,
   context,
 }) => {
@@ -504,7 +640,7 @@ test("eventless discovery and settings writes resync across tabs and survive rel
   expect(externalRequests).toEqual([]);
 });
 
-test("discovery promotes a source and imports a manual capture through the real browser-local UI", async ({
+scenarioTest("discovery promotes a source and imports a manual capture through the real browser-local UI", async ({
   page,
   context,
 }) => {
@@ -541,7 +677,7 @@ test("discovery promotes a source and imports a manual capture through the real 
   expect(externalRequests).toEqual([]);
 });
 
-test("score correction is browser-local, cross-tab visible, reload durable, and network-free", async ({
+scenarioTest("score correction is browser-local, cross-tab visible, reload durable, and network-free", async ({
   page,
   context,
 }) => {
@@ -574,7 +710,7 @@ test("score correction is browser-local, cross-tab visible, reload durable, and 
   expect(externalRequests).toEqual([]);
 });
 
-test("separate browser contexts isolate workspaces", async ({
+scenarioTest("separate browser contexts isolate workspaces", async ({
   page,
   browser,
 }) => {
@@ -593,7 +729,7 @@ test("separate browser contexts isolate workspaces", async ({
   }
 });
 
-test("reset rotates identity, fences state, and deletes generated blobs", async ({
+scenarioTest("reset rotates identity, fences state, and deletes generated blobs", async ({
   page,
 }) => {
   const initialized = await initializeWorkspace(page);
@@ -631,7 +767,7 @@ test("reset rotates identity, fences state, and deletes generated blobs", async 
   ).toBe(true);
 });
 
-test("future native database version is upgrade-required without downgrade", async ({
+scenarioTest("future native database version is upgrade-required without downgrade", async ({
   page,
 }) => {
   await page.evaluate(async () => {
@@ -670,7 +806,7 @@ test("future native database version is upgrade-required without downgrade", asy
   ).toBe(2);
 });
 
-test("postcommit event adapter emits only valid ordered domain events", async ({
+scenarioTest("postcommit event adapter emits only valid ordered domain events", async ({
   page,
 }) => {
   const result = await page.evaluate(async (moduleUrls) => {

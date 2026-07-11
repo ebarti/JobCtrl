@@ -3,8 +3,15 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./App.js";
 import { EventStreamProvider } from "./contexts/operations/providers/EventStreamProvider.js";
+import {
+  DemoConsentClient,
+  DemoConsentGate,
+  DemoTelemetryAdapter,
+  type DemoConsentChoice,
+} from "./demo/consent/index.js";
 import { createAppComposition, resolveAppMode } from "./demo/portFactory.js";
 import { DemoWorkspaceProvider } from "./demo/workspace/DemoWorkspaceProvider.js";
+import { router } from "./router.js";
 import { createQueryClient } from "./shared/lib/queryClient.js";
 import { DensityProvider } from "./shared/providers/DensityProvider.js";
 import { PortsProvider } from "./shared/providers/PortsProvider.js";
@@ -24,19 +31,79 @@ if (import.meta.hot) {
   import.meta.hot.dispose(() => disposeComposition());
 }
 
-void mount();
+const appMode = resolveAppMode(import.meta.env.VITE_JOBCTRL_APP_MODE);
+void bootstrap();
 
-async function mount(): Promise<void> {
-  const composition = await createAppComposition({
-    mode: resolveAppMode(import.meta.env.VITE_JOBCTRL_APP_MODE),
-    apiBaseUrl: import.meta.env.VITE_JOBCTRL_API_BASE_URL ?? "",
-  });
+async function bootstrap(): Promise<void> {
+  if (appMode !== "demo") {
+    await mountApplication();
+    return;
+  }
+
+  const client = new DemoConsentClient();
+  let initialChoice: DemoConsentChoice = "unknown";
+  try {
+    const state = await client.getChoice();
+    initialChoice = state.choice;
+    if (state.choice === "granted") {
+      await mountApplication(client);
+      return;
+    }
+  } catch {
+    // The static gate remains usable and acceptance stays retryable.
+  }
+
+  root.render(
+    <React.StrictMode>
+      <DemoConsentGate
+        client={client}
+        initialChoice={initialChoice}
+        onDeclined={() => window.location.assign("https://jobctrl.dev")}
+        onGranted={() => mountApplication(client)}
+      />
+    </React.StrictMode>,
+  );
+}
+
+async function mountApplication(consentClient?: DemoConsentClient): Promise<void> {
+  const demoTelemetry = appMode === "demo" ? new DemoTelemetryAdapter() : undefined;
+  let composition: Awaited<ReturnType<typeof createAppComposition>>;
+  try {
+    composition = await createAppComposition({
+      mode: appMode,
+      apiBaseUrl: import.meta.env.VITE_JOBCTRL_API_BASE_URL ?? "",
+      ...(demoTelemetry ? { demoTelemetry } : {}),
+    });
+  } catch {
+    if (consentClient) {
+      void consentClient.recordHealth("failure", "persistent").catch(() => undefined);
+    }
+    demoTelemetry?.error(undefined, { errorCode: "client_unexpected" });
+    root.render(
+      <main role="alert">
+        <h1>Demo temporarily unavailable</h1>
+        <p>Reload to try the browser-local demo again.</p>
+      </main>,
+    );
+    return;
+  }
   disposeComposition();
-  disposeComposition = composition.dispose;
+  const stopRouteTelemetry = demoTelemetry
+    ? router.subscribe("onResolved", ({ pathChanged, toLocation }) => {
+        if (pathChanged) demoTelemetry.routeViewed(toLocation.pathname);
+      })
+    : () => undefined;
+  disposeComposition = () => {
+    stopRouteTelemetry();
+    composition.dispose();
+  };
   if (
     composition.kind === "demo" &&
     composition.initialization.kind === "upgrade_required"
   ) {
+    if (consentClient) {
+      void consentClient.recordHealth("failure", "persistent").catch(() => undefined);
+    }
     root.render(
       <main role="alert">
         <h1>Demo update required</h1>
@@ -44,6 +111,17 @@ async function mount(): Promise<void> {
       </main>,
     );
     return;
+  }
+  if (
+    composition.kind === "demo" &&
+    composition.initialization.kind === "ready" &&
+    consentClient
+  ) {
+    const storageMode = composition.initialization.storageMode === "indexeddb"
+      ? "persistent"
+      : "memory";
+    void consentClient.recordHealth("success", storageMode).catch(() => undefined);
+    demoTelemetry?.sessionStarted(window.location.pathname);
   }
   const workspace = composition.kind === "demo" ? composition.workspace : null;
   root.render(

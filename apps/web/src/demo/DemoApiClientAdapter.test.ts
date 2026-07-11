@@ -9,6 +9,7 @@ import {
 } from "@jobctrl/contracts";
 
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
+import { FakeTelemetryPort } from "../test/testPorts.js";
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import {
   DemoApiClientAdapter,
@@ -825,5 +826,34 @@ describe("DemoApiClientAdapter", () => {
       name: "DemoCapabilityError",
       code: "demo_capability_not_implemented",
     });
+  });
+
+  it("emits only closed action telemetry without affecting scenario results", async () => {
+    const telemetry = new FakeTelemetryPort();
+    const { adapter } = await createAdapter({ telemetry });
+
+    await expect(adapter.rescoreJob("job-fabrikam-systems", {})).resolves.toMatchObject({
+      status: "queued",
+    });
+    expect(telemetry.event).toHaveBeenNthCalledWith(1, "demo_action_started", {
+      feature: "scoring",
+      action: "rescore",
+      scenario: "success",
+    });
+    expect(telemetry.event).toHaveBeenCalledTimes(1);
+
+    telemetry.event.mockClear();
+    await expect(adapter.retailorJob("job-fabrikam-systems", {})).resolves.toMatchObject({
+      status: "blocked",
+    });
+    expect(telemetry.event).toHaveBeenNthCalledWith(2, "demo_action_failed", {
+      feature: "materials",
+      action: "retailor",
+      scenario: "retry",
+      result: "failed",
+      errorCode: "validation_rejected",
+      durationBucket: expect.stringMatching(/ms|s/),
+    });
+    adapter.dispose();
   });
 });

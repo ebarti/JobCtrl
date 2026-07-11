@@ -26,6 +26,28 @@ in [Configuration](configuration.md); the repo threat model is in
 - Live apply is approval-gated by default, dry-run is blocked at the browser
   network layer, and ambiguous post-submit recovery parks for verification.
 
+## Public Demo Boundary
+
+The public synthetic demo never connects to the local JobCtrl API, worker,
+browser extension, model providers, job boards, Gmail, or application
+submission transports. Its product state stays in the visitor's browser. A
+same-origin Cloudflare Worker handles only consent, aggregate initialization
+health, allowlisted analytics, and retention.
+
+The demo is unavailable until the visitor accepts first-party analytics
+cookies. A decline creates no visitor or session identifier and redirects to
+`https://jobctrl.dev`; returning shows the consent screen again. Before a
+confirmed grant, the app creates no demo IndexedDB workspace and sends no
+health or product-telemetry event. Post-accept analytics failures never block
+browser-local product interaction.
+
+Telemetry schemas reject free-form content and product identifiers at both the
+browser and Worker boundaries. Cloudflare automatic invocation logs and traces
+are disabled for the demo Workers; only closed lifecycle outcomes may be
+logged. Post-accept withdrawal and immediate visitor-event deletion are
+deferred from this MVP, so the notice relies on the documented cookie and
+90-day raw-data expiry instead of claiming an unavailable control.
+
 ## What Leaves Your Machine
 
 | Outbound call | When | What can be sent |

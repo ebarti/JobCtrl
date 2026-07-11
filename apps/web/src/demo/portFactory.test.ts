@@ -8,6 +8,7 @@ import { NavigatorClipboardAdapter } from "../shared/adapters/local/NavigatorCli
 import { OpenArtifactAdapter } from "../shared/adapters/local/OpenArtifactAdapter.js";
 import { SseEventStreamAdapter } from "../shared/adapters/local/SseEventStreamAdapter.js";
 import { StaticFeatureFlagAdapter } from "../shared/adapters/local/StaticFeatureFlagAdapter.js";
+import { FakeTelemetryPort } from "../test/testPorts.js";
 import type {
   DemoWorkspaceSnapshot,
   DemoWorkspaceStore,
@@ -87,11 +88,13 @@ describe("port factory", () => {
   it("selects demo only explicitly and constructs no product-network, SSE, or host-OS adapter", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const previewOpener = vi.fn(() => ({ close: vi.fn() }));
+    const telemetry = new FakeTelemetryPort();
     try {
       expect(resolveAppMode("demo")).toBe("demo");
       const composition = await createAppComposition({
         mode: "demo",
         demoPreviewOpener: previewOpener,
+        demoTelemetry: telemetry,
         demoWorkspace: { store: new InMemoryDemoWorkspaceStore() },
       });
 
@@ -117,6 +120,7 @@ describe("port factory", () => {
         composition.ports.featureFlags.get("activityDetailDirectLoad", false),
       ).toBe(true);
       expect(composition.ports.featureFlags.get("demoMode", false)).toBe(true);
+      expect(composition.ports.telemetry).toBe(telemetry);
       expect(composition.ports.api).toBeInstanceOf(DemoApiClientAdapter);
       await expect(composition.ports.api.health()).resolves.toMatchObject({
         ok: true,

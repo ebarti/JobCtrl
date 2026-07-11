@@ -15,6 +15,7 @@ import {
 } from "@jobctrl/contracts";
 
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
+import type { TelemetryPort } from "../shared/ports/TelemetryPort.js";
 import { isDemoArtifactUrl } from "./artifacts.js";
 import type { ApiClientResponse, DemoReadModel } from "./contracts.js";
 import {
@@ -84,6 +85,7 @@ export interface DemoApiClientAdapterOptions
   extends DemoLocalCommandExecutorOptions {
   readonly scenario?: DemoScenarioEngineOptions;
   readonly external?: DemoExternalRehearsalExecutorOptions;
+  readonly telemetry?: TelemetryPort;
 }
 
 /** Browser-local adapter for reads, local commands, and deterministic scenarios. */
@@ -91,12 +93,14 @@ export class DemoApiClientAdapter implements ApiClientPort {
   private readonly localCommands: DemoLocalCommandExecutor;
   private readonly scenarios: DemoScenarioEngine;
   private readonly externalRehearsals: DemoExternalRehearsalExecutor;
+  private readonly telemetry: TelemetryPort | undefined;
 
   constructor(
     private readonly workspace: DemoWorkspaceRepository,
     options: DemoApiClientAdapterOptions = {},
   ) {
     this.localCommands = new DemoLocalCommandExecutor(workspace, options);
+    this.telemetry = options.telemetry;
     this.scenarios = new DemoScenarioEngine(workspace, options.scenario ?? {
       ...(options.clock ? { clock: options.clock } : {}),
       ...(options.createId ? { createId: options.createId } : {}),
@@ -649,15 +653,102 @@ export class DemoApiClientAdapter implements ApiClientPort {
     method: TMethod,
   ): ApiClientPort[TMethod] {
     return ((...args: Parameters<ApiClientPort[TMethod]>) =>
-      this.scenarios.execute(method, args)) as ApiClientPort[TMethod];
+      this.trackDemoAction(method, () => this.scenarios.execute(method, args))) as ApiClientPort[TMethod];
   }
 
   private rehearsed<TMethod extends DemoInitialExternalRehearsalOperation>(
     method: TMethod,
   ): ApiClientPort[TMethod] {
     return ((...args: Parameters<ApiClientPort[TMethod]>) =>
-      this.externalRehearsals.execute(method, args)) as ApiClientPort[TMethod];
+      this.trackDemoAction(method, () => this.externalRehearsals.execute(method, args))) as ApiClientPort[TMethod];
   }
+
+  private async trackDemoAction<TResult>(
+    method: string,
+    execute: () => Promise<TResult>,
+  ): Promise<TResult> {
+    const metadata = DEMO_ACTION_TELEMETRY[method];
+    if (!metadata || !this.telemetry) return execute();
+    const startedAt = monotonicNow();
+    this.emitTelemetry("demo_action_started", metadata);
+    try {
+      const result = await execute();
+      const status = actionStatus(result);
+      const durationBucket = telemetryDurationBucket(monotonicNow() - startedAt);
+      if (status === "queued" || status === "starting" || status === "in_progress") {
+        return result;
+      }
+      if (status === "failed" || status === "blocked") {
+        this.emitTelemetry("demo_action_failed", {
+          ...metadata,
+          result: "failed",
+          errorCode: status === "blocked" ? "validation_rejected" : "scenario_failed",
+          durationBucket,
+        });
+      } else if (status === "canceled" || status === "cancelled") {
+        this.emitTelemetry("demo_action_cancelled", {
+          ...metadata,
+          result: "cancelled",
+          durationBucket,
+        });
+      } else {
+        this.emitTelemetry("demo_action_completed", {
+          ...metadata,
+          result: "succeeded",
+          durationBucket,
+        });
+      }
+      return result;
+    } catch (error) {
+      this.emitTelemetry("demo_action_failed", {
+        ...metadata,
+        result: "failed",
+        errorCode: "client_unexpected",
+        durationBucket: telemetryDurationBucket(monotonicNow() - startedAt),
+      });
+      throw error;
+    }
+  }
+
+  private emitTelemetry(
+    name: string,
+    attributes: Record<string, string>,
+  ): void {
+    try {
+      this.telemetry?.event(name, attributes);
+    } catch {
+      // Optional analytics never changes browser-local product behavior.
+    }
+  }
+}
+
+const DEMO_ACTION_TELEMETRY: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  rescoreJob: { feature: "scoring", action: "rescore", scenario: "success" },
+  retailorJob: { feature: "materials", action: "retailor", scenario: "retry" },
+  retryStage: { feature: "pipeline", action: "retry_stage", scenario: "retry" },
+  runJobStage: { feature: "pipeline", action: "run_stage", scenario: "success" },
+  openArtifact: { feature: "artifacts", action: "open_artifact", scenario: "success" },
+  applyJob: { feature: "apply", action: "apply_dry_run", scenario: "success" },
+  markApplied: { feature: "apply", action: "mark_applied", scenario: "success" },
+};
+
+function actionStatus(result: unknown): string | undefined {
+  if (typeof result !== "object" || result === null || !("status" in result)) return undefined;
+  return typeof result.status === "string" ? result.status : undefined;
+}
+
+function monotonicNow(): number {
+  return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
+function telemetryDurationBucket(milliseconds: number): string {
+  if (milliseconds < 100) return "under_100ms";
+  if (milliseconds < 500) return "100ms_to_499ms";
+  if (milliseconds < 1_000) return "500ms_to_999ms";
+  if (milliseconds < 2_000) return "1s_to_2s";
+  if (milliseconds < 5_000) return "2s_to_5s";
+  if (milliseconds < 10_000) return "5s_to_10s";
+  return "over_10s";
 }
 
 function artifactPreviewUrl(
