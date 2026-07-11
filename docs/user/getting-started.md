@@ -5,10 +5,10 @@ pageClass: jh-user-guide-page
 # Getting Started
 
 JobCtrl runs entirely on your own computer. This guide takes you from an
-empty machine to the app open in your browser. The app runs from a source
-checkout you own, but you do not have to assemble it by hand: a **one-line
-bootstrap** (or the **Homebrew launcher**) clones it and walks you through a
-guided install. It is local-first: your data stays on your machine unless you
+empty machine to the app open in your browser. The current public path is a
+source checkout with a guided install. The bundled curl installer and stable
+Homebrew formula remain release work until P6 publishes and verifies signed
+metadata. It is local-first: your data stays on your machine unless you
 explicitly configure an external provider.
 
 ::: tip Want to see the product first?
@@ -56,29 +56,7 @@ downloads. Each line says what the tool is for.
 
 ## 2. Install Dependencies
 
-The fastest path is the bootstrap script — it clones the repository to
-`~/JobCtrl` (override with `JOBCTRL_HOME` or `--dir`) and runs the same
-guided installer described below:
-
-```bash
-curl -fsSL https://jobctrl.dev/install.sh | bash
-```
-
-Homebrew users can install the toolchain plus a global `jobctrl` launcher
-instead, then bootstrap through it:
-
-```bash
-brew install ebarti/tap/jobctrl --HEAD
-jobctrl bootstrap
-```
-
-The launcher proxies every CLI command (`jobctrl doctor`, `jobctrl dev`, …)
-into the checkout, so you can skip the long `uv --project …` prefixes shown
-in this guide. The public formula is beta and HEAD-only until the first tagged
-formula is published. From an existing checkout, `brew install --formula
-packaging/homebrew/Formula/jobctrl.rb --HEAD` installs the same launcher.
-
-Or do the same steps by hand:
+Clone the repository and run the guided installer:
 
 ```bash
 git clone https://github.com/ebarti/JobCtrl.git
@@ -86,8 +64,8 @@ cd JobCtrl
 scripts/install
 ```
 
-Each install path downloads the project and runs the guided first-run installer:
-it checks your system tools, installs the JavaScript and Python dependencies,
+The guided first-run installer checks your system tools, installs the JavaScript
+and Python dependencies,
 and downloads the Playwright Chromium browser. It also runs `jobctrl setup`,
 which detects Claude/Codex/Antigravity auth and persists any intentionally
 enabled or skipped analysis legs. Expect a few minutes on the first run.
@@ -130,14 +108,6 @@ available: local database, LLM provider, Temporal, browser automation, the Gmail
 connector, approval-gate posture, broad-board/CAPTCHA warnings, application
 attestations, and telemetry. The installer already ran `jobctrl setup`; rerun it
 later only when vendor auth or analysis-leg choices change.
-
-If you installed the Homebrew launcher, use the shorter commands from anywhere:
-
-```bash
-jobctrl dev
-jobctrl init      # CLI route only
-jobctrl doctor    # CLI route only
-```
 
 At minimum, connect one general LLM provider. Start from the example file:
 

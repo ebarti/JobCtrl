@@ -143,24 +143,21 @@ to the rename train / post-rename launch assets (R7b).
 - **Rollback.** Delete the tag; if a bad artifact published to PyPI, yank it;
   re-disable the workflow.
 
-### 9.5 — Homebrew tap publication (automated; updated 2026-07-09)
+### 9.5 — Homebrew tap publication (P6-gated)
 
-The formula's canonical copy lives in-repo at
-`packaging/homebrew/Formula/jobctrl.rb` (head-only spec until the first
-tag). The tap repository `ebarti/homebrew-tap` already exists and publishes
-`Formula/jobctrl.rb`. `.github/workflows/sync-homebrew-tap.yml` checks out the
-tap with a write-scoped deploy key and copies the canonical formula there on
-every canonical-formula change to `main`, every published GitHub release, and
-manual dispatch. The workflow validates Ruby syntax and byte equality before
-committing, and makes no commit when the tap is already current.
+`packaging/homebrew/Formula/jobctrl.rb.tmpl` is the one canonical formula
+template. P4 has no checked-in rendered formula or public stable install
+claim. P6 renders it from the signed stable descriptor, independently verifies
+that descriptor against `packaging/distribution/release-keys.json`, smoke-tests
+the published ZIP, and supplies matching promotion evidence to the reusable
+tap workflow. The workflow never triggers from `main` or merely from a
+published GitHub Release.
 
-- **Action.** At the first public tag, add the stable `url` (tag tarball) and
-  its `sha256` to the canonical in-repo formula, run `brew style` and
-  `brew audit --formula`, merge the change, and verify
-  `brew install ebarti/tap/jobctrl` end to end. The sync workflow publishes
-  that exact update to the tap; do not edit the tap copy by hand.
-- **Rollback.** Revert or delete `Formula/jobctrl.rb` in the tap; the
-  README's script and manual paths are unaffected.
+- **Action.** Run P6's signed descriptor, published-ZIP smoke, formula render,
+  Ruby syntax, and Homebrew audit/test gates; then call the reusable sync
+  workflow with the verified render. Do not edit the tap copy by hand.
+- **Rollback.** Revert `Formula/jobctrl.rb` in the tap after coordinating a
+  signed release revocation; the source-development instructions are separate.
 
 ## Status summary
 
@@ -170,4 +167,4 @@ committing, and makes no commit when the tap is already current.
 | 9.2 Docs-site deploy | Yes | No | Blocked until the post-public hosted gates are green; owner executes |
 | 9.3 Rename redirect | Yes | Landed 2026-07-07 | Redirect verify at flip; owner executes |
 | 9.4 Release tagging | Yes | Landed 2026-07-07 | v2.0.0 selected and mechanics ready; blocked until post-public hosted gates pass |
-| 9.5 Homebrew tap | First stable tag only | No | Head formula published; automated exact-copy sync configured; stable spec + install verification remain for first tag |
+| 9.5 Homebrew tap | P6 signed artifact only | No | P4 template/generator and fail-closed reusable sync are ready; rendering, publication, and install verification remain blocked on P6 |

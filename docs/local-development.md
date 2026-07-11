@@ -30,16 +30,13 @@ created by `jobctrl init`.
 `--skip-system`, `--skip-doctor`, and `--run-doctor` for non-interactive,
 partial, or CLI-diagnostic runs.
 
-`scripts/get` is the curl-able wrapper around the same installer, published on
-the docs site as `https://jobctrl.dev/install.sh`: it clones (or fast-forwards)
-a checkout at `~/JobCtrl` (`JOBCTRL_HOME` / `--dir` override) and then executes
-`scripts/install` there, reattaching `/dev/tty` when run through a pipe.
-`docs/public/install.sh` must stay byte-for-byte identical to `scripts/get`;
-`pnpm docs:build` checks that before building the site. `scripts/jobctrl-launcher`
-is the global `jobctrl` shim installed by the Homebrew formula
-(`packaging/homebrew/Formula/jobctrl.rb`); it resolves the checkout and
-proxies `jobctrl <command>`, `jobctrl dev`, `jobctrl bootstrap`, and
-`jobctrl update`.
+`scripts/get` is now the transport-only bootstrap boundary for the planned
+bundled distribution; it neither clones a checkout nor provisions contributor
+tools. Until P6 publishes a signed descriptor and native-installer pin, its
+normal network path fails closed. Use `scripts/install` and the source commands
+on this page for contributor work. `docs/public/install.sh` must stay
+byte-for-byte identical to `scripts/get`; `pnpm docs:build` checks that before
+building the site.
 
 For machines that already have the system tools and browsers installed, use the
 non-interactive dependency sync:
@@ -171,7 +168,7 @@ pnpm distribution:build
 `pnpm distribution:audit` checks the component inventory, redistribution and
 license policy, exact external archive locks, provider-pack wheel locks, source
 dependency baseline, and signing policy. `pnpm distribution:build` writes an
-unsigned local payload and deterministic archive under
+unsigned local payload and deterministic ZIP archive under
 `dist/distribution-real/`. The build compiles the API and web app, installs the
 core-only Python closure, embeds the pinned Node, Temporal, Python Playwright,
 Playwright MCP, and Chromium runtimes, then emits the manifest, SBOM,
@@ -180,8 +177,12 @@ development tool, provider runtime, source path, unowned file, unresolved
 license, or unpinned external input enters the payload.
 
 The local artifact is deliberately marked `unsigned-local` and cannot be
-promoted as a stable release. It includes the Phase 2 native launcher at
-`payload/launcher/jobctrl`: its private runtime manifest starts the fixed
+promoted as a stable release. It includes both native binaries at
+`payload/launcher/jobctrl` and `payload/launcher/jobctrl-installer`, compiled
+with the locked official Go toolchain. Its local descriptor, detached
+unsigned-local envelope, and curl fixture contract bind the ZIP's build ID,
+manifest SHA-256, size, and archive SHA-256; those fixtures are file-only and
+cannot select a network channel. The launcher's private runtime manifest starts the fixed
 loopback Temporal (`7233`/`8233`), worker, and API (`8766`) fleet without Vite,
 and records each canonical `JOBCTRL_DIR` under
 `~/Library/Application Support/JobCtrl/instances/<sha256>` (override with

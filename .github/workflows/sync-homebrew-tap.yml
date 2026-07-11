@@ -1,13 +1,52 @@
 name: Sync Homebrew Tap
 
+# P6 calls this workflow only after it has verified the descriptor signature
+# and smoke-tested the published signed ZIP. There is intentionally no push or
+# `release: published` trigger: neither an unrendered template nor a merely
+# published GitHub release is authorization to change the public tap.
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "packaging/homebrew/Formula/jobctrl.rb"
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      descriptor_path:
+        required: true
+        type: string
+      descriptor_signature_path:
+        required: true
+        type: string
+      descriptor_url:
+        required: true
+        type: string
+      formula_path:
+        required: true
+        type: string
+      promotion_evidence_path:
+        required: true
+        type: string
+    secrets:
+      HOMEBREW_TAP_DEPLOY_KEY:
+        required: true
   workflow_dispatch:
+    inputs:
+      descriptor_path:
+        description: P6 signed stable descriptor path in this checkout
+        required: true
+        type: string
+      descriptor_signature_path:
+        description: Detached P6 descriptor signature path in this checkout
+        required: true
+        type: string
+      descriptor_url:
+        description: Canonical HTTPS descriptor URL
+        required: true
+        type: string
+      formula_path:
+        description: P6-rendered stable formula path in this checkout
+        required: true
+        type: string
+      promotion_evidence_path:
+        description: P6 signature and published-asset smoke evidence path
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -18,8 +57,15 @@ concurrency:
 
 jobs:
   sync:
-    name: Publish canonical formula
+    name: Publish verified rendered formula
     runs-on: ubuntu-latest
+    env:
+      DESCRIPTOR_PATH: ${{ inputs.descriptor_path }}
+      DESCRIPTOR_SIGNATURE_PATH: ${{ inputs.descriptor_signature_path }}
+      DESCRIPTOR_URL: ${{ inputs.descriptor_url }}
+      FORMULA_PATH: ${{ inputs.formula_path }}
+      PROMOTION_EVIDENCE_PATH: ${{ inputs.promotion_evidence_path }}
+      VERIFIED_FORMULA_PATH: ${{ runner.temp }}/jobctrl-verified.rb
 
     steps:
       - name: Check out JobCtrl
@@ -28,6 +74,35 @@ jobs:
       - name: Run strict release privacy gate
         run: python3 scripts/release_check.py --strict-prompt
 
+      - name: Require P6 signed render and publication evidence
+        run: |
+          set -euo pipefail
+          workspace="$(realpath "$GITHUB_WORKSPACE")"
+          resolve_workspace_file() {
+            case "$1" in *$'\n'*|*$'\r'*) echo "release evidence path contains a newline" >&2; exit 1 ;; esac
+            case "$1" in
+              /*) candidate="$1" ;;
+              *) candidate="$workspace/$1" ;;
+            esac
+            resolved="$(realpath -e "$candidate")"
+            case "$resolved" in
+              "$workspace"/*) printf '%s\n' "$resolved" ;;
+              *) echo "release evidence path escapes GITHUB_WORKSPACE: $1" >&2; exit 1 ;;
+            esac
+          }
+          descriptor="$(resolve_workspace_file "$DESCRIPTOR_PATH")"
+          signature="$(resolve_workspace_file "$DESCRIPTOR_SIGNATURE_PATH")"
+          formula="$(resolve_workspace_file "$FORMULA_PATH")"
+          evidence="$(resolve_workspace_file "$PROMOTION_EVIDENCE_PATH")"
+          node scripts/distribution-homebrew.mjs verify-promotion \
+            --descriptor "$descriptor" \
+            --signature "$signature" \
+            --descriptor-url "$DESCRIPTOR_URL" \
+            --formula "$formula" \
+            --evidence "$evidence"
+          ruby -c "$formula"
+          install -m 0644 "$formula" "$VERIFIED_FORMULA_PATH"
+
       - name: Check out Homebrew tap
         uses: actions/checkout@v4
         with:
@@ -35,16 +110,13 @@ jobs:
           path: homebrew-tap
           ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
 
-      - name: Validate and synchronize formula
+      - name: Synchronize the verified rendered formula
         run: |
           set -euo pipefail
-          ruby -c packaging/homebrew/Formula/jobctrl.rb
           install -m 0644 \
-            packaging/homebrew/Formula/jobctrl.rb \
+            "$VERIFIED_FORMULA_PATH" \
             homebrew-tap/Formula/jobctrl.rb
-          cmp \
-            packaging/homebrew/Formula/jobctrl.rb \
-            homebrew-tap/Formula/jobctrl.rb
+          ruby -c homebrew-tap/Formula/jobctrl.rb
           git -C homebrew-tap diff --check
 
       - name: Commit synchronized formula
@@ -52,11 +124,11 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$(git status --short --untracked-files=all -- Formula/jobctrl.rb)" ]]; then
-            echo "Formula/jobctrl.rb already matches the canonical JobCtrl formula."
+            echo "Formula/jobctrl.rb already matches the P6-verified render."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/jobctrl.rb
-          git commit -m "chore: sync JobCtrl formula (${GITHUB_REF_NAME})"
+          git commit -m "chore: sync JobCtrl stable formula"
           git push origin HEAD:main

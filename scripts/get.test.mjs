@@ -1,162 +1,137 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { createHash } from "node:crypto";
+import { chmodSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import test from "node:test";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const GET = path.join(here, "get");
-const LAUNCHER = path.join(here, "jobctrl-launcher");
-
-// macOS ships bash 3.2, where empty "$@" / "${arr[@]}" expansions are
-// unbound-variable errors under `set -u`. Running the system bash (not the
-// Homebrew one) is the point of these regressions.
+const ROOT = path.resolve(import.meta.dirname, "..");
+const GET = path.join(ROOT, "scripts", "get");
 const SYSTEM_BASH = "/bin/bash";
 
-function makeTmp() {
-  return mkdtempSync(path.join(tmpdir(), "jobctrl-get-test-"));
+function makeTmp() { return mkdtempSync(path.join(os.tmpdir(), "jobctrl-get-test-")); }
+function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
+function run(args, env) { return spawnSync(SYSTEM_BASH, [GET, ...args], { encoding: "utf8", env: { ...process.env, ...env } }); }
+
+function fixture(root, { validDigest = true } = {}) {
+  const bin = path.join(root, "bin");
+  mkdirSync(bin);
+  const uname = path.join(bin, "uname");
+  writeFileSync(uname, "#!/bin/sh\n[ \"$1\" = -s ] && printf Darwin || printf arm64\n");
+  chmodSync(uname, 0o755);
+  const args = path.join(root, "installer-args.txt");
+  const installer = path.join(root, "installer");
+  writeFileSync(installer, "#!/bin/sh\nprintf '%s\n' \"$@\" > \"" + args + "\"\nhome=\"$JOBCTRL_RUNTIME_HOME\"\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --home ]; then home=\"$2\"; shift 2; continue; fi\n  shift\ndone\nmkdir -p \"$home/bin\"\nprintf selector > \"$home/bin/jobctrl\"\nchmod 700 \"$home/bin/jobctrl\"\n");
+  chmodSync(installer, 0o755);
+  const descriptor = path.join(root, "descriptor.json");
+  const signature = path.join(root, "descriptor.json.sig");
+  const archive = path.join(root, "release.zip");
+  writeFileSync(descriptor, "{}"); writeFileSync(signature, "{}"); writeFileSync(archive, "zip");
+  const contract = path.join(root, "fixture.contract");
+  const digest = validDigest ? sha256(readFileSync(installer)) : "0".repeat(64);
+  writeFileSync(contract, [
+    "MODE=local-fixture", "PLATFORM=darwin-arm64", "INSTALLER_URL=file://" + installer,
+    "INSTALLER_SHA256=" + digest, "INSTALLER_VERSION=fixture", "DESCRIPTOR_FILE=" + descriptor,
+    "SIGNATURE_FILE=" + signature, "ARCHIVE_FILE=" + archive, "",
+  ].join("\n"));
+  const runtime = path.join(root, "runtime");
+  return { args, contract, runtime, env: { HOME: root, JOBCTRL_RUNTIME_HOME: runtime, SHELL: "/bin/zsh", PATH: bin + ":" + process.env.PATH } };
 }
 
-// A fake JobCtrl checkout: a git repo with a stub scripts/install that
-// records its argv. The untracked stub keeps the tree dirty, which get
-// treats as "skip pull, reuse as-is" — so no upstream is needed.
-function makeStubCheckout(root) {
-  const dir = path.join(root, "checkout");
-  mkdirSync(path.join(dir, "scripts"), { recursive: true });
-  const init = spawnSync("git", ["-C", dir, "init", "-q"], { encoding: "utf8" });
-  assert.equal(init.status, 0, `git init failed: ${init.stderr}`);
-  const argsFile = path.join(dir, "install-args.txt");
-  writeFileSync(
-    path.join(dir, "scripts", "install"),
-    `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\necho STUB_INSTALL_OK\n`,
-  );
-  chmodSync(path.join(dir, "scripts", "install"), 0o755);
-  return { dir, argsFile };
-}
-
-function run(bin, args, options = {}) {
-  return spawnSync(SYSTEM_BASH, [bin, ...args], {
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "pipe"],
-    ...options,
-  });
-}
-
-test("get survives bash 3.2 with no installer args (empty-array regression)", (t) => {
-  const root = makeTmp();
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const { dir, argsFile } = makeStubCheckout(root);
-
-  // No -y and piped stdin: get either reattaches /dev/tty (empty INSTALL_ARGS
-  // exec — the bash 3.2 crash site) or falls back to --yes. Both branches
-  // must exit 0 under the system bash.
-  const result = run(GET, ["--dir", dir]);
-  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-  assert.match(result.stdout, /STUB_INSTALL_OK/);
-  const recorded = readFileSync(argsFile, "utf8").trim();
-  assert.ok(
-    recorded === "" || recorded === "--yes",
-    `unexpected installer args: ${JSON.stringify(recorded)}`,
-  );
+test("get is transport-only and delegates an explicit local fixture to the native installer", () => {
+  const root = makeTmp(); try {
+    const value = fixture(root);
+    const result = run(["--local-fixture-contract", value.contract, "--home", path.join(root, "runtime")], value.env);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(readFileSync(value.args, "utf8").trim().split("\n"), [
+      "--allow-unsigned-local", "--descriptor-file", path.join(root, "descriptor.json"),
+      "--signature-file", path.join(root, "descriptor.json.sig"), "--archive-file", path.join(root, "release.zip"),
+      "--home", path.join(root, "runtime"),
+    ]);
+    const link = path.join(root, ".local", "bin", "jobctrl");
+    assert.equal(readlinkSync(link), path.join(value.runtime, "bin", "jobctrl"));
+    const profile = path.join(root, ".zprofile");
+    const firstProfile = readFileSync(profile, "utf8");
+    assert.match(firstProfile, /JobCtrl managed path/);
+    assert.equal(statSync(profile).mode & 0o777, 0o600);
+    const repeated = run(["--local-fixture-contract", value.contract, "--home", value.runtime], value.env);
+    assert.equal(repeated.status, 0, repeated.stderr);
+    assert.equal(readFileSync(profile, "utf8"), firstProfile);
+    const source = readFileSync(GET, "utf8");
+    assert.doesNotMatch(source, /git clone|git pull|corepack|pnpm|uv sync|scripts\/install/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("get forwards -y and passthrough args after --", (t) => {
-  const root = makeTmp();
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const { dir, argsFile } = makeStubCheckout(root);
-
-  const result = run(GET, ["-y", "--dir", dir, "--", "--dry-run", "--skip-doctor"]);
-  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-  const recorded = readFileSync(argsFile, "utf8").trim().split("\n");
-  assert.deepEqual(recorded, ["--dry-run", "--skip-doctor", "--yes"]);
+test("get supports custom home/bin links, opt-out, and refuses unrelated command/profile paths", () => {
+  const root = makeTmp(); try {
+    const value = fixture(root);
+    const home = path.join(root, "custom runtime");
+    const bin = path.join(root, "custom-bin");
+    const custom = run(["--local-fixture-contract", value.contract, "--home", home, "--bin-dir", bin, "--no-modify-path"], value.env);
+    assert.equal(custom.status, 0, custom.stderr || custom.stdout);
+    assert.equal(readlinkSync(path.join(bin, "jobctrl")), path.join(home, "bin", "jobctrl"));
+    assert.throws(() => readFileSync(path.join(root, ".zprofile"), "utf8"));
+    rmSync(path.join(bin, "jobctrl"));
+    writeFileSync(path.join(bin, "jobctrl"), "not ours\n");
+    const unrelated = run(["--local-fixture-contract", value.contract, "--home", home, "--bin-dir", bin, "--no-modify-path"], value.env);
+    assert.equal(unrelated.status, 1);
+    assert.match(unrelated.stderr, /refusing to replace existing non-symlink command/);
+    rmSync(path.join(bin, "jobctrl"));
+    mkdirSync(path.join(root, "profile-target"));
+    symlinkSync(path.join(root, "profile-target"), path.join(root, ".zprofile"));
+    const profile = run(["--local-fixture-contract", value.contract, "--home", home, "--bin-dir", bin], value.env);
+    assert.equal(profile.status, 1);
+    assert.match(profile.stderr, /refusing to modify symlinked login profile/);
+    assert.equal(lstatSync(path.join(root, ".zprofile")).isSymbolicLink(), true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("get tolerates a bare trailing -- (empty \"$@\" append)", (t) => {
-  const root = makeTmp();
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const { dir } = makeStubCheckout(root);
-
-  const result = run(GET, ["-y", "--dir", dir, "--"]);
-  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-  assert.match(result.stdout, /STUB_INSTALL_OK/);
+test("get rejects relative runtime homes and profile-injection bin paths", () => {
+  const root = makeTmp(); try {
+    const value = fixture(root);
+    const relative = run(["--local-fixture-contract", value.contract, "--home", "relative-runtime", "--no-modify-path"], value.env);
+    assert.equal(relative.status, 1);
+    assert.match(relative.stderr, /runtime home must be an absolute path/);
+    const injected = run(["--local-fixture-contract", value.contract, "--bin-dir", path.join(root, "bin$bad"), "--no-modify-path"], value.env);
+    assert.equal(injected.status, 1);
+    assert.match(injected.stderr, /--bin-dir contains unsafe characters/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("get refuses a non-empty directory that is not a clone", (t) => {
-  const root = makeTmp();
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const dir = path.join(root, "occupied");
-  mkdirSync(dir);
-  writeFileSync(path.join(dir, "unrelated.txt"), "not a checkout\n");
-
-  const result = run(GET, ["-y", "--dir", dir]);
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /not a JobCtrl clone/);
+test("get appends one managed line while preserving a regular login profile's contents and mode", () => {
+  const root = makeTmp(); try {
+    const value = fixture(root);
+    const profile = path.join(root, ".zprofile");
+    writeFileSync(profile, "export EXISTING=1\n");
+    chmodSync(profile, 0o640);
+    const result = run(["--local-fixture-contract", value.contract], value.env);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const contents = readFileSync(profile, "utf8");
+    assert.match(contents, /^export EXISTING=1$/m);
+    assert.equal((contents.match(/JobCtrl managed path/g) ?? []).length, 1);
+    assert.equal(statSync(profile).mode & 0o777, 0o640);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("launcher prints help and hints bootstrap when no checkout exists", (t) => {
-  const root = makeTmp();
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const env = { ...process.env, JOBCTRL_HOME: path.join(root, "missing") };
-
-  const help = run(LAUNCHER, ["--help"], { env });
-  assert.equal(help.status, 0, `stderr: ${help.stderr}`);
-  assert.match(help.stdout, /JobCtrl launcher/);
-  assert.match(help.stdout, /No checkout found yet/);
-
-  const doctor = run(LAUNCHER, ["doctor"], { env });
-  assert.equal(doctor.status, 1);
-  assert.match(doctor.stderr, /run: jobctrl bootstrap/);
+test("get rejects tampered installer bytes and does not execute them", () => {
+  const root = makeTmp(); try {
+    const value = fixture(root, { validDigest: false });
+    const result = run(["--local-fixture-contract", value.contract], value.env);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /SHA-256 mismatch/);
+    assert.throws(() => readFileSync(value.args, "utf8"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("launcher accepts a linked git worktree as a checkout (.git file, not dir)", (t) => {
-  const root = makeTmp();
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  // Linked worktrees have a `.git` FILE pointing at the real gitdir; the
-  // launcher must not misread that as "no checkout".
-  const dir = path.join(root, "worktree-style");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, ".git"), "gitdir: /somewhere/else\n");
-  const env = { ...process.env, JOBCTRL_HOME: dir };
-
-  const help = run(LAUNCHER, ["--help"], { env });
-  assert.equal(help.status, 0, `stderr: ${help.stderr}`);
-  assert.doesNotMatch(help.stdout, /No checkout found yet/);
-});
-
-test("brew-symlinked launcher resolves the baked libexec get (symlink regression)", (t) => {
-  const root = makeTmp();
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-
-  // Simulate the Homebrew layout: keg with bin/ + libexec/, the libexec path
-  // baked in (as the formula's inreplace does), and a prefix bin symlink.
-  const keg = path.join(root, "keg");
-  mkdirSync(path.join(keg, "bin"), { recursive: true });
-  mkdirSync(path.join(keg, "libexec"), { recursive: true });
-  const bakedGet = path.join(keg, "libexec", "get");
-  writeFileSync(bakedGet, readFileSync(GET, "utf8"));
-  chmodSync(bakedGet, 0o755);
-  const kegLauncher = path.join(keg, "bin", "jobctrl");
-  writeFileSync(
-    kegLauncher,
-    readFileSync(LAUNCHER, "utf8").replace("@JOBCTRL_LIBEXEC_GET@", bakedGet),
-  );
-  chmodSync(kegLauncher, 0o755);
-  const prefixBin = path.join(root, "prefix", "bin");
-  mkdirSync(prefixBin, { recursive: true });
-  symlinkSync(kegLauncher, path.join(prefixBin, "jobctrl"));
-
-  const env = { ...process.env, JOBCTRL_HOME: path.join(root, "missing") };
-  const result = run(path.join(prefixBin, "jobctrl"), ["bootstrap", "--help"], { env });
-  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-  assert.match(result.stdout, /Clones JobCtrl to \$JOBCTRL_HOME/);
+test("local fixture mode cannot select a network release and normal mode fails closed before P6", () => {
+  const root = makeTmp(); try {
+    const value = fixture(root);
+    const local = run(["--local-fixture-contract", value.contract, "--release-url", "https://attacker.example/release"], value.env);
+    assert.equal(local.status, 1);
+    assert.match(local.stderr, /cannot use --release-url/);
+    const normal = run([], value.env);
+    assert.equal(normal.status, 1);
+    assert.match(normal.stderr, /no signed native installer is published yet/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

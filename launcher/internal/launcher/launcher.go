@@ -5,7 +5,9 @@ package launcher
 
 import (
 	"bufio"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -143,6 +145,67 @@ type manifestSignature struct {
 	Promotable        bool    `json:"promotable"`
 }
 
+type selectorReceipt struct {
+	SchemaVersion    int    `json:"schemaVersion"`
+	BuildID          string `json:"buildId"`
+	Channel          string `json:"channel"`
+	Sequence         int64  `json:"sequence"`
+	ArtifactSHA256   string `json:"artifactSha256"`
+	ManifestSHA256   string `json:"manifestSha256"`
+	DescriptorSHA256 string `json:"descriptorSha256"`
+	DescriptorURL    string `json:"descriptorUrl"`
+	InstalledAt      string `json:"installedAt"`
+}
+
+// DistributionManifest is the native release-payload contract shared by the
+// installed launcher and the acquisition installer.  It intentionally remains
+// here instead of a JS/Python implementation: a downloaded payload is never
+// trusted until this Go verifier has authenticated and walked it.
+type DistributionManifest = distributionManifest
+
+// DistributionTrust controls the one narrow local-development escape hatch.
+// Network and stable callers must leave AllowUnsignedLocal false and provide
+// the public keys authorized for their descriptor's manifestKeyId.
+type DistributionTrust struct {
+	PublicKeys         map[string]ed25519.PublicKey
+	AllowUnsignedLocal bool
+	ExpectedChannel    string
+}
+
+// AcquisitionPolicy is derived only from immutable build-time inputs. The
+// installer receives it from the launcher package so a signed release binary
+// cannot opt itself into the contributor-only unsigned-local route.
+type AcquisitionPolicy struct {
+	ExpectedChannel    string
+	AllowUnsignedLocal bool
+	AllowNetwork       bool
+}
+
+// releaseTrustKeyBase64 is deliberately empty in source. P6 injects the
+// protected release public key with -ldflags; a missing or malformed value is
+// a fail-closed condition for signed releases. Tests inject a fixed public key
+// through DistributionTrust instead of changing this package variable.
+var releaseTrustKeyBase64 string
+
+// releaseChannel is injected alongside releaseTrustKeyBase64 for a signed
+// launcher build. Leaving it at local keeps contributor fixtures usable, but a
+// non-empty release key with any other value is a fail-closed configuration.
+var releaseChannel = "local"
+
+// AcquisitionBuildPolicy returns the sole acquisition policy permitted by the
+// compiled launcher. P6 injects both releaseChannel and the release key; a
+// partial or contradictory injection fails closed.
+func AcquisitionBuildPolicy() (AcquisitionPolicy, error) {
+	keys := embeddedReleaseTrust()
+	if releaseChannel == "local" && len(keys) == 0 {
+		return AcquisitionPolicy{ExpectedChannel: "local", AllowUnsignedLocal: true}, nil
+	}
+	if (releaseChannel == "stable" || releaseChannel == "prerelease") && len(keys) > 0 {
+		return AcquisitionPolicy{ExpectedChannel: releaseChannel, AllowNetwork: true}, nil
+	}
+	return AcquisitionPolicy{}, errors.New("invalid compiled release acquisition policy")
+}
+
 type componentRecord struct {
 	PID           int        `json:"pid"`
 	PGID          int        `json:"pgid"`
@@ -203,6 +266,7 @@ var readProcessExecutable processIdentityReader = processExecutable
 var signalProcessGroup groupSignaler = func(pgid int, signal syscall.Signal) error { return syscall.Kill(-pgid, signal) }
 var openBrowser = func(url string) error { return exec.Command("/usr/bin/open", url).Run() }
 var temporalHealthProbe = probeTemporal
+var startCommand = executeStart
 
 // Run is the only public CLI entrypoint. __supervise is reachable only through
 // the re-exec made by `jobctrl start`.
@@ -214,27 +278,25 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 	if len(args) > 0 && args[0] == "__supervise" {
 		return supervise(ctx, readyWriterFromEnv(inheritedEnv))
 	}
+	return dispatchCommand(ctx, args, stdout, stderr)
+}
+
+// dispatchCommand keeps the one-release dev compatibility alias on the exact
+// same native start path. It exists separately from Run so that its routing
+// contract can be regression-tested without starting a runtime.
+func dispatchCommand(ctx launchContext, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
 		printHelp(stdout)
 		return nil
 	}
 	switch args[0] {
 	case "start":
-		foreground, noOpen, err := parseStartArgs(args[1:])
-		if err != nil {
+		return startCommand(ctx, args[1:], stdout)
+	case "dev":
+		if _, err := fmt.Fprintln(stderr, "jobctrl: 'dev' is deprecated; use 'jobctrl start'"); err != nil {
 			return err
 		}
-		if foreground {
-			return supervise(ctx, nil)
-		}
-		if err := startDetached(ctx); err != nil {
-			return err
-		}
-		if !noOpen {
-			return openURL(ctx)
-		}
-		_, err = fmt.Fprintf(stdout, "JobCtrl is ready at http://127.0.0.1:%d\n", ctx.Manifest.Ports.API)
-		return err
+		return startCommand(ctx, args[1:], stdout)
 	case "stop":
 		if len(args) != 1 {
 			return errors.New("usage: jobctrl stop")
@@ -267,6 +329,24 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 	}
 }
 
+func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
+	foreground, noOpen, err := parseStartArgs(args)
+	if err != nil {
+		return err
+	}
+	if foreground {
+		return supervise(ctx, nil)
+	}
+	if err := startDetached(ctx); err != nil {
+		return err
+	}
+	if !noOpen {
+		return openURL(ctx)
+	}
+	_, err = fmt.Fprintf(stdout, "JobCtrl is ready at http://127.0.0.1:%d\n", ctx.Manifest.Ports.API)
+	return err
+}
+
 func ExitCode(err error) int {
 	if err == nil {
 		return 0
@@ -280,7 +360,7 @@ func ExitCode(err error) int {
 	return 1
 }
 func printHelp(out io.Writer) {
-	fmt.Fprint(out, "JobCtrl bundled launcher\n\nUsage:\n  jobctrl start [--no-open] [--foreground]\n  jobctrl stop\n  jobctrl status [--pipeline] [--json]\n  jobctrl logs [temporal|worker|api]\n  jobctrl open\n  jobctrl version [--json]\n  jobctrl pipeline-status\n  jobctrl <Python domain command>\n")
+	fmt.Fprint(out, "JobCtrl bundled launcher\n\nUsage:\n  jobctrl start [--no-open] [--foreground]\n  jobctrl dev [--no-open] [--foreground]  (deprecated alias for start)\n  jobctrl stop\n  jobctrl status [--pipeline] [--json]\n  jobctrl logs [temporal|worker|api]\n  jobctrl open\n  jobctrl version [--json]\n  jobctrl pipeline-status\n  jobctrl <Python domain command>\n")
 }
 func parseStartArgs(args []string) (foreground, noOpen bool, err error) {
 	for _, arg := range args {
@@ -315,13 +395,18 @@ func parseVersionArgs(args []string) (bool, error) {
 }
 
 func prepare(executable string, inheritedEnv []string) (launchContext, error) {
-	payloadRoot, err := locatePayloadRoot(executable)
+	payloadRoot, receipt, err := locatePayloadRoot(executable, inheritedEnv)
 	if err != nil {
 		return launchContext{}, err
 	}
 	distribution, err := loadAndVerifyDistributionManifest(payloadRoot)
 	if err != nil {
 		return launchContext{}, err
+	}
+	if receipt != nil {
+		if err := verifySelectorReceipt(payloadRoot, distribution, *receipt); err != nil {
+			return launchContext{}, err
+		}
 	}
 	manifest, err := loadRuntimeManifest(filepath.Join(payloadRoot, "launcher", "runtime-manifest.json"))
 	if err != nil {
@@ -336,19 +421,65 @@ func prepare(executable string, inheritedEnv []string) (launchContext, error) {
 	}
 	return launchContext{executable, payloadRoot, manifest, distribution, inst, childEnvironment(inheritedEnv, payloadRoot, inst.StateDir, manifest)}, nil
 }
-func locatePayloadRoot(executable string) (string, error) {
+func locatePayloadRoot(executable string, inheritedEnv []string) (string, *selectorReceipt, error) {
 	path, err := filepath.EvalSymlinks(executable)
 	if err != nil {
-		return "", fmt.Errorf("resolve launcher executable: %w", err)
+		return "", nil, fmt.Errorf("resolve launcher executable: %w", err)
 	}
 	path, err = filepath.Abs(path)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	if filepath.Base(path) != "jobctrl" || filepath.Base(filepath.Dir(path)) != "launcher" {
-		return "", fmt.Errorf("launcher must be installed as <payload>/launcher/jobctrl, got %q", path)
+	if filepath.Base(path) == "jobctrl" && filepath.Base(filepath.Dir(path)) == "launcher" {
+		return filepath.Dir(filepath.Dir(path)), nil, nil
 	}
-	return filepath.Dir(filepath.Dir(path)), nil
+	values := environmentMap(inheritedEnv)
+	home := values["JOBCTRL_RUNTIME_HOME"]
+	if home == "" {
+		if values["HOME"] == "" {
+			return "", nil, errors.New("HOME is required to resolve the installed JobCtrl selector")
+		}
+		home = filepath.Join(values["HOME"], "Library", "Application Support", "JobCtrl")
+	}
+	home, err = filepath.Abs(home)
+	if err != nil {
+		return "", nil, err
+	}
+	home, err = filepath.EvalSymlinks(home)
+	if err != nil {
+		return "", nil, fmt.Errorf("canonicalize JobCtrl runtime home: %w", err)
+	}
+	selector := filepath.Join(home, "bin", "jobctrl")
+	if path != selector {
+		return "", nil, fmt.Errorf("launcher must be installed as <payload>/launcher/jobctrl or the JobCtrl runtime selector, got %q", path)
+	}
+	var current selectorReceipt
+	if err := decodeStrictRegular(filepath.Join(home, "current.json"), &current); err != nil {
+		return "", nil, fmt.Errorf("read installed JobCtrl selector: %w", err)
+	}
+	if current.SchemaVersion != 1 || !buildIDPattern.MatchString(current.BuildID) || (current.Channel != "local" && current.Channel != "stable" && current.Channel != "prerelease") || current.Sequence < 1 || !sha256Pattern.MatchString(current.ArtifactSHA256) || !sha256Pattern.MatchString(current.ManifestSHA256) || !sha256Pattern.MatchString(current.DescriptorSHA256) {
+		return "", nil, errors.New("installed JobCtrl selector receipt is invalid")
+	}
+	return filepath.Join(home, "releases", current.BuildID, "payload"), &current, nil
+}
+
+func verifySelectorReceipt(payloadRoot string, manifest distributionManifest, current selectorReceipt) error {
+	manifestDigest, err := sha256Path(filepath.Join(payloadRoot, "manifest.json"))
+	if err != nil {
+		return err
+	}
+	if current.BuildID != manifest.BuildID || current.Channel != manifest.ReleaseChannel || current.ManifestSHA256 != manifestDigest {
+		return errors.New("current selector receipt does not bind the verified payload")
+	}
+	releaseReceiptPath := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(payloadRoot))), "releases", current.BuildID, "receipt.json")
+	var immutable selectorReceipt
+	if err := decodeStrictRegular(releaseReceiptPath, &immutable); err != nil {
+		return fmt.Errorf("read immutable release receipt: %w", err)
+	}
+	if current != immutable {
+		return errors.New("current selector receipt differs from immutable release receipt")
+	}
+	return nil
 }
 func decodeStrict(path string, destination any) error {
 	file, err := os.Open(path)
@@ -365,6 +496,17 @@ func decodeStrict(path string, destination any) error {
 		return fmt.Errorf("decode %s: trailing JSON value", filepath.Base(path))
 	}
 	return nil
+}
+
+func decodeStrictRegular(path string, destination any) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is not a regular file", filepath.Base(path))
+	}
+	return decodeStrict(path, destination)
 }
 func safeRelativePath(path string) bool {
 	if !isPrintableASCII(path) || strings.Contains(path, "\\") || strings.HasPrefix(path, "/") {
@@ -465,8 +607,8 @@ func validateDistributionManifestShape(raw []byte, manifest distributionManifest
 	if !rawNonNegativeInteger(object["sourceDateEpoch"]) || manifest.SchemaVersion != 1 || !semverPattern.MatchString(manifest.AppVersion) || !buildIDPattern.MatchString(manifest.BuildID) || manifest.SourceDateEpoch < 0 {
 		return errors.New("invalid distribution manifest format")
 	}
-	if manifest.ReleaseChannel != "local" {
-		return errors.New("this launcher accepts only local release manifests until release-signature verification is provisioned")
+	if manifest.ReleaseChannel != "local" && manifest.ReleaseChannel != "prerelease" && manifest.ReleaseChannel != "stable" {
+		return errors.New("invalid distribution release channel")
 	}
 	platform, err := decodeRawJSONObject(object["platform"], "distribution manifest platform", "id", "os", "arch", "minimumOsVersion")
 	if err != nil {
@@ -636,8 +778,15 @@ func validateDistributionManifestShape(raw []byte, manifest distributionManifest
 	if err != nil {
 		return err
 	}
-	if !rawBoolean(fields["notarized"]) || manifest.Signing.ManifestAlgorithm != "ed25519" || manifest.Signing.ManifestKeyID != "local-development" || manifest.Signing.CodeSigning != "unsigned-local" || manifest.Signing.Notarized {
-		return errors.New("invalid local distribution signing envelope")
+	if !rawBoolean(fields["notarized"]) || manifest.Signing.ManifestAlgorithm != "ed25519" || !isPrintableASCII(manifest.Signing.ManifestKeyID) {
+		return errors.New("invalid distribution signing envelope")
+	}
+	if manifest.ReleaseChannel == "local" {
+		if manifest.Signing.ManifestKeyID != "local-development" || manifest.Signing.CodeSigning != "unsigned-local" || manifest.Signing.Notarized {
+			return errors.New("invalid local distribution signing envelope")
+		}
+	} else if manifest.Signing.ManifestKeyID == "local-development" || manifest.Signing.CodeSigning != "developer-id" || !manifest.Signing.Notarized {
+		return errors.New("signed distribution requires Developer ID signing and notarization")
 	}
 	return nil
 }
@@ -647,13 +796,41 @@ func validateManifestSignatureShape(raw []byte, signature manifestSignature, man
 	if err != nil {
 		return err
 	}
-	if !rawNonNegativeInteger(fields["schemaVersion"]) || !rawBoolean(fields["promotable"]) || string(fields["signature"]) != "null" || signature.SchemaVersion != 1 || signature.Status != "unsigned-local" || signature.Signature != nil || signature.Promotable || signature.ManifestAlgorithm != manifest.Signing.ManifestAlgorithm || signature.ManifestKeyID != manifest.Signing.ManifestKeyID {
-		return errors.New("invalid local distribution manifest signature binding")
+	if !rawNonNegativeInteger(fields["schemaVersion"]) || !rawBoolean(fields["promotable"]) || signature.SchemaVersion != 1 || signature.ManifestAlgorithm != manifest.Signing.ManifestAlgorithm || signature.ManifestKeyID != manifest.Signing.ManifestKeyID {
+		return errors.New("invalid distribution manifest signature binding")
+	}
+	if manifest.ReleaseChannel == "local" {
+		if string(fields["signature"]) != "null" || signature.Status != "unsigned-local" || signature.Signature != nil || signature.Promotable {
+			return errors.New("invalid local distribution manifest signature binding")
+		}
+		return nil
+	}
+	if signature.Status != "signed" || signature.Signature == nil || !signature.Promotable {
+		return errors.New("signed distribution manifest signature is invalid")
+	}
+	encoded, err := base64.StdEncoding.DecodeString(*signature.Signature)
+	if err != nil || len(encoded) != ed25519.SignatureSize {
+		return errors.New("signed distribution manifest signature is not Ed25519")
 	}
 	return nil
 }
 
 func loadAndVerifyDistributionManifest(payloadRoot string) (distributionManifest, error) {
+	keys := embeddedReleaseTrust()
+	if len(keys) == 0 {
+		return VerifyDistributionPayload(payloadRoot, DistributionTrust{AllowUnsignedLocal: true, ExpectedChannel: "local"})
+	}
+	if releaseChannel != "stable" && releaseChannel != "prerelease" {
+		return distributionManifest{}, errors.New("signed launcher build has no valid release channel binding")
+	}
+	return VerifyDistributionPayload(payloadRoot, DistributionTrust{PublicKeys: keys, ExpectedChannel: releaseChannel})
+}
+
+// VerifyDistributionPayload authenticates the exact manifest bytes, then
+// proves that every payload file is the tree committed by that manifest. It is
+// deliberately exported for cmd/jobctrl-installer so launch and acquisition
+// have one native trust implementation.
+func VerifyDistributionPayload(payloadRoot string, trust DistributionTrust) (distributionManifest, error) {
 	var manifest distributionManifest
 	manifestPath := filepath.Join(payloadRoot, "manifest.json")
 	manifestBytes, err := os.ReadFile(manifestPath)
@@ -666,8 +843,8 @@ func loadAndVerifyDistributionManifest(payloadRoot string) (distributionManifest
 	if err := validateDistributionManifestShape(manifestBytes, manifest); err != nil {
 		return manifest, err
 	}
-	if err := verifyPayloadTree(payloadRoot, manifest); err != nil {
-		return manifest, err
+	if trust.ExpectedChannel != "" && manifest.ReleaseChannel != trust.ExpectedChannel {
+		return manifest, fmt.Errorf("distribution channel %q does not match expected %q", manifest.ReleaseChannel, trust.ExpectedChannel)
 	}
 	var signature manifestSignature
 	signaturePath := filepath.Join(payloadRoot, "manifest.sig")
@@ -681,12 +858,53 @@ func loadAndVerifyDistributionManifest(payloadRoot string) (distributionManifest
 	if err := validateManifestSignatureShape(signatureBytes, signature, manifest); err != nil {
 		return manifest, err
 	}
-	// P6 replaces this seam with Ed25519 verification. P1's local artifact is
-	// permitted only when every relevant envelope field says local/non-promotable.
-	if signature.Status == "unsigned-local" && signature.Signature == nil && !signature.Promotable && manifest.ReleaseChannel == "local" && manifest.Signing.CodeSigning == "unsigned-local" && !manifest.Signing.Notarized && signature.ManifestAlgorithm == "ed25519" && signature.ManifestKeyID == "local-development" {
-		return manifest, nil
+	if manifest.ReleaseChannel == "local" {
+		if !trust.AllowUnsignedLocal {
+			return manifest, errors.New("unsigned-local payloads are allowed only by explicit local fixture mode")
+		}
+	} else {
+		key, exists := trust.PublicKeys[signature.ManifestKeyID]
+		if !exists || len(key) != ed25519.PublicKeySize {
+			return manifest, fmt.Errorf("no trusted Ed25519 key is provisioned for manifest key id %q", signature.ManifestKeyID)
+		}
+		encoded, _ := base64.StdEncoding.DecodeString(*signature.Signature)
+		if !ed25519.Verify(key, signedMessage("jobctrl:manifest:v1\x00", manifestBytes), encoded) {
+			return manifest, errors.New("distribution manifest Ed25519 signature verification failed")
+		}
 	}
-	return manifest, errors.New("release manifest signature verification is unavailable for this artifact; only P1 unsigned-local non-promotable artifacts are accepted")
+	if err := verifyPayloadTree(payloadRoot, manifest); err != nil {
+		return manifest, err
+	}
+	return manifest, nil
+}
+
+func signedMessage(domain string, raw []byte) []byte {
+	message := make([]byte, len(domain)+len(raw))
+	copy(message, domain)
+	copy(message[len(domain):], raw)
+	return message
+}
+
+func embeddedReleaseTrust() map[string]ed25519.PublicKey {
+	if releaseTrustKeyBase64 == "" {
+		return map[string]ed25519.PublicKey{}
+	}
+	decoded, err := base64.StdEncoding.DecodeString(releaseTrustKeyBase64)
+	if err != nil || len(decoded) != ed25519.PublicKeySize {
+		return map[string]ed25519.PublicKey{}
+	}
+	return map[string]ed25519.PublicKey{"jobctrl-release-v1": ed25519.PublicKey(decoded)}
+}
+
+// EmbeddedReleaseTrust returns a defensive copy of the release keys injected
+// into this native build. An empty map is intentional before P6 provisions the
+// protected public key.
+func EmbeddedReleaseTrust() map[string]ed25519.PublicKey {
+	result := make(map[string]ed25519.PublicKey)
+	for id, key := range embeddedReleaseTrust() {
+		result[id] = append(ed25519.PublicKey(nil), key...)
+	}
+	return result
 }
 
 // verifyPayloadTree is deliberately performed before any lifecycle action or

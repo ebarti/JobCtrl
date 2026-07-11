@@ -339,41 +339,42 @@ def test_built_distribution_metadata_must_match_project_version(tmp_path: Path) 
     assert sdist_findings == []
 
 
-def test_homebrew_formula_requires_tap_sync_workflow(tmp_path: Path) -> None:
+def _write_homebrew_p4_contract(tmp_path: Path, workflow: str | None = None) -> None:
     _write(
-        tmp_path / release_check.HOMEBREW_FORMULA_PATH,
-        'class Jobctrl < Formula\n  depends_on "corepack"\nend\n',
+        tmp_path / release_check.HOMEBREW_FORMULA_TEMPLATE_PATH,
+        'class Jobctrl < Formula\n  url "{{ARTIFACT_URL}}"\nend\n',
     )
+    _write(tmp_path / release_check.HOMEBREW_FORMULA_GENERATOR_PATH, "// generator\n")
+    _write(tmp_path / release_check.HOMEBREW_RELEASE_TRUST_PATH, '{"schemaVersion": 1, "keys": {}}\n')
+    if workflow is not None:
+        _write(tmp_path / release_check.HOMEBREW_SYNC_WORKFLOW_PATH, workflow)
 
-    findings = release_check._homebrew_sync_findings(tmp_path)
 
-    assert findings == [
-        ".github/workflows/sync-homebrew-tap.yml: canonical Homebrew formula has no tap synchronization workflow"
+def test_homebrew_template_requires_p6_gated_tap_sync_workflow(tmp_path: Path) -> None:
+    _write_homebrew_p4_contract(tmp_path)
+
+    assert release_check._homebrew_sync_findings(tmp_path) == [
+        ".github/workflows/sync-homebrew-tap.yml: canonical Homebrew template has no P6-gated tap synchronization workflow"
     ]
 
 
-def test_homebrew_tap_sync_workflow_must_cover_main_and_releases(tmp_path: Path) -> None:
-    _write(
-        tmp_path / release_check.HOMEBREW_FORMULA_PATH,
-        'class Jobctrl < Formula\n  depends_on "corepack"\nend\n',
-    )
-    _write(
-        tmp_path / release_check.HOMEBREW_SYNC_WORKFLOW_PATH,
+def test_homebrew_tap_sync_requires_reusable_signed_render_gate(tmp_path: Path) -> None:
+    _write_homebrew_p4_contract(
+        tmp_path,
         """
         on:
-          push:
-            branches: ["main"]
-          release:
-            types: [published]
+          workflow_call:
+          workflow_dispatch:
         jobs:
           sync:
             steps:
               - run: python3 scripts/release_check.py --strict-prompt
+              - run: node scripts/distribution-homebrew.mjs verify-promotion
               - uses: actions/checkout@v4
                 with:
                   repository: ebarti/homebrew-tap
                   ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
-              - run: install packaging/homebrew/Formula/jobctrl.rb homebrew-tap/Formula/jobctrl.rb
+              - run: install "$VERIFIED_FORMULA_PATH" homebrew-tap/Formula/jobctrl.rb
               - run: git status --short --untracked-files=all -- Formula/jobctrl.rb
         """,
     )
@@ -381,85 +382,43 @@ def test_homebrew_tap_sync_workflow_must_cover_main_and_releases(tmp_path: Path)
     assert release_check._homebrew_sync_findings(tmp_path) == []
 
 
-def test_homebrew_tap_sync_workflow_must_detect_an_untracked_formula(
-    tmp_path: Path,
-) -> None:
-    _write(
-        tmp_path / release_check.HOMEBREW_FORMULA_PATH,
-        'class Jobctrl < Formula\n  depends_on "corepack"\nend\n',
-    )
-    _write(
-        tmp_path / release_check.HOMEBREW_SYNC_WORKFLOW_PATH,
+def test_homebrew_template_rejects_toolchain_or_head_spec(tmp_path: Path) -> None:
+    _write_homebrew_p4_contract(
+        tmp_path,
         """
         on:
-          push:
-            branches: ["main"]
-          release:
-            types: [published]
+          workflow_call:
+          workflow_dispatch:
         jobs:
           sync:
             steps:
               - run: python3 scripts/release_check.py --strict-prompt
+              - run: node scripts/distribution-homebrew.mjs verify-promotion
               - uses: actions/checkout@v4
                 with:
                   repository: ebarti/homebrew-tap
                   ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
-              - run: install packaging/homebrew/Formula/jobctrl.rb homebrew-tap/Formula/jobctrl.rb
-        """,
-    )
-
-    assert any(
-        "does not detect an absent or untracked tap formula" in finding
-        for finding in release_check._homebrew_sync_findings(tmp_path)
-    )
-
-
-def test_homebrew_formula_must_install_corepack(tmp_path: Path) -> None:
-    _write(
-        tmp_path / release_check.HOMEBREW_FORMULA_PATH,
-        'class Jobctrl < Formula\n  depends_on "node"\nend\n',
-    )
-    _write(
-        tmp_path / release_check.HOMEBREW_SYNC_WORKFLOW_PATH,
-        """
-        on:
-          push:
-            branches: ["main"]
-          release:
-            types: [published]
-        jobs:
-          sync:
-            steps:
-              - run: python3 scripts/release_check.py --strict-prompt
-              - uses: actions/checkout@v4
-                with:
-                  repository: ebarti/homebrew-tap
-                  ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
-              - run: install packaging/homebrew/Formula/jobctrl.rb homebrew-tap/Formula/jobctrl.rb
+              - run: install "$VERIFIED_FORMULA_PATH" homebrew-tap/Formula/jobctrl.rb
               - run: git status --short --untracked-files=all -- Formula/jobctrl.rb
         """,
+    )
+    _write(
+        tmp_path / release_check.HOMEBREW_FORMULA_TEMPLATE_PATH,
+        'class Jobctrl < Formula\n  depends_on "corepack"\n  head "https://example.test/jobctrl.git"\nend\n',
     )
 
     assert release_check._homebrew_sync_findings(tmp_path) == [
-        "packaging/homebrew/Formula/jobctrl.rb: does not install Corepack required by the launcher and installer"
+        "packaging/homebrew/Formula/jobctrl.rb.tmpl: must not declare Homebrew dependencies or a HEAD source path"
     ]
 
 
-def test_homebrew_tap_sync_gates_before_loading_publish_credentials(
-    tmp_path: Path,
-) -> None:
-    _write(
-        tmp_path / release_check.HOMEBREW_FORMULA_PATH,
-        'class Jobctrl < Formula\n  depends_on "corepack"\nend\n',
-    )
-    _write(
-        tmp_path / release_check.HOMEBREW_SYNC_WORKFLOW_PATH,
+def test_homebrew_tap_sync_gates_before_loading_publish_credentials(tmp_path: Path) -> None:
+    _write_homebrew_p4_contract(
+        tmp_path,
         """
         on:
-          push:
-            branches: ["main"]
-          release:
-            types: [published]
+          workflow_call:
+          workflow_dispatch:
         jobs:
           sync:
             steps:
@@ -468,15 +427,15 @@ def test_homebrew_tap_sync_gates_before_loading_publish_credentials(
                   repository: ebarti/homebrew-tap
                   ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
               - run: python3 scripts/release_check.py --strict-prompt
-              - run: install packaging/homebrew/Formula/jobctrl.rb homebrew-tap/Formula/jobctrl.rb
+              - run: node scripts/distribution-homebrew.mjs verify-promotion
+              - run: install "$VERIFIED_FORMULA_PATH" homebrew-tap/Formula/jobctrl.rb
               - run: git status --short --untracked-files=all -- Formula/jobctrl.rb
         """,
     )
 
-    assert any(
-        "loads tap credentials before the strict release privacy gate" in finding
-        for finding in release_check._homebrew_sync_findings(tmp_path)
-    )
+    findings = release_check._homebrew_sync_findings(tmp_path)
+    assert any("loads tap credentials before the strict release privacy gate" in finding for finding in findings)
+    assert any("loads tap credentials before signed-render verification" in finding for finding in findings)
 
 
 def test_publish_workflow_scans_built_archives_before_upload() -> None:

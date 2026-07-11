@@ -1,0 +1,72 @@
+# frozen_string_literal: true
+
+# This template is rendered only from a P6-verified signed stable descriptor.
+# It intentionally has no HEAD/source-build path and no developer toolchain
+# dependencies. The ZIP is the same immutable payload resolved by curl.
+require "open3"
+
+class Jobctrl < Formula
+  desc "Local-first job search mission control: discover, score, tailor, apply"
+  homepage "https://jobctrl.dev"
+  license "AGPL-3.0-only"
+
+  url "{{ARTIFACT_URL}}"
+  sha256 "{{ARTIFACT_SHA256}}"
+  version "{{APP_VERSION}}"
+
+  JOBCTRL_BUILD_ID = "{{BUILD_ID}}"
+  JOBCTRL_MANIFEST_SHA256 = "{{MANIFEST_SHA256}}"
+  JOBCTRL_DESCRIPTOR_URL = "{{DESCRIPTOR_URL}}"
+  JOBCTRL_DESCRIPTOR_SHA256 = "{{DESCRIPTOR_SHA256}}"
+
+  def verify_notarized_bundle!(bundle)
+    codesign_output, codesign_status = Open3.capture2e(
+      "/usr/bin/codesign", "--verify", "--deep", "--strict", "--check-notarization", "-R=notarized", "--verbose=2", bundle.to_s
+    )
+    odie "JobCtrl release signature verification failed for #{bundle}: #{codesign_output}" unless codesign_status.success?
+
+    gatekeeper_output, gatekeeper_status = Open3.capture2e(
+      "/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", bundle.to_s
+    )
+    unless gatekeeper_status.success? && gatekeeper_output.include?("source=Notarized Developer ID")
+      odie "JobCtrl release is not Gatekeeper-notarized for #{bundle}: #{gatekeeper_output}"
+    end
+  end
+
+  def outermost_chromium_apps
+    candidates = Dir[(buildpath/"chromium").join("**", "*.app")]
+    candidates.reject { |candidate| candidates.any? { |parent| parent != candidate && candidate.start_with?("#{parent}/") } }
+  end
+
+  def install
+    # The release ZIP has a payload root, not a source checkout. Keep that
+    # exact verified payload together under libexec and expose its one native
+    # launcher through Homebrew's normal bin symlink. P5 moves selection and
+    # updates into the user-owned release store transactionally.
+    verify_notarized_bundle!(buildpath/"launcher/jobctrl")
+    chromium_apps = outermost_chromium_apps
+    odie "JobCtrl release has no managed Chromium app bundle to verify" if chromium_apps.empty?
+    chromium_apps.each { |bundle| verify_notarized_bundle!(Pathname.new(bundle)) }
+    libexec.install Dir["*"]
+    bin.install_symlink libexec/"launcher/jobctrl"
+  end
+
+  def caveats
+    <<~EOS
+      JobCtrl #{version} (#{JOBCTRL_BUILD_ID}) uses the same signed ZIP and
+      manifest as the curl channel. It has no Homebrew dependencies and no
+      source checkout. The verified ZIP privately bundles Node, Python,
+      Temporal, and one managed core Chromium; Git, Corepack, uv, Poppler, and
+      system Chrome are not required unless you explicitly enable an
+      authenticated-browser capability.
+    EOS
+  end
+
+  test do
+    assert_predicate libexec/"launcher/jobctrl", :executable?
+    assert_predicate bin/"jobctrl", :symlink?
+    version = shell_output("#{bin}/jobctrl version --json")
+    assert_match %Q("buildId":"#{JOBCTRL_BUILD_ID}"), version.delete(" ")
+    assert_match %Q("manifestSha256":"#{JOBCTRL_MANIFEST_SHA256}"), version.delete(" ")
+  end
+end

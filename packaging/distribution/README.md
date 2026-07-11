@@ -30,12 +30,25 @@ development and the installed product.
   attribution gates that production builds and stable promotion must pass.
 - `signing-policy.json` names the required trust identities and records whether
   stable promotion is externally unblocked; it never stores private material.
+- `release-keys.json` is the single public-key registry consumed by release
+  transports. It is intentionally empty in P4, so any stable descriptor or
+  Homebrew tap sync fails closed until P6 provisions the audited key.
 - `scripts/distribution-manifest.mjs` validates these contracts and generates
   deterministic file inventories and source/payload footprint reports.
 - `scripts/distribution-build.mjs` assembles either a tiny deterministic test
   fixture or the real production payload, emits release metadata, audits every
-  file and Mach-O, creates a deterministic archive, and smoke-tests a clean
-  extraction.
+  file and Mach-O, creates a deterministic ZIP, and smoke-tests a clean
+  extraction. It builds both `launcher/jobctrl` and
+  `launcher/jobctrl-installer` with the locked official Go toolchain.
+- `scripts/distribution-release.mjs` writes the strict local-only release
+  descriptor, unsigned-local detached envelope, and curl fixture contract.
+  Their ZIP/build/manifest identity is checked by the native installer; they
+  are deliberately not promotable or usable for a network channel.
+- `scripts/distribution-homebrew.mjs` renders one stable Homebrew formula from
+  a P6-verified descriptor. The checked-in source is a template, not a fake
+  SHA-pinned release formula; promotion verification independently validates
+  the descriptor Ed25519 signature against `release-keys.json` and requires
+  published-asset smoke evidence before the tap workflow can write.
 
 The inventory records top-level components; the release SBOM records every
 transitive package, binary, dynamic library, and license. A production builder
@@ -101,7 +114,7 @@ The real builder downloads only the seven locked archives, verifies every
 SHA-256 before extraction, and caches verified inputs under
 `~/Library/Caches/JobCtrl/distribution`. It builds the API and web app, installs
 the Python core closure without provider extras, embeds the pinned browser and
-native SQLite binding, and writes the payload, deterministic `.tar.gz`,
+native SQLite binding, and writes the payload, deterministic `.zip`,
 `build-result.json`, `size-report.json`, and build evidence under `dist/`.
 The Python assembly removes the unreachable Tcl/Tk GUI closure and normalizes
 installer-generated `RECORD` and CycloneDX metadata against
@@ -116,7 +129,7 @@ The three provider packs remain artifact-excluded and report their exact locked
 wheel download bytes; extracted installed size belongs to state-owned
 activation reporting, not the signed core total.
 
-Before success, it extracts the archive with the stock macOS `tar` and runs the
+Before success, it extracts the archive with the stock macOS `unzip` and runs the
 bundled Node, Python, Temporal server, long-lived worker, API, web app, Chromium,
 and PDF.js paths with a stock system `PATH`. Runtime children execute under a
 macOS sandbox that denies non-loopback outbound IP connections; the smoke test
@@ -129,9 +142,11 @@ fresh worker heartbeat, stable DB identity, retained job, and completed Temporal
 run. The extracted payload tree is compared with the manifest again after all
 smoke processes exit.
 
-`SOURCE_DATE_EPOCH` controls archive timestamps and defaults to `0`. The local
+`SOURCE_DATE_EPOCH` controls ZIP timestamps and defaults to `0`. The local
 builder deliberately emits an unsigned, non-promotable artifact; signing and
-notarization are a separate release stage.
+notarization are a separate P6 release stage. Homebrew rendering has the same
+boundary: P4 only validates fixtures, while P6 supplies the trusted release key,
+signed descriptor, and verified published-artifact evidence before synchronization.
 
 ## Commands
 
