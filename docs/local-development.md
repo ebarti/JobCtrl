@@ -137,6 +137,28 @@ launcher restarts instead of disappearing when the process exits. With Temporal
 running, `jobctrl doctor` reports `Temporal: reachable`. The Vite web dev
 server proxies `/v1/*` to the TypeScript API by default.
 
+### Public demo browser workspace
+
+Run the frontend-only public demo with synthetic data and no JobCtrl API,
+Temporal, worker, SSE, or host-OS integration:
+
+```bash
+VITE_JOBCTRL_APP_MODE=demo corepack pnpm web:dev
+```
+
+Only the exact value `demo` selects this composition. A missing or invalid
+`VITE_JOBCTRL_APP_MODE` keeps the normal local composition, so a mistyped value
+cannot produce a partially mounted app.
+
+The demo workspace persists in IndexedDB and is shared by tabs and people using
+the same browser profile. Separate browser profiles and private/incognito
+contexts are isolated. Reset rotates the workspace identity, clears pending
+demo actions, and deletes generated demo blobs in the same transaction. If
+IndexedDB is unavailable or full, the page warns that it has switched to
+tab-local memory; those fallback changes are neither shared nor retained after
+the tab closes. The demo contains synthetic data, but visitors should still not
+enter personal data or secrets.
+
 ## Verify
 
 ```bash
@@ -153,6 +175,7 @@ pnpm api:check
 pnpm api:test
 pnpm web:check
 pnpm web:build
+corepack pnpm --filter @jobctrl/web e2e:demo-workspace
 pnpm scripts:test
 pnpm qa:test
 pnpm extension:check

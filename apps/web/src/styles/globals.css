@@ -68,6 +68,28 @@ code,
   min-width: 0;
 }
 
+.demo-workspace-notice {
+  position: sticky;
+  top: 0;
+  z-index: 110;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--warning);
+  border-radius: calc(var(--radius) * 0.8);
+  background: color-mix(in oklch, var(--warning) 10%, var(--card));
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.demo-workspace-notice strong {
+  color: var(--warning-foreground);
+}
+
 .side-rail {
   position: sticky;
   top: 0;

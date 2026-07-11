@@ -11,6 +11,13 @@ export { assertDemoSeedInvariants } from "./invariants.js";
 export { scanDemoPrivacy } from "./privacy.js";
 export { DEMO_READ_MODEL } from "./read-model.js";
 export { DEMO_SEED } from "./seed.js";
+export {
+  createAppComposition,
+  createLocalPorts,
+  resolveAppMode,
+} from "./portFactory.js";
+export { DemoCapabilityError } from "./ports.js";
+export * from "./workspace/index.js";
 export type {
   ApiClientResponse,
   AppMode,
