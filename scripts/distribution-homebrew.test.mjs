@@ -27,15 +27,20 @@ function stableDescriptor() {
     revokedBuildIds: [],
     buildId: "stable-build-0000042",
     appVersion: "2.0.0",
+    sourceCommit: "a".repeat(40),
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
     artifact: {
-      url: "https://releases.jobctrl.dev/v1/stable/jobctrl-2.0.0-darwin-arm64.zip",
+      url: "https://releases.jobctrl.dev/v1/artifacts/stable-build-0000042/jobctrl-2.0.0-darwin-arm64.zip",
       sha256: "a".repeat(64),
       sizeBytes: 12345,
       archiveType: "zip",
       manifestSha256: "b".repeat(64),
     },
   };
+}
+
+function stableDescriptorUrl() {
+  return "https://releases.jobctrl.dev/v1/artifacts/stable-build-0000042/release-descriptor.json";
 }
 
 function signedStableFixture(descriptorRaw) {
@@ -59,25 +64,28 @@ test("Homebrew render uses the exact signed curl ZIP identity without a toolchai
   const descriptorRaw = `${JSON.stringify(stableDescriptor(), null, 2)}\n`;
   const signed = signedStableFixture(descriptorRaw);
   const signatureRaw = `${JSON.stringify(signed.signature, null, 2)}\n`;
-  const descriptorUrl = "https://releases.jobctrl.dev/v1/stable/darwin-arm64.json";
+  const descriptorUrl = stableDescriptorUrl();
   const rendered = await renderHomebrewFormula({ descriptorRaw, signatureRaw, descriptorUrl, trust: signed.trust });
   const formulaPath = path.join(root, "jobctrl.rb");
   await writeFile(formulaPath, rendered.formula);
   assert.equal(validateRenderedHomebrewFormula({ formula: rendered.formula, descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }), true);
-  assert.match(rendered.formula, /url "https:\/\/releases\.jobctrl\.dev\/v1\/stable\/jobctrl-2\.0\.0-darwin-arm64\.zip"/);
+  assert.match(rendered.formula, /url "https:\/\/releases\.jobctrl\.dev\/v1\/artifacts\/stable-build-0000042\/jobctrl-2\.0\.0-darwin-arm64\.zip"/);
   assert.match(rendered.formula, /JOBCTRL_MANIFEST_SHA256 = "b{64}"/);
   assert.match(rendered.formula, /JOBCTRL_BUILD_ID = "stable-build-0000042"/);
   assert.match(rendered.formula, /resource "jobctrl-release-descriptor"/);
+  assert.match(rendered.formula, /bootstrap\.install "release-descriptor\.json" => "homebrew-release\.json"/);
+  assert.match(rendered.formula, /bootstrap\.install "release-descriptor\.json\.sig" => "homebrew-release\.json\.sig"/);
   assert.match(rendered.formula, /bootstrap\.install cached_download => "jobctrl-release\.zip"/);
   assert.match(rendered.formula, /homebrew-bootstrap\.json/);
   assert.match(rendered.formula, /bin\.install_symlink bootstrap\/"jobctrl"/);
   assert.doesNotMatch(rendered.formula, /Pathname\.new\(Dir\.home\)/);
   assert.match(rendered.formula, /Open3\.capture2e/);
   assert.match(rendered.formula, /--verify", "--deep", "--strict", "--check-notarization", "-R=notarized/);
+  assert.match(rendered.formula, /def verify_notarized_executable!/);
   assert.match(rendered.formula, /--assess", "--type", "execute", "--verbose=4/);
   assert.doesNotMatch(rendered.formula, /context:primary-signature/);
   assert.match(rendered.formula, /source=Notarized Developer ID/);
-  assert.match(rendered.formula, /outermost_chromium_apps/);
+  assert.match(rendered.formula, /managed_headless_shell/);
   assert.doesNotMatch(rendered.formula, /depends_on|^\s*head\s+|git clone/);
   assert.deepEqual(
     releasePublicationInputs({ descriptorRaw, descriptorUrl }),
@@ -92,7 +100,7 @@ test("Homebrew promotion verification fails closed without P6 signature and publ
   const descriptorRaw = `${JSON.stringify(stableDescriptor(), null, 2)}\n`;
   const signed = signedStableFixture(descriptorRaw);
   const signatureRaw = `${JSON.stringify(signed.signature, null, 2)}\n`;
-  const descriptorUrl = "https://releases.jobctrl.dev/v1/stable/darwin-arm64.json";
+  const descriptorUrl = stableDescriptorUrl();
   const rendered = await renderHomebrewFormula({ descriptorRaw, signatureRaw, descriptorUrl, trust: signed.trust });
   const evidence = {
     schemaVersion: 1,
@@ -108,6 +116,14 @@ test("Homebrew promotion verification fails closed without P6 signature and publ
       buildId: stableDescriptor().buildId,
       appVersion: stableDescriptor().appVersion,
     },
+    publishedCandidate: {
+      descriptorSha256: (await import("node:crypto")).createHash("sha256").update(descriptorRaw).digest("hex"),
+      buildId: stableDescriptor().buildId,
+      appVersion: stableDescriptor().appVersion,
+      artifactSha256: stableDescriptor().artifact.sha256,
+      artifactSizeBytes: stableDescriptor().artifact.sizeBytes,
+      manifestSha256: stableDescriptor().artifact.manifestSha256,
+    },
   };
   const verified = await verifyHomebrewPromotionEvidence({ descriptorRaw, signatureRaw, descriptorUrl, formulaRaw: rendered.formula, evidenceRaw: JSON.stringify(evidence), trust: signed.trust });
   assert.equal(verified.artifact.buildId, stableDescriptor().buildId);
@@ -118,6 +134,7 @@ test("Homebrew promotion verification fails closed without P6 signature and publ
   );
   const local = stableDescriptor();
   local.channel = "local";
+  delete local.sourceCommit;
   local.artifact.url = "file:///jobctrl-local-release/jobctrl-2.0.0-darwin-arm64.zip";
   await assert.rejects(
     renderHomebrewFormula({ descriptorRaw: JSON.stringify(local), signatureRaw: JSON.stringify({ ...signed.signature, status: "unsigned-local", keyId: "local-development", signature: null }), descriptorUrl, trust: signed.trust }),
@@ -131,7 +148,7 @@ test("Homebrew promotion verification fails closed without P6 signature and publ
       'desc "Local-first job search mission control: discover, score, tailor, apply"',
       'desc "Tampered JobCtrl formula"',
     ),
-    rendered.formula.replace('    verify_notarized_bundle!(buildpath/"launcher/jobctrl-installer")\n', ""),
+    rendered.formula.replace('    verify_notarized_executable!(buildpath/"launcher/jobctrl-installer")\n', ""),
   ];
   for (const mutatedFormula of mutations) {
     assert.notEqual(mutatedFormula, rendered.formula);
@@ -163,7 +180,7 @@ test("Homebrew trust verification rejects empty or wrong trust, wrong domains, t
   const descriptorRaw = `${JSON.stringify(stableDescriptor(), null, 2)}\n`;
   const signed = signedStableFixture(descriptorRaw);
   const signatureRaw = `${JSON.stringify(signed.signature, null, 2)}\n`;
-  const descriptorUrl = "https://releases.jobctrl.dev/v1/stable/darwin-arm64.json";
+  const descriptorUrl = stableDescriptorUrl();
   assert.equal((await loadHomebrewReleaseTrust()).size, 0, "P4 must fail closed until P6 provisions the canonical key registry");
   await assert.rejects(renderHomebrewFormula({ descriptorRaw, signatureRaw, descriptorUrl, trust: new Map() }), /no Homebrew release trust key/);
   const wrong = generateKeyPairSync("ed25519");
@@ -189,16 +206,20 @@ test("Homebrew trust verification rejects empty or wrong trust, wrong domains, t
     renderHomebrewFormula({ descriptorRaw, signatureRaw, descriptorUrl: 'https://releases.jobctrl.dev/v1/stable/x";system("bad")#', trust: signed.trust }),
     /whitespace, quotes, or backslashes|canonical/,
   );
+  await assert.rejects(
+    renderHomebrewFormula({ descriptorRaw, signatureRaw, descriptorUrl: "https://releases.jobctrl.dev/v1/stable/darwin-arm64.json", trust: signed.trust }),
+    /exact immutable build path/,
+  );
 });
 
 test("Homebrew formula validation rejects a render that omits launcher or Chromium notarization gates", async () => {
   const descriptorRaw = `${JSON.stringify(stableDescriptor(), null, 2)}\n`;
   const signed = signedStableFixture(descriptorRaw);
   const signatureRaw = `${JSON.stringify(signed.signature, null, 2)}\n`;
-  const descriptorUrl = "https://releases.jobctrl.dev/v1/stable/darwin-arm64.json";
+  const descriptorUrl = stableDescriptorUrl();
   const rendered = await renderHomebrewFormula({ descriptorRaw, signatureRaw, descriptorUrl, trust: signed.trust });
   assert.throws(
-    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('verify_notarized_bundle!(buildpath/"launcher/jobctrl")', ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('verify_notarized_executable!(buildpath/"launcher/jobctrl")', ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
     /launcher\/jobctrl/,
   );
   assert.throws(
@@ -206,7 +227,7 @@ test("Homebrew formula validation rejects a render that omits launcher or Chromi
     /source=Notarized Developer ID/,
   );
   assert.throws(
-    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replaceAll("outermost_chromium_apps", "chromium_apps"), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
-    /outermost_chromium_apps/,
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replaceAll("managed_headless_shell", "chromium_headless"), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    /managed_headless_shell/,
   );
 });

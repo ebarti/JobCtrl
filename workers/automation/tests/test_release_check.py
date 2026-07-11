@@ -359,48 +359,65 @@ def test_homebrew_template_requires_p6_gated_tap_sync_workflow(tmp_path: Path) -
 
 
 def test_homebrew_tap_sync_requires_reusable_signed_render_gate(tmp_path: Path) -> None:
+    workflow = (
+        release_check.ROOT / release_check.HOMEBREW_SYNC_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
     _write_homebrew_p4_contract(
         tmp_path,
-        """
-        on:
-          workflow_call:
-          workflow_dispatch:
-        jobs:
-          sync:
-            steps:
-              - run: python3 scripts/release_check.py --strict-prompt
-              - run: node scripts/distribution-homebrew.mjs verify-promotion
-              - uses: actions/checkout@v4
-                with:
-                  repository: ebarti/homebrew-tap
-                  ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
-              - run: install "$VERIFIED_FORMULA_PATH" homebrew-tap/Formula/jobctrl.rb
-              - run: git status --short --untracked-files=all -- Formula/jobctrl.rb
-        """,
+        workflow,
     )
 
     assert release_check._homebrew_sync_findings(tmp_path) == []
 
 
+def test_homebrew_tap_key_is_resolved_only_behind_publication_environment() -> None:
+    workflow = (
+        release_check.ROOT / release_check.HOMEBREW_SYNC_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    interface = workflow.partition("\njobs:")[0]
+    verify = release_check._workflow_job_body(workflow, "verify")
+    publish = release_check._workflow_job_body(workflow, "publish")
+
+    assert "HOMEBREW_TAP_DEPLOY_KEY" not in interface
+    assert verify is not None and "HOMEBREW_TAP_DEPLOY_KEY" not in verify
+    assert publish is not None
+    assert "environment: release-publication" in publish
+    assert "secrets.HOMEBREW_TAP_DEPLOY_KEY" in publish
+    release_workflow = (
+        release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    caller = release_check._workflow_job_body(release_workflow, "sync-homebrew")
+    assert caller is not None
+    assert "HOMEBREW_TAP_DEPLOY_KEY" not in caller
+    assert "secrets:" not in caller
+
+
+def test_homebrew_tap_key_cannot_be_a_workflow_call_secret(tmp_path: Path) -> None:
+    workflow = (
+        release_check.ROOT / release_check.HOMEBREW_SYNC_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    workflow = workflow.replace(
+        "\npermissions:\n",
+        "\n    secrets:\n"
+        "      HOMEBREW_TAP_DEPLOY_KEY:\n"
+        "        required: true\n"
+        "\npermissions:\n",
+        1,
+    ).replace("    environment: release-publication\n", "", 1)
+    _write_homebrew_p4_contract(tmp_path, workflow)
+
+    findings = release_check._homebrew_sync_findings(tmp_path)
+    assert any("must be an environment secret" in finding for finding in findings)
+    assert any("behind release-publication approval" in finding for finding in findings)
+
+
 def test_homebrew_template_rejects_toolchain_or_head_spec(tmp_path: Path) -> None:
+    workflow = (
+        release_check.ROOT / release_check.HOMEBREW_SYNC_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
     _write_homebrew_p4_contract(
         tmp_path,
-        """
-        on:
-          workflow_call:
-          workflow_dispatch:
-        jobs:
-          sync:
-            steps:
-              - run: python3 scripts/release_check.py --strict-prompt
-              - run: node scripts/distribution-homebrew.mjs verify-promotion
-              - uses: actions/checkout@v4
-                with:
-                  repository: ebarti/homebrew-tap
-                  ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
-              - run: install "$VERIFIED_FORMULA_PATH" homebrew-tap/Formula/jobctrl.rb
-              - run: git status --short --untracked-files=all -- Formula/jobctrl.rb
-        """,
+        workflow,
     )
     _write(
         tmp_path / release_check.HOMEBREW_FORMULA_TEMPLATE_PATH,
@@ -412,47 +429,291 @@ def test_homebrew_template_rejects_toolchain_or_head_spec(tmp_path: Path) -> Non
     ]
 
 
-def test_homebrew_tap_sync_gates_before_loading_publish_credentials(tmp_path: Path) -> None:
+def test_homebrew_tap_publish_cannot_mix_verification_with_deploy_key(
+    tmp_path: Path,
+) -> None:
+    workflow = (
+        release_check.ROOT / release_check.HOMEBREW_SYNC_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    workflow = workflow.replace(
+        "    permissions:\n      actions: read\n      contents: read\n",
+        "    env:\n      LEAKED_TAP_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}\n"
+        "    permissions:\n      actions: read\n      contents: read\n",
+        1,
+    ).replace(
+        "      - name: Download the exact verified formula\n",
+        "      - name: Execute forbidden JobCtrl verification\n"
+        "        run: node scripts/distribution-homebrew.mjs verify-promotion\n\n"
+        "      - name: Download the exact verified formula\n",
+        1,
+    )
     _write_homebrew_p4_contract(
         tmp_path,
-        """
-        on:
-          workflow_call:
-          workflow_dispatch:
-        jobs:
-          sync:
-            steps:
-              - uses: actions/checkout@v4
-                with:
-                  repository: ebarti/homebrew-tap
-                  ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
-              - run: python3 scripts/release_check.py --strict-prompt
-              - run: node scripts/distribution-homebrew.mjs verify-promotion
-              - run: install "$VERIFIED_FORMULA_PATH" homebrew-tap/Formula/jobctrl.rb
-              - run: git status --short --untracked-files=all -- Formula/jobctrl.rb
-        """,
+        workflow,
     )
 
     findings = release_check._homebrew_sync_findings(tmp_path)
-    assert any("loads tap credentials before the strict release privacy gate" in finding for finding in findings)
-    assert any("loads tap credentials before signed-render verification" in finding for finding in findings)
+    assert any(
+        "verify job must not receive tap publication credentials" in finding
+        for finding in findings
+    )
+    assert any(
+        "tap publish job executes JobCtrl or dependency code" in finding
+        for finding in findings
+    )
 
 
-def test_publish_workflow_scans_built_archives_before_upload() -> None:
-    workflow = (release_check.ROOT / release_check.PUBLISH_WORKFLOW_PATH).read_text(
+def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> None:
+    workflow = (
+        release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    resolve = release_check._workflow_job_body(workflow, "pypi-resolve")
+    compare = release_check._workflow_job_body(workflow, "pypi-compare")
+    publish = release_check._workflow_job_body(workflow, "publish-pypi")
+
+    assert resolve is not None
+    assert compare is not None
+    assert publish is not None
+    assert not (release_check.ROOT / release_check.PUBLISH_WORKFLOW_PATH).exists()
+
+    assert "needs: [resolve, publish-github-release]" in resolve
+    assert "persist-credentials: false" in resolve
+    assert "distribution-release.finalizer.bundle.mjs.sha256" in resolve
+    assert "distribution-release-authority-bundles.NOTICE.txt" in resolve
+    assert "sha256sum -c distribution-release.finalizer.bundle.mjs.sha256" in resolve
+    assert "node scripts/distribution-release.finalizer.bundle.mjs verify-pypi-gate" in resolve
+    assert "JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}" in resolve
+    assert "JOBCTRL_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}" in resolve
+    assert 'filter="data"' in resolve
+    assert "actions/setup-python@" not in resolve
+    assert "astral-sh/setup-uv@" not in resolve
+    assert "corepack pnpm" not in resolve
+    assert "uv --project" not in resolve
+
+    for job_name, artifact in (
+        ("pypi-build-a", "jobctrl-pypi-a-"),
+        ("pypi-build-b", "jobctrl-pypi-b-"),
+    ):
+        build = release_check._workflow_job_body(workflow, job_name)
+        assert build is not None
+        assert "needs: pypi-resolve" in build
+        assert "actions/setup-python@" in build
+        assert "astral-sh/setup-uv@" in build
+        assert "actions/setup-node@" not in build
+        assert "corepack pnpm" not in build
+        assert "verify-pypi-gate" not in build
+        assert "JOBCTRL_RELEASE_PUBLIC_KEY" not in build
+        assert "JOBCTRL_RELEASE_KEY_ID" not in build
+        sync = "uv --project workers/automation sync --python 3.12.13 --locked --no-default-groups --only-group release-build --no-install-project"
+        build_command = "uv --project workers/automation run --python 3.12.13 --no-sync python -m build --no-isolation workers/automation"
+        assert sync in build
+        assert build_command in build
+        assert build.index(sync) < build.index(build_command) < build.index(
+            "python3 scripts/release_check.py --strict-prompt"
+        ) < build.index("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02")
+        assert artifact in build
+
+    assert "needs: [pypi-resolve, pypi-build-a, pypi-build-b]" in compare
+    assert 'cmp "$a/$name" "$b/$name"' in compare
+    assert "shasum -a 256 packages/* > SHA256SUMS" in compare
+
+    assert "environment: pypi" in publish
+    assert "id-token: write" in publish
+    assert "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" in publish
+    assert "actions/checkout@" not in publish
+    assert "actions/setup-python@" not in publish
+    assert "actions/setup-node@" not in publish
+    assert "astral-sh/setup-uv@" not in publish
+    assert "uv --project" not in publish
+    assert "python -m build" not in publish
+    assert "JOBCTRL_RELEASE_PUBLIC_KEY" not in publish
+    assert "JOBCTRL_RELEASE_KEY_ID" not in publish
+    assert "EXPECTED_SOURCE_COMMIT: ${{ needs.pypi-resolve.outputs.source_commit }}" in publish
+    assert 'gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG"' in publish
+    assert 'gh api "repos/$GITHUB_REPOSITORY/commits/main"' in publish
+    assert 'test "$EXPECTED_SOURCE_COMMIT" = "$tag_sha"' in publish
+    assert 'test "$tag_sha" = "$main_sha"' in publish
+    assert "packages-dir: ${{ runner.temp }}/jobctrl-pypi-dists/packages" in publish
+    assert "SHA256SUMS" in publish
+    assert "uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d" in publish
+
+
+def test_pypi_no_isolation_backend_is_exactly_pinned_and_locked() -> None:
+    pyproject = (release_check.ROOT / release_check.PYTHON_PROJECT_PATH).read_text(
+        encoding="utf-8"
+    )
+    lock = (release_check.ROOT / release_check.PYTHON_LOCK_PATH).read_text(
         encoding="utf-8"
     )
 
-    build = workflow.index("python -m build workers/automation")
-    scan = workflow.index("python3 scripts/release_check.py --strict-prompt")
-    publish = workflow.index("uses: pypa/gh-action-pypi-publish@release/v1")
+    assert 'requires = ["hatchling==1.29.0"]' in pyproject
+    assert '"hatchling==1.29.0"' in pyproject
+    assert 'release-build = ["build==1.4.3", "hatchling==1.29.0"]' in pyproject
+    assert 'name = "build"\nversion = "1.4.3"' in lock
+    assert 'name = "hatchling"\nversion = "1.29.0"' in lock
+    assert release_check._pypi_build_backend_findings(release_check.ROOT) == []
 
-    assert build < scan < publish
-    assert 'test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"' in workflow
-    assert "release:\n    types: [published]" in workflow
-    assert "if: github.event.release.prerelease == false" in workflow
-    assert "contents: read" in workflow
-    assert "workflow_dispatch:" not in workflow
+
+def test_pypi_workflow_static_contract_is_clean() -> None:
+    workflow = (
+        release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+
+    assert release_check._pypi_release_workflow_findings(workflow) == []
+
+
+def test_pypi_signed_release_gate_cannot_move_behind_builder_dependencies() -> None:
+    workflow = (
+        release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    workflow = workflow.replace(
+        "          node scripts/distribution-release.finalizer.bundle.mjs verify-pypi-gate \\\n",
+        "          echo skipped-signed-release-gate \\\n",
+        1,
+    ).replace(
+        "      - name: Build exact fixed-epoch PyPI distributions without isolation\n",
+        "      - name: Run the signed-release gate too late\n"
+        "        run: node scripts/distribution-release.finalizer.bundle.mjs verify-pypi-gate\n\n"
+        "      - name: Build exact fixed-epoch PyPI distributions without isolation\n",
+        1,
+    )
+
+    findings = release_check._pypi_release_workflow_findings(workflow)
+
+    assert any("cleanly verify the immutable signed release" in item for item in findings)
+    assert any("must only build after the clean shared gate" in item for item in findings)
+
+
+def test_distribution_privileged_jobs_reject_dependency_or_repo_execution(
+    tmp_path: Path,
+) -> None:
+    workflow = (
+        release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    policy = (release_check.ROOT / release_check.SIGNING_POLICY_PATH).read_text(
+        encoding="utf-8"
+    )
+    workflow = workflow.replace(
+        "      - name: Download the independently compared candidate\n",
+        "      - name: Install forbidden signing dependencies\n"
+        "        run: |\n"
+        "          corepack pnpm install --frozen-lockfile\n"
+        "          node scripts/distribution-release.mjs inspect fixture fixture\n\n"
+        "      - name: Download the independently compared candidate\n",
+        1,
+    ).replace(
+        "      - name: Download the immutable signed candidate\n",
+        "      - name: Execute forbidden publication code\n"
+        "        run: node scripts/distribution-release.mjs inspect fixture fixture\n\n"
+        "      - name: Download the immutable signed candidate\n",
+        1,
+    ).replace(
+        "  smoke-and-verify:\n",
+        "  smoke-and-verify:\n"
+        "    environment: release-publication\n",
+        1,
+    )
+    _write(tmp_path / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH, workflow)
+    _write(tmp_path / release_check.SIGNING_POLICY_PATH, policy)
+
+    findings = release_check._release_distribution_findings(tmp_path)
+
+    assert any(
+        "sign job must not install packages or dependency tooling" in item
+        for item in findings
+    )
+    assert any(
+        "sign job must execute only the sealed bundled finalizer" in item
+        for item in findings
+    )
+    assert any(
+        "publication job publish-immutable executes repository or dependency code"
+        in item
+        for item in findings
+    )
+    assert any(
+        "credential-free job smoke-and-verify receives signing or publication authority"
+        in item
+        for item in findings
+    )
+
+
+def test_distribution_dispatch_must_execute_from_the_audited_release_tag(
+    tmp_path: Path,
+) -> None:
+    workflow = (
+        release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    policy = (release_check.ROOT / release_check.SIGNING_POLICY_PATH).read_text(
+        encoding="utf-8"
+    )
+    workflow = workflow.replace(
+        '          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"\n', "", 1
+    ).replace('          test "$GITHUB_SHA" = "$head_sha"\n', "", 1)
+    _write(tmp_path / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH, workflow)
+    _write(tmp_path / release_check.SIGNING_POLICY_PATH, policy)
+
+    findings = release_check._release_distribution_findings(tmp_path)
+    assert any("workflow definition ref" in item for item in findings)
+    assert any("workflow definition SHA" in item for item in findings)
+    assert any("executing workflow comes from the audited release tag" in item for item in findings)
+
+
+def test_homebrew_sync_cannot_run_before_channel_pointer_cas(tmp_path: Path) -> None:
+    workflow = (
+        release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    policy = (release_check.ROOT / release_check.SIGNING_POLICY_PATH).read_text(
+        encoding="utf-8"
+    )
+    homebrew = release_check._workflow_job_body(workflow, "sync-homebrew")
+    promote = release_check._workflow_job_body(workflow, "promote-channel-pointer")
+
+    assert "group: release-distribution-${{ inputs.channel }}-darwin-arm64" in workflow
+    assert homebrew is not None
+    assert "needs: [resolve, sign, package-signed-candidate, smoke-and-verify, promote-channel-pointer]" in homebrew
+    assert promote is not None
+    assert "needs: [resolve, sign, package-signed-candidate, smoke-and-verify]" in promote
+    assert "sync-homebrew" not in promote.partition("\n    steps:")[0]
+
+    stale_order = workflow.replace(
+        "group: release-distribution-${{ inputs.channel }}-darwin-arm64",
+        "group: release-distribution-${{ inputs.release_tag }}",
+        1,
+    ).replace(
+        "needs: [resolve, sign, package-signed-candidate, smoke-and-verify, promote-channel-pointer]",
+        "__HOMEBREW_NEEDS__",
+        1,
+    ).replace(
+        "needs: [resolve, sign, package-signed-candidate, smoke-and-verify]",
+        "needs: [resolve, sign, package-signed-candidate, smoke-and-verify, sync-homebrew]",
+        1,
+    ).replace(
+        "__HOMEBREW_NEEDS__",
+        "needs: [resolve, sign, package-signed-candidate, smoke-and-verify]",
+        1,
+    )
+    _write(tmp_path / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH, stale_order)
+    _write(tmp_path / release_check.SIGNING_POLICY_PATH, policy)
+
+    findings = release_check._release_distribution_findings(tmp_path)
+    assert any("serialize release mutation" in item for item in findings)
+    assert any("channel promotion must bind" in item for item in findings)
+    assert any("Homebrew publication must bind" in item for item in findings)
+
+
+def test_distribution_audit_tar_is_derived_outside_member_checksum_closure() -> None:
+    workflow = (
+        release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    package = release_check._workflow_job_body(workflow, "package-signed-candidate")
+
+    assert package is not None
+    assert "The deterministic transport container is intentionally outside" in package
+    assert 'jobctrl-release-audit.tar >>' not in package
+    assert package.index("shasum -a 256 -c SHA256SUMS") < package.index(
+        'output = root / "jobctrl-release-audit.tar"'
+    )
 
 
 def test_release_privacy_workflow_enforces_strict_prompt_gate() -> None:

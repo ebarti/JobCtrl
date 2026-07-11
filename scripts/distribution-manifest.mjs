@@ -35,7 +35,6 @@ const EXPECTED_LOCK_INPUTS = new Map([
   ["node-runtime-archive", "node-runtime"],
   ["python-runtime-archive", "python-runtime"],
   ["temporal-runtime-archive", "temporal-runtime"],
-  ["chromium-core-browser-archive", "chromium-core"],
   ["chromium-core-headless-archive", "chromium-core"],
   ["playwright-mcp-archive", "playwright-mcp"],
 ]);
@@ -1273,7 +1272,7 @@ export async function loadManifestValidationContracts(root = REPO_ROOT) {
   return { schema, schemaValidator, inventoryById, platformsById, capabilitiesById, versions, signingPolicy };
 }
 
-async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2)) {
   const command = argv[0] ?? "audit";
   if (command === "audit") {
     process.stdout.write(`${JSON.stringify(await auditDistributionContracts(), null, 2)}\n`);
@@ -1301,7 +1300,7 @@ async function main(argv = process.argv.slice(2)) {
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
-if (import.meta.url === invokedPath) {
+if (import.meta.url === invokedPath && path.basename(process.argv[1] ?? "") === "distribution-manifest.mjs") {
   main().catch((error) => {
     process.stderr.write(`distribution: ${error.message}\n`);
     process.exitCode = 1;

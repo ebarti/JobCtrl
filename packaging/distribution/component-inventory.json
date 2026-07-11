@@ -152,7 +152,7 @@
       "license": "BSD-3-Clause",
       "redistribution": "bundle",
       "requiredInCore": true,
-      "notes": "Playwright revision 1208. Chromium third-party notices must be shipped verbatim."
+      "notes": "Playwright revision 1208 headless shell only. The full Chrome-for-Testing bundle is excluded because it contains Widevine CDM with separate commercial redistribution terms; Chromium third-party notices are shipped verbatim."
     },
     {
       "id": "playwright-mcp",

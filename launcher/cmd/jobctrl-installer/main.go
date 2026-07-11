@@ -21,7 +21,7 @@ import (
 func main() {
 	var releaseURL, home, descriptorURL, descriptorFile, signatureFile, archiveFile, source string
 	var allowUnsignedLocal, stageOnly, jsonOutput bool
-	flag.StringVar(&releaseURL, "release-url", installer.DefaultReleaseURL, "signed stable release descriptor URL")
+	flag.StringVar(&releaseURL, "release-url", "", "signed release channel-pointer URL (default: compiled channel)")
 	flag.StringVar(&home, "home", "", "JobCtrl runtime home (default: ~/Library/Application Support/JobCtrl)")
 	flag.StringVar(&descriptorURL, "descriptor-url", "", "canonical HTTPS URL for a signed cached descriptor")
 	flag.BoolVar(&allowUnsignedLocal, "allow-unsigned-local", false, "allow checked-in/local fixture files only")
@@ -56,7 +56,7 @@ func main() {
 		if !policy.AllowUnsignedLocal {
 			fail("unsigned-local fixtures are unavailable in this signed installer build")
 		}
-		if releaseURL != installer.DefaultReleaseURL || descriptorURL != "" {
+		if releaseURL != "" || descriptorURL != "" {
 			fail("unsigned-local mode cannot use network release options")
 		}
 		receipt, err = installer.InstallFromLocalFiles(options, descriptorFile, signatureFile, archiveFile)

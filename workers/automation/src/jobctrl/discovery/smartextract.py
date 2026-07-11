@@ -65,6 +65,7 @@ from jobctrl.discovery.target_queries import (
 )
 from jobctrl.discovery.title_filter import title_matches_query
 from jobctrl.llm import get_client
+from jobctrl.runtime import is_bundled_runtime
 
 log = logging.getLogger(__name__)
 
@@ -402,6 +403,13 @@ def collect_page_intelligence(
     R10: the navigation is public-destination checked and politeness-gated. A
     robots-deny, unsafe destination, or budget-exhaustion performs zero
     navigation and returns the empty intelligence report."""
+    # The distributed core contains only Playwright's headless-shell archive.
+    # Refuse a caller-requested headed retry before touching Playwright: a
+    # fallback here would silently turn the bounded runtime into an undeclared
+    # browser dependency (or select a user-installed browser).
+    if is_bundled_runtime() and not headless:
+        raise ValueError("bundled JobCtrl runtime supports headless Playwright only")
+
     intel: dict = _empty_page_intelligence(url)
 
     captured_responses: list[dict] = []
@@ -1205,7 +1213,10 @@ def _run_one_site(name: str, url: str, cancel_event: threading.Event | None = No
         len(intel["card_candidates"]),
     )
 
-    # Headful retry if page content is tiny
+    # The bundled core is a headless-only Chromium shell. A short page is
+    # useful evidence for downstream strategy selection, but must never cause
+    # an implicit headful retry or adoption of a host browser. Source checkouts
+    # retain the historical headed retry to improve discovery on short pages.
     full_html = intel.get("full_html", "")
     cleaned_check = clean_page_html(full_html) if full_html else ""
     _captcha_signals = [
@@ -1219,17 +1230,20 @@ def _run_one_site(name: str, url: str, cancel_event: threading.Event | None = No
     ]
     _is_captcha = any(s in full_html.lower() for s in _captcha_signals) if full_html else False
     if len(cleaned_check) < 5000 and full_html and not _is_captcha:
-        log.info("Cleaned HTML only %s chars -- retrying headful...", f"{len(cleaned_check):,}")
-        _raise_if_canceled(cancel_event)
-        intel = collect_page_intelligence(url, headless=False)
-        _raise_if_canceled(cancel_event)
-        collect_time = time.time() - t0
-        log.info(
-            "Headful done in %.1fs | JSON-LD: %d | API: %d",
-            collect_time,
-            len(intel["json_ld"]),
-            len(intel["api_responses"]),
-        )
+        if is_bundled_runtime():
+            log.info("Cleaned HTML only %s chars -- retaining headless-only result", f"{len(cleaned_check):,}")
+        else:
+            log.info("Cleaned HTML only %s chars -- retrying headful...", f"{len(cleaned_check):,}")
+            _raise_if_canceled(cancel_event)
+            intel = collect_page_intelligence(url, headless=False)
+            _raise_if_canceled(cancel_event)
+            collect_time = time.time() - t0
+            log.info(
+                "Headful done in %.1fs | JSON-LD: %d | API: %d",
+                collect_time,
+                len(intel["json_ld"]),
+                len(intel["api_responses"]),
+            )
     elif _is_captcha:
         log.warning("CAPTCHA/rate-limit detected -- skipping headful retry")
 

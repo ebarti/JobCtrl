@@ -31,7 +31,7 @@ class Jobctrl < Formula
     sha256 JOBCTRL_SIGNATURE_SHA256
   end
 
-  def verify_notarized_bundle!(bundle)
+  def verify_notarized_app!(bundle)
     codesign_output, codesign_status = Open3.capture2e(
       "/usr/bin/codesign", "--verify", "--deep", "--strict", "--check-notarization", "-R=notarized", "--verbose=2", bundle.to_s
     )
@@ -45,9 +45,18 @@ class Jobctrl < Formula
     end
   end
 
-  def outermost_chromium_apps
-    candidates = Dir[(buildpath/"chromium").join("**", "*.app")]
-    candidates.reject { |candidate| candidates.any? { |parent| parent != candidate && candidate.start_with?("#{parent}/") } }
+  def verify_notarized_executable!(executable)
+    codesign_output, codesign_status = Open3.capture2e(
+      "/usr/bin/codesign", "--verify", "--strict", "--check-notarization", "-R=notarized", "--verbose=2", executable.to_s
+    )
+    odie "JobCtrl release executable signature verification failed for #{executable}: #{codesign_output}" unless codesign_status.success?
+  end
+
+  def managed_headless_shell
+    candidates = Dir[(buildpath/"chromium").join("**", "chrome-headless-shell")]
+    candidates.select! { |candidate| File.file?(candidate) && File.executable?(candidate) }
+    odie "JobCtrl release has no managed Chromium headless shell to verify" unless candidates.length == 1
+    Pathname.new(candidates.first)
   end
 
   def install
@@ -55,17 +64,15 @@ class Jobctrl < Formula
     # libexec/bootstrap is a native bootstrap, not the runtime selector: on its first
     # normal-user invocation it authenticates these resources into the user
     # store, then re-execs that stable selector.
-    verify_notarized_bundle!(buildpath/"launcher/jobctrl")
-    verify_notarized_bundle!(buildpath/"launcher/jobctrl-installer")
-    chromium_apps = outermost_chromium_apps
-    odie "JobCtrl release has no managed Chromium app bundle to verify" if chromium_apps.empty?
-    chromium_apps.each { |bundle| verify_notarized_bundle!(Pathname.new(bundle)) }
+    verify_notarized_executable!(buildpath/"launcher/jobctrl")
+    verify_notarized_executable!(buildpath/"launcher/jobctrl-installer")
+    verify_notarized_executable!(managed_headless_shell)
     bootstrap = libexec/"bootstrap"
     bootstrap.install buildpath/"launcher/jobctrl"
     bootstrap.install buildpath/"launcher/jobctrl-installer"
     bootstrap.install cached_download => "jobctrl-release.zip"
-    resource("jobctrl-release-descriptor").stage { bootstrap.install "darwin-arm64.json" => "homebrew-release.json" }
-    resource("jobctrl-release-descriptor-signature").stage { bootstrap.install "darwin-arm64.json.sig" => "homebrew-release.json.sig" }
+    resource("jobctrl-release-descriptor").stage { bootstrap.install "release-descriptor.json" => "homebrew-release.json" }
+    resource("jobctrl-release-descriptor-signature").stage { bootstrap.install "release-descriptor.json.sig" => "homebrew-release.json.sig" }
     (bootstrap/"homebrew-bootstrap.json").write(JSON.generate({
       schemaVersion: 1,
       descriptorUrl: JOBCTRL_DESCRIPTOR_URL,

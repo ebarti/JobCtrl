@@ -21,6 +21,92 @@ from jobctrl.infrastructure.discovery import SqliteJobRepository
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 
 
+def test_short_headless_html_never_retries_headful_in_the_bundled_core(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def collect(_url: str, **kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {"full_html": "<html>short</html>", "json_ld": [], "api_responses": [], "data_testids": [], "card_candidates": []}
+
+    monkeypatch.setattr(smartextract, "collect_page_intelligence", collect)
+    monkeypatch.setattr(smartextract, "is_bundled_runtime", lambda: True)
+    monkeypatch.setattr(smartextract, "clean_page_html", lambda _html: "short")
+    monkeypatch.setattr(smartextract, "format_strategy_briefing", lambda _intel: "fixture")
+    monkeypatch.setattr(smartextract, "ask_llm", lambda _prompt: ("fixture", 0.0, {"response_chars": 7}))
+    monkeypatch.setattr(smartextract, "extract_json", lambda _raw: {"strategy": "unknown", "reasoning": "fixture"})
+
+    result = smartextract._run_one_site("Fixture", "https://example.test/jobs")
+
+    assert result["status"] == "FAIL"
+    assert calls == [{}]
+
+
+def test_short_headless_html_retries_headful_in_source_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def collect(_url: str, **kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {
+            "full_html": "<html>short</html>",
+            "json_ld": [],
+            "api_responses": [],
+            "data_testids": [],
+            "card_candidates": [],
+        }
+
+    monkeypatch.setattr(smartextract, "collect_page_intelligence", collect)
+    monkeypatch.setattr(smartextract, "is_bundled_runtime", lambda: False)
+    monkeypatch.setattr(smartextract, "clean_page_html", lambda _html: "short")
+    monkeypatch.setattr(smartextract, "format_strategy_briefing", lambda _intel: "fixture")
+    monkeypatch.setattr(smartextract, "ask_llm", lambda _prompt: ("fixture", 0.0, {"response_chars": 7}))
+    monkeypatch.setattr(smartextract, "extract_json", lambda _raw: {"strategy": "unknown", "reasoning": "fixture"})
+
+    result = smartextract._run_one_site("Fixture", "https://example.test/jobs")
+
+    assert result["status"] == "FAIL"
+    assert calls == [{}, {"headless": False}]
+
+
+def test_source_mode_propagates_a_failed_headful_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def collect(_url: str, **kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        if kwargs == {"headless": False}:
+            raise RuntimeError("headed retry failed")
+        return {
+            "full_html": "<html>short</html>",
+            "json_ld": [],
+            "api_responses": [],
+            "data_testids": [],
+            "card_candidates": [],
+        }
+
+    monkeypatch.setattr(smartextract, "collect_page_intelligence", collect)
+    monkeypatch.setattr(smartextract, "is_bundled_runtime", lambda: False)
+    monkeypatch.setattr(smartextract, "clean_page_html", lambda _html: "short")
+
+    with pytest.raises(RuntimeError, match="headed retry failed"):
+        smartextract._run_one_site("Fixture", "https://example.test/jobs")
+
+    assert calls == [{}, {"headless": False}]
+
+
+def test_page_intelligence_rejects_headed_playwright_in_bundled_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(smartextract, "is_bundled_runtime", lambda: True)
+
+    with pytest.raises(ValueError, match="headless Playwright only"):
+        smartextract.collect_page_intelligence("https://example.test/jobs", headless=False)
+
+
 def _ats_posting(
     *,
     canonical_url: str,

@@ -19,7 +19,7 @@
         {
           "componentId": "chromium-core",
           "observedMinimum": "12.0",
-          "observedPath": "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+          "observedPath": "chromium_headless_shell-1208/chrome-headless-shell-mac-arm64/chrome-headless-shell",
           "method": "Mach-O LC_BUILD_VERSION"
         },
         {

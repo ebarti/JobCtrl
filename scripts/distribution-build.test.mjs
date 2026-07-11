@@ -10,6 +10,7 @@ import { gzipSync } from "node:zlib";
 
 import {
   assertNodeAttributionClosure,
+  assertHeadlessChromiumPayload,
   buildFixturePayload,
   collectNodeLicenseInventory,
   collectPayloadNpmContributors,
@@ -22,6 +23,7 @@ import {
   extensionCaptureSmokeHeaders,
   normalizeInstalledPythonMetadata,
   loadNativeLauncherToolchain,
+  nativeLauncherLifecycleSmokeRequirement,
   npmIdentityForContributingSource,
   parseMachOMinimumVersions,
   parseOtoolDependencies,
@@ -111,6 +113,21 @@ test("native launcher build pins an official verified darwin-arm64 compiler cont
   const toolchain = await loadNativeLauncherToolchain(root);
   assert.equal(toolchain.archive.sizeBytes, 64723756);
   assert.equal(await sha256File(path.join(root, "launcher", "GO-LICENSE")), "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad");
+});
+
+test("pre-sign network candidates defer only the unavailable native lifecycle smoke", () => {
+  assert.deepEqual(nativeLauncherLifecycleSmokeRequirement("local"), { status: "required" });
+  assert.deepEqual(nativeLauncherLifecycleSmokeRequirement("stable"), {
+    status: "skipped",
+    reason: "pre-sign-unavailable",
+    releaseChannel: "stable",
+  });
+  assert.deepEqual(nativeLauncherLifecycleSmokeRequirement("prerelease"), {
+    status: "skipped",
+    reason: "pre-sign-unavailable",
+    releaseChannel: "prerelease",
+  });
+  assert.throws(() => nativeLauncherLifecycleSmokeRequirement("preview"), /release channel is invalid/);
 });
 
 function tarField(value, width) {
@@ -504,10 +521,10 @@ test("successful distribution CLI invocation accepts the option separator and al
   assert.equal(JSON.parse(stdout).archiveSha256, result.archiveSha256);
 });
 
-test("every bundled Playwright browser revision is preseeded with immutable first-launch markers", async (context) => {
+test("the bundled Playwright headless-shell revision is preseeded with immutable first-launch markers", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-browser-markers-"));
   context.after(async () => rm(root, { recursive: true, force: true }));
-  for (const revision of ["chromium-1208", "chromium_headless_shell-1208"]) {
+  for (const revision of ["chromium_headless_shell-1208"]) {
     const revisionRoot = path.join(root, revision);
     await mkdir(revisionRoot, { recursive: true });
     await writePlaywrightRevisionMarkers(revisionRoot);
@@ -698,6 +715,28 @@ test("forbidden scan rejects provider packs, dev tools, caches, and build-path l
   await mkdir(path.join(root, "worker", "site-packages", "httpx-1.0.dist-info", "licenses"), { recursive: true });
   await writeFile(path.join(root, "worker", "site-packages", "httpx-1.0.dist-info", "licenses", "LICENSE.md"), "legal\n", { mode: 0o644 });
   assert.equal((await scanForbiddenPayload(root)).status, "clean");
+});
+
+test("forbidden payload scan blocks Widevine from the redistributable Chromium core", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-widevine-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "chromium", "Google Chrome for Testing.app", "Contents", "Frameworks"), { recursive: true });
+  await writeFile(path.join(root, "chromium", "Google Chrome for Testing.app", "Contents", "Frameworks", "libwidevinecdm.dylib"), "WidevineCdm", { mode: 0o644 });
+  await assert.rejects(scanForbiddenPayload(root), /WidevineCdm|libwidevinecdm/);
+});
+
+test("headless Chromium topology rejects a full browser path even without Widevine", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-headless-topology-"));
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  const shell = path.join(root, "chromium", "chromium_headless_shell-1208", "chrome-headless-shell-mac-arm64", "chrome-headless-shell");
+  await mkdir(path.dirname(shell), { recursive: true });
+  await writeFile(shell, "headless", { mode: 0o755 });
+  const contracts = { componentPaths: new Map([["chromium-core", "chromium"]]) };
+  assert.match((await assertHeadlessChromiumPayload(root, contracts)).executable, /chrome-headless-shell$/);
+  const fullBrowser = path.join(root, "chromium", "chromium-1208", "chrome-mac-arm64", "browser");
+  await mkdir(path.dirname(fullBrowser), { recursive: true });
+  await writeFile(fullBrowser, "not-widevine", { mode: 0o755 });
+  await assert.rejects(assertHeadlessChromiumPayload(root, contracts), /unexpected browser revisions|full browser topology/);
 });
 
 test("tar parser preserves safe links and rejects traversal, hard links, and special modes", () => {

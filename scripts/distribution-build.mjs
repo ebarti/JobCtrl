@@ -110,6 +110,7 @@ const FORBIDDEN_TOOL_INVOCATION_NEEDLES = [
   "/bin/pnpm",
   "/bin/uv",
 ];
+const FORBIDDEN_BROWSER_REDISTRIBUTION_NEEDLES = ["WidevineCdm", "libwidevinecdm"];
 const FORBIDDEN_PLAYWRIGHT_MCP_RUNTIME_PATHS = [
   "playwright-mcp/node_modules/playwright",
   "playwright-mcp/node_modules/playwright-core/lib/vite",
@@ -353,7 +354,7 @@ function nativeGoArchiveLock(toolchain) {
   };
 }
 
-async function loadBuildContracts(root = REPO_ROOT) {
+export async function loadBuildContracts(root = REPO_ROOT, { signingPolicyOverride = null } = {}) {
   const [contracts, layout, locks, providerPackLocks, licenseEvidenceLocks, nodeLicenseEvidenceLocks, launcherToolchain] = await Promise.all([
     loadManifestValidationContracts(root),
     readFile(path.join(root, "packaging", "distribution", "payload-layout.json"), "utf8").then(JSON.parse),
@@ -368,7 +369,23 @@ async function loadBuildContracts(root = REPO_ROOT) {
   const sharedComponentSpecs = validateSharedComponentLayout(layout, contracts);
   invariant(licenseEvidenceLocks.schemaVersion === 1 && Array.isArray(licenseEvidenceLocks.inputs), "license evidence lock is invalid");
   invariant(nodeLicenseEvidenceLocks.schemaVersion === 1 && Array.isArray(nodeLicenseEvidenceLocks.inputs), "Node license evidence lock is invalid");
-  return { ...contracts, layout, locks, providerPackLocks, licenseEvidenceLocks, nodeLicenseEvidenceLocks, launcherToolchain, componentPaths, embeddedComponentSpecs, sharedComponentSpecs, platform: contracts.platformsById.get(locks.platform) };
+  return {
+    ...contracts,
+    // `signing-policy.json` is intentionally tracked in a blocked state. A
+    // protected P6 runner may supply an in-memory provisioned policy after it
+    // has checked its protected secrets; it never alters the checkout.
+    signingPolicy: signingPolicyOverride ?? contracts.signingPolicy,
+    layout,
+    locks,
+    providerPackLocks,
+    licenseEvidenceLocks,
+    nodeLicenseEvidenceLocks,
+    launcherToolchain,
+    componentPaths,
+    embeddedComponentSpecs,
+    sharedComponentSpecs,
+    platform: contracts.platformsById.get(locks.platform),
+  };
 }
 
 async function copyTree(source, destination, { exclude = () => false } = {}) {
@@ -808,15 +825,6 @@ async function assembleExternalRuntimes(payloadRoot, contracts, cacheDirectory, 
   await chmod(path.join(temporalRoot, "temporal"), 0o755);
 
   const chromiumRoot = componentRoot(payloadRoot, contracts, "chromium-core");
-  const chromiumRevisionRoot = path.join(chromiumRoot, "chromium-1208");
-  const browserEntries = await extractVerifiedArchive({
-    archivePath: archiveById.get("chromium-core-browser-archive"),
-    lock: lockById.get("chromium-core-browser-archive"),
-    destination: chromiumRevisionRoot,
-    stripComponents: 0,
-  });
-  await assertSymlinksPreserved(chromiumRevisionRoot, browserEntries);
-  await writePlaywrightRevisionMarkers(chromiumRevisionRoot);
   const headlessRevisionRoot = path.join(chromiumRoot, "chromium_headless_shell-1208");
   const headlessEntries = await extractVerifiedArchive({
     archivePath: archiveById.get("chromium-core-headless-archive"),
@@ -1623,45 +1631,26 @@ async function collectTopLevelLicenseEvidence(payloadRoot, root, contracts) {
 async function browserCreditsEvidence(payloadRoot, contracts) {
   const chromiumRoot = componentRoot(payloadRoot, contracts, "chromium-core");
   const inventory = await buildFileInventory(chromiumRoot);
-  const credits = inventory.filter((file) => file.type === "file" && /(^|\/)(credits|resources\.pak|third.?party)/i.test(file.path));
-  invariant(credits.length > 0, "Chromium payload contains no embedded credits resource");
+  const credits = inventory.filter((file) => file.type === "file" && /(^|\/)(LICENSE\.headless_shell|credits|(?:headless_)?resources\.pak|third.?party)/i.test(file.path));
+  invariant(credits.length > 0, "Chromium headless-shell payload contains no license/notice resource");
   return credits.map((file) => ({
     subject: "chromium-core",
     payloadPath: path.posix.join(contracts.componentPaths.get("chromium-core"), file.path),
     sha256: file.sha256,
-    note: "Chrome for Testing exposes its bundled third-party credits from this signed resource.",
+    note: "The bundled Chromium headless shell ships this signed license/notice resource verbatim.",
   }));
 }
 
 async function captureChromiumCredits(payloadRoot, contracts, scratchDirectory) {
-  const pythonExecutable = path.join(componentRoot(payloadRoot, contracts, "python-runtime"), "bin", "python3");
-  const output = path.join(scratchDirectory, "chromium-third-party-credits.html");
-  const script = [
-    "from pathlib import Path",
-    "from playwright.sync_api import sync_playwright",
-    "with sync_playwright() as p:",
-    "    browser = p.chromium.launch(headless=True, executable_path=p.chromium.executable_path)",
-    "    page = browser.new_page()",
-    "    page.goto('chrome://credits')",
-    "    assert page.title() == 'Credits'",
-    "    content = page.content()",
-    "    assert len(content) > 100000 and 'license' in content.lower()",
-    `    Path(${JSON.stringify(output)}).write_text(content, encoding='utf-8')`,
-    "    browser.close()",
-  ].join("\n");
-  await run(pythonExecutable, ["-I", "-B", "-c", script], {
-    cwd: payloadRoot,
-    env: {
-      HOME: path.join(scratchDirectory, "browser-home"),
-      JOBCTRL_DIR: path.join(scratchDirectory, "jobctrl-state"),
-      JOBCTRL_PAYLOAD_DIR: payloadRoot,
-      JOBCTRL_RUNTIME_MODE: "bundled",
-      PLAYWRIGHT_BROWSERS_PATH: componentRoot(payloadRoot, contracts, "chromium-core"),
-      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-    },
-  });
-  await requireFile(output, "captured Chromium third-party credits");
-  return output;
+  const source = path.join(
+    componentRoot(payloadRoot, contracts, "chromium-core"),
+    "chromium_headless_shell-1208",
+    "chrome-headless-shell-mac-arm64",
+    "LICENSE.headless_shell",
+  );
+  await requireFile(source, "bundled Chromium headless-shell license/notice evidence");
+  invariant((await stat(source)).size > 100_000, "bundled Chromium headless-shell license/notice evidence is unexpectedly small");
+  return source;
 }
 
 async function materializeLicenseSources(releaseRoot, sources) {
@@ -2160,6 +2149,23 @@ async function cleanupNativeLauncherRuntime(extractedRoot) {
   }
 }
 
+// A network-channel pre-sign candidate intentionally carries the same
+// unsigned-local manifest envelope as a developer build.  Its launcher is
+// already compiled for that network channel, but it cannot yet pass the native
+// lifecycle's signature/manifest admission checks until finalization has
+// signed, notarized, stapled, and re-manifested the immutable bytes.  Keep the
+// boundary explicit: every direct payload smoke still runs, while only that
+// unavailable lifecycle is deferred to the published native-install smoke.
+export function nativeLauncherLifecycleSmokeRequirement(nativeLauncherReleaseChannel = "local") {
+  invariant(RELEASE_CHANNELS.has(nativeLauncherReleaseChannel), "native launcher lifecycle smoke release channel is invalid");
+  if (nativeLauncherReleaseChannel === "local") return { status: "required" };
+  return {
+    status: "skipped",
+    reason: "pre-sign-unavailable",
+    releaseChannel: nativeLauncherReleaseChannel,
+  };
+}
+
 async function requireJsonResponse(url, options, label) {
   const response = await fetch(url, options);
   const text = await response.text();
@@ -2392,6 +2398,20 @@ async function managedMcpChromiumExecutable(payloadRoot, contracts) {
   return requireFile(executable, "managed Chromium executable for Playwright MCP smoke");
 }
 
+export async function assertHeadlessChromiumPayload(payloadRoot, contracts) {
+  const chromiumRoot = componentRoot(payloadRoot, contracts, "chromium-core");
+  const files = await buildFileInventory(chromiumRoot);
+  const required = "chromium_headless_shell-1208/chrome-headless-shell-mac-arm64/chrome-headless-shell";
+  const executable = files.filter((file) => file.type === "file" && file.path === required);
+  invariant(executable.length === 1, "core Chromium payload must contain exactly one managed headless-shell executable");
+  const topLevel = [...new Set(files.map((file) => file.path.split("/")[0]))].sort(bytewiseCompare);
+  invariant(JSON.stringify(topLevel) === JSON.stringify(["chromium_headless_shell-1208"]), `core Chromium payload has unexpected browser revisions: ${topLevel.join(", ")}`);
+  invariant(files.filter((file) => file.type === "file" && path.posix.basename(file.path) === "chrome-headless-shell").length === 1, "core Chromium payload must not contain an extra headless-shell revision");
+  const forbidden = files.filter((file) => file.path.startsWith("chromium-") || file.path.includes(".app/") || file.path.includes("Google Chrome for Testing"));
+  invariant(forbidden.length === 0, `core Chromium payload must exclude the full browser topology: ${forbidden.map((file) => file.path).join(", ")}`);
+  return { executable: path.join(chromiumRoot, ...required.split("/")), fileCount: files.length };
+}
+
 export async function prepareExtractedSmokeLayout({ archivePath, outputRoot }) {
   const extractedRoot = path.join(outputRoot, "clean-extraction");
   await rm(extractedRoot, { recursive: true, force: true });
@@ -2430,7 +2450,9 @@ export async function prepareExtractedSmokeLayout({ archivePath, outputRoot }) {
   };
 }
 
-async function smokeExtractedPayload(archivePath, outputRoot, contracts) {
+async function smokeExtractedPayload(archivePath, outputRoot, contracts, {
+  nativeLauncherReleaseChannel = "local",
+} = {}) {
   const {
     canonicalExtractedRoot,
     payloadRoot,
@@ -2440,6 +2462,7 @@ async function smokeExtractedPayload(archivePath, outputRoot, contracts) {
   const manifest = JSON.parse(await readFile(path.join(payloadRoot, "manifest.json"), "utf8"));
   validateDistributionManifest(manifest, contracts);
   await verifyExactPayloadTree(payloadRoot, manifest);
+  await assertHeadlessChromiumPayload(payloadRoot, contracts);
   const extractionForbiddenAudit = await scanForbiddenPayload(payloadRoot, { forbiddenAbsolutePaths: [REPO_ROOT, outputRoot] });
 
   const stockEnvironment = {
@@ -2655,8 +2678,14 @@ def preview_attempt(playwright):
         browser.close()
 
 with sync_playwright() as playwright:
-    executable = playwright.chromium.executable_path
-    assert "/chromium/chromium-1208/" in executable, executable
+    from pathlib import Path
+    import os
+    browser_root = Path(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
+    required_headless = browser_root / "chromium_headless_shell-1208" / "chrome-headless-shell-mac-arm64" / "chrome-headless-shell"
+    assert required_headless.is_file(), required_headless
+    assert not any(browser_root.glob("chromium-*")), list(browser_root.glob("chromium-*"))
+    assert not any(browser_root.rglob("*.app")), "full browser app bundle entered the core payload"
+    assert not any("Google Chrome for Testing" in str(candidate) for candidate in browser_root.rglob("*")), "full Chrome-for-Testing entered the core payload"
     browser_attempts = []
     result = None
     for browser_attempt in range(1, 4):
@@ -2672,7 +2701,7 @@ with sync_playwright() as playwright:
             break
     assert result is not None and result["nonZeroPixelBytes"] > 0, {"attempts": browser_attempts, "lastResult": result}
     print(json.dumps({
-        "browserExecutable": executable,
+        "browserExecutable": str(required_headless),
         "browserLaunchAttempts": browser_attempts,
         "rootNavigation": True,
         "isolatedSameOriginDocument": True,
@@ -2739,7 +2768,10 @@ with sync_playwright() as playwright:
     secondTermination = await terminateExtractedRuntimeStack(secondStack);
   }
   invariant(secondTermination?.api?.status === "exited" && secondTermination.worker?.status === "exited" && secondTermination.temporal?.status === "exited", "restarted extracted runtime stack did not terminate");
-  const nativeLauncherLifecycle = await smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot: canonicalExtractedRoot, stockEnvironment });
+  const nativeLauncherLifecycleRequirement = nativeLauncherLifecycleSmokeRequirement(nativeLauncherReleaseChannel);
+  const nativeLauncherLifecycle = nativeLauncherLifecycleRequirement.status === "required"
+    ? await smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot: canonicalExtractedRoot, stockEnvironment })
+    : nativeLauncherLifecycleRequirement;
   await verifyExactPayloadTree(payloadRoot, manifest);
   return {
     status: "pass",
@@ -3160,9 +3192,17 @@ async function manifestFiles(payloadRoot) {
   return (await buildFileInventory(payloadRoot)).filter((file) => !ENVELOPE_FILES.has(file.path));
 }
 
-export async function createLocalManifest(payloadRoot, contracts, { buildId, sourceDateEpoch }) {
+export async function createReleaseManifest(payloadRoot, contracts, {
+  buildId,
+  sourceDateEpoch,
+  releaseChannel = "local",
+  manifestKeyId = releaseChannel === "local" ? "local-development" : contracts.signingPolicy.manifestSigning.keyId,
+  codeSigning = releaseChannel === "local" ? "unsigned-local" : "developer-id",
+  notarized = releaseChannel !== "local",
+}) {
   invariant(/^[0-9A-Za-z][0-9A-Za-z._-]{7,127}$/.test(buildId), "local buildId is invalid");
   invariant(Number.isInteger(sourceDateEpoch) && sourceDateEpoch >= 0, "sourceDateEpoch must be a non-negative integer");
+  invariant(RELEASE_CHANNELS.has(releaseChannel), "releaseChannel is invalid");
   const files = await manifestFiles(payloadRoot);
   const components = [...contracts.componentPaths.entries()].sort(([left], [right]) => bytewiseCompare(left, right)).map(([id, componentPath]) => {
     const inventory = contracts.inventoryById.get(id);
@@ -3190,7 +3230,7 @@ export async function createLocalManifest(payloadRoot, contracts, { buildId, sou
     schemaVersion: 1,
     appVersion: contracts.versions["jobctrl-launcher"],
     buildId,
-    releaseChannel: "local",
+    releaseChannel,
     sourceDateEpoch,
     platform: {
       id: contracts.platform.id,
@@ -3204,13 +3244,19 @@ export async function createLocalManifest(payloadRoot, contracts, { buildId, sou
     files,
     signing: {
       manifestAlgorithm: "ed25519",
-      manifestKeyId: "local-development",
-      codeSigning: "unsigned-local",
-      notarized: false,
+      manifestKeyId,
+      codeSigning,
+      notarized,
     },
   };
   validateDistributionManifest(manifest, contracts);
   await writeJson(path.join(payloadRoot, "manifest.json"), manifest);
+  return manifest;
+}
+
+export async function createLocalManifest(payloadRoot, contracts, options) {
+  const manifest = await createReleaseManifest(payloadRoot, contracts, options);
+  invariant(manifest.releaseChannel === "local", "createLocalManifest only supports local channel envelopes");
   await writeJson(path.join(payloadRoot, "manifest.sig"), {
     schemaVersion: 1,
     status: "unsigned-local",
@@ -3244,6 +3290,7 @@ export async function scanForbiddenPayload(payloadRoot, { forbiddenAbsolutePaths
   const artifactWideNeedles = [
     ...forbiddenAbsolutePaths.filter(Boolean),
     ...FORBIDDEN_TOOL_INVOCATION_NEEDLES,
+    ...FORBIDDEN_BROWSER_REDISTRIBUTION_NEEDLES,
   ];
   let streamScannedFileCount = 0;
   let semanticTextScannedFileCount = 0;
@@ -3753,7 +3800,10 @@ export async function buildRealPayload({
 } = {}) {
   invariant(outputDirectory, "real build requires outputDirectory");
   validateReleaseBuildBinding(releaseChannel, releaseTrustKeyBase64);
-  invariant(releaseChannel === "local" && releaseTrustKeyBase64 === "", "P4 builds only unsigned-local release envelopes; P6 signs and binds prerelease/stable artifacts after its release gates");
+  // A signed channel starts as an explicitly local *pre-sign* envelope. P6
+  // signs mutable code, staples nested applications, then recreates and signs
+  // the final manifest from post-staple bytes. The provisional envelope is
+  // never publishable.
   const contracts = await loadBuildContracts(root);
   const baselineSizeReport = baselineSizeReportPath === null
     ? null
@@ -3776,6 +3826,7 @@ export async function buildRealPayload({
       assemblePlaywrightMcp(payloadRoot, root, contracts, externalInputs),
       writeGeneratedComponents(payloadRoot, root, contracts, sourceDateEpoch, nativeGoToolchain, { releaseChannel, releaseTrustKeyBase64 }),
     ]);
+    await assertHeadlessChromiumPayload(payloadRoot, contracts);
     const pythonSbom = await preparePythonWorker(payloadRoot, root, contracts, scratchDirectory);
     const providerPackMeasurement = await measureProviderPackInstalledTrees(payloadRoot, root, contracts, scratchDirectory);
     const providerPackComparison = compareProviderPackMeasurements(
@@ -3831,7 +3882,7 @@ export async function buildRealPayload({
         pythonPackageCount: pythonAttribution.packages.length,
         payloadNpmPackages,
         browserEmbeddedResources: browserResources,
-        chromiumCredits: "licenses/texts contains the verbatim chrome://credits HTML captured from the pinned browser",
+        chromiumCredits: "licenses/texts contains the verbatim LICENSE.headless_shell notice file from the pinned headless browser",
       },
     });
     const manifest = await createLocalManifest(payloadRoot, contracts, { buildId, sourceDateEpoch });
@@ -3857,7 +3908,9 @@ export async function buildRealPayload({
     await writeJson(path.join(evidenceRoot, "provider-pack-installed-trees.json"), providerPackMeasurement);
     const archivePath = path.join(outputRoot, `jobctrl-${contracts.versions["jobctrl-launcher"]}-${contracts.platform.id}.zip`);
     const compressed = await createDeterministicZip(payloadRoot, archivePath, sourceDateEpoch);
-    const smoke = await smokeExtractedPayload(archivePath, outputRoot, contracts);
+    const smoke = await smokeExtractedPayload(archivePath, outputRoot, contracts, {
+      nativeLauncherReleaseChannel: releaseChannel,
+    });
     await rm(path.join(outputRoot, "clean-extraction"), { recursive: true, force: true });
 
     const installedBytes = (await buildFileInventory(payloadRoot)).reduce((sum, file) => sum + file.sizeBytes, 0);
@@ -3901,6 +3954,10 @@ export async function buildRealPayload({
       buildId,
       releaseChannel: "local",
       nativeLauncherReleaseChannel: releaseChannel,
+      nativeLauncherReleaseTrustKeyBase64: releaseTrustKeyBase64 || null,
+      nativeLauncherReleaseTrustKeySha256: releaseTrustKeyBase64
+        ? createHash("sha256").update(releaseTrustKeyBase64).digest("hex")
+        : null,
       archiveType: "zip",
       payloadRoot,
       archivePath,
@@ -3949,7 +4006,7 @@ function parseCliOptions(argv) {
   return options;
 }
 
-async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2)) {
   const command = argv[0] ?? "fixture";
   const options = parseCliOptions(argv.slice(1));
   if (command === "audit") {
@@ -3988,6 +4045,8 @@ async function main(argv = process.argv.slice(2)) {
       buildId: options["build-id"] ?? "local-real-build-0001",
       sourceDateEpoch: Number.parseInt(options["source-date-epoch"] ?? process.env.SOURCE_DATE_EPOCH ?? "0", 10),
       baselineSizeReportPath: options["baseline-size-report"] ?? null,
+      releaseChannel: options["release-channel"] ?? "local",
+      releaseTrustKeyBase64: options["release-trust-key"] ?? "",
     });
     process.stdout.write(canonicalJson({
       mode: result.mode,
@@ -4005,7 +4064,7 @@ async function main(argv = process.argv.slice(2)) {
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
-if (import.meta.url === invokedPath) {
+if (import.meta.url === invokedPath && path.basename(process.argv[1] ?? "") === "distribution-build.mjs") {
   try {
     await main();
   } catch (error) {
