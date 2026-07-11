@@ -11,7 +11,9 @@ import {
   createDuplicateJobLinked,
   createDuplicateJobLinkRejected,
   createJobDiscovered,
+  createJobHidden,
   createJobSourceObserved,
+  createJobUnhidden,
   createSourceLocationCandidateDiscovered,
   createSourceLocationCandidatePromoted,
   createSourceRegistryEntryCreated,
@@ -43,8 +45,11 @@ import {
 } from "../src/events/preparation.js";
 import {
   createApplicationEmailFeedbackIngested,
+  createApplicationOutcomeRecorded,
   createApplicationSubmitted,
+  createApplyReviewDecisionRecorded,
   createApplyRunStarted,
+  createOutcomeSuggestionDecided,
 } from "../src/events/apply.js";
 import { createStageStarted, createStageCompleted } from "../src/events/orchestration.js";
 import { createProfileUpdated, createProfileImported, createTailoringPolicyUpdated } from "../src/events/profile.js";
@@ -94,6 +99,26 @@ describe("Discovery events", () => {
     expect(event.tenantId).toBe("local");
     expect(event.payload.jobId).toBe("j1");
     expect(event.payload.source).toBe("linkedin");
+  });
+
+  it("JobHidden and JobUnhidden preserve distinct lifecycle facts", () => {
+    const hidden = createJobHidden(LOCAL_TENANT, {
+      jobId: "j1",
+      reason: "not-a-fit",
+      hiddenAt: "2026-07-11T10:00:00Z",
+    });
+    const unhidden = createJobUnhidden(LOCAL_TENANT, {
+      jobId: "j1",
+      unhiddenAt: "2026-07-11T11:00:00Z",
+    });
+    expect(hidden).toMatchObject({
+      eventType: "JobHidden",
+      payload: { jobId: "j1", reason: "not-a-fit" },
+    });
+    expect(unhidden).toMatchObject({
+      eventType: "JobUnhidden",
+      payload: { jobId: "j1" },
+    });
   });
 
   it("SourceLocationCandidateDiscovered carries locator fields", () => {
@@ -468,6 +493,45 @@ describe("Apply events", () => {
     expect(event.eventType).toBe("ApplyRunStarted");
     expect(event.payload.dryRun).toBe(false);
   });
+
+  it("creates production-shaped apply review and outcome audit events", () => {
+    const decision = createApplyReviewDecisionRecorded(LOCAL_TENANT, {
+      jobKey: "j1",
+      decisionId: "decision-1",
+      decision: "approve_dry_run",
+      reasonPresent: true,
+      materialsGeneration: 2,
+      profileVersion: 3,
+      applicationUrl: "https://example.com/apply",
+      partialOverrideRunId: null,
+      emailRecipient: null,
+      emailAttachmentArtifactId: null,
+    });
+    const outcome = createApplicationOutcomeRecorded(LOCAL_TENANT, {
+      jobKey: "j1",
+      outcomeId: "outcome-1",
+      kind: "interview",
+      source: "manual",
+      occurredAt: "2026-07-11T10:00:00Z",
+      suggestionId: null,
+      evidenceId: null,
+      interviewPrepGeneration: 1,
+      notePresent: true,
+    });
+    const suggestion = createOutcomeSuggestionDecided(LOCAL_TENANT, {
+      jobKey: "j1",
+      suggestionId: "suggestion-1",
+      evidenceId: "evidence-1",
+      decision: "accept",
+      outcomeId: "outcome-1",
+      outcomeKind: "interview",
+      notePresent: false,
+      reasonPresent: true,
+    });
+    expect(decision.eventType).toBe("ApplyReviewDecisionRecorded");
+    expect(outcome.payload).toMatchObject({ kind: "interview", source: "manual" });
+    expect(suggestion.payload).toMatchObject({ decision: "accept", outcomeId: "outcome-1" });
+  });
 });
 
 describe("Orchestration events", () => {
@@ -732,6 +796,15 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         metadata: {},
         discoveredAt: "t",
       }).eventType,
+      createJobHidden(LOCAL_TENANT, {
+        jobId: "j",
+        reason: "user-requested",
+        hiddenAt: "t",
+      }).eventType,
+      createJobUnhidden(LOCAL_TENANT, {
+        jobId: "j",
+        unhiddenAt: "t",
+      }).eventType,
       createSourceLocationCandidateDiscovered(LOCAL_TENANT, {
         candidateId: "candidate-1",
         candidateUrl: "https://example.com/careers",
@@ -961,6 +1034,39 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         runId: "r",
         appliedAt: "t",
         verificationConfidence: 0.5,
+      }).eventType,
+      createApplyReviewDecisionRecorded(LOCAL_TENANT, {
+        jobKey: "j",
+        decisionId: "decision-1",
+        decision: "approve_dry_run",
+        reasonPresent: false,
+        materialsGeneration: 1,
+        profileVersion: 1,
+        applicationUrl: "u",
+        partialOverrideRunId: null,
+        emailRecipient: null,
+        emailAttachmentArtifactId: null,
+      }).eventType,
+      createApplicationOutcomeRecorded(LOCAL_TENANT, {
+        jobKey: "j",
+        outcomeId: "outcome-1",
+        kind: "interview",
+        source: "manual",
+        occurredAt: "t",
+        suggestionId: null,
+        evidenceId: null,
+        interviewPrepGeneration: 1,
+        notePresent: false,
+      }).eventType,
+      createOutcomeSuggestionDecided(LOCAL_TENANT, {
+        jobKey: "j",
+        suggestionId: "suggestion-1",
+        evidenceId: null,
+        decision: "ignore",
+        outcomeId: null,
+        outcomeKind: null,
+        notePresent: false,
+        reasonPresent: false,
       }).eventType,
       createApplicationEmailFeedbackIngested(LOCAL_TENANT, {
         jobKey: "j",

@@ -20,7 +20,9 @@ import type {
 } from "@jobctrl/domain-types";
 
 import { artifactsKeys } from "../operations/artifactsKeys.js";
+import { applyReviewKeys } from "../operations/applyReviewKeys.js";
 import { dashboardKeys } from "../operations/dashboardKeys.js";
+import { digestKeys } from "../operations/digestKeys.js";
 import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
 import { workflowRunsKeys } from "../operations/workflowRunsKeys.js";
@@ -67,7 +69,9 @@ export const stageBlockedHandler = (event: StageBlocked): readonly InvalidationI
 export const stageSkippedHandler = (event: StageSkipped): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(applyReviewKeys.queue(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
 ];
 
 export const stageCanceledHandler = (
@@ -75,6 +79,9 @@ export const stageCanceledHandler = (
 ): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(applyReviewKeys.queue(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
 ];
 
 type PreparationWorkItemEvent =
@@ -128,6 +135,12 @@ const workflowLifecycleHandler = (
 export const workflowStartedHandler = workflowLifecycleHandler;
 export const workflowCompletedHandler = workflowLifecycleHandler;
 export const workflowFailedHandler = workflowLifecycleHandler;
-export const workflowCanceledHandler = workflowLifecycleHandler;
+export const workflowCanceledHandler = (
+  event: WorkflowCanceled,
+): readonly InvalidationItem[] => [
+  ...workflowLifecycleHandler(event),
+  invalidate(applyReviewKeys.queue(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
 export const workflowTimedOutHandler = workflowLifecycleHandler;
 export const workflowTerminatedHandler = workflowLifecycleHandler;

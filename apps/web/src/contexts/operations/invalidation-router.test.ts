@@ -27,17 +27,38 @@ const WORKFLOW_ID = "run-abc123";
 const ARTIFACT_ID = "artifact-1";
 
 const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys> = {
-  JobDiscovered: [jobsKeys.lists(LOCAL_TENANT), dashboardKeys.summary(LOCAL_TENANT)],
+  JobDiscovered: [
+    jobsKeys.lists(LOCAL_TENANT),
+    discoveryKeys.manualCapture(LOCAL_TENANT),
+    discoveryKeys.sourceRegistry(LOCAL_TENANT),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
+  ],
   JobUpdated: [jobsKeys.lists(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
   JobDeleted: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
   ],
   JobRestored: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
+  ],
+  JobHidden: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
+  ],
+  JobUnhidden: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
   ],
   JobSourceObserved: [
     jobsKeys.lists(LOCAL_TENANT),
@@ -76,6 +97,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   ],
   DiscoveryFeedbackRecorded: [
     discoveryKeys.feedback(LOCAL_TENANT),
+    discoveryKeys.quarantine(LOCAL_TENANT),
     discoveryKeys.sourceRegistry(LOCAL_TENANT),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
@@ -147,7 +169,9 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   ScoreCorrected: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
+    applyReviewKeys.queue(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
   ],
   ScoreRescoreRequested: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
@@ -308,6 +332,26 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
     analyticsKeys.all(LOCAL_TENANT),
   ],
+  ApplyReviewDecisionRecorded: [
+    applyReviewKeys.queue(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
+  ],
+  ApplicationOutcomeRecorded: [
+    outcomesKeys.lists(LOCAL_TENANT),
+    outcomesKeys.detail(LOCAL_TENANT, JOB_ID),
+    analyticsKeys.all(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  OutcomeSuggestionDecided: [
+    outcomesKeys.lists(LOCAL_TENANT),
+    outcomesKeys.detail(LOCAL_TENANT, JOB_ID),
+    analyticsKeys.all(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
   StageStarted: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
@@ -337,9 +381,17 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   StageSkipped: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    applyReviewKeys.queue(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
   ],
-  StageCanceled: [jobsKeys.lists(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  StageCanceled: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    applyReviewKeys.queue(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
+  ],
   ProfileUpdated: [profileKeys.profile(LOCAL_TENANT)],
   ProfileImported: [profileKeys.profile(LOCAL_TENANT)],
   WorkflowStarted: [
@@ -357,6 +409,8 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   WorkflowCanceled: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    applyReviewKeys.queue(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
   ],
   WorkflowTimedOut: [
     workflowRunsKeys.lists(LOCAL_TENANT),
@@ -375,6 +429,9 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   ContactDeleted: [
     outreachKeys.contactDetail(LOCAL_TENANT, "contact-1"),
     outreachKeys.contactLists(LOCAL_TENANT),
+    outreachKeys.threads(LOCAL_TENANT),
+    outreachKeys.dueFollowUps(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
   ],
   WarmIntroIdentified: [outreachKeys.contactDetail(LOCAL_TENANT, "contact-1")],
   ContactResearchTaskStarted: [
@@ -414,18 +471,22 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   OutreachSendLogged: [
     outreachKeys.thread(LOCAL_TENANT, "thread-1"),
     outreachKeys.dueFollowUps(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
   ],
   FollowUpScheduled: [
     outreachKeys.thread(LOCAL_TENANT, "thread-1"),
     outreachKeys.dueFollowUps(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
   ],
   FollowUpCompleted: [
     outreachKeys.thread(LOCAL_TENANT, "thread-1"),
     outreachKeys.dueFollowUps(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
   ],
   FollowUpDismissed: [
     outreachKeys.thread(LOCAL_TENANT, "thread-1"),
     outreachKeys.dueFollowUps(LOCAL_TENANT),
+    digestKeys.all(LOCAL_TENANT),
   ],
 };
 

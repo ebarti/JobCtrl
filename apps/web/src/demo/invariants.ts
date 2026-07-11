@@ -370,10 +370,12 @@ export function assertDemoSeedInvariants(seed: DemoSeed): void {
   // general-domain policy intentionally treats arbitrary dotted words as
   // domain-shaped, so exclude this one structural token from the serialized
   // privacy projection rather than weakening domain detection.
-  const privacyText = JSON.stringify(privacyProjection).replaceAll(
-    '"kind":"materials.resume"',
-    '"kind":"materials_resume"',
-  );
+  const privacyText = JSON.stringify(privacyProjection)
+    .replaceAll('"kind":"materials.resume"', '"kind":"materials_resume"')
+    // This exact reserved-domain URL exists only to satisfy the production
+    // manual-capture input contract. The adapter never fetches it; browser
+    // previews continue to use bundled same-origin `/demo/*` assets.
+    .replaceAll("https://demo.invalid/source-preview.html", "demo_manual_capture_url");
   const findings = scanDemoPrivacy(privacyText);
   if (findings.length > 0) {
     throw new TypeError(`Demo seed contains privacy needles: ${findings.join(", ")}.`);

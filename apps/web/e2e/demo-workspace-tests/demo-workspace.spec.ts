@@ -218,6 +218,114 @@ test("same-context tabs share, serialize concurrent writes, and survive reload w
   expect(productRequests).toEqual([]);
 });
 
+test("eventless discovery and settings writes resync across tabs and survive reload", async ({
+  page,
+  context,
+}) => {
+  const productRequests: string[] = [];
+  const externalRequests: string[] = [];
+  context.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/v1/")) productRequests.push(url.pathname);
+    if (url.origin !== "http://127.0.0.1:5198") externalRequests.push(request.url());
+  });
+  const second = await context.newPage();
+
+  await Promise.all([page.goto("/discovery"), second.goto("/discovery")]);
+  await expect(page.getByLabel("Results per board")).toHaveValue("12");
+  await expect(second.getByLabel("Results per board")).toHaveValue("12");
+  await page.getByLabel("Results per board").fill("23");
+  await page.getByRole("button", { name: "save runtime settings" }).click();
+  await expect(page.getByText("runtime settings saved")).toBeVisible();
+  await expect(second.getByLabel("Results per board")).toHaveValue("23");
+  await second.reload();
+  await expect(second.getByLabel("Results per board")).toHaveValue("23");
+
+  await Promise.all([page.goto("/settings"), second.goto("/settings")]);
+  await expect(page.getByLabel("Apply concurrency")).toHaveValue("1");
+  await expect(second.getByLabel("Apply concurrency")).toHaveValue("1");
+  await page.getByLabel("Apply concurrency").fill("3");
+  const executionForm = page.locator("form").filter({ has: page.getByLabel("Apply concurrency") });
+  await executionForm.getByRole("button", { name: "save", exact: true }).click();
+  await expect(page.getByText("settings saved", { exact: true })).toBeVisible();
+  await expect(second.getByLabel("Apply concurrency")).toHaveValue("3");
+  await second.reload();
+  await expect(second.getByLabel("Apply concurrency")).toHaveValue("3");
+
+  expect(productRequests).toEqual([]);
+  expect(externalRequests).toEqual([]);
+});
+
+test("discovery promotes a source and imports a manual capture through the real browser-local UI", async ({
+  page,
+  context,
+}) => {
+  const productRequests: string[] = [];
+  const externalRequests: string[] = [];
+  context.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/v1/")) productRequests.push(url.pathname);
+    if (url.origin !== "http://127.0.0.1:5198") externalRequests.push(request.url());
+  });
+
+  await page.goto("/discovery");
+  await page.getByRole("tab", { name: "Source locator" }).click();
+  const promote = page.getByRole("button", {
+    name: "Promote /demo/source-preview.html",
+  });
+  await expect(promote).toBeVisible();
+  await promote.click();
+  await expect(page.getByText("No source candidates.")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Manual capture" }).click();
+  const importCapture = page.getByRole("button", {
+    name: "Import https://demo.invalid/source-preview.html",
+  });
+  await expect(importCapture).toBeEnabled();
+  await importCapture.click();
+  await expect(page.getByText("No manual captures.")).toBeVisible();
+
+  await page.goto("/jobs");
+  await expect(page.getByText("Bundled manual-capture opportunity", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("Bundled manual-capture opportunity", { exact: true })).toBeVisible();
+  expect(productRequests).toEqual([]);
+  expect(externalRequests).toEqual([]);
+});
+
+test("score correction is browser-local, cross-tab visible, reload durable, and network-free", async ({
+  page,
+  context,
+}) => {
+  const productRequests: string[] = [];
+  const externalRequests: string[] = [];
+  context.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/v1/")) productRequests.push(url.pathname);
+    if (url.origin !== "http://127.0.0.1:5198") externalRequests.push(request.url());
+  });
+
+  const second = await context.newPage();
+  await Promise.all([
+    page.goto("/jobs/job-northwind-platform"),
+    second.goto("/jobs/job-northwind-platform"),
+  ]);
+  await expect(page.getByText("8/10", { exact: true })).toBeVisible();
+  await expect(second.getByText("8/10", { exact: true })).toBeVisible();
+
+  await page.getByLabel("Correct score").fill("9");
+  await page.getByLabel("Reason").fill("Reviewed bundled synthetic evidence");
+  await page.getByRole("button", { name: "Save score correction" }).click();
+  await expect(page.getByText("Scoring policy updated;", { exact: false })).toBeVisible();
+  await expect(page.getByText("9/10", { exact: true })).toBeVisible();
+  await expect(second.getByText("9/10", { exact: true })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByText("9/10", { exact: true })).toBeVisible();
+  expect(productRequests).toEqual([]);
+  expect(externalRequests).toEqual([]);
+});
+
 test("separate browser contexts isolate workspaces", async ({
   page,
   browser,
