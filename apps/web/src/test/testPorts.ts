@@ -256,6 +256,17 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
       token: "jh_ext_rotated_token_123456789012345678901234567",
       created: true,
     })),
+    browserCapabilities: vi.fn(async () => ({
+      ok: true as const,
+      capabilities: [
+        { id: "core-browser" as const, status: "ready" as const, detail: "Managed browser ready.", mutable: false, enabled: true, profileCopyReady: false },
+        { id: "auto-apply-browser" as const, status: "disabled" as const, detail: "Disabled.", mutable: true, enabled: false, profileCopyReady: false },
+        { id: "authenticated-linkedin-browser" as const, status: "disabled" as const, detail: "Disabled.", mutable: true, enabled: false, profileCopyReady: false },
+      ],
+    })),
+    enableBrowserCapability: vi.fn(),
+    disableBrowserCapability: vi.fn(),
+    copyLinkedInBrowserProfile: vi.fn(),
   };
   const api = overrides.api
     ? Object.assign(Object.create(Object.getPrototypeOf(baseApi)), baseApi, templateApiDefaults, overrides.api)

@@ -102,6 +102,9 @@ export function readDashboardSettings(
   );
   const scoreCriteria = persistedString(raw, ["scoreCriteria", "score_criteria"], "", "next_run");
   const targetCriteria = persistedString(raw, ["targetCriteria", "target_criteria"], "", "next_run");
+  const llmModelOverride: EffectiveSetting<string | null> = environment.LLM_MODEL?.trim()
+    ? { value: environment.LLM_MODEL.trim(), source: "environment", activation: "next_workflow", editable: false }
+    : { value: null, source: "default", activation: "next_workflow", editable: true };
 
   return {
     settings: {
@@ -135,6 +138,7 @@ export function readDashboardSettings(
       preferredModels: normalizedPreferredModels(raw.preferredModels ?? raw.preferred_models),
     },
     effectiveSettings: {
+      llmModelOverride,
       dailyBudgetUsd,
       applyConcurrency,
       workerActivitySlots,

@@ -15,6 +15,7 @@ describe("useUpdateCredentialsBatchMutation", () => {
     apiKey: "",
     projectId: "project-id",
     location: "us-central1",
+    googleApplicationCredentials: "",
   });
 
   it("sends one provider mode plan and returns configured indicators only", async () => {

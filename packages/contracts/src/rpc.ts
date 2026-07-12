@@ -82,6 +82,10 @@ export const RpcMethods = {
   ProviderStatus: "provider_status",
   ProviderModels: "provider_models",
   ProviderVerify: "provider_verify",
+  BrowserCapabilitiesList: "browser_capabilities_list",
+  BrowserCapabilityEnable: "browser_capability_enable",
+  BrowserCapabilityDisable: "browser_capability_disable",
+  BrowserProfileCopy: "browser_profile_copy",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 

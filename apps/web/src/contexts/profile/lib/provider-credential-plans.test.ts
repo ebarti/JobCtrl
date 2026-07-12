@@ -16,6 +16,7 @@ const claudeBase = {
   awsProfile: "jobctrl",
   awsWorkspaceId: "wrkspc_test",
   foundryResource: "claude-resource",
+  googleApplicationCredentials: "",
 };
 
 describe("provider credential plans", () => {
@@ -58,12 +59,14 @@ describe("provider credential plans", () => {
       apiKey: "gemini-secret",
       projectId: "",
       location: "",
+      googleApplicationCredentials: "",
     });
     const vertex = buildGoogleCredentialBatch({
       mode: "vertex",
       apiKey: "",
       projectId: "project-id",
       location: "us-central1",
+      googleApplicationCredentials: "/private/service-account.json",
     });
 
     expect(apiKey.operations).toEqual(expect.arrayContaining([
@@ -73,6 +76,7 @@ describe("provider credential plans", () => {
     expect(vertex.operations).toEqual(expect.arrayContaining([
       { operation: "delete", key: "GEMINI_API_KEY" },
       { operation: "set", key: "GOOGLE_GENAI_USE_VERTEXAI", value: "true" },
+      { operation: "set", key: "GOOGLE_APPLICATION_CREDENTIALS", value: "/private/service-account.json" },
     ]));
   });
 
@@ -84,6 +88,7 @@ describe("provider credential plans", () => {
         apiKey: "",
         projectId: "project-id",
         location: "us-central1",
+        googleApplicationCredentials: "",
       }),
     ]) {
       const firstDelete = batch.operations.findIndex(
@@ -109,12 +114,14 @@ describe("provider credential plans", () => {
       { operation: "delete", key: "ANTHROPIC_FOUNDRY_RESOURCE" },
       { operation: "delete", key: "AWS_REGION" },
       { operation: "delete", key: "AWS_PROFILE" },
+      { operation: "delete", key: "GOOGLE_APPLICATION_CREDENTIALS" },
     ]);
     expect(removeGoogleProviderBatch().operations).toEqual([
       { operation: "delete", key: "GEMINI_API_KEY" },
       { operation: "delete", key: "GOOGLE_GENAI_USE_VERTEXAI" },
       { operation: "delete", key: "GOOGLE_CLOUD_PROJECT" },
       { operation: "delete", key: "GOOGLE_CLOUD_LOCATION" },
+      { operation: "delete", key: "GOOGLE_APPLICATION_CREDENTIALS" },
     ]);
     expect(removeClaudeProviderBatch().operations).not.toContainEqual(
       expect.objectContaining({ key: "OPENAI_API_KEY" }),

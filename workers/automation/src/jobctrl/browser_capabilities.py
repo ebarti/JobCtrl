@@ -342,7 +342,7 @@ def _validate_state(payload: object, *, catalog: BrowserCapabilityCatalog) -> di
             or not isinstance(profile_copy.get("acceptedAt"), str)
             or not profile_copy["acceptedAt"].strip()
             or not isinstance(profile_copy.get("method"), str)
-            or profile_copy["method"] != "explicit-cli"
+            or profile_copy["method"] not in {"explicit-cli", "explicit-ui-v1"}
         ):
             raise BrowserCapabilityStateError("browser profile-copy consent metadata is invalid")
         if bool(record.get("profileCopied")) != (profile_copy is not None):
@@ -663,7 +663,7 @@ def copy_authenticated_linkedin_profile(
         raise BrowserProfileConsentRequiredError(
             "Copying an existing browser profile requires separate affirmative consent."
         )
-    if consent_method != "explicit-cli":
+    if consent_method not in {"explicit-cli", "explicit-ui-v1"}:
         raise BrowserProfileConsentRequiredError("browser profile-copy consent must be explicit")
     resolved_catalog = catalog or load_browser_capability_catalog()
     with _browser_capability_state_lock(app_dir=app_dir):

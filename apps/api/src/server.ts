@@ -21,6 +21,10 @@ import {
   type BulkRetryFailedResponse,
   BulkRescoreJobsNotOnCurrentScoringPolicyRequestSchema,
   BulkRetailorCurrentPolicyRequestSchema,
+  BrowserCapabilityIds,
+  BrowserCapabilityEnableRequestSchema,
+  BrowserCapabilitiesResultSchema,
+  BrowserProfileCopyRequestSchema,
   CancelJobActionRequestSchema,
   CompensationSourcePolicyUpdateRequestSchema,
   CorrectScoreRequestSchema,
@@ -176,6 +180,7 @@ import {
 } from "./extension-auth.js";
 import {
   CredentialStoreUnavailableError,
+  CredentialManagedByEnvironmentError,
   KeychainCredentialStore,
   type CredentialStore,
 } from "./credentials.js";
@@ -358,7 +363,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const contactResearchStarter = options.contactResearchStarter ?? createContactResearchStarter(pythonRuntime);
   const outreachDraftGenerator = options.outreachDraftGenerator ?? createOutreachDraftGenerator(pythonRuntime);
   const artifactOpener = options.artifactOpener ?? defaultArtifactOpener;
-  const credentialStore = options.credentialStore ?? new KeychainCredentialStore();
+  const credentialStore = options.credentialStore ?? new KeychainCredentialStore({
+    env: options.settingsEnvironment ?? process.env,
+  });
   const providerDispatcher =
     options.providerDispatcher ??
     createRuntimeJsonRpcDispatcherFactory(pythonRuntime)(actionContext);
@@ -2266,6 +2273,48 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/credentials", async () => credentialStore.list());
 
+  app.get("/v1/browser-capabilities", async (_request, reply) =>
+    dispatchBrowserCapabilities(reply, providerDispatcher, "browser_capabilities_list", {}),
+  );
+
+  app.post<{ Params: { capabilityId: string } }>(
+    "/v1/browser-capabilities/:capabilityId/enable",
+    async (request, reply) => {
+      const capabilityId = decodeRouteParam(request.params.capabilityId);
+      if (capabilityId === "core-browser" || !BrowserCapabilityIds.includes(capabilityId as never)) {
+        void reply.code(400);
+        return { ok: false, error: "browser_capability_failed", message: "This browser capability cannot be enabled." };
+      }
+      const body = parseBody(reply, BrowserCapabilityEnableRequestSchema, request.body ?? {});
+      if (!body) return undefined;
+      return dispatchBrowserCapabilities(reply, providerDispatcher, "browser_capability_enable", {
+        capabilityId,
+        executablePath: body.executablePath,
+      });
+    },
+  );
+
+  app.post<{ Params: { capabilityId: string } }>(
+    "/v1/browser-capabilities/:capabilityId/disable",
+    async (request, reply) => {
+      const capabilityId = decodeRouteParam(request.params.capabilityId);
+      if (capabilityId === "core-browser" || !BrowserCapabilityIds.includes(capabilityId as never)) {
+        void reply.code(400);
+        return { ok: false, error: "browser_capability_failed", message: "This browser capability cannot be disabled." };
+      }
+      return dispatchBrowserCapabilities(reply, providerDispatcher, "browser_capability_disable", { capabilityId });
+    },
+  );
+
+  app.post(
+    "/v1/browser-capabilities/authenticated-linkedin-browser/profile-copy",
+    async (request, reply) => {
+      const body = parseBody(reply, BrowserProfileCopyRequestSchema, request.body ?? {});
+      if (!body) return undefined;
+      return dispatchBrowserCapabilities(reply, providerDispatcher, "browser_profile_copy", body);
+    },
+  );
+
   app.patch("/v1/credentials", async (request, reply) => {
     const body = parseBody(reply, CredentialUpdateRequestSchema, request.body ?? {});
     if (!body) {
@@ -2274,6 +2323,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     try {
       return await credentialStore.set(body.key, body.value);
     } catch (error) {
+      if (error instanceof CredentialManagedByEnvironmentError) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "credential_managed_by_environment",
+          key: error.key,
+          source: "environment",
+          message: error.message,
+        };
+      }
       if (error instanceof CredentialStoreUnavailableError) {
         void reply.code(error.reason === "unsupported_platform" ? 409 : 503);
         return {
@@ -2299,6 +2358,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     try {
       return await credentialStore.applyBatch(body.operations);
     } catch (error) {
+      if (error instanceof CredentialManagedByEnvironmentError) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "credential_managed_by_environment",
+          key: error.key,
+          source: "environment",
+          message: error.message,
+        };
+      }
       if (error instanceof CredentialStoreUnavailableError) {
         void reply.code(error.reason === "unsupported_platform" ? 409 : 503);
         return {
@@ -2321,6 +2390,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     try {
       return await credentialStore.delete(key as (typeof CredentialKeys)[number]);
     } catch (error) {
+      if (error instanceof CredentialManagedByEnvironmentError) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "credential_managed_by_environment",
+          key: error.key,
+          source: "environment",
+          message: error.message,
+        };
+      }
       if (error instanceof CredentialStoreUnavailableError) {
         void reply.code(error.reason === "unsupported_platform" ? 409 : 503);
         return {
@@ -3024,6 +3103,33 @@ async function dispatchProviderModelCatalog(
     throw new Error("provider model catalog RPC returned an invalid response");
   }
   return parsed.data;
+}
+
+async function dispatchBrowserCapabilities(
+  reply: FastifyReply,
+  dispatcher: JsonRpcDispatcher,
+  method: Parameters<JsonRpcDispatcher["call"]>[0],
+  params: Record<string, unknown>,
+) {
+  const response = await dispatcher.call(method, params);
+  if (response.error) {
+    void reply.code(response.error.code === JsonRpcErrorCodes.InvalidParams ? 400 : 502);
+    return {
+      ok: false as const,
+      error: "browser_capability_failed" as const,
+      message: "The browser capability request could not be completed.",
+    };
+  }
+  const parsed = BrowserCapabilitiesResultSchema.safeParse(response.result);
+  if (!parsed.success) {
+    void reply.code(502);
+    return {
+      ok: false as const,
+      error: "browser_capability_failed" as const,
+      message: "Browser capability status is temporarily unavailable.",
+    };
+  }
+  return { ok: true as const, ...parsed.data };
 }
 
 function decodeRouteParam(value: string): string {

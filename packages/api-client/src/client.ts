@@ -44,6 +44,10 @@ import type {
   BulkRetryFailedResponse,
   BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
   BulkRetailorCurrentPolicyRequest,
+  BrowserCapabilitiesResponse,
+  BrowserCapabilityEnableRequest,
+  BrowserCapabilityId,
+  BrowserProfileCopyRequest,
   CancelJobActionRequest,
   CompensationSourcePolicyUpdateRequest,
   CompensationSourceRegistryResponse,
@@ -812,6 +816,28 @@ export class JobCtrlApiClient {
     body: CredentialBatchUpdateRequest,
   ): Promise<CredentialsResponse> {
     return this.patch("/v1/credentials/batch", body);
+  }
+
+  browserCapabilities(): Promise<BrowserCapabilitiesResponse> {
+    return this.get("/v1/browser-capabilities");
+  }
+
+  enableBrowserCapability(
+    capabilityId: BrowserCapabilityId,
+    body: BrowserCapabilityEnableRequest,
+  ): Promise<BrowserCapabilitiesResponse> {
+    return this.post(`/v1/browser-capabilities/${encodeURIComponent(capabilityId)}/enable`, body);
+  }
+
+  disableBrowserCapability(capabilityId: BrowserCapabilityId): Promise<BrowserCapabilitiesResponse> {
+    return this.post(`/v1/browser-capabilities/${encodeURIComponent(capabilityId)}/disable`, {});
+  }
+
+  copyLinkedInBrowserProfile(body: BrowserProfileCopyRequest): Promise<BrowserCapabilitiesResponse> {
+    return this.post(
+      "/v1/browser-capabilities/authenticated-linkedin-browser/profile-copy",
+      body,
+    );
   }
 
   providerStatus(): Promise<ProviderStatusResponse> {

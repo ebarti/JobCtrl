@@ -13,6 +13,7 @@ import {
   ClaudeProviderForm,
   GoogleProviderForm,
 } from "../forms/provider-setup-forms.js";
+import { CredentialForm } from "../forms/credential-form.js";
 import { useCredentialsQuery } from "../hooks/useCredentialsQuery.js";
 import { useProviderStatusQuery } from "../hooks/useProviderStatusQuery.js";
 import { useUpdateCredentialsBatchMutation } from "../hooks/useUpdateCredentialsBatchMutation.js";
@@ -39,12 +40,17 @@ export function CredentialsPanel() {
   const store = credentialsQuery.data?.store;
   const statuses = providerStatusQuery.data?.providers ?? [];
   const configured = (keys: readonly CredentialKey[]) =>
-    keys.some((key) => credentials.find((entry) => entry.key === key)?.configured === true);
+    keys.some((key) => {
+      const source = credentials.find((entry) => entry.key === key)?.effectiveSource;
+      return source === "environment" || source === "keychain";
+    });
   const claudeConfigured = configured(CLAUDE_KEYS);
   const googleConfigured = configured(GOOGLE_KEYS);
   const codexStatus = findStatus(statuses, "codex");
   const claudeStatus = findStatus(statuses, "claude");
   const googleStatus = findStatus(statuses, "google");
+  const environmentManagedKeys = credentials.filter((entry) => entry.effectiveSource === "environment").map((entry) => entry.key);
+  const capSolver = credentials.find((entry) => entry.key === "CAPSOLVER_API_KEY");
   const claudeCurrentMode = inferConfiguredMode(
     credentials,
     CLAUDE_MODE_KEYS,
@@ -81,6 +87,7 @@ export function CredentialsPanel() {
               provider="codex"
               status={codexStatus}
               title="Codex"
+              ownership={codexStatus?.mode === "cli_auth" ? "isolated Codex CLI" : "not configured"}
             >
               <CodexProviderSetup
                 isolatedAuthDetected={codexStatus?.mode === "cli_auth"}
@@ -96,10 +103,12 @@ export function CredentialsPanel() {
                   provider="claude"
                   status={mergeConfiguredStatus("claude", claudeStatus, claudeConfigured)}
                   title="Claude"
+                  ownership={providerOwnership(credentials, CLAUDE_KEYS, claudeStatus)}
                 >
                   <ClaudeProviderForm
                     configured={claudeConfigured}
                     currentMode={claudeCurrentMode}
+                    environmentManagedKeys={environmentManagedKeys}
                   />
                 </ProviderCard>
                 <ProviderCard
@@ -107,10 +116,12 @@ export function CredentialsPanel() {
                   provider="google"
                   status={mergeConfiguredStatus("google", googleStatus, googleConfigured)}
                   title="Google"
+                  ownership={providerOwnership(credentials, GOOGLE_KEYS, googleStatus)}
                 >
                   <GoogleProviderForm
                     configured={googleConfigured}
                     currentMode={googleCurrentMode}
+                    environmentManagedKeys={environmentManagedKeys}
                   />
                 </ProviderCard>
               </>
@@ -123,6 +134,21 @@ export function CredentialsPanel() {
           </div>
         )}
       </section>
+      {store && capSolver ? (
+        <section className="card full provider-setup-shell">
+          <CardHeader title="Apply CAPTCHA solver" meta="optional · restart required" />
+          <p className="provider-copy">A CapSolver key only enables JobCtrl's owned solver tool during a user-started Apply. Unsupported or unconfigured CAPTCHA always fails closed.</p>
+          <CredentialForm
+            credentialKey="CAPSOLVER_API_KEY"
+            label="CapSolver API key"
+            configured={capSolver.configured}
+            effectiveSource={capSolver.effectiveSource}
+            editable={capSolver.editable}
+            available={store.available}
+            unavailableReason={store.unavailableReason ?? undefined}
+          />
+        </section>
+      ) : null}
       <CredentialPrivacyNotice store={store} />
     </>
   );
@@ -177,12 +203,14 @@ function ProviderCard({
   description,
   status,
   children,
+  ownership,
 }: {
   provider: ProviderId;
   title: string;
   description: string;
   status?: ProviderStatusItem | undefined;
   children: ReactNode;
+  ownership: string;
 }) {
   const statusLabel = status?.ready
     ? "Ready"
@@ -201,6 +229,7 @@ function ProviderCard({
         <span className={`tag ${status?.ready ? "ok" : "muted"}`}>{statusLabel}</span>
       </header>
       {status?.mode ? <p className="provider-current-mode">Detected mode: {status.mode}</p> : null}
+      <p className="provider-current-mode">Effective ownership: {ownership}</p>
       {status?.message ? <p className="provider-status-message">{status.message}</p> : null}
       {children}
     </article>
@@ -408,9 +437,24 @@ const CLAUDE_KEYS = [
   "CLAUDE_CODE_USE_BEDROCK",
   "CLAUDE_CODE_USE_ANTHROPIC_AWS",
   "CLAUDE_CODE_USE_FOUNDRY",
+  "GOOGLE_APPLICATION_CREDENTIALS",
 ] as const satisfies readonly CredentialKey[];
 
-const GOOGLE_KEYS = ["GEMINI_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI"] as const satisfies readonly CredentialKey[];
+const GOOGLE_KEYS = ["GEMINI_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_APPLICATION_CREDENTIALS"] as const satisfies readonly CredentialKey[];
+
+function providerOwnership(
+  credentials: CredentialsResponse["credentials"],
+  keys: readonly CredentialKey[],
+  status: ProviderStatusItem | undefined,
+): string {
+  const ownedKeys = new Set<CredentialKey>(keys);
+  const entries = credentials.filter((entry) => ownedKeys.has(entry.key));
+  if (entries.some((entry) => entry.effectiveSource === "environment")) return "launch environment";
+  if (entries.some((entry) => entry.effectiveSource === "keychain")) return "macOS Keychain";
+  if (status?.mode && status.mode !== "api_key") return "external cloud credential chain";
+  if (entries.some((entry) => entry.effectiveSource === "inspection_unknown")) return "inspection unavailable";
+  return "not configured";
+}
 
 const CLAUDE_MODE_KEYS = [
   ["ANTHROPIC_API_KEY", "anthropic_api_key"],
@@ -431,7 +475,7 @@ function inferConfiguredMode(
   fallback: string | null | undefined,
 ): string | null | undefined {
   const configuredModes = modeKeys.flatMap(([key, mode]) =>
-    credentials.find((entry) => entry.key === key)?.configured === true
+    ["environment", "keychain"].includes(credentials.find((entry) => entry.key === key)?.effectiveSource ?? "")
       ? [mode]
       : [],
   );

@@ -8572,6 +8572,8 @@ describe("local TypeScript API", () => {
           label: key,
           configured: stored.has(key),
           storage: "keychain" as const,
+          effectiveSource: stored.has(key) ? "keychain" as const : "absent" as const,
+          editable: true,
         })),
       })),
       set: vi.fn(async (key: CredentialKey, value: string) => {
@@ -8642,6 +8644,8 @@ describe("local TypeScript API", () => {
         label: key,
         configured: values.has(key),
         storage: "keychain" as const,
+        effectiveSource: values.has(key) ? "keychain" as const : "absent" as const,
+        editable: true,
       })),
     });
     const credentialStore = {
@@ -9087,6 +9091,8 @@ describe("local TypeScript API", () => {
         label: key,
         configured: true,
         storage: "keychain" as const,
+        effectiveSource: "keychain" as const,
+        editable: true,
       })),
     };
     const credentialStore = {

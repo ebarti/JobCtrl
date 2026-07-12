@@ -20,6 +20,10 @@ import type {
   BulkRetryFailedResponse,
   BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
   BulkRetailorCurrentPolicyRequest,
+  BrowserCapabilitiesResponse,
+  BrowserCapabilityEnableRequest,
+  BrowserCapabilityId,
+  BrowserProfileCopyRequest,
   CancelJobActionRequest,
   CompensationSourcePolicyUpdateRequest,
   CompensationSourceRegistryResponse,
@@ -337,6 +341,13 @@ export interface ApiClientPort {
   updateCredential(body: CredentialUpdateRequest): Promise<CredentialsResponse>;
   deleteCredential(key: CredentialKey): Promise<CredentialsResponse>;
   updateCredentialsBatch(body: CredentialBatchUpdateRequest): Promise<CredentialsResponse>;
+  browserCapabilities(): Promise<BrowserCapabilitiesResponse>;
+  enableBrowserCapability(
+    capabilityId: BrowserCapabilityId,
+    body: BrowserCapabilityEnableRequest,
+  ): Promise<BrowserCapabilitiesResponse>;
+  disableBrowserCapability(capabilityId: BrowserCapabilityId): Promise<BrowserCapabilitiesResponse>;
+  copyLinkedInBrowserProfile(body: BrowserProfileCopyRequest): Promise<BrowserCapabilitiesResponse>;
   providerModels(): Promise<ProviderModelCatalogResponse>;
   providerStatus(): Promise<ProviderStatusResponse>;
   verifyCodexProvider(): Promise<CodexVerifyResponse>;

@@ -78,6 +78,33 @@ describe("KeychainCredentialStore", () => {
     vi.useRealTimers();
   });
 
+  it("reports environment ownership separately and rejects ineffective writes without echoing values", async () => {
+    const runSecurity = vi.fn<SecurityCommandRunner>(async () => result(44, NOT_FOUND));
+    const store = new KeychainCredentialStore({
+      platform: "darwin",
+      runSecurity,
+      env: { CAPSOLVER_API_KEY: SECRET },
+    });
+
+    const response = await store.list();
+    const capSolver = response.credentials.find((entry) => entry.key === "CAPSOLVER_API_KEY");
+    const googleAdc = response.credentials.find((entry) => entry.key === "GOOGLE_APPLICATION_CREDENTIALS");
+
+    expect(capSolver).toMatchObject({ configured: false, effectiveSource: "environment", editable: false });
+    expect(googleAdc).toMatchObject({ configured: false, effectiveSource: "absent", editable: true });
+    await expect(store.set("CAPSOLVER_API_KEY", `${SECRET}-replacement`)).rejects.toMatchObject({
+      name: "CredentialManagedByEnvironmentError",
+      key: "CAPSOLVER_API_KEY",
+    });
+    await expect(store.delete("CAPSOLVER_API_KEY")).rejects.toMatchObject({
+      name: "CredentialManagedByEnvironmentError",
+    });
+    await expect(store.applyBatch([{ operation: "delete", key: "CAPSOLVER_API_KEY" }])).rejects.toMatchObject({
+      name: "CredentialManagedByEnvironmentError",
+    });
+    expect(JSON.stringify(response)).not.toContain(SECRET);
+  });
+
   it.each(["linux", "win32"] as const)(
     "returns an explicit unsupported capability without spawning security on %s",
     async (platform) => {
@@ -98,6 +125,7 @@ describe("KeychainCredentialStore", () => {
           (credential) => credential.configured === null,
         ),
       ).toBe(true);
+      expect(response.credentials.every((credential) => credential.effectiveSource === "inspection_unknown")).toBe(true);
       await expect(store.set("OPENAI_API_KEY", SECRET)).rejects.toMatchObject({
         name: "CredentialStoreUnavailableError",
         reason: "unsupported_platform",

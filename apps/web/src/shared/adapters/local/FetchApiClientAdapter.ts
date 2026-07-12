@@ -345,6 +345,25 @@ export class FetchApiClientAdapter implements ApiClientPort {
   ) {
     return this.client.updateCredentialsBatch(body);
   }
+  browserCapabilities() {
+    return this.client.browserCapabilities();
+  }
+  enableBrowserCapability(
+    capabilityId: Parameters<JobCtrlApiClient["enableBrowserCapability"]>[0],
+    body: Parameters<JobCtrlApiClient["enableBrowserCapability"]>[1],
+  ) {
+    return this.client.enableBrowserCapability(capabilityId, body);
+  }
+  disableBrowserCapability(
+    capabilityId: Parameters<JobCtrlApiClient["disableBrowserCapability"]>[0],
+  ) {
+    return this.client.disableBrowserCapability(capabilityId);
+  }
+  copyLinkedInBrowserProfile(
+    body: Parameters<JobCtrlApiClient["copyLinkedInBrowserProfile"]>[0],
+  ) {
+    return this.client.copyLinkedInBrowserProfile(body);
+  }
   providerModels() {
     return this.client.providerModels();
   }

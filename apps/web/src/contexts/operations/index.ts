@@ -83,6 +83,7 @@ export { dashboardKeys } from "./dashboardKeys.js";
 export { digestKeys } from "./digestKeys.js";
 export { healthKeys } from "./healthKeys.js";
 export { settingsKeys } from "./settingsKeys.js";
+export { browserCapabilityKeys } from "./browserCapabilityKeys.js";
 export { jobsKeys } from "./jobsKeys.js";
 export { outcomesKeys } from "./outcomesKeys.js";
 export { workflowRunsKeys } from "./workflowRunsKeys.js";
@@ -118,6 +119,12 @@ export {
   useProviderModelCatalogQuery,
   useSettingsPolicyQuery,
 } from "./hooks/useSettingsPolicyQueries.js";
+export { useBrowserCapabilitiesQuery } from "./hooks/useBrowserCapabilitiesQuery.js";
+export {
+  useCopyLinkedInBrowserProfileMutation,
+  useDisableBrowserCapabilityMutation,
+  useEnableBrowserCapabilityMutation,
+} from "./hooks/useBrowserCapabilityMutations.js";
 export { useJobApplicationOutcomesQuery } from "./hooks/useJobApplicationOutcomesQuery.js";
 export { useJobDetailQuery } from "./hooks/useJobDetailQuery.js";
 export { useJobsListQuery } from "./hooks/useJobsListQuery.js";
