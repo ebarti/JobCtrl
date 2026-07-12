@@ -33,6 +33,11 @@
     "web:storybook": "corepack pnpm --filter @jobctrl/web storybook",
     "web:storybook:build": "corepack pnpm --filter @jobctrl/web storybook:build",
     "web:storybook:test": "corepack pnpm --filter @jobctrl/web storybook:test",
+    "demo-edge:check": "corepack pnpm --filter @jobctrl/demo-edge check",
+    "demo-edge:test": "corepack pnpm --filter @jobctrl/demo-edge test",
+    "demo-edge:types": "corepack pnpm --filter @jobctrl/demo-edge types",
+    "demo-edge:dry-run": "corepack pnpm --filter @jobctrl/demo-edge dry-run",
+    "demo-edge:migrate:local": "corepack pnpm --filter @jobctrl/demo-edge migrate:local",
     "extension:check": "corepack pnpm --filter @jobctrl/extension check",
     "extension:test": "corepack pnpm --filter @jobctrl/extension test",
     "extension:build": "corepack pnpm --filter @jobctrl/extension build",
@@ -62,8 +67,8 @@
     "python:test": "uv --project workers/automation run --extra dev pytest -q",
     "python:lint": "uv --project workers/automation run --extra dev ruff check .",
     "python:build": "uv --project workers/automation run --extra dev python -m build workers/automation",
-    "check": "corepack pnpm --filter @jobctrl/contracts check && corepack pnpm --filter @jobctrl/api-client check && corepack pnpm api:check && corepack pnpm web:check && corepack pnpm extension:check && corepack pnpm python:lint && corepack pnpm launcher:check",
-    "test": "corepack pnpm scripts:test && corepack pnpm api:test && corepack pnpm web:build && corepack pnpm extension:test && corepack pnpm extension:e2e && corepack pnpm python:test && corepack pnpm launcher:test"
+    "check": "corepack pnpm --filter @jobctrl/contracts check && corepack pnpm --filter @jobctrl/api-client check && corepack pnpm api:check && corepack pnpm web:check && corepack pnpm extension:check && corepack pnpm demo-edge:check && corepack pnpm python:lint && corepack pnpm launcher:check",
+    "test": "corepack pnpm scripts:test && corepack pnpm demo-edge:test && corepack pnpm api:test && corepack pnpm web:build && corepack pnpm extension:test && corepack pnpm extension:e2e && corepack pnpm python:test && corepack pnpm launcher:test"
   },
   "repository": {
     "type": "git",

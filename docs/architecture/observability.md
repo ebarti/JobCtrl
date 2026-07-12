@@ -24,8 +24,9 @@ flowchart LR
     class LF ext
 ```
 
-Every span originates in the Python worker; the TypeScript API and web app are
-not instrumented yet (see [Out of Scope](#out-of-scope) below).
+Every OpenTelemetry span described on this page originates in the Python
+worker; the TypeScript API and web app are not instrumented yet (see
+[Out of Scope](#out-of-scope) below).
 
 The Python worker exports OpenTelemetry spans over OTLP/HTTP to a
 Langfuse instance for LLM tracing. The wiring lives under
@@ -121,6 +122,18 @@ exit so the `BatchSpanProcessor` flushes any in-flight spans.
 `jobctrl doctor` includes a `Langfuse` row that probes the OTLP endpoint
 with a `HEAD` request — `OK reachable`, `MISSING (set
 LANGFUSE_PUBLIC_KEY/SECRET_KEY/BASE_URL)`, or `unreachable`.
+
+## Public Demo Edge Logs
+
+The deployment-gated public demo is a separate observability boundary. Static
+assets come from Cloudflare Pages, a same-origin Worker handles only
+`demo.jobctrl.dev/api/*`, and a scheduled Worker performs D1 retention.
+
+Both Worker configs disable automatic invocation logs and traces. The Workers
+emit only closed lifecycle fields and never log request bodies, cookies, IPs,
+URLs, user agents, or referrers. Optional product measurement uses the typed,
+consent-gated D1 event contract; non-linkable operational counters and
+consented reports remain separate populations.
 
 ## Out of Scope
 
