@@ -1,6 +1,7 @@
 import type { Theme } from "vitepress";
 import { inBrowser } from "vitepress";
 import DefaultTheme from "vitepress/theme";
+import ComparisonScreenshotCarousel from "./ComparisonScreenshotCarousel.vue";
 import JobCtrlLayout from "./JobCtrlLayout.vue";
 import MermaidRenderer from "./MermaidRenderer.vue";
 import WorkflowSurfacePanel from "./WorkflowSurfacePanel.vue";
@@ -22,6 +23,7 @@ export default {
   extends: DefaultTheme,
   Layout: JobCtrlLayout,
   enhanceApp({ app, router }) {
+    app.component("ComparisonScreenshotCarousel", ComparisonScreenshotCarousel);
     app.component("Mermaid", MermaidRenderer);
     app.component("WorkflowSurfacePanel", WorkflowSurfacePanel);
     app.component("WorkflowSurfaceSelector", WorkflowSurfaceSelector);

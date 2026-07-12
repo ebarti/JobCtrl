@@ -626,6 +626,115 @@ try {
     console.log("ok    /comparison desktop visual hierarchy");
   }
 
+  const comparisonEyebrow =
+    "Pinned snapshots · issue threads checked · no marketing claims taken at face value";
+  const comparisonCarousel = page.locator("[data-jh-comparison-carousel]");
+  const comparisonCarouselCount = await comparisonCarousel.count();
+  if (comparisonCarouselCount !== 1) {
+    fail(`/comparison desktop: expected one screenshot carousel, found ${comparisonCarouselCount}`);
+  } else {
+    const carouselState = async () =>
+      comparisonCarousel.evaluate((carousel) => {
+        const images = [...carousel.querySelectorAll("img")];
+        const visibleImages = images.filter((image) => {
+          const box = image.getBoundingClientRect();
+          const style = getComputedStyle(image);
+          return box.width > 0 && box.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+        });
+        return {
+          caption: carousel.querySelector("figcaption")?.textContent?.trim() ?? "",
+          imageCount: images.length,
+          imageAlt: visibleImages[0]?.alt ?? "",
+          status:
+            carousel.querySelector(".jh-comparison-screenshot-carousel__status")?.textContent?.trim() ?? "",
+          visibleImageCount: visibleImages.length,
+        };
+      });
+    const previous = comparisonCarousel.getByRole("button", { name: "Previous", exact: true });
+    const next = comparisonCarousel.getByRole("button", { name: "Next", exact: true });
+    const initialCarousel = await carouselState();
+    const initialPreviousDisabled = await previous.isDisabled();
+    const initialNextDisabled = await next.isDisabled();
+
+    await next.click();
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector("[data-jh-comparison-carousel] .jh-comparison-screenshot-carousel__status")
+          ?.textContent?.trim() === "2 of 2",
+    );
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector("[data-jh-comparison-carousel] img")
+          ?.getAttribute("aria-label") === "Expand image: Apply Review editing a tailored resume with audit evidence",
+    );
+    const applyReviewImage = comparisonCarousel.locator("img");
+    const applyReviewZoomLabel = await applyReviewImage.getAttribute("aria-label");
+    await applyReviewImage.click();
+    await page.waitForSelector(".jh-lightbox", { state: "visible", timeout: 5000 });
+    const expandedApplyReviewAlt = await page.locator(".jh-lightbox__content img").getAttribute("alt");
+    await page.locator('.jh-lightbox button[aria-label="Close"]').click();
+    const nextCarousel = await carouselState();
+    const nextPreviousDisabled = await previous.isDisabled();
+    const nextNextDisabled = await next.isDisabled();
+
+    await previous.click();
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector("[data-jh-comparison-carousel] .jh-comparison-screenshot-carousel__status")
+          ?.textContent?.trim() === "1 of 2",
+    );
+    const restoredCarousel = await carouselState();
+    const restoredPreviousDisabled = await previous.isDisabled();
+    const restoredNextDisabled = await next.isDisabled();
+    const eyebrowPresent = (await page.locator(".vp-doc").innerText()).includes(comparisonEyebrow);
+
+    if (
+      eyebrowPresent
+      || initialCarousel.imageCount !== 1
+      || initialCarousel.visibleImageCount !== 1
+      || initialCarousel.imageAlt !== "Jobs table with fit scores, stages, and filters"
+      || initialCarousel.caption !== "Jobs — scored and filterable, with every score inspectable"
+      || initialCarousel.status !== "1 of 2"
+      || !initialPreviousDisabled
+      || initialNextDisabled
+      || nextCarousel.imageCount !== 1
+      || nextCarousel.visibleImageCount !== 1
+      || nextCarousel.imageAlt !== "Apply Review editing a tailored resume with audit evidence"
+      || nextCarousel.caption !== "Apply Review — edit and approve the exact resume that ships"
+      || nextCarousel.status !== "2 of 2"
+      || nextPreviousDisabled
+      || !nextNextDisabled
+      || applyReviewZoomLabel !== "Expand image: Apply Review editing a tailored resume with audit evidence"
+      || expandedApplyReviewAlt !== "Apply Review editing a tailored resume with audit evidence"
+      || restoredCarousel.imageCount !== 1
+      || restoredCarousel.visibleImageCount !== 1
+      || restoredCarousel.imageAlt !== "Jobs table with fit scores, stages, and filters"
+      || restoredCarousel.status !== "1 of 2"
+      || !restoredPreviousDisabled
+      || restoredNextDisabled
+    ) {
+      fail(`/comparison desktop: screenshot carousel state regressed (${JSON.stringify({
+        eyebrowPresent,
+        initialCarousel,
+        initialPreviousDisabled,
+        initialNextDisabled,
+        nextCarousel,
+        nextPreviousDisabled,
+        nextNextDisabled,
+        applyReviewZoomLabel,
+        expandedApplyReviewAlt,
+        restoredCarousel,
+        restoredPreviousDisabled,
+        restoredNextDisabled,
+      })})`);
+    } else {
+      console.log("ok    /comparison desktop screenshot carousel");
+    }
+  }
+
   await page.goto(`http://127.0.0.1:${port}/user/normal-flows`, { waitUntil: "networkidle" });
   await page.waitForFunction(() => document.querySelectorAll(".mermaid svg").length >= 1, { timeout: 15000 });
   const desktopLoopDiagram = await page.locator(".vp-doc .mermaid").first().boundingBox();
@@ -715,17 +824,42 @@ try {
   await page.locator('.jh-lightbox button[aria-label="Close"]').click();
 
   await page.goto(`http://127.0.0.1:${port}/comparison`, { waitUntil: "networkidle" });
+  const comparisonCarouselMobile = page.locator("[data-jh-comparison-carousel]");
+  await comparisonCarouselMobile.scrollIntoViewIfNeeded();
+  await comparisonCarouselMobile.getByRole("button", { name: "Next", exact: true }).click();
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector("[data-jh-comparison-carousel] .jh-comparison-screenshot-carousel__status")
+        ?.textContent?.trim() === "2 of 2",
+  );
   const comparisonMobile = await page.evaluate(() => {
     const cards = [...document.querySelectorAll(".jh-compare-card")].map((card) => {
       const box = card.getBoundingClientRect();
       return { x: box.x, y: box.y, width: box.width };
     });
     const summary = document.querySelector(".jh-compare-table-wrap");
+    const carousel = document.querySelector("[data-jh-comparison-carousel]");
+    const carouselImage = carousel?.querySelector("img");
+    const carouselImageBox = carouselImage?.getBoundingClientRect();
     return {
       cards,
+      carouselImage: carouselImageBox
+        ? {
+            height: carouselImageBox.height,
+            left: carouselImageBox.left,
+            right: carouselImageBox.right,
+            width: carouselImageBox.width,
+          }
+        : null,
+      carouselImageCount: carousel?.querySelectorAll("img").length ?? 0,
+      carouselStatus:
+        carousel?.querySelector(".jh-comparison-screenshot-carousel__status")?.textContent?.trim() ?? "",
       pageOverflows: document.documentElement.scrollWidth > window.innerWidth,
       summaryClientWidth: summary?.clientWidth ?? 0,
       summaryScrollWidth: summary?.scrollWidth ?? 0,
+      viewportHeight: window.innerHeight,
+      viewportWidth: window.innerWidth,
     };
   });
   const cardsStack = comparisonMobile.cards.length === 3
@@ -744,16 +878,23 @@ try {
     || comparisonMobile.pageOverflows
     || comparisonMobile.summaryScrollWidth <= comparisonMobile.summaryClientWidth + 80
     || afterArrow <= beforeArrow
+    || comparisonMobile.carouselImageCount !== 1
+    || comparisonMobile.carouselStatus !== "2 of 2"
+    || !comparisonMobile.carouselImage
+    || comparisonMobile.carouselImage.left < -1
+    || comparisonMobile.carouselImage.right > comparisonMobile.viewportWidth + 1
+    || comparisonMobile.carouselImage.width < 220
+    || comparisonMobile.carouselImage.height > comparisonMobile.viewportHeight * 0.8
   ) {
     fail(
-      `/comparison mobile: cards or keyboard-scroll table regressed (${JSON.stringify({
+      `/comparison mobile: cards, carousel, or keyboard-scroll table regressed (${JSON.stringify({
         ...comparisonMobile,
         beforeArrow,
         afterArrow,
       })})`,
     );
   } else {
-    console.log("ok    /comparison mobile layout and keyboard table scroll");
+    console.log("ok    /comparison mobile layout, screenshot carousel, and keyboard table scroll");
   }
 
   await page.goto(`http://127.0.0.1:${port}/user/data-and-safety`, { waitUntil: "networkidle" });

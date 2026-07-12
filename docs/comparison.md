@@ -9,8 +9,6 @@ JobCtrl, [Career-Ops](https://github.com/santifer/career-ops), and
 broad problem through three different operating models. This is an
 evidence-backed capability comparison, not a quality ranking.
 
-<p class="jh-compare-eyebrow">Pinned snapshots · issue threads checked · no marketing claims taken at face value</p>
-
 ## Three operating models
 
 <div class="jh-compare-grid" role="list">
@@ -129,9 +127,7 @@ and follow durable runs as server-side changes arrive.
 
 [![JobCtrl dashboard showing pipeline progress, job counts, source health, and apply runs](assets/screenshots/dashboard.png)](user/screenshots.md)
 
-| [![Jobs table with fit scores, stages, and filters](assets/screenshots/jobs.png)](user/screenshots.md) | [![Apply Review editing a tailored resume with audit evidence](assets/screenshots/apply-review.png)](user/screenshots.md) |
-| --- | --- |
-| **Jobs** — scored and filterable, with every score inspectable | **Apply Review** — edit and approve the exact resume that ships |
+<ComparisonScreenshotCarousel />
 
 All screenshots use synthetic sample data. Open the [Product Tour](user/screenshots.md)
 for the complete Profile → Discovery → Pipeline → Jobs → Apply Review → Runs
