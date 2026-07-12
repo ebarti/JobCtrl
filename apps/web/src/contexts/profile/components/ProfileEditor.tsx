@@ -8,7 +8,6 @@ import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAu
 import { ProfileForm } from "../forms/profile-form.js";
 import { useProfileHtmlPreviewUrl } from "../hooks/useProfileHtmlPreviewUrl.js";
 import { useProfileQuery } from "../hooks/useProfileQuery.js";
-import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
 import { ResumeTemplatePanel } from "./ResumeTemplatePanel.js";
 
 const SPLIT_STORAGE_KEY = "profile-preview-split-width";
@@ -23,15 +22,13 @@ export interface ProfileEditorProps {
 export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
   const { storage } = usePorts();
   const profileQuery = useProfileQuery();
-  const settingsQuery = useSettingsQuery();
   const { url: profileHtmlPreviewUrl } = useProfileHtmlPreviewUrl();
   const layoutRef = useRef<HTMLDivElement>(null);
   const [editorWidth, setEditorWidth] = useState(() => {
     const saved = storage.get<number>(SPLIT_STORAGE_KEY);
     return clampEditorWidth(typeof saved === "number" ? saved : DEFAULT_EDITOR_WIDTH);
   });
-  const errorMessage =
-    profileQuery.error?.message ?? settingsQuery.error?.message ?? "";
+  const errorMessage = profileQuery.error?.message ?? "";
   const showPreview = section === "profile";
   const layoutStyle = {
     "--profile-editor-width": `${editorWidth}%`,
@@ -80,7 +77,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
       <section className="card">
         <CardHeader
           title={cardTitle}
-          meta={settingsQuery.data ? undefined : "loading"}
+          meta={profileQuery.data ? undefined : "loading"}
         />
         {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
         {section === "profile" ? (
@@ -90,14 +87,10 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
             </Link>
           </div>
         ) : null}
-        {profileQuery.data && (section !== "preferences" || settingsQuery.data) ? (
-          section === "preferences" && settingsQuery.data ? (
+        {profileQuery.data ? (
+          section === "preferences" ? (
             <>
-              <ProfileForm
-                initial={profileQuery.data}
-                section={section}
-                settings={settingsQuery.data.settings}
-              />
+              <ProfileForm initial={profileQuery.data} section={section} />
               <ResumeTemplatePanel profileHtmlPreviewUrl={profileHtmlPreviewUrl} />
             </>
           ) : (

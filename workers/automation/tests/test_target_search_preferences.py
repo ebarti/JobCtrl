@@ -330,6 +330,46 @@ def test_load_search_config_reads_profile_target_search_from_db(tmp_path, monkey
     assert loaded["target_region"] == "europe"
 
 
+def test_legacy_dashboard_location_is_fallback_only_when_profile_target_is_empty(
+    tmp_path, monkeypatch
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    dashboard_path = tmp_path / "dashboard.json"
+    dashboard_path.write_text(
+        '{"location_filter": "Legacy City", "target_role": "Legacy Role"}',
+        encoding="utf-8",
+    )
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE candidate_profiles (
+          tenant_id TEXT NOT NULL, profile_id TEXT NOT NULL,
+          experience_target_role TEXT NOT NULL,
+          experience_target_locations TEXT NOT NULL,
+          experience_target_work_models TEXT NOT NULL,
+          personal_city TEXT NOT NULL DEFAULT '', personal_country TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO candidate_profiles VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("local", "default", "", "", "", "Home City", "Home Country"),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setenv("JOBCTRL_DASHBOARD_CONFIG_PATH", str(dashboard_path))
+
+    loaded = config.load_search_config()
+
+    assert loaded["queries"][0]["query"] == "Legacy Role"
+    assert loaded["locations"] == [{
+        "label": "legacy-city",
+        "location": "Legacy City",
+        "remote": False,
+    }]
+
+
 def test_load_search_config_prefers_database_discovery_settings(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)

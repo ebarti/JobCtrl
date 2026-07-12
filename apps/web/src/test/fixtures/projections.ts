@@ -10,6 +10,7 @@ import type {
   CredentialsResponse,
   DashboardSummary,
   DailyDigest,
+  DiscoverySettingsResponse,
   EvidenceMapResponse,
   InterviewPrep,
   JobAuditEntry,
@@ -1736,15 +1737,32 @@ export const sampleResumeTemplateListResponse: ResumeTemplateListResponse = {
   },
 };
 
-export const sampleDiscoverySettingsResponse = {
+export const sampleDiscoverySettingsResponse: DiscoverySettingsResponse = {
   ok: true as const,
   settings: {
-    boards: ["indeed", "linkedin", "zip_recruiter"] as const,
+    boards: ["indeed", "linkedin", "zip_recruiter"],
     resultsPerSite: 50,
     hoursOld: 72,
     schedulingEnabled: false,
     scheduleCron: "0 7 * * *",
-    source: "database" as const,
+    roleFilterMode: "auto",
+    roleFilterModel: null,
+    maxParallelFamilies: 1,
+    crawlUserAgentProduct: "JobCtrl",
+    crawlUserAgentContact: "https://github.com/ebarti/JobCtrl",
+    source: "database",
+  },
+  effectiveSettings: {
+    boards: { value: ["indeed", "linkedin", "zip_recruiter"], source: "persisted", activation: "next_run", editable: true },
+    resultsPerSite: { value: 50, source: "persisted" as const, activation: "next_run" as const, editable: true as const },
+    hoursOld: { value: 72, source: "persisted" as const, activation: "next_run" as const, editable: true as const },
+    schedulingEnabled: { value: false, source: "persisted" as const, activation: "restart" as const, editable: true as const },
+    scheduleCron: { value: "0 7 * * *", source: "persisted" as const, activation: "restart" as const, editable: true as const },
+    roleFilterMode: { value: "auto" as const, source: "default" as const, activation: "next_source_family" as const, editable: true as const },
+    roleFilterModel: { value: null, source: "default" as const, activation: "next_source_family" as const, editable: true as const },
+    maxParallelFamilies: { value: 1, source: "default" as const, activation: "next_run" as const, editable: true as const },
+    crawlUserAgentProduct: { value: "JobCtrl", source: "default" as const, activation: "next_source_family" as const, editable: true as const },
+    crawlUserAgentContact: { value: "https://github.com/ebarti/JobCtrl", source: "default" as const, activation: "next_source_family" as const, editable: true as const },
   },
 };
 

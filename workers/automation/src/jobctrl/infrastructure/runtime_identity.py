@@ -130,6 +130,29 @@ def write_worker_heartbeat(
     return resolved_worker_id
 
 
+def latest_active_max_concurrent_activities() -> int | None:
+    """Return the latest worker-reported active activity limit, when available."""
+    identity = current_runtime_identity()
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(identity.db_path)
+        row = conn.execute(
+            f"SELECT max_concurrent_activities FROM {WORKER_HEARTBEAT_TABLE} "
+            "WHERE max_concurrent_activities IS NOT NULL ORDER BY last_seen_at DESC LIMIT 1"
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+    if row is None:
+        return None
+    try:
+        return max(1, int(row[0]))
+    except (TypeError, ValueError):
+        return None
+
+
 def _default_worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 

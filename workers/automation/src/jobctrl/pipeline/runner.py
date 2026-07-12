@@ -1330,15 +1330,26 @@ def plan_discovery_source_families(
         families.append("workday")
     if not source_filter_active or smart_extract_sources:
         families.append("smartextract")
+    from jobctrl.infrastructure.runtime_identity import latest_active_max_concurrent_activities
     from jobctrl.infrastructure.temporal.concurrency import (
-        max_parallel_discovery_families_from_env,
+        resolve_max_concurrent_activities,
+        resolved_max_parallel_discovery_families,
+    )
+
+    search_cfg = config.load_search_config()
+    active_activity_slots = (
+        latest_active_max_concurrent_activities()
+        or resolve_max_concurrent_activities().value
     )
 
     return {
         "families": families,
         "progress_total": len(families) + 2,
         "start_count": _pipeline_job_count() if limit > 0 else 0,
-        "max_parallel_families": max_parallel_discovery_families_from_env(),
+        "max_parallel_families": resolved_max_parallel_discovery_families(
+            search_cfg,
+            active_activity_slots,
+        ),
     }
 
 

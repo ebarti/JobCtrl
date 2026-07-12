@@ -77,6 +77,7 @@ def test_worker_heartbeat_keeps_the_startup_concurrency_snapshot(monkeypatch, tm
         conn.close()
 
     assert row == (8, 10)
+    assert runtime_identity.latest_active_max_concurrent_activities() == 8
 
 
 def test_worker_heartbeat_migrates_legacy_runtime_columns(monkeypatch, tmp_path):

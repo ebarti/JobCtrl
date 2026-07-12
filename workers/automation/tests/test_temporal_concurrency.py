@@ -7,6 +7,7 @@ from jobctrl.infrastructure.temporal.concurrency import (
     max_concurrent_activities_from_env,
     max_parallel_discovery_families_from_env,
     resolve_max_concurrent_activities,
+    resolved_max_parallel_discovery_families,
 )
 
 
@@ -83,3 +84,8 @@ def test_max_parallel_discovery_families_clamps_to_at_least_one() -> None:
     assert max_parallel_discovery_families_from_env({"JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES": "3"}) == 3
     assert max_parallel_discovery_families_from_env({"JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES": "0"}) == 1
     assert max_parallel_discovery_families_from_env({"JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES": "-2"}) == 1
+
+
+def test_discovery_fanout_is_capped_by_active_worker_slots_and_safety_limit() -> None:
+    assert resolved_max_parallel_discovery_families({"max_parallel_families": 4}, 2) == 2
+    assert resolved_max_parallel_discovery_families({"max_parallel_families": 99}, 20) == 4

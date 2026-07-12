@@ -57,6 +57,21 @@ def test_empty_contact_env_drops_the_contact_suffix(monkeypatch) -> None:
     assert ua.header_value() == f"JobCtrl/{ua.version}"
 
 
+def test_persisted_discovery_identity_is_used_when_environment_is_absent(monkeypatch) -> None:
+    monkeypatch.delenv(UA_PRODUCT_ENV, raising=False)
+    monkeypatch.delenv(UA_CONTACT_ENV, raising=False)
+
+    ua = resolve_honest_user_agent({
+        "crawl_user_agent": {
+            "product": "JobCtrlResearch",
+            "contact": "ops@example.test",
+        }
+    })
+
+    assert ua.product == "JobCtrlResearch"
+    assert ua.contact_url == "ops@example.test"
+
+
 def test_gateway_default_ua_reflects_the_owner_override(monkeypatch) -> None:
     monkeypatch.setenv(UA_PRODUCT_ENV, "AcmeJobBot")
     monkeypatch.setenv(UA_CONTACT_ENV, "https://acme.example/bot")

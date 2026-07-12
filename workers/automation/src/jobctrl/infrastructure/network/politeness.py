@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator
@@ -60,7 +61,10 @@ UA_CONTACT_ENV = "JOBCTRL_CRAWL_UA_CONTACT"
 """Env override for the honest-UA contact. Set empty to drop the contact suffix."""
 
 
-def resolve_honest_user_agent() -> HonestUserAgent:
+def resolve_honest_user_agent(
+    search_cfg: Mapping[str, object] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> HonestUserAgent:
     """The effective honest outbound identity, with owner env overrides applied.
 
     Starts from :func:`default_honest_user_agent` (``JobCtrl/<version>
@@ -73,9 +77,25 @@ def resolve_honest_user_agent() -> HonestUserAgent:
     impersonates a browser; owners should review the effective value before real
     crawls (see ``docs/user/configuration.md``)."""
     base = default_honest_user_agent()
-    product = (os.environ.get(UA_PRODUCT_ENV) or "").strip() or base.product
-    contact_override = os.environ.get(UA_CONTACT_ENV)
-    contact = base.contact_url if contact_override is None else (contact_override.strip() or None)
+    source = env if env is not None else os.environ
+    if search_cfg is None:
+        from jobctrl import config
+
+        search_cfg = config.load_search_config()
+    crawl_user_agent = search_cfg.get("crawl_user_agent") if search_cfg else None
+    crawl_user_agent = crawl_user_agent if isinstance(crawl_user_agent, Mapping) else {}
+    configured_product = str(crawl_user_agent.get("product") or "").strip()
+    configured_contact = crawl_user_agent.get("contact")
+    if UA_PRODUCT_ENV in source:
+        product = source.get(UA_PRODUCT_ENV, "").strip() or base.product
+    else:
+        product = configured_product or base.product
+    if UA_CONTACT_ENV in source:
+        contact = source.get(UA_CONTACT_ENV, "").strip() or None
+    elif configured_contact is not None:
+        contact = str(configured_contact).strip() or None
+    else:
+        contact = base.contact_url
     return HonestUserAgent(product=product, version=base.version, contact_url=contact)
 
 

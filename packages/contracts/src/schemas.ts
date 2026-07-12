@@ -3510,7 +3510,13 @@ export interface DashboardSettings {
   preferredModels: Partial<Record<ProviderId, string>>;
 }
 
-export const SETTING_ACTIVATIONS = ["live", "next_poll", "restart"] as const;
+export const SETTING_ACTIVATIONS = [
+  "live",
+  "next_poll",
+  "next_source_family",
+  "next_run",
+  "restart",
+] as const;
 export type SettingActivation = (typeof SETTING_ACTIVATIONS)[number];
 
 export type EffectiveSetting<T> =
@@ -3754,6 +3760,11 @@ export const DiscoverySettingsUpdateRequestSchema = z
     hoursOld: z.coerce.number().int().min(1).max(8760).optional(),
     schedulingEnabled: z.boolean().optional(),
     scheduleCron: z.string().min(1).optional(),
+    roleFilterMode: z.enum(["auto", "deterministic", "llm"]).optional(),
+    roleFilterModel: z.string().trim().max(160).nullable().optional(),
+    maxParallelFamilies: z.coerce.number().int().min(1).max(4).optional(),
+    crawlUserAgentProduct: z.string().trim().min(1).max(80).optional(),
+    crawlUserAgentContact: z.string().trim().max(240).optional(),
   })
   .strict();
 export type DiscoverySettingsUpdateRequest = z.infer<typeof DiscoverySettingsUpdateRequestSchema>;
@@ -3764,12 +3775,39 @@ export interface DiscoverySettings {
   hoursOld: number;
   schedulingEnabled: boolean;
   scheduleCron: string;
+  roleFilterMode: "auto" | "deterministic" | "llm";
+  roleFilterModel: string | null;
+  maxParallelFamilies: number;
+  crawlUserAgentProduct: string;
+  crawlUserAgentContact: string;
   source: "database";
+}
+
+export interface EffectiveDiscoverySettings {
+  boards: EffectiveSetting<DiscoverySettings["boards"]>;
+  resultsPerSite: EffectiveSetting<number>;
+  hoursOld: EffectiveSetting<number>;
+  schedulingEnabled: EffectiveSetting<boolean>;
+  scheduleCron: EffectiveSetting<string>;
+  roleFilterMode: EffectiveSetting<DiscoverySettings["roleFilterMode"]>;
+  roleFilterModel: EffectiveSetting<string | null>;
+  maxParallelFamilies: EffectiveSetting<number>;
+  crawlUserAgentProduct: EffectiveSetting<string>;
+  crawlUserAgentContact: EffectiveSetting<string>;
 }
 
 export interface DiscoverySettingsResponse {
   ok: true;
   settings: DiscoverySettings;
+  effectiveSettings: EffectiveDiscoverySettings;
+}
+
+export interface DiscoverySettingManagedByEnvironmentResponse {
+  ok: false;
+  error: "setting_managed_by_environment";
+  field: "roleFilterMode" | "roleFilterModel" | "maxParallelFamilies" | "crawlUserAgentProduct" | "crawlUserAgentContact";
+  source: "environment";
+  message: string;
 }
 
 export interface CredentialsResponse {

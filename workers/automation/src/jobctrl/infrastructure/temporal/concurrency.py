@@ -89,5 +89,17 @@ def max_parallel_discovery_families_from_env(env: Mapping[str, str] | None = Non
         return DEFAULT_MAX_PARALLEL_DISCOVERY_FAMILIES
 
 
+def resolved_max_parallel_discovery_families(
+    search_cfg: Mapping[str, object],
+    active_activity_slots: int,
+) -> int:
+    """Bound the next-run fanout by policy, safety cap, and active worker slots."""
+    try:
+        configured = int(search_cfg.get("max_parallel_families") or 1)
+    except (TypeError, ValueError):
+        configured = DEFAULT_MAX_PARALLEL_DISCOVERY_FAMILIES
+    return min(4, max(1, configured), max(1, int(active_activity_slots)))
+
+
 def activity_executor_max_workers(max_concurrent_activities: int) -> int:
     return max(1, int(max_concurrent_activities)) + 2

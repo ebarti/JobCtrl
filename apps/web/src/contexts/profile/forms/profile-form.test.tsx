@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   sampleProfileResponse,
-  sampleSettingsResponse,
 } from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { renderWithProviders } from "../../../test/render.js";
@@ -99,43 +98,27 @@ describe("<ProfileForm>", () => {
       <ProfileForm
         initial={sampleProfileResponse}
         section="preferences"
-        settings={sampleSettingsResponse.settings}
       />,
     );
 
     expect(await screen.findByRole("heading", { name: "Application configurations" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Location filter")).toHaveValue("Remote");
+    expect(screen.queryByLabelText("Location filter")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Tailoring controls" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Target search" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Target tracks" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
   });
 
-  it("saves the Preferences location filter through settings", async () => {
-    const user = userEvent.setup();
-    const updateProfile = vi.fn(async () => sampleProfileResponse);
-    const updateSettings = vi.fn(async (request) => ({
-      ...sampleSettingsResponse,
-      settings: { ...sampleSettingsResponse.settings, ...request },
-    }));
+  it("does not expose the legacy dashboard location filter in Preferences", async () => {
     renderWithProviders(
       <ProfileForm
         initial={sampleProfileResponse}
         section="preferences"
-        settings={sampleSettingsResponse.settings}
       />,
-      {
-        ports: buildTestPorts({ api: { updateProfile, updateSettings } }),
-      },
     );
 
-    const locationFilter = await screen.findByLabelText("Location filter");
-    await user.clear(locationFilter);
-    await user.type(locationFilter, "Barcelona, Spain");
-    await user.click(screen.getByRole("button", { name: /^save all$/i }));
-
-    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ locationFilter: "Barcelona, Spain" }));
-    expect(updateProfile).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Location filter")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Target location 1")).not.toBeInTheDocument();
   });
 
   it("renders target search as a discovery settings section", async () => {
