@@ -389,28 +389,34 @@ coverage notes, safe operator notes, and safe control metadata. The control
 metadata distinguishes fixed local/public sources from the user-owned
 Levels.fyi and Glassdoor preferences and lists only the permitted access-mode
 choices. It does not return credentials, raw provider payloads, private-account
-state, local paths, scraped salary data, feed URLs, or salary observations.
+state, local paths, feed URLs, or salary observations.
 
 `PATCH /v1/compensation/sources` persists one user-owned source preference in
 the local dashboard settings file and returns the refreshed registry. A
 Levels.fyi update contains `sourceId: "levels_fyi"`, `enabled`, `accessMode`,
 and `europeCoverageConfirmed`; a Glassdoor update contains
 `sourceId: "glassdoor"`, `enabled`, and `accessMode`. Enabling Levels.fyi is
-rejected unless the access mode is `licensed_api`, `licensed_data_feed`, or
-`enterprise_mcp` and Europe coverage is confirmed. Enabling Glassdoor is
-rejected unless the access mode is `partner_api` or `written_permission`.
+accepted with tokenless `public_markdown` and no coverage confirmation. The
+`licensed_api`, `licensed_data_feed`, and `enterprise_mcp` modes still require
+Europe coverage confirmation. Enabling Glassdoor is rejected unless the access
+mode is `partner_api` or `written_permission`.
 Disabling either source remains allowed and takes precedence over a legacy
 environment-variable configuration.
 
 The registry read and preference write are network-free. They do not fetch,
-scrape, cache, or return provider payloads. The registry lists posted salary
+cache, or return provider payloads. The registry lists posted salary
 text, Euro Top Tech, Levels.fyi, Glassdoor, and the temporary manual
 reported-compensation import as safe policy entries. An explicit saved
 preference is the source-policy gate for Levels.fyi or Glassdoor. Until a
 preference exists, `JOBCTRL_LEVELS_FYI_ACCESS_MODE`,
 `JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE`, and
 `JOBCTRL_GLASSDOOR_ACCESS_MODE` retain their compatibility behavior.
-When available, refresh paths automatically load licensed Levels.fyi rows from
+When `public_markdown` is enabled, refresh paths derive public
+job-family/location routes from the current jobs, read Levels.fyi's documented
+Markdown representation, and fall back to the same public page's structured
+data when the Markdown response is empty. Requests need no credential, and
+derived evidence carries the provider-required attribution and canonical URL.
+When a licensed mode is enabled, refresh paths load Levels.fyi rows from
 `JOBCTRL_LEVELS_FYI_OBSERVATIONS_PATH` or
 `JOBCTRL_LEVELS_FYI_OBSERVATIONS_URL` and Glassdoor rows from
 `JOBCTRL_GLASSDOOR_OBSERVATIONS_PATH` or

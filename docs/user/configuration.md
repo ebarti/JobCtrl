@@ -454,24 +454,34 @@ does not revoke Google's server-side grant.
 ## Compensation Sources
 
 **Settings → General → Compensation sources** records local access policy for
-Levels.fyi and Glassdoor; it is not a provider connection and does not fetch or
-store a feed. Choose only the access basis you actually have and confirm Europe
-coverage for Levels.fyi when applicable. The policy is stored in
-`dashboard.json` and gates the TypeScript API and Python refresh worker. Once
-saved, it overrides the compatibility environment-variable gate; before that,
-the variables below remain the fallback.
+Levels.fyi and Glassdoor. Saving this policy is network-free and does not fetch
+or store a feed. Levels.fyi defaults to **Public Markdown**, which needs no API
+key or token. When enabled, a later compensation refresh derives
+job-family/location pages from your current jobs, reads the provider-published
+`.md` salary route, and falls back to the same public page's structured data
+when a location Markdown response is empty. Derived evidence carries
+`Data source: Levels.fyi (https://www.levels.fyi)` and links to the canonical
+salary page.
 
-Enabling a source does not obtain a license, create permission, bypass provider
-controls, or scrape a provider website. You must still supply an authorized
-JSON or CSV feed using the corresponding path or URL variable. Turning the
-source off in Settings prevents the worker from loading that feed even when an
-access-mode environment variable is present.
+Licensed Levels.fyi API, data-feed, and enterprise MCP modes remain available.
+Those modes require the configured agreement to cover Europe and use the JSON
+or CSV path/URL variables below. Glassdoor continues to require partner API or
+written-permission access. No mode uses private endpoints or bypasses login,
+paywall, rate-limit, or other provider controls.
+
+Choose only the access basis you actually have. The choice is stored locally in
+`dashboard.json` and consumed by both the
+TypeScript API and Python compensation refresh worker. Once you save a source
+preference, it overrides the compatibility environment-variable gate for that
+source; before that, the variables below remain the fallback. Turning a source
+off prevents future refreshes from loading it.
 
 | Variable | What it does |
 | --- | --- |
-| `JOBCTRL_LEVELS_FYI_ACCESS_MODE` | Compatibility fallback for the Levels.fyi access basis until an explicit Settings preference exists. |
-| `JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE` | Compatibility fallback for explicit Levels.fyi Europe coverage confirmation. |
-| `JOBCTRL_LEVELS_FYI_OBSERVATIONS_PATH` / `JOBCTRL_LEVELS_FYI_OBSERVATIONS_URL` | JSON or CSV observations feed. |
+| `JOBCTRL_LEVELS_FYI_ACCESS_MODE` | Compatibility fallback until a Settings preference exists. Use `public_markdown` for tokenless public pages or a listed licensed mode for an authorized feed. |
+| `JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE` | Compatibility fallback for Europe coverage confirmation in licensed Levels.fyi modes; not required for `public_markdown`. |
+| `JOBCTRL_LEVELS_FYI_OBSERVATIONS_PATH` / `JOBCTRL_LEVELS_FYI_OBSERVATIONS_URL` | Optional authorized JSON or CSV observations feed for licensed modes. Not used by `public_markdown`. |
+| `JOBCTRL_LEVELS_FYI_API_TOKEN` / `JOBCTRL_LEVELS_FYI_API_KEY` / `JOBCTRL_LEVELS_FYI_TOKEN` | Optional bearer credential aliases for a licensed URL feed. Public Markdown never reads or requires them. |
 | `JOBCTRL_GLASSDOOR_ACCESS_MODE` | Compatibility fallback for the Glassdoor access basis until an explicit Settings preference exists. |
 | `JOBCTRL_GLASSDOOR_OBSERVATIONS_PATH` / `JOBCTRL_GLASSDOOR_OBSERVATIONS_URL` | JSON or CSV observations feed. |
 

@@ -136,12 +136,13 @@ SOURCE_DISPLAY_NAMES: dict[MarketSourceId, str] = {
 }
 SOURCE_DEFAULT_SNAPSHOT_VERSION = "reported-compensation-import-v1"
 SOURCE_DEFAULT_ATTRIBUTION: dict[MarketSourceId, str] = {
-    "levels_fyi": "Levels.fyi reported compensation data",
+    "levels_fyi": "Data source: Levels.fyi (https://www.levels.fyi)",
     "glassdoor": "Glassdoor reported compensation data",
     "manual_reported_compensation": "Manual reported compensation import",
     "euro_top_tech": "Euro Top Tech public crowdsourced compensation data",
     "posted_salary_text": "Employer-posted salary text captured by JobCtrl",
 }
+LEVELS_FYI_MARKET_AGGREGATE_COMPANY = "Levels.fyi market aggregate"
 UNSAFE_SOURCE_TEXT_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
@@ -448,7 +449,9 @@ def estimate_market_compensation(
             normalized_role=normalized_role,
         )
 
-    component_rows = tuple(row for row in observations if row.source_id in MARKET_SOURCE_IDS and row.component == component_value)
+    component_rows = tuple(
+        row for row in observations if row.source_id in MARKET_SOURCE_IDS and row.component == component_value
+    )
     if not component_rows:
         insufficient_reasons.append("missing_reported_observation")
         factors.append(_factor("component", 0.0, f"No reported compensation observations use {component_value}."))
@@ -594,11 +597,15 @@ def estimate_market_compensation(
             _factor("company", company_score, f"Reported rows matched company {company}."),
             _factor("role", role_score, f"Reported rows matched role {title}."),
             _factor("level", level_score, f"Level support: {inferred_level}."),
-            _factor("location", location_score, "Location compatibility was evaluated but company-role evidence is primary."),
+            _factor(
+                "location", location_score, "Location compatibility was evaluated but company-role evidence is primary."
+            ),
             _factor("component", 1.0, f"Component {component_value} matches the reported compensation rows."),
             _factor("freshness", freshness_score, "Reported source snapshots are inside the freshness window."),
             _factor("sample", sample_score, f"Reported compensation sample count: {sample_count}."),
-            _factor("agreement", agreement_score, "Selected reported compensation rows are within dispersion tolerance."),
+            _factor(
+                "agreement", agreement_score, "Selected reported compensation rows are within dispersion tolerance."
+            ),
             _factor("trimodal_tier", tier_score, f"Company tier context: {company_tier}."),
         ]
     )
@@ -611,7 +618,16 @@ def estimate_market_compensation(
         insufficient_reasons.append("weak_level_match")
 
     confidence_score = round(
-        min(company_score, role_score, level_score, location_score, freshness_score, sample_score, agreement_score, tier_score),
+        min(
+            company_score,
+            role_score,
+            level_score,
+            location_score,
+            freshness_score,
+            sample_score,
+            agreement_score,
+            tier_score,
+        ),
         2,
     )
     confidence_interval_minimum, confidence_interval_maximum = _confidence_interval(
@@ -835,7 +851,8 @@ def _select_rows(
     exact = [
         row
         for row in rows
-        if _company_score(normalized_company, row.company_name) >= 0.95 and _role_score(normalized_role, row.role_title) >= 0.72
+        if _company_score(normalized_company, row.company_name) >= 0.95
+        and _role_score(normalized_role, row.role_title) >= 0.72
     ]
     if exact:
         return exact, "exact_company_role", None
@@ -843,7 +860,8 @@ def _select_rows(
     adjacent = [
         row
         for row in rows
-        if _company_score(normalized_company, row.company_name) >= 0.95 and _role_score(normalized_role, row.role_title) >= 0.30
+        if _company_score(normalized_company, row.company_name) >= 0.95
+        and _role_score(normalized_role, row.role_title) >= 0.30
     ]
     if adjacent:
         return adjacent, "company_adjacent_role", "company_role_fallback"
@@ -855,7 +873,8 @@ def _select_rows(
         tier_rows = [
             row
             for row in rows
-            if row.company_tier == company_tier and _role_score(normalized_role, row.role_title) >= 0.72
+            if row.company_tier == company_tier
+            and _role_score(normalized_role, row.role_title) >= 0.72
             and _fallback_level_score(target_level, row) >= 0.78
         ]
         if tier_rows:
@@ -870,7 +889,11 @@ def _select_rows(
         and _location_score(location, row.location) >= 0.78
     ]
     if same_location_role:
-        return same_location_role, "same_location_role_fallback", "company_role_fallback"
+        return (
+            _prefer_levels_fyi_market_aggregate(same_location_role),
+            "same_location_role_fallback",
+            "company_role_fallback",
+        )
 
     baseline = [
         row
@@ -878,9 +901,22 @@ def _select_rows(
         if _fallback_level_score(target_level, row) >= 0.78 and _location_score(location, row.location) >= 0.5
     ]
     if baseline:
-        return baseline, "market_baseline_fallback", "company_role_fallback"
+        return _prefer_levels_fyi_market_aggregate(baseline), "market_baseline_fallback", "company_role_fallback"
 
     return [], "none", None
+
+
+def _prefer_levels_fyi_market_aggregate(
+    rows: list[ReportedCompensationObservation],
+) -> list[ReportedCompensationObservation]:
+    aggregates = [
+        row for row in rows if row.source_id == "levels_fyi" and row.company_name == LEVELS_FYI_MARKET_AGGREGATE_COMPANY
+    ]
+    if not aggregates:
+        return rows
+    return [
+        row for row in rows if row.source_id != "levels_fyi" or row.company_name == LEVELS_FYI_MARKET_AGGREGATE_COMPANY
+    ]
 
 
 def _snapshot(row: ReportedCompensationObservation) -> MarketSourceSnapshot:
@@ -941,7 +977,22 @@ def _safe_source_url(value: str | None) -> str | None:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
         return None
     lowered = text.casefold()
-    if any(term in lowered for term in ("/users/", "\\users\\", "file://", "credential", "secret", "token", "password", "api_key", "api key", "api-key", "private")):
+    if any(
+        term in lowered
+        for term in (
+            "/users/",
+            "\\users\\",
+            "file://",
+            "credential",
+            "secret",
+            "token",
+            "password",
+            "api_key",
+            "api key",
+            "api-key",
+            "private",
+        )
+    ):
         return None
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
 
@@ -1143,6 +1194,8 @@ def _level_score(expected: str | None, observed: str | None) -> float:
 def _normalize_level(value: str | None) -> str:
     text = str(value or "").casefold()
     tokens = set(re.findall(r"[a-z0-9]+", text))
+    if "all" in tokens and {"level", "levels"} & tokens:
+        return "unknown"
     if {"ceo", "chief", "cio", "ciso", "coo", "cpo", "cto", "executive", "president", "vice", "vp"} & tokens:
         return "executive"
     if {"staff", "principal", "lead", "director", "head", "l6", "l7", "l8"} & tokens:
@@ -1159,6 +1212,8 @@ def _normalize_level(value: str | None) -> str:
 
 
 def _fallback_level_score(target_level: str, row: ReportedCompensationObservation) -> float:
+    if re.fullmatch(r"all\s+levels?", str(row.level_label or "").strip(), re.IGNORECASE):
+        return 0.5 if target_level == "executive" else 0.78
     observed_level = _normalize_level(row.level_label)
     if observed_level == "unknown":
         observed_level = _level_from_title(row.role_title)

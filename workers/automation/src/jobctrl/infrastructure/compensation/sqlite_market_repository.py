@@ -9,7 +9,7 @@ import os
 import re
 import sqlite3
 import urllib.parse
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -26,6 +26,11 @@ from jobctrl.infrastructure.network import (
     PolitenessGateway,
     PolitenessSession,
     PolitenessSourceContext,
+)
+from jobctrl.infrastructure.compensation.levels_fyi_public import (
+    DEFAULT_LEVELS_FYI_PUBLIC_MAX_PAGES,
+    LevelsFyiPublicTarget,
+    load_levels_fyi_public_observations,
 )
 from jobctrl.domain.compensation import (
     MarketCompensationEstimate,
@@ -82,12 +87,12 @@ UNSAFE_FACTOR_REASON_TERMS = (
 EURO_TOP_TECH_DATA_ENTRIES_URL = "https://www.eurotoptech.com/api/data-entries?sort=submitted&dir=desc"
 EURO_TOP_TECH_ATTRIBUTION = "Euro Top Tech public crowdsourced compensation data (https://www.eurotoptech.com/data)"
 
-# Compensation feeds are documented public APIs / operator-configured licensed
-# feeds, so robots is exempt (D2); the politeness gateway still applies the
+# Compensation inputs are documented public pages/APIs or operator-configured
+# licensed feeds, so robots is exempt (D2); the gateway still applies the
 # honest UA, per-host pacing/concurrency, and a per-run request budget (R10).
 COMPENSATION_FEED_POLICY = SourcePolicy(
     policy_id="compensation_feed",
-    allowed_methods=(SourcePolicyMethod.FEED,),
+    allowed_methods=(SourcePolicyMethod.FEED, SourcePolicyMethod.STATIC_PAGE),
     robots_policy=RobotsPolicy.EXEMPT_DOCUMENTED_API,
     max_requests_per_run=100,
 )
@@ -133,6 +138,22 @@ def _text_feed_fetcher(
         return client.fetch_text(url, extra_headers=headers)
 
     return fetch
+
+
+def _levels_fyi_public_fetcher(
+    gateway: PolitenessGateway,
+    conn: sqlite3.Connection | None,
+    run_id: str | None,
+    opener: Any | None = None,
+) -> Callable[[str], str | None]:
+    client = _feed_client(gateway, "levels_fyi", conn, run_id, opener=opener)
+
+    def fetch(url: str) -> str | None:
+        return client.fetch_text(url, extra_headers={"Accept-Encoding": "gzip"})
+
+    return fetch
+
+
 EURO_TOP_TECH_EUROPE_COUNTRIES = frozenset(
     {
         "albania",
@@ -199,12 +220,13 @@ class ReportedCompensationSourceLoad:
     observations: tuple[ReportedCompensationObservation, ...]
     local_count: int = 0
     levels_fyi_count: int = 0
+    levels_fyi_public_count: int = 0
     glassdoor_count: int = 0
     euro_top_tech_count: int = 0
 
     @property
     def licensed_count(self) -> int:
-        return self.levels_fyi_count + self.glassdoor_count
+        return max(0, self.levels_fyi_count - self.levels_fyi_public_count) + self.glassdoor_count
 
 
 class SqliteMarketCompensationRepository:
@@ -558,6 +580,8 @@ def load_reported_compensation_observations(
 def load_default_reported_compensation_observations(
     *,
     local_observations_path: Path | str | None = None,
+    levels_fyi_targets: Iterable[LevelsFyiPublicTarget] = (),
+    levels_fyi_public_max_pages: int = DEFAULT_LEVELS_FYI_PUBLIC_MAX_PAGES,
     include_eurotoptech: bool = True,
     eurotoptech_max_pages: int = 10,
     env: dict[str, str] | None = None,
@@ -586,7 +610,7 @@ def load_default_reported_compensation_observations(
         default_source_id=None,
         text_fetch=_text_feed_fetcher(active_gateway, "local", recorder_conn, run_id, opener=opener),
     )
-    levels_fyi = _load_configured_provider_observations(
+    levels_fyi_licensed = _load_configured_provider_observations(
         source_env,
         provider="levels_fyi",
         text_fetch=_text_feed_fetcher(active_gateway, "levels_fyi", recorder_conn, run_id, opener=opener),
@@ -613,6 +637,22 @@ def load_default_reported_compensation_observations(
             Path.home() / ".jobctrl" / "compensation" / "levels-fyi.csv",
         ),
     )
+    levels_fyi_public_fetch = _levels_fyi_public_fetcher(
+        active_gateway,
+        recorder_conn,
+        run_id,
+        opener=opener,
+    )
+    levels_fyi_public = (
+        load_levels_fyi_public_observations(
+            levels_fyi_targets,
+            fetch_text=levels_fyi_public_fetch,
+            max_pages=levels_fyi_public_max_pages,
+        )
+        if str(source_env.get("JOBCTRL_LEVELS_FYI_ACCESS_MODE") or "").strip().casefold() == "public_markdown"
+        else ()
+    )
+    levels_fyi = (*levels_fyi_public, *levels_fyi_licensed)
     glassdoor = _load_configured_provider_observations(
         source_env,
         provider="glassdoor",
@@ -654,6 +694,7 @@ def load_default_reported_compensation_observations(
         observations=tuple(observations),
         local_count=len(local),
         levels_fyi_count=len(levels_fyi),
+        levels_fyi_public_count=len(levels_fyi_public),
         glassdoor_count=len(glassdoor),
         euro_top_tech_count=len(eurotoptech),
     )
@@ -668,9 +709,7 @@ def _compensation_source_environment(
 
     effective = dict(env)
     resolved_settings_path = Path(
-        settings_path
-        or effective.get("JOBCTRL_DASHBOARD_CONFIG_PATH")
-        or APP_DIR / "dashboard.json"
+        settings_path or effective.get("JOBCTRL_DASHBOARD_CONFIG_PATH") or APP_DIR / "dashboard.json"
     )
     preferences = _read_compensation_source_preferences(resolved_settings_path)
     _apply_compensation_source_preference(
@@ -701,11 +740,7 @@ def _read_compensation_source_preferences(path: Path) -> dict[str, dict[str, Any
         raw_sources = parsed.get("compensationSources")
     if not isinstance(raw_sources, dict):
         return {}
-    return {
-        str(source_id): value
-        for source_id, value in raw_sources.items()
-        if isinstance(value, dict)
-    }
+    return {str(source_id): value for source_id, value in raw_sources.items() if isinstance(value, dict)}
 
 
 def _apply_compensation_source_preference(
@@ -776,9 +811,7 @@ def _load_optional_observation_ref(
 ) -> tuple[ReportedCompensationObservation, ...]:
     if ref is None or str(ref).strip() == "":
         return ()
-    return _load_observation_ref(
-        str(ref), default_source_id=default_source_id, auth_token=None, text_fetch=text_fetch
-    )
+    return _load_observation_ref(str(ref), default_source_id=default_source_id, auth_token=None, text_fetch=text_fetch)
 
 
 def _load_configured_provider_observations(
@@ -809,7 +842,9 @@ def _load_configured_provider_observations(
     if not refs:
         return ()
 
-    auth_token = next((str(env.get(var) or "").strip() for var in auth_token_vars if str(env.get(var) or "").strip()), None)
+    auth_token = next(
+        (str(env.get(var) or "").strip() for var in auth_token_vars if str(env.get(var) or "").strip()), None
+    )
     observations: list[ReportedCompensationObservation] = []
     for ref in refs:
         try:
@@ -905,7 +940,9 @@ def _cursor_url(base_url: str, cursor: str) -> str:
     query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
     query = [(key, value) for key, value in query if key != "cursor"]
     query.append(("cursor", cursor))
-    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query), parts.fragment))
+    return urllib.parse.urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query), parts.fragment)
+    )
 
 
 def _euro_top_tech_observation(data: dict[str, Any]) -> ReportedCompensationObservation | None:
@@ -1005,7 +1042,9 @@ def _observation_from_dict(
         level_label=_text(_pick(data, "level_label", "levelLabel", "level", "seniority"), default=None),
         company_tier=_company_tier(_pick(data, "company_tier", "companyTier", "tier")),
         release_year=_nullable_int(_pick(data, "release_year", "releaseYear", "reported_year", "reportedYear")),
-        snapshot_version=_text(_pick(data, "snapshot_version", "snapshotVersion"), default="reported-compensation-import-v1"),
+        snapshot_version=_text(
+            _pick(data, "snapshot_version", "snapshotVersion"), default="reported-compensation-import-v1"
+        ),
         sample_count=_nullable_int(_pick(data, "sample_count", "sampleCount", "samples")) or 1,
         attribution=_text(_pick(data, "attribution"), default=None),
         source_url=_safe_evidence_url(
@@ -1368,7 +1407,10 @@ def _safe_metadata_text(value: Any) -> str | None:
     if text is None:
         return None
     lowered = text.casefold()
-    if any(pattern in lowered for pattern in ("rawproviderpayload", "credential", "secret", "/users/", "\\users\\", "private")):
+    if any(
+        pattern in lowered
+        for pattern in ("rawproviderpayload", "credential", "secret", "/users/", "\\users\\", "private")
+    ):
         return None
     return text
 

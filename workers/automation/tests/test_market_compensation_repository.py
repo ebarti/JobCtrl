@@ -14,6 +14,7 @@ from jobctrl.domain.compensation import (
     parse_posted_compensation,
 )
 from jobctrl.infrastructure.compensation import (
+    LevelsFyiPublicTarget,
     SqliteMarketCompensationRepository,
     SqlitePostedCompensationRepository,
     load_default_reported_compensation_observations,
@@ -210,7 +211,9 @@ def test_backfill_is_idempotent_and_preserves_existing_salary_and_posted_facts(
     assert repo.backfill_from_jobs((_levels(), _glassdoor()), estimated_at="2026-06-19T10:00:00Z") == 1
     assert repo.backfill_from_jobs((_levels(), _glassdoor()), estimated_at="2026-06-19T10:00:00Z") == 1
 
-    market_rows = conn.execute("SELECT * FROM job_market_compensation_estimates WHERE job_url = ?", (job_url,)).fetchall()
+    market_rows = conn.execute(
+        "SELECT * FROM job_market_compensation_estimates WHERE job_url = ?", (job_url,)
+    ).fetchall()
     posted_rows = conn.execute("SELECT * FROM job_posted_compensation_facts WHERE job_url = ?", (job_url,)).fetchall()
     salary = conn.execute("SELECT salary FROM jobs WHERE url = ?", (job_url,)).fetchone()["salary"]
 
@@ -458,7 +461,9 @@ def test_importer_loads_levels_and_glassdoor_observations(tmp_path: Path) -> Non
     assert observations[0].source_url == "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer"
     assert observations[1].minimum_amount == 125_000
     assert observations[1].maximum_amount == 125_000
-    assert observations[1].source_url == "https://www.glassdoor.com/Salary/Acme-AI-Senior-Platform-Engineer-Salaries.htm"
+    assert (
+        observations[1].source_url == "https://www.glassdoor.com/Salary/Acme-AI-Senior-Platform-Engineer-Salaries.htm"
+    )
 
 
 def test_user_source_settings_enable_levels_feed_without_process_policy_env(
@@ -501,6 +506,77 @@ def test_user_source_settings_enable_levels_feed_without_process_policy_env(
 
     assert loaded.levels_fyi_count == 1
     assert [observation.source_id for observation in loaded.observations] == ["levels_fyi"]
+
+
+def test_user_source_settings_enable_tokenless_levels_public_pages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_path = tmp_path / "dashboard.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "compensation_sources": {
+                    "levels_fyi": {
+                        "enabled": True,
+                        "access_mode": "public_markdown",
+                        "europe_coverage_confirmed": False,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured_targets: list[object] = []
+    captured_public_urls: list[str] = []
+
+    def public_fetcher(*_args, **_kwargs):
+        def fetch(url: str) -> str:
+            captured_public_urls.append(url)
+            return ""
+
+        return fetch
+
+    def load_public(targets, *, fetch_text, max_pages):
+        captured_targets.extend(targets)
+        fetch_text("https://www.levels.fyi/t/software-engineer.md")
+        assert max_pages > 0
+        return (
+            ReportedCompensationObservation(
+                source_id="levels_fyi",
+                company_name="Levels.fyi market aggregate",
+                role_title="Software Engineer",
+                location="Madrid, Spain",
+                level_label="all levels",
+                minimum_amount=39_000,
+                maximum_amount=77_000,
+                sample_count=599,
+                attribution="Data source: Levels.fyi (https://www.levels.fyi)",
+                source_url="https://www.levels.fyi/t/software-engineer/locations/madrid-esp",
+            ),
+        )
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.sqlite_market_repository.load_levels_fyi_public_observations",
+        load_public,
+    )
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.sqlite_market_repository._levels_fyi_public_fetcher",
+        public_fetcher,
+    )
+
+    loaded = load_default_reported_compensation_observations(
+        levels_fyi_targets=(LevelsFyiPublicTarget("Senior Platform Engineer", "Madrid, Spain"),),
+        include_eurotoptech=False,
+        env={},
+        settings_path=settings_path,
+    )
+
+    assert len(captured_targets) == 1
+    assert captured_public_urls == ["https://www.levels.fyi/t/software-engineer.md"]
+    assert loaded.levels_fyi_count == 1
+    assert loaded.levels_fyi_public_count == 1
+    assert loaded.licensed_count == 0
 
 
 def test_user_source_settings_can_disable_an_environment_configured_feed(

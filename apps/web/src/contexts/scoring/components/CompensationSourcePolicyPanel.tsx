@@ -213,6 +213,7 @@ function CompensationSourceControls({
         sourceId: "levels_fyi",
         enabled: next.enabled,
         accessMode:
+          next.accessMode === "public_markdown" ||
           next.accessMode === "licensed_api" ||
           next.accessMode === "licensed_data_feed" ||
           next.accessMode === "enterprise_mcp"
@@ -313,7 +314,10 @@ function CompensationSourceControls({
             </FieldLabel>
             <FieldDescription id={enabledHelpId}>
               {prerequisitesMet
-                ? "Use configured rows on future compensation refreshes."
+                ? source.sourceId === "levels_fyi" &&
+                  control.accessMode === "public_markdown"
+                  ? "Read attributed public salary pages on future compensation refreshes."
+                  : "Use configured rows on future compensation refreshes."
                 : "Choose an access basis and confirm required coverage first."}
             </FieldDescription>
           </FieldContent>

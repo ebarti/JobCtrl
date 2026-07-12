@@ -294,17 +294,25 @@ export class DemoLocalCommandExecutor {
           source.control = {
             kind: "user_preference",
             enabled: false,
-            accessMode: null,
+            accessMode: sourceId === "levels_fyi" ? "public_markdown" : null,
             allowedAccessModes: sourceId === "levels_fyi"
-              ? ["licensed_api", "licensed_data_feed", "enterprise_mcp"]
+              ? [
+                  "public_markdown",
+                  "licensed_api",
+                  "licensed_data_feed",
+                  "enterprise_mcp",
+                ]
               : ["partner_api", "written_permission"],
-            europeCoverageRequired: sourceId === "levels_fyi",
+            europeCoverageRequired: false,
             europeCoverageConfirmed: false,
           };
           sources.push(source);
         }
         const control = record(source.control);
         Object.assign(control, body);
+        if (sourceId === "levels_fyi") {
+          control.europeCoverageRequired = body.accessMode !== "public_markdown";
+        }
         source.control = control as unknown as typeof source.control;
         return draft.state.readModel.discovery.compensationSources;
       }

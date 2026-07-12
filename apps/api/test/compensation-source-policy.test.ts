@@ -98,16 +98,21 @@ describe("compensation source policy", () => {
     }
   });
 
-  it("keeps licensed sources unavailable by default with explicit disabled reasons", () => {
+  it("defaults Levels.fyi to disabled tokenless public access", () => {
     const response = listCompensationSources({});
 
     expect(source(response, "levels_fyi")).toMatchObject({
       availability: "unavailable",
-      accessMode: "unavailable_until_permitted",
-      licenseStatus: "requires_license",
+      accessMode: "public_markdown",
+      licenseStatus: "permitted",
       configured: false,
       supportedFields: [],
-      disabledReason: "Requires licensed Levels.fyi access mode and explicit Europe coverage confirmation.",
+      disabledReason: "Disabled in Compensation sources settings.",
+      sourceUrl: "https://www.levels.fyi/llms.txt",
+      control: {
+        accessMode: "public_markdown",
+        europeCoverageRequired: false,
+      },
     });
     expect(source(response, "glassdoor")).toMatchObject({
       availability: "unavailable",
@@ -119,7 +124,43 @@ describe("compensation source policy", () => {
     });
   });
 
-  it("requires both permitted Levels.fyi access and explicit Europe coverage", () => {
+  it("enables public Levels.fyi pages without credentials or coverage confirmation", async () => {
+    const { app, cleanup } = withTempApp();
+    try {
+      const response = await app.inject({
+        method: "PATCH",
+        url: "/v1/compensation/sources",
+        payload: {
+          sourceId: "levels_fyi",
+          enabled: true,
+          accessMode: "public_markdown",
+          europeCoverageConfirmed: false,
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(source(response.json(), "levels_fyi")).toMatchObject({
+        availability: "available",
+        accessMode: "public_markdown",
+        configured: true,
+        licenseStatus: "permitted",
+        disabledReason: null,
+        attributionRequirement:
+          "Display Data source: Levels.fyi (https://www.levels.fyi) and preserve the canonical page URL.",
+        control: {
+          enabled: true,
+          accessMode: "public_markdown",
+          europeCoverageRequired: false,
+          europeCoverageConfirmed: false,
+        },
+      });
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("still requires explicit Europe coverage for licensed Levels.fyi modes", () => {
     const missingCoverage = listCompensationSources({
       JOBCTRL_LEVELS_FYI_ACCESS_MODE: "licensed_api",
     });
@@ -304,7 +345,7 @@ describe("compensation source policy", () => {
     }
   });
 
-  it("does not expose credentials, raw provider payloads, local paths, or scraped salary data", () => {
+  it("does not expose credentials, raw provider payloads, local paths, or salary observations", () => {
     const response = listCompensationSources({
       JOBCTRL_LEVELS_FYI_ACCESS_MODE: "licensed_data_feed",
       JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE: "1",
