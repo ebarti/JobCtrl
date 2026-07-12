@@ -16,6 +16,7 @@ changed, then add a browser/product-path check for user-visible behavior.
 | Web UI | `corepack pnpm web:check`, `corepack pnpm --filter @jobctrl/web test`, and `corepack pnpm web:build` |
 | Frontend types | `corepack pnpm --filter @jobctrl/web test-d` |
 | Browser flow | `corepack pnpm --filter @jobctrl/web e2e -- tests/<flow>.spec.ts` |
+| Public demo browser workspace | `corepack pnpm --filter @jobctrl/web e2e:demo-workspace` |
 | Python worker | `uv --project workers/automation run --extra dev ruff check .` and `uv --project workers/automation run --extra dev pytest -q` |
 | Any patch | `git diff --check` |
 
@@ -64,6 +65,16 @@ Frontend verification has four distinct jobs: logic/type correctness,
 component accessibility, route-level browser behavior, and visual consistency.
 The [Frontend QA guide](developer/qa/frontend.md) gives the commands and the
 [Browser Smoke guide](developer/qa/browser-smoke.md) gives the user paths.
+
+The dedicated demo-workspace Playwright lane starts Vite only; it must not
+start or contact the product API or SSE endpoint. It proves same-profile tab
+sharing and concurrent writes, separate-context isolation, reload persistence,
+atomic reset/blob deletion, future IndexedDB-version refusal without downgrade,
+and post-commit domain-event delivery. Unit and component tests cover injected
+quota/security fallbacks, schema revalidation, reset-epoch races, event-log
+loss, the reactive data-boundary warning, and the unchanged canonical event
+provider/invalidation router. Playwright artifacts are written outside the
+repository under the system temporary directory.
 
 <a id="token-foundation-qa-gate"></a>
 <a id="shared-primitive-qa-gate"></a>

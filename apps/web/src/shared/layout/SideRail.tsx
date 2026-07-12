@@ -17,6 +17,7 @@ import {
 } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
 
+import { useDemoWorkspace } from "../../demo/workspace/DemoWorkspaceProvider.js";
 import { cn } from "../lib/cn.js";
 import { BrandMark } from "./BrandMark.js";
 import { LegalNotice } from "./LegalNotice.js";
@@ -122,10 +123,17 @@ export function RailNav({ className, onNavigate }: RailNavProps) {
 }
 
 export function LocalModeCard() {
+  const workspace = useDemoWorkspace();
+  const text =
+    workspace.mode === "demo"
+      ? workspace.runtime.storageMode === "indexeddb"
+        ? "Demo mode — shared browser profile"
+        : "Demo mode — this tab only"
+      : "Local mode — all data stays on device";
   return (
     <div className="side-rail__footer">
       <span className="side-rail__status-dot" aria-hidden="true" />
-      <span className="side-rail__footer-text">Local mode — all data stays on device</span>
+      <span className="side-rail__footer-text">{text}</span>
     </div>
   );
 }
