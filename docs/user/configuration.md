@@ -358,10 +358,9 @@ LinkedIn profile with explicit consent, and pair or rotate the extension token.
 System browsers are never auto-detected: enabling either optional capability
 requires an explicit Chrome/Chromium executable path. The path is write-only
 and is not shown again. A source profile path is cleared after the copy request
-and is never returned, logged, or persisted. Rotating the pairing token takes
-effect immediately and disconnects existing extensions; the UI never exposes
-the token's file path. The CLI commands below remain an equivalent operator
-surface.
+and is never returned, logged, or persisted. Rotating the pairing token takes effect immediately.
+Existing extensions are disconnected; the UI never exposes the token's file
+path. The CLI commands below remain an equivalent operator surface.
 
 | Variable | Default | What it does |
 | --- | --- | --- |

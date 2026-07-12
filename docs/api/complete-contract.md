@@ -1195,7 +1195,7 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   returning a saved executable or source-profile path. The core browser is
   managed and read-only. `POST /v1/browser-capabilities/:capabilityId/enable`
   requires an explicit Chrome/Chromium executable path for optional
-  capabilities; the path is write-only. The matching `/disable` route applies
+  capabilities. The path is write-only. The matching `/disable` route applies
   immediately. `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy`
   requires explicit consent, clears the source path after the request, and
   never returns, logs, or persists it. JobCtrl does not auto-detect or adopt a

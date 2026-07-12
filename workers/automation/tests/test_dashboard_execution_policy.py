@@ -45,10 +45,10 @@ def test_saved_execution_policy_is_used_when_environment_is_absent(tmp_path, mon
 
 
 def test_explicit_tailoring_request_stays_ahead_of_environment_and_saved_policy(tmp_path, monkeypatch) -> None:
-    _dashboard(tmp_path, monkeypatch, {"tailoring_generator_models": ["saved:model"]})
-    monkeypatch.setenv("TAILORING_GENERATOR_MODELS", "env:model")
+    _dashboard(tmp_path, monkeypatch, {"tailoring_generator_models": ["claude:sonnet"]})
+    monkeypatch.setenv("TAILORING_GENERATOR_MODELS", "codex:gpt-5.5")
 
-    policy = _build_llm_policy(tailor_models=("request:model",), tailor_judge_min_score=0.7)
+    policy = _build_llm_policy(tailor_models=("google:gemini-2.5-pro",), tailor_judge_min_score=0.7)
 
-    assert policy.candidate_models == ("request:model",)
+    assert policy.candidate_models == ("google:gemini-2.5-pro",)
     assert policy.judge_min_score == 0.7

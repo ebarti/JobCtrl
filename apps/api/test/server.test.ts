@@ -251,7 +251,8 @@ describe("local TypeScript API", () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:8765");
-    expect(response.json()).toMatchObject({
+    const health = response.json();
+    expect(health).toMatchObject({
       ok: true,
       appDir: tempDir,
       dbPath: options.dbPath,
@@ -262,12 +263,6 @@ describe("local TypeScript API", () => {
         outputTokens: 0,
         estimatedUsd: 0,
         dailyBudgetUsd: 12.5,
-        analysisLegs: ["claude", "codex", "google"],
-        tailoringGeneratorModels: null,
-        tailoringJudgeModel: null,
-        tailoringJudgeMinScore: 0.82,
-        applyMaxBudgetUsd: 5,
-        applyTimeoutSeconds: 900,
         remainingUsd: 12.5,
         unlimited: false,
       },
@@ -278,6 +273,16 @@ describe("local TypeScript API", () => {
         heartbeat: null,
       },
     });
+    for (const policyKey of [
+      "analysisLegs",
+      "tailoringGeneratorModels",
+      "tailoringJudgeModel",
+      "tailoringJudgeMinScore",
+      "applyMaxBudgetUsd",
+      "applyTimeoutSeconds",
+    ]) {
+      expect(health.llmSpend).not.toHaveProperty(policyKey);
+    }
 
     await app.close();
   });

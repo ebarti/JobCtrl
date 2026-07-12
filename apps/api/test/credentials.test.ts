@@ -6,7 +6,7 @@ import {
   type CredentialBatchOperation,
   type CredentialKey,
 } from "@jobctrl/contracts";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   CredentialStoreUnavailableError,
@@ -74,8 +74,13 @@ const PRE_BATCH_STATE = new Map<CredentialKey, string>([
 ]);
 
 describe("KeychainCredentialStore", () => {
+  beforeEach(() => {
+    for (const key of CredentialKeys) vi.stubEnv(key, "");
+  });
+
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   it("reports environment ownership separately and rejects ineffective writes without echoing values", async () => {
