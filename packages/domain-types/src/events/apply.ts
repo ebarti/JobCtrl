@@ -145,3 +145,104 @@ export function createApplicationEmailFeedbackIngested(
 ): ApplicationEmailFeedbackIngested {
   return createDomainEvent("ApplicationEmailFeedbackIngested", tenantId, payload);
 }
+
+// -- ApplyReviewDecisionRecorded -------------------------------------------
+
+export type ApplyReviewDecisionValue =
+  | "approve_submit"
+  | "approve_dry_run"
+  | "defer"
+  | "decline"
+  | "reset";
+
+export interface ApplyReviewDecisionRecordedPayload {
+  readonly jobKey: string;
+  readonly decisionId: string;
+  readonly decision: ApplyReviewDecisionValue;
+  readonly reasonPresent: boolean;
+  readonly materialsGeneration: number | null;
+  readonly profileVersion: number | null;
+  readonly applicationUrl: string | null;
+  readonly partialOverrideRunId: string | null;
+  readonly emailRecipient: string | null;
+  readonly emailAttachmentArtifactId: string | null;
+}
+
+export type ApplyReviewDecisionRecorded = DomainEvent<
+  "ApplyReviewDecisionRecorded",
+  ApplyReviewDecisionRecordedPayload
+>;
+
+export function createApplyReviewDecisionRecorded(
+  tenantId: TenantId,
+  payload: ApplyReviewDecisionRecordedPayload,
+): ApplyReviewDecisionRecorded {
+  return createDomainEvent("ApplyReviewDecisionRecorded", tenantId, payload);
+}
+
+// -- ApplicationOutcomeRecorded --------------------------------------------
+
+export type ApplicationOutcomeKindValue =
+  | "applied_confirmation"
+  | "recruiter_reply"
+  | "interview"
+  | "assessment"
+  | "rejection"
+  | "offer"
+  | "withdrawn"
+  | "bounced"
+  | "no_response"
+  | "unknown";
+
+export type ApplicationOutcomeSourceValue = "manual" | "email_suggestion";
+
+export interface ApplicationOutcomeRecordedPayload {
+  readonly jobKey: string;
+  readonly outcomeId: string;
+  readonly kind: ApplicationOutcomeKindValue;
+  readonly source: ApplicationOutcomeSourceValue;
+  readonly occurredAt: string;
+  readonly suggestionId: string | null;
+  readonly evidenceId: string | null;
+  readonly interviewPrepGeneration: number | null;
+  readonly notePresent: boolean;
+}
+
+export type ApplicationOutcomeRecorded = DomainEvent<
+  "ApplicationOutcomeRecorded",
+  ApplicationOutcomeRecordedPayload
+>;
+
+export function createApplicationOutcomeRecorded(
+  tenantId: TenantId,
+  payload: ApplicationOutcomeRecordedPayload,
+): ApplicationOutcomeRecorded {
+  return createDomainEvent("ApplicationOutcomeRecorded", tenantId, payload);
+}
+
+// -- OutcomeSuggestionDecided ----------------------------------------------
+
+export type OutcomeSuggestionDecisionValue = "accept" | "correct" | "ignore";
+
+export interface OutcomeSuggestionDecidedPayload {
+  readonly jobKey: string;
+  readonly suggestionId: string;
+  readonly evidenceId: string | null;
+  readonly decision: OutcomeSuggestionDecisionValue;
+  readonly outcomeId: string | null;
+  readonly outcomeKind: ApplicationOutcomeKindValue | null;
+  readonly notePresent: boolean;
+  readonly reasonPresent: boolean;
+}
+
+export type OutcomeSuggestionDecided = DomainEvent<
+  "OutcomeSuggestionDecided",
+  OutcomeSuggestionDecidedPayload
+>;
+
+export function createOutcomeSuggestionDecided(
+  tenantId: TenantId,
+  payload: OutcomeSuggestionDecidedPayload,
+): OutcomeSuggestionDecided {
+  return createDomainEvent("OutcomeSuggestionDecided", tenantId, payload);
+}

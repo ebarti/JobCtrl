@@ -204,7 +204,7 @@ const READ_METHODS = new Set<keyof ApiClientPort>(
 );
 
 describe("DemoApiClientAdapter", () => {
-  it("covers every port member with a populated read or an intentional mutation error", async () => {
+  it("covers every port member with a populated read, local command, or intentional later-phase error", async () => {
     const { adapter } = await createAdapter();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     try {
@@ -222,13 +222,16 @@ describe("DemoApiClientAdapter", () => {
       const manifestMethods = Object.keys(
         DEMO_CAPABILITY_MANIFEST,
       ) as (keyof ApiClientPort)[];
-      const mutationMethods = manifestMethods.filter(
+      const commandMethods = manifestMethods.filter(
         (method) => !READ_METHODS.has(method),
       );
-      expect([...READ_METHODS, ...mutationMethods].toSorted()).toEqual(
+      expect([...READ_METHODS, ...commandMethods].toSorted()).toEqual(
         manifestMethods.toSorted(),
       );
-      for (const method of mutationMethods) {
+      const intentionallyDeferred = commandMethods.filter(
+        (method) => DEMO_CAPABILITY_MANIFEST[method].class !== "browser_local",
+      );
+      for (const method of intentionallyDeferred) {
         const invoke = adapter[method] as unknown as (
           ...args: unknown[]
         ) => unknown;

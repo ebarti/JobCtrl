@@ -17,6 +17,12 @@ export {
   type JobRestoredPayload,
   type JobRestored,
   createJobRestored,
+  type JobHiddenPayload,
+  type JobHidden,
+  createJobHidden,
+  type JobUnhiddenPayload,
+  type JobUnhidden,
+  createJobUnhidden,
   type SourceLocationCandidateDiscoveredPayload,
   type SourceLocationCandidateDiscovered,
   createSourceLocationCandidateDiscovered,
@@ -192,6 +198,19 @@ export {
   type ApplySubmitIntendedPayload,
   type ApplySubmitIntended,
   createApplySubmitIntended,
+  type ApplyReviewDecisionValue,
+  type ApplyReviewDecisionRecordedPayload,
+  type ApplyReviewDecisionRecorded,
+  createApplyReviewDecisionRecorded,
+  type ApplicationOutcomeKindValue,
+  type ApplicationOutcomeSourceValue,
+  type ApplicationOutcomeRecordedPayload,
+  type ApplicationOutcomeRecorded,
+  createApplicationOutcomeRecorded,
+  type OutcomeSuggestionDecisionValue,
+  type OutcomeSuggestionDecidedPayload,
+  type OutcomeSuggestionDecided,
+  createOutcomeSuggestionDecided,
 } from "./apply.js";
 
 export {
@@ -338,7 +357,9 @@ import type {
   DiscoveryRunStarted,
   DiscoveryRunCompleted,
   DiscoveryRunFailed,
+  JobHidden,
   JobRestored,
+  JobUnhidden,
   JobUpdated,
   CanonicalJobIdentityResolved,
   DuplicateJobLinked,
@@ -390,6 +411,9 @@ import type {
   ApplyRunEventRecorded,
   ApplyRunStarted,
   ApplySubmitIntended,
+  ApplyReviewDecisionRecorded,
+  ApplicationOutcomeRecorded,
+  OutcomeSuggestionDecided,
 } from "./apply.js";
 import type {
   StageBlocked,
@@ -438,6 +462,8 @@ export type DomainEventUnion =
   | JobUpdated
   | JobDeleted
   | JobRestored
+  | JobHidden
+  | JobUnhidden
   | JobSourceObserved
   | DiscoveryRunStarted
   | DiscoveryRunCompleted
@@ -487,6 +513,9 @@ export type DomainEventUnion =
   | ApplicationEmailFeedbackIngested
   | ApplicationSubmitted
   | ApplicationFailed
+  | ApplyReviewDecisionRecorded
+  | ApplicationOutcomeRecorded
+  | OutcomeSuggestionDecided
   | StageStarted
   | StageCompleted
   | StageFailed
@@ -532,6 +561,8 @@ export const DOMAIN_EVENT_TYPES = [
   "JobUpdated",
   "JobDeleted",
   "JobRestored",
+  "JobHidden",
+  "JobUnhidden",
   "JobSourceObserved",
   "DiscoveryRunStarted",
   "DiscoveryRunCompleted",
@@ -581,6 +612,9 @@ export const DOMAIN_EVENT_TYPES = [
   "ApplicationEmailFeedbackIngested",
   "ApplicationSubmitted",
   "ApplicationFailed",
+  "ApplyReviewDecisionRecorded",
+  "ApplicationOutcomeRecorded",
+  "OutcomeSuggestionDecided",
   "StageStarted",
   "StageCompleted",
   "StageFailed",

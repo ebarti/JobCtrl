@@ -39,6 +39,7 @@ class DemoWorkspaceSubscription implements EventStreamSubscription {
   >();
   private statusValue: EventStreamStatus = "connecting";
   private closed = false;
+  private lastDeliveredRevision = 0;
   private lastDeliveredSequence = 0;
   private readonly stop: () => void;
   private notificationQueue: Promise<void>;
@@ -86,6 +87,7 @@ class DemoWorkspaceSubscription implements EventStreamSubscription {
         this.setStatus("closed");
         return;
       }
+      this.lastDeliveredRevision = initialization.snapshot.revision;
       this.lastDeliveredSequence = initialization.snapshot.lastEventSequence;
       if (!this.closed) {
         this.setStatus("open");
@@ -104,11 +106,23 @@ class DemoWorkspaceSubscription implements EventStreamSubscription {
       return;
     }
     if (notification.kind === "reset" || notification.kind === "resync") {
+      this.lastDeliveredRevision = notification.revision;
+      this.lastDeliveredSequence = notification.lastEventSequence;
+      this.cycleConnection();
+      return;
+    }
+    if (notification.revision <= this.lastDeliveredRevision) {
+      return;
+    }
+    if (notification.revision !== this.lastDeliveredRevision + 1) {
+      this.lastDeliveredRevision = notification.revision;
       this.lastDeliveredSequence = notification.lastEventSequence;
       this.cycleConnection();
       return;
     }
     if (notification.lastEventSequence <= this.lastDeliveredSequence) {
+      this.lastDeliveredRevision = notification.revision;
+      this.cycleConnection();
       return;
     }
 
@@ -117,6 +131,7 @@ class DemoWorkspaceSubscription implements EventStreamSubscription {
       this.lastDeliveredSequence,
     );
     if (result.kind === "event_log_lost") {
+      this.lastDeliveredRevision = notification.revision;
       this.lastDeliveredSequence = notification.lastEventSequence;
       this.cycleConnection();
       return;
@@ -127,6 +142,7 @@ class DemoWorkspaceSubscription implements EventStreamSubscription {
       }
       this.emit(event);
     }
+    this.lastDeliveredRevision = notification.revision;
     this.lastDeliveredSequence = notification.lastEventSequence;
   }
 

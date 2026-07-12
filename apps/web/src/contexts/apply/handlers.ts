@@ -1,17 +1,21 @@
 import type {
   ApplicationEmailFeedbackIngested,
   ApplicationFailed,
+  ApplicationOutcomeRecorded,
   ApplicationSubmitted,
+  ApplyReviewDecisionRecorded,
   ApplyRunEventRecorded,
   ApplyRunStarted,
   ApplySubmitIntended,
   EmailApplicationCandidateRecorded,
+  OutcomeSuggestionDecided,
 } from "@jobctrl/domain-types";
 
 import { analyticsKeys } from "../operations/analyticsKeys.js";
 import { applyRunsKeys } from "../operations/applyRunsKeys.js";
 import { applyReviewKeys } from "../operations/applyReviewKeys.js";
 import { dashboardKeys } from "../operations/dashboardKeys.js";
+import { digestKeys } from "../operations/digestKeys.js";
 import {
   invalidate,
   patchApplyRunEvent,
@@ -60,6 +64,30 @@ export const applicationEmailFeedbackIngestedHandler = (
   invalidate(applyReviewKeys.queue(event.tenantId)),
   invalidate(analyticsKeys.all(event.tenantId)),
 ];
+
+export const applyReviewDecisionRecordedHandler = (
+  event: ApplyReviewDecisionRecorded,
+): readonly InvalidationItem[] => [
+  invalidate(applyReviewKeys.queue(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobKey)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
+];
+
+type ApplicationOutcomeEvent = ApplicationOutcomeRecorded | OutcomeSuggestionDecided;
+
+const applicationOutcomeHandler = (
+  event: ApplicationOutcomeEvent,
+): readonly InvalidationItem[] => [
+  invalidate(outcomesKeys.lists(event.tenantId)),
+  invalidate(outcomesKeys.detail(event.tenantId, event.payload.jobKey)),
+  invalidate(analyticsKeys.all(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobKey)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const applicationOutcomeRecordedHandler = applicationOutcomeHandler;
+export const outcomeSuggestionDecidedHandler = applicationOutcomeHandler;
 
 export const emailApplicationCandidateRecordedHandler = (
   event: EmailApplicationCandidateRecorded,

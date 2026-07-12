@@ -17,6 +17,11 @@ import {
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import { isDemoArtifactUrl } from "./artifacts.js";
 import type { ApiClientResponse, DemoReadModel } from "./contracts.js";
+import {
+  DemoLocalCommandExecutor,
+  type DemoBrowserLocalCommand,
+  type DemoLocalCommandExecutorOptions,
+} from "./DemoLocalCommandExecutor.js";
 import { DemoCapabilityError } from "./ports.js";
 import type { DemoWorkspaceRepository } from "./workspace/DemoWorkspaceRepository.js";
 
@@ -68,7 +73,14 @@ export class DemoResourceNotFoundError extends JobCtrlApiError {
 
 /** Browser-local P2 adapter. Mutations remain explicit P3 capability errors. */
 export class DemoApiClientAdapter implements ApiClientPort {
-  constructor(private readonly workspace: DemoWorkspaceRepository) {}
+  private readonly localCommands: DemoLocalCommandExecutor;
+
+  constructor(
+    private readonly workspace: DemoWorkspaceRepository,
+    options: DemoLocalCommandExecutorOptions = {},
+  ) {
+    this.localCommands = new DemoLocalCommandExecutor(workspace, options);
+  }
 
   health() {
     return this.read((model) => model.dashboard.health);
@@ -462,60 +474,60 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return this.read((model) => model.outreach.dueFollowUps);
   }
 
-  acknowledgeDigest = this.unsupported("acknowledgeDigest");
-  updateDiscoverySettings = this.unsupported("updateDiscoverySettings");
-  upsertDiscoverySource = this.unsupported("upsertDiscoverySource");
-  patchDiscoverySourceState = this.unsupported("patchDiscoverySourceState");
-  updateCompensationSourcePolicy = this.unsupported(
+  acknowledgeDigest = this.local("acknowledgeDigest");
+  updateDiscoverySettings = this.local("updateDiscoverySettings");
+  upsertDiscoverySource = this.local("upsertDiscoverySource");
+  patchDiscoverySourceState = this.local("patchDiscoverySourceState");
+  updateCompensationSourcePolicy = this.local(
     "updateCompensationSourcePolicy",
   );
-  promoteSourceLocatorCandidate = this.unsupported(
+  promoteSourceLocatorCandidate = this.local(
     "promoteSourceLocatorCandidate",
   );
-  rejectSourceLocatorCandidate = this.unsupported(
+  rejectSourceLocatorCandidate = this.local(
     "rejectSourceLocatorCandidate",
   );
-  decideDiscoveryQuarantine = this.unsupported("decideDiscoveryQuarantine");
-  importManualCapture = this.unsupported("importManualCapture");
-  dismissManualCapture = this.unsupported("dismissManualCapture");
-  recordDiscoveryFeedback = this.unsupported("recordDiscoveryFeedback");
-  decideRoleMatchFeedbackSuggestion = this.unsupported(
+  decideDiscoveryQuarantine = this.local("decideDiscoveryQuarantine");
+  importManualCapture = this.local("importManualCapture");
+  dismissManualCapture = this.local("dismissManualCapture");
+  recordDiscoveryFeedback = this.local("recordDiscoveryFeedback");
+  decideRoleMatchFeedbackSuggestion = this.local(
     "decideRoleMatchFeedbackSuggestion",
   );
-  decideApplyReview = this.unsupported("decideApplyReview");
-  createResumeReviewDraft = this.unsupported("createResumeReviewDraft");
-  saveResumeReviewDraftRevision = this.unsupported(
+  decideApplyReview = this.local("decideApplyReview");
+  createResumeReviewDraft = this.local("createResumeReviewDraft");
+  saveResumeReviewDraftRevision = this.local(
     "saveResumeReviewDraftRevision",
   );
-  seedResumeReviewCommentThreads = this.unsupported(
+  seedResumeReviewCommentThreads = this.local(
     "seedResumeReviewCommentThreads",
   );
   renderResumeReviewDraft = this.unsupported("renderResumeReviewDraft");
-  replyToResumeReviewComment = this.unsupported("replyToResumeReviewComment");
-  saveResumeTemplate = this.unsupported("saveResumeTemplate");
-  setDefaultResumeTemplate = this.unsupported("setDefaultResumeTemplate");
-  setJobResumeTemplate = this.unsupported("setJobResumeTemplate");
+  replyToResumeReviewComment = this.local("replyToResumeReviewComment");
+  saveResumeTemplate = this.local("saveResumeTemplate");
+  setDefaultResumeTemplate = this.local("setDefaultResumeTemplate");
+  setJobResumeTemplate = this.local("setJobResumeTemplate");
   ensureCurrentResumeMaterials = this.unsupported(
     "ensureCurrentResumeMaterials",
   );
-  recordManualApplicationOutcome = this.unsupported(
+  recordManualApplicationOutcome = this.local(
     "recordManualApplicationOutcome",
   );
-  decideOutcomeSuggestion = this.unsupported("decideOutcomeSuggestion");
-  deleteJob = this.unsupported("deleteJob");
-  deleteJobs = this.unsupported("deleteJobs");
-  permanentlyDeleteJob = this.unsupported("permanentlyDeleteJob");
-  permanentlyDeleteJobs = this.unsupported("permanentlyDeleteJobs");
-  restoreJob = this.unsupported("restoreJob");
-  restoreJobs = this.unsupported("restoreJobs");
-  hideJob = this.unsupported("hideJob");
-  hideJobs = this.unsupported("hideJobs");
-  unhideJob = this.unsupported("unhideJob");
-  unhideJobs = this.unsupported("unhideJobs");
+  decideOutcomeSuggestion = this.local("decideOutcomeSuggestion");
+  deleteJob = this.local("deleteJob");
+  deleteJobs = this.local("deleteJobs");
+  permanentlyDeleteJob = this.local("permanentlyDeleteJob");
+  permanentlyDeleteJobs = this.local("permanentlyDeleteJobs");
+  restoreJob = this.local("restoreJob");
+  restoreJobs = this.local("restoreJobs");
+  hideJob = this.local("hideJob");
+  hideJobs = this.local("hideJobs");
+  unhideJob = this.local("unhideJob");
+  unhideJobs = this.local("unhideJobs");
   retryFailedJobs = this.unsupported("retryFailedJobs");
   runPendingPreparation = this.unsupported("runPendingPreparation");
-  correctScore = this.unsupported("correctScore");
-  resetStaleScoresForRescore = this.unsupported("resetStaleScoresForRescore");
+  correctScore = this.local("correctScore");
+  resetStaleScoresForRescore = this.local("resetStaleScoresForRescore");
   rescoreJob = this.unsupported("rescoreJob");
   refreshCompensation = this.unsupported("refreshCompensation");
   refreshAllCompensation = this.unsupported("refreshAllCompensation");
@@ -525,11 +537,11 @@ export class DemoApiClientAdapter implements ApiClientPort {
   retailorJob = this.unsupported("retailorJob");
   tailorJob = this.unsupported("tailorJob");
   retailorCurrentPolicy = this.unsupported("retailorCurrentPolicy");
-  cancelWorkflowRun = this.unsupported("cancelWorkflowRun");
+  cancelWorkflowRun = this.local("cancelWorkflowRun");
   openArtifact = this.unsupported("openArtifact");
-  updateProfile = this.unsupported("updateProfile");
-  importResume = this.unsupported("importResume");
-  updateSettings = this.unsupported("updateSettings");
+  updateProfile = this.local("updateProfile");
+  importResume = this.local("importResume");
+  updateSettings = this.local("updateSettings");
   extensionCapabilityToken = this.unsupported("extensionCapabilityToken");
   rotateExtensionCapabilityToken = this.unsupported(
     "rotateExtensionCapabilityToken",
@@ -537,28 +549,28 @@ export class DemoApiClientAdapter implements ApiClientPort {
   runPipelineStages = this.unsupported("runPipelineStages");
   updateCredential = this.unsupported("updateCredential");
   deleteCredential = this.unsupported("deleteCredential");
-  createContact = this.unsupported("createContact");
-  updateContact = this.unsupported("updateContact");
-  deleteContact = this.unsupported("deleteContact");
+  createContact = this.local("createContact");
+  updateContact = this.local("updateContact");
+  deleteContact = this.local("deleteContact");
   importContacts = this.unsupported("importContacts");
   runContactResearch = this.unsupported("runContactResearch");
-  confirmContactCandidate = this.unsupported("confirmContactCandidate");
+  confirmContactCandidate = this.local("confirmContactCandidate");
   generateOutreachDraft = this.unsupported("generateOutreachDraft");
   reviseOutreachDraft = this.unsupported("reviseOutreachDraft");
-  approveOutreachDraft = this.unsupported("approveOutreachDraft");
-  rejectOutreachDraft = this.unsupported("rejectOutreachDraft");
+  approveOutreachDraft = this.local("approveOutreachDraft");
+  rejectOutreachDraft = this.local("rejectOutreachDraft");
   logOutreachSend = this.unsupported("logOutreachSend");
-  scheduleOutreachFollowUp = this.unsupported("scheduleOutreachFollowUp");
-  completeOutreachFollowUp = this.unsupported("completeOutreachFollowUp");
-  dismissOutreachFollowUp = this.unsupported("dismissOutreachFollowUp");
+  scheduleOutreachFollowUp = this.local("scheduleOutreachFollowUp");
+  completeOutreachFollowUp = this.local("completeOutreachFollowUp");
+  dismissOutreachFollowUp = this.local("dismissOutreachFollowUp");
   retryStage = this.unsupported("retryStage");
   runJobStage = this.unsupported("runJobStage");
   generateMaterials = this.unsupported("generateMaterials");
   generateInterviewPrep = this.unsupported("generateInterviewPrep");
   applyJob = this.unsupported("applyJob");
-  cancelJobAction = this.unsupported("cancelJobAction");
+  cancelJobAction = this.local("cancelJobAction");
   markApplied = this.unsupported("markApplied");
-  markSkipped = this.unsupported("markSkipped");
+  markSkipped = this.local("markSkipped");
 
   private async read<TValue>(
     select: (model: DemoReadModel) => TValue,
@@ -587,6 +599,13 @@ export class DemoApiClientAdapter implements ApiClientPort {
       Promise.reject(
         new DemoCapabilityError(method),
       )) as unknown as ApiClientPort[TMethod];
+  }
+
+  private local<TMethod extends DemoBrowserLocalCommand>(
+    method: TMethod,
+  ): ApiClientPort[TMethod] {
+    return ((...args: Parameters<ApiClientPort[TMethod]>) =>
+      this.localCommands.execute(method, args)) as ApiClientPort[TMethod];
   }
 }
 

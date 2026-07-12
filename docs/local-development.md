@@ -158,9 +158,12 @@ IndexedDB is unavailable or full, the page warns that it has switched to
 tab-local memory; those fallback changes are neither shared nor retained after
 the tab closes. The demo contains synthetic data, but visitors should still not
 enter personal data or secrets. Product reads, filtering, sorting, pagination,
-details, and bundled previews are served from that browser-local workspace;
-write actions remain intentionally unavailable until their simulated demo
-transitions are implemented.
+details, bundled previews, and safe synchronous write actions are served from
+that browser-local workspace. Those writes are atomic, survive reload, and
+remain visible across same-profile tabs. Provider-backed, external, and
+long-running actions stay unavailable until their explicit no-effect receipt
+or deterministic scenario implementation lands; the demo never falls back to
+the product API.
 
 ## Verify
 

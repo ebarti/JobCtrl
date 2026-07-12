@@ -77,6 +77,39 @@ export function createJobRestored(
   return createDomainEvent("JobRestored", tenantId, payload);
 }
 
+// -- JobHidden --------------------------------------------------------------
+
+export interface JobHiddenPayload {
+  readonly jobId: string;
+  readonly reason: string;
+  readonly hiddenAt: string;
+}
+
+export type JobHidden = DomainEvent<"JobHidden", JobHiddenPayload>;
+
+export function createJobHidden(
+  tenantId: TenantId,
+  payload: JobHiddenPayload,
+): JobHidden {
+  return createDomainEvent("JobHidden", tenantId, payload);
+}
+
+// -- JobUnhidden ------------------------------------------------------------
+
+export interface JobUnhiddenPayload {
+  readonly jobId: string;
+  readonly unhiddenAt: string;
+}
+
+export type JobUnhidden = DomainEvent<"JobUnhidden", JobUnhiddenPayload>;
+
+export function createJobUnhidden(
+  tenantId: TenantId,
+  payload: JobUnhiddenPayload,
+): JobUnhidden {
+  return createDomainEvent("JobUnhidden", tenantId, payload);
+}
+
 // -- SourceLocationCandidateDiscovered -------------------------------------
 
 export interface SourceLocationCandidateDiscoveredPayload {

@@ -773,7 +773,7 @@ export const DEMO_READ_MODEL = {
       items: [
         {
           itemId: "capture-demo-browser",
-          originatingUrl: "/demo/source-preview.html",
+          originatingUrl: "https://demo.invalid/source-preview.html",
           sourceId: "demo-source:northwind",
           reason: "browser_extension_capture",
           retryContext: { simulated: true },
@@ -1525,7 +1525,34 @@ export const DEMO_READ_MODEL = {
                 confidence: 1,
                 userConfirmed: false,
               },
-              attributes: [],
+              attributes: [
+                {
+                  attributeId: "candidate-demo-name",
+                  kind: "name",
+                  value: "Synthetic research candidate",
+                  provenance: {
+                    sourceKind: "user_entered",
+                    sourceRef: "bundled-demo-fixture",
+                    captureMethod: "bundled_fixture",
+                    capturedAt: at("2026-07-11T08:42:00.000Z"),
+                    confidence: 1,
+                    userConfirmed: false,
+                  },
+                },
+                {
+                  attributeId: "candidate-demo-title",
+                  kind: "title",
+                  value: "Synthetic hiring partner",
+                  provenance: {
+                    sourceKind: "user_entered",
+                    sourceRef: "bundled-demo-fixture",
+                    captureMethod: "bundled_fixture",
+                    capturedAt: at("2026-07-11T08:42:00.000Z"),
+                    confidence: 1,
+                    userConfirmed: false,
+                  },
+                },
+              ],
               confirmedContactId: null,
               confirmedAt: null,
             },

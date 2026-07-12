@@ -71,9 +71,16 @@ start or contact the product API or SSE endpoint. It proves same-profile tab
 sharing and concurrent writes, separate-context isolation, reload persistence,
 atomic reset/blob deletion, future IndexedDB-version refusal without downgrade,
 post-commit domain-event delivery, and populated direct-refresh coverage for
-the demo's dashboard, product routes, and seeded detail deep links. Unit and component tests cover injected
-quota/security fallbacks, schema revalidation, reset-epoch races, event-log
-loss, read-adapter query/404/capability parity, the reactive data-boundary
+the demo's dashboard, product routes, and seeded detail deep links. It also
+exercises real source promotion, manual-capture import, and score correction
+through the shared UI, proving that the results are reload durable and
+product-network-free; score correction is also cross-tab visible. Native
+browser coverage also proves that eventless Discovery and Settings writes
+trigger a broad cross-tab resync and remain durable after reload. Unit and
+component tests cover injected quota/security fallbacks, schema revalidation,
+reset-epoch races, event-log loss, read-adapter query/404/capability parity,
+valid arguments for every browser-local command plus focused projection,
+replay, cascade, and quota-rollback invariants, the reactive data-boundary
 warning, and the unchanged canonical event provider/invalidation router.
 Playwright artifacts are written outside the repository under the system
 temporary directory.

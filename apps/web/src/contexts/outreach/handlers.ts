@@ -28,6 +28,7 @@ import type {
 } from "@jobctrl/domain-types";
 
 import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
+import { digestKeys } from "../operations/digestKeys.js";
 import { outreachKeys } from "./queryKeys.js";
 
 // -- Contact aggregate ------------------------------------------------------
@@ -50,6 +51,9 @@ export const contactAttributeRecordedHandler = (
 export const contactDeletedHandler = (event: ContactDeleted): readonly InvalidationItem[] => [
   invalidate(outreachKeys.contactDetail(event.tenantId, event.payload.contactId)),
   invalidate(outreachKeys.contactLists(event.tenantId)),
+  invalidate(outreachKeys.threads(event.tenantId)),
+  invalidate(outreachKeys.dueFollowUps(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
 ];
 
 export const warmIntroIdentifiedHandler = (
@@ -135,6 +139,7 @@ export const outreachSendLoggedHandler = (
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.thread(event.tenantId, event.payload.threadId)),
   invalidate(outreachKeys.dueFollowUps(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
 ];
 
 export const followUpScheduledHandler = (
@@ -142,6 +147,7 @@ export const followUpScheduledHandler = (
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.thread(event.tenantId, event.payload.threadId)),
   invalidate(outreachKeys.dueFollowUps(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
 ];
 
 export const followUpCompletedHandler = (
@@ -149,6 +155,7 @@ export const followUpCompletedHandler = (
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.thread(event.tenantId, event.payload.threadId)),
   invalidate(outreachKeys.dueFollowUps(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
 ];
 
 export const followUpDismissedHandler = (
@@ -156,4 +163,5 @@ export const followUpDismissedHandler = (
 ): readonly InvalidationItem[] => [
   invalidate(outreachKeys.thread(event.tenantId, event.payload.threadId)),
   invalidate(outreachKeys.dueFollowUps(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
 ];

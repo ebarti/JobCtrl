@@ -163,6 +163,9 @@ describe("DemoWorkspaceEventStreamAdapter", () => {
     const workspace = createWorkspace();
     await workspace.initialize();
     const eventStream = new DemoWorkspaceEventStreamAdapter(workspace);
+    const observedEvents: string[] = [];
+    const observer = eventStream.subscribe({ tenantId: LOCAL_TENANT });
+    observer.on((envelope) => observedEvents.push(envelope.eventType));
     const ports = buildTestPorts({ eventStream });
     const harness = buildProviderHarness({ ports });
     const unrelatedKey = ["unrelated-demo-query"] as const;
@@ -183,15 +186,17 @@ describe("DemoWorkspaceEventStreamAdapter", () => {
         (draft.state as { title: string }).title = "No domain event";
       });
     });
-    await settle();
-    expect(
-      harness.queryClient.getQueryState(jobsKeys.lists(LOCAL_TENANT))
-        ?.isInvalidated,
-    ).toBe(false);
-    expect(harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(
-      false,
+    await waitFor(() =>
+      expect(harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(
+        true,
+      ),
     );
+    expect(observedEvents).toEqual([]);
 
+    harness.queryClient.setQueryData(jobsKeys.lists(LOCAL_TENANT), {
+      items: [],
+    });
+    harness.queryClient.setQueryData(unrelatedKey, { retained: true });
     await act(async () => {
       await workspace.mutate((_draft, context) =>
         context.appendDomainEvent(event(1)),
@@ -203,6 +208,10 @@ describe("DemoWorkspaceEventStreamAdapter", () => {
           ?.isInvalidated,
       ).toBe(true),
     );
+    expect(harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(
+      false,
+    );
+    expect(observedEvents).toEqual(["JobUpdated"]);
 
     harness.queryClient.setQueryData(unrelatedKey, { retained: true });
     await act(async () => {
@@ -213,5 +222,6 @@ describe("DemoWorkspaceEventStreamAdapter", () => {
         harness.queryClient.getQueryState(unrelatedKey)?.isInvalidated,
       ).toBe(true),
     );
+    observer.close();
   });
 });

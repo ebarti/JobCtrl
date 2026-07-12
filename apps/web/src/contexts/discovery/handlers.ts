@@ -8,8 +8,10 @@ import type {
   DuplicateJobLinkRejected,
   JobDeleted,
   JobDiscovered,
+  JobHidden,
   JobRestored,
   JobSourceObserved,
+  JobUnhidden,
   JobUpdated,
   SourceLocationCandidateDiscovered,
   SourceLocationCandidatePromoted,
@@ -19,13 +21,18 @@ import type {
 } from "@jobctrl/domain-types";
 
 import { dashboardKeys } from "../operations/dashboardKeys.js";
+import { digestKeys } from "../operations/digestKeys.js";
 import { discoveryKeys } from "./queryKeys.js";
 import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
 
 export const jobDiscoveredHandler = (event: JobDiscovered): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(discoveryKeys.manualCapture(event.tenantId)),
+  invalidate(discoveryKeys.sourceRegistry(event.tenantId)),
+  invalidate(discoveryKeys.sourceQuality(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
 ];
 
 export const jobUpdatedHandler = (event: JobUpdated): readonly InvalidationItem[] => [
@@ -37,12 +44,28 @@ export const jobDeletedHandler = (event: JobDeleted): readonly InvalidationItem[
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
 ];
 
 export const jobRestoredHandler = (event: JobRestored): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
+];
+
+export const jobHiddenHandler = (event: JobHidden): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
+];
+
+export const jobUnhiddenHandler = (event: JobUnhidden): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+  invalidate(digestKeys.all(event.tenantId)),
 ];
 
 export const jobSourceObservedHandler = (
@@ -144,6 +167,7 @@ export const discoveryFeedbackRecordedHandler = (
   event: DiscoveryFeedbackRecorded,
 ): readonly InvalidationItem[] => [
   invalidate(discoveryKeys.feedback(event.tenantId)),
+  invalidate(discoveryKeys.quarantine(event.tenantId)),
   invalidate(discoveryKeys.sourceRegistry(event.tenantId)),
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
