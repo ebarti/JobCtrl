@@ -176,6 +176,19 @@ in the MVP. The receipt history stays inspectable in the demo shell. The demo
 never falls back to the product API, SSE, an external origin, or a host-OS
 opener.
 
+`DemoSeedValue.seedVersion` is the fixture-revision boundary, separate from the
+IndexedDB/workspace schema versions. Changing the canonical seed must bump this
+value. When a seed refresh changes the destructive writer contract, also advance
+`DEMO_WORKSPACE_SCHEMA_VERSION` so an older bundle refuses the snapshot before
+writing or clearing blobs. Only explicitly reviewed older seed versions are
+refreshable: on the next initialization they are atomically reseeded with a new
+workspace identity and reset epoch, and pending scenarios and generated blobs
+are removed. A newer or unknown seed version instead requires an updated demo
+and leaves its durable snapshot and blobs untouched. If an allowed durable
+refresh cannot be written, the current seed is loaded into tab-local memory with
+the existing storage warning. Consent state is outside this workspace lifecycle
+and is not reset.
+
 ### Public demo edge workers
 
 The public demo uses Cloudflare Pages for the Vite SPA, a same-origin Worker at

@@ -51,6 +51,8 @@ creates its browser-local workspace. Declining returns to `jobctrl.dev`; a
 later visit asks again. Read the
 [demo data notice](https://jobctrl.dev/user/data-and-safety#public-demo) before
 entering, and do not type personal data, credentials, or secrets.
+When a deployment updates the canonical synthetic examples, the next demo load
+refreshes that browser-local workspace once; cookie consent is unchanged.
 
 ## Get Started
 

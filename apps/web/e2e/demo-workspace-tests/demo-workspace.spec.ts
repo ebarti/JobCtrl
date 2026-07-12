@@ -18,6 +18,7 @@ const MODULE_URLS = {
   eventStream: "/src/demo/workspace/DemoWorkspaceEventStreamAdapter.ts",
 } as const;
 const STATIC_HOST = "/demo/source-preview.html";
+const CURRENT_DEMO_SEED_VERSION = "2026-07-12.1";
 
 const scenarioTest = test.extend<{ demoNetworkBoundary: void }>({
   demoNetworkBoundary: [
@@ -949,6 +950,73 @@ scenarioTest("reset rotates identity, fences state, and deletes generated blobs"
       );
     }),
   ).toBe(true);
+});
+
+scenarioTest("an older seed refreshes once and clears generated browser state", async ({
+  page,
+}) => {
+  const initialized = await initializeWorkspace(page);
+  expect(initialized.kind).toBe("ready");
+  if (initialized.kind !== "ready") return;
+  await page.evaluate(async () => {
+    const workspace = window.__jobctrlDemoWorkspace;
+    if (!workspace) throw new Error("workspace not initialized");
+    await workspace.putBlob(
+      "outdated-seed-preview",
+      new Blob(["outdated synthetic edit"], { type: "text/plain" }),
+    );
+    await workspace.mutate((draft) => {
+      (draft as unknown as { schemaVersion: number }).schemaVersion = 3;
+      (draft as unknown as { seedVersion: string }).seedVersion =
+        "2026-07-11.1";
+      (draft.state as { title: string }).title =
+        "Mutated previous synthetic seed";
+    });
+    workspace.dispose();
+    delete window.__jobctrlDemoWorkspace;
+  });
+  const stale = initialized.snapshot;
+
+  await page.goto("/dashboard");
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  const refreshed = await initializeWorkspace(page);
+
+  expect(refreshed.kind).toBe("ready");
+  if (refreshed.kind !== "ready") return;
+  expect(refreshed.snapshot).toMatchObject({
+    schemaVersion: 4,
+    seedVersion: CURRENT_DEMO_SEED_VERSION,
+    resetCount: stale.resetCount + 1,
+    resetEpoch: stale.resetEpoch + 1,
+    pendingScenarios: [],
+    blobIds: [],
+    state: { title: "JobCtrl product tour" },
+  });
+  expect(refreshed.snapshot.workspaceId).not.toBe(stale.workspaceId);
+  expect(
+    await page.evaluate(async () => {
+      if (!window.__jobctrlDemoWorkspace)
+        throw new Error("workspace not initialized");
+      return (
+        (await window.__jobctrlDemoWorkspace.blob(
+          "outdated-seed-preview",
+        )) === null
+      );
+    }),
+  ).toBe(true);
+
+  const refreshedWorkspaceId = refreshed.snapshot.workspaceId;
+  await page.reload();
+  const reloaded = await initializeWorkspace(page);
+  expect(reloaded).toMatchObject({
+    kind: "ready",
+    snapshot: {
+      seedVersion: CURRENT_DEMO_SEED_VERSION,
+      workspaceId: refreshedWorkspaceId,
+      resetCount: stale.resetCount + 1,
+      resetEpoch: stale.resetEpoch + 1,
+    },
+  });
 });
 
 scenarioTest("future native database version is upgrade-required without downgrade", async ({
