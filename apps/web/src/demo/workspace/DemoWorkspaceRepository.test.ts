@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createJobUpdated, LOCAL_TENANT } from "@jobctrl/domain-types";
 
+import { DEMO_SEED } from "../seed.js";
 import type {
   DemoWorkspaceChannel,
   DemoWorkspaceChannelFactory,
@@ -233,7 +234,9 @@ describe("DemoWorkspaceRepository", () => {
     const unsubscribe = repository.subscribeReceipts(listener);
 
     await repository.mutate((draft) => {
-      (draft.state.receipts as Array<(typeof draft.state.receipts)[number]>).push({
+      (
+        draft.state.receipts as Array<(typeof draft.state.receipts)[number]>
+      ).push({
         receiptId: "receipt-live-open",
         kind: "os_open",
         simulated: true,
@@ -312,7 +315,9 @@ describe("DemoWorkspaceRepository", () => {
       expect(await repository.snapshot()).toMatchObject({
         revision: 2,
         state: { title: "Discover running" },
-        pendingScenarios: [{ phase: "running", deadlineAt: new Date(50).toISOString() }],
+        pendingScenarios: [
+          { phase: "running", deadlineAt: new Date(50).toISOString() },
+        ],
       });
 
       now = 50;
@@ -351,8 +356,8 @@ describe("DemoWorkspaceRepository", () => {
     expect(initial.kind).toBe("ready");
     if (initial.kind !== "ready") return;
     expect(initial.snapshot).toMatchObject({
-      schemaVersion: 3,
-      seedVersion: "2026-07-11.1",
+      schemaVersion: 4,
+      seedVersion: DEMO_SEED.seedVersion,
       workspaceId: "workspace-1",
       resetCount: 0,
       revision: 0,
@@ -369,6 +374,374 @@ describe("DemoWorkspaceRepository", () => {
     expect(reloaded).toMatchObject({
       kind: "ready",
       snapshot: { workspaceId: "workspace-1", revision: 0 },
+    });
+  });
+
+  it("atomically refreshes an older synthetic seed once and clears generated workspace state", async () => {
+    const baselineRepository = buildRepository(
+      new InMemoryDemoWorkspaceStore(),
+    );
+    const baseline = await baselineRepository.initialize();
+    expect(baseline.kind).toBe("ready");
+    if (baseline.kind !== "ready") return;
+    const staleSnapshot: DemoWorkspaceSnapshot = {
+      ...baseline.snapshot,
+      schemaVersion: 3,
+      seedVersion: "2026-07-11.1",
+      workspaceId: "workspace-stale-seed",
+      resetCount: 2,
+      resetEpoch: 4,
+      revision: 7,
+      lastEventSequence: 9,
+      eventLog: [],
+      blobIds: ["generated-preview"],
+      state: {
+        ...baseline.snapshot.state,
+        title: "Mutated previous synthetic seed",
+      },
+      pendingScenarios: [queuedInvocation({ resetEpoch: 4 })],
+    };
+    const store = new InMemoryDemoWorkspaceStore(staleSnapshot);
+    await store.transact((_current, transaction) => {
+      transaction.putBlob("generated-preview", new Blob(["generated preview"]));
+    });
+    const repository = new DemoWorkspaceRepository({
+      store,
+      clock: fixedClock,
+      createWorkspaceId: () => "workspace-refreshed-seed",
+    });
+
+    const ready = await repository.initialize();
+
+    expect(ready).toMatchObject({
+      kind: "ready",
+      snapshot: {
+        schemaVersion: 4,
+        seedVersion: DEMO_SEED.seedVersion,
+        workspaceId: "workspace-refreshed-seed",
+        resetCount: 3,
+        resetEpoch: 5,
+        revision: 8,
+        lastEventSequence: 9,
+        eventLog: [],
+        blobIds: [],
+        pendingScenarios: [],
+        state: { title: "JobCtrl product tour" },
+      },
+    });
+    expect(
+      ready.kind === "ready"
+        ? ready.snapshot.state.readModel.jobs.list.items.find(
+            (job) => job.jobKey === "job-fabrikam-systems",
+          )
+        : null,
+    ).toMatchObject({ currentState: "failed" });
+    expect(await repository.blob("generated-preview")).toBeNull();
+
+    const reloaded = new DemoWorkspaceRepository({
+      store,
+      clock: fixedClock,
+      createWorkspaceId: () => "workspace-must-not-reseed",
+    });
+    await expect(reloaded.initialize()).resolves.toMatchObject({
+      kind: "ready",
+      snapshot: {
+        workspaceId: "workspace-refreshed-seed",
+        resetCount: 3,
+        resetEpoch: 5,
+        revision: 8,
+      },
+    });
+  });
+
+  it.each([
+    ["newer", "2026-07-13.1"],
+    ["unknown", "future-seed"],
+  ] as const)(
+    "preserves a %s seed and requires an upgrade",
+    async (_description, seedVersion) => {
+      const baselineRepository = buildRepository(
+        new InMemoryDemoWorkspaceStore(),
+      );
+      const baseline = await baselineRepository.initialize();
+      expect(baseline.kind).toBe("ready");
+      if (baseline.kind !== "ready") return;
+      const protectedSnapshot: DemoWorkspaceSnapshot = {
+        ...baseline.snapshot,
+        seedVersion,
+        workspaceId: `workspace-${seedVersion}-seed`,
+        blobIds: ["protected-preview"],
+        state: {
+          ...baseline.snapshot.state,
+          title: "Protected newer demo workspace",
+        },
+      };
+      const store = new InMemoryDemoWorkspaceStore(protectedSnapshot);
+      await store.transact((_current, transaction) => {
+        transaction.putBlob("protected-preview", new Blob(["protected"]));
+      });
+
+      const initialization = await buildRepository(store).initialize();
+
+      expect(initialization).toMatchObject({
+        kind: "upgrade_required",
+        scope: "seed_version",
+        foundSeedVersion: seedVersion,
+        supportedSeedVersion: DEMO_SEED.seedVersion,
+      });
+      expect(await store.readSnapshot()).toMatchObject({
+        seedVersion,
+        workspaceId: `workspace-${seedVersion}-seed`,
+        blobIds: ["protected-preview"],
+        state: { title: "Protected newer demo workspace" },
+      });
+      expect(await store.readBlob("protected-preview")).toEqual(
+        expect.objectContaining({ size: 9 }),
+      );
+    },
+  );
+
+  it("refuses a manual reset after a newer seed replaces the active snapshot", async () => {
+    const store = new SharedPersistentStore();
+    const repository = buildRepository(store);
+    await repository.initialize();
+    const current = await repository.snapshot();
+    await store.memory.transact((_stored, transaction) => {
+      transaction.putBlob("newer-preview", new Blob(["protected"]));
+      transaction.putSnapshot({
+        ...current,
+        seedVersion: "2026-07-13.1",
+        workspaceId: "workspace-newer-manual-reset",
+        revision: current.revision + 1,
+        blobIds: ["newer-preview"],
+        state: {
+          ...current.state,
+          title: "Newer durable workspace",
+        },
+      });
+    });
+
+    await expect(repository.reset()).rejects.toMatchObject({
+      name: "DemoWorkspaceUpgradeRequiredError",
+      upgrade: {
+        scope: "seed_version",
+        foundSeedVersion: "2026-07-13.1",
+      },
+    });
+    expect(await store.readSnapshot()).toMatchObject({
+      seedVersion: "2026-07-13.1",
+      workspaceId: "workspace-newer-manual-reset",
+      revision: current.revision + 1,
+      blobIds: ["newer-preview"],
+      state: { title: "Newer durable workspace" },
+    });
+    expect(await store.readBlob("newer-preview")).toEqual(
+      expect.objectContaining({ size: 9 }),
+    );
+  });
+
+  it("does not let a newer cross-tab reset downgrade the durable workspace", async () => {
+    const hub = new ChannelHub();
+    const store = new SharedPersistentStore();
+    const olderTab = buildRepository(store, hub.createFactory());
+    await olderTab.initialize();
+    const current = await olderTab.snapshot();
+    const newerSnapshot = {
+      ...current,
+      seedVersion: "2026-07-13.1",
+      workspaceId: "workspace-newer-cross-tab",
+      resetCount: current.resetCount + 1,
+      resetEpoch: current.resetEpoch + 1,
+      revision: current.revision + 1,
+      blobIds: ["newer-cross-tab-preview"],
+      state: {
+        ...current.state,
+        title: "Newer cross-tab workspace",
+      },
+    };
+    await store.memory.transact((_stored, transaction) => {
+      transaction.putBlob("newer-cross-tab-preview", new Blob(["protected"]));
+      transaction.putSnapshot(newerSnapshot);
+    });
+
+    hub.send({
+      source: "local",
+      kind: "reset",
+      workspaceId: newerSnapshot.workspaceId,
+      revision: newerSnapshot.revision,
+      resetEpoch: newerSnapshot.resetEpoch,
+      lastEventSequence: newerSnapshot.lastEventSequence,
+    });
+    await settleBroadcast();
+
+    expect(olderTab.getRuntimeSnapshot()).toMatchObject({
+      status: "upgrade_required",
+      upgrade: {
+        scope: "seed_version",
+        foundSeedVersion: "2026-07-13.1",
+      },
+    });
+    expect(await store.readSnapshot()).toMatchObject({
+      seedVersion: "2026-07-13.1",
+      workspaceId: "workspace-newer-cross-tab",
+      blobIds: ["newer-cross-tab-preview"],
+      state: { title: "Newer cross-tab workspace" },
+    });
+    expect(await store.readBlob("newer-cross-tab-preview")).toEqual(
+      expect.objectContaining({ size: 9 }),
+    );
+  });
+
+  it("fences a P6 reset before it can downgrade a P7 workspace", async () => {
+    const p6WorkspaceSchemaVersion = 3;
+    const hub = new ChannelHub();
+    const store = new SharedPersistentStore();
+    const p7Tab = buildRepository(store, hub.createFactory());
+    await p7Tab.initialize();
+    await p7Tab.putBlob("p7-preview", new Blob(["P7 generated preview"]));
+    const p7Snapshot = await p7Tab.snapshot();
+    const notifications: DemoWorkspaceNotification[] = [];
+    p7Tab.subscribe((notification) => notifications.push(notification));
+    const p6Channel = hub.createFactory().create();
+    if (!p6Channel) throw new Error("missing P6 channel fixture");
+
+    const p6CompatibleReset = async (): Promise<DemoWorkspaceSnapshot> => {
+      const committed = await store.transact((stored, transaction) => {
+        if (!stored) {
+          throw new Error("Demo workspace disappeared during P6 reset.");
+        }
+        if (stored.schemaVersion > p6WorkspaceSchemaVersion) {
+          throw new Error(
+            "This demo workspace was created by a newer version. Reload after updating the demo.",
+          );
+        }
+        const downgraded: DemoWorkspaceSnapshot = {
+          ...stored,
+          schemaVersion: p6WorkspaceSchemaVersion,
+          seedVersion: "2026-07-11.1",
+          workspaceId: "workspace-p6-reset",
+          revision: stored.revision + 1,
+          resetEpoch: stored.resetEpoch + 1,
+          resetCount: stored.resetCount + 1,
+          blobIds: [],
+        };
+        transaction.clearBlobs();
+        transaction.putSnapshot(downgraded);
+        return downgraded;
+      });
+      p6Channel.postMessage({
+        source: "local",
+        kind: "reset",
+        workspaceId: committed.workspaceId,
+        revision: committed.revision,
+        resetEpoch: committed.resetEpoch,
+        lastEventSequence: committed.lastEventSequence,
+      });
+      return committed;
+    };
+
+    await expect(p6CompatibleReset()).rejects.toThrow(
+      "This demo workspace was created by a newer version.",
+    );
+    await settleBroadcast();
+
+    expect(notifications).toEqual([]);
+    expect(p7Tab.getRuntimeSnapshot()).toMatchObject({ status: "ready" });
+    expect(p7Tab.snapshotNow()).toEqual(p7Snapshot);
+    expect(await store.readSnapshot()).toEqual(p7Snapshot);
+    expect(await store.readBlob("p7-preview")).toEqual(
+      expect.objectContaining({ size: 20 }),
+    );
+    p6Channel.close();
+  });
+
+  it("loads the current seed in memory when durable seed refresh hits quota", async () => {
+    const builder = buildRepository(new InMemoryDemoWorkspaceStore());
+    await builder.initialize();
+    const staleSnapshot: DemoWorkspaceSnapshot = {
+      ...(await builder.snapshot()),
+      schemaVersion: 3,
+      seedVersion: "2026-07-11.1",
+      workspaceId: "workspace-stale-quota-seed",
+    };
+    const store = new SharedPersistentStore(
+      new InMemoryDemoWorkspaceStore(staleSnapshot),
+    );
+    store.failNext = new DemoWorkspaceStorageError("quota");
+    const repository = new DemoWorkspaceRepository({
+      store,
+      clock: fixedClock,
+      createWorkspaceId: () => "workspace-memory-seed",
+    });
+
+    await expect(repository.initialize()).resolves.toMatchObject({
+      kind: "ready",
+      storageMode: "memory",
+      warning: {
+        code: "quota_exceeded",
+        message: expect.stringContaining("current synthetic examples"),
+      },
+      snapshot: {
+        seedVersion: DEMO_SEED.seedVersion,
+        workspaceId: "workspace-memory-seed",
+        resetCount: 1,
+        resetEpoch: 1,
+        revision: 1,
+        state: { title: "JobCtrl product tour" },
+      },
+    });
+    expect((await store.readSnapshot())?.seedVersion).toBe("2026-07-11.1");
+  });
+
+  it("broadcasts an automatic seed refresh as a reset to existing tabs", async () => {
+    const hub = new ChannelHub();
+    const store = new SharedPersistentStore();
+    const first = buildRepository(store, hub.createFactory());
+    await first.initialize();
+    const current = await first.snapshot();
+    await store.memory.transact((_stored, transaction) => {
+      transaction.putSnapshot({
+        ...current,
+        schemaVersion: 3,
+        seedVersion: "2026-07-11.1",
+        state: {
+          ...current.state,
+          title: "Mutated previous synthetic seed",
+        },
+      });
+    });
+    const notifications: DemoWorkspaceNotification[] = [];
+    first.subscribe((notification) => notifications.push(notification));
+    const second = new DemoWorkspaceRepository({
+      store,
+      clock: fixedClock,
+      channelFactory: hub.createFactory(),
+      createWorkspaceId: () => "workspace-refreshed-broadcast",
+    });
+
+    await expect(second.initialize()).resolves.toMatchObject({
+      kind: "ready",
+      snapshot: {
+        seedVersion: DEMO_SEED.seedVersion,
+        workspaceId: "workspace-refreshed-broadcast",
+        resetEpoch: 1,
+      },
+    });
+    await settleBroadcast();
+
+    expect(notifications).toContainEqual(
+      expect.objectContaining({
+        source: "broadcast",
+        kind: "reset",
+        workspaceId: "workspace-refreshed-broadcast",
+        revision: 1,
+        resetEpoch: 1,
+      }),
+    );
+    expect(await first.snapshot()).toMatchObject({
+      seedVersion: DEMO_SEED.seedVersion,
+      workspaceId: "workspace-refreshed-broadcast",
+      state: { title: "JobCtrl product tour" },
     });
   });
 
@@ -855,7 +1228,7 @@ describe("DemoWorkspaceRepository", () => {
     await builder.initialize();
     const future = {
       ...(await builder.snapshot()),
-      schemaVersion: 4,
+      schemaVersion: 5,
       workspaceId: "future-workspace",
     };
     const store = new InMemoryDemoWorkspaceStore(future);
@@ -864,8 +1237,8 @@ describe("DemoWorkspaceRepository", () => {
     await expect(repository.initialize()).resolves.toMatchObject({
       kind: "upgrade_required",
       scope: "workspace_schema",
-      foundSchemaVersion: 4,
-      supportedSchemaVersion: 3,
+      foundSchemaVersion: 5,
+      supportedSchemaVersion: 4,
     });
     expect((await store.readSnapshot())?.workspaceId).toBe("future-workspace");
   });
@@ -879,7 +1252,7 @@ describe("DemoWorkspaceRepository", () => {
     await store.memory.transact((_stored, transaction) => {
       transaction.putSnapshot({
         ...current,
-        schemaVersion: 4,
+        schemaVersion: 5,
         revision: 1,
       });
     });
@@ -898,7 +1271,7 @@ describe("DemoWorkspaceRepository", () => {
       status: "upgrade_required",
       upgrade: {
         scope: "workspace_schema",
-        foundSchemaVersion: 4,
+        foundSchemaVersion: 5,
       },
     });
   });
@@ -924,7 +1297,7 @@ describe("DemoWorkspaceRepository", () => {
     expect(ready).toMatchObject({
       kind: "ready",
       snapshot: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         workspaceId: "legacy-workspace",
         revision: 2,
         blobIds: ["legacy-preview"],
@@ -958,7 +1331,7 @@ describe("DemoWorkspaceRepository", () => {
       kind: "ready",
       storageMode: "memory",
       snapshot: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         workspaceId: "legacy-quota-workspace",
         blobIds: ["legacy-quota-preview"],
       },

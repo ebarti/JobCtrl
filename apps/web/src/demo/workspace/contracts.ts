@@ -13,7 +13,7 @@ export const DEMO_WORKSPACE_DATABASE = "jobctrl-demo";
 export const DEMO_WORKSPACE_DATABASE_VERSION = 1;
 export const DEMO_WORKSPACE_STORE = "workspace";
 export const DEMO_BLOBS_STORE = "blobs";
-export const DEMO_WORKSPACE_SCHEMA_VERSION = 3;
+export const DEMO_WORKSPACE_SCHEMA_VERSION = 4;
 export const DEMO_WORKSPACE_EVENT_LOG_LIMIT = 128;
 
 export interface DemoLegacyPendingScenario {
@@ -100,7 +100,9 @@ export interface DemoScenarioInvocation extends DemoLegacyPendingScenario {
   readonly recoveryInput: DemoScenarioRecoveryInput;
 }
 
-export type DemoPendingScenario = DemoLegacyPendingScenario | DemoScenarioInvocation;
+export type DemoPendingScenario =
+  | DemoLegacyPendingScenario
+  | DemoScenarioInvocation;
 
 export function isDemoScenarioInvocation(
   pending: DemoPendingScenario,
@@ -128,7 +130,13 @@ export interface DemoDynamicReceipt {
     | DemoSimulatedAsyncOperation;
   readonly scenarioId?: string;
   readonly runId?: string;
-  readonly entityType: "artifact" | "contact" | "job" | "outreach_thread" | "source" | "workspace";
+  readonly entityType:
+    | "artifact"
+    | "contact"
+    | "job"
+    | "outreach_thread"
+    | "source"
+    | "workspace";
   readonly entityId: string;
 }
 
@@ -181,11 +189,15 @@ export type DemoWorkspaceStorageMode = "indexeddb" | "memory";
 export type DemoWorkspaceWarning =
   | {
       readonly code: "indexeddb_unavailable";
-      readonly message: "Browser storage is unavailable; this tab will not share or retain demo changes.";
+      readonly message:
+        | "Browser storage is unavailable; this tab will not share or retain demo changes."
+        | "Browser storage is unavailable; this tab loaded the current synthetic examples in memory only.";
     }
   | {
       readonly code: "quota_exceeded";
-      readonly message: "Browser storage is full; this tab preserved the last confirmed demo state in memory only.";
+      readonly message:
+        | "Browser storage is full; this tab preserved the last confirmed demo state in memory only."
+        | "Browser storage is full; this tab loaded the current synthetic examples in memory only.";
     };
 
 export interface DemoWorkspaceReady {
@@ -209,6 +221,13 @@ export type DemoWorkspaceUpgradeRequired =
       readonly foundDatabaseVersion: number;
       readonly supportedDatabaseVersion: number;
       readonly message: "This browser database was created by a newer demo version. Reload after updating the demo.";
+    }
+  | {
+      readonly kind: "upgrade_required";
+      readonly scope: "seed_version";
+      readonly foundSeedVersion: string;
+      readonly supportedSeedVersion: string;
+      readonly message: "This demo workspace seed is not supported by this version. Reload after updating the demo.";
     };
 
 export type DemoWorkspaceInitialization =

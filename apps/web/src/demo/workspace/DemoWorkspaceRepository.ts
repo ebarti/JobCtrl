@@ -146,6 +146,15 @@ export class DemoWorkspaceRepository {
       if (upgrade) {
         return this.setUpgrade(upgrade);
       }
+      if (classifyDemoSeedVersion(current.seedVersion) === "refreshable") {
+        const refreshed = await this.refreshSeed();
+        this.adoptAuthoritativeSnapshot(refreshed.snapshot, true);
+        const ready = this.setReady(refreshed.snapshot);
+        if (refreshed.didRefresh) {
+          this.publishLocal("reset", refreshed.snapshot);
+        }
+        return ready;
+      }
       const migrated =
         current.schemaVersion < DEMO_WORKSPACE_SCHEMA_VERSION
           ? await this.migrate(current)
@@ -378,14 +387,7 @@ export class DemoWorkspaceRepository {
           throw new Error("Demo workspace disappeared during reset.");
         }
         throwIfFutureWorkspace(stored);
-        const now = this.clock.now().toISOString();
-        const next = this.makeSeedSnapshot({
-          createdAt: now,
-          resetCount: stored.resetCount + 1,
-          resetEpoch: stored.resetEpoch + 1,
-          revision: stored.revision + 1,
-          lastEventSequence: stored.lastEventSequence,
-        });
+        const next = this.makeReplacementSeedSnapshot(stored);
         transaction.clearBlobs();
         transaction.putSnapshot(next);
         return next;
@@ -455,13 +457,7 @@ export class DemoWorkspaceRepository {
   }
 
   private async seed(): Promise<DemoWorkspaceSnapshot> {
-    const candidate = this.makeSeedSnapshot({
-      createdAt: this.clock.now().toISOString(),
-      resetCount: 0,
-      resetEpoch: 0,
-      revision: 0,
-      lastEventSequence: 0,
-    });
+    const candidate = this.makeReplacementSeedSnapshot(null);
     const committed = await this.store.transact((current, transaction) => {
       if (current) {
         throwIfFutureWorkspace(current);
@@ -475,6 +471,31 @@ export class DemoWorkspaceRepository {
       this.publishLocal("commit", committed);
     }
     return committed;
+  }
+
+  private async refreshSeed(): Promise<{
+    readonly snapshot: DemoWorkspaceSnapshot;
+    readonly didRefresh: boolean;
+  }> {
+    let didRefresh = false;
+    const snapshot = await this.store.transact((stored, transaction) => {
+      if (!stored) {
+        throw new Error("Demo workspace disappeared during seed refresh.");
+      }
+      throwIfFutureWorkspace(stored);
+      if (classifyDemoSeedVersion(stored.seedVersion) !== "refreshable") {
+        return stored;
+      }
+      const next = this.makeReplacementSeedSnapshot(stored);
+      transaction.clearBlobs();
+      transaction.putSnapshot(next);
+      didRefresh = true;
+      return next;
+    });
+    return {
+      snapshot,
+      didRefresh,
+    };
   }
 
   private async migrate(
@@ -576,20 +597,16 @@ export class DemoWorkspaceRepository {
   private async fallbackFromUnavailable(
     confirmed: DemoWorkspaceSnapshot | null,
   ): Promise<DemoWorkspaceReady> {
+    const seedRefreshRequired =
+      confirmed !== null &&
+      classifyDemoSeedVersion(confirmed.seedVersion) === "refreshable";
     const warning: DemoWorkspaceWarning = {
       code: "indexeddb_unavailable",
-      message:
-        "Browser storage is unavailable; this tab will not share or retain demo changes.",
+      message: seedRefreshRequired
+        ? "Browser storage is unavailable; this tab loaded the current synthetic examples in memory only."
+        : "Browser storage is unavailable; this tab will not share or retain demo changes.",
     };
-    const candidate =
-      confirmed ??
-      this.makeSeedSnapshot({
-        createdAt: this.clock.now().toISOString(),
-        resetCount: 0,
-        resetEpoch: 0,
-        revision: 0,
-        lastEventSequence: 0,
-      });
+    const candidate = this.fallbackCandidate(confirmed);
     const snapshot = await this.switchToMemory(candidate, warning, true);
     if (!confirmed) {
       this.publishLocal("commit", snapshot);
@@ -600,25 +617,45 @@ export class DemoWorkspaceRepository {
   private async fallbackFromQuota(
     confirmed: DemoWorkspaceSnapshot | null,
   ): Promise<DemoWorkspaceReady> {
+    const seedRefreshRequired =
+      confirmed !== null &&
+      classifyDemoSeedVersion(confirmed.seedVersion) === "refreshable";
     const warning: DemoWorkspaceWarning = {
       code: "quota_exceeded",
-      message:
-        "Browser storage is full; this tab preserved the last confirmed demo state in memory only.",
+      message: seedRefreshRequired
+        ? "Browser storage is full; this tab loaded the current synthetic examples in memory only."
+        : "Browser storage is full; this tab preserved the last confirmed demo state in memory only.",
     };
-    const candidate =
-      confirmed ??
-      this.makeSeedSnapshot({
-        createdAt: this.clock.now().toISOString(),
-        resetCount: 0,
-        resetEpoch: 0,
-        revision: 0,
-        lastEventSequence: 0,
-      });
+    const candidate = this.fallbackCandidate(confirmed);
     const snapshot = await this.switchToMemory(candidate, warning, true);
     if (!confirmed) {
       this.publishLocal("commit", snapshot);
     }
     return this.setReady(snapshot);
+  }
+
+  private fallbackCandidate(
+    confirmed: DemoWorkspaceSnapshot | null,
+  ): DemoWorkspaceSnapshot {
+    if (confirmed) {
+      throwIfFutureWorkspace(confirmed);
+      if (classifyDemoSeedVersion(confirmed.seedVersion) === "current") {
+        return confirmed;
+      }
+    }
+    return this.makeReplacementSeedSnapshot(confirmed);
+  }
+
+  private makeReplacementSeedSnapshot(
+    previous: DemoWorkspaceSnapshot | null,
+  ): DemoWorkspaceSnapshot {
+    return this.makeSeedSnapshot({
+      createdAt: this.clock.now().toISOString(),
+      resetCount: previous ? previous.resetCount + 1 : 0,
+      resetEpoch: previous ? previous.resetEpoch + 1 : 0,
+      revision: previous ? previous.revision + 1 : 0,
+      lastEventSequence: previous?.lastEventSequence ?? 0,
+    });
   }
 
   private async switchToMemory(
@@ -940,16 +977,43 @@ function defaultWorkspaceId(): string {
 function workspaceUpgrade(
   snapshot: DemoWorkspaceSnapshot,
 ): DemoWorkspaceUpgradeRequired | null {
-  return snapshot.schemaVersion > DEMO_WORKSPACE_SCHEMA_VERSION
-    ? {
-        kind: "upgrade_required",
-        scope: "workspace_schema",
-        foundSchemaVersion: snapshot.schemaVersion,
-        supportedSchemaVersion: DEMO_WORKSPACE_SCHEMA_VERSION,
-        message:
-          "This demo workspace was created by a newer version. Reload after updating the demo.",
-      }
-    : null;
+  if (snapshot.schemaVersion > DEMO_WORKSPACE_SCHEMA_VERSION) {
+    return {
+      kind: "upgrade_required",
+      scope: "workspace_schema",
+      foundSchemaVersion: snapshot.schemaVersion,
+      supportedSchemaVersion: DEMO_WORKSPACE_SCHEMA_VERSION,
+      message:
+        "This demo workspace was created by a newer version. Reload after updating the demo.",
+    };
+  }
+
+  if (classifyDemoSeedVersion(snapshot.seedVersion) === "unsupported") {
+    return {
+      kind: "upgrade_required",
+      scope: "seed_version",
+      foundSeedVersion: snapshot.seedVersion,
+      supportedSeedVersion: DEMO_SEED.seedVersion,
+      message:
+        "This demo workspace seed is not supported by this version. Reload after updating the demo.",
+    };
+  }
+
+  return null;
+}
+
+const REFRESHABLE_DEMO_SEED_VERSIONS = new Set(["2026-07-11.1"]);
+
+/** Only reviewed legacy fixtures may be destructively replaced. */
+function classifyDemoSeedVersion(
+  seedVersion: string,
+): "current" | "refreshable" | "unsupported" {
+  if (seedVersion === DEMO_SEED.seedVersion) {
+    return "current";
+  }
+  return REFRESHABLE_DEMO_SEED_VERSIONS.has(seedVersion)
+    ? "refreshable"
+    : "unsupported";
 }
 
 function throwIfFutureWorkspace(snapshot: DemoWorkspaceSnapshot): void {
