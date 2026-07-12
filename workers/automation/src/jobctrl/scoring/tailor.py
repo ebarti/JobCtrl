@@ -139,12 +139,17 @@ def _build_analyze_use_case(
 
 
 def _build_voice_port():
-    """Construct the Phase-3 voice pass adapter (Claude Agent SDK).
+    """Construct the optional Claude voice pass only when provider auth is ready.
 
     Mirrors ``_build_analyze_use_case``'s SDK wiring: the voice pass is a NEW AI
     transform, so it runs through the Claude Agent SDK behind the ``VoicePort``
     seam, not the legacy httpx client (the all-new-AI-via-SDK directive).
     """
+    from jobctrl.infrastructure.setup_probes import probe_claude_auth
+
+    if not probe_claude_auth().ok:
+        return None
+
     from jobctrl.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter
 
     return ClaudeVoiceAdapter()

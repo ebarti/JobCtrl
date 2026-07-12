@@ -6,11 +6,11 @@ pageClass: jh-user-guide-page
 
 Most people never need this page. JobCtrl ships with working defaults, and the
 Discovery targets and preferences you set in the web app cover day-to-day use.
-The two settings worth knowing first are an **LLM provider key** (required before
+The two settings worth knowing first are an **LLM provider** (required before
 scoring or materials can run) and the **daily LLM spend budget** (which caps
-cost). Employer-analysis also has per-vendor auth checks because it runs a
-Claude + Codex + Antigravity ensemble; `jobctrl setup` and `jobctrl doctor`
-report those separately.
+cost). A single ready Codex, Claude, or Google provider is sufficient for every
+core AI stage, including employer-analysis synthesis. A second provider can add
+ensemble diversity, but it is not mandatory.
 
 JobCtrl configuration is intentionally local. Some settings live in the local
 SQLite database, set through the web app; working runtime credentials and
@@ -52,21 +52,23 @@ around risky actions.
 The development launcher loads `~/.jobctrl/.env`, repo `.env`, and the optional
 `JOBCTRL_USER_ENV_PATH` file before starting local services.
 
-The web app's credential panel is a separate, macOS-only store for
-`OPENAI_API_KEY`, `GEMINI_API_KEY`, and `LLM_URL`. It can write and report the
-presence of those entries in the macOS Keychain. At Python process startup,
-after env-file loading, JobCtrl uses a Keychain value only when the corresponding
-environment value is missing or empty; any non-empty value already present wins.
-Saving or removing a value in the running web app is therefore
-**restart-to-activate**: restart the Python worker (or the full local stack)
-before provider work. Native Windows and Linux credential-store adapters are
-planned; use the plaintext `.env` fallback or the shell on those platforms
-today. `jobctrl doctor` reports the effective source without printing secret
-values. In the macOS panel, **status unknown** (`inspection_failed`) is distinct
-from **not configured**: it means JobCtrl could not inspect Keychain, not that the
-entry is absent. Unlock Keychain if it is locked and retry; operational
-save/remove failures use a generic unavailable message without raw command
-details.
+On macOS, **Settings → Credentials** is the preferred guided provider setup. It
+stores Anthropic or Gemini API keys and the selected provider-mode settings in
+macOS Keychain. Codex credentials stay in JobCtrl's isolated Codex home, and
+AWS, Google, and Azure credentials stay in their native CLI-managed stores;
+JobCtrl records only the activation flags and non-secret identifiers needed to
+select those routes.
+
+At Python process startup, after env-file loading, JobCtrl uses a Keychain value
+only when the corresponding environment value is missing or empty; any
+non-empty environment value wins. Saving or removing a value is therefore
+**restart-to-activate**: restart JobCtrl before provider work. Native Windows
+and Linux credential-store adapters are planned; use `.env` or the shell on
+those platforms today. `jobctrl doctor` reports the effective source without
+printing secrets. **Status unknown** (`inspection_failed`) is distinct from
+**not configured**: it means JobCtrl could not inspect Keychain. Provider-mode
+replacement is all-or-nothing from the web contract; a failed change preserves
+the previous configuration or reports an explicit sanitized recovery failure.
 
 ## Candidate Profile Application Fields
 
@@ -110,17 +112,71 @@ attestation; leave it empty when there is no truthful answer.
 
 ## LLM Providers
 
-| Variable | What it does |
-| --- | --- |
-| `GEMINI_API_KEY` | Enables Gemini-backed scoring/materials and the Antigravity/Gemini analysis leg. |
-| `OPENAI_API_KEY` | Enables OpenAI-backed scoring/materials. For the Codex analysis leg, enroll this into `CODEX_HOME/auth.json`; a bare env key is not enough. |
-| `LLM_URL` | Enables a local OpenAI-compatible HTTP endpoint. |
-| `LLM_API_KEY` | Optional bearer token for the `LLM_URL` endpoint. |
-| `GOOGLE_API_KEY` | Fallback for the Antigravity/Gemini analysis leg when `GEMINI_API_KEY` is unset. |
-| `LLM_MODEL` | Overrides the provider default model. |
+Choose one provider in **Settings → Credentials**, then restart JobCtrl and use
+`jobctrl doctor`. The pipeline model spec defaults to `default`, which resolves
+through a ready provider. Explicit model specs use `codex:`, `claude:`, or
+`google:`; `gemini:` remains an alias for the Google SDK route.
 
-The pipeline default model spec is currently `gemini:gemini-3.5-flash` unless a
-stage or UI control overrides it.
+### Codex
+
+JobCtrl uses persisted Codex CLI authentication only. A raw
+`OPENAI_API_KEY` in JobCtrl's environment or Keychain is not a direct model
+route and does not satisfy readiness. Authenticate the stable JobCtrl-owned
+home with either a ChatGPT subscription or an API key enrolled through Codex:
+
+```bash
+CODEX_HOME="${JOBCTRL_DIR:-$HOME/.jobctrl}/codex_home" codex login
+
+printenv OPENAI_API_KEY | \
+  CODEX_HOME="${JOBCTRL_DIR:-$HOME/.jobctrl}/codex_home" \
+  codex login --with-api-key
+```
+
+`jobctrl setup --launch-logins` uses the bundled Codex runtime for the same
+flow. The Settings card can verify the resulting login without making a model
+call. Codex stores local state under `CODEX_HOME`, and `codex login status`
+exits successfully when credentials are present. See the official
+[Codex login command](https://learn.chatgpt.com/docs/developer-commands#codex-login)
+and [state-location reference](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations).
+
+JobCtrl keeps authentication outside the model-readable
+`codex_home/workspace/` directory. If isolated auth is absent, setup may copy a
+regular Codex CLI `auth.json` into the stable JobCtrl home once; it never
+overwrites an existing isolated login or creates a transient per-run home.
+
+### Claude
+
+Choose exactly one Claude Agent SDK route. Consumer Claude CLI login/OAuth does
+not count as provider readiness. The supported routes follow the official
+[Agent SDK authentication guidance](https://code.claude.com/docs/en/agent-sdk/quickstart):
+
+| Route | Settings stored by JobCtrl | Credential owned outside JobCtrl |
+| --- | --- | --- |
+| Anthropic API | `ANTHROPIC_API_KEY` | None |
+| Google Vertex AI | `CLAUDE_CODE_USE_VERTEX=1`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION` | Google Application Default Credentials (`gcloud auth application-default login`) or `GOOGLE_APPLICATION_CREDENTIALS` naming an existing service-account JSON file |
+| Amazon Bedrock | `CLAUDE_CODE_USE_BEDROCK=1`, optional `AWS_PROFILE` / `AWS_REGION` | AWS credential chain ([Bedrock setup](https://code.claude.com/docs/en/amazon-bedrock)) |
+| Claude Platform on AWS | `CLAUDE_CODE_USE_ANTHROPIC_AWS=1`, `ANTHROPIC_AWS_WORKSPACE_ID`, optional `AWS_PROFILE` / `AWS_REGION` | AWS credential chain ([Claude Platform on AWS](https://code.claude.com/docs/en/claude-platform-on-aws)) |
+| Microsoft Foundry | `CLAUDE_CODE_USE_FOUNDRY=1`, `ANTHROPIC_FOUNDRY_RESOURCE` | Azure credential chain (`az login`; [Foundry setup](https://code.claude.com/docs/en/microsoft-foundry)) |
+
+The Vertex route is documented separately in the official
+[Claude on Vertex AI guide](https://code.claude.com/docs/en/google-vertex-ai).
+
+### Google
+
+Choose one:
+
+| Route | Configuration |
+| --- | --- |
+| Gemini API | `GEMINI_API_KEY` (the runtime also accepts `GOOGLE_API_KEY` from the environment) |
+| Vertex AI | `GOOGLE_GENAI_USE_VERTEXAI=1`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, plus valid Google Application Default Credentials |
+
+Vertex project and location values select the target; they are not credentials.
+If `GOOGLE_APPLICATION_CREDENTIALS` is set, it must name an existing regular,
+loadable service-account JSON file. Otherwise JobCtrl checks the standard local
+gcloud ADC location, whose officially loadable ADC types (including
+`authorized_user`) remain supported.
+
+`LLM_MODEL` optionally overrides the selected provider's default model.
 
 ## Employer-Analysis Ensemble
 
@@ -133,43 +189,15 @@ jobctrl doctor
 
 The ensemble legs use vendor SDK runtimes pinned in the Python environment. The
 setup command detects auth before prompting and writes only local `.env`
-configuration; it never commits or ships credentials.
-
-Every employer-analysis run reconciles its legs with a Claude Agent SDK
-synthesis pass, so Claude auth (`ANTHROPIC_API_KEY` or local Claude credentials)
-is required even when you disable the `claude` leg via `JOBCTRL_ANALYSIS_LEGS`.
-`jobctrl setup` warns that analysis is not ready when synthesis auth is
-missing, and `jobctrl doctor` reports a dedicated `Claude synthesis auth` row
-that stays red until Claude auth is present.
+configuration; it never commits or ships credentials. Every run drafts and
+synthesizes with at least one ready provider. Unavailable optional legs degrade
+independently; the only ready provider is automatically included even when a
+stale `JOBCTRL_ANALYSIS_LEGS` value omitted it.
 
 | Variable | What it does |
 | --- | --- |
-| `JOBCTRL_ANALYSIS_LEGS` | Comma-separated enabled legs: `claude,codex,antigravity` by default. Setup writes this when you intentionally skip an unauthenticated leg so runs do not burn retries. Disabling the `claude` leg does **not** remove the Claude synthesis-auth requirement above. |
-| `ANTHROPIC_API_KEY` | Supported Claude Agent SDK auth path. |
-| `ANTHROPIC_AUTH_TOKEN` | Alternate Claude auth token path. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Local/dev Claude subscription convenience. The distributed product path remains API/provider auth. |
-| `CLAUDE_CONFIG_DIR` | Overrides the local Claude credential directory checked for `.credentials.json`. |
-| `CODEX_HOME` | Source Codex home containing `auth.json`. Defaults to `~/.codex`; the JobCtrl adapter copies this auth into a JobCtrl-owned Codex home so app-server history does not clutter the user's Codex app, then restricts sandboxed analysis commands to that home’s `workspace/` directory. |
+| `JOBCTRL_ANALYSIS_LEGS` | Comma-separated optional draft legs: `claude,codex,antigravity` by default. Setup writes this when you intentionally skip an unauthenticated leg. It does not impose a separate synthesis-provider requirement. |
 | `JOBCTRL_CODEX_BIN` | Explicit Codex runtime override. The default is the pinned `openai-codex-cli-bin` bundled binary. |
-| `GOOGLE_GENAI_USE_VERTEXAI` | Set to `1` to allow the Antigravity leg to use Vertex AI ADC instead of an API key. |
-| `GOOGLE_CLOUD_PROJECT` / `GOOGLE_PROJECT_ID` / `GCLOUD_PROJECT` | Project used with Vertex AI ADC. |
-| `GOOGLE_CLOUD_LOCATION` / `GOOGLE_VERTEX_LOCATION` | Optional Vertex location for Antigravity. |
-
-Codex auth is the common gotcha: `OPENAI_API_KEY` and `CODEX_API_KEY` can feed
-other surfaces, but the Codex SDK app-server path used by JobCtrl needs
-persisted `auth.json`. Enroll a key with:
-
-```bash
-printenv OPENAI_API_KEY | codex login --with-api-key
-```
-
-or run the Codex device login locally, then rerun `jobctrl setup`.
-
-Those `CODEX_HOME` instructions describe the current source mode. Bundled mode
-accepts `OPENAI_API_KEY` for its verified managed Codex provider pack, performs
-an isolated ephemeral API login, and never reads or copies ambient
-`CODEX_HOME/auth.json`. Source contributors follow the source-mode instructions
-above; installed users use the managed provider-pack path.
 
 ## LLM Spend Budget
 

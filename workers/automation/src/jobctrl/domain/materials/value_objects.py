@@ -396,8 +396,8 @@ class JudgeVerdict:
 
 
 _MODEL_SPEC_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
-_MODEL_SPEC_SENTINELS = {"", "default", "local-default"}
-_PROVIDER_PREFIXES = {"gemini", "openai", "local"}
+_MODEL_SPEC_SENTINELS = {"", "default"}
+_PROVIDER_PREFIXES = {"claude", "codex", "gemini", "google"}
 
 
 @dataclass(frozen=True)
@@ -406,7 +406,8 @@ class LlmModelSpec:
 
     A spec is either a bare model name, which uses the currently configured
     provider, or ``provider:model`` where provider is one of
-    ``gemini``, ``openai``, or ``local``. It deliberately carries no URL,
+    ``claude``, ``codex``, ``gemini``, or ``google``.
+    It deliberately carries no URL,
     API key, or provider configuration.
     """
 

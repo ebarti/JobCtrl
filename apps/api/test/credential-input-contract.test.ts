@@ -1,5 +1,6 @@
 import {
   CREDENTIAL_VALUE_MAX_LENGTH,
+  CredentialBatchUpdateRequestSchema,
   CredentialUpdateRequestSchema,
   type CredentialKey,
 } from "@jobctrl/contracts";
@@ -43,7 +44,6 @@ describe("credential input contract", () => {
       "OPENAI_API_KEY",
       "sk-proj_example-._~+/=",
     ],
-    ["local LLM URL", "LLM_URL", "http://127.0.0.1:11434/v1"],
   ] satisfies ReadonlyArray<readonly [string, CredentialKey, string]>)(
     "preserves %s",
     (_label, key, value) => {
@@ -55,4 +55,43 @@ describe("credential input contract", () => {
       ).toBe(true);
     },
   );
+
+  it("accepts an allowlisted mixed set/delete batch and rejects duplicate keys", () => {
+    expect(
+      CredentialBatchUpdateRequestSchema.safeParse({
+        operations: [
+          { operation: "set", key: "ANTHROPIC_API_KEY", value: "secret" },
+          { operation: "delete", key: "CLAUDE_CODE_USE_VERTEX" },
+        ],
+      }).success,
+    ).toBe(true);
+
+    expect(
+      CredentialBatchUpdateRequestSchema.safeParse({
+        operations: [
+          { operation: "set", key: "GEMINI_API_KEY", value: "first" },
+          { operation: "delete", key: "GEMINI_API_KEY" },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects unknown batch keys without retaining a rejected value", () => {
+    const parsed = CredentialBatchUpdateRequestSchema.safeParse({
+      operations: [
+        {
+          operation: "set",
+          key: "AWS_SECRET_ACCESS_KEY",
+          value: REJECTED_VALUE_MARKER,
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(JSON.stringify(parsed.error.issues)).not.toContain(
+        REJECTED_VALUE_MARKER,
+      );
+    }
+  });
 });

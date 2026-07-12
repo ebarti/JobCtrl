@@ -127,7 +127,7 @@ _EMAIL_ONLY_RE = re.compile(r"RESULT:EMAIL_ONLY:([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]
 # Reasons that get promoted from ``RESULT:FAILED:reason`` to a
 # dedicated SubmissionResult variant.
 _PROMOTED_FAILED_REASONS = {"captcha", "expired", "login_issue"}
-_DEFAULT_MODEL_SENTINELS = {"", "default", "local-default"}
+_DEFAULT_MODEL_SENTINELS = {"", "default"}
 _ACTIVE_CLAUDE_PROCS: dict[int, subprocess.Popen] = {}
 _ACTIVE_CLAUDE_LOCK = threading.Lock()
 

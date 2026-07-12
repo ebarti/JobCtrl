@@ -109,6 +109,8 @@ def test_default_handlers_are_registered() -> None:
         "generate_interview_prep",
         "apply",
         "profile_import",
+        "provider_status",
+        "provider_verify",
     }
     # Force dispatch on each method name with deliberately invalid params
     # — we only care that the response is NOT METHOD_NOT_FOUND.
@@ -117,6 +119,64 @@ def test_default_handlers_are_registered() -> None:
         assert response is not None
         body = response.to_dict()
         assert "error" not in body or body["error"]["code"] != METHOD_NOT_FOUND
+
+
+def test_provider_status_and_verify_are_secret_free(monkeypatch) -> None:
+    from jobctrl.infrastructure import setup_probes
+
+    monkeypatch.setattr(
+        setup_probes,
+        "provider_status_snapshot",
+        lambda provider: {
+            "provider": provider,
+            "configured": provider == "codex",
+            "ready": provider == "codex",
+            "mode": "cli_auth" if provider == "codex" else None,
+            "message": "ready" if provider == "codex" else "not configured",
+        },
+    )
+    monkeypatch.setattr(
+        setup_probes,
+        "verify_codex_connection",
+        lambda: (True, "connected", "Codex CLI authentication verified"),
+    )
+    server = _server()
+
+    status = server.dispatch(
+        JsonRpcRequest(method="provider_status", params={"provider": "codex"}, id=1)
+    )
+    verify = server.dispatch(
+        JsonRpcRequest(method="provider_verify", params={"provider": "codex"}, id=2)
+    )
+
+    assert status is not None
+    assert status.to_dict()["result"] == {
+        "providers": [
+            {
+                "provider": "codex",
+                "configured": True,
+                "ready": True,
+                "mode": "cli_auth",
+                "message": "ready",
+            }
+        ]
+    }
+    assert verify is not None
+    assert verify.to_dict()["result"] == {
+        "provider": "codex",
+        "ok": True,
+        "status": "connected",
+        "message": "Codex CLI authentication verified",
+    }
+
+
+def test_provider_verify_rejects_non_codex() -> None:
+    server = _server()
+    response = server.dispatch(
+        JsonRpcRequest(method="provider_verify", params={"provider": "claude"}, id=1)
+    )
+    assert response is not None
+    assert response.to_dict()["error"]["code"] == INVALID_PARAMS
 
 
 def test_generate_interview_prep_starts_user_triggered_workflow() -> None:
@@ -746,7 +806,7 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
                 "dryRun": True,
                 "rescore": True,
                 "retailor": True,
-                "tailorModels": ["local:draft-a", "openai:draft-b"],
+                "tailorModels": ["codex:draft-a", "claude:draft-b"],
                 "tailorJudgeModel": "gemini:judge-c",
                 "tailorJudgeMinScore": 0.9,
             },
@@ -780,7 +840,7 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
         dry_run=True,
         rescore=True,
         retailor=True,
-        tailor_models=("local:draft-a", "openai:draft-b"),
+        tailor_models=("codex:draft-a", "claude:draft-b"),
         tailor_judge_model="gemini:judge-c",
         tailor_judge_min_score=0.9,
         llm_model=DEFAULT_PIPELINE_LLM_MODEL_SPEC,

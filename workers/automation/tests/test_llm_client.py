@@ -16,7 +16,6 @@ from jobctrl.llm import LLMClient
 def test_gemini_provider_defaults_to_gemini_35_flash(monkeypatch) -> None:
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("LLM_URL", raising=False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
 
     _base_url, model, _api_key = llm._detect_provider()

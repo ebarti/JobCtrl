@@ -91,11 +91,13 @@ directory; treat those logs as sensitive too.
 
 ### Credentials Outside The Workspace
 
-The web app exposes a macOS-only credential panel for `OPENAI_API_KEY`,
-`GEMINI_API_KEY`, and `LLM_URL`. After environment-file loading, Python loads a
-Keychain entry at startup only when that environment value is missing or empty.
-Any non-empty environment value already present wins. Restart the worker (or the
-full stack) after saving or removing a value.
+The macOS credential panel guides Codex, Claude, and Google setup. Anthropic and
+Gemini API keys plus cloud activation flags/non-secret identifiers can live in
+Keychain. Codex auth lives under the isolated `codex_home`; AWS, Google, and
+Azure credential files remain in their vendor stores. After environment-file
+loading, Python loads a Keychain entry at startup only when that environment
+value is missing or empty. Any non-empty environment value already present
+wins. Restart JobCtrl after saving or removing a value.
 
 Windows Credential Manager and Linux Secret Service/keyring adapters are
 planned; those platforms use `.env` or shell variables today. The panel returns

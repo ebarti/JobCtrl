@@ -1,6 +1,7 @@
 export { profileKeys } from "./queryKeys.js";
 
 export { useCredentialsQuery } from "./hooks/useCredentialsQuery.js";
+export { useProviderStatusQuery } from "./hooks/useProviderStatusQuery.js";
 export { useDeleteCredentialMutation } from "./hooks/useDeleteCredentialMutation.js";
 export { useExtensionCapabilityTokenQuery } from "./hooks/useExtensionCapabilityTokenQuery.js";
 export { useImportResumeMutation } from "./hooks/useImportResumeMutation.js";
@@ -10,6 +11,8 @@ export { useProfileQuery } from "./hooks/useProfileQuery.js";
 export { useRotateExtensionCapabilityTokenMutation } from "./hooks/useRotateExtensionCapabilityTokenMutation.js";
 export { useSettingsQuery } from "./hooks/useSettingsQuery.js";
 export { useUpdateCredentialMutation } from "./hooks/useUpdateCredentialMutation.js";
+export { useUpdateCredentialsBatchMutation } from "./hooks/useUpdateCredentialsBatchMutation.js";
+export { useVerifyCodexProviderMutation } from "./hooks/useVerifyCodexProviderMutation.js";
 export { useUpdateProfileMutation } from "./hooks/useUpdateProfileMutation.js";
 export { useUpdateSettingsMutation } from "./hooks/useUpdateSettingsMutation.js";
 

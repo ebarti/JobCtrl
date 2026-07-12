@@ -56,11 +56,22 @@ def build_analyze_use_case(
     from jobctrl.infrastructure.analysis import (
         AntigravityAnalysisAdapter,
         ClaudeAnalysisAdapter,
-        ClaudeAnalysisSynthesizer,
         CodexAnalysisAdapter,
+        LlmAnalysisSynthesizer,
     )
+    from jobctrl.infrastructure.llm import LlmAdapter
+    from jobctrl.infrastructure.setup_probes import ready_llm_providers
 
     enabled_legs = enabled_analysis_legs()
+    ready = ready_llm_providers()
+    if not ready:
+        raise RuntimeError("No core LLM provider is ready for employer analysis")
+    leg_provider = {"claude": "claude", "codex": "codex", "antigravity": "google"}
+    selected_provider = next(
+        (leg_provider[leg] for leg in enabled_legs if leg_provider[leg] in ready),
+        ready[0],
+    )
+    llm = LlmAdapter(default_model=f"{selected_provider}:default")
     adapters = []
     if "claude" in enabled_legs:
         adapters.append(ClaudeAnalysisAdapter())
@@ -68,13 +79,34 @@ def build_analyze_use_case(
         adapters.append(CodexAnalysisAdapter())
     if "antigravity" in enabled_legs:
         adapters.append(AntigravityAnalysisAdapter())
+    adapter_providers = {
+        "claude" if isinstance(adapter, ClaudeAnalysisAdapter) else
+        "codex" if isinstance(adapter, CodexAnalysisAdapter) else
+        "google" if isinstance(adapter, AntigravityAnalysisAdapter) else
+        "local"
+        for adapter in adapters
+    }
+    if selected_provider == "claude" and "claude" not in adapter_providers:
+        adapters.append(ClaudeAnalysisAdapter())
+    elif selected_provider == "codex" and "codex" not in adapter_providers:
+        adapters.append(CodexAnalysisAdapter())
+    elif selected_provider == "google" and "google" not in adapter_providers:
+        adapters.append(AntigravityAnalysisAdapter())
+    synthesizer = LlmAnalysisSynthesizer(
+        llm=llm,
+        provider_id=llm.provider_id,
+        model=llm.model,
+    )
 
     return AnalyzeJobUseCase(
         repository=SqliteEmployerAnalysisRepository(conn),
         adapters=tuple(adapters),
-        synthesizer=ClaudeAnalysisSynthesizer(),
+        synthesizer=synthesizer,
         publisher=publisher or EmployerAnalyzedEventRecorder(conn, stage=event_stage),
-        sdk_set_version=analysis_sdk_set_version(enabled_legs),
+        sdk_set_version=analysis_sdk_set_version(
+            enabled_legs,
+            synthesizer_provider=llm.provider_id,
+        ),
     )
 
 

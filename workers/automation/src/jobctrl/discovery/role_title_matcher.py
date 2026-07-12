@@ -245,11 +245,12 @@ def _role_filter_enabled(search_cfg: Mapping[str, object] | None = None) -> bool
         return True
     if _running_under_pytest():
         return False
-    return bool(
-        os.environ.get("GEMINI_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("LLM_URL")
-    )
+    try:
+        from jobctrl.infrastructure.setup_probes import core_llm_ready
+
+        return core_llm_ready()
+    except Exception:  # noqa: BLE001 - auto mode degrades to deterministic matching
+        return False
 
 
 def _running_under_pytest() -> bool:

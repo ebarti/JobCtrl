@@ -8,12 +8,17 @@ import {
   CREDENTIAL_VALUE_MAX_LENGTH,
   CredentialKeys,
   type ActionCommandPayload,
+  type CredentialBatchOperation,
   type CredentialKey,
 } from "@jobctrl/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
-import { KeychainCredentialStore } from "../src/credentials.js";
+import {
+  CredentialStoreUnavailableError,
+  KeychainCredentialStore,
+} from "../src/credentials.js";
+import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 import { PROFILE_PREVIEW_SCRIPT, defaultActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 
@@ -8387,6 +8392,16 @@ describe("local TypeScript API", () => {
         stored.delete(key);
         return credentialStore.list();
       }),
+      applyBatch: vi.fn(async (operations: readonly CredentialBatchOperation[]) => {
+        for (const operation of operations) {
+          if (operation.operation === "set") {
+            stored.set(operation.key, operation.value);
+          } else {
+            stored.delete(operation.key);
+          }
+        }
+        return credentialStore.list();
+      }),
     };
     const app = buildApp({ ...options, credentialStore });
 
@@ -8416,6 +8431,197 @@ describe("local TypeScript API", () => {
     expect(remove.json().credentials.find((credential: { key: string }) => credential.key === "OPENAI_API_KEY")).toMatchObject({
       configured: false,
     });
+
+    await app.close();
+  });
+
+  it("applies an allowlisted credential batch without returning values", async () => {
+    const values = new Map<CredentialKey, string>([
+      ["CLAUDE_CODE_USE_VERTEX", "1"],
+    ]);
+    const response = () => ({
+      ok: true as const,
+      store: {
+        kind: "macos_keychain" as const,
+        available: true,
+        unavailableReason: null,
+        requiresWorkerRestart: true as const,
+      },
+      credentials: CredentialKeys.map((key) => ({
+        key,
+        label: key,
+        configured: values.has(key),
+        storage: "keychain" as const,
+      })),
+    });
+    const credentialStore = {
+      list: vi.fn(async () => response()),
+      set: vi.fn(),
+      delete: vi.fn(),
+      applyBatch: vi.fn(async (operations: readonly CredentialBatchOperation[]) => {
+        for (const operation of operations) {
+          if (operation.operation === "set") {
+            values.set(operation.key, operation.value);
+          } else {
+            values.delete(operation.key);
+          }
+        }
+        return response();
+      }),
+    };
+    const app = buildApp({ ...options, credentialStore });
+
+    const save = await app.inject({
+      method: "PATCH",
+      url: "/v1/credentials/batch",
+      payload: {
+        operations: [
+          { operation: "set", key: "ANTHROPIC_API_KEY", value: "batch-secret" },
+          { operation: "delete", key: "CLAUDE_CODE_USE_VERTEX" },
+        ],
+      },
+    });
+
+    expect(save.statusCode, save.body).toBe(200);
+    expect(credentialStore.applyBatch).toHaveBeenCalledTimes(1);
+    expect(save.body).not.toContain("batch-secret");
+    expect(save.json().credentials).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "ANTHROPIC_API_KEY", configured: true }),
+        expect.objectContaining({ key: "CLAUDE_CODE_USE_VERTEX", configured: false }),
+      ]),
+    );
+
+    const invalid = await app.inject({
+      method: "PATCH",
+      url: "/v1/credentials/batch",
+      payload: {
+        operations: [
+          {
+            operation: "set",
+            key: "AWS_SECRET_ACCESS_KEY",
+            value: REJECTED_CREDENTIAL_VALUE_MARKER,
+          },
+        ],
+      },
+    });
+    expect(invalid.statusCode, invalid.body).toBe(400);
+    expect(invalid.body).not.toContain(REJECTED_CREDENTIAL_VALUE_MARKER);
+    expect(credentialStore.applyBatch).toHaveBeenCalledTimes(1);
+
+    await app.close();
+  });
+
+  it("returns an explicit sanitized partial-failure state when batch recovery is incomplete", async () => {
+    const secret = "partial-batch-secret-must-not-appear";
+    const credentialStore = {
+      list: vi.fn(),
+      set: vi.fn(),
+      delete: vi.fn(),
+      applyBatch: vi.fn(async () => {
+        throw new CredentialStoreUnavailableError("partial_failure");
+      }),
+    };
+    const app = buildApp({ ...options, credentialStore });
+    const logError = vi.spyOn(app.log, "error");
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/credentials/batch",
+      payload: {
+        operations: [
+          { operation: "set", key: "ANTHROPIC_API_KEY", value: secret },
+          { operation: "delete", key: "CLAUDE_CODE_USE_VERTEX" },
+        ],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toEqual({
+      ok: false,
+      error: "credential_store_unavailable",
+      reason: "partial_failure",
+      message:
+        "Credential update failed and Keychain recovery was incomplete. Provider credentials may be partially updated; inspect Keychain before retrying.",
+    });
+    expect(response.body).not.toContain(secret);
+    expect(logError).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("dispatches sanitized provider status and Codex verification responses", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async (method) => {
+      if (method === "provider_status") {
+        return {
+          jsonrpc: "2.0" as const,
+          id: 1,
+          result: {
+            providers: [
+              {
+                provider: "codex",
+                configured: true,
+                ready: true,
+                mode: "subscription",
+              },
+            ],
+          },
+        };
+      }
+      return {
+        jsonrpc: "2.0" as const,
+        id: 2,
+        result: {
+          provider: "codex",
+          ok: true,
+          status: "connected",
+          message: "Codex CLI authentication is ready.",
+        },
+      };
+    });
+    const providerDispatcher: JsonRpcDispatcher = {
+      call,
+      close: vi.fn(async () => undefined),
+    };
+    const app = buildApp({ ...options, providerDispatcher });
+
+    const status = await app.inject({ method: "GET", url: "/v1/providers/status" });
+    const verify = await app.inject({ method: "POST", url: "/v1/providers/codex/verify" });
+
+    expect(status.statusCode, status.body).toBe(200);
+    expect(status.json()).toMatchObject({
+      ok: true,
+      providers: [{ provider: "codex", ready: true, mode: "subscription" }],
+    });
+    expect(verify.statusCode, verify.body).toBe(200);
+    expect(verify.json()).toMatchObject({
+      ok: true,
+      verification: { provider: "codex", status: "connected" },
+    });
+    expect(call).toHaveBeenNthCalledWith(1, "provider_status", {});
+    expect(call).toHaveBeenNthCalledWith(2, "provider_verify", { provider: "codex" });
+
+    await app.close();
+  });
+
+  it("sanitizes provider dispatcher failures", async () => {
+    const marker = "secret-provider-token";
+    const providerDispatcher: JsonRpcDispatcher = {
+      call: vi.fn(async () => ({
+        jsonrpc: "2.0" as const,
+        id: 1,
+        error: { code: -32603, message: marker, data: { token: marker } },
+      })),
+      close: vi.fn(async () => undefined),
+    };
+    const app = buildApp({ ...options, providerDispatcher });
+
+    const status = await app.inject({ method: "GET", url: "/v1/providers/status" });
+    const verify = await app.inject({ method: "POST", url: "/v1/providers/codex/verify" });
+
+    expect(status.statusCode, status.body).toBe(502);
+    expect(verify.statusCode, verify.body).toBe(502);
+    expect(`${status.body}${verify.body}`).not.toContain(marker);
 
     await app.close();
   });
@@ -8484,6 +8690,7 @@ describe("local TypeScript API", () => {
       list: vi.fn(async () => response),
       set: vi.fn(async (_key: CredentialKey, _value: string) => response),
       delete: vi.fn(async () => response),
+      applyBatch: vi.fn(async () => response),
     };
     const app = buildApp({ ...options, credentialStore });
 

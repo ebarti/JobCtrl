@@ -255,6 +255,38 @@ def analyze_job(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def provider_status(params: dict[str, Any]) -> dict[str, Any]:
+    """Return secret-free readiness for the guided provider settings surface."""
+
+    from jobctrl.infrastructure.setup_probes import provider_status_snapshot
+
+    requested = params.get("provider")
+    providers = ("codex", "claude", "google")
+    if requested is not None:
+        requested = str(requested).strip().lower()
+        if requested not in providers:
+            raise invalid_params("provider must be codex, claude, or google")
+        providers = (requested,)
+    return {"providers": [provider_status_snapshot(provider) for provider in providers]}
+
+
+def provider_verify(params: dict[str, Any]) -> dict[str, Any]:
+    """Verify persisted Codex CLI auth without making a model-generation call."""
+
+    provider = str(_require(params, "provider")).strip().lower()
+    if provider != "codex":
+        raise invalid_params("provider_verify currently supports only codex")
+    from jobctrl.infrastructure.setup_probes import verify_codex_connection
+
+    ok, status, message = verify_codex_connection()
+    return {
+        "provider": "codex",
+        "ok": ok,
+        "status": status,
+        "message": message,
+    }
+
+
 def refresh_compensation(params: dict[str, Any]) -> WorkflowStartSpec:
     """Build a workflow spec for compensation refresh."""
     try:
@@ -508,6 +540,8 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     # Standalone employer-analysis trigger (D-10) — synchronous; runs the
     # ensemble inline (no timeout, D-19) and persists the canonical analysis.
     server.register("analyze_job", analyze_job, mode="sync")
+    server.register("provider_status", provider_status, mode="sync")
+    server.register("provider_verify", provider_verify, mode="sync")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("generate_interview_prep", generate_interview_prep, mode="workflow")
     server.register("run_contact_research", run_contact_research, mode="workflow")

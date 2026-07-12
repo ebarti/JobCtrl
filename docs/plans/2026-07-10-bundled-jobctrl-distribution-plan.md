@@ -204,9 +204,10 @@ The release pipeline must publish, for every artifact:
   subscription credentials. Bundled Claude setup accepts Anthropic API-key or
   supported cloud-provider authentication; it does not route Free, Pro, or Max
   Claude Code credentials through the Agent SDK and launches the provider with
-  `--bare`. Bundled Codex accepts only `OPENAI_API_KEY`, forces API login with
-  ephemeral credential storage, and never reads or copies consumer
-  `CODEX_HOME/auth.json`; source mode retains its existing persisted-login path.
+  `--bare`. Bundled Codex uses persisted CLI authentication in the stable
+  JobCtrl-owned `codex_home`; an OpenAI API key is accepted only as stdin to
+  `codex login --with-api-key`, and setup may copy regular CLI auth once when
+  isolated auth is absent without overwriting it later.
 - Credentials are never bundled, copied into release artifacts, or included in
   logs.
 

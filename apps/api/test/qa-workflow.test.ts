@@ -1,7 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { CredentialKey, CredentialsResponse } from "@jobctrl/contracts";
+import type {
+  CredentialBatchOperation,
+  CredentialKey,
+  CredentialsResponse,
+} from "@jobctrl/contracts";
 import { CredentialKeys } from "@jobctrl/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -276,6 +280,16 @@ function createMemoryCredentialStore(): CredentialStore {
     },
     delete: async (key) => {
       values.delete(key);
+      return list();
+    },
+    applyBatch: async (operations: readonly CredentialBatchOperation[]) => {
+      for (const operation of operations) {
+        if (operation.operation === "set") {
+          values.set(operation.key, operation.value);
+        } else {
+          values.delete(operation.key);
+        }
+      }
       return list();
     },
   };

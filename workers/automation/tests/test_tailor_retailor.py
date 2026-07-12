@@ -440,7 +440,7 @@ def test_tailor_cli_passes_tailoring_model_controls(monkeypatch):
             "--tailor-models",
             "local:draft-a,gemini:draft-b",
             "--tailor-judge-model",
-            "openai:judge-c",
+            "google:judge-c",
             "--tailor-judge-min-score",
             "0.9",
         ],
@@ -449,7 +449,7 @@ def test_tailor_cli_passes_tailoring_model_controls(monkeypatch):
     assert result.exit_code == 0
     assert captured["stage"] == "tailor"
     assert captured["kwargs"]["tailor_models"] == ("local:draft-a", "gemini:draft-b")
-    assert captured["kwargs"]["tailor_judge_model"] == "openai:judge-c"
+    assert captured["kwargs"]["tailor_judge_model"] == "google:judge-c"
     assert captured["kwargs"]["tailor_judge_min_score"] == 0.9
 
 
@@ -471,14 +471,14 @@ def test_tailor_cli_preserves_omitted_judge_min_score_for_env_default(monkeypatc
             "--tailor-models",
             "local:draft-a",
             "--tailor-judge-model",
-            "openai:judge-c",
+            "google:judge-c",
         ],
     )
 
     assert result.exit_code == 0
     assert captured["stage"] == "tailor"
     assert captured["kwargs"]["tailor_models"] == ("local:draft-a",)
-    assert captured["kwargs"]["tailor_judge_model"] == "openai:judge-c"
+    assert captured["kwargs"]["tailor_judge_model"] == "google:judge-c"
     assert captured["kwargs"]["tailor_judge_min_score"] is None
 
 

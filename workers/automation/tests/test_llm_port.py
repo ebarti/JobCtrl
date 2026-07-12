@@ -95,18 +95,76 @@ def test_llm_adapter_can_pin_its_default_model(monkeypatch: pytest.MonkeyPatch) 
     routed = _FakeClient(response="routed", model="gemini-3.5-flash")
     created: list[tuple[str | None, str | None]] = []
 
-    def fake_create_client(provider: str | None = None, model: str | None = None) -> _FakeClient:
+    def fake_make_backend(provider: str | None = None, model: str | None = None) -> _FakeClient:
         created.append((provider, model))
+        routed.provider_id = provider or "google"
         return routed
 
-    monkeypatch.setattr(adapter_module, "create_client", fake_create_client)
+    monkeypatch.setattr(adapter_module, "_make_backend", fake_make_backend)
     adapter = LlmAdapter(default_model="gemini:gemini-3.5-flash")
 
     response = adapter.chat([LlmMessage(role="user", content="hi")])
 
     assert response == "routed"
     assert adapter.model == "gemini-3.5-flash"
-    assert created == [("gemini", "gemini-3.5-flash")]
+    assert created == [("google", "gemini-3.5-flash")]
+
+
+@pytest.mark.parametrize(
+    ("environment_model", "expected"),
+    [
+        ("claude:claude-opus-4-8", ("claude", "claude-opus-4-8")),
+        ("codex:gpt-5.5", ("codex", "gpt-5.5")),
+        ("google:gemini-3.5-flash", ("google", "gemini-3.5-flash")),
+    ],
+)
+def test_llm_adapter_resolves_documented_environment_model_for_default_calls(
+    monkeypatch: pytest.MonkeyPatch,
+    environment_model: str,
+    expected: tuple[str, str],
+) -> None:
+    created: list[tuple[str | None, str | None]] = []
+
+    def fake_make_backend(provider: str | None = None, model: str | None = None) -> _FakeClient:
+        created.append((provider, model))
+        client = _FakeClient(model=model or "provider-default")
+        client.provider_id = provider or "google"
+        return client
+
+    monkeypatch.setenv("LLM_MODEL", environment_model)
+    monkeypatch.setattr(adapter_module, "_make_backend", fake_make_backend)
+
+    LlmAdapter(default_model="default")
+
+    assert created == [expected]
+
+
+def test_llm_adapter_keeps_explicit_model_over_environment_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[tuple[str | None, str | None]] = []
+
+    def fake_make_backend(provider: str | None = None, model: str | None = None) -> _FakeClient:
+        created.append((provider, model))
+        client = _FakeClient(model=model or "provider-default")
+        client.provider_id = provider or "google"
+        return client
+
+    monkeypatch.setenv("LLM_MODEL", "claude:claude-opus-4-8")
+    monkeypatch.setattr(adapter_module, "_make_backend", fake_make_backend)
+
+    LlmAdapter(default_model="codex:gpt-5.5")
+
+    assert created == [("codex", "gpt-5.5")]
+
+
+def test_llm_adapter_rejects_unsupported_environment_model_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_MODEL", "local:http://127.0.0.1:11434")
+
+    with pytest.raises(ValueError, match="URLs"):
+        LlmAdapter(default_model="default")
 
 
 def test_llm_adapter_routes_explicit_provider_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -114,39 +172,26 @@ def test_llm_adapter_routes_explicit_provider_model(monkeypatch: pytest.MonkeyPa
     routed = _FakeClient(response="routed", model="judge-model")
     created: list[tuple[str | None, str | None]] = []
 
-    def fake_create_client(provider: str | None = None, model: str | None = None) -> _FakeClient:
+    def fake_make_backend(provider: str | None = None, model: str | None = None) -> _FakeClient:
         created.append((provider, model))
+        routed.provider_id = provider or "google"
         return routed
 
-    monkeypatch.setattr(adapter_module, "create_client", fake_create_client)
+    monkeypatch.setattr(adapter_module, "_make_backend", fake_make_backend)
     adapter = LlmAdapter(client=default)  # type: ignore[arg-type]
 
     response = adapter.chat([LlmMessage(role="user", content="hi")], model="gemini:judge-model")
 
     assert response == "routed"
-    assert created == [("gemini", "judge-model")]
+    assert created == [("google", "judge-model")]
     assert len(default.calls) == 0
     assert len(routed.calls) == 1
 
 
-def test_llm_adapter_routes_explicit_openai_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    default = _FakeClient(model="default-model")
-    routed = _FakeClient(response="routed", model="gpt-test")
-    created: list[tuple[str | None, str | None]] = []
-
-    def fake_create_client(provider: str | None = None, model: str | None = None) -> _FakeClient:
-        created.append((provider, model))
-        return routed
-
-    monkeypatch.setattr(adapter_module, "create_client", fake_create_client)
-    adapter = LlmAdapter(client=default)  # type: ignore[arg-type]
-
-    response = adapter.chat([LlmMessage(role="user", content="hi")], model="openai:gpt-test")
-
-    assert response == "routed"
-    assert created == [("openai", "gpt-test")]
-    assert len(default.calls) == 0
-    assert len(routed.calls) == 1
+def test_llm_adapter_rejects_direct_openai_provider() -> None:
+    adapter = LlmAdapter(client=_FakeClient())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="unsupported LLM provider"):
+        adapter.chat([LlmMessage(role="user", content="hi")], model="openai:gpt-test")
 
 
 def test_llm_adapter_rejects_raw_provider_config_in_model_spec() -> None:

@@ -1259,8 +1259,8 @@ def test_tailor_use_case_routes_multiple_candidate_models_and_persists_safe_meta
         assembler=ResumeAssembler(),
         analyze_use_case=_FakeAnalyzeUseCase(),
         llm_policy=TailoringLlmPolicy(
-            candidate_models=("local:draft-a", "openai:draft-b"),
-            judge_model="gemini:judge-c",
+            candidate_models=("codex:draft-a", "claude:draft-b"),
+            judge_model="google:judge-c",
         ),
     )
 
@@ -1268,20 +1268,20 @@ def test_tailor_use_case_routes_multiple_candidate_models_and_persists_safe_meta
 
     assert outcome.status == "approved"
     assert [kwargs.get("model") for kwargs in llm.kwargs] == [
-        "local:draft-a",
-        "openai:draft-b",
-        "gemini:judge-c",
+        "codex:draft-a",
+        "claude:draft-b",
+        "google:judge-c",
     ]
-    assert outcome.report["selected_model"] == "openai:draft-b"
+    assert outcome.report["selected_model"] == "claude:draft-b"
     assert outcome.materials is not None
     assert outcome.materials.tailored_resume is not None
     metadata = outcome.materials.tailored_resume.metadata
-    assert metadata["selected_model"] == "openai:draft-b"
-    assert metadata["judge_model"] == "gemini:judge-c"
+    assert metadata["selected_model"] == "claude:draft-b"
+    assert metadata["judge_model"] == "google:judge-c"
     assert metadata["tailoring_policy_version"] == 1
     assert metadata["tailoring_policy"]["prompt_fingerprint"].startswith("sha256:")
     assert metadata["tailoring_policy"]["config_fingerprint"].startswith("sha256:")
-    assert metadata["candidate_summaries"][0]["generator"] == "local:draft-a"
+    assert metadata["candidate_summaries"][0]["generator"] == "codex:draft-a"
     assert "api_key" not in json.dumps(metadata).lower()
     assert "platform leadership language" not in json.dumps(metadata).lower()
 
@@ -1342,8 +1342,8 @@ def test_tailor_use_case_tries_multiple_candidate_models_and_separate_judge(
         assembler=ResumeAssembler(),
         analyze_use_case=_FakeAnalyzeUseCase(),
         llm_policy=TailoringLlmPolicy(
-            candidate_models=("local:bad-candidate", "local:good-candidate"),
-            judge_model="local:judge",
+            candidate_models=("codex:bad-candidate", "claude:good-candidate"),
+            judge_model="google:judge",
         ),
     )
 
@@ -1353,15 +1353,15 @@ def test_tailor_use_case_tries_multiple_candidate_models_and_separate_judge(
 
     assert outcome.status == "approved"
     assert [kwargs.get("model") for kwargs in llm.kwargs] == [
-        "local:bad-candidate",
-        "local:good-candidate",
-        "local:judge",
+        "codex:bad-candidate",
+        "claude:good-candidate",
+        "google:judge",
     ]
-    assert outcome.report["selected_model"] == "local:good-candidate"
+    assert outcome.report["selected_model"] == "claude:good-candidate"
     assert outcome.materials is not None
     metadata = outcome.materials.tailored_resume.metadata if outcome.materials.tailored_resume else {}
-    assert metadata["selected_model"] == "local:good-candidate"
-    assert metadata["judge"]["judge_model"] == "local:judge"
+    assert metadata["selected_model"] == "claude:good-candidate"
+    assert metadata["judge"]["judge_model"] == "google:judge"
 
 
 def test_tailor_use_case_pass_verdict_below_threshold_fails_judge(
@@ -1398,7 +1398,7 @@ def test_tailor_use_case_lenient_skips_structured_judge(
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
         analyze_use_case=_FakeAnalyzeUseCase(),
-        llm_policy=TailoringLlmPolicy(judge_model="local:judge"),
+        llm_policy=TailoringLlmPolicy(judge_model="google:judge"),
     )
 
     outcome = use_case.execute(

@@ -18,6 +18,7 @@ from jobctrl.infrastructure.analysis.claude_analysis_adapter import (
     ClaudeAnalysisSynthesizer,
 )
 from jobctrl.infrastructure.analysis.codex_analysis_adapter import CodexAnalysisAdapter
+from jobctrl.infrastructure.analysis.llm_analysis_synthesizer import LlmAnalysisSynthesizer
 from jobctrl.infrastructure.analysis.ensemble import (
     compute_agreement,
     run_ensemble,
@@ -34,6 +35,7 @@ __all__ = [
     "ClaudeAnalysisAdapter",
     "ClaudeAnalysisSynthesizer",
     "CodexAnalysisAdapter",
+    "LlmAnalysisSynthesizer",
     "compute_agreement",
     "run_ensemble",
 ]

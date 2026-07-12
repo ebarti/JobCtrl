@@ -833,7 +833,7 @@ not primary user-facing stages.
 
 The request accepts `stages`, `limit`, `workers`, `minScore`,
 `validationMode`, `dryRun`, the default pipeline LLM model (`llmModel`, default
-`gemini:gemini-3.5-flash`), tailoring LLM controls (`tailorModels`,
+`default`, resolved through a ready Codex/Claude/Google provider), tailoring LLM controls (`tailorModels`,
 `tailorJudgeModel`, `tailorJudgeMinScore`), and apply flags (`headless`,
 `model`, `continuous`). Discover requests may also pass `sourceIds`, a
 deduplicated list of source-registry IDs from `GET /v1/discovery/sources`; when
@@ -1103,8 +1103,9 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   apply concurrency, discovery scheduling, LLM spend budget, and related
   preferences. `PATCH /v1/settings` updates them; the web Preferences and
   Settings forms use these routes.
-- `GET /v1/credentials` lists the supported provider credential keys
-  (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `LLM_URL`) with a label, storage kind,
+- `GET /v1/credentials` lists the fixed guided Claude/Google credential and
+  cloud-mode keys plus the legacy OpenAI-key removal entry, with a label,
+  storage kind,
   and a `configured` presence state (`true`, `false`, or `null`) only — values
   are never returned. `false` means confirmed absent; `null` means presence is
   unknown and must not be interpreted as missing. Its
@@ -1116,24 +1117,35 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   or failing the endpoint. A macOS inspection failure returns
   `inspection_failed` and unknown presence rather than misreporting an entry as
   absent.
-  `PATCH /v1/credentials` receives the submitted value and passes it to the
+  `PATCH /v1/credentials` receives one submitted value and passes it to the
   macOS Keychain (service `JobCtrl`); its response returns the same
-  presence-only shape. The PATCH schema rejects unknown keys with `400`.
+  presence-only shape. `PATCH /v1/credentials/batch` validates the complete
+  allowlisted operation plan, atomically applies it, and restores the exact
+  pre-change state on failure without exposing values. The schemas reject
+  unknown or duplicate keys with `400`.
   `DELETE /v1/credentials/:key` removes an allowlisted entry and returns
   `400 invalid_credential_key` for an unknown path key. Mutations on an
   unsupported host return sanitized `409 credential_store_unavailable`;
   operational Keychain failures return sanitized
-  `503 credential_store_unavailable` with reason `operational_failure`. Neither
-  path returns raw Keychain errors. `GET` and `DELETE` never return stored values,
-  and the API never reads a stored value back for provider runtime use. If
+  `503 credential_store_unavailable` with a sanitized operational or rollback
+  failure reason. Neither
+  path returns raw Keychain errors. `GET` and `DELETE` never return stored
+  values; private batch snapshots are used only for compensating rollback, not
+  provider runtime. If
   inspection or a mutation fails, unlock Keychain if it is locked and retry
   rather than replacing an unknown status with a new credential blindly.
   Separately, each Python CLI/worker process performs a bounded Keychain lookup
   once at startup for allowlisted environment values that remain missing or
   empty after env-file loading. A non-empty environment value wins. A running
   Python worker does not hot-reload API edits, so saving or removing a Keychain
-  entry requires a worker or full-stack restart before provider work observes
+  entry requires a JobCtrl restart before provider work observes
   the change.
+- `GET /v1/providers/status` returns sanitized status for exactly Codex,
+  Claude, and Google: `configured`, `ready`, detected `mode`, and a bounded
+  secret-free message. `POST /v1/providers/codex/verify` runs the isolated
+  Codex CLI's `login status` command without making a generation request and
+  returns `connected`, `not_configured`, or `failed`. RPC errors and malformed
+  provider responses become sanitized `502`/`503` provider-operation errors.
 - `GET /v1/extension/pairing-token` returns the local browser-extension
   capability token for the Settings pairing surface; `POST
   /v1/extension/pairing-token/rotate` replaces it. The token is generated under

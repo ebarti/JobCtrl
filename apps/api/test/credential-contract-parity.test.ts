@@ -28,9 +28,9 @@ function pythonBoolean(source: string, name: string): boolean {
 }
 
 function pythonTuple(source: string, name: string): string[] {
-  const match = source.match(new RegExp(`^${name} = \\(([^\\n]+)\\)$`, "m"));
+  const match = source.match(new RegExp(`^${name} = \\(([\\s\\S]*?)^\\)`, "m"));
   if (!match?.[1]) {
-    throw new Error(`Missing single-line Python tuple ${name}`);
+    throw new Error(`Missing Python tuple ${name}`);
   }
   return [...match[1].matchAll(/["']([^"']+)["']/g)].map(
     (item) => item[1] ?? "",

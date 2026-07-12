@@ -7,6 +7,8 @@ export const profileKeys = {
   extensionPairing: (tenantId: TenantId) =>
     [...profileKeys.all(tenantId), "extension-pairing"] as const,
   credentials: (tenantId: TenantId) => [...profileKeys.all(tenantId), "credentials"] as const,
+  providerStatus: (tenantId: TenantId) =>
+    [...profileKeys.all(tenantId), "provider-status"] as const,
   resumeTemplates: (tenantId: TenantId) =>
     [...profileKeys.all(tenantId), "resume-templates"] as const,
 };

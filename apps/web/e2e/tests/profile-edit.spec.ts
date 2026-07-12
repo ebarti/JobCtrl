@@ -1,6 +1,13 @@
 import { test, expect } from "@playwright/test";
 
-import { sampleCredentialsResponse } from "../../src/test/fixtures/projections.js";
+import {
+  sampleCredentialsResponse,
+  sampleProviderStatusResponse,
+} from "../../src/test/fixtures/projections.js";
+import {
+  removeClaudeProviderBatch,
+  removeGoogleProviderBatch,
+} from "../../src/contexts/profile/lib/provider-credential-plans.js";
 
 test("Profile edit + Plate baseline editor: edit a field, save, preview HTML refreshes with a new cache key", async ({
   page,
@@ -69,38 +76,42 @@ test("Credential notices keep a real, contained layout box at mobile width", asy
       }),
     });
   });
+  await page.route("**/v1/providers/status", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(sampleProviderStatusResponse),
+    });
+  });
 
   await page.setViewportSize({ width: 390, height: 844 });
 
   for (const expected of [
     {
       scenario: "available" as const,
-      copy: "Keychain changes are loaded by Python processes at startup.",
+      copy: "Provider settings saved here stay in macOS Keychain.",
       display: "block",
       guidance: true,
     },
     {
       scenario: "unsupported_platform" as const,
-      copy: "Keychain credential editing is available only on macOS.",
+      copy: "Guided secret storage is available only with macOS Keychain.",
       display: "block",
       guidance: true,
     },
     {
       scenario: "inspection_failed" as const,
-      copy: "JobCtrl could not safely inspect macOS Keychain.",
-      display: "flex",
+      copy: "JobCtrl could not safely inspect Keychain.",
+      display: "block",
       guidance: false,
     },
   ]) {
     scenario = expected.scenario;
     await page.goto(`/settings/credentials?qa=${expected.scenario}`);
 
-    const notice =
-      expected.scenario === "inspection_failed"
-        ? page.getByRole("alert", {
-            name: "Keychain inspection unavailable",
-          })
-        : page.getByText(expected.copy, { exact: false }).first();
+    const notice = page
+      .locator(".credential-store-notice")
+      .filter({ hasText: expected.copy })
+      .first();
     await expect(notice).toBeVisible({ timeout: 30_000 });
 
     const geometry = await notice.evaluate((element) => {
@@ -157,4 +168,67 @@ test("Credential notices keep a real, contained layout box at mobile width", asy
       expect(geometry.background).toBe(geometry.expectedInfoBackground);
     }
   }
+});
+
+test("Guided Claude and Google setup can be removed through confirmed provider batches", async ({
+  page,
+}) => {
+  const configuredKeys = new Set([
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_USE_VERTEX",
+    "GEMINI_API_KEY",
+    "GOOGLE_GENAI_USE_VERTEXAI",
+  ]);
+  const submittedBatches: unknown[] = [];
+  const credentialsResponse = () => ({
+    ...sampleCredentialsResponse,
+    credentials: sampleCredentialsResponse.credentials.map((credential) => ({
+      ...credential,
+      configured: configuredKeys.has(credential.key),
+    })),
+  });
+
+  await page.route(/\/v1\/credentials(?:\/batch)?(?:\?.*)?$/, async (route) => {
+    if (route.request().method() === "PATCH") {
+      const body = route.request().postDataJSON() as {
+        operations: Array<{ operation: "delete" | "set"; key: string }>;
+      };
+      submittedBatches.push(body);
+      for (const operation of body.operations) {
+        if (operation.operation === "delete") configuredKeys.delete(operation.key);
+      }
+    }
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(credentialsResponse()),
+    });
+  });
+  await page.route("**/v1/providers/status", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(sampleProviderStatusResponse),
+    });
+  });
+
+  await page.goto("/settings/credentials");
+
+  for (const provider of ["Claude", "Google"] as const) {
+    await page.getByRole("button", { name: `Remove ${provider} setup` }).click();
+    const dialog = page.getByRole("dialog", {
+      name: `Remove ${provider} provider setup?`,
+    });
+    await expect(dialog).toContainText("External vendor CLI and cloud credentials are unchanged.");
+    await dialog.getByRole("button", { name: `Remove ${provider} setup` }).click();
+    await expect(
+      page.getByText(
+        new RegExp(`${provider} provider settings removed\\. Restart JobCtrl`, "i"),
+      ),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: `Remove ${provider} setup` })).toHaveCount(0);
+  }
+
+  expect(submittedBatches).toEqual([
+    removeClaudeProviderBatch(),
+    removeGoogleProviderBatch(),
+  ]);
 });

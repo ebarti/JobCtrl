@@ -13,10 +13,13 @@ Gemini-serialised (no ``additionalProperties``).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from jobctrl.domain.materials.analysis import JobAnalysisDraft
 from jobctrl.infrastructure.analysis.antigravity_analysis_adapter import (
@@ -203,12 +206,43 @@ async def test_missing_api_key_raises_clear_error(monkeypatch: pytest.MonkeyPatc
         await adapter.draft("SYS", "6+ years of Python required.")
 
 
-async def test_vertex_adc_config_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_vertex_adc_config_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    credentials = tmp_path / "adc.json"
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_key_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    credentials.write_text(
+        json.dumps(
+            {
+                "type": "service_account",
+                "project_id": "project-a",
+                "private_key_id": "test-key-id",
+                "private_key": private_key_pem,
+                "client_email": "jobctrl-test@project-a.iam.gserviceaccount.com",
+                "client_id": "1234567890",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "client_x509_cert_url": (
+                    "https://www.googleapis.com/robot/v1/metadata/x509/"
+                    "jobctrl-test%40project-a.iam.gserviceaccount.com"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "1")
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "project-a")
     monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
     calls: dict[str, Any] = {}
     adapter = _make_adapter(structured=_valid_analysis_dict(), calls=calls)
 

@@ -1,7 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 
-import { sampleCredentialsResponse } from "../../../test/fixtures/projections.js";
+import {
+  sampleCredentialsResponse,
+  sampleProviderStatusResponse,
+} from "../../../test/fixtures/projections.js";
 import { CredentialsPanel } from "./CredentialsPanel.js";
 
 const meta = {
@@ -12,9 +15,19 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Present: Story = {};
+export const Configured: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        http.get("*/v1/providers/status", () =>
+          HttpResponse.json(sampleProviderStatusResponse),
+        ),
+      ],
+    },
+  },
+};
 
-export const Absent: Story = {
+export const Unconfigured: Story = {
   parameters: {
     msw: {
       handlers: [
@@ -26,6 +39,52 @@ export const Absent: Story = {
               configured: false,
             })),
           }),
+        ),
+        http.get("*/v1/providers/status", () =>
+          HttpResponse.json({
+            ok: true,
+            providers: sampleProviderStatusResponse.providers.map((provider) => ({
+              ...provider,
+              configured: false,
+              ready: false,
+              mode: null,
+            })),
+          }),
+        ),
+      ],
+    },
+  },
+};
+
+export const Loading: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        http.get("*/v1/credentials", async () => {
+          await delay("infinite");
+          return HttpResponse.json(sampleCredentialsResponse);
+        }),
+        http.get("*/v1/providers/status", async () => {
+          await delay("infinite");
+          return HttpResponse.json(sampleProviderStatusResponse);
+        }),
+      ],
+    },
+  },
+};
+
+export const Error: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        http.get("*/v1/credentials", () =>
+          HttpResponse.json({ ok: false, error: "internal" }, { status: 500 }),
+        ),
+        http.get("*/v1/providers/status", () =>
+          HttpResponse.json(
+            { ok: false, error: "provider_status_failed" },
+            { status: 503 },
+          ),
         ),
       ],
     },
@@ -49,54 +108,6 @@ export const InspectionFailed: Story = {
               configured: null,
             })),
           }),
-        ),
-      ],
-    },
-  },
-};
-
-export const UnsupportedPlatform: Story = {
-  parameters: {
-    msw: {
-      handlers: [
-        http.get("*/v1/credentials", () =>
-          HttpResponse.json({
-            ...sampleCredentialsResponse,
-            store: {
-              ...sampleCredentialsResponse.store,
-              available: false,
-              unavailableReason: "unsupported_platform",
-            },
-            credentials: sampleCredentialsResponse.credentials.map((entry) => ({
-              ...entry,
-              configured: null,
-            })),
-          }),
-        ),
-      ],
-    },
-  },
-};
-
-export const Loading: Story = {
-  parameters: {
-    msw: {
-      handlers: [
-        http.get("*/v1/credentials", async () => {
-          await new Promise((resolve) => setTimeout(resolve, 60_000));
-          return HttpResponse.json(sampleCredentialsResponse);
-        }),
-      ],
-    },
-  },
-};
-
-export const Error: Story = {
-  parameters: {
-    msw: {
-      handlers: [
-        http.get("*/v1/credentials", () =>
-          HttpResponse.json({ ok: false, error: "internal" }, { status: 500 }),
         ),
       ],
     },

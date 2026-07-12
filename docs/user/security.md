@@ -171,14 +171,17 @@ browser session but remains rate/budget limited. See
 
 | Secret | Boundary |
 | --- | --- |
-| Provider/runtime keys | Shell or plaintext `~/.jobctrl/.env`; never SQLite. |
-| macOS web credential entries | Keychain for `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `LLM_URL`; status only is returned. |
+| Provider/runtime keys | Shell, plaintext `~/.jobctrl/.env`, or the guided macOS Keychain boundary; never SQLite. |
+| Codex login | Persisted under JobCtrl's isolated `codex_home`; raw OpenAI keys are enrollment input only. |
+| Claude/Google web entries | Keychain for API keys plus cloud activation flags/non-secret identifiers; AWS, Google, and Azure credential files remain in their vendor stores. Status only is returned. |
 | CAPTCHA key | `CAPSOLVER_API_KEY` read by the owned local solver, not the model. |
 | Job-site passwords | Optional local profile value typed through a focused-field credential tool, never returned to the model. |
 
 Environment values win over Keychain. Keychain is loaded only for missing/empty
-values at process startup, so restart after changes. Windows and Linux use
-environment configuration today.
+values at process startup, so restart JobCtrl after changes. Provider
+replacement is atomic from the web contract; stored secrets are used internally
+only to restore a failed batch and never cross the HTTP boundary. Windows and
+Linux use environment configuration today.
 
 ## The Apply Agent
 

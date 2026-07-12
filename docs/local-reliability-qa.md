@@ -67,6 +67,19 @@ the production-mode browser lane. Verify direct SPA deep links, Pages security
 headers, the same-origin `/api/*` route, D1 migration state, and one Pages
 rollback before calling the public deployment healthy.
 
+### Provider setup gate
+
+When provider auth, Settings credentials, model routing, or employer analysis
+changes, prove each sanctioned provider independently: Codex persisted CLI auth,
+Claude API/cloud auth, Google Gemini key, Google standard ADC, and an existing
+regular `GOOGLE_APPLICATION_CREDENTIALS` service-account file. Project metadata,
+missing credential files, consumer Claude OAuth, raw OpenAI keys, and deferred
+local/custom endpoints must not unlock readiness. Inject a failure at every
+Keychain batch boundary and prove exact rollback, then exercise provider-level
+revocation, the three-card Settings route at desktop/mobile width, the demo
+read-only boundary, and a sole-provider draft plus synthesis path without making
+a live model call.
+
 <a id="scoring-policy-eval-gate"></a>
 <a id="saved-views-smoke"></a>
 <a id="daily-digest-smoke"></a>

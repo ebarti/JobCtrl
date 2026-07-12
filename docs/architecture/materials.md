@@ -27,9 +27,11 @@ same text rendered into the accepted artifact.
 
 ## Canonical Employer Analysis
 
-A parallel Claude, Codex, and Gemini analysis ensemble produces drafts; a Claude
-synthesizer reconciles healthy legs. One failed leg records degraded audit data
-without cancelling the others. All-leg failure is a hard error.
+A parallel Claude, Codex, and Google analysis ensemble produces drafts; a
+provider-neutral synthesizer reconciles healthy legs through any ready
+provider. One failed optional leg records degraded audit data without cancelling
+the others. A single ready provider is sufficient; all-provider failure is a
+hard error.
 
 The canonical, generation-versioned analysis stores:
 

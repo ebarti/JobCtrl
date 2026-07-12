@@ -19,8 +19,8 @@ for a screen-by-screen walkthrough.
 - An Apple-silicon Mac running macOS 15 or newer.
 - Internet access for installation, updates, and any hosted providers you
   choose to connect.
-- One supported LLM provider or a local OpenAI-compatible endpoint before you
-  run scoring or material generation.
+- One supported LLM provider before you run scoring or material generation:
+  Codex, Claude, or Google.
 
 The bundled install includes JobCtrl's application runtimes, workflow engine,
 PDF tooling, and managed headless browser. You do **not** need to install Git,
@@ -105,11 +105,19 @@ not recorded there.
 
 ### Connect an LLM provider
 
-Open the credential panel in the web app and configure one of:
+Open **Settings → Credentials** and configure one provider:
 
-- `GEMINI_API_KEY` for Google Gemini;
-- `OPENAI_API_KEY` for OpenAI;
-- `LLM_URL` for a local OpenAI-compatible model server.
+- **Codex:** authenticate JobCtrl's isolated Codex CLI with a ChatGPT
+  subscription or enroll an OpenAI API key through `codex login`. A raw
+  `OPENAI_API_KEY` is not used directly by JobCtrl.
+- **Claude:** use an Anthropic API key or one of the guided Google Vertex,
+  Amazon Bedrock, Claude Platform on AWS, or Microsoft Foundry routes.
+- **Google:** use a Gemini API key or Vertex AI Application Default
+  Credentials.
+
+One ready provider is sufficient for scoring, materials, and employer
+analysis. Connecting a second provider can improve ensemble diversity, but it
+is a recommendation, not a requirement.
 
 Credential changes take effect when the Python worker next starts. Restart
 JobCtrl after adding or removing a credential:
@@ -123,11 +131,10 @@ You can also store provider settings in `~/.jobctrl/.env`. See
 [Configuration](configuration.md) for provider choices, precedence, budgets,
 and feature-specific credentials.
 
-### Check optional provider integrations
+### Verify provider readiness
 
-Run the guided setup when you want JobCtrl to detect local Claude, Codex, or
-Antigravity authentication and record which employer-analysis legs you intend
-to use:
+Restart JobCtrl after changing saved provider settings, then verify the
+effective configuration:
 
 ```bash
 jobctrl setup
@@ -135,8 +142,8 @@ jobctrl doctor
 ```
 
 `jobctrl doctor` reports readiness without printing secret values. Employer
-analysis requires Claude synthesis authentication even when the Claude draft
-leg itself is disabled.
+analysis uses whichever configured provider is ready; Claude is no longer a
+mandatory synthesis dependency.
 
 The web app does not require `jobctrl init`. Run it only if you want starter
 files for terminal-driven workflows:

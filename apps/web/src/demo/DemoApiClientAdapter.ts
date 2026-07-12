@@ -435,6 +435,17 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return this.read((model) => model.profile.credentials);
   }
 
+  async providerStatus(): Promise<ApiClientResponse<"providerStatus">> {
+    return {
+      ok: true,
+      providers: [
+        { provider: "codex", configured: false, ready: false, mode: null },
+        { provider: "claude", configured: false, ready: false, mode: null },
+        { provider: "google", configured: false, ready: false, mode: null },
+      ],
+    };
+  }
+
   async listContacts(
     query: Parameters<ApiClientPort["listContacts"]>[0] = {},
   ): Promise<ApiClientResponse<"listContacts">> {
@@ -590,6 +601,8 @@ export class DemoApiClientAdapter implements ApiClientPort {
   runPipelineStages = this.unsupported("runPipelineStages");
   updateCredential = this.unsupported("updateCredential");
   deleteCredential = this.unsupported("deleteCredential");
+  updateCredentialsBatch = this.unsupported("updateCredentialsBatch");
+  verifyCodexProvider = this.unsupported("verifyCodexProvider");
   createContact = this.local("createContact");
   updateContact = this.local("updateContact");
   deleteContact = this.local("deleteContact");

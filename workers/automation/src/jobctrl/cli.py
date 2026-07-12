@@ -20,7 +20,6 @@ from rich.table import Table
 from rich.text import Text
 
 from jobctrl import __version__
-from jobctrl.llm import DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL
 from jobctrl.pipeline import SUPPORTED_STAGE_ORDER, run_single_job
 from jobctrl.workflow_specs import (
     build_apply_workflow_spec,
@@ -942,13 +941,15 @@ def setup(
     from jobctrl.infrastructure.setup_probes import (
         ANALYSIS_LEGS_ENV,
         antigravity_auth_kwargs,
+        codex_auth_path,
         enabled_analysis_legs,
+        ensure_jobctrl_codex_auth,
+        jobctrl_codex_home,
         probe_analysis_setup,
         probe_antigravity_auth,
         probe_claude_auth,
-        probe_claude_synthesis_auth,
         probe_codex_auth,
-        resolve_bundled_codex_path,
+        resolve_codex_binary,
     )
     from jobctrl.runtime import is_bundled_runtime, payload_dir
 
@@ -1012,6 +1013,12 @@ def setup(
         raise typer.Exit(code=2) from exc
     authenticated_legs: list[str] = []
 
+    if "codex" in configured_legs and not dry_run and not codex_auth_path().exists():
+        try:
+            ensure_jobctrl_codex_auth()
+        except RuntimeError:
+            pass
+
     if not json_output:
         console.print("\n[bold]Analysis Vendor Auth[/bold]")
     for probe in probe_analysis_setup():
@@ -1048,52 +1055,50 @@ def setup(
         if codex_probe.ok:
             authenticated_legs.append("codex")
         else:
-            if bundled:
-                if _confirm_setup_action(
-                    "Paste OPENAI_API_KEY for the bundled Codex analysis leg?",
-                    yes=False,
-                    non_interactive=non_interactive or yes,
-                    default=False,
-                ):
-                    key = typer.prompt("OPENAI_API_KEY", hide_input=True)
-                    if key.strip():
-                        env_updates["OPENAI_API_KEY"] = key.strip()
-                        authenticated_legs.append("codex")
-                elif not json_output:
-                    console.print(
-                        "  [dim]Bundled Codex auth: set OPENAI_API_KEY; "
-                        "consumer CODEX_HOME/auth.json and CODEX_API_KEY are not reused.[/dim]"
+            key = os.environ.get("OPENAI_API_KEY") or os.environ.get("CODEX_API_KEY")
+            command: list[str] | None = None
+            stdin: str | None = None
+            if key and launch_logins and _confirm_setup_action(
+                "Enroll the current OpenAI key into JobCtrl's Codex CLI home now?",
+                yes=yes,
+                non_interactive=non_interactive,
+                default=False,
+            ):
+                command = [str(resolve_codex_binary()), "login", "--with-api-key"]
+                stdin = key + "\n"
+            elif launch_logins and _confirm_setup_action(
+                "Authenticate JobCtrl's Codex CLI with your ChatGPT subscription now?",
+                yes=yes,
+                non_interactive=non_interactive,
+                default=False,
+            ):
+                command = [str(resolve_codex_binary()), "login"]
+            if command is not None:
+                summary["commands"].append(command)
+                if not json_output:
+                    console.print(f"[dim]+ {_shell_join(command)}[/dim]")
+                if dry_run:
+                    authenticated_legs.append("codex")
+                else:
+                    login_env = dict(os.environ)
+                    login_env["CODEX_HOME"] = str(jobctrl_codex_home())
+                    login_env.pop("OPENAI_API_KEY", None)
+                    login_env.pop("CODEX_API_KEY", None)
+                    proc = subprocess.run(
+                        command,
+                        input=stdin,
+                        text=True,
+                        check=False,
+                        cwd=str(root) if root else None,
+                        env=login_env,
                     )
-            else:
-                key = os.environ.get("OPENAI_API_KEY") or os.environ.get("CODEX_API_KEY")
-                if key and launch_logins and _confirm_setup_action(
-                    "Enroll the current OpenAI key into CODEX_HOME/auth.json now?",
-                    yes=yes,
-                    non_interactive=non_interactive,
-                    default=False,
-                ):
-                    command = [str(resolve_bundled_codex_path()), "login", "--with-api-key"]
-                    summary["commands"].append(command)
-                    if not json_output:
-                        console.print(f"[dim]+ {_shell_join(command)}[/dim]")
-                    if dry_run:
+                    if proc.returncode == 0 and probe_codex_auth(login_env).ok:
                         authenticated_legs.append("codex")
-                    else:
-                        proc = subprocess.run(
-                            command,
-                            input=key + "\n",
-                            text=True,
-                            check=False,
-                            cwd=str(root) if root else None,
-                        )
-                        if proc.returncode == 0:
-                            authenticated_legs.append("codex")
-                elif not json_output:
-                    console.print(
-                        "  [dim]Codex enrollment: run `codex login` or "
-                        "`printenv OPENAI_API_KEY | codex login --with-api-key`, "
-                        "then rerun setup.[/dim]"
-                    )
+            elif not json_output:
+                console.print(
+                    "  [dim]Codex enrollment: run `CODEX_HOME=<JobCtrl Codex home> codex login` "
+                    "or pipe OPENAI_API_KEY to `codex login --with-api-key`, then rerun setup.[/dim]"
+                )
             if "codex" not in authenticated_legs and _confirm_setup_action(
                 "Skip the Codex analysis leg for now?",
                 yes=yes,
@@ -1141,21 +1146,17 @@ def setup(
     _write_env_updates(get_env_path(), env_updates, dry_run=dry_run, quiet=json_output)
     summary["envUpdates"] = sorted(env_updates)
 
-    # Employer-analysis synthesis ALWAYS reconciles with the Claude Agent SDK
-    # (ClaudeAnalysisSynthesizer), regardless of the enabled leg set, so Claude
-    # synthesis auth is a hard requirement even when the claude draft leg is
-    # disabled. Report readiness against the post-update env so a freshly entered
-    # key counts, and never present a green analysis state without it.
-    synthesis_probe = probe_claude_synthesis_auth({**os.environ, **env_updates})
-    summary["analysisReady"] = synthesis_probe.ok
-    if not synthesis_probe.ok:
-        summary["analysisNotReadyReason"] = synthesis_probe.note
+    post_update_probes = probe_analysis_setup({**os.environ, **env_updates})
+    core_probe = next(probe for probe in post_update_probes if probe.name == "core LLM provider")
+    summary["analysisReady"] = core_probe.ok
+    if not core_probe.ok:
+        summary["analysisNotReadyReason"] = core_probe.note
         if not json_output:
             console.print(
-                f"[red]Employer analysis is NOT ready:[/red] {synthesis_probe.note}"
+                f"[red]Core AI stages are NOT ready:[/red] {core_probe.note}"
             )
     elif not json_output:
-        console.print("[green]Employer analysis synthesis auth ready.[/green]")
+        console.print("[green]Core AI provider ready.[/green]")
 
     if not skip_doctor:
         if not json_output:
@@ -1250,7 +1251,7 @@ def run(
         "--tailor-models",
         help=(
             "Comma-separated LLM specs for tailor candidate generation "
-            "(examples: gemini:gemini-3.5-flash, openai:gpt-4o-mini, local:resume-a)."
+            "(examples: default, codex:gpt-5.5, claude:claude-opus-4-8, google:gemini-3.5-flash)."
         ),
     ),
     tailor_judge_model: str = typer.Option(
@@ -1564,7 +1565,7 @@ def apply(
         mcp_path = _app_dir / ".mcp-apply-0.json"
         console.print(f"[green]Wrote prompt to:[/green] {prompt_file}")
         console.print("\n[bold]Run manually:[/bold]")
-        model_args = "" if model in {"", "default", "local-default"} else f"--model {model} "
+        model_args = "" if model in {"", "default"} else f"--model {model} "
         console.print(
             f"  claude {model_args}-p "
             f"--mcp-config {mcp_path} "
@@ -2774,26 +2775,9 @@ def doctor() -> None:
                         "pip install --no-deps python-jobspy && pip install pydantic tls-client requests markdownify regex"))
 
     # --- Tier 2 checks ---
-    has_gemini = bool(os.environ.get("GEMINI_API_KEY"))
-    has_openai = bool(os.environ.get("OPENAI_API_KEY"))
-    has_local = bool(os.environ.get("LLM_URL"))
-    if has_gemini:
-        model = os.environ.get("LLM_MODEL", DEFAULT_GEMINI_MODEL)
-        results.append(("LLM provider", ok_mark, f"Gemini ({model})"))
-    elif has_openai:
-        model = os.environ.get("LLM_MODEL", DEFAULT_OPENAI_MODEL)
-        results.append(("LLM provider", ok_mark, f"OpenAI ({model})"))
-    elif has_local:
-        results.append(("LLM provider", ok_mark, f"Local: {os.environ.get('LLM_URL')}"))
-    else:
-        results.append((
-            "LLM provider",
-            fail_mark,
-            "Set GEMINI_API_KEY, OPENAI_API_KEY, or LLM_URL; ensemble auth is checked below",
-        ))
-
     for probe in probe_analysis_setup():
-        results.append((probe.name, ok_mark if probe.ok else fail_mark, probe.note))
+        mark = ok_mark if probe.ok else (fail_mark if probe.required else "[dim]optional[/dim]")
+        results.append((probe.name, mark, probe.note))
 
     # --- Tier 3 checks ---
     # Claude apply runtime

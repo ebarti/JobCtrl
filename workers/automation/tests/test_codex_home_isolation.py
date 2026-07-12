@@ -82,10 +82,12 @@ def test_isolated_codex_env_is_minimal_for_jobctrl_home(tmp_path: Path) -> None:
 
     env = adapter._isolated_codex_env(codex_home, process_home)
 
-    assert env == {"CODEX_HOME": str(codex_home), "HOME": str(process_home)}
+    assert env["CODEX_HOME"] == str(codex_home)
+    assert env["HOME"] == str(process_home)
+    assert all(env[key] == "" for key in adapter._CODEX_BUNDLED_NEUTRALIZED_AUTH_ENV)
 
 
-def test_bundled_codex_uses_only_api_key_and_never_reads_or_copies_consumer_auth(
+def test_bundled_codex_uses_persisted_auth_and_neutralizes_raw_keys(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -102,21 +104,16 @@ def test_bundled_codex_uses_only_api_key_and_never_reads_or_copies_consumer_auth
     monkeypatch.setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", "https://consumer.test/refresh")
     monkeypatch.setenv("CODEX_REVOKE_TOKEN_URL_OVERRIDE", "https://consumer.test/revoke")
 
-    def unexpected_consumer_auth_read() -> Path:
-        raise AssertionError("bundled Codex must not resolve ambient CODEX_HOME/auth.json")
-
-    monkeypatch.setattr(adapter, "codex_auth_path", unexpected_consumer_auth_read)
-
     dirs = adapter._prepare_isolated_codex_home()
     env = adapter._isolated_codex_env(dirs.codex_home, dirs.process_home)
 
-    assert dirs.codex_home == app_dir / "provider-runtime/codex"
-    assert not (dirs.codex_home / "auth.json").exists()
+    assert dirs.codex_home == app_dir / "codex_home"
+    assert (dirs.codex_home / "auth.json").is_file()
     assert (source_codex_home / "auth.json").is_file()
     assert env == {
         "CODEX_HOME": str(dirs.codex_home),
         "HOME": str(dirs.process_home),
-        "OPENAI_API_KEY": "sk-bundled",
+        "OPENAI_API_KEY": "",
         "CODEX_API_KEY": "",
         "CODEX_ACCESS_TOKEN": "",
         "CODEX_AGENT_IDENTITY_AUTH": "",
@@ -125,7 +122,7 @@ def test_bundled_codex_uses_only_api_key_and_never_reads_or_copies_consumer_auth
     }
 
 
-def test_bundled_codex_factory_forces_api_login_with_ephemeral_credentials(
+def test_bundled_codex_factory_uses_persisted_credentials(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -136,6 +133,9 @@ def test_bundled_codex_factory_forces_api_login_with_ephemeral_credentials(
     monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
     monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "bundled")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-bundled")
+    auth = app_dir / "codex_home/auth.json"
+    auth.parent.mkdir(parents=True)
+    auth.write_text('{"OPENAI_API_KEY":"sk-persisted"}', encoding="utf-8")
     monkeypatch.setattr(jobctrl.runtime, "activate_provider_pack", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: tmp_path / "codex-bin")
 
@@ -147,12 +147,8 @@ def test_bundled_codex_factory_forces_api_login_with_ephemeral_credentials(
 
     codex = adapter._load_async_codex_factory()()
 
-    assert codex.config.config_overrides == (
-        *adapter._CODEX_CONFIG_OVERRIDES,
-        'forced_login_method="api"',
-        'cli_auth_credentials_store="ephemeral"',
-    )
-    assert codex.config.env["OPENAI_API_KEY"] == "sk-bundled"
+    assert codex.config.config_overrides == adapter._CODEX_CONFIG_OVERRIDES
+    assert codex.config.env["OPENAI_API_KEY"] == ""
     assert all(
         codex.config.env[key] == ""
         for key in adapter._CODEX_BUNDLED_NEUTRALIZED_AUTH_ENV

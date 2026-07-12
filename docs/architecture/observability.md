@@ -53,7 +53,7 @@ These sources emit spans:
 
 | Source | Span name | `langfuse.observation.type` |
 | --- | --- | --- |
-| Every LLM call (`jobctrl.llm.LLMClient.chat`) | `llm.<model>` | `generation` |
+| Every provider-routed `LlmPort` call | `llm.<model>` | `generation` |
 | Each employer-analysis ensemble draft leg (scopes `jobctrl.analysis.claude` / `.codex` / `.antigravity`) | `llm.<model>` | `generation` |
 | The employer-analysis synthesizer (scope `jobctrl.analysis.synthesizer`) | `llm.<model>` | `generation` |
 | The resume voice pass (scope `jobctrl.materials.voice`) | `llm.<model>` | `generation` |
@@ -83,17 +83,15 @@ sources after the cap is reached.
 
 ## Employer-Analysis Ensemble Spans
 
-The employer-analysis ensemble is the first capability on the **agent-SDK**
-standard (Claude Agent SDK + Codex SDK + Google Antigravity/Gemini SDK). The
-legs currently run `claude-opus-4-8` (the Claude draft and synthesizer, and
-also the resume voice pass), `gpt-5.5` (Codex), and `gemini-3.5-flash`
-(Antigravity). Those
-SDKs consume the existing local session credentials (Claude Code session, reused
-Codex login, and `GEMINI_API_KEY`/`GOOGLE_API_KEY` for the Antigravity leg) —
-they introduce no new key management. The analysis run is visible through its
+The employer-analysis ensemble uses the Claude Agent SDK, Codex SDK, and Google
+SDK. Each backend supports plain and schema-constrained `LlmPort` calls. The
+same ready backend that can draft can also synthesize, so no provider is a
+universal dependency. Claude uses API/cloud-provider auth (not consumer CLI
+OAuth), Codex uses the stable JobCtrl-owned CLI login, and Google uses a Gemini
+key or verified Vertex ADC. The analysis run is visible through its
 persisted `EmployerAnalyzed` `job_events` record and the read-model
-`ensemble_completeness` field. Each of the four ensemble legs (the three parallel
-drafts + the Claude synthesizer) and the post-selection resume voice pass wrap
+`ensemble_completeness` field. Each parallel draft, the provider-neutral
+synthesizer, and the optional post-selection resume voice pass wrap
 their SDK model call in the same `llm_generation_span` the `LLMClient` uses, so
 every frontier-model call reports its model, prompt/completion, latency, and —
 when the SDK surfaces usage — input/output token counts to Langfuse. Distinct

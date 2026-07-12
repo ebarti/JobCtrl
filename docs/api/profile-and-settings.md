@@ -40,11 +40,16 @@ enter the system. They do not hold provider credentials or raw feed contents.
 | `GET/PATCH /v1/settings` | Non-secret runtime settings. |
 | `GET /v1/credentials` | Availability/status metadata, not secret values. |
 | `PATCH /v1/credentials` | Store or replace a credential through the local credential adapter. |
+| `PATCH /v1/credentials/batch` | Atomically replace or remove one guided provider configuration. |
 | `DELETE /v1/credentials/:key` | Remove a stored credential. |
+| `GET /v1/providers/status` | Sanitized Codex/Claude/Google configuration and readiness. |
+| `POST /v1/providers/codex/verify` | Verify isolated Codex CLI auth without a model call. |
 | `GET /v1/extension/pairing-token` | Read the local extension pairing state. |
 
 Credential responses expose enough state for the UI to show whether a provider
-is configured, but do not return stored secret material. See the
+is configured, but do not return stored secret material. Guided provider
+replacement rolls back on failure; an unrecoverable rollback is reported as an
+explicit sanitized store failure. See the
 [Security guide](../user/security.md) for the user-facing trust boundary.
 
 ## Which Screen Owns What?

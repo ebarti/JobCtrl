@@ -1,188 +1,521 @@
-"""Shared setup/auth probe behavior for doctor and setup."""
+"""Shared provider readiness, auth, and status probes."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
+import jobctrl.config
 from jobctrl.infrastructure import setup_probes
 
 
-def test_enabled_analysis_legs_default_and_aliases() -> None:
+def _sdk_ready(name: str):
+    return setup_probes.ProbeResult(name, True, "stub")
+
+
+def _stub_sdks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(setup_probes, "probe_claude_sdk", lambda: _sdk_ready("Claude analysis SDK"))
+    monkeypatch.setattr(setup_probes, "probe_codex_sdk", lambda env=None: _sdk_ready("Codex analysis SDK"))
+    monkeypatch.setattr(setup_probes, "probe_antigravity_sdk", lambda: _sdk_ready("Antigravity analysis SDK"))
+
+
+def _write_adc(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "type": "authorized_user",
+                "client_id": "test-client",
+                "client_secret": "test-secret",
+                "refresh_token": "test-refresh",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_service_account_adc(path: Path) -> None:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_key_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "type": "service_account",
+                "project_id": "test-project",
+                "private_key_id": "test-key-id",
+                "private_key": private_key_pem,
+                "client_email": "jobctrl-test@test-project.iam.gserviceaccount.com",
+                "client_id": "1234567890",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "client_x509_cert_url": (
+                    "https://www.googleapis.com/robot/v1/metadata/x509/"
+                    "jobctrl-test%40test-project.iam.gserviceaccount.com"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_codex_auth(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "test-access-token",
+                    "refresh_token": "test-refresh-token",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_enabled_analysis_legs_default_aliases_and_validation() -> None:
     assert setup_probes.parse_enabled_analysis_legs(None) == ("claude", "codex", "antigravity")
     assert setup_probes.parse_enabled_analysis_legs("gemini, openai") == ("codex", "antigravity")
-
-
-def test_enabled_analysis_legs_rejects_unknown() -> None:
     with pytest.raises(ValueError, match="unknown analysis leg"):
         setup_probes.parse_enabled_analysis_legs("claude,llama")
 
 
-def test_analysis_sdk_set_version_reflects_enabled_legs() -> None:
-    assert setup_probes.analysis_sdk_set_version(("claude", "antigravity")) == "claude+antigravity-v1"
+def test_analysis_sdk_set_version_includes_actual_synthesizer() -> None:
+    assert setup_probes.analysis_sdk_set_version(
+        ("claude", "antigravity"), synthesizer_provider="codex"
+    ) == "claude+antigravity-v2-synth-codex"
 
 
-def test_codex_auth_requires_persisted_auth_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    env = {"OPENAI_API_KEY": "sk-test"}
-
-    probe = setup_probes.probe_codex_auth(env)
-
-    assert probe.ok is False
-    assert "not enrolled" in probe.note
-
-    auth = tmp_path / ".codex" / "auth.json"
-    auth.parent.mkdir(parents=True)
-    auth.write_text("{}", encoding="utf-8")
-
-    probe = setup_probes.probe_codex_auth({})
-    assert probe.ok is True
-    assert str(auth) in probe.note
-
-
-def test_codex_home_is_honored(tmp_path: Path) -> None:
-    custom_home = tmp_path / "codex"
-    assert setup_probes.codex_auth_path({"CODEX_HOME": str(custom_home)}) == custom_home / "auth.json"
-
-
-def test_claude_auth_accepts_config_dir_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(setup_probes, "_macos_claude_keychain_present", lambda: False)
-    config_dir = tmp_path / "claude"
-    config_dir.mkdir()
-    (config_dir / ".credentials.json").write_text("{}", encoding="utf-8")
-
-    probe = setup_probes.probe_claude_auth({"CLAUDE_CONFIG_DIR": str(config_dir)})
-
-    assert probe.ok is True
-    assert "local Claude credentials" in probe.note
-
-
-def test_antigravity_auth_accepts_keys_and_vertex_adc() -> None:
-    assert setup_probes.antigravity_auth_kwargs({"GEMINI_API_KEY": "g-key"}) == {"api_key": "g-key"}
-
-    kwargs = setup_probes.antigravity_auth_kwargs({
-        "GOOGLE_GENAI_USE_VERTEXAI": "1",
-        "GOOGLE_CLOUD_PROJECT": "project-a",
-        "GOOGLE_CLOUD_LOCATION": "europe-west4",
-    })
-
-    assert kwargs == {"vertex": True, "project": "project-a", "location": "europe-west4"}
-
-
-def test_antigravity_auth_requires_key_or_vertex() -> None:
-    with pytest.raises(RuntimeError, match="Antigravity analysis auth requires"):
-        setup_probes.antigravity_auth_kwargs({})
-
-
-def test_resolve_codex_binary_uses_explicit_override(tmp_path: Path) -> None:
-    override = tmp_path / "codex"
-    assert setup_probes.resolve_codex_binary({"JOBCTRL_CODEX_BIN": str(override)}) == override
-
-
-def test_probe_claude_synthesis_auth_reflects_claude_auth(
+def test_codex_requires_persisted_cli_auth_and_uses_stable_jobctrl_home(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # Force a deterministic "no local Claude auth" state without touching the
-    # real machine: empty config dir + no keychain.
-    monkeypatch.setattr(setup_probes, "_macos_claude_keychain_present", lambda: False)
-    empty_config = tmp_path / "claude-empty"
-    empty_config.mkdir()
-    env_no_auth = {"CLAUDE_CONFIG_DIR": str(empty_config)}
+    app_dir = tmp_path / "jobctrl"
+    source_home = tmp_path / "source-codex"
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    env = {"CODEX_HOME": str(source_home), "OPENAI_API_KEY": "sk-test"}
 
-    missing = setup_probes.probe_claude_synthesis_auth(env_no_auth)
-    assert missing.name == "Claude synthesis auth"
+    raw_only = setup_probes.probe_codex_auth(env)
+    assert raw_only.ok is False
+    assert "not enrolled" in raw_only.note
+    assert setup_probes.codex_auth_path(env) == app_dir / "codex_home/auth.json"
+
+    source_home.mkdir()
+    _write_codex_auth(source_home / "auth.json")
+    target = setup_probes.ensure_jobctrl_codex_auth(env)
+    assert target == app_dir / "codex_home/auth.json"
+    assert target.is_file()
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"ANTHROPIC_API_KEY": "api"},
+        {"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_PROFILE": "work"},
+        {
+            "CLAUDE_CODE_USE_ANTHROPIC_AWS": "1",
+            "ANTHROPIC_AWS_WORKSPACE_ID": "workspace",
+            "AWS_PROFILE": "work",
+        },
+        {
+            "CLAUDE_CODE_USE_FOUNDRY": "1",
+            "ANTHROPIC_FOUNDRY_RESOURCE": "resource",
+            "ANTHROPIC_FOUNDRY_API_KEY": "secret",
+        },
+    ],
+)
+def test_claude_auth_accepts_api_and_official_cloud_provider_chains(env: dict[str, str]) -> None:
+    assert setup_probes.probe_claude_auth(env).ok is True
+
+
+def test_claude_vertex_requires_google_credentials(tmp_path: Path) -> None:
+    credentials = tmp_path / "adc.json"
+    missing = setup_probes.probe_claude_auth(
+        {
+            "CLAUDE_CODE_USE_VERTEX": "1",
+            "ANTHROPIC_VERTEX_PROJECT_ID": "project",
+            "GOOGLE_APPLICATION_CREDENTIALS": str(credentials),
+        }
+    )
     assert missing.ok is False
-    assert "synthesis" in missing.note.lower()
-
-    present = setup_probes.probe_claude_synthesis_auth(
-        {**env_no_auth, "ANTHROPIC_API_KEY": "sk-test"}
+    _write_service_account_adc(credentials)
+    ready = setup_probes.probe_claude_auth(
+        {
+            "CLAUDE_CODE_USE_VERTEX": "1",
+            "ANTHROPIC_VERTEX_PROJECT_ID": "project",
+            "GOOGLE_APPLICATION_CREDENTIALS": str(credentials),
+        }
     )
-    assert present.name == "Claude synthesis auth"
-    assert present.ok is True
+    assert ready.ok is True
 
 
-def test_probe_analysis_setup_always_probes_claude_synthesis_auth(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_explicit_non_service_account_adc_is_rejected_for_claude_and_google_vertex(
+    tmp_path: Path,
 ) -> None:
-    # Synthesis auth is required regardless of the enabled leg set. SDK presence
-    # is orthogonal to this invariant, so stub the SDK probes to keep the test
-    # off any real vendor runtime/network.
-    monkeypatch.setattr(
-        setup_probes, "probe_claude_sdk",
-        lambda: setup_probes.ProbeResult("Claude analysis SDK", True, "stub"),
-    )
-    monkeypatch.setattr(
-        setup_probes, "probe_codex_sdk",
-        lambda env=None: setup_probes.ProbeResult("Codex analysis SDK", True, "stub"),
-    )
-    monkeypatch.setattr(
-        setup_probes, "probe_antigravity_sdk",
-        lambda: setup_probes.ProbeResult("Antigravity analysis SDK", True, "stub"),
-    )
-    monkeypatch.setattr(setup_probes, "_macos_claude_keychain_present", lambda: False)
-    empty_config = tmp_path / "claude-empty"
-    empty_config.mkdir()
+    credentials = tmp_path / "adc.json"
+    _write_adc(credentials)
 
+    claude = setup_probes.probe_claude_auth(
+        {
+            "CLAUDE_CODE_USE_VERTEX": "1",
+            "ANTHROPIC_VERTEX_PROJECT_ID": "project",
+            "GOOGLE_APPLICATION_CREDENTIALS": str(credentials),
+        }
+    )
+    google = setup_probes.probe_antigravity_auth(
+        {
+            "GOOGLE_GENAI_USE_VERTEXAI": "1",
+            "GOOGLE_CLOUD_PROJECT": "project",
+            "GOOGLE_APPLICATION_CREDENTIALS": str(credentials),
+        }
+    )
+
+    assert claude.ok is False
+    assert google.ok is False
+
+
+def test_google_vertex_requires_loadable_local_adc(tmp_path: Path) -> None:
+    credentials = tmp_path / "adc.json"
     base = {
-        "JOBCTRL_ANALYSIS_LEGS": "codex,antigravity",
-        "CLAUDE_CONFIG_DIR": str(empty_config),
-        "CODEX_HOME": str(tmp_path / "codex-empty"),
+        "GOOGLE_GENAI_USE_VERTEXAI": "1",
+        "GOOGLE_CLOUD_PROJECT": "configured-project",
+        "GOOGLE_APPLICATION_CREDENTIALS": str(credentials),
     }
 
-    def _synthesis_row(results):
-        rows = [r for r in results if r.name == "Claude synthesis auth"]
-        assert len(rows) == 1, [r.name for r in results]
-        return rows[0]
+    with pytest.raises(RuntimeError, match="valid local Vertex AI ADC"):
+        setup_probes.antigravity_auth_kwargs(base)
 
-    # (b) Claude-less leg set WITHOUT Claude auth: synthesis row present and red
-    # (doctor renders ok=False as MISSING) — no green-paradox.
-    without_auth = setup_probes.probe_analysis_setup(base)
-    legs_row = next(r for r in without_auth if r.name == "analysis legs enabled")
-    assert "claude" not in legs_row.note  # the claude draft leg is genuinely off
-    assert _synthesis_row(without_auth).ok is False
+    credentials.mkdir()
+    with pytest.raises(RuntimeError, match="valid local Vertex AI ADC"):
+        setup_probes.antigravity_auth_kwargs(base)
 
-    # (a) Same Claude-less leg set WITH Claude auth: synthesis reachable, green.
-    with_auth = setup_probes.probe_analysis_setup({**base, "ANTHROPIC_API_KEY": "sk-test"})
-    assert _synthesis_row(with_auth).ok is True
+    credentials.rmdir()
+    credentials.write_text("{}", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="valid local Vertex AI ADC"):
+        setup_probes.antigravity_auth_kwargs(base)
+
+    _write_service_account_adc(credentials)
+    assert setup_probes.antigravity_auth_kwargs(base) == {
+        "vertex": True,
+        "project": "configured-project",
+    }
 
 
-def test_resolve_claude_apply_binary_precedence(
+def test_google_vertex_project_and_location_alone_are_not_credentials(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="valid local Vertex AI ADC"):
+        setup_probes.antigravity_auth_kwargs(
+            {
+                "HOME": str(tmp_path),
+                "GOOGLE_GENAI_USE_VERTEXAI": "1",
+                "GOOGLE_CLOUD_PROJECT": "configured-project",
+                "GOOGLE_CLOUD_LOCATION": "europe-west4",
+            }
+        )
+
+
+def test_google_vertex_uses_gcloud_well_known_adc_when_env_is_unset(tmp_path: Path) -> None:
+    credentials = tmp_path / ".config" / "gcloud" / "application_default_credentials.json"
+    _write_adc(credentials)
+
+    assert setup_probes.antigravity_auth_kwargs(
+        {
+            "HOME": str(tmp_path),
+            "GOOGLE_GENAI_USE_VERTEXAI": "1",
+            "GOOGLE_CLOUD_LOCATION": "europe-west4",
+        }
+    ) == {"vertex": True, "location": "europe-west4"}
+
+
+def test_invalid_explicit_adc_does_not_fall_back_to_gcloud_adc(tmp_path: Path) -> None:
+    _write_adc(tmp_path / ".config" / "gcloud" / "application_default_credentials.json")
+    explicit = tmp_path / "invalid.json"
+    explicit.write_text("{}", encoding="utf-8")
+
+    probe = setup_probes.probe_antigravity_auth(
+        {
+            "HOME": str(tmp_path),
+            "GOOGLE_APPLICATION_CREDENTIALS": str(explicit),
+            "GOOGLE_GENAI_USE_VERTEXAI": "1",
+            "GOOGLE_CLOUD_PROJECT": "configured-project",
+        }
+    )
+
+    assert probe.ok is False
+    assert "valid local Vertex AI ADC" in probe.note
+
+
+@pytest.mark.parametrize("adc_state", ["missing", "invalid"])
+def test_sole_google_missing_or_invalid_adc_is_not_ready_or_tier_two(
+    adc_state: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _stub_sdks(monkeypatch)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", tmp_path / "jobctrl")
+    monkeypatch.setattr(jobctrl.config, "load_env", lambda: None)
+    credentials = tmp_path / "google-adc.json"
+    if adc_state == "invalid":
+        credentials.write_text("{}", encoding="utf-8")
+    env = {
+        "HOME": str(tmp_path),
+        "CODEX_HOME": str(tmp_path / "absent-codex"),
+        "GOOGLE_APPLICATION_CREDENTIALS": str(credentials),
+        "GOOGLE_GENAI_USE_VERTEXAI": "1",
+        "GOOGLE_CLOUD_PROJECT": "configured-project",
+    }
+
+    status = setup_probes.provider_status_snapshot("google", env)
+    aggregate = next(
+        row for row in setup_probes.probe_analysis_setup(env) if row.name == "core LLM provider"
+    )
+    assert status["configured"] is True
+    assert status["ready"] is False
+    assert aggregate.ok is False
+
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "CODEX_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    assert jobctrl.config.get_tier() == 1
+
+
+def test_claude_consumer_oauth_is_never_readiness() -> None:
+    probe = setup_probes.probe_claude_auth({"CLAUDE_CODE_OAUTH_TOKEN": "consumer"})
+    assert probe.ok is False
+    assert "consumer OAuth" in probe.note
+
+
+def test_claude_sdk_options_preserve_home_for_cloud_credential_discovery(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # 1. Explicit override wins over PATH and the bundled runtime.
-    override = tmp_path / "claude-override"
-    assert setup_probes.resolve_claude_apply_binary(
-        {"JOBCTRL_CLAUDE_BIN": str(override)}
-    ) == str(override)
-
-    # 2. No override -> system `claude` on PATH.
-    monkeypatch.setattr(
-        "shutil.which", lambda name: "/usr/local/bin/claude" if name == "claude" else None
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", tmp_path / "jobctrl")
+    options = setup_probes.bundled_claude_sdk_options(
+        {"ANTHROPIC_API_KEY": "api", "CLAUDE_CODE_OAUTH_TOKEN": "consumer"}
     )
-    assert setup_probes.resolve_claude_apply_binary({}) == "/usr/local/bin/claude"
-
-    # 3. No override, no PATH `claude` -> SDK-bundled path when present.
-    monkeypatch.setattr("shutil.which", lambda name: None)
-    bundled = tmp_path / "_bundled" / "claude"
-    bundled.parent.mkdir(parents=True)
-    bundled.write_text("", encoding="utf-8")
-    monkeypatch.setattr(setup_probes, "resolve_bundled_claude_path", lambda: bundled)
-    assert setup_probes.resolve_claude_apply_binary({}) == str(bundled)
-
-    # 4. Nothing resolvable -> literal "claude" sentinel.
-    monkeypatch.setattr(
-        setup_probes, "resolve_bundled_claude_path", lambda: tmp_path / "absent" / "claude"
-    )
-    assert setup_probes.resolve_claude_apply_binary({}) == "claude"
+    sdk_env = options["env"]
+    assert "HOME" not in sdk_env
+    assert sdk_env["CLAUDE_CODE_OAUTH_TOKEN"] == ""
+    assert sdk_env["CLAUDE_CONFIG_DIR"].endswith("claude_home/config")
 
 
-def test_resolve_claude_apply_binary_expands_user_override(
+def test_any_one_provider_readiness_matrix(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # A `~/...` override must reach Popen expanded, matching resolve_codex_binary
-    # and the _has_claude_apply_runtime existence probe.
-    monkeypatch.setenv("HOME", str(tmp_path))
-    resolved = setup_probes.resolve_claude_apply_binary({"JOBCTRL_CLAUDE_BIN": "~/bin/claude"})
-    assert "~" not in resolved
-    assert resolved == str(tmp_path / "bin" / "claude")
+    _stub_sdks(monkeypatch)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", tmp_path / "jobctrl")
+    base = {"CODEX_HOME": str(tmp_path / "absent")}
+
+    cases = (
+        ({**base, "ANTHROPIC_API_KEY": "api"}, True),
+        ({**base, "GOOGLE_API_KEY": "google"}, True),
+        (base, False),
+        ({**base, "OPENAI_API_KEY": "raw-only"}, False),
+    )
+    for env, expected in cases:
+        result = setup_probes.probe_analysis_setup(env)
+        core = next(row for row in result if row.name == "core LLM provider")
+        assert core.ok is expected, (env, core)
+        assert all(not row.required for row in result if row.name != "core LLM provider")
+
+
+def test_provider_status_is_secret_free(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(setup_probes, "probe_claude_sdk", lambda: _sdk_ready("Claude analysis SDK"))
+    status = setup_probes.provider_status_snapshot("claude", {"ANTHROPIC_API_KEY": "super-secret"})
+    assert status == {
+        "provider": "claude",
+        "configured": True,
+        "ready": True,
+        "mode": "api_key",
+        "message": "Claude provider is ready",
+    }
+    assert "super-secret" not in str(status)
+
+
+def test_provider_status_does_not_copy_ambient_codex_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    source_home = tmp_path / "source-codex"
+    _write_codex_auth(source_home / "auth.json")
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+
+    status = setup_probes.provider_status_snapshot(
+        "codex",
+        {"CODEX_HOME": str(source_home)},
+    )
+
+    assert status["ready"] is False
+    target = setup_probes.codex_auth_path()
+    assert target.exists() is False
+    assert target.parent.exists() is False
+
+
+def test_verify_codex_uses_persisted_home_and_strips_raw_keys(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    target = app_dir / "codex_home/auth.json"
+    target.parent.mkdir(parents=True)
+    _write_codex_auth(target)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+    seen: dict[str, object] = {}
+
+    def runner(command, **kwargs):
+        seen.update(command=command, **kwargs)
+        return SimpleNamespace(returncode=0)
+
+    result = setup_probes.verify_codex_connection(
+        {"OPENAI_API_KEY": "raw", "CODEX_API_KEY": "raw-alias"}, runner=runner
+    )
+    assert result == (True, "connected", "Codex CLI authentication verified")
+    assert seen["command"][-2:] == ["login", "status"]
+    child_env = seen["env"]
+    assert "OPENAI_API_KEY" not in child_env
+    assert "CODEX_API_KEY" not in child_env
+    assert child_env["CODEX_HOME"] == str(app_dir / "codex_home")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "",
+        "{",
+        "{}",
+        '{"tokens":{"access_token":""}}',
+    ],
+)
+def test_codex_rejects_empty_malformed_or_invalid_auth_json(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    payload: str,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    auth = app_dir / "codex_home/auth.json"
+    auth.parent.mkdir(parents=True)
+    auth.write_text(payload, encoding="utf-8")
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+
+    ok, status, _message = setup_probes.verify_codex_connection({}, runner=lambda *_args, **_kwargs: None)
+
+    assert (ok, status) == (False, "not_configured")
+
+
+def test_codex_rejects_auth_json_directory_or_symlink(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    auth = app_dir / "codex_home/auth.json"
+    auth.parent.mkdir(parents=True)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+
+    auth.mkdir()
+    assert setup_probes.verify_codex_connection({}, runner=lambda *_args, **_kwargs: None)[0] is False
+    auth.rmdir()
+
+    source = tmp_path / "source-auth.json"
+    _write_codex_auth(source)
+    auth.symlink_to(source)
+    assert setup_probes.verify_codex_connection({}, runner=lambda *_args, **_kwargs: None)[0] is False
+
+
+def test_failed_codex_cli_status_blocks_provider_status_core_gate_and_tier(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _stub_sdks(monkeypatch)
+    app_dir = tmp_path / "jobctrl"
+    _write_codex_auth(app_dir / "codex_home/auth.json")
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(jobctrl.config, "load_env", lambda: None)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+
+    def failed_runner(*_args, **_kwargs):
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(
+        setup_probes,
+        "_cached_verify_codex_connection",
+        lambda values: setup_probes.verify_codex_connection(values, runner=failed_runner),
+    )
+    env = {"CODEX_HOME": str(tmp_path / "source-codex")}
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "CODEX_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    assert setup_probes.provider_status_snapshot("codex", env)["ready"] is False
+    assert setup_probes.ready_llm_providers(env) == ()
+    assert setup_probes.core_llm_ready(env) is False
+    assert next(
+        probe for probe in setup_probes.probe_analysis_setup(env) if probe.name == "core LLM provider"
+    ).ok is False
+    monkeypatch.setenv("CODEX_HOME", env["CODEX_HOME"])
+    monkeypatch.setattr(
+        setup_probes,
+        "_env",
+        lambda supplied=None: supplied if supplied is not None else {"CODEX_HOME": env["CODEX_HOME"]},
+    )
+    assert jobctrl.config.get_tier() == 1
+
+
+def test_codex_readiness_caches_successful_cli_status_for_unchanged_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    _write_codex_auth(app_dir / "codex_home/auth.json")
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+    checks = 0
+    calls = 0
+
+    def successful_runner(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return SimpleNamespace(returncode=0)
+
+    verify = setup_probes.verify_codex_connection
+
+    def verify_with_runner(values):
+        nonlocal checks
+        checks += 1
+        return verify(values, runner=successful_runner)
+
+    monkeypatch.setattr(setup_probes, "verify_codex_connection", verify_with_runner)
+
+    assert setup_probes.probe_codex_auth({}).ok is True
+    assert setup_probes.probe_codex_auth({}).ok is True
+    assert checks == 1
+    assert calls == 1
+
+    (app_dir / "codex_home/auth.json").write_text("{}", encoding="utf-8")
+
+    assert setup_probes.probe_codex_auth({}).ok is False
+    assert checks == 2
+    assert calls == 1
+
+
+def test_resolve_codex_and_claude_binary_overrides(tmp_path: Path) -> None:
+    assert setup_probes.resolve_codex_binary({"JOBCTRL_CODEX_BIN": str(tmp_path / "codex")}) == tmp_path / "codex"
+    assert setup_probes.resolve_claude_apply_binary({"JOBCTRL_CLAUDE_BIN": str(tmp_path / "claude")}) == str(tmp_path / "claude")

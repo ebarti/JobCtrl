@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import json
 import os
-import platform
 import shutil
 import subprocess
+import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Callable, Mapping
 
 from jobctrl.runtime import (
     RuntimeConfigurationError,
@@ -39,6 +41,7 @@ _LEG_ALIASES = {
 
 _CLAUDE_CLOUD_FLAGS = (
     "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
 )
@@ -62,6 +65,19 @@ _ANTIGRAVITY_CONSUMER_AUTH_ENV = (
     "GOOGLE_ANTIGRAVITY_OAUTH_TOKEN",
     "GOOGLE_ANTIGRAVITY_SESSION",
 )
+_GOOGLE_ADC_TYPES = {
+    "authorized_user",
+    "service_account",
+    "external_account",
+    "external_account_authorized_user",
+    "impersonated_service_account",
+    "gdch_service_account",
+}
+_EXPLICIT_GOOGLE_ADC_TYPE = "service_account"
+_CODEX_AUTH_STATUS_CACHE_TTL_SECONDS = 30.0
+_CODEX_AUTH_STATUS_CACHE: dict[
+    tuple[object, ...], tuple[float, tuple[bool, str, str]]
+] = {}
 
 
 @dataclass(frozen=True)
@@ -109,11 +125,18 @@ def enabled_analysis_legs(env: Mapping[str, str] | None = None) -> tuple[str, ..
     return parse_enabled_analysis_legs(_env(env).get(ANALYSIS_LEGS_ENV))
 
 
-def analysis_sdk_set_version(legs: tuple[str, ...] | None = None) -> str:
+def analysis_sdk_set_version(
+    legs: tuple[str, ...] | None = None,
+    *,
+    synthesizer_provider: str = "default",
+) -> str:
     """Return the cache-key SDK-set version for the enabled leg set."""
 
     selected = legs or enabled_analysis_legs()
-    return f"{'+'.join(selected)}-v1"
+    safe_provider = "".join(
+        char for char in synthesizer_provider.strip().lower() if char.isalnum() or char in {"-", "_"}
+    ) or "default"
+    return f"{'+'.join(selected)}-v2-synth-{safe_provider}"
 
 
 def effective_codex_home(env: Mapping[str, str] | None = None) -> Path:
@@ -123,116 +146,156 @@ def effective_codex_home(env: Mapping[str, str] | None = None) -> Path:
     return Path(raw).expanduser() if raw else Path.home() / ".codex"
 
 
-def codex_auth_path(env: Mapping[str, str] | None = None) -> Path:
+def source_codex_auth_path(env: Mapping[str, str] | None = None) -> Path:
     return effective_codex_home(env) / "auth.json"
 
 
-def claude_config_dir(env: Mapping[str, str] | None = None) -> Path:
-    raw = _env(env).get("CLAUDE_CONFIG_DIR")
-    return Path(raw).expanduser() if raw else Path.home() / ".claude"
+def jobctrl_codex_home(env: Mapping[str, str] | None = None) -> Path:
+    """Return the stable JobCtrl-owned Codex home used by setup and runtime."""
+
+    from jobctrl.config import APP_DIR
+
+    return APP_DIR / "codex_home"
 
 
-def claude_credentials_path(env: Mapping[str, str] | None = None) -> Path:
-    return claude_config_dir(env) / ".credentials.json"
+def codex_auth_path(env: Mapping[str, str] | None = None) -> Path:
+    """Return the persisted auth cache consumed by JobCtrl's Codex SDK lane."""
+
+    return jobctrl_codex_home(env) / "auth.json"
 
 
-def _macos_claude_keychain_present() -> bool:
-    if platform.system() != "Darwin" or shutil.which("security") is None:
-        return False
-    try:
-        completed = subprocess.run(
-            ["security", "find-generic-password", "-s", "Claude Code-credentials"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return completed.returncode == 0
+def _aws_credentials_present(values: Mapping[str, str]) -> bool:
+    if values.get("AWS_PROFILE", "").strip():
+        return True
+    if values.get("AWS_ACCESS_KEY_ID", "").strip() and values.get("AWS_SECRET_ACCESS_KEY", "").strip():
+        return True
+    raw = values.get("AWS_SHARED_CREDENTIALS_FILE", "").strip()
+    home = Path(values.get("HOME", "")).expanduser() if values.get("HOME") else Path.home()
+    path = Path(raw).expanduser() if raw else home / ".aws" / "credentials"
+    return path.is_file()
+
+
+def _google_credentials_present(values: Mapping[str, str]) -> bool:
+    return _loadable_google_adc(values)
+
+
+def _azure_credentials_present(values: Mapping[str, str]) -> bool:
+    if values.get("ANTHROPIC_FOUNDRY_API_KEY", "").strip() or values.get("AZURE_API_KEY", "").strip():
+        return True
+    if all(
+        values.get(key, "").strip()
+        for key in ("AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_CLIENT_SECRET")
+    ):
+        return True
+    if values.get("AZURE_FEDERATED_TOKEN_FILE", "").strip() or values.get("IDENTITY_ENDPOINT", "").strip():
+        return True
+    home = Path(values.get("HOME", "")).expanduser() if values.get("HOME") else Path.home()
+    azure_dir = Path(values.get("AZURE_CONFIG_DIR", "")).expanduser() if values.get("AZURE_CONFIG_DIR") else home / ".azure"
+    return any((azure_dir / name).is_file() for name in ("msal_token_cache.json", "azureProfile.json"))
 
 
 def probe_claude_auth(env: Mapping[str, str] | None = None) -> ProbeResult:
     values = _env(env)
     if values.get("ANTHROPIC_API_KEY"):
         return ProbeResult("Claude analysis auth", True, "ANTHROPIC_API_KEY")
-    for key in _CLAUDE_CLOUD_FLAGS:
-        if _truthy(values.get(key)):
-            return ProbeResult("Claude analysis auth", True, key)
-    if is_bundled_runtime(values):
-        unsupported = next((key for key in _CLAUDE_CONSUMER_AUTH_ENV if values.get(key)), None)
-        note = (
-            f"{unsupported} is consumer OAuth and is not supported by bundled JobCtrl; "
-            if unsupported
-            else ""
-        )
+    if _truthy(values.get("CLAUDE_CODE_USE_BEDROCK")):
+        if _aws_credentials_present(values):
+            return ProbeResult("Claude analysis auth", True, "Amazon Bedrock with AWS credentials")
+        return ProbeResult("Claude analysis auth", False, "CLAUDE_CODE_USE_BEDROCK needs AWS credentials")
+    if _truthy(values.get("CLAUDE_CODE_USE_ANTHROPIC_AWS")):
+        if not values.get("ANTHROPIC_AWS_WORKSPACE_ID", "").strip():
+            return ProbeResult(
+                "Claude analysis auth",
+                False,
+                "CLAUDE_CODE_USE_ANTHROPIC_AWS needs ANTHROPIC_AWS_WORKSPACE_ID",
+            )
+        if _aws_credentials_present(values):
+            return ProbeResult(
+                "Claude analysis auth",
+                True,
+                "Claude Platform on AWS with workspace and AWS credentials",
+            )
         return ProbeResult(
             "Claude analysis auth",
             False,
-            note
-            + "set ANTHROPIC_API_KEY or configure Claude Code for Bedrock, Vertex, or Foundry",
+            "CLAUDE_CODE_USE_ANTHROPIC_AWS needs AWS credentials",
         )
-    if values.get("ANTHROPIC_AUTH_TOKEN"):
-        return ProbeResult("Claude analysis auth", True, "ANTHROPIC_AUTH_TOKEN")
-    if values.get("CLAUDE_CODE_OAUTH_TOKEN"):
-        return ProbeResult("Claude analysis auth", True, "CLAUDE_CODE_OAUTH_TOKEN")
-    credentials = claude_credentials_path(values)
-    if credentials.exists():
-        return ProbeResult("Claude analysis auth", True, f"local Claude credentials at {credentials}")
-    if _macos_claude_keychain_present():
-        return ProbeResult("Claude analysis auth", True, 'macOS Keychain "Claude Code-credentials"')
+    if _truthy(values.get("CLAUDE_CODE_USE_VERTEX")):
+        project = (
+            values.get("ANTHROPIC_VERTEX_PROJECT_ID")
+            or values.get("GOOGLE_CLOUD_PROJECT")
+            or values.get("GOOGLE_PROJECT_ID")
+            or values.get("GCLOUD_PROJECT")
+        )
+        if not project:
+            return ProbeResult(
+                "Claude analysis auth",
+                False,
+                "CLAUDE_CODE_USE_VERTEX needs ANTHROPIC_VERTEX_PROJECT_ID",
+            )
+        if _google_credentials_present(values):
+            return ProbeResult("Claude analysis auth", True, "Google Cloud Agent Platform credentials")
+        return ProbeResult(
+            "Claude analysis auth",
+            False,
+            "CLAUDE_CODE_USE_VERTEX needs Google Cloud credentials",
+        )
+    if _truthy(values.get("CLAUDE_CODE_USE_FOUNDRY")):
+        if not values.get("ANTHROPIC_FOUNDRY_RESOURCE", "").strip():
+            return ProbeResult(
+                "Claude analysis auth",
+                False,
+                "CLAUDE_CODE_USE_FOUNDRY needs ANTHROPIC_FOUNDRY_RESOURCE",
+            )
+        if _azure_credentials_present(values):
+            return ProbeResult("Claude analysis auth", True, "Microsoft Foundry with Azure credentials")
+        return ProbeResult(
+            "Claude analysis auth",
+            False,
+            "CLAUDE_CODE_USE_FOUNDRY needs Azure credentials",
+        )
+    unsupported = next((key for key in _CLAUDE_CONSUMER_AUTH_ENV if values.get(key)), None)
+    note = f"{unsupported} is consumer OAuth and is not supported; " if unsupported else ""
     return ProbeResult(
         "Claude analysis auth",
         False,
-        "set ANTHROPIC_API_KEY or enroll local Claude credentials",
+        note
+        + "set ANTHROPIC_API_KEY or configure Bedrock, Claude Platform on AWS, Vertex, or Foundry",
     )
 
 
 def probe_claude_synthesis_auth(env: Mapping[str, str] | None = None) -> ProbeResult:
-    """Claude auth for the always-on ensemble synthesizer (D-07).
-
-    ``ClaudeAnalysisSynthesizer`` reconciles every employer-analysis run with the
-    Claude Agent SDK regardless of ``JOBCTRL_ANALYSIS_LEGS``, so its auth is
-    required even when the ``claude`` draft leg is disabled. Reuses the Claude
-    credential resolution and only relabels the row + not-ready guidance.
-    """
+    """Compatibility alias for callers that still label the Claude capability."""
 
     result = probe_claude_auth(env)
-    if result.ok:
-        return ProbeResult("Claude synthesis auth", True, result.note)
-    return ProbeResult(
-        "Claude synthesis auth",
-        False,
-        "required for ensemble synthesis even when the claude leg is disabled; "
-        + (
-            "set ANTHROPIC_API_KEY or configure Bedrock, Vertex, or Foundry"
-            if is_bundled_runtime(_env(env))
-            else "set ANTHROPIC_API_KEY or enroll local Claude credentials"
-        ),
-    )
+    return ProbeResult("Claude synthesis auth", result.ok, result.note, required=False)
 
 
 def bundled_claude_sdk_options(env: Mapping[str, str] | None = None) -> dict[str, object]:
-    """Return SDK options that prevent consumer credential reuse in bundled mode."""
+    """Return SDK options that prevent consumer credential reuse in every mode."""
 
     values = _env(env)
-    if not is_bundled_runtime(values):
-        return {}
     probe = probe_claude_auth(values)
     if not probe.ok:
         raise RuntimeError(probe.note)
     from jobctrl.config import APP_DIR
 
-    home = provider_runtime_home("claude", app_dir=APP_DIR)
+    provider_home = (
+        provider_runtime_home("claude", app_dir=APP_DIR)
+        if is_bundled_runtime(values)
+        else APP_DIR / "claude_home"
+    )
+    config_dir = provider_home / "config"
     isolated_env = {
-        "HOME": str(home),
-        "CLAUDE_CONFIG_DIR": str(home / "config"),
+        # Keep HOME unchanged so AWS profiles, gcloud ADC, and Azure CLI
+        # credentials remain discoverable through their official chains.
+        "CLAUDE_CONFIG_DIR": str(config_dir),
         # The Claude SDK merges overrides over os.environ. Empty values
         # explicitly neutralize ambient consumer OAuth variables while the
         # supported API/cloud settings remain inherited.
         **{key: "" for key in _CLAUDE_CONSUMER_AUTH_ENV},
     }
-    (home / "config").mkdir(mode=0o700, parents=True, exist_ok=True)
+    config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     return {
         "cwd": str(APP_DIR),
         "env": isolated_env,
@@ -257,6 +320,8 @@ def bundled_claude_process_auth_env(
     prefixes = ("AWS_", "AZURE_", "ANTHROPIC_FOUNDRY_")
     explicit = {
         "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AWS_WORKSPACE_ID",
+        "ANTHROPIC_FOUNDRY_RESOURCE",
         "ANTHROPIC_VERTEX_PROJECT_ID",
         "ANTHROPIC_VERTEX_REGION",
         "CLOUD_ML_REGION",
@@ -273,37 +338,218 @@ def bundled_claude_process_auth_env(
     from jobctrl.config import APP_DIR
 
     home = provider_runtime_home("claude", app_dir=APP_DIR)
-    result.update({"HOME": str(home), "CLAUDE_CONFIG_DIR": str(home / "config")})
+    result.update({"CLAUDE_CONFIG_DIR": str(home / "config")})
     (home / "config").mkdir(mode=0o700, parents=True, exist_ok=True)
+    return result
+
+
+def _codex_auth_file_signature(path: Path) -> tuple[object, ...]:
+    """Return a cache key that changes when a candidate auth file changes."""
+
+    try:
+        stat = path.lstat()
+    except OSError:
+        return (str(path), "missing")
+    return (str(path), stat.st_mode, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+def _validate_codex_auth_file(path: Path) -> None:
+    """Reject non-regular, malformed, or empty persisted Codex auth state."""
+
+    if path.is_symlink():
+        raise RuntimeError(f"Codex auth cache must not be a symlink: {path}")
+    if not path.is_file():
+        raise RuntimeError("Codex CLI is not authenticated in the JobCtrl provider home")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Codex auth cache is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Codex auth cache is not a JSON object")
+    api_key = payload.get("OPENAI_API_KEY")
+    tokens = payload.get("tokens")
+    has_api_key = isinstance(api_key, str) and bool(api_key.strip())
+    has_access_token = isinstance(tokens, dict) and isinstance(
+        tokens.get("access_token"), str
+    ) and bool(tokens["access_token"].strip())
+    if not has_api_key and not has_access_token:
+        raise RuntimeError("Codex auth cache does not contain persisted CLI credentials")
+
+
+def _cached_verify_codex_connection(values: Mapping[str, str]) -> tuple[bool, str, str]:
+    """Bound repeated readiness checks while invalidating on auth-state changes."""
+
+    key = (
+        _codex_auth_file_signature(codex_auth_path(values)),
+        values.get(CODEX_BIN_ENV, ""),
+    )
+    now = time.monotonic()
+    cached = _CODEX_AUTH_STATUS_CACHE.get(key)
+    if cached is not None and now - cached[0] < _CODEX_AUTH_STATUS_CACHE_TTL_SECONDS:
+        return cached[1]
+    result = verify_codex_connection(values)
+    refreshed_key = (
+        _codex_auth_file_signature(codex_auth_path(values)),
+        values.get(CODEX_BIN_ENV, ""),
+    )
+    _CODEX_AUTH_STATUS_CACHE[refreshed_key] = (now, result)
     return result
 
 
 def probe_codex_auth(env: Mapping[str, str] | None = None) -> ProbeResult:
     values = _env(env)
-    if is_bundled_runtime(values):
-        if values.get("OPENAI_API_KEY", "").strip():
-            return ProbeResult("Codex analysis auth", True, "OPENAI_API_KEY")
-        unsupported = "CODEX_API_KEY is not supported; " if values.get("CODEX_API_KEY") else ""
-        return ProbeResult(
-            "Codex analysis auth",
-            False,
-            unsupported
-            + "set OPENAI_API_KEY; bundled JobCtrl does not read or copy CODEX_HOME/auth.json",
-        )
-    auth_path = codex_auth_path(values)
-    if auth_path.exists():
-        return ProbeResult("Codex analysis auth", True, f"auth.json at {auth_path}")
+    ok, _status, message = _cached_verify_codex_connection(values)
+    if ok:
+        return ProbeResult("Codex analysis auth", True, message)
     if values.get("OPENAI_API_KEY") or values.get("CODEX_API_KEY"):
         return ProbeResult(
             "Codex analysis auth",
             False,
-            "OpenAI key present but not enrolled; run setup to create CODEX_HOME/auth.json",
+            "OpenAI key present but not enrolled; complete the JobCtrl provider setup",
         )
     return ProbeResult(
         "Codex analysis auth",
         False,
-        "run codex login or enroll an OpenAI key into CODEX_HOME/auth.json",
+        message,
     )
+
+
+def ensure_jobctrl_codex_auth(env: Mapping[str, str] | None = None) -> Path:
+    """Ensure source CLI auth is copied once into the stable isolated home."""
+
+    values = _env(env)
+    target = codex_auth_path(values)
+    if target.is_symlink():
+        raise RuntimeError(f"Codex auth cache must not be a symlink: {target}")
+    if not target.exists():
+        source = source_codex_auth_path(values)
+        if source.is_symlink():
+            raise RuntimeError(f"Codex auth cache must not be a symlink: {source}")
+        if source.is_file() and source != target:
+            _validate_codex_auth_file(source)
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            target.parent.chmod(0o700)
+            shutil.copy2(source, target)
+    _validate_codex_auth_file(target)
+    target.chmod(0o600)
+    return target
+
+
+def provider_status_snapshot(
+    provider: str,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    """Return secret-free provider status for the settings/API surface."""
+
+    values = _env(env)
+    if provider == "claude":
+        probe = probe_claude_auth(values)
+        configured = bool(
+            values.get("ANTHROPIC_API_KEY")
+            or any(_truthy(values.get(flag)) for flag in _CLAUDE_CLOUD_FLAGS)
+        )
+        if values.get("ANTHROPIC_API_KEY"):
+            mode = "api_key"
+        else:
+            mode = next(
+                (
+                    label
+                    for flag, label in (
+                        ("CLAUDE_CODE_USE_BEDROCK", "bedrock"),
+                        ("CLAUDE_CODE_USE_ANTHROPIC_AWS", "anthropic_aws"),
+                        ("CLAUDE_CODE_USE_VERTEX", "vertex"),
+                        ("CLAUDE_CODE_USE_FOUNDRY", "foundry"),
+                    )
+                    if _truthy(values.get(flag))
+                ),
+                None,
+            )
+        sdk = probe_claude_sdk() if probe.ok else ProbeResult("Claude analysis SDK", False, "auth required")
+        ready = probe.ok and sdk.ok
+        message = (
+            "Claude provider is ready"
+            if ready
+            else "Claude auth is configured but the managed SDK runtime is unavailable"
+            if probe.ok
+            else "Claude configuration is incomplete"
+            if configured
+            else "Claude is not configured"
+        )
+    elif provider == "codex":
+        probe = probe_codex_auth(values)
+        configured = probe.ok or bool(values.get("OPENAI_API_KEY") or values.get("CODEX_API_KEY"))
+        mode = "cli_auth" if probe.ok else "key_not_enrolled" if configured else None
+        sdk = probe_codex_sdk(values) if probe.ok else ProbeResult("Codex analysis SDK", False, "auth required")
+        ready = probe.ok and sdk.ok
+        message = (
+            "Codex CLI authentication is ready"
+            if ready
+            else "OpenAI key must be enrolled with codex login --with-api-key"
+            if configured and not probe.ok
+            else "Codex CLI auth is configured but the managed SDK runtime is unavailable"
+            if probe.ok
+            else "Codex CLI is not authenticated"
+        )
+    elif provider == "google":
+        probe = probe_antigravity_auth(values)
+        vertex = _truthy(values.get("GOOGLE_GENAI_USE_VERTEXAI")) or _truthy(
+            values.get("GOOGLE_CLOUD_VERTEXAI")
+        )
+        configured = bool(values.get("GEMINI_API_KEY") or values.get("GOOGLE_API_KEY") or vertex)
+        mode = "api_key" if values.get("GEMINI_API_KEY") or values.get("GOOGLE_API_KEY") else "vertex" if vertex else None
+        sdk = probe_antigravity_sdk() if probe.ok else ProbeResult("Antigravity analysis SDK", False, "auth required")
+        ready = probe.ok and sdk.ok
+        message = (
+            "Google provider is ready"
+            if ready
+            else "Google auth is configured but the managed SDK runtime is unavailable"
+            if probe.ok
+            else "Google configuration is incomplete"
+            if configured
+            else "Google is not configured"
+        )
+    else:
+        raise ValueError(f"unsupported provider: {provider}")
+    return {
+        "provider": provider,
+        "configured": configured,
+        "ready": ready,
+        "mode": mode,
+        "message": message,
+    }
+
+
+def verify_codex_connection(
+    env: Mapping[str, str] | None = None,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+) -> tuple[bool, str, str]:
+    """Verify persisted Codex CLI auth without generation or account disclosure."""
+
+    values = dict(_env(env))
+    try:
+        _validate_codex_auth_file(codex_auth_path(values))
+    except RuntimeError:
+        return False, "not_configured", "Codex CLI is not authenticated"
+    try:
+        binary = resolve_codex_binary(values)
+        child_env = dict(values)
+        child_env["CODEX_HOME"] = str(jobctrl_codex_home(values))
+        for key in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"):
+            child_env.pop(key, None)
+        completed = runner(
+            [str(binary), "login", "status"],
+            env=child_env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001 - return a secret-free verification result
+        return False, "failed", "Codex authentication verification failed"
+    if completed.returncode == 0:
+        return True, "connected", "Codex CLI authentication verified"
+    return False, "failed", "Codex CLI authentication could not be verified"
 
 
 def _adc_credentials_path(env: Mapping[str, str] | None = None) -> Path:
@@ -311,7 +557,56 @@ def _adc_credentials_path(env: Mapping[str, str] | None = None) -> Path:
     raw = values.get("GOOGLE_APPLICATION_CREDENTIALS")
     if raw:
         return Path(raw).expanduser()
-    return Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+    home = Path(values.get("HOME", "")).expanduser() if values.get("HOME") else Path.home()
+    return home / ".config" / "gcloud" / "application_default_credentials.json"
+
+
+def _loadable_google_adc(env: Mapping[str, str] | None = None) -> bool:
+    """Return whether the selected local ADC file is parseable without refresh.
+
+    ``google.auth.default()`` may fall through to a metadata server, which is a
+    network operation and is unsuitable for setup/status probes.  JobCtrl's
+    supported no-network readiness sources are therefore the explicit
+    ``GOOGLE_APPLICATION_CREDENTIALS`` file and gcloud's well-known local ADC
+    file. Explicit credential paths are restricted to service-account JSON;
+    gcloud's well-known ADC may use any supported local ADC type. The loader
+    validates the selected allowed type without refreshing or disclosing it.
+    """
+
+    values = _env(env)
+    path = _adc_credentials_path(values)
+    if not path.is_file():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        credential_type = payload.get("type") if isinstance(payload, dict) else None
+        if values.get("GOOGLE_APPLICATION_CREDENTIALS"):
+            if credential_type != _EXPLICIT_GOOGLE_ADC_TYPE:
+                return False
+        elif credential_type not in _GOOGLE_ADC_TYPES:
+            return False
+        try:
+            google_auth = importlib.import_module("google.auth")
+        except ImportError:
+            if not is_bundled_runtime(values):
+                raise
+            from jobctrl.config import APP_DIR
+
+            activate_provider_pack("antigravity-provider-runtime", app_dir=APP_DIR)
+            google_auth = importlib.import_module("google.auth")
+        # The generic loader warns for untrusted external credential configs.
+        # This path is explicitly user-selected (or gcloud-owned), and the ADC
+        # type allowlist above prevents an unexpected loader from being chosen.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="The load_credentials_from_file method is deprecated.*",
+                category=DeprecationWarning,
+            )
+            credentials, _project = google_auth.load_credentials_from_file(str(path))
+    except Exception:  # noqa: BLE001 - secret-free, no-network readiness probe
+        return False
+    return credentials is not None
 
 
 def antigravity_auth_kwargs(env: Mapping[str, str] | None = None) -> dict[str, object]:
@@ -323,13 +618,12 @@ def antigravity_auth_kwargs(env: Mapping[str, str] | None = None) -> dict[str, o
         return {"api_key": api_key}
 
     vertex_requested = _truthy(values.get("GOOGLE_GENAI_USE_VERTEXAI")) or _truthy(values.get("GOOGLE_CLOUD_VERTEXAI"))
-    adc_path = _adc_credentials_path(values)
     project = (
         values.get("GOOGLE_CLOUD_PROJECT")
         or values.get("GOOGLE_PROJECT_ID")
         or values.get("GCLOUD_PROJECT")
     )
-    if vertex_requested and (project or adc_path.exists()):
+    if vertex_requested and _loadable_google_adc(values):
         kwargs: dict[str, object] = {"vertex": True}
         if project:
             kwargs["project"] = project
@@ -349,7 +643,7 @@ def antigravity_auth_kwargs(env: Mapping[str, str] | None = None) -> dict[str, o
     )
     raise RuntimeError(
         "Antigravity analysis auth requires GEMINI_API_KEY/GOOGLE_API_KEY, "
-        "or Vertex AI ADC with GOOGLE_GENAI_USE_VERTEXAI=1"
+        "or valid local Vertex AI ADC with GOOGLE_GENAI_USE_VERTEXAI=1"
         f"{unsupported_note}."
     )
 
@@ -497,27 +791,54 @@ def probe_antigravity_sdk() -> ProbeResult:
 
 
 def probe_analysis_setup(env: Mapping[str, str] | None = None) -> list[ProbeResult]:
-    """Return SDK/auth probes for the currently enabled employer-analysis legs."""
+    """Return the one-provider core gate plus optional per-provider diagnostics."""
 
     values = _env(env)
     try:
         legs = enabled_analysis_legs(values)
     except ValueError as exc:
         return [ProbeResult("analysis legs enabled", False, str(exc))]
-    results = [
-        ProbeResult("analysis legs enabled", True, ",".join(legs)),
-    ]
-    # Synthesis reconciles EVERY ensemble run with the Claude Agent SDK
-    # (ClaudeAnalysisSynthesizer, ensemble.py) regardless of the enabled legs, so
-    # its SDK + auth are always required — probe them independently of `legs`. The
-    # claude draft leg reuses the same runtime + credentials, so it needs no
-    # extra row when enabled.
-    results.extend([probe_claude_sdk(), probe_claude_synthesis_auth(values)])
-    if "codex" in legs:
-        results.extend([probe_codex_sdk(values), probe_codex_auth(values)])
-    if "antigravity" in legs:
-        results.extend([probe_antigravity_sdk(), probe_antigravity_auth(values)])
+    provider_pairs = (
+        ("Claude", probe_claude_sdk(), probe_claude_auth(values)),
+        ("Codex", probe_codex_sdk(values), probe_codex_auth(values)),
+        ("Google", probe_antigravity_sdk(), probe_antigravity_auth(values)),
+    )
+    ready = [name.lower() for name, sdk, auth in provider_pairs if sdk.ok and auth.ok]
+    aggregate = ProbeResult(
+        "core LLM provider",
+        bool(ready),
+        f"ready: {', '.join(ready)}" if ready else "authenticate Claude, Codex, or Google",
+    )
+    results = [aggregate, ProbeResult("analysis legs enabled", True, ",".join(legs), required=False)]
+    for name, sdk, auth in provider_pairs:
+        results.extend(
+            [
+                ProbeResult(sdk.name, sdk.ok, sdk.note, required=False),
+                ProbeResult(auth.name, auth.ok, auth.note, required=False),
+            ]
+        )
     return results
+
+
+def ready_llm_providers(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    """Return providers that can service both free-text and structured core calls."""
+
+    values = _env(env)
+    ready: list[str] = []
+    claude_auth = probe_claude_auth(values)
+    if claude_auth.ok and probe_claude_sdk().ok:
+        ready.append("claude")
+    codex_auth = probe_codex_auth(values)
+    if codex_auth.ok and probe_codex_sdk(values).ok:
+        ready.append("codex")
+    google_auth = probe_antigravity_auth(values)
+    if google_auth.ok and probe_antigravity_sdk().ok:
+        ready.append("google")
+    return tuple(ready)
+
+
+def core_llm_ready(env: Mapping[str, str] | None = None) -> bool:
+    return bool(ready_llm_providers(env))
 
 
 __all__ = [
@@ -530,10 +851,11 @@ __all__ = [
     "antigravity_auth_kwargs",
     "bundled_claude_process_auth_env",
     "bundled_claude_sdk_options",
-    "claude_credentials_path",
     "codex_auth_path",
+    "core_llm_ready",
     "effective_codex_home",
     "enabled_analysis_legs",
+    "ensure_jobctrl_codex_auth",
     "parse_enabled_analysis_legs",
     "probe_analysis_setup",
     "probe_antigravity_auth",
@@ -543,8 +865,13 @@ __all__ = [
     "probe_claude_synthesis_auth",
     "probe_codex_auth",
     "probe_codex_sdk",
+    "provider_status_snapshot",
+    "ready_llm_providers",
     "resolve_bundled_claude_path",
     "resolve_bundled_codex_path",
     "resolve_claude_apply_binary",
     "resolve_codex_binary",
+    "source_codex_auth_path",
+    "jobctrl_codex_home",
+    "verify_codex_connection",
 ]
