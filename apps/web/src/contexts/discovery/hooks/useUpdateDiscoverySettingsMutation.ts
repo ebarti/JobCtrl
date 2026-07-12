@@ -4,6 +4,7 @@ import type {
   EffectiveDiscoverySettings,
   EffectiveSetting,
 } from "@jobctrl/contracts";
+import { DiscoverySettingsResponseSchema } from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
@@ -105,17 +106,8 @@ function patchDiscoverySettings(
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function isDiscoverySettingsResponse(value: unknown): value is DiscoverySettingsResponse {
-  return (
-    isRecord(value) &&
-    value["ok"] === true &&
-    isRecord(value["settings"]) &&
-    isRecord(value["effectiveSettings"])
-  );
+  return DiscoverySettingsResponseSchema.safeParse(value).success;
 }
 
 function persistedValue<T>(

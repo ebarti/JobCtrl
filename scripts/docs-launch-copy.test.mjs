@@ -168,7 +168,6 @@ test("configuration docs match current routes, storage, and opt-in integrations"
   const storage = await read("docs/architecture/storage.md");
   const observability = await read("docs/architecture/observability.md");
   const completeApi = await read("docs/api/complete-contract.md");
-  const profileApi = await read("docs/api/profile-and-settings.md");
   const envExample = await read(".env.example");
   const normalizedConfiguration = configuration.replace(/\s+/g, " ");
   const normalizedApi = completeApi.replace(/\s+/g, " ");
@@ -178,14 +177,17 @@ test("configuration docs match current routes, storage, and opt-in integrations"
   assert.match(normalizedApi, /scheduling mutation boundary; `\/v1\/settings` does not own discovery cadence/i);
   assert.match(normalizedApi, /configured `dailyBudgetUsd` from `dashboard\.json`/i);
 
-  for (const route of [
-    "/discovery",
-    "/settings",
-    "/settings/credentials",
-    "/settings/models",
-    "/settings/browser",
+  for (const [label, route] of [
+    ["Profile", "/profile"],
+    ["Preferences", "/preferences"],
+    ["Discovery", "/discovery"],
+    ["Settings → General", "/settings"],
+    ["Settings → Credentials", "/settings/credentials"],
+    ["Settings → Model selection", "/settings/models"],
+    ["Settings → Browser & extension", "/settings/browser"],
   ]) {
-    assert.ok(configuration.includes(`(${route})`) || profileApi.includes(`(${route})`));
+    assert.ok(configuration.includes(`**${label}** (\`${route}\`)`));
+    assert.ok(!configuration.includes(`](${route})`));
   }
   assert.match(configuration, /jobctrl capability enable auto-apply-browser/);
   assert.match(configuration, /environment compatibility override → saved UI value → built-in default/);

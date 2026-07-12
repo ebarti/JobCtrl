@@ -4,6 +4,7 @@ import type {
   BrowserCapabilityId,
   BrowserProfileCopyRequest,
 } from "@jobctrl/contracts";
+import { BrowserCapabilitiesResponseSchema } from "@jobctrl/contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
@@ -79,12 +80,5 @@ function patchCapability(
 function isBrowserCapabilitiesResponse(
   value: unknown,
 ): value is BrowserCapabilitiesResponse {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "ok" in value &&
-    value.ok === true &&
-    "capabilities" in value &&
-    Array.isArray(value.capabilities)
-  );
+  return BrowserCapabilitiesResponseSchema.safeParse(value).success;
 }

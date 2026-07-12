@@ -4,18 +4,10 @@ import type {
   SettingsResponse,
   SettingsUpdateRequest,
 } from "@jobctrl/contracts";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
+import { SettingsResponseSchema } from "@jobctrl/contracts";
 
 function isSettingsResponse(value: unknown): value is SettingsResponse {
-  return (
-    isRecord(value) &&
-    value["ok"] === true &&
-    isRecord(value["settings"]) &&
-    isRecord(value["effectiveSettings"])
-  );
+  return SettingsResponseSchema.safeParse(value).success;
 }
 
 function persistedValue<T>(

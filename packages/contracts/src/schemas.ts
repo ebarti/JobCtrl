@@ -3536,6 +3536,26 @@ export const SETTING_ACTIVATIONS = [
 ] as const;
 export type SettingActivation = (typeof SETTING_ACTIVATIONS)[number];
 
+const effectiveSettingSchema = <T extends z.ZodType>(value: T) =>
+  z.discriminatedUnion("source", [
+    z
+      .object({
+        value,
+        source: z.literal("environment"),
+        activation: z.enum(SETTING_ACTIVATIONS),
+        editable: z.literal(false),
+      })
+      .strict(),
+    z
+      .object({
+        value,
+        source: z.enum(["persisted", "default"]),
+        activation: z.enum(SETTING_ACTIVATIONS),
+        editable: z.literal(true),
+      })
+      .strict(),
+  ]);
+
 export type EffectiveSetting<T> =
   | {
       value: T;
@@ -3564,6 +3584,56 @@ export interface EffectiveDashboardSettings {
   scoreCriteria: EffectiveSetting<string>;
   targetCriteria: EffectiveSetting<string>;
 }
+
+export const SettingsResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    settings: z
+      .object({
+        targetRole: z.string(),
+        locationFilter: z.string(),
+        minFitScore: z.number(),
+        autoApply: z.boolean(),
+        applyApprovalRequired: z.boolean(),
+        applyConcurrency: z.number(),
+        workerActivitySlots: z.number(),
+        dailyBudgetUsd: z.number(),
+        analysisLegs: z.array(z.enum(ProviderIds)),
+        tailoringGeneratorModels: z.array(z.string()).nullable(),
+        tailoringJudgeModel: z.string().nullable(),
+        tailoringJudgeMinScore: z.number(),
+        applyMaxBudgetUsd: z.number(),
+        applyTimeoutSeconds: z.number(),
+        scoreCriteria: z.string(),
+        targetCriteria: z.string(),
+        preferredModels: z
+          .object({
+            codex: z.string().optional(),
+            claude: z.string().optional(),
+            google: z.string().optional(),
+          })
+          .strict(),
+      })
+      .strict(),
+    effectiveSettings: z
+      .object({
+        llmModelOverride: effectiveSettingSchema(z.string().nullable()),
+        dailyBudgetUsd: effectiveSettingSchema(z.number()),
+        applyConcurrency: effectiveSettingSchema(z.number()),
+        workerActivitySlots: effectiveSettingSchema(z.number()),
+        analysisLegs: effectiveSettingSchema(z.array(z.enum(ProviderIds))),
+        tailoringGeneratorModels: effectiveSettingSchema(z.array(z.string()).nullable()),
+        tailoringJudgeModel: effectiveSettingSchema(z.string().nullable()),
+        tailoringJudgeMinScore: effectiveSettingSchema(z.number()),
+        applyMaxBudgetUsd: effectiveSettingSchema(z.number()),
+        applyTimeoutSeconds: effectiveSettingSchema(z.number()),
+        scoreCriteria: effectiveSettingSchema(z.string()),
+        targetCriteria: effectiveSettingSchema(z.string()),
+      })
+      .strict(),
+    paths: z.object({ settingsPath: z.string() }).strict(),
+  })
+  .strict();
 
 export interface SettingsResponse {
   ok: true;
@@ -3829,6 +3899,43 @@ export interface EffectiveDiscoverySettings {
   crawlUserAgentContact: EffectiveSetting<string>;
 }
 
+export const DiscoverySettingsResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    settings: z
+      .object({
+        boards: z.array(z.enum(["indeed", "linkedin", "zip_recruiter", "glassdoor"])),
+        resultsPerSite: z.number(),
+        hoursOld: z.number(),
+        schedulingEnabled: z.boolean(),
+        scheduleCron: z.string(),
+        roleFilterMode: z.enum(["auto", "deterministic", "llm"]),
+        roleFilterModel: z.string().nullable(),
+        maxParallelFamilies: z.number(),
+        crawlUserAgentProduct: z.string(),
+        crawlUserAgentContact: z.string(),
+        source: z.literal("database"),
+      })
+      .strict(),
+    effectiveSettings: z
+      .object({
+        boards: effectiveSettingSchema(
+          z.array(z.enum(["indeed", "linkedin", "zip_recruiter", "glassdoor"])),
+        ),
+        resultsPerSite: effectiveSettingSchema(z.number()),
+        hoursOld: effectiveSettingSchema(z.number()),
+        schedulingEnabled: effectiveSettingSchema(z.boolean()),
+        scheduleCron: effectiveSettingSchema(z.string()),
+        roleFilterMode: effectiveSettingSchema(z.enum(["auto", "deterministic", "llm"])),
+        roleFilterModel: effectiveSettingSchema(z.string().nullable()),
+        maxParallelFamilies: effectiveSettingSchema(z.number()),
+        crawlUserAgentProduct: effectiveSettingSchema(z.string()),
+        crawlUserAgentContact: effectiveSettingSchema(z.string()),
+      })
+      .strict(),
+  })
+  .strict();
+
 export interface DiscoverySettingsResponse {
   ok: true;
   settings: DiscoverySettings;
@@ -3906,6 +4013,13 @@ export type BrowserCapabilityItem = z.infer<typeof BrowserCapabilityItemSchema>;
 
 export const BrowserCapabilitiesResultSchema = z
   .object({ capabilities: z.array(BrowserCapabilityItemSchema).length(BrowserCapabilityIds.length) })
+  .strict();
+
+export const BrowserCapabilitiesResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    capabilities: z.array(BrowserCapabilityItemSchema).length(BrowserCapabilityIds.length),
+  })
   .strict();
 
 export interface BrowserCapabilitiesResponse {
