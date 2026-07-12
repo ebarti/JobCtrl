@@ -262,6 +262,12 @@ describe("local TypeScript API", () => {
         outputTokens: 0,
         estimatedUsd: 0,
         dailyBudgetUsd: 12.5,
+        analysisLegs: ["claude", "codex", "google"],
+        tailoringGeneratorModels: null,
+        tailoringJudgeModel: null,
+        tailoringJudgeMinScore: 0.82,
+        applyMaxBudgetUsd: 5,
+        applyTimeoutSeconds: 900,
         remainingUsd: 12.5,
         unlimited: false,
       },
@@ -8299,6 +8305,8 @@ describe("local TypeScript API", () => {
         dailyBudgetUsd: { value: 12.5, source: "persisted", activation: "live", editable: true },
         applyConcurrency: { value: 3, source: "persisted", activation: "next_poll", editable: true },
         workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
+        analysisLegs: { source: "default", activation: "next_analysis", editable: true },
+        applyMaxBudgetUsd: { value: 5, source: "default", activation: "next_apply_job", editable: true },
       },
     });
 
@@ -8386,6 +8394,12 @@ describe("local TypeScript API", () => {
         applyConcurrency: 1,
         workerActivitySlots: 4,
         dailyBudgetUsd: 25,
+        analysisLegs: ["claude", "codex", "google"],
+        tailoringGeneratorModels: null,
+        tailoringJudgeModel: null,
+        tailoringJudgeMinScore: 0.82,
+        applyMaxBudgetUsd: 5,
+        applyTimeoutSeconds: 900,
         scoreCriteria: "",
         targetCriteria: "",
         preferredModels: {},
@@ -8409,6 +8423,12 @@ describe("local TypeScript API", () => {
         applyConcurrency: 2,
         workerActivitySlots: 6,
         dailyBudgetUsd: 19.75,
+        analysisLegs: ["claude", "google"],
+        tailoringGeneratorModels: ["claude:sonnet", "codex:gpt-5.5"],
+        tailoringJudgeModel: "claude:opus",
+        tailoringJudgeMinScore: 0.9,
+        applyMaxBudgetUsd: 7.5,
+        applyTimeoutSeconds: 1200,
         scoreCriteria: "Prioritize platform security, DevSecOps, and leadership scope.",
         targetCriteria: "Target senior engineering leadership roles.",
       },
@@ -8438,6 +8458,12 @@ describe("local TypeScript API", () => {
       apply_concurrency: 2,
       worker_activity_slots: 6,
       daily_budget_usd: 19.75,
+      analysis_legs: ["claude", "google"],
+      tailoring_generator_models: ["claude:sonnet", "codex:gpt-5.5"],
+      tailoring_judge_model: "claude:opus",
+      tailoring_judge_min_score: 0.9,
+      apply_max_budget_usd: 7.5,
+      apply_timeout_seconds: 1200,
       score_criteria: "Prioritize platform security, DevSecOps, and leadership scope.",
       target_criteria: "Target senior engineering leadership roles.",
     });
@@ -8478,10 +8504,40 @@ describe("local TypeScript API", () => {
       field: "workerActivitySlots",
       source: "environment",
       activation: "restart",
-      message: "Worker activity slots are managed by the launch environment and require a worker restart.",
+      message: "workerActivitySlots is managed by the launch environment and cannot be changed here.",
     });
     expect(fs.readFileSync(options.settingsPath, "utf8")).toBe(before);
 
+    await app.close();
+  });
+
+  it("exposes and rejects environment-managed AI and Apply policy writes", async () => {
+    const app = buildApp({
+      ...options,
+      settingsEnvironment: {
+        JOBCTRL_ANALYSIS_LEGS: "claude,google",
+        JOBCTRL_APPLY_MAX_BUDGET_USD: "0",
+      },
+    });
+    const read = await app.inject({ method: "GET", url: "/v1/settings" });
+    expect(read.json()).toMatchObject({
+      settings: { analysisLegs: ["claude", "google"], applyMaxBudgetUsd: 0 },
+      effectiveSettings: {
+        analysisLegs: { source: "environment", activation: "next_analysis", editable: false },
+        applyMaxBudgetUsd: { source: "environment", activation: "next_apply_job", editable: false },
+      },
+    });
+    const write = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: { applyMaxBudgetUsd: 9 },
+    });
+    expect(write.statusCode, write.body).toBe(409);
+    expect(write.json()).toMatchObject({
+      error: "setting_managed_by_environment",
+      field: "applyMaxBudgetUsd",
+      activation: "next_apply_job",
+    });
     await app.close();
   });
 

@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from collections.abc import Iterable, Mapping as MappingABC
 from contextlib import nullcontext
@@ -344,13 +343,12 @@ class TailoringLlmPolicy:
 
     @classmethod
     def from_env(cls) -> "TailoringLlmPolicy":
+        from jobctrl import config
+
         return cls(
-            candidate_models=_split_model_specs(
-                os.environ.get("TAILORING_GENERATOR_MODELS")
-                or os.environ.get("TAILORING_GENERATOR_MODEL")
-            ),
-            judge_model=os.environ.get("TAILORING_JUDGE_MODEL"),
-            judge_min_score=float(os.environ.get("TAILORING_JUDGE_MIN_SCORE", "0.82")),
+            candidate_models=config.get_tailoring_generator_models(),
+            judge_model=config.get_tailoring_judge_model(),
+            judge_min_score=config.get_tailoring_judge_min_score(),
         )
 
     @property

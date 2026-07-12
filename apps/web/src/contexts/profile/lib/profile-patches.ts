@@ -1,15 +1,11 @@
 import type {
   CredentialKey,
-  EffectiveDashboardSettings,
-  EffectiveSetting,
   ProfileUpdateRequest,
-  SettingsUpdateRequest,
 } from "@jobctrl/contracts";
 
 import type {
   CredentialsResponse,
   ProfileConfigResponse,
-  SettingsResponse,
 } from "../../operations/types.js";
 
 function isProfileResponse(value: unknown): value is ProfileConfigResponse {
@@ -19,15 +15,6 @@ function isProfileResponse(value: unknown): value is ProfileConfigResponse {
     "profile" in value &&
     "style" in value &&
     "templateText" in value
-  );
-}
-
-function isSettingsResponse(value: unknown): value is SettingsResponse {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "settings" in value &&
-    typeof (value as SettingsResponse).settings === "object"
   );
 }
 
@@ -80,39 +67,7 @@ export function patchProfileResponse(
   return next;
 }
 
-export function patchSettingsResponse(current: unknown, body: SettingsUpdateRequest): unknown {
-  if (!isSettingsResponse(current)) {
-    return current;
-  }
-  const overrides = Object.fromEntries(
-    Object.entries(body).filter(([key, value]) => key !== "preferredModels" && value !== undefined),
-  );
-  const preferredModels = body.preferredModels
-    ? Object.fromEntries(
-        Object.entries({
-          ...current.settings.preferredModels,
-          ...body.preferredModels,
-        }).filter(([, value]) => typeof value === "string" && value.length > 0),
-      )
-    : current.settings.preferredModels;
-  const effectiveSettings: EffectiveDashboardSettings = { ...current.effectiveSettings };
-  for (const field of ["dailyBudgetUsd", "applyConcurrency", "workerActivitySlots"] as const) {
-    const value = body[field];
-    const metadata = effectiveSettings[field];
-    if (value !== undefined && metadata?.editable) {
-      effectiveSettings[field] = {
-        ...metadata,
-        value,
-        source: "persisted",
-      } as EffectiveSetting<number>;
-    }
-  }
-  return {
-    ...current,
-    settings: { ...current.settings, ...overrides, preferredModels },
-    effectiveSettings,
-  };
-}
+export { patchSettingsResponse } from "../../../shared/lib/settings-patches.js";
 
 export function patchCredentialConfigured(
   current: unknown,

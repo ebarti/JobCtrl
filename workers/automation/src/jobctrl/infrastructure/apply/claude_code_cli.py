@@ -176,6 +176,7 @@ class ClaudeCodeCliAdapter:
         log_dir: Path | None = None,
         app_dir: Path | None = None,
         default_timeout_seconds: int | None = None,
+        max_budget_usd: float | None = None,
     ) -> None:
         self._log_dir = Path(log_dir) if log_dir else config.LOG_DIR
         self._app_dir = Path(app_dir) if app_dir else config.APP_DIR
@@ -183,6 +184,11 @@ class ClaudeCodeCliAdapter:
             int(default_timeout_seconds)
             if default_timeout_seconds is not None
             else config.get_apply_timeout_seconds()
+        )
+        self._max_budget_usd = (
+            float(max_budget_usd)
+            if max_budget_usd is not None
+            else config.get_apply_max_budget_usd()
         )
 
     # ------------------------------------------------------------------
@@ -217,7 +223,7 @@ class ClaudeCodeCliAdapter:
         if model_label not in _DEFAULT_MODEL_SENTINELS:
             cmd.extend(["--model", model_label])
         if _claude_supports_budget_flag(claude_bin, bare=bundled):
-            cmd.extend(["--max-budget-usd", f"{config.get_apply_max_budget_usd():.2f}"])
+            cmd.extend(["--max-budget-usd", f"{self._max_budget_usd:.2f}"])
         allowed_tools = _allowed_tools_for_mcp_config(prompt.mcp_config)
         cmd.extend([
             "-p",
