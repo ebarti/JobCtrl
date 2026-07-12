@@ -357,7 +357,7 @@ describe("DemoApiClientAdapter", () => {
       minFitScore: 7,
       maxFitScore: 7,
       stage: "score",
-      state: "succeeded",
+      state: "failed",
       sort: "title",
       dir: "asc",
       page: 3,
@@ -380,7 +380,7 @@ describe("DemoApiClientAdapter", () => {
       minFitScore: 7,
       maxFitScore: 7,
       stage: "score",
-      state: "succeeded",
+      state: "failed",
       deleted: "active",
     });
 
@@ -399,6 +399,20 @@ describe("DemoApiClientAdapter", () => {
       total: 3,
       pages: 3,
     });
+  });
+
+  it("keeps the Failures KPI total equal to its failed-jobs query", async () => {
+    const { adapter } = await createAdapter();
+
+    const [summary, failedJobs] = await Promise.all([
+      adapter.dashboardSummary(),
+      adapter.jobs({ state: "failed", deleted: "active" }),
+    ]);
+
+    expect(summary.totals.failures).toBe(failedJobs.pagination.total);
+    expect(failedJobs.items.map((job) => job.jobKey)).toEqual([
+      "job-fabrikam-systems",
+    ]);
   });
 
   it("matches every production job sort arm and stable key tie-break", async () => {

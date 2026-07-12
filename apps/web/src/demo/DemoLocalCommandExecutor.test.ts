@@ -850,7 +850,7 @@ describe("DemoLocalCommandExecutor", () => {
     expect(snapshot.state.readModel.dashboard.summary.progress.some((progress) => progress.runId === detail.runId)).toBe(false);
     expect(snapshot.state.readModel.jobs.details[JOB]?.job.currentState).toBe("canceled");
     expect(snapshot.state.readModel.dashboard.summary.work).toMatchObject({ active: 0, stuck: 0, stuckItems: [] });
-    expect(snapshot.state.readModel.dashboard.summary.preparation?.workItems).toEqual({ queued: 0, running: 0, failed: 0 });
+    expect(snapshot.state.readModel.dashboard.summary.preparation?.workItems).toEqual({ queued: 0, running: 0, failed: 1 });
     expect(snapshot.state.readModel.dashboard.summary.funnel.find((stage) => stage.stage === "tailor")).toEqual({
       stage: "tailor", total: 1, succeeded: 0, running: 0, pending: 0, blocked: 1, failed: 0,
     });
@@ -886,7 +886,7 @@ describe("DemoLocalCommandExecutor", () => {
     });
     expect(snapshot.state.readModel.dashboard.digest.pendingApprovals.count).toBe(0);
     expect(snapshot.state.readModel.dashboard.summary.work.active).toBe(0);
-    expect(snapshot.state.readModel.dashboard.summary.preparation?.workItems).toEqual({ queued: 0, running: 0, failed: 0 });
+    expect(snapshot.state.readModel.dashboard.summary.preparation?.workItems).toEqual({ queued: 0, running: 0, failed: 1 });
     expect(snapshot.state.readModel.dashboard.summary.funnel.find((stage) => stage.stage === "tailor")).toEqual({
       stage: "tailor", total: 1, succeeded: 0, running: 0, pending: 0, blocked: 1, failed: 0,
     });

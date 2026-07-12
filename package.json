@@ -33,6 +33,8 @@
     "web:storybook": "corepack pnpm --filter @jobctrl/web storybook",
     "web:storybook:build": "corepack pnpm --filter @jobctrl/web storybook:build",
     "web:storybook:test": "corepack pnpm --filter @jobctrl/web storybook:test",
+    "demo:build": "VITE_JOBCTRL_APP_MODE=demo corepack pnpm --filter @jobctrl/web build",
+    "demo:smoke": "node scripts/demo-smoke.mjs",
     "demo-edge:check": "corepack pnpm --filter @jobctrl/demo-edge check",
     "demo-edge:test": "corepack pnpm --filter @jobctrl/demo-edge test",
     "demo-edge:types": "corepack pnpm --filter @jobctrl/demo-edge types",

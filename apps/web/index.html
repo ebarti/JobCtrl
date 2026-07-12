@@ -7,28 +7,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>JobCtrl</title>
-    <script>
-      // Pre-paint theme to avoid FOUC. Reads the Zustand `persist` middleware
-      // serialization for `useUiPreferencesStore` (key `jh:ui-preferences`,
-      // shape `{state: {theme, density, ...}, version: 1}`). When the persist
-      // version is bumped with a real migration, revisit this script — it
-      // cannot run the migrator and will silently fall back to "light".
-      (function () {
-        try {
-          var raw = window.localStorage.getItem("jh:ui-preferences");
-          var theme = "light";
-          if (raw) {
-            var parsed = JSON.parse(raw);
-            if (parsed && parsed.state && parsed.state.theme === "dark") {
-              theme = "dark";
-            }
-          }
-          document.documentElement.dataset.theme = theme;
-        } catch (e) {
-          document.documentElement.dataset.theme = "light";
-        }
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

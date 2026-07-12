@@ -36,6 +36,22 @@ takes the wheel. JobCtrl runs the whole pipeline — **discover → enrich →
 score → tailor → review → apply** — as crash-resumable local workflows with
 a daily spend ceiling, and shows its work at every step.
 
+## Public Demo Rollout
+
+The browser-local demo is deployment-ready but is not public yet. It will be
+linked here only after the production consent boundary, telemetry retention,
+direct routes, and rollback path pass their launch checks. Once live, it will
+let visitors explore synthetic jobs, scoring evidence, tailored materials,
+dry-run rehearsals, and workflow history before installing JobCtrl. Demo
+actions are simulated and cannot contact employers, providers, Gmail, job
+boards, or the local JobCtrl app.
+
+The demo requires first-party analytics-cookie acceptance before it
+creates its browser-local workspace. Declining returns to `jobctrl.dev`; a
+later visit asks again. Read the
+[demo data notice](https://jobctrl.dev/user/data-and-safety#public-demo) before
+entering, and do not type personal data, credentials, or secrets.
+
 ## Get Started
 
 **Current public path: run the source checkout.** The first signed bundled
@@ -116,8 +132,8 @@ reports missing prerequisites and can offer Homebrew installs where supported.
 A machine without Git cannot run the clone command; Git is not needed after
 moving to the future bundled install.
 
-The reproducible source audit currently records 83 unique direct JavaScript
-packages, 1,428 pnpm lock records, and 103 uv lock records. A simple sum of the
+The reproducible source audit currently records 85 unique direct JavaScript
+packages, 1,480 pnpm lock records, and 103 uv lock records. A simple sum of the
 preserved 2026-07-10 source-planning observations is about 4.28 GiB with system
 Chrome skipped, or 5.58 GiB with the separately optional 1.3 GiB Chrome from
 that reference machine included. `scripts/install` never installs system

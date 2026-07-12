@@ -72,8 +72,8 @@ roughly 15–30 minutes end to end, mostly downloads.
 - **CAPTCHA-solving key** — only for auto-apply runs that explicitly opt into it.
 :::
 
-The source dependency audit currently records 83 unique direct JavaScript
-packages, 1,428 pnpm lock records, and 103 uv lock records. A simple sum of the
+The source dependency audit currently records 85 unique direct JavaScript
+packages, 1,480 pnpm lock records, and 103 uv lock records. A simple sum of the
 preserved 2026-07-10 planning observations is about 4.28 GiB with system Chrome
 skipped, or 5.58 GiB with the separately optional 1.3 GiB Chrome from that
 reference machine included. `scripts/install` never installs system Chrome.

@@ -1,0 +1,160 @@
+name: Demo Site
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - "apps/demo-edge/**"
+      - "packages/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/demo-site.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "apps/web/**"
+      - "apps/demo-edge/**"
+      - "packages/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/demo-site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-site-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build:
+    name: Build and verify demo
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify deployment contracts
+        run: pnpm scripts:test
+
+      - name: Verify edge workers
+        run: pnpm demo-edge:check && pnpm demo-edge:test && pnpm demo-edge:dry-run
+
+      - name: Build browser-local demo
+        run: pnpm demo:build
+
+      - name: Upload demo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-site-dist
+          path: dist/web
+          retention-days: 7
+
+  preview:
+    name: Deploy static preview
+    needs: build
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      vars.DEMO_PREVIEW_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19"
+
+      - name: Download demo artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: demo-site-dist
+          path: dist/web
+
+      - name: Publish static preview
+        run: corepack pnpm dlx wrangler@4.107.0 pages deploy dist/web --project-name=jobctrl-demo --branch="$HEAD_REF"
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+  production:
+    name: Deploy production demo
+    needs: build
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main' &&
+      vars.DEMO_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: demo-production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download demo artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: demo-site-dist
+          path: dist/web
+
+      - name: Apply telemetry migrations
+        run: corepack pnpm --dir apps/demo-edge exec wrangler d1 migrations apply DEMO_TELEMETRY_DB --remote --config wrangler.api.jsonc
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Deploy consent and telemetry API
+        run: corepack pnpm --dir apps/demo-edge exec wrangler deploy --config wrangler.api.jsonc --var "DEMO_RELEASE:${GITHUB_SHA}"
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Deploy retention worker
+        run: corepack pnpm --dir apps/demo-edge exec wrangler deploy --config wrangler.retention.jsonc --var "DEMO_RELEASE:${GITHUB_SHA}"
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Publish production site
+        run: corepack pnpm --dir apps/demo-edge exec wrangler pages deploy ../../dist/web --project-name=jobctrl-demo --branch=main
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Smoke production consent boundary
+        run: pnpm demo:smoke
+        env:
+          DEMO_BASE_URL: https://demo.jobctrl.dev

@@ -367,7 +367,7 @@ scenarioTest(
     await expect(
       page.getByRole("dialog", { name: "Job details" }),
     ).toBeVisible();
-    await expectJobState(second, "Systems delivery director", "succeeded");
+    await expectJobState(second, "Systems delivery director", "failed");
 
     acceptNextConfirmation(page);
     await page
@@ -435,6 +435,34 @@ scenarioTest(
     await expect(
       reloadedDrawer.getByText("suppressed", { exact: true }),
     ).toHaveCount(2);
+  },
+);
+
+scenarioTest(
+  "blocked Contoso Apply Review handoff preserves the requested job identity",
+  async ({ page }) => {
+    const runtimeErrors: string[] = [];
+    page.on("pageerror", (error) => runtimeErrors.push(error.message));
+
+    await page.goto("/jobs/job-contoso-reliability");
+    const drawer = page.getByRole("dialog", { name: "Job details" });
+    await drawer
+      .getByRole("link", {
+        name: "Open Apply Review for Reliability engineering manager",
+      })
+      .click();
+
+    await expect(page).toHaveURL(
+      /\/apply-review\?jobKey=job-contoso-reliability(?:&|$)/,
+    );
+    await expect(
+      page.getByText("This job is not in the application review queue."),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Application review" }),
+    ).toBeVisible();
+    await expect(page.getByText("Something went wrong!", { exact: true })).toHaveCount(0);
+    expect(runtimeErrors).toEqual([]);
   },
 );
 
@@ -591,6 +619,26 @@ scenarioTest("Demo guide shortcuts navigate through seeded surfaces and confirm 
   expect(guideBounds!.x).toBeGreaterThanOrEqual(0);
   expect(guideBounds!.x + guideBounds!.width).toBeLessThanOrEqual(390);
   expect(guideBounds!.y + guideBounds!.height).toBeLessThanOrEqual(844);
+});
+
+scenarioTest("Dashboard Failures opens the failed job counted by the KPI", async ({ page }) => {
+  await page.goto("/dashboard");
+  const failuresKpi = page
+    .locator(".kpis")
+    .getByRole("link", { name: /^Failures\b/i });
+
+  await expect(failuresKpi).toContainText("1");
+  await failuresKpi.click();
+
+  await expect(page).toHaveURL(/\/jobs\?.*\bstate=failed\b/);
+  await expect(page.getByRole("heading", { name: "Jobs" })).toBeVisible();
+  await expect(page.getByText("1 total", { exact: true })).toBeVisible();
+  await expect(jobRow(page, "Systems delivery director")).toContainText(
+    "failed",
+  );
+  await expect(page.getByText("No jobs match.", { exact: true })).toHaveCount(
+    0,
+  );
 });
 
 scenarioTest("every P2 product route and seeded deep link renders populated across direct refreshes", async ({
