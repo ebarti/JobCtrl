@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useDryRunApplyMutation } from "../hooks/useDryRunApplyMutation.js";
 
 export interface DryRunButtonProps {
@@ -11,10 +12,13 @@ export interface DryRunButtonProps {
 export function DryRunButton({
   jobId,
   className = "tab",
-  label = "dry-run",
+  label,
 }: DryRunButtonProps): JSX.Element {
+  const { featureFlags } = usePorts();
+  const isDemo = featureFlags.get("demoMode", false);
   const dryRun = useDryRunApplyMutation();
   const isPending = dryRun.isPending;
+  const actionLabel = label ?? (isDemo ? "rehearse application" : "dry-run");
   return (
     <button
       type="button"
@@ -22,7 +26,7 @@ export function DryRunButton({
       disabled={isPending}
       onClick={() => dryRun.mutate({ jobId })}
     >
-      {isPending ? "running" : label}
+      {isPending ? "running" : actionLabel}
     </button>
   );
 }

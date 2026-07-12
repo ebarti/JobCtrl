@@ -76,8 +76,14 @@ exercises real source promotion, manual-capture import, and score correction
 through the shared UI, proving that the results are reload durable and
 product-network-free; score correction is also cross-tab visible. Native
 browser coverage also proves that eventless Discovery and Settings writes
-trigger a broad cross-tab resync and remain durable after reload. Unit and
-component tests cover injected quota/security fallbacks, schema revalidation,
+trigger a broad cross-tab resync and remain durable after reload. The same lane
+drives deterministic queued, running, and terminal stage scenarios through
+accessible product controls; covers the Contoso fail-first tailoring retry;
+checks receipt history across reload and same-profile tabs; and rehearses
+artifact preview, application dry-run, and mark-applied actions without an
+external effect. Every scenario test installs a strict
+request guard that rejects product API, SSE, and external-origin traffic. Unit
+and component tests cover injected quota/security fallbacks, schema revalidation,
 reset-epoch races, event-log loss, read-adapter query/404/capability parity,
 valid arguments for every browser-local command plus focused projection,
 replay, cascade, and quota-rollback invariants, the reactive data-boundary

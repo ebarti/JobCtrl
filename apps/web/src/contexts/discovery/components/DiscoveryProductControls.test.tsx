@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
+import { DemoFeatureFlagAdapter } from "../../../demo/ports.js";
 import { DiscoveryProductControls } from "./DiscoveryProductControls.js";
 
 const NO_POLITENESS = {
@@ -15,6 +16,18 @@ const NO_POLITENESS = {
 } as const;
 
 describe("DiscoveryProductControls", () => {
+  it("labels the demo source preview as bundled and network-free", async () => {
+    const ports = buildTestPorts();
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+    renderWithProviders(<DiscoveryProductControls />, { ports });
+
+    expect(
+      await screen.findByRole("button", {
+        name: /bundled preview.*no fetch.*linkedin/i,
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("renders source health, quarantine review, and manual capture queues", async () => {
     renderWithProviders(<DiscoveryProductControls />);
 

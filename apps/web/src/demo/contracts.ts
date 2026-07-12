@@ -27,6 +27,33 @@ export type ApiClientResponse<TMethod extends keyof ApiClientPort> = ApiClientPo
   ? TResponse
   : never;
 
+export const DEMO_SIMULATED_ASYNC_OPERATIONS = [
+  "renderResumeReviewDraft",
+  "ensureCurrentResumeMaterials",
+  "retryFailedJobs",
+  "runPendingPreparation",
+  "rescoreJob",
+  "rescoreJobsNotOnCurrentScoringPolicy",
+  "retailorJob",
+  "tailorJob",
+  "retailorCurrentPolicy",
+  "runPipelineStages",
+  "generateOutreachDraft",
+  "reviseOutreachDraft",
+  "retryStage",
+  "runJobStage",
+  "generateMaterials",
+  "generateInterviewPrep",
+] as const satisfies readonly (keyof ApiClientPort)[];
+export type DemoSimulatedAsyncOperation = (typeof DEMO_SIMULATED_ASYNC_OPERATIONS)[number];
+
+export const DEMO_EXTERNAL_REHEARSAL_OPERATIONS = [
+  "openArtifact",
+  "applyJob",
+  "markApplied",
+] as const satisfies readonly (keyof ApiClientPort)[];
+export type DemoExternalRehearsalOperation = (typeof DEMO_EXTERNAL_REHEARSAL_OPERATIONS)[number];
+
 export interface DemoRelativeTimestamp {
   /** Offset from the injected scenario clock, not a wall-clock timestamp. */
   readonly offsetMinutes: number;
@@ -67,12 +94,19 @@ export interface DemoRunningScenarioStep {
 export interface DemoScenario {
   readonly scenarioId: string;
   readonly capability: "simulated_async";
-  readonly operation: keyof ApiClientPort;
+  readonly operation: DemoSimulatedAsyncOperation;
   readonly steps: readonly [DemoQueuedScenarioStep, DemoRunningScenarioStep];
   readonly terminal: DemoScenarioTerminal & { readonly at: DemoRelativeTimestamp };
 }
 
-export type DemoReceiptKind = "application" | "outreach" | "discovery" | "llm" | "os_open";
+export type DemoReceiptKind =
+  | "application"
+  | "outreach"
+  | "discovery"
+  | "compensation"
+  | "contact_research"
+  | "llm"
+  | "os_open";
 
 /**
  * `true` / `false` literals make an external side effect impossible to encode
@@ -86,6 +120,21 @@ export interface DemoReceipt {
   readonly recordedAt: DemoRelativeTimestamp;
   readonly wouldHaveDone: string;
   readonly didNotDo: string;
+  /** Dynamic P3b receipts add bounded operation/entity identity only. */
+  readonly operation?:
+    | DemoExternalRehearsalOperation
+    | DemoSimulatedAsyncOperation
+    | "discoverySourcePreview";
+  readonly scenarioId?: string;
+  readonly runId?: string;
+  readonly entityType?:
+    | "artifact"
+    | "contact"
+    | "job"
+    | "outreach_thread"
+    | "source"
+    | "workspace";
+  readonly entityId?: string;
 }
 
 export interface DemoArtifactAsset {

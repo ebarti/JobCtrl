@@ -1,7 +1,10 @@
 import type {
   DemoPendingScenario,
+  DemoScenarioInvocation,
+  DemoWorkspaceCommit,
   DemoWorkspaceSnapshot,
 } from "./contracts.js";
+import { isDemoScenarioInvocation } from "./contracts.js";
 import {
   DemoWorkspaceRepository,
   DemoWorkspaceStaleEpochError,
@@ -21,7 +24,44 @@ export type DemoWorkspaceDeadlineHandler = (
   pending: DemoPendingScenario,
   draft: DemoWorkspaceSnapshot,
   context: DemoWorkspaceMutationContext,
+) => DemoPendingScenario | null | void;
+
+export type DemoWorkspaceScenarioEnqueueHandler = (
+  pending: DemoScenarioInvocation,
+  draft: DemoWorkspaceSnapshot,
+  context: DemoWorkspaceMutationContext,
 ) => void;
+
+export type DemoWorkspaceInvocationScheduleResult =
+  | {
+      readonly kind: "scheduled";
+      readonly pending: DemoScenarioInvocation;
+      readonly commit: DemoWorkspaceCommit;
+    }
+  | {
+      readonly kind: "active";
+      readonly pending: DemoScenarioInvocation;
+    }
+  | {
+      readonly kind: "persistence_warning";
+      readonly pending: DemoScenarioInvocation;
+      readonly commit: Extract<DemoWorkspaceCommit, { kind: "persistence_warning" }>;
+    };
+
+class DemoWorkspaceActiveInvocation extends Error {
+  constructor(readonly pending: DemoScenarioInvocation) {
+    super(`Demo scenario ${pending.dedupeKey} is already active.`);
+    this.name = "DemoWorkspaceActiveInvocation";
+  }
+}
+
+/** Aborts an IDB transaction for a stale callback without writing a revision. */
+class DemoWorkspaceBenignDeadlineAbort extends Error {
+  constructor() {
+    super("The demo deadline is no longer authoritative.");
+    this.name = "DemoWorkspaceBenignDeadlineAbort";
+  }
+}
 
 const browserSchedulerClock: DemoSchedulerClock = {
   now: () => Date.now(),
@@ -56,10 +96,7 @@ export class DemoWorkspaceScheduler {
       if (notification.kind === "reset") {
         this.reconcileGeneration += 1;
         this.clearTimersAndRegistrations();
-      } else if (
-        notification.kind === "resync" ||
-        notification.source === "broadcast"
-      ) {
+      } else {
         this.clearTimers();
         this.queueReconcile(++this.reconcileGeneration);
       }
@@ -75,6 +112,62 @@ export class DemoWorkspaceScheduler {
       return;
     }
     this.arm(pending, onDeadline);
+  }
+
+  /**
+   * Persists the invocation and its initial queued projection in one fenced
+   * transaction. Concurrent calls with the same dedupe key reuse the active
+   * invocation instead of creating another workflow.
+   */
+  async scheduleInvocation(
+    pending: DemoScenarioInvocation,
+    onEnqueue: DemoWorkspaceScenarioEnqueueHandler,
+    onDeadline: DemoWorkspaceDeadlineHandler,
+  ): Promise<DemoWorkspaceInvocationScheduleResult> {
+    const enqueue = () =>
+      this.workspace.mutate(
+        (draft, context) => {
+          const active = draft.pendingScenarios.find(
+            (candidate): candidate is DemoScenarioInvocation =>
+              isDemoScenarioInvocation(candidate) &&
+              candidate.dedupeKey === pending.dedupeKey,
+          );
+          if (active) {
+            throw new DemoWorkspaceActiveInvocation(active);
+          }
+          if (
+            draft.pendingScenarios.some(
+              (candidate) => candidate.scenarioId === pending.scenarioId,
+            )
+          ) {
+            throw new Error(
+              `Demo scenario ${pending.scenarioId} is already pending.`,
+            );
+          }
+          onEnqueue(pending, draft, context);
+          (draft.pendingScenarios as DemoPendingScenario[]).push(pending);
+        },
+        { expectedResetEpoch: pending.resetEpoch },
+      );
+    try {
+      let commit = await enqueue();
+      // A quota transition switches the repository to its confirmed in-memory
+      // authority. Retry the same fenced CAS once before reporting queued.
+      if (commit.kind === "persistence_warning") {
+        commit = await enqueue();
+        if (commit.kind === "persistence_warning") {
+          return { kind: "persistence_warning", pending, commit };
+        }
+      }
+      this.arm(pending, onDeadline);
+      return { kind: "scheduled", pending, commit };
+    } catch (error) {
+      if (!(error instanceof DemoWorkspaceActiveInvocation)) {
+        throw error;
+      }
+      this.arm(error.pending, onDeadline);
+      return { kind: "active", pending: error.pending };
+    }
   }
 
   async recover(onDeadline: DemoWorkspaceDeadlineHandler): Promise<void> {
@@ -188,23 +281,84 @@ export class DemoWorkspaceScheduler {
   ): Promise<void> {
     this.timers.delete(pending.scenarioId);
     this.registrations.delete(pending.scenarioId);
+    if (this.disposed) {
+      return;
+    }
     try {
-      await this.workspace.mutate(
-        (draft, context) => {
-          const persisted = draft.pendingScenarios.find(
-            (candidate) => candidate.scenarioId === pending.scenarioId,
-          );
-          if (!persisted || persisted.deadlineAt !== pending.deadlineAt) {
-            return;
-          }
-          onDeadline(persisted, draft, context);
-        },
-        { expectedResetEpoch: pending.resetEpoch },
-      );
+      let nextPending: DemoPendingScenario | null | void = undefined;
+      const advance = () => {
+        nextPending = undefined;
+        return this.workspace.mutate(
+          (draft, context) => {
+            if (this.disposed) {
+              throw new DemoWorkspaceBenignDeadlineAbort();
+            }
+            const index = draft.pendingScenarios.findIndex(
+              (candidate) => candidate.scenarioId === pending.scenarioId,
+            );
+            const persisted = draft.pendingScenarios[index];
+            if (!persisted || !sameDeadlineRegistration(persisted, pending)) {
+              throw new DemoWorkspaceBenignDeadlineAbort();
+            }
+            nextPending = onDeadline(persisted, draft, context);
+            if (nextPending === null) {
+              (draft.pendingScenarios as DemoPendingScenario[]).splice(index, 1);
+            } else if (nextPending !== undefined) {
+              assertValidTransition(persisted, nextPending);
+              (draft.pendingScenarios as DemoPendingScenario[])[index] =
+                nextPending;
+            }
+          },
+          { expectedResetEpoch: pending.resetEpoch },
+        );
+      };
+      let commit = await advance();
+      if (commit.kind === "persistence_warning") {
+        commit = await advance();
+      }
+      if (commit.kind === "committed" && nextPending) {
+        this.arm(nextPending, onDeadline);
+      }
     } catch (error) {
-      if (!(error instanceof DemoWorkspaceStaleEpochError)) {
+      if (
+        !(error instanceof DemoWorkspaceStaleEpochError) &&
+        !(error instanceof DemoWorkspaceBenignDeadlineAbort)
+      ) {
         throw error;
       }
     }
+  }
+}
+
+function sameDeadlineRegistration(
+  persisted: DemoPendingScenario,
+  armed: DemoPendingScenario,
+): boolean {
+  if (
+    persisted.deadlineAt !== armed.deadlineAt ||
+    persisted.resetEpoch !== armed.resetEpoch
+  ) {
+    return false;
+  }
+  if (isDemoScenarioInvocation(persisted) !== isDemoScenarioInvocation(armed)) {
+    return false;
+  }
+  return !isDemoScenarioInvocation(persisted) ||
+    !isDemoScenarioInvocation(armed)
+    ? true
+    : persisted.phase === armed.phase &&
+        persisted.dedupeKey === armed.dedupeKey;
+}
+
+function assertValidTransition(
+  current: DemoPendingScenario,
+  next: DemoPendingScenario,
+): void {
+  if (
+    current.scenarioId !== next.scenarioId ||
+    current.resetEpoch !== next.resetEpoch ||
+    !Number.isFinite(Date.parse(next.deadlineAt))
+  ) {
+    throw new TypeError("A demo deadline transition changed its durable identity.");
   }
 }

@@ -12,6 +12,7 @@ import {
   DEMO_WORKSPACE_SCHEMA_VERSION,
   systemDemoWorkspaceClock,
   type DemoPendingScenario,
+  type DemoWorkspaceReceipt,
   type DemoWorkspaceClock,
   type DemoWorkspaceCommit,
   type DemoWorkspaceEventRecord,
@@ -95,6 +96,7 @@ export type DemoWorkspaceEventRead =
  * an authoritative IDB reread before subscribers can observe it.
  */
 export class DemoWorkspaceRepository {
+  private static readonly EMPTY_RECEIPTS: readonly DemoWorkspaceReceipt[] = [];
   private store: DemoWorkspaceStore;
   private readonly fallbackStore: DemoWorkspaceStore;
   private readonly clock: DemoWorkspaceClock;
@@ -110,6 +112,8 @@ export class DemoWorkspaceRepository {
     (notification: DemoWorkspaceNotification) => void
   >();
   private readonly runtimeListeners = new Set<() => void>();
+  private readonly receiptListeners = new Set<() => void>();
+  private receiptsSnapshot = DemoWorkspaceRepository.EMPTY_RECEIPTS;
   private broadcastQueue = Promise.resolve();
 
   constructor(options: DemoWorkspaceRepositoryOptions) {
@@ -208,6 +212,15 @@ export class DemoWorkspaceRepository {
 
   readonly getRuntimeSnapshot = (): DemoWorkspaceRuntimeSnapshot =>
     this.runtimeSnapshot;
+
+  /** React-safe stable view; identity changes only after authoritative adoption. */
+  readonly getReceiptsSnapshot = (): readonly DemoWorkspaceReceipt[] =>
+    this.receiptsSnapshot;
+
+  readonly subscribeReceipts = (listener: () => void): (() => void) => {
+    this.receiptListeners.add(listener);
+    return () => this.receiptListeners.delete(listener);
+  };
 
   async mutate(
     mutation: DraftMutation,
@@ -438,6 +451,7 @@ export class DemoWorkspaceRepository {
     this.store.close?.();
     this.notificationListeners.clear();
     this.runtimeListeners.clear();
+    this.receiptListeners.clear();
   }
 
   private async seed(): Promise<DemoWorkspaceSnapshot> {
@@ -484,6 +498,9 @@ export class DemoWorkspaceRepository {
         revision: stored.revision + 1,
         eventLog: stored.eventLog ?? [],
         blobIds: optionalBlobIds(stored) ?? migratedBlobIds,
+        // P1 stored only a deadline and cannot recover the bounded command or
+        // projection transform required by the P3 state machine.
+        pendingScenarios: [],
         updatedAt: this.clock.now().toISOString(),
       };
       transaction.putSnapshot(migrated);
@@ -671,6 +688,10 @@ export class DemoWorkspaceRepository {
     advanceWatermark: boolean,
   ): void {
     this.authoritativeSnapshot = snapshot;
+    this.receiptsSnapshot = snapshot.state.receipts;
+    for (const listener of this.receiptListeners) {
+      listener();
+    }
     if (advanceWatermark) {
       this.notificationWatermark = watermarkFromSnapshot(snapshot);
     }

@@ -100,7 +100,9 @@ function assertDemoReadModelInvariants(seed: DemoSeed): void {
   if (asRecord(dashboardTotals, "dashboard totals").jobs !== jobIds.length) {
     throw new TypeError("Demo dashboard job total must match the jobs list.");
   }
-  const artifactUrls = new Set(Object.values(seed.artifacts).map((asset) => asset.url));
+  const artifactUrls: ReadonlySet<string> = new Set(
+    Object.values(seed.artifacts).map((asset) => asset.url),
+  );
   for (const item of jobs) {
     const jobId = readString(item, "jobKey", "job list item");
     requireDetail(model.jobs.details, jobId, "job");
@@ -152,8 +154,46 @@ function assertDemoReadModelInvariants(seed: DemoSeed): void {
   const artifacts = assertListEnvelope(model.materials.list, "artifacts list");
   const artifactIds = artifacts.map((item) => readString(item, "artifactId", "artifact list item"));
   assertUnique(artifactIds, "artifact");
-  for (const artifactId of artifactIds) {
+  for (const item of artifacts) {
+    const artifactId = readString(item, "artifactId", "artifact list item");
+    const artifact = asRecord(item, `artifact ${artifactId}`);
+    const jobId = readString(artifact, "jobKey", `artifact ${artifactId}`);
+    if (!jobIds.includes(jobId)) {
+      throw new TypeError(`Demo artifact ${artifactId} references a missing job.`);
+    }
+    const localPath = readString(artifact, "localPath", `artifact ${artifactId}`);
+    if (!artifactUrls.has(localPath)) {
+      throw new TypeError(`Demo artifact ${artifactId} references a missing bundled preview asset.`);
+    }
     requireDetail(model.materials.details, artifactId, "artifact");
+    const detailArtifact = asRecord(model.materials.details[artifactId]?.artifact, `artifact detail ${artifactId}`);
+    for (const key of ["artifactId", "jobKey", "status", "localPath"] as const) {
+      if (detailArtifact[key] !== artifact[key]) {
+        throw new TypeError(`Demo artifact ${artifactId} has inconsistent list and detail ${key}.`);
+      }
+    }
+  }
+  for (const artifactId of Object.keys(model.materials.details)) {
+    if (!artifactIds.includes(artifactId)) {
+      throw new TypeError(`Demo artifact detail ${artifactId} has no list record.`);
+    }
+  }
+  for (const jobId of jobIds) {
+    const job = model.jobs.list.items.find((item) => item.jobKey === jobId);
+    const detail = model.jobs.details[jobId];
+    const ownedArtifactIds = artifacts
+      .filter((item) => readString(item, "jobKey", `artifact for ${jobId}`) === jobId)
+      .map((item) => readString(item, "artifactId", `artifact for ${jobId}`));
+    if (job?.artifactCount !== ownedArtifactIds.length || detail?.job.artifactCount !== ownedArtifactIds.length) {
+      throw new TypeError(`Demo job ${jobId} artifact count must match its material projections.`);
+    }
+    const detailArtifactIds = detail?.artifacts.map((item) => item.artifactId) ?? [];
+    if (
+      detailArtifactIds.length !== ownedArtifactIds.length ||
+      !ownedArtifactIds.every((artifactId) => detailArtifactIds.includes(artifactId))
+    ) {
+      throw new TypeError(`Demo job ${jobId} detail artifacts must match its material projections.`);
+    }
   }
   for (const [jobId, draft] of Object.entries(model.materials.resumeReviewDrafts)) {
     if (!jobIds.includes(jobId)) {

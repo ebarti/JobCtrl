@@ -12,11 +12,13 @@ import { CancelStageButton } from "./CancelStageButton.js";
 import { MarkAppliedButton } from "./MarkAppliedButton.js";
 import { MarkSkippedButton } from "./MarkSkippedButton.js";
 import { RetryStageButton } from "./RetryStageButton.js";
+import { RunJobStageButton } from "./RunJobStageButton.js";
 
 export interface JobActionsProps {
   jobId: string;
   currentStage: Stage;
   canRetryStage?: boolean;
+  canRunCurrentStage?: boolean;
   canRetailor?: boolean;
   applyApprovalRequired?: boolean;
 }
@@ -25,6 +27,7 @@ export function JobActions({
   jobId,
   currentStage,
   canRetryStage = false,
+  canRunCurrentStage = true,
   canRetailor = false,
   applyApprovalRequired = true,
 }: JobActionsProps): JSX.Element {
@@ -37,6 +40,11 @@ export function JobActions({
           runAfter={shouldRunAfterRetry(currentStage)}
         />
       ) : null}
+      <RunJobStageButton
+        disabled={!canRunCurrentStage}
+        jobId={jobId}
+        stage={currentStage}
+      />
       <CancelStageButton jobId={jobId} stage={currentStage} />
       <RescoreJobButton jobId={jobId} />
       <GenerateMaterialsButton jobId={jobId} />

@@ -253,7 +253,7 @@ const demoSeed = {
     {
       scenarioId: "scenario-tailoring-retry",
       capability: "simulated_async",
-      operation: "tailorJob",
+      operation: "retailorJob",
       steps: [
         { state: "queued", at: minutes(0), message: "Tailoring rehearsal queued." },
         { state: "running", at: minutes(1), message: "Checking artifact grounding." },
@@ -267,24 +267,24 @@ const demoSeed = {
       },
     },
     {
-      scenarioId: "scenario-discovery-cancelled",
+      scenarioId: "scenario-stage-cancelled",
       capability: "simulated_async",
-      operation: "runPipelineStages",
+      operation: "runJobStage",
       steps: [
-        { state: "queued", at: minutes(0), message: "Discovery rehearsal queued." },
-        { state: "running", at: minutes(1), message: "Preparing bundled source results." },
+        { state: "queued", at: minutes(0), message: "Stage rehearsal queued." },
+        { state: "running", at: minutes(1), message: "Running the selected stage." },
       ],
-      terminal: { state: "cancelled", at: minutes(2), summary: "Synthetic discovery rehearsal cancelled." },
+      terminal: { state: "cancelled", at: minutes(2), summary: "Synthetic stage rehearsal cancelled." },
     },
     {
-      scenarioId: "scenario-outreach-draft",
+      scenarioId: "scenario-stage-retry",
       capability: "simulated_async",
-      operation: "generateOutreachDraft",
+      operation: "retryStage",
       steps: [
-        { state: "queued", at: minutes(0), message: "Draft rehearsal queued." },
-        { state: "running", at: minutes(1), message: "Checking draft provenance." },
+        { state: "queued", at: minutes(0), message: "Stage retry queued." },
+        { state: "running", at: minutes(1), message: "Retrying the selected stage." },
       ],
-      terminal: { state: "succeeded", at: minutes(2), summary: "Synthetic outreach draft is ready for review." },
+      terminal: { state: "succeeded", at: minutes(2), summary: "Synthetic stage retry completed." },
     },
   ],
   receipts: [

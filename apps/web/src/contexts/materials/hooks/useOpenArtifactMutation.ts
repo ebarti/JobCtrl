@@ -12,8 +12,8 @@ export function useOpenArtifactMutation(): UseMutationResult<
   Error,
   OpenArtifactVariables
 > {
-  const { api } = usePorts();
+  const { openInOs } = usePorts();
   return useMutation({
-    mutationFn: ({ artifactId }) => api.openArtifact(artifactId),
+    mutationFn: ({ artifactId }) => openInOs.open(artifactId),
   });
 }

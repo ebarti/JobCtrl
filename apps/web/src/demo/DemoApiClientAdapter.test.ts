@@ -13,6 +13,7 @@ import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import {
   DemoApiClientAdapter,
   DemoResourceNotFoundError,
+  type DemoApiClientAdapterOptions,
 } from "./DemoApiClientAdapter.js";
 import { DemoCapabilityError } from "./ports.js";
 import {
@@ -20,7 +21,9 @@ import {
   InMemoryDemoWorkspaceStore,
 } from "./workspace/index.js";
 
-async function createAdapter(): Promise<{
+async function createAdapter(
+  options: DemoApiClientAdapterOptions = {},
+): Promise<{
   adapter: DemoApiClientAdapter;
   repository: DemoWorkspaceRepository;
 }> {
@@ -30,7 +33,7 @@ async function createAdapter(): Promise<{
     createWorkspaceId: () => "workspace-adapter-test",
   });
   await repository.initialize();
-  return { adapter: new DemoApiClientAdapter(repository), repository };
+  return { adapter: new DemoApiClientAdapter(repository, options), repository };
 }
 
 function compensationSummary(
@@ -204,7 +207,7 @@ const READ_METHODS = new Set<keyof ApiClientPort>(
 );
 
 describe("DemoApiClientAdapter", () => {
-  it("covers every port member with a populated read, local command, or intentional later-phase error", async () => {
+  it("covers every port member and reserves capability errors for unavailable methods", async () => {
     const { adapter } = await createAdapter();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     try {
@@ -229,7 +232,7 @@ describe("DemoApiClientAdapter", () => {
         manifestMethods.toSorted(),
       );
       const intentionallyDeferred = commandMethods.filter(
-        (method) => DEMO_CAPABILITY_MANIFEST[method].class !== "browser_local",
+        (method) => DEMO_CAPABILITY_MANIFEST[method].class === "unavailable",
       );
       for (const method of intentionallyDeferred) {
         const invoke = adapter[method] as unknown as (
@@ -328,15 +331,20 @@ describe("DemoApiClientAdapter", () => {
     );
   });
 
-  it("keeps openArtifact unavailable until the P3 rehearsal owns it", async () => {
-    const { adapter } = await createAdapter();
+  it("delegates artifact opening to the no-host-OS rehearsal", async () => {
+    const { adapter, repository } = await createAdapter({
+      external: { opener: () => ({ close: vi.fn() }) },
+    });
+    const before = (await repository.snapshot()).state.receipts.length;
+
     await expect(
       adapter.openArtifact("artifact-tailored-resume"),
-    ).rejects.toMatchObject({
-      name: "DemoCapabilityError",
-      code: "demo_capability_not_implemented",
-      message: expect.stringContaining("openArtifact"),
+    ).resolves.toMatchObject({
+      ok: true,
+      opened: true,
+      path: "/demo/tailored-resume.pdf",
     });
+    expect((await repository.snapshot()).state.receipts).toHaveLength(before + 1);
   });
 
   it("matches production job filters, sorting, pagination, and filter metadata", async () => {
@@ -612,7 +620,7 @@ describe("DemoApiClientAdapter", () => {
     });
 
     const artifacts = await adapter.artifacts({
-      q: "resume",
+      q: "Platform systems lead",
       status: "accepted",
       type: "tailored_resume",
       sort: "type",

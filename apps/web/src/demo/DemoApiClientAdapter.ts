@@ -22,7 +22,16 @@ import {
   type DemoBrowserLocalCommand,
   type DemoLocalCommandExecutorOptions,
 } from "./DemoLocalCommandExecutor.js";
+import {
+  DemoExternalRehearsalExecutor,
+  type DemoExternalRehearsalExecutorOptions,
+  type DemoInitialExternalRehearsalOperation,
+} from "./DemoExternalRehearsalExecutor.js";
 import { DemoCapabilityError } from "./ports.js";
+import {
+  DemoScenarioEngine,
+  type DemoScenarioEngineOptions,
+} from "./DemoScenarioEngine.js";
 import type { DemoWorkspaceRepository } from "./workspace/DemoWorkspaceRepository.js";
 
 type CacheKey = number | string | undefined;
@@ -71,15 +80,43 @@ export class DemoResourceNotFoundError extends JobCtrlApiError {
   }
 }
 
-/** Browser-local P2 adapter. Mutations remain explicit P3 capability errors. */
+export interface DemoApiClientAdapterOptions
+  extends DemoLocalCommandExecutorOptions {
+  readonly scenario?: DemoScenarioEngineOptions;
+  readonly external?: DemoExternalRehearsalExecutorOptions;
+}
+
+/** Browser-local adapter for reads, local commands, and deterministic scenarios. */
 export class DemoApiClientAdapter implements ApiClientPort {
   private readonly localCommands: DemoLocalCommandExecutor;
+  private readonly scenarios: DemoScenarioEngine;
+  private readonly externalRehearsals: DemoExternalRehearsalExecutor;
 
   constructor(
     private readonly workspace: DemoWorkspaceRepository,
-    options: DemoLocalCommandExecutorOptions = {},
+    options: DemoApiClientAdapterOptions = {},
   ) {
     this.localCommands = new DemoLocalCommandExecutor(workspace, options);
+    this.scenarios = new DemoScenarioEngine(workspace, options.scenario ?? {
+      ...(options.clock ? { clock: options.clock } : {}),
+      ...(options.createId ? { createId: options.createId } : {}),
+    });
+    this.externalRehearsals = new DemoExternalRehearsalExecutor(
+      workspace,
+      options.external ?? {
+        opener: () => null,
+        ...(options.clock ? { clock: options.clock } : {}),
+        ...(options.createId ? { createId: options.createId } : {}),
+      },
+    );
+  }
+
+  initialize(): Promise<void> {
+    return this.scenarios.initialize();
+  }
+
+  dispose(): void {
+    this.scenarios.dispose();
   }
 
   health() {
@@ -528,17 +565,17 @@ export class DemoApiClientAdapter implements ApiClientPort {
   runPendingPreparation = this.unsupported("runPendingPreparation");
   correctScore = this.local("correctScore");
   resetStaleScoresForRescore = this.local("resetStaleScoresForRescore");
-  rescoreJob = this.unsupported("rescoreJob");
+  rescoreJob = this.simulated("rescoreJob");
   refreshCompensation = this.unsupported("refreshCompensation");
   refreshAllCompensation = this.unsupported("refreshAllCompensation");
   rescoreJobsNotOnCurrentScoringPolicy = this.unsupported(
     "rescoreJobsNotOnCurrentScoringPolicy",
   );
-  retailorJob = this.unsupported("retailorJob");
+  retailorJob = this.simulated("retailorJob");
   tailorJob = this.unsupported("tailorJob");
   retailorCurrentPolicy = this.unsupported("retailorCurrentPolicy");
   cancelWorkflowRun = this.local("cancelWorkflowRun");
-  openArtifact = this.unsupported("openArtifact");
+  openArtifact = this.rehearsed("openArtifact");
   updateProfile = this.local("updateProfile");
   importResume = this.local("importResume");
   updateSettings = this.local("updateSettings");
@@ -563,13 +600,13 @@ export class DemoApiClientAdapter implements ApiClientPort {
   scheduleOutreachFollowUp = this.local("scheduleOutreachFollowUp");
   completeOutreachFollowUp = this.local("completeOutreachFollowUp");
   dismissOutreachFollowUp = this.local("dismissOutreachFollowUp");
-  retryStage = this.unsupported("retryStage");
-  runJobStage = this.unsupported("runJobStage");
+  retryStage = this.simulated("retryStage");
+  runJobStage = this.simulated("runJobStage");
   generateMaterials = this.unsupported("generateMaterials");
   generateInterviewPrep = this.unsupported("generateInterviewPrep");
-  applyJob = this.unsupported("applyJob");
+  applyJob = this.rehearsed("applyJob");
   cancelJobAction = this.local("cancelJobAction");
-  markApplied = this.unsupported("markApplied");
+  markApplied = this.rehearsed("markApplied");
   markSkipped = this.local("markSkipped");
 
   private async read<TValue>(
@@ -606,6 +643,20 @@ export class DemoApiClientAdapter implements ApiClientPort {
   ): ApiClientPort[TMethod] {
     return ((...args: Parameters<ApiClientPort[TMethod]>) =>
       this.localCommands.execute(method, args)) as ApiClientPort[TMethod];
+  }
+
+  private simulated<TMethod extends import("./contracts.js").DemoSimulatedAsyncOperation>(
+    method: TMethod,
+  ): ApiClientPort[TMethod] {
+    return ((...args: Parameters<ApiClientPort[TMethod]>) =>
+      this.scenarios.execute(method, args)) as ApiClientPort[TMethod];
+  }
+
+  private rehearsed<TMethod extends DemoInitialExternalRehearsalOperation>(
+    method: TMethod,
+  ): ApiClientPort[TMethod] {
+    return ((...args: Parameters<ApiClientPort[TMethod]>) =>
+      this.externalRehearsals.execute(method, args)) as ApiClientPort[TMethod];
   }
 }
 

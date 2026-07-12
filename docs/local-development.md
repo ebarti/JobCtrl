@@ -160,10 +160,15 @@ the tab closes. The demo contains synthetic data, but visitors should still not
 enter personal data or secrets. Product reads, filtering, sorting, pagination,
 details, bundled previews, and safe synchronous write actions are served from
 that browser-local workspace. Those writes are atomic, survive reload, and
-remain visible across same-profile tabs. Provider-backed, external, and
-long-running actions stay unavailable until their explicit no-effect receipt
-or deterministic scenario implementation lands; the demo never falls back to
-the product API.
+remain visible across same-profile tabs. Long-running demo controls, including
+the job detail's **run current stage** action, use deterministic queued,
+running, and terminal scenarios whose projections survive reload and
+same-profile tabs. Application dry-runs, simulated mark-applied actions, and
+artifact opening are rehearsals only: each adds a durable receipt that confirms
+no external effect occurred. Other provider-backed actions remain unavailable
+in the MVP. The receipt history stays inspectable in the demo shell. The demo
+never falls back to the product API, SSE, an external origin, or a host-OS
+opener.
 
 ## Verify
 

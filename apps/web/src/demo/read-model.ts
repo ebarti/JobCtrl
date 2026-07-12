@@ -1,5 +1,6 @@
 import { ProfileSchema } from "@jobctrl/contracts";
 
+import { DEMO_ARTIFACTS } from "./artifacts.js";
 import type { DemoReadModel } from "./contracts.js";
 import { demoTimestamp } from "./clock.js";
 
@@ -110,7 +111,7 @@ const blockedJob = {
   errorCode: "demo_missing_requirement",
   errorMessage: "The demo preserves the explicit requirement gap.",
   nextAction: "Review the missing requirement before tailoring.",
-  artifactCount: 0,
+  artifactCount: 2,
 } satisfies DemoReadModel["jobs"]["list"]["items"][number];
 
 const staleJob = {
@@ -129,6 +130,7 @@ const staleJob = {
     pendingExplicitRescore: true,
   },
   currentStage: "score",
+  currentSubstage: "score",
   currentState: "succeeded",
   nextAction: "Rescore against the current synthetic policy.",
   artifactCount: 0,
@@ -181,6 +183,32 @@ const textArtifact = {
   status: "accepted",
   localPath: "/demo/tailored-resume.html",
   createdAt: at("2026-07-11T08:00:00.000Z"),
+  sizeBytes: 826,
+  size: "826 B",
+} satisfies DemoReadModel["materials"]["list"]["items"][number];
+
+const contosoResumePdfArtifact = {
+  artifactId: "artifact-contoso-resume-pdf-g1",
+  jobKey: blockedJob.jobKey,
+  title: blockedJob.title,
+  company: blockedJob.company,
+  type: "resume_pdf",
+  status: "accepted",
+  localPath: DEMO_ARTIFACTS.tailoredResumePdf.url,
+  createdAt: at("2026-07-10T07:00:00.000Z"),
+  sizeBytes: 612,
+  size: "612 B",
+} satisfies DemoReadModel["materials"]["list"]["items"][number];
+
+const contosoResumeTextArtifact = {
+  artifactId: "artifact-contoso-resume-g1",
+  jobKey: blockedJob.jobKey,
+  title: blockedJob.title,
+  company: blockedJob.company,
+  type: "tailored_resume",
+  status: "accepted",
+  localPath: DEMO_ARTIFACTS.tailoredResumeHtml.url,
+  createdAt: at("2026-07-10T07:00:00.000Z"),
   sizeBytes: 826,
   size: "826 B",
 } satisfies DemoReadModel["materials"]["list"]["items"][number];
@@ -507,7 +535,7 @@ export const DEMO_READ_MODEL = {
             nextAction: "Review deterministic materials progress.",
           },
         ],
-        artifacts: [artifact],
+        artifacts: [artifact, textArtifact],
         auditHistory: [
           {
             id: "audit-score",
@@ -552,7 +580,20 @@ export const DEMO_READ_MODEL = {
             },
           ],
           eligibilityConcerns: [],
-          sources: [],
+          sources: [
+            {
+              kind: "materials.resume",
+              label: "Accepted resume text",
+              status: "present",
+              detail: "Generation 1 remains reviewable while replacement tailoring is blocked.",
+            },
+            {
+              kind: "materials.resume_pdf",
+              label: "Accepted resume PDF",
+              status: "present",
+              detail: "Generation 1 remains previewable from the bundled demo asset.",
+            },
+          ],
         },
         stages: [
           {
@@ -571,7 +612,7 @@ export const DEMO_READ_MODEL = {
             nextAction: "Review the explicit gap.",
           },
         ],
-        artifacts: [],
+        artifacts: [contosoResumeTextArtifact, contosoResumePdfArtifact],
         auditHistory: [],
         employerAnalysis: null,
         requirementFitReport: null,
@@ -886,8 +927,10 @@ export const DEMO_READ_MODEL = {
       items: [
         artifact,
         textArtifact,
+        contosoResumeTextArtifact,
+        contosoResumePdfArtifact,
       ],
-      pagination: { page: 1, pageSize: 50, total: 2, pages: 1 },
+      pagination: { page: 1, pageSize: 50, total: 4, pages: 1 },
       sort: { field: "created_at", dir: "desc" },
       filter: {},
     },
@@ -913,6 +956,29 @@ export const DEMO_READ_MODEL = {
         ok: true,
         artifact: textArtifact,
         layoutBoxes: [],
+        tailoringExplanation: null,
+      },
+      [contosoResumeTextArtifact.artifactId]: {
+        ok: true,
+        artifact: contosoResumeTextArtifact,
+        layoutBoxes: [],
+        tailoringExplanation: null,
+      },
+      [contosoResumePdfArtifact.artifactId]: {
+        ok: true,
+        artifact: contosoResumePdfArtifact,
+        layoutBoxes: [
+          {
+            semanticId: "requirement-gap-preserved",
+            pageNumber: 1,
+            lineNumber: 4,
+            textExcerpt: "No unsupported regulated-domain claim is added.",
+            leftPct: 12,
+            topPct: 35,
+            widthPct: 76,
+            heightPct: 5,
+          },
+        ],
         tailoringExplanation: null,
       },
     },

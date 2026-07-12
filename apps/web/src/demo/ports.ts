@@ -1,5 +1,6 @@
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
+import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import type { FeatureFlagPort } from "../shared/ports/FeatureFlagPort.js";
 import type { OpenInOsPort } from "../shared/ports/OpenInOsPort.js";
 import type { Session, SessionPort } from "../shared/ports/SessionPort.js";
@@ -39,6 +40,9 @@ export class DemoStorageAdapter implements StoragePort {
 
 export class DemoFeatureFlagAdapter implements FeatureFlagPort {
   get<T extends boolean | number | string>(key: string, defaultValue: T): T {
+    if (key === "demoMode" && typeof defaultValue === "boolean") {
+      return true as T;
+    }
     if (
       key === "activityDetailDirectLoad" &&
       typeof defaultValue === "boolean"
@@ -51,7 +55,9 @@ export class DemoFeatureFlagAdapter implements FeatureFlagPort {
 
 /** The public demo cannot invoke the local host OS opener. */
 export class DemoOpenInOsAdapter implements OpenInOsPort {
-  async open(_artifactId: string): Promise<never> {
-    throw new DemoCapabilityError("openInOs");
+  constructor(private readonly api: Pick<ApiClientPort, "openArtifact">) {}
+
+  open(artifactId: string) {
+    return this.api.openArtifact(artifactId);
   }
 }
