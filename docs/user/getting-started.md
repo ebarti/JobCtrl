@@ -109,8 +109,7 @@ not recorded there.
 
 Open **Settings → Credentials** and configure one provider:
 
-- **Codex:** have an authenticated Codex CLI. JobCtrl reuses that authentication;
-  API-key users may use Codex's `codex login --with-api-key` flow.
+- **Codex:** use an already authenticated Codex CLI, then verify it in JobCtrl.
 - **Claude:** use an Anthropic API key or one of the guided Google Vertex,
   Amazon Bedrock, Claude Platform on AWS, or Microsoft Foundry routes.
 - **Google:** use a Gemini API key or Vertex AI Application Default
@@ -120,8 +119,8 @@ One ready provider is sufficient for scoring, materials, and employer
 analysis. Connecting a second provider can improve ensemble diversity, but it
 is a recommendation, not a requirement.
 
-Credential changes take effect when the Python worker next starts. Restart
-JobCtrl after adding or removing a credential:
+Claude, Google, and CapSolver values saved to Keychain take effect when the
+relevant Python process next starts. Restart JobCtrl after those edits:
 
 ```bash
 jobctrl stop
@@ -134,8 +133,7 @@ and feature-specific credentials.
 
 ### Verify provider readiness
 
-Restart JobCtrl after changing saved provider settings, then verify the
-effective configuration:
+After any required Keychain restart, verify the effective configuration:
 
 ```bash
 jobctrl setup
@@ -177,10 +175,12 @@ other headless core workflows. Install or adopt a system Chrome/Chromium
 profile only when you explicitly enable an authenticated-browser or auto-apply
 capability that needs it.
 
-The optional browser extension can save the current job page and review
+Open **Settings → Browser & extension** to enable an optional system-browser
+capability with an explicit Chrome/Chromium path, or to pair the extension.
+JobCtrl never auto-detects or adopts a system browser. The optional extension can save the current job page and review
 deterministic profile-backed autofill suggestions. It talks only to JobCtrl's
 loopback API and cannot submit an application by itself. Pair it from
-**Settings** using the local browser-extension token.
+the same Settings tab using the local browser-extension token.
 
 ## Update, Roll Back, Or Remove JobCtrl
 

@@ -517,6 +517,15 @@ registries. Compensation-source policy is managed from Settings and stored
 locally; it is not a feed connection. Start with [.env.example](.env.example); full reference:
 [Configuration](https://jobctrl.dev/user/configuration).
 
+The web app centralizes launch configuration across **Settings → General**
+(spend, capacity, scoring, apply runtime), **Credentials**, **Model selection**
+(provider preference and AI execution policy), and **Browser & extension**.
+Discovery owns its target, runtime, automation, source, and schedule controls.
+Where an environment override exists, the UI shows the effective source and
+makes environment-owned controls read-only. Saved changes are labeled as live,
+next poll/run/workflow, or restart-required; worker activity slots show desired
+versus active values.
+
 Providers that accept environment credentials can use the plaintext
 `~/.jobctrl/.env` file or the process environment. On macOS, **Settings →
 Credentials** guides one of three providers: an authenticated Codex CLI,
@@ -532,8 +541,10 @@ selected ready provider, then that provider's default. Secret values managed by 
 panel are stored in the system Keychain, while AWS, Google, and Azure credential
 files remain owned by their vendor CLIs. At Python process startup, a non-empty
 environment value takes precedence over the corresponding Keychain entry.
-Keychain edits are not hot-reloaded, so restart JobCtrl after saving or
-removing one. Native Windows Credential Manager and Linux Secret
+Claude, Google, and CapSolver Keychain edits are not hot-reloaded by Python, so
+restart the relevant process after saving or removing one. Preferred models,
+browser capabilities, and extension pairing do not require that restart.
+Native Windows Credential Manager and Linux Secret
 Service/keyring adapters are planned, not shipped; use `.env` or the shell on
 those platforms today. The macOS panel
 distinguishes **not configured** from **status unknown**: an unknown
@@ -568,6 +579,11 @@ enable it. LLM spend is tracked locally; its `dailyBudgetUsd` ceiling is stored
 in `dashboard.json`, defaults to `25`
 (`0` = unlimited), spendful workflows run a budget preflight, and the health
 surface shows today's estimated spend.
+
+Optional system-browser capabilities and extension pairing are also available
+from **Settings → Browser & extension**. Enabling an authenticated or auto-apply
+browser requires an explicit Chrome/Chromium path; JobCtrl does not auto-detect
+or adopt it. Browser enable/disable and pairing-token rotation are live.
 
 ## Development
 

@@ -27,7 +27,8 @@ describe("credential and browser privacy documentation contract", () => {
     expect(readme).toContain("Secret values managed by the panel are stored in the system Keychain");
     expect(readme).toContain("AWS, Google, and Azure credential files remain owned by their vendor CLIs");
     expect(readme).toContain("a non-empty environment value takes precedence");
-    expect(readme).toContain("Keychain edits are not hot-reloaded");
+    expect(readme).toContain("Claude, Google, and CapSolver Keychain edits are not hot-reloaded");
+    expect(readme).toContain("Preferred models, browser capabilities, and extension pairing do not require that restart");
     expect(readme).toContain("Windows Credential Manager");
     expect(readme).toContain("Linux Secret Service/keyring");
     expect(readme).toContain("an unknown (`inspection_failed`) result means Keychain could not be inspected");
@@ -58,6 +59,11 @@ describe("credential and browser privacy documentation contract", () => {
     expect(completeApi).toContain("`503 credential_store_unavailable` with a sanitized operational or rollback failure reason");
     expect(completeApi).toContain("is the explicit mutation that may validate");
     expect(completeApi).toContain("It is read-only and never copies ambient Codex auth");
+    expect(completeApi).toContain("`effectiveSource` (`environment`, `keychain`, `absent`, or `inspection_unknown`)");
+    expect(completeApi).toContain("Environment-owned entries are read-only");
+    expect(completeApi).toContain("The core browser is managed and read-only");
+    expect(completeApi).toContain("The path is write-only");
+    expect(completeApi).toContain("never returns, logs, or persists it");
   });
 
   it("preserves owner-signoff state for credential claims", () => {

@@ -34,7 +34,7 @@ when implementing or debugging a specific endpoint.
 
 | Boundary | Representative routes | Response model |
 | --- | --- | --- |
-| Profile and configuration | `/v1/profile`, `/v1/settings`, `/v1/credentials`, `/v1/providers/models`, `/v1/discovery/settings` | Synchronous reads and validated patches |
+| Profile and configuration | `/v1/profile`, `/v1/settings`, `/v1/credentials`, `/v1/providers/models`, `/v1/discovery/settings`, `/v1/browser-capabilities`, `/v1/extension/pairing-token` | Synchronous reads and validated patches |
 | Jobs and evidence | `/v1/jobs`, `/v1/jobs/:jobKey`, `/v1/evidence-map`, `/v1/artifacts` | Projection-backed reads |
 | Review and outcomes | `/v1/apply/review-queue`, `/v1/jobs/:jobKey/apply-review/decision`, `/v1/outcomes` | Explicit review commands plus read models |
 | Workflow operations | `/v1/pipeline/actions/run-stage`, `/v1/workflow-runs`, `/v1/health` | `202` for accepted asynchronous work; `200` for reads/sync commands |
@@ -132,6 +132,13 @@ the Python JSON-RPC boundary. `PATCH /v1/settings` accepts `preferredModels`,
 validates every non-null choice against that current catalog, and persists only
 the canonical `preferred_models` provider/model mapping; `null` clears one
 provider without requiring it to be ready.
+
+`GET/PATCH /v1/settings` also carries effective-source and activation metadata
+for launch controls. Environment-owned fields are read-only. Discovery runtime
+and schedule controls use `GET/PATCH /v1/discovery/settings`; browser adoption
+uses `GET /v1/browser-capabilities` plus capability-specific `POST` enable,
+disable, and profile-copy routes; extension pairing uses
+`GET /v1/extension/pairing-token` and `POST /v1/extension/pairing-token/rotate`.
 
 ## Related Packages
 

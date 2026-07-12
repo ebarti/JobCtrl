@@ -81,10 +81,10 @@ the Preferences toggle only allows or forbids invented adjacent-experience
 drafts. Draft adjacent claims require review and are not user-configured as an
 auto-approval bypass. The Discovery page (`/discovery`) owns target search,
 sources, scheduling, quarantine, and capture. Settings General (`/settings`)
-owns `dailyBudgetUsd`, auto apply, minimum fit score, approval, apply
-concurrency, worker status, and compensation source policy. Credentials
-(`/settings/credentials`) and model selection (`/settings/models`) are separate
-tabs. Authenticated system-browser capabilities remain CLI-only.
+owns spend/capacity, scoring, apply runtime, and compensation source policy.
+Credentials (`/settings/credentials`), model selection and AI execution policy
+(`/settings/models`), and browser capabilities plus extension pairing
+(`/settings/browser`) are separate tabs.
 When `VITE_GOOGLE_MAPS_API_KEY` is available to the web dev process, the Profile
 Address field progressively enhances into a Google Maps Places address search.
 Selecting a Google result updates the existing address, city, state/province,
@@ -325,8 +325,10 @@ source registry renders as a paginated, filterable, sortable table so source
 type and policy metadata are visible as columns instead of compact badges:
 
 - `GET /v1/discovery/settings` returns the SQLite-backed runtime discovery
-  settings used by board discovery, including `schedulingEnabled` and
-  `scheduleCron`.
+  settings used by board discovery: boards, per-site and age limits, schedule,
+  role-filter mode/model, bounded source-family parallelism, and crawl
+  user-agent product/contact. Managed fields include effective source,
+  editability, and activation metadata.
 - `PATCH /v1/discovery/settings` updates those runtime settings without
   dropping the worker search-contract fields stored in the same row. This is
   the scheduling mutation boundary; `/v1/settings` does not own discovery
@@ -1106,9 +1108,11 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
 ## Settings And Credentials
 
 - `GET /v1/settings` returns the runtime settings stored in the local
-  settings file (`dashboard.json` under the app dir): apply approval gate,
-  apply concurrency, auto apply, minimum fit score, LLM spend budget, and related
-  preferences. The response's `preferredModels` is a strict partial mapping
+  settings file (`dashboard.json` under the app dir): spend/capacity, apply,
+  scoring guidance, analysis legs, tailoring generator/judge policy, and related
+  preferences. Managed fields include effective source, editability, and
+  activation timing; environment-owned fields reject writes. The response's
+  `preferredModels` is a strict partial mapping
   keyed only by `codex`, `claude`, and `google`, and contains only nonempty
   saved model IDs. `PATCH /v1/settings` updates them; a non-null preferred ID
   must match the current ready-provider catalog, while `null` clears that
@@ -1116,11 +1120,13 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   `preferred_models`; it stores provider/model IDs only. Settings General and
   Model selection use these routes; discovery scheduling uses
   `/v1/discovery/settings` instead.
-- `GET /v1/credentials` lists the fixed guided Claude/Google credential and
+- `GET /v1/credentials` lists the fixed guided Claude/Google/CapSolver credential and
   cloud-mode keys plus the legacy OpenAI-key removal entry, with a label,
   storage kind,
-  and a `configured` presence state (`true`, `false`, or `null`) only — values
-  are never returned. `false` means confirmed absent; `null` means presence is
+  an `effectiveSource` (`environment`, `keychain`, `absent`, or
+  `inspection_unknown`), editability, and a `configured` presence state (`true`,
+  `false`, or `null`) only — values are never returned. Environment-owned
+  entries are read-only. `false` means confirmed absent; `null` means presence is
   unknown and must not be interpreted as missing. Its
   top-level `store` capability reports `kind: "macos_keychain"`, whether that
   backend is available on the API host, `unavailableReason` as
@@ -1151,8 +1157,10 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   once at startup for allowlisted environment values that remain missing or
   empty after env-file loading. A non-empty environment value wins. A running
   Python worker does not hot-reload API edits, so saving or removing a Keychain
-  entry requires a JobCtrl restart before provider work observes
-  the change.
+  entry requires the relevant Python worker or provider process to restart
+  before Claude, Google, or CapSolver work observes the change. Codex verification,
+  preferred-model edits, browser capability changes, and extension pairing do
+  not share that restart requirement.
 - `GET /v1/providers/status` returns sanitized status for exactly Codex,
   Claude, and Google: `configured`, `ready`, detected `mode`, and a bounded
   secret-free message. It is read-only and never copies ambient Codex auth.
@@ -1182,6 +1190,16 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   restrictive file permissions. These pairing routes are for CLI callers and
   same-origin Settings requests only; arbitrary loopback web origins and
   extension-origin CORS cannot mint or rotate the token.
+- `GET /v1/browser-capabilities` returns `core-browser`,
+  `auto-apply-browser`, and `authenticated-linkedin-browser` state without
+  returning a saved executable or source-profile path. The core browser is
+  managed and read-only. `POST /v1/browser-capabilities/:capabilityId/enable`
+  requires an explicit Chrome/Chromium executable path for optional
+  capabilities; the path is write-only. The matching `/disable` route applies
+  immediately. `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy`
+  requires explicit consent, clears the source path after the request, and
+  never returns, logs, or persists it. JobCtrl does not auto-detect or adopt a
+  system browser.
 - Authenticated extension routes under `/v1/extension/*` require `Authorization:
   Bearer <token>`. A valid token allows a `chrome-extension://` origin through
   the route-scoped CORS and unsafe-mutation guards, but only after the loopback

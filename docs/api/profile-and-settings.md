@@ -47,6 +47,11 @@ enter the system. They do not hold provider credentials or raw feed contents.
 | `GET /v1/providers/models` | Read-only sanitized model choices in stable Codex/Claude/Google order; never copies ambient Codex auth. Codex and Google are live; Claude is explicitly provider aliases. |
 | `POST /v1/providers/codex/verify` | Explicitly validate and import a reusable normal Codex CLI `auth.json` once when isolated auth is absent, then verify isolated auth without a model call. |
 | `GET /v1/extension/pairing-token` | Read the local extension pairing state. |
+| `POST /v1/extension/pairing-token/rotate` | Rotate the token immediately and disconnect existing extension clients. |
+| `GET /v1/browser-capabilities` | Read the managed and optional browser capability states. |
+| `POST /v1/browser-capabilities/:capabilityId/enable` | Enable an optional capability with an explicit, write-only browser executable path. |
+| `POST /v1/browser-capabilities/:capabilityId/disable` | Disable an optional capability immediately. |
+| `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy` | Copy a profile only with explicit consent; the source path is request-only. |
 
 Credential responses expose enough state for the UI to show whether a provider
 is configured, but do not return stored secret material. Guided provider
@@ -64,6 +69,9 @@ home. It invokes the same copy-once behavior retained by setup and generation.
 Each supplied non-null ID must be in the current catalog for a ready provider;
 `null` clears a choice even when that provider is unavailable. The setting
 contains provider and model IDs only, never credentials or account metadata.
+The settings and discovery responses also include effective-source,
+editability, and activation metadata for managed controls; an environment-owned
+field is read-only instead of being silently shadowed by a saved value.
 
 ## Which Screen Owns What?
 
@@ -74,7 +82,7 @@ contains provider and model IDs only, never credentials or account metadata.
 | Discovery (`/discovery`) | Target search, sources, scheduling, quarantine, and capture controls. |
 | Settings → General (`/settings`) | Spend/apply/worker controls and compensation source policy (not a feed connection). |
 | Settings → Credentials (`/settings/credentials`) | Provider modes, credential presence, and explicit Codex verification. |
-| Settings → Model selection (`/settings/models`) | Provider-scoped preferred model IDs. |
-| CLI `jobctrl capability …` | Authenticated system-browser capability adoption and removal. |
+| Settings → Model selection (`/settings/models`) | Provider-scoped preferred model IDs plus analysis and tailoring execution policy. |
+| Settings → Browser & extension (`/settings/browser`) | Browser capability adoption/removal, consented profile copy, and extension pairing/rotation. |
 
 This split keeps a configuration change from masquerading as candidate evidence.

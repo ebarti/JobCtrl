@@ -129,7 +129,8 @@ test("launch provider guidance requires one of Codex, Claude, or Google", async 
   const claudeStart = configuration.indexOf("### Claude", codexStart);
   assert.ok(codexStart >= 0 && claudeStart > codexStart);
   const codexSection = configuration.slice(codexStart, claudeStart);
-  assert.match(codexSection, /codex login --with-api-key/);
+  assert.match(codexSection, /already authenticated Codex CLI/);
+  assert.doesNotMatch(codexSection, /codex login --with-api-key/);
   assert.doesNotMatch(
     codexSection,
     /CODEX_HOME|codex_home|auth\.json|setup --launch-logins|isolated (?:Codex )?home|fallback target-home/i,
@@ -182,10 +183,15 @@ test("configuration docs match current routes, storage, and opt-in integrations"
     "/settings",
     "/settings/credentials",
     "/settings/models",
+    "/settings/browser",
   ]) {
     assert.ok(configuration.includes(`(${route})`) || profileApi.includes(`(${route})`));
   }
-  assert.match(configuration, /jobctrl capability list\/enable\/disable/);
+  assert.match(configuration, /jobctrl capability enable auto-apply-browser/);
+  assert.match(configuration, /environment compatibility override → saved UI value → built-in default/);
+  assert.match(configuration, /worker activity slots show desired versus active values/);
+  assert.match(configuration, /The path is write-only and is not shown again/);
+  assert.match(configuration, /Rotating the pairing token takes effect immediately/);
   assert.match(configuration, /not a provider connection/i);
 
   for (const document of [readme, dataAndSafety, security, storage]) {

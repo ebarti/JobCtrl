@@ -184,11 +184,14 @@ browser session but remains rate/budget limited. See
 | Provider/runtime keys | Shell, plaintext `~/.jobctrl/.env`, or the guided macOS Keychain boundary; never SQLite. |
 | Codex login | Stable `$JOBCTRL_DIR/codex_home/auth.json`, separate from SQLite and the normal Codex home. Valid normal CLI auth may be reused once only when this file is absent; existing isolated auth is never overwritten, and prompt-driven reads are limited to `codex_home/workspace/`. |
 | Claude/Google web entries | Keychain for API keys plus cloud activation flags/non-secret identifiers; AWS, Google, and Azure credential files remain in their vendor stores. Status only is returned. |
-| CAPTCHA key | `CAPSOLVER_API_KEY` read by the owned local solver, not the model. |
+| CAPTCHA key | `CAPSOLVER_API_KEY` saved from Settings to Keychain on macOS, or supplied by the environment elsewhere; read by the owned local solver, not the model. |
 | Job-site passwords | Optional local profile value typed through a focused-field credential tool, never returned to the model. |
 
-Environment values win over Keychain. Keychain is loaded only for missing/empty
-values at process startup, so restart JobCtrl after changes. Provider
+Environment values win over Keychain and make the matching Settings control
+read-only. Keychain is loaded only for missing/empty values at process startup,
+so restart the relevant Python process after Claude, Google, or CapSolver
+changes. Codex verification, model preference, browser capability, and
+extension-pairing changes do not require that restart. Provider
 replacement is atomic from the web contract; stored secrets are used internally
 only to restore a failed batch and never cross the HTTP boundary. Windows and
 Linux use environment configuration today.

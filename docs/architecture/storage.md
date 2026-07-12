@@ -15,7 +15,7 @@ Unless overridden by `JOBCTRL_DIR`, the local authority root is
 | --- | --- |
 | `jobctrl.db` plus WAL/SHM | Canonical profile, jobs, discovery settings, events, projections, materials metadata, reviews, contacts, outcomes, and workflow rows. |
 | `temporal.db` plus WAL/SHM | Bundled Temporal history; native lifecycle treats it and `jobctrl.db` as one restore pair. |
-| `dashboard.json` | Non-secret runtime settings including `dailyBudgetUsd`, apply controls, provider-scoped model IDs, and compensation source policy. |
+| `dashboard.json` | Non-secret runtime settings including spend/capacity, apply controls, scoring guidance, provider-scoped model IDs, AI execution policy, and compensation source policy. |
 | `.env`, `gmail/` | Plaintext environment credentials and Gmail OAuth client/token state. |
 | `codex_home/` | Stable JobCtrl-owned Codex state; auth is outside the prompt-readable `workspace/` subtree. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated and separately acquired provider runtime state. |
@@ -68,7 +68,8 @@ rendering settings/template text, run visibility, apply-review decisions,
 application outcomes, linked email evidence, and outcome suggestions. The
 projection tables (above) are also stored here. Dashboard settings remain
 file-backed until their own storage migration. `dashboard.json` owns the daily
-budget, apply controls, preferred model IDs, and safe Levels.fyi/Glassdoor
+budget, capacity/apply controls, scoring guidance, AI execution policy,
+preferred model IDs, and safe Levels.fyi/Glassdoor
 access-basis and coverage policy. That policy is not a feed connection;
 credentials, feed paths/URLs, feed contents, and provider payloads do not belong
 in the file.
