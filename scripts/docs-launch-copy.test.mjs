@@ -91,14 +91,6 @@ test("launch provider guidance requires one of Codex, Claude, or Google", async 
     await read("docs/architecture/runtime.md"),
     await read("docs/api/complete-contract.md"),
   ].join("\n");
-  const publicCodexCopy = [
-    readme,
-    gettingStarted,
-    configuration,
-    envExample,
-    security,
-    dataAndSafety,
-  ].join("\n");
 
   assert.match(gettingStarted, /One ready provider is sufficient/);
   assert.match(configuration, /^### Codex$/m);
@@ -142,14 +134,21 @@ test("launch provider guidance requires one of Codex, Claude, or Google", async 
     codexSection,
     /CODEX_HOME|codex_home|auth\.json|setup --launch-logins|isolated (?:Codex )?home|fallback target-home/i,
   );
+  const simpleSetupCopy = `${readmeConfiguration}\n${gettingStarted}\n${codexSection}`;
   assert.doesNotMatch(
-    publicCodexCopy,
+    simpleSetupCopy,
     /CODEX_HOME|codex_home|auth\.json|setup --launch-logins|isolated (?:Codex )?home|fallback target-home/i,
   );
   assert.doesNotMatch(
-    publicCodexCopy,
+    simpleSetupCopy,
     /\b(?:Codex (?:CLI )?login|credentials?|authentication) (?:copy|copying|import|importing|staging)\b|\b(?:copy|copying|import|importing) (?:an? )?(?:existing |valid |normal )*(?:Codex (?:CLI )?login|credentials?|authentication)\b|\b(?:copy-once|reusable-login importer)\b/i,
   );
+  for (const document of [readme, security, dataAndSafety]) {
+    assert.match(document, /codex_home/);
+    assert.match(document, /workspace\//);
+    assert.match(document, /(?:once|one-time)/i);
+    assert.match(document, /never overwrit/i);
+  }
   assert.match(configuration, /CLAUDE_CODE_USE_BEDROCK/);
   assert.match(configuration, /CLAUDE_CODE_USE_ANTHROPIC_AWS/);
   assert.match(configuration, /CLAUDE_CODE_USE_VERTEX/);
@@ -158,6 +157,54 @@ test("launch provider guidance requires one of Codex, Claude, or Google", async 
   assert.doesNotMatch(publicProviderCopy, /LLM_URL|LLM_API_KEY/);
   assert.doesNotMatch(gettingStarted, /local OpenAI-compatible/i);
   assert.doesNotMatch(readme, /OpenAI-backed scoring|general LLM access.*OPENAI_API_KEY/i);
+});
+
+test("configuration docs match current routes, storage, and opt-in integrations", async () => {
+  const readme = await read("README.md");
+  const configuration = await read("docs/user/configuration.md");
+  const dataAndSafety = await read("docs/user/data-and-safety.md");
+  const security = await read("docs/user/security.md");
+  const storage = await read("docs/architecture/storage.md");
+  const observability = await read("docs/architecture/observability.md");
+  const completeApi = await read("docs/api/complete-contract.md");
+  const profileApi = await read("docs/api/profile-and-settings.md");
+  const envExample = await read(".env.example");
+  const normalizedConfiguration = configuration.replace(/\s+/g, " ");
+  const normalizedApi = completeApi.replace(/\s+/g, " ");
+
+  assert.match(normalizedConfiguration, /daily LLM budget is stored in `dashboard\.json`/i);
+  assert.doesNotMatch(configuration, /daily LLM budget is a preference stored in SQLite/i);
+  assert.match(normalizedApi, /scheduling mutation boundary; `\/v1\/settings` does not own discovery cadence/i);
+  assert.match(normalizedApi, /configured `dailyBudgetUsd` from `dashboard\.json`/i);
+
+  for (const route of [
+    "/discovery",
+    "/settings",
+    "/settings/credentials",
+    "/settings/models",
+  ]) {
+    assert.ok(configuration.includes(`(${route})`) || profileApi.includes(`(${route})`));
+  }
+  assert.match(configuration, /jobctrl capability list\/enable\/disable/);
+  assert.match(configuration, /not a provider connection/i);
+
+  for (const document of [readme, dataAndSafety, security, storage]) {
+    assert.match(document, /dashboard\.json/);
+    assert.match(document, /codex_home/);
+    assert.match(document, /browser-capabilities\.json/);
+  }
+
+  assert.doesNotMatch(envExample, /CHROME_PATH|JOBCTRL_API_HOST|JOBCTRL_API_PORT|VITE_GOOGLE_MAPS_API_KEY|TEMPORAL_ADDRESS/);
+  assert.match(envExample, /docs\/local-development\.md/);
+  assert.match(envExample, /^# CAPSOLVER_API_KEY=$/m);
+  assert.match(configuration, /gmail\.readonly/);
+  assert.match(configuration, /gmail\.send/);
+  assert.match(configuration, /Removing only the local token.*does not revoke/is);
+
+  for (const document of [readme, configuration, dataAndSafety, security, observability]) {
+    assert.match(document, /metadata-only/i);
+  }
+  assert.doesNotMatch(configuration, /prompts and completions are exported/i);
 });
 
 test("runtime overrides stay in contributor documentation", async () => {

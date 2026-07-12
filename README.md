@@ -296,11 +296,12 @@ is opt-in and configuration-gated:
   Raw email bodies stay local; outgoing sends require the `gmail.send` scope.
 - **Google Maps** — address autocomplete, only if you set
   `VITE_GOOGLE_MAPS_API_KEY`.
-- **CAPTCHA solving** — supported widgets are handled only through the owned
-  local solver tool when configured; no solver key travels through the model
-  prompt.
-- **Langfuse / OpenTelemetry** — traces, only when you configure it
-  (`LANGFUSE_DISABLE=1` opts out even with credentials present).
+- **CAPTCHA solving** — configure CapSolver only when you explicitly authorize
+  sending a supported widget's site key and page URL during apply; the owned
+  local tool keeps the solver key and returned token out of the model prompt.
+- **Langfuse / OpenTelemetry** — metadata-only traces, only when you configure
+  them: provider/model, operation/stage, outcome, token counts, and safe sizes,
+  never raw prompts, job/profile/material text, or completions.
 
 The apply prompt is the largest single batch of personal data that can leave.
 Full per-call breakdown:
@@ -321,18 +322,28 @@ JobCtrl service.
 
 By default, JobCtrl writes local data under `~/.jobctrl/`:
 
-- `jobctrl.db` — local SQLite database with profile, jobs, events,
-  projections, settings, and artifact metadata.
+- `jobctrl.db` — local SQLite database with profile, jobs, discovery settings,
+  events, projections, and artifact metadata.
 - `temporal.db` — bundled-runtime Temporal persistence. It is rollback-critical
   alongside `jobctrl.db`: a bundled release transition snapshots and restores
   the two databases as one verified pair, never as independent files.
 - `.env` — plaintext, cross-platform fallback for provider/API credentials
   and local runtime settings; it is not encrypted at rest.
-- `dashboard.json` — non-secret dashboard settings, including provider-scoped
-  preferred model IDs. It never stores provider credentials.
+- `dashboard.json` — non-secret runtime settings, including `dailyBudgetUsd`,
+  apply controls, provider-scoped model IDs, and compensation source policy. It
+  never stores provider credentials or feed contents.
+- `codex_home/` — the stable JobCtrl-owned Codex CLI home. Its `auth.json` may
+  reuse valid normal Codex CLI authentication once when absent; JobCtrl never
+  overwrites existing isolated auth or changes the normal Codex home. Prompt-
+  driven reads are limited to `codex_home/workspace/`.
+- `gmail/` — Gmail OAuth client and private refresh/access token state.
+- `browser-capabilities.json`, `browser-profiles/`,
+  `extension-capability-token`, `chrome-workers/`, `apply-workers/` — explicit
+  browser adoption, copied profiles, extension pairing, and browser/apply state.
+- `provider-packs/`, `provider-runtime/`, `claude_home/` — provider runtime
+  packages and isolated provider state when those paths are used.
 - `tailored_resumes/`, `cover_letters/`, `logs/` — generated artifacts and
   logs.
-- `chrome-workers/`, `apply-workers/` — local browser/apply worker state.
 - `backups/` — source-mode `jobctrl backup` snapshots and, once the P6-signed
   bundled channel is public, verified paired lifecycle snapshots.
 
@@ -418,8 +429,9 @@ fixtures are never a production upgrade path.
 
 1. Create or import a candidate profile.
 2. Configure target roles, locations, work models, and application
-   preferences. In Settings, opt into Levels.fyi or Glassdoor compensation
-   feeds only when you have the matching licensed or permitted access.
+   preferences. In Settings, record Levels.fyi or Glassdoor compensation
+   source policy only when you have matching access; this policy does not
+   connect a feed.
 3. Run Discover from the UI or CLI, optionally targeting a single source from
    the Pipelines tab when you want a lighter retry.
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
@@ -498,10 +510,11 @@ different CLI surfaces. Source contributors can use
 
 ## Configuration
 
-Configuration comes from local profile/settings stores, environment variables
+Configuration comes from SQLite-backed profile/discovery stores,
+`dashboard.json` runtime settings, environment variables
 (`~/.jobctrl/.env`, repo `.env`, or the shell), and package-shipped source
-registries. Compensation-source opt-ins are managed from Settings and stored
-locally. Start with [.env.example](.env.example); full reference:
+registries. Compensation-source policy is managed from Settings and stored
+locally; it is not a feed connection. Start with [.env.example](.env.example); full reference:
 [Configuration](https://jobctrl.dev/user/configuration).
 
 Providers that accept environment credentials can use the plaintext
@@ -548,9 +561,11 @@ Keychain output.
 
 </details>
 
-Discovery scheduling is stored in SQLite: `scheduling_enabled` defaults to
+Discovery scheduling is stored in SQLite through
+`GET/PATCH /v1/discovery/settings`: `scheduling_enabled` defaults to
 `false`; `schedule_cron` defaults to `0 7 * * *` and only runs after you
-enable it. LLM spend is tracked locally; `dailyBudgetUsd` defaults to `25`
+enable it. LLM spend is tracked locally; its `dailyBudgetUsd` ceiling is stored
+in `dashboard.json`, defaults to `25`
 (`0` = unlimited), spendful workflows run a budget preflight, and the health
 surface shows today's estimated spend.
 

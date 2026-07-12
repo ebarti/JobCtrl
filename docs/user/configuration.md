@@ -12,10 +12,11 @@ cost). A single ready Codex, Claude, or Google provider is sufficient for every
 core AI stage, including employer-analysis synthesis. A second provider can add
 ensemble diversity, but it is not mandatory.
 
-JobCtrl configuration is intentionally local. Some settings live in the local
-SQLite database, set through the web app; working runtime credentials and
-runtime switches are read from environment variables. Everything here is
-optional unless a feature you want depends on it.
+JobCtrl configuration is intentionally local. Profile and discovery settings
+live in SQLite; non-secret runtime settings live in `dashboard.json`; working
+credentials and advanced runtime switches come from local credential stores or
+environment variables. Everything here is optional unless a feature you want
+depends on it.
 
 ::: info Command spelling
 Command blocks on this page use the canonical installed spelling,
@@ -29,10 +30,13 @@ Contributors running from source can use the checkout-prefixed commands in
 
 | You want to change… | Use |
 | --- | --- |
-| Candidate facts, target role, location, work model, or writing preferences | Profile / Preferences in the web app |
-| Discovery sources, schedules, quarantine, or manual capture | Discovery in the web app |
-| Approval, spend, worker, or provider behavior | Settings in the web app |
-| Provider secret used by the Python runtime | `~/.jobctrl/.env`, shell environment, or the macOS credential panel |
+| Candidate facts and resume evidence | **Profile** (`/profile`) |
+| Target role, location, work model, or writing preferences | **Preferences** (`/preferences`) |
+| Discovery sources, schedules, quarantine, or manual capture | **Discovery** (`/discovery`) |
+| Approval, spend budget, apply concurrency, or compensation source policy | **Settings → General** (`/settings`) |
+| Provider secret or cloud mode | **Settings → Credentials** (`/settings/credentials`) on macOS, or `~/.jobctrl/.env` / the shell |
+| Preferred provider model | **Settings → Model selection** (`/settings/models`) |
+| Authenticated system-browser capability | `jobctrl capability list/enable/disable` in the CLI |
 
 The rest of this page is a lookup table. [Data, Privacy & Safety](data-and-safety.md)
 explains what is stored or sent; [Security](security.md) explains the controls
@@ -43,6 +47,7 @@ around risky actions.
 | Source | Purpose |
 | --- | --- |
 | `~/.jobctrl/jobctrl.db` | Candidate profile, discovery settings, preferences, tailoring controls, jobs, events, projections, and artifact metadata. |
+| `~/.jobctrl/dashboard.json` | Non-secret runtime settings such as the daily budget, apply controls, preferred model IDs, and compensation source policy. |
 | `~/.jobctrl/.env` | Personal provider keys and runtime environment. |
 | repo `.env` | Development-only overrides for the current checkout. |
 | shell environment | One-off overrides for commands and CI. |
@@ -197,12 +202,12 @@ stale `JOBCTRL_ANALYSIS_LEGS` value omitted it.
 
 ## LLM Spend Budget
 
-The daily LLM budget is a preference stored in SQLite (`dailyBudgetUsd`,
-default `25`; `0` means unlimited). Workflows that spend LLM tokens run a
+The daily LLM budget is stored in `dashboard.json` and edited in **Settings →
+General** (`dailyBudgetUsd`, default `25`; `0` means unlimited). Workflows that spend LLM tokens run a
 budget preflight before their heavy activities and stop with a non-retryable
 budget error once the estimated daily spend reaches the ceiling.
 `GET /v1/health` reports today's estimated spend against the configured
-budget, and the Preferences form edits the value.
+budget.
 
 ## Discovery
 
@@ -316,7 +321,7 @@ tied to the same material generation.
 | --- | --- | --- |
 | `JOBCTRL_CLAUDE_BIN` | unset | Explicit apply-agent Claude runtime override. By default apply uses a system `claude` when present, then the pinned Claude Agent SDK bundled binary. |
 | `JOBCTRL_APPLY_TIMEOUT_SECONDS` | `900` | Per-job autonomous apply timeout. |
-| `CAPSOLVER_API_KEY` | unset | Optional key used only by the owned local `solve_captcha` apply tool for supported widgets. Provider keys and solver tokens are not sent through the model prompt; unsupported or unconfigured CAPTCHA flows fail closed. |
+| `CAPSOLVER_API_KEY` | unset | Explicit opt-in to send a detected supported widget's site key and page URL to CapSolver during an apply run you start or a standing loop you enable. The owned local `solve_captcha` tool keeps provider keys and solver tokens out of the model prompt; unsupported, unconfigured, or failed solves stop the apply path. |
 | `JOBCTRL_LINKEDIN_APPLY_RESOLVER` | capability-controlled | Set to `0` to disable authenticated LinkedIn outbound apply URL resolution after it has been explicitly enabled. It cannot enable the feature by itself. |
 | `JOBCTRL_LINKEDIN_APPLY_CHROME_PROFILE` | browser default | Chrome profile name inside the resolver user-data directory. |
 | `JOBCTRL_LINKEDIN_APPLY_HEADLESS` | visible Chrome | Set to `1` to run the resolver headless. |
@@ -383,25 +388,33 @@ jobctrl gmail-auth
 jobctrl doctor
 ```
 
-The first runs the Gmail sign-in and writes your local token; the second
-re-checks that the connector is now available.
+Before running the first command, enable the Gmail API in a Google Cloud
+project, create an OAuth **Desktop app** client, and save its downloaded JSON as
+`$JOBCTRL_GMAIL_OAUTH_CLIENT_PATH`. The command opens Google's consent flow and
+writes a private local token to `$JOBCTRL_GMAIL_TOKEN_PATH`; `jobctrl doctor`
+then re-checks readiness.
 
-The connector requests Gmail read-only and send scopes. Read scope is used for
-bounded verification-code and outcome lookups. Send scope is used only for the
-owned email-application path after a dry-run records the recipient and
-attachment candidate and Apply Review approves that exact binding. Raw Gmail
-bodies stay local and are not copied into events, telemetry, broad projections,
-or logs.
+The connector requests `gmail.readonly` and `gmail.send`. Read-only access is
+used for bounded verification-code and outcome lookups. Send access is used
+only for the owned email-application path after a dry-run records the recipient
+and attachment candidate and Apply Review approves that exact binding. Raw
+Gmail bodies stay local and are not copied into events, telemetry, broad
+projections, or logs.
+
+To disconnect, delete the local token and revoke the OAuth client's access in
+your Google Account's third-party access controls. Re-run `jobctrl gmail-auth`
+to grant access again. Removing only the local token prevents JobCtrl reuse but
+does not revoke Google's server-side grant.
 
 ## Compensation Sources
 
-Settings > General > Compensation sources lets you opt into Levels.fyi and
-Glassdoor at your discretion. Choose the access basis you actually have,
-confirm Europe coverage for Levels.fyi, and then enable the source. The choice
-is stored locally in `dashboard.json` and is consumed by both the TypeScript API
-and the Python compensation refresh worker. Once you save a source preference,
-it overrides the compatibility environment-variable gate for that source;
-before that, the environment variables below remain the fallback.
+**Settings → General → Compensation sources** records local access policy for
+Levels.fyi and Glassdoor; it is not a provider connection and does not fetch or
+store a feed. Choose only the access basis you actually have and confirm Europe
+coverage for Levels.fyi when applicable. The policy is stored in
+`dashboard.json` and gates the TypeScript API and Python refresh worker. Once
+saved, it overrides the compatibility environment-variable gate; before that,
+the variables below remain the fallback.
 
 Enabling a source does not obtain a license, create permission, bypass provider
 controls, or scrape a provider website. You must still supply an authorized
@@ -428,9 +441,10 @@ Provider payloads and restricted datasets should never be committed.
 | `LANGFUSE_OTEL_TIMEOUT_SECONDS` | OTLP/HTTP export timeout, default `5.0`. |
 | `JOBCTRL_ENV` | Environment attribute stamped on exported traces, default `local`. |
 
-When Langfuse export is enabled, LLM prompts and completions are exported to the
-configured Langfuse instance. Do not enable it for private runs unless that is
-intentional.
+When enabled, export is metadata-only: provider/model identifiers, operation or
+stage, success/failure, token counts, and safe size metrics. Raw prompts,
+messages, job text, profiles, generated materials, completions, credentials,
+local paths, logs, and database content are not span attributes.
 
 ## Test And Documentation Workspaces
 

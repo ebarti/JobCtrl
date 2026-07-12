@@ -177,9 +177,9 @@ Native Windows and Linux credential-store adapters are planned. The CapSolver
 key is an env var scoped to the owned solver tool; Gmail token files are local; job-site
 passwords, if saved, remain local profile data consumed by `type_credential`.
 SQLite, generated artifacts, browser profiles, logs, prompts, completions, and
-worker directories are sensitive. Langfuse/OTel export is opt-in and warns that
-LLM prompts and completions leave the machine; enrichment spans intentionally
-avoid raw posting text, resumes, cover letters, and credentials. Security
+worker directories are sensitive. Langfuse/OTel export is opt-in and
+metadata-only; LLM prompts and completions are excluded. Enrichment spans
+intentionally avoid raw posting text, resumes, cover letters, and credentials. Security
 reviews should watch for secret material in logs, traces, release artifacts,
 HTML previews, generated PDFs, worker stdout, and exception payloads.
 

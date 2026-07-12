@@ -1,10 +1,31 @@
 # Storage
 
-Everything durable lives on the user's machine: one SQLite database plus
-generated files under the local workspace directory.
+Everything durable lives on the user's machine in local SQLite stores and
+files under the workspace directory.
 
 **Read this if** you need to know which table or file owns a piece of data, or
 where generated artifacts land on disk.
+
+## Local Authority Inventory
+
+Unless overridden by `JOBCTRL_DIR`, the local authority root is
+`~/.jobctrl/`:
+
+| Path | Authority |
+| --- | --- |
+| `jobctrl.db` plus WAL/SHM | Canonical profile, jobs, discovery settings, events, projections, materials metadata, reviews, contacts, outcomes, and workflow rows. |
+| `temporal.db` plus WAL/SHM | Bundled Temporal history; native lifecycle treats it and `jobctrl.db` as one restore pair. |
+| `dashboard.json` | Non-secret runtime settings including `dailyBudgetUsd`, apply controls, provider-scoped model IDs, and compensation source policy. |
+| `.env`, `gmail/` | Plaintext environment credentials and Gmail OAuth client/token state. |
+| `codex_home/` | Stable JobCtrl-owned Codex state; auth is outside the prompt-readable `workspace/` subtree. |
+| `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated and separately acquired provider runtime state. |
+| `tailored_resumes/`, `cover_letters/`, `logs/` | Generated material and logs registered by SQLite metadata where applicable. |
+| `browser-capabilities.json`, `browser-profiles/`, `extension-capability-token`, `chrome-workers/`, `apply-workers/` | Browser adoption/consent, extension pairing, copied profiles, and browser/apply execution state. |
+| `backups/` and legacy `resume.*` / style files | User-created database snapshots and pre-migration resume inputs. |
+
+Developer supervisors additionally use checkout-local `.dev/` process, log,
+and Temporal files; those are not installed-user authorities but remain
+sensitive.
 
 ## Schema At A Glance
 
@@ -46,10 +67,11 @@ stage states, events, artifacts, normalized Candidate Profile data, profile
 rendering settings/template text, run visibility, apply-review decisions,
 application outcomes, linked email evidence, and outcome suggestions. The
 projection tables (above) are also stored here. Dashboard settings remain
-file-backed until their own storage migration. The dashboard settings file also
-owns the safe Levels.fyi and Glassdoor enablement, access-basis, and coverage
-preferences; credentials, feed contents, and provider payloads do not belong in
-that file.
+file-backed until their own storage migration. `dashboard.json` owns the daily
+budget, apply controls, preferred model IDs, and safe Levels.fyi/Glassdoor
+access-basis and coverage policy. That policy is not a feed connection;
+credentials, feed paths/URLs, feed contents, and provider payloads do not belong
+in the file.
 The `digest_state` projection table stores the local daily digest review
 watermark; passive Dashboard and CLI reads do not update it, and only explicit
 acknowledge actions advance it.

@@ -37,7 +37,8 @@ enter the system. They do not hold provider credentials or raw feed contents.
 
 | Route | Storage boundary |
 | --- | --- |
-| `GET/PATCH /v1/settings` | Non-secret runtime settings. |
+| `GET/PATCH /v1/settings` | File-backed non-secret runtime settings in `dashboard.json`; not discovery scheduling. |
+| `GET/PATCH /v1/discovery/settings` | SQLite-backed discovery controls, including scheduling. |
 | `GET /v1/credentials` | Availability/status metadata, not secret values. |
 | `PATCH /v1/credentials` | Store or replace a credential through the local credential adapter. |
 | `PATCH /v1/credentials/batch` | Atomically replace or remove one guided provider configuration. |
@@ -68,9 +69,12 @@ contains provider and model IDs only, never credentials or account metadata.
 
 | Screen | Owns |
 | --- | --- |
-| Profile | Candidate facts, experience, skills, evidence, resume content. |
-| Preferences | Target role, location, work model, and fit preferences. |
-| Discovery | Sources, cadence, quarantine, and capture controls. |
-| Settings | Runtime behavior and credential status. |
+| Profile (`/profile`) | Candidate facts, experience, skills, evidence, resume content. |
+| Preferences (`/preferences`) | Target role, location, work model, and fit/tailoring preferences. |
+| Discovery (`/discovery`) | Target search, sources, scheduling, quarantine, and capture controls. |
+| Settings → General (`/settings`) | Spend/apply/worker controls and compensation source policy (not a feed connection). |
+| Settings → Credentials (`/settings/credentials`) | Provider modes, credential presence, and explicit Codex verification. |
+| Settings → Model selection (`/settings/models`) | Provider-scoped preferred model IDs. |
+| CLI `jobctrl capability …` | Authenticated system-browser capability adoption and removal. |
 
 This split keeps a configuration change from masquerading as candidate evidence.

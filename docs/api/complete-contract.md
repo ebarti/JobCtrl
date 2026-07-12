@@ -79,9 +79,12 @@ must-have coverage, and revision-attempt limits in the profile
 non-inventing behavior, along with supported adjacent-experience translation;
 the Preferences toggle only allows or forbids invented adjacent-experience
 drafts. Draft adjacent claims require review and are not user-configured as an
-auto-approval bypass. The Discovery page owns target search plus automation
-controls such as discovery minimum fit score and auto apply. The Settings page
-keeps execution-only controls such as apply concurrency.
+auto-approval bypass. The Discovery page (`/discovery`) owns target search,
+sources, scheduling, quarantine, and capture. Settings General (`/settings`)
+owns `dailyBudgetUsd`, auto apply, minimum fit score, approval, apply
+concurrency, worker status, and compensation source policy. Credentials
+(`/settings/credentials`) and model selection (`/settings/models`) are separate
+tabs. Authenticated system-browser capabilities remain CLI-only.
 When `VITE_GOOGLE_MAPS_API_KEY` is available to the web dev process, the Profile
 Address field progressively enhances into a Google Maps Places address search.
 Selecting a Google result updates the existing address, city, state/province,
@@ -322,9 +325,12 @@ source registry renders as a paginated, filterable, sortable table so source
 type and policy metadata are visible as columns instead of compact badges:
 
 - `GET /v1/discovery/settings` returns the SQLite-backed runtime discovery
-  settings used by board discovery.
+  settings used by board discovery, including `schedulingEnabled` and
+  `scheduleCron`.
 - `PATCH /v1/discovery/settings` updates those runtime settings without
-  dropping the worker search-contract fields stored in the same row.
+  dropping the worker search-contract fields stored in the same row. This is
+  the scheduling mutation boundary; `/v1/settings` does not own discovery
+  cadence.
 - `GET /v1/discovery/sources` lists source registry entries merged with
   `source_quality_stats`. Each entry also carries the same additive `politeness`
   object as `sourceHealth[]` (robots-disallowed / rate-limited / budget-exhausted
@@ -373,8 +379,8 @@ type and policy metadata are visible as columns instead of compact badges:
 ## Compensation
 
 `GET /v1/compensation/sources` returns the compensation source policy registry
-used by the Settings compensation-source panel. The response contains safe
-policy metadata only: source id, display name, source type, access mode,
+used by the Settings General policy panel. This is not a feed connection. The
+response contains safe policy metadata only: source id, display name, source type, access mode,
 availability, license status, terms/source URLs, freshness policy, attribution
 requirement, supported field names, disabled reason, configured flag, Europe
 coverage notes, safe operator notes, and safe control metadata. The control
@@ -1047,9 +1053,10 @@ writes `worker_runtime_heartbeats` into the same database; `GET /v1/health`
 returns the API app/database identity plus the latest Python worker
 heartbeat status (`healthy`, `missing`, `stale` after 45 s, or `mismatched`
 when the worker points at a different app dir/database) and an `llmSpend`
-block (`status: ok | over_budget`, today's `estimatedUsd`, and the configured
-`dailyBudgetUsd` — default `25`, `0` = unlimited) read from the local
-`llm_spend` metering table, plus worker startup concurrency metadata
+block (`status: ok | over_budget`, today's `estimatedUsd` from the local
+`llm_spend` metering table, and configured `dailyBudgetUsd` from
+`dashboard.json` — default `25`, `0` = unlimited), plus worker startup
+concurrency metadata
 (`maxConcurrentActivities`, `activityExecutorMaxWorkers`). The web topbar
 surfaces missing or stale worker heartbeats, the Settings page surfaces the
 worker activity-slot configuration, and the pipeline stage trigger blocks new
@@ -1100,14 +1107,15 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
 
 - `GET /v1/settings` returns the runtime settings stored in the local
   settings file (`dashboard.json` under the app dir): apply approval gate,
-  apply concurrency, discovery scheduling, LLM spend budget, and related
+  apply concurrency, auto apply, minimum fit score, LLM spend budget, and related
   preferences. The response's `preferredModels` is a strict partial mapping
   keyed only by `codex`, `claude`, and `google`, and contains only nonempty
   saved model IDs. `PATCH /v1/settings` updates them; a non-null preferred ID
   must match the current ready-provider catalog, while `null` clears that
   provider without requiring readiness. The canonical file key is
-  `preferred_models`; it stores provider/model IDs only. The web Preferences
-  and Settings forms use these routes.
+  `preferred_models`; it stores provider/model IDs only. Settings General and
+  Model selection use these routes; discovery scheduling uses
+  `/v1/discovery/settings` instead.
 - `GET /v1/credentials` lists the fixed guided Claude/Google credential and
   cloud-mode keys plus the legacy OpenAI-key removal entry, with a label,
   storage kind,
