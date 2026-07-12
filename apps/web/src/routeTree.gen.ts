@@ -32,8 +32,8 @@ import { Route as JobsIndexRouteImport } from "./routes/jobs.index";
 import { Route as ArtifactsIndexRouteImport } from "./routes/artifacts.index";
 import { Route as SpikesTableFiltersRouteImport } from "./routes/spikes.table-filters";
 import { Route as SettingsModelsRouteImport } from "./routes/settings.models";
-import { Route as SettingsBrowserRouteImport } from "./routes/settings.browser";
 import { Route as SettingsCredentialsRouteImport } from "./routes/settings.credentials";
+import { Route as SettingsBrowserRouteImport } from "./routes/settings.browser";
 import { Route as RunsRunIdRouteImport } from "./routes/runs.$runId";
 import { Route as ProfileImportRouteImport } from "./routes/profile.import";
 import { Route as OutreachContactIdRouteImport } from "./routes/outreach.$contactId";
@@ -160,14 +160,14 @@ const SettingsModelsRoute = SettingsModelsRouteImport.update({
   path: "/models",
   getParentRoute: () => SettingsRoute,
 } as any);
-const SettingsBrowserRoute = SettingsBrowserRouteImport.update({
-  id: "/browser",
-  path: "/browser",
-  getParentRoute: () => SettingsRoute,
-} as any);
 const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
   id: "/credentials",
   path: "/credentials",
+  getParentRoute: () => SettingsRoute,
+} as any);
+const SettingsBrowserRoute = SettingsBrowserRouteImport.update({
+  id: "/browser",
+  path: "/browser",
   getParentRoute: () => SettingsRoute,
 } as any);
 const RunsRunIdRoute = RunsRunIdRouteImport.update({
@@ -243,9 +243,9 @@ export interface FileRoutesByFullPath {
   "/outreach/$contactId": typeof OutreachContactIdRoute;
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
+  "/settings/browser": typeof SettingsBrowserRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
   "/settings/models": typeof SettingsModelsRoute;
-  "/settings/browser": typeof SettingsBrowserRoute;
   "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts/": typeof ArtifactsIndexRoute;
   "/jobs/": typeof JobsIndexRoute;
@@ -274,9 +274,9 @@ export interface FileRoutesByTo {
   "/outreach/$contactId": typeof OutreachContactIdRoute;
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
+  "/settings/browser": typeof SettingsBrowserRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
   "/settings/models": typeof SettingsModelsRoute;
-  "/settings/browser": typeof SettingsBrowserRoute;
   "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts": typeof ArtifactsIndexRoute;
   "/jobs": typeof JobsIndexRoute;
@@ -312,9 +312,9 @@ export interface FileRoutesById {
   "/outreach/$contactId": typeof OutreachContactIdRoute;
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
+  "/settings/browser": typeof SettingsBrowserRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
   "/settings/models": typeof SettingsModelsRoute;
-  "/settings/browser": typeof SettingsBrowserRoute;
   "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts/": typeof ArtifactsIndexRoute;
   "/jobs/": typeof JobsIndexRoute;
@@ -351,9 +351,9 @@ export interface FileRouteTypes {
     | "/outreach/$contactId"
     | "/profile/import"
     | "/runs/$runId"
+    | "/settings/browser"
     | "/settings/credentials"
     | "/settings/models"
-    | "/settings/browser"
     | "/spikes/table-filters"
     | "/artifacts/"
     | "/jobs/"
@@ -382,9 +382,9 @@ export interface FileRouteTypes {
     | "/outreach/$contactId"
     | "/profile/import"
     | "/runs/$runId"
+    | "/settings/browser"
     | "/settings/credentials"
     | "/settings/models"
-    | "/settings/browser"
     | "/spikes/table-filters"
     | "/artifacts"
     | "/jobs"
@@ -419,9 +419,9 @@ export interface FileRouteTypes {
     | "/outreach/$contactId"
     | "/profile/import"
     | "/runs/$runId"
+    | "/settings/browser"
     | "/settings/credentials"
     | "/settings/models"
-    | "/settings/browser"
     | "/spikes/table-filters"
     | "/artifacts/"
     | "/jobs/"
@@ -618,18 +618,18 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SettingsModelsRouteImport;
       parentRoute: typeof SettingsRoute;
     };
-    "/settings/browser": {
-      id: "/settings/browser";
-      path: "/browser";
-      fullPath: "/settings/browser";
-      preLoaderRoute: typeof SettingsBrowserRouteImport;
-      parentRoute: typeof SettingsRoute;
-    };
     "/settings/credentials": {
       id: "/settings/credentials";
       path: "/credentials";
       fullPath: "/settings/credentials";
       preLoaderRoute: typeof SettingsCredentialsRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
+    "/settings/browser": {
+      id: "/settings/browser";
+      path: "/browser";
+      fullPath: "/settings/browser";
+      preLoaderRoute: typeof SettingsBrowserRouteImport;
       parentRoute: typeof SettingsRoute;
     };
     "/runs/$runId": {
@@ -799,16 +799,16 @@ const RunsRouteChildren: RunsRouteChildren = {
 const RunsRouteWithChildren = RunsRoute._addFileChildren(RunsRouteChildren);
 
 interface SettingsRouteChildren {
+  SettingsBrowserRoute: typeof SettingsBrowserRoute;
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute;
   SettingsModelsRoute: typeof SettingsModelsRoute;
-  SettingsBrowserRoute: typeof SettingsBrowserRoute;
   SettingsIndexRoute: typeof SettingsIndexRoute;
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
+  SettingsBrowserRoute: SettingsBrowserRoute,
   SettingsCredentialsRoute: SettingsCredentialsRoute,
   SettingsModelsRoute: SettingsModelsRoute,
-  SettingsBrowserRoute: SettingsBrowserRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 };
 
