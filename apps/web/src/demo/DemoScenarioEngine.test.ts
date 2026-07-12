@@ -339,8 +339,8 @@ describe("DemoScenarioEngine", () => {
 
     await expect(
       fixture.engine.execute("retryStage", [
-        "job-fabrikam-systems",
-        { stage: "score", resetAttempts: false, runAfter: true, dryRun: false },
+        "job-contoso-reliability",
+        { stage: "tailor", resetAttempts: false, runAfter: true, dryRun: false },
       ]),
     ).resolves.toMatchObject({
       status: "blocked",

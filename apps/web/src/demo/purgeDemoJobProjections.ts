@@ -700,7 +700,7 @@ function recomputeDashboard(draft: MutableSnapshot): void {
     job.discoveredAt?.startsWith(generatedDay),
   ).length;
   summary.totals.failures = jobs.filter(
-    (job) => job.currentState === "failed" || job.currentState === "exhausted",
+    (job) => job.currentState === "failed",
   ).length;
   summary.totals.blocked = jobs.filter(
     (job) => job.currentState === "blocked",

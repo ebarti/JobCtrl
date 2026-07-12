@@ -4,6 +4,13 @@ import { DEMO_ROUTE_NAMES, type DemoRouteName, type DemoSeed } from "./contracts
 import { scanDemoPrivacy } from "./privacy.js";
 import { ProfileSchema, QA_DEMO_SHARED_LIFECYCLE_STATES } from "@jobctrl/contracts";
 
+const CLOSED_ACTIVE_STATES: ReadonlySet<string> = new Set([
+  "closed",
+  "expired",
+  "removed",
+  "location_incompatible",
+]);
+
 function assertUnique(ids: readonly string[], label: string): void {
   if (new Set(ids).size !== ids.length) {
     throw new TypeError(`Demo ${label} identifiers must be unique.`);
@@ -100,12 +107,51 @@ function assertDemoReadModelInvariants(seed: DemoSeed): void {
   if (asRecord(dashboardTotals, "dashboard totals").jobs !== jobIds.length) {
     throw new TypeError("Demo dashboard job total must match the jobs list.");
   }
+  const activeJobs = model.jobs.list.items.filter(
+    (item) =>
+      item.deletedAt === null &&
+      item.hiddenAt === null &&
+      !CLOSED_ACTIVE_STATES.has(item.activeState),
+  );
+  const dashboardFailureTotal = asRecord(
+    dashboardTotals,
+    "dashboard totals",
+  ).failures;
+  if (typeof dashboardFailureTotal !== "number") {
+    throw new TypeError(
+      "Demo dashboard totals must include a numeric failure count.",
+    );
+  }
+  const failedJobs = activeJobs.filter(
+    (item) => item.currentState === "failed",
+  );
+  if (dashboardFailureTotal !== failedJobs.length) {
+    throw new TypeError(
+      "Demo dashboard failure total must match the failed jobs KPI query.",
+    );
+  }
   const artifactUrls: ReadonlySet<string> = new Set(
     Object.values(seed.artifacts).map((asset) => asset.url),
   );
   for (const item of jobs) {
     const jobId = readString(item, "jobKey", "job list item");
     requireDetail(model.jobs.details, jobId, "job");
+    const job = model.jobs.list.items.find((candidate) => candidate.jobKey === jobId)!;
+    const detailJob = model.jobs.details[jobId]!.job;
+    for (const key of [
+      "currentStage",
+      "currentSubstage",
+      "currentState",
+      "errorCode",
+      "errorMessage",
+      "nextAction",
+    ] as const) {
+      if (detailJob[key] !== job[key]) {
+        throw new TypeError(
+          `Demo job ${jobId} has inconsistent list and detail ${key}.`,
+        );
+      }
+    }
     for (const urlKey of ["postingSourceUrl", "applicationUrl"]) {
       const url = readString(item, urlKey, `job ${jobId}`) as (typeof artifactUrls extends Set<infer T> ? T : never);
       if (!artifactUrls.has(url)) {

@@ -24,7 +24,7 @@ describe("canonical public demo seed", () => {
 
   it("is deterministic, immutable by type, and covers the required lifecycle arms", () => {
     expect(() => assertDemoSeedInvariants(DEMO_SEED)).not.toThrow();
-    expect(demoSeedDigest(DEMO_SEED)).toBe("fnv1a-9bdbb172");
+    expect(demoSeedDigest(DEMO_SEED)).toBe("fnv1a-b819c053");
     expect(demoSeedDigest({ b: 2, a: ["seed", true] })).toBe(demoSeedDigest({ a: ["seed", true], b: 2 }));
   });
 
@@ -105,15 +105,46 @@ describe("canonical public demo seed", () => {
     expect(resetSeed.jobs.details[CONTOSO_JOB_KEY]?.artifacts).toEqual(artifacts);
   });
 
-  it("keeps Fabrikam's runnable current stage and substage aligned", () => {
+  it("keeps the failed Fabrikam rescore inspectable and aligned across dashboard, list, and detail", () => {
+    const model = DEMO_SEED.readModel;
     const fabrikam = DEMO_SEED.readModel.jobs.details["job-fabrikam-systems"];
+    const failedJobs = model.jobs.list.items.filter(
+      (item) =>
+        item.deletedAt === null &&
+        item.hiddenAt === null &&
+        item.currentState === "failed",
+    );
 
+    expect(model.dashboard.summary.totals.failures).toBe(failedJobs.length);
+    expect(failedJobs.map((item) => item.jobKey)).toEqual([
+      "job-fabrikam-systems",
+    ]);
     expect(fabrikam?.job).toMatchObject({
       currentStage: "score",
       currentSubstage: "score",
+      currentState: "failed",
+      errorCode: "demo_rescore_gate",
     });
     expect(fabrikam?.stages).toContainEqual(
-      expect.objectContaining({ stage: "score" }),
+      expect.objectContaining({
+        stage: "score",
+        state: "failed",
+        errorCode: "demo_rescore_gate",
+        retryable: true,
+      }),
+    );
+  });
+
+  it("rejects a dashboard failure total that cannot be opened through the Failures KPI", () => {
+    const mismatched = structuredClone(DEMO_SEED) as unknown as {
+      readModel: { dashboard: { summary: { totals: { failures: number } } } };
+    };
+    mismatched.readModel.dashboard.summary.totals.failures += 1;
+
+    expect(() =>
+      assertDemoSeedInvariants(mismatched as unknown as typeof DEMO_SEED),
+    ).toThrow(
+      "dashboard failure total must match the failed jobs KPI query",
     );
   });
 

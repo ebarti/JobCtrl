@@ -33,7 +33,6 @@ describe("purgeDemoJobProjections", () => {
     expect(result.removedRunIds).toEqual(
       expect.arrayContaining([
         "run-materials-progress",
-        "run-failed-quality-gate",
         "run-application-rehearsal",
         "run-discovery-cancelled",
         "run-discovery-demo",
@@ -227,6 +226,25 @@ describe("purgeDemoJobProjections", () => {
 });
 
 describe("derived demo projections", () => {
+  it("keeps recomputed Failures totals aligned with the exact failed-jobs query", () => {
+    const snapshot = createSnapshot();
+    const fabrikam = snapshot.state.readModel.jobs.list.items.find(
+      (job) => job.jobKey === "job-fabrikam-systems",
+    )!;
+    const fabrikamDetail =
+      snapshot.state.readModel.jobs.details[fabrikam.jobKey]!;
+    fabrikam.currentState = "exhausted";
+    fabrikamDetail.job.currentState = "exhausted";
+
+    recomputeDemoOperationalProjections(snapshot);
+
+    expect(snapshot.state.readModel.dashboard.summary.totals.failures).toBe(
+      snapshot.state.readModel.jobs.list.items.filter(
+        (job) => job.currentState === "failed",
+      ).length,
+    );
+  });
+
   it("reconciles cancellation from terminal job, stage, and run state", () => {
     const snapshot = createSnapshot();
     const beforeAnalytics = structuredClone(snapshot.state.readModel.analytics);
@@ -240,7 +258,7 @@ describe("derived demo projections", () => {
     expect(summary.preparation?.workItems).toEqual({
       queued: 0,
       running: 0,
-      failed: 0,
+      failed: 1,
     });
     expect(summary.progress).toEqual([]);
     expect(
