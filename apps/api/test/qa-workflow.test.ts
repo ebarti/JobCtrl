@@ -205,8 +205,13 @@ describe("seeded local QA workflow", () => {
 
     const profileResponse = await app.inject({ method: "GET", url: "/v1/profile" });
     expect(profileResponse.statusCode, profileResponse.body).toBe(200);
+    expect(profileResponse.json().profile.personal).toMatchObject({
+      full_name: "John Doe",
+      preferred_name: "John",
+      email: "john.doe@example.com",
+    });
     const profileDraft = profileResponse.json().profile;
-    profileDraft.personal.full_name = "QA Candidate Edited";
+    profileDraft.personal.full_name = "John Doe Edited";
     const updateProfile = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
@@ -216,7 +221,7 @@ describe("seeded local QA workflow", () => {
     expect(updateProfile.statusCode, updateProfile.body).toBe(200);
     const profileAfterUpdate = await app.inject({ method: "GET", url: "/v1/profile" });
     expect(profileAfterUpdate.statusCode, profileAfterUpdate.body).toBe(200);
-    expect(profileAfterUpdate.json().profile.personal.full_name).toBe("QA Candidate Edited");
+    expect(profileAfterUpdate.json().profile.personal.full_name).toBe("John Doe Edited");
 
     const preview = await app.inject({ method: "GET", url: "/v1/profile/preview.pdf" });
     expect(preview.statusCode, preview.body).toBe(200);

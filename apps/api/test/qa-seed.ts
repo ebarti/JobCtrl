@@ -61,9 +61,9 @@ export function createQaPdfBytes(title: string): Buffer {
 const QA_PROFILE = {
   schema_version: 2,
   personal: {
-    full_name: "QA Candidate",
-    preferred_name: "QA",
-    email: "qa@example.local",
+    full_name: "John Doe",
+    preferred_name: "John",
+    email: "john.doe@example.com",
     phone: "+1 555-0100",
     city: "Remote City",
     country: "Remote",
@@ -137,7 +137,7 @@ const QA_RESUME_HTML = `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>QA Candidate Resume</title>
+    <title>John Doe Resume</title>
     <style>
       body { font-family: Inter, system-ui, sans-serif; margin: 48px; color: #111827; }
       main { max-width: 760px; margin: 0 auto; }
@@ -148,8 +148,8 @@ const QA_RESUME_HTML = `<!doctype html>
   </head>
   <body>
     <main class="resume-page">
-      <h1 data-resume-layout-target="personal:full_name" data-resume-line-number="1">QA Candidate</h1>
-      <p data-resume-layout-target="personal:contact" data-resume-line-number="2">qa@example.local | Remote City</p>
+      <h1 data-resume-layout-target="personal:full_name" data-resume-line-number="1">John Doe</h1>
+      <p data-resume-layout-target="personal:contact" data-resume-line-number="2">john.doe@example.com | Remote City</p>
       <h2>Profile</h2>
       <p data-resume-layout-target="summary" data-resume-line-number="3">Platform and security engineering leader for QA validation.</p>
       <h2>Experience</h2>
