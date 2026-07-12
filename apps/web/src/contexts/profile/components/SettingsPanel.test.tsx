@@ -34,7 +34,7 @@ describe("<SettingsPanel>", () => {
     });
 
     expect(await screen.findByText("Cost and capacity")).toBeInTheDocument();
-    expect(screen.getByLabelText("Worker activity slots")).toHaveValue(4);
+    expect(await screen.findByLabelText("Worker activity slots")).toHaveValue(4);
     expect(screen.getByText(/Desired: 4. Active: 12./)).toHaveTextContent("Restart pending");
     expect(screen.queryByText("Executor threads")).not.toBeInTheDocument();
     expect(screen.queryByText("Task queue")).not.toBeInTheDocument();

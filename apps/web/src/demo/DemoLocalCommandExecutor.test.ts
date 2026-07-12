@@ -52,7 +52,7 @@ const JOB_DETAIL_RESPONSE_KEYS = [
 ] as const;
 const EXPECTED_RESPONSE_KEYS = {
   acknowledgeDigest: ["ok", "state"],
-  updateDiscoverySettings: ["ok", "settings"],
+  updateDiscoverySettings: ["effectiveSettings", "ok", "settings"],
   upsertDiscoverySource: ["ok", "source"],
   patchDiscoverySourceState: ["ok", "source"],
   updateCompensationSourcePolicy: ["ok", "sources"],
@@ -88,7 +88,7 @@ const EXPECTED_RESPONSE_KEYS = {
   cancelWorkflowRun: ACTION_RESPONSE_KEYS,
   updateProfile: ["ok", "profile", "style", "templateText"],
   importResume: ["ok", "profile", "source", "style", "templateText"],
-  updateSettings: ["ok", "paths", "settings"],
+  updateSettings: ["effectiveSettings", "ok", "paths", "settings"],
   createContact: ["contact", "ok"],
   updateContact: ["contact", "ok"],
   deleteContact: ["contactId", "deletedAt", "ok"],
@@ -229,7 +229,7 @@ const LOCAL_CASES = [
 ] as const satisfies readonly LocalCase[];
 
 describe("DemoLocalCommandExecutor", () => {
-  it("keeps the 122-member capability manifest exhaustive with exact class counts", () => {
+  it("keeps the 126-member capability manifest exhaustive with exact class counts", () => {
     const counts = Object.values(DEMO_CAPABILITY_MANIFEST).reduce<Record<string, number>>(
       (result, capability) => {
         result[capability.class] = (result[capability.class] ?? 0) + 1;
@@ -237,12 +237,12 @@ describe("DemoLocalCommandExecutor", () => {
       },
       {},
     );
-    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(122);
+    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(126);
     expect(counts).toEqual({
-      browser_local: 91,
+      browser_local: 92,
       simulated_async: 4,
       rehearsed_external: 4,
-      unavailable: 23,
+      unavailable: 26,
     });
   });
 
@@ -625,6 +625,9 @@ describe("DemoLocalCommandExecutor", () => {
     await expect(adapter.updateSettings({ dailyBudgetUsd: 12, targetRole: "Demo architect" })).resolves.toMatchObject({
       ok: true,
       settings: { dailyBudgetUsd: 12, targetRole: "Demo architect" },
+      effectiveSettings: {
+        dailyBudgetUsd: { value: 12, source: "persisted" },
+      },
     });
     await expect(adapter.decideApplyReview(JOB, { decision: "approve_dry_run", decidedBy: "demo-user" })).resolves.toMatchObject({
       ok: true,

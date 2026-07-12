@@ -61,14 +61,30 @@ export function useCopyLinkedInBrowserProfileMutation() {
 }
 
 function patchCapability(
-  current: BrowserCapabilitiesResponse,
+  current: unknown,
   capabilityId: BrowserCapabilityId,
   patch: Partial<BrowserCapabilitiesResponse["capabilities"][number]>,
-): BrowserCapabilitiesResponse {
+): unknown {
+  if (!isBrowserCapabilitiesResponse(current)) {
+    return current;
+  }
   return {
     ...current,
     capabilities: current.capabilities.map((capability) =>
       capability.id === capabilityId ? { ...capability, ...patch } : capability,
     ),
   };
+}
+
+function isBrowserCapabilitiesResponse(
+  value: unknown,
+): value is BrowserCapabilitiesResponse {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "ok" in value &&
+    value.ok === true &&
+    "capabilities" in value &&
+    Array.isArray(value.capabilities)
+  );
 }

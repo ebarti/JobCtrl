@@ -179,6 +179,9 @@ browser session but remains rate/budget limited. See
 
 ## Credentials
 
+Codex-backed work requires Codex CLI to be installed and authenticated through
+its supported sign-in flow before JobCtrl can reuse or verify that login.
+
 | Secret | Boundary |
 | --- | --- |
 | Provider/runtime keys | Shell, plaintext `~/.jobctrl/.env`, or the guided macOS Keychain boundary; never SQLite. |

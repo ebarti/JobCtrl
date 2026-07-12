@@ -18,8 +18,15 @@ export function SettingsPanel() {
         <SettingsForm
           initial={settings}
           effectiveSettings={settingsQuery.data!.effectiveSettings}
-          activeWorkerActivitySlots={healthQuery.data?.worker.heartbeat?.maxConcurrentActivities}
-          workerStatus={healthQuery.data?.worker.status}
+          {...(healthQuery.data?.worker.heartbeat?.maxConcurrentActivities !== undefined
+            ? {
+                activeWorkerActivitySlots:
+                  healthQuery.data.worker.heartbeat.maxConcurrentActivities,
+              }
+            : {})}
+          {...(healthQuery.data?.worker.status !== undefined
+            ? { workerStatus: healthQuery.data.worker.status }
+            : {})}
         />
       ) : (
         <Empty title="Loading config." />

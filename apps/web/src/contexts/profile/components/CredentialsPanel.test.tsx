@@ -25,6 +25,8 @@ describe("<CredentialsPanel>", () => {
     expect(await screen.findByRole("heading", { name: "Codex" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Claude" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Google" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Apply CAPTCHA solver" })).toBeInTheDocument();
+    expect(screen.getByLabelText("CapSolver API key")).toBeEnabled();
     expect(screen.getByText(CODEX_LOGIN_COMMANDS.subscription)).toBeInTheDocument();
     expect(screen.getByText(CODEX_LOGIN_COMMANDS.apiKey)).toBeInTheDocument();
     expect(screen.queryByLabelText(/OpenAI API key/i)).not.toBeInTheDocument();
@@ -226,6 +228,30 @@ describe("<CredentialsPanel>", () => {
     expect(within(card).getAllByRole("radio").every((radio) => radio.hasAttribute("disabled"))).toBe(true);
     expect(updateCredentialsBatch).not.toHaveBeenCalled();
     expect(card).not.toHaveTextContent(/provider settings removed/i);
+  });
+
+  it("keeps an environment-owned CapSolver key visibly read-only", async () => {
+    renderPanel({
+      credentials: vi.fn(async () => ({
+        ...sampleCredentialsResponse,
+        credentials: sampleCredentialsResponse.credentials.map((credential) =>
+          credential.key === "CAPSOLVER_API_KEY"
+            ? {
+                ...credential,
+                configured: true,
+                effectiveSource: "environment" as const,
+                editable: false,
+              }
+            : credential,
+        ),
+      })),
+    });
+
+    const solver = await screen.findByRole("heading", { name: "Apply CAPTCHA solver" });
+    const panel = solver.closest("section");
+    expect(panel).not.toBeNull();
+    expect(within(panel!).getByLabelText("CapSolver API key")).toBeDisabled();
+    expect(within(panel!).getByText("managed by environment")).toBeInTheDocument();
   });
 
   it("keeps a sanitized Google removal error inside the confirmation dialog", async () => {

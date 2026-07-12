@@ -30,13 +30,13 @@ Contributors running from source can use the checkout-prefixed commands in
 
 | You want to change… | Use |
 | --- | --- |
-| Candidate facts and resume evidence | **Profile** (`/profile`) |
-| Work model, application, or writing preferences | **Preferences** (`/preferences`) |
-| Target roles/locations, runtime, automation, sources, schedules, quarantine, or manual capture | **Discovery** (`/discovery`) |
-| Spend/capacity, scoring guidance, apply runtime, or compensation source policy | **Settings → General** (`/settings`) |
-| Provider secret or cloud mode | **Settings → Credentials** (`/settings/credentials`) on macOS, or `~/.jobctrl/.env` / the shell |
-| Preferred provider model, analysis legs, or tailoring generator/judge policy | **Settings → Model selection** (`/settings/models`) |
-| System-browser capabilities or extension pairing | **Settings → Browser & extension** (`/settings/browser`) |
+| Candidate facts and resume evidence | [**Profile**](/profile) |
+| Work model, application, or writing preferences | [**Preferences**](/preferences) |
+| Target roles/locations, runtime, automation, sources, schedules, quarantine, or manual capture | [**Discovery**](/discovery) |
+| Spend/capacity, scoring guidance, apply runtime, or compensation source policy | [**Settings → General**](/settings) |
+| Provider secret or cloud mode | [**Settings → Credentials**](/settings/credentials) on macOS, or `~/.jobctrl/.env` / the shell |
+| Preferred provider model, analysis legs, or tailoring generator/judge policy | [**Settings → Model selection**](/settings/models) |
+| System-browser capabilities or extension pairing | [**Settings → Browser & extension**](/settings/browser) |
 
 The rest of this page is a lookup table. [Data, Privacy & Safety](data-and-safety.md)
 explains what is stored or sent; [Security](security.md) explains the controls
@@ -161,8 +161,8 @@ restart requirement (or require an explicit adapter reset).
 ### Codex
 
 JobCtrl requires an already authenticated Codex CLI and reuses that
-authentication. Use Codex's supported sign-in flow before verifying it in
-JobCtrl.
+authentication. Install Codex CLI and complete its supported sign-in flow
+before verifying it in JobCtrl.
 
 ### Claude
 
