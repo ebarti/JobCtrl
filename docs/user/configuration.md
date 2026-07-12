@@ -150,9 +150,8 @@ JobCtrl uses persisted Codex CLI authentication only. A raw
 route and does not satisfy readiness. If your normal Codex CLI is already
 authenticated, click **Reuse existing login or verify** in **Settings →
 Credentials**. Setup and the first generation retain the same one-time reuse
-behavior. Each path validates the regular CLI `auth.json` against the pinned
-Codex runtime in private staging before publishing it to JobCtrl's stable
-isolated home, without changing the normal Codex home.
+behavior. Each path validates the regular CLI `auth.json` before copying it to
+JobCtrl's stable isolated home, without changing the normal Codex home.
 
 If there is no reusable normal Codex CLI login, fall back to authenticating the
 stable JobCtrl-owned home with a ChatGPT subscription or an API key enrolled
@@ -176,11 +175,10 @@ and [state-location reference](https://learn.chatgpt.com/docs/config-file/config
 
 JobCtrl keeps authentication outside the model-readable
 `codex_home/workspace/` directory. If isolated auth is absent, setup,
-generation, and the Settings verify action use one shared safe importer. It
-publishes only a candidate that passes staged live verification; a failed or
-expired candidate leaves no isolated auth and can be retried after the source
-login is refreshed. It never overwrites an existing isolated login, changes
-the normal Codex home, or creates a transient per-run runtime home.
+generation, and the Settings verify action use one shared copy-once path. It
+never overwrites an existing isolated login, changes the normal Codex home, or
+creates a transient per-run runtime home. Settings then checks the isolated
+login with `codex login status`.
 
 ### Claude
 

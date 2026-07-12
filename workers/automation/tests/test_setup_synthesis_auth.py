@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import subprocess
 from pathlib import Path
@@ -61,19 +62,6 @@ def _prepare_codex_setup_test(
     )
     monkeypatch.setattr(setup_probes, "_CODEX_AUTH_STATUS_CACHE", {})
     original_verify = setup_probes.verify_codex_connection
-    original_ensure = setup_probes.ensure_jobctrl_codex_auth
-
-    def ensure_jobctrl_codex_auth(env=None, **_kwargs):
-        return original_ensure(
-            env,
-            runner=lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
-        )
-
-    monkeypatch.setattr(
-        setup_probes,
-        "ensure_jobctrl_codex_auth",
-        ensure_jobctrl_codex_auth,
-    )
 
     def verify_codex_connection(env=None):
         return original_verify(
@@ -220,7 +208,8 @@ def test_setup_fallback_prepares_private_owned_codex_home_before_login(
         assert kwargs["input"] == ambient_auth["OPENAI_API_KEY"] + "\n"
         assert target_home == app_dir / "codex_home"
         assert target_home.is_dir() and not target_home.is_symlink()
-        assert stat.S_IMODE(target_home.stat().st_mode) == 0o700
+        if os.name != "nt":
+            assert stat.S_IMODE(target_home.stat().st_mode) == 0o700
         target_auth = target_home / "auth.json"
         _write_codex_auth(target_auth)
         target_auth.chmod(0o600)
@@ -235,9 +224,7 @@ def test_setup_fallback_prepares_private_owned_codex_home_before_login(
     assert (source_home / "auth.json").read_text(encoding="utf-8") == "{}"
 
 
-@pytest.mark.parametrize("target_kind", ["symlink", "file"])
-def test_setup_fallback_rejects_unsafe_owned_codex_home(
-    target_kind: str,
+def test_setup_fallback_rejects_non_directory_owned_codex_home(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -248,12 +235,7 @@ def test_setup_fallback_rejects_unsafe_owned_codex_home(
     _prepare_codex_setup_test(monkeypatch, app_dir=app_dir, source_home=source_home)
     app_dir.mkdir()
     target_home = app_dir / "codex_home"
-    if target_kind == "symlink":
-        external = tmp_path / "external-codex-home"
-        external.mkdir()
-        target_home.symlink_to(external, target_is_directory=True)
-    else:
-        target_home.write_text("not a directory", encoding="utf-8")
+    target_home.write_text("not a directory", encoding="utf-8")
     monkeypatch.setattr(jobctrl.config, "ensure_dirs", lambda: None)
     monkeypatch.setattr(
         cli_module,

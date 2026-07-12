@@ -8,16 +8,13 @@ Keeping that logic here avoids letting setup and doctor drift.
 
 from __future__ import annotations
 
-import errno
 import importlib
 import importlib.metadata
 import json
 import os
 import shutil
-import stat
 import subprocess
 import time
-import uuid
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -365,160 +362,54 @@ def _codex_auth_file_signature(path: Path) -> tuple[object, ...]:
     return (str(path), stat.st_mode, stat.st_ino, stat.st_size, stat.st_mtime_ns)
 
 
-_DIRECTORY_OPEN_FLAGS = (
-    os.O_RDONLY
-    | getattr(os, "O_DIRECTORY", 0)
-    | getattr(os, "O_CLOEXEC", 0)
-    | getattr(os, "O_NOFOLLOW", 0)
-)
-_FILE_READ_OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-
-
-def _unsafe_path_error(path: Path, exc: OSError) -> RuntimeError:
-    is_symlink = exc.errno == errno.ELOOP
-    if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
-        try:
-            is_symlink = stat.S_ISLNK(path.lstat().st_mode)
-        except OSError:
-            pass
-    detail = "must not be a symlink" if is_symlink else "is unavailable or unsafe"
-    return RuntimeError(f"Codex path {detail}: {path}")
-
-
-def _open_directory(
-    path: Path,
-    *,
-    parent_descriptor: int | None = None,
-    create: bool = False,
-) -> int:
-    leaf: str | Path = path.name if parent_descriptor is not None else path
-    if create:
-        try:
-            os.mkdir(leaf, 0o700, dir_fd=parent_descriptor)
-        except FileExistsError:
-            pass
-        except FileNotFoundError:
-            if parent_descriptor is not None:
-                raise RuntimeError(f"Codex parent directory is unavailable: {path.parent}") from None
-            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            try:
-                os.mkdir(path, 0o700)
-            except FileExistsError:
-                pass
-        except OSError as exc:
-            raise _unsafe_path_error(path, exc) from exc
-    try:
-        descriptor = os.open(leaf, _DIRECTORY_OPEN_FLAGS, dir_fd=parent_descriptor)
-    except OSError as exc:
-        raise _unsafe_path_error(path, exc) from exc
-    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
-        os.close(descriptor)
-        raise RuntimeError(f"Codex path must be a directory: {path}")
-    if create:
-        os.fchmod(descriptor, 0o700)
-    return descriptor
-
-
 def ensure_private_directory(path: Path, *, parent: Path | None = None) -> Path:
-    """Ensure one JobCtrl-owned directory leaf is private and not a symlink."""
+    """Create one JobCtrl-owned directory with best-effort private permissions."""
 
-    if parent is None:
-        descriptor = _open_directory(path, create=True)
-        os.close(descriptor)
-        return path
-    parent_descriptor = _open_directory(parent)
+    if parent is not None and not parent.is_dir():
+        raise RuntimeError(f"Codex parent directory is unavailable or unsafe: {parent}")
     try:
-        descriptor = _open_directory(path, parent_descriptor=parent_descriptor, create=True)
-        os.close(descriptor)
-    finally:
-        os.close(parent_descriptor)
+        path.mkdir(mode=0o700, parents=parent is None, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(f"Codex path is unavailable or unsafe: {path}") from exc
+    if not path.is_dir():
+        raise RuntimeError(f"Codex path must be a directory: {path}")
+    try:
+        path.chmod(0o700)
+    except OSError:
+        if os.name != "nt":
+            raise
     return path
 
 
-def _read_codex_auth(
-    path: Path,
-    *,
-    directory_descriptor: int | None = None,
-    harden_mode: bool = False,
-) -> bytes:
-    leaf: str | Path = path.name if directory_descriptor is not None else path
-    try:
-        descriptor = os.open(leaf, _FILE_READ_OPEN_FLAGS, dir_fd=directory_descriptor)
-    except OSError as exc:
-        raise _unsafe_path_error(path, exc) from exc
-    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-        os.close(descriptor)
-        raise RuntimeError(f"Codex auth cache must be a regular file: {path}")
-    try:
-        with os.fdopen(descriptor, "rb", closefd=False) as handle:
-            raw = handle.read()
-        try:
-            payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RuntimeError("Codex auth cache is not valid JSON") from exc
-        if not isinstance(payload, dict):
-            raise RuntimeError("Codex auth cache is not a JSON object")
-        api_key = payload.get("OPENAI_API_KEY")
-        tokens = payload.get("tokens")
-        has_api_key = isinstance(api_key, str) and bool(api_key.strip())
-        has_access_token = isinstance(tokens, dict) and isinstance(
-            tokens.get("access_token"), str
-        ) and bool(tokens["access_token"].strip())
-        if not has_api_key and not has_access_token:
-            raise RuntimeError("Codex auth cache does not contain persisted CLI credentials")
-        if harden_mode:
-            os.fchmod(descriptor, 0o600)
-            os.fsync(descriptor)
-        return raw
-    finally:
-        os.close(descriptor)
+def _validate_codex_auth_file(path: Path) -> None:
+    """Reject non-regular, malformed, or empty persisted Codex auth state."""
 
-
-def _optional_directory(path: Path, parent_descriptor: int) -> int | None:
-    try:
-        entry = os.stat(path.name, dir_fd=parent_descriptor, follow_symlinks=False)
-    except FileNotFoundError:
-        return None
-    if stat.S_ISLNK(entry.st_mode):
-        raise RuntimeError(f"Codex path must not be a symlink: {path}")
-    if not stat.S_ISDIR(entry.st_mode):
-        raise RuntimeError(f"Codex path must be a directory: {path}")
-    return _open_directory(path, parent_descriptor=parent_descriptor)
-
-
-def _optional_auth(path: Path, directory_descriptor: int) -> bytes | None:
-    try:
-        entry = os.stat(path.name, dir_fd=directory_descriptor, follow_symlinks=False)
-    except FileNotFoundError:
-        return None
-    if stat.S_ISLNK(entry.st_mode):
+    if path.is_symlink():
         raise RuntimeError(f"Codex auth cache must not be a symlink: {path}")
-    return _read_codex_auth(
-        path,
-        directory_descriptor=directory_descriptor,
-        harden_mode=True,
-    )
+    if not path.is_file():
+        raise RuntimeError("Codex CLI is not authenticated in the JobCtrl provider home")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Codex auth cache is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Codex auth cache is not a JSON object")
+    api_key = payload.get("OPENAI_API_KEY")
+    tokens = payload.get("tokens")
+    has_api_key = isinstance(api_key, str) and bool(api_key.strip())
+    has_access_token = isinstance(tokens, dict) and isinstance(
+        tokens.get("access_token"), str
+    ) and bool(tokens["access_token"].strip())
+    if not has_api_key and not has_access_token:
+        raise RuntimeError("Codex auth cache does not contain persisted CLI credentials")
 
 
 def prepare_jobctrl_codex_home(env: Mapping[str, str] | None = None) -> Path:
-    """Safely create or validate the owned Codex home before target login."""
+    """Create or validate the stable JobCtrl-owned Codex home before login."""
 
     target_home = jobctrl_codex_home(env)
     ensure_private_directory(target_home.parent)
     return ensure_private_directory(target_home, parent=target_home.parent)
-
-
-def _read_isolated_codex_auth(values: Mapping[str, str]) -> bytes:
-    target_home = jobctrl_codex_home(values)
-    app_descriptor = _open_directory(target_home.parent)
-    try:
-        home_descriptor = _open_directory(target_home, parent_descriptor=app_descriptor)
-        try:
-            return _read_codex_auth(target_home / "auth.json", directory_descriptor=home_descriptor)
-        finally:
-            os.close(home_descriptor)
-    finally:
-        os.close(app_descriptor)
 
 
 def _run_codex_login_status(
@@ -579,118 +470,28 @@ def probe_codex_auth(env: Mapping[str, str] | None = None) -> ProbeResult:
     )
 
 
-def ensure_jobctrl_codex_auth(
-    env: Mapping[str, str] | None = None,
-    *,
-    runner: Callable[..., Any] = subprocess.run,
-) -> Path:
-    """Safely import valid ambient CLI auth once into the stable isolated home."""
+def ensure_jobctrl_codex_auth(env: Mapping[str, str] | None = None) -> Path:
+    """Copy valid ambient CLI auth once into the stable isolated home."""
 
-    values = dict(_env(env))
-    target_home = jobctrl_codex_home(values)
-    target = target_home / "auth.json"
-    app_directory = target_home.parent
-    app_descriptor = _open_directory(app_directory, create=True)
-    staging_name: str | None = None
-    staging_descriptor: int | None = None
-    try:
-        home_descriptor = _optional_directory(target_home, app_descriptor)
-        if home_descriptor is not None:
-            try:
-                if _optional_auth(target, home_descriptor) is not None:
-                    return target
-            finally:
-                os.close(home_descriptor)
-
+    values = _env(env)
+    target = codex_auth_path(values)
+    if target.is_symlink():
+        raise RuntimeError(f"Codex auth cache must not be a symlink: {target}")
+    if not target.exists():
         source = source_codex_auth_path(values)
-        if source == target:
-            raise RuntimeError("Codex CLI is not authenticated in the JobCtrl provider home")
-        source_payload = _read_codex_auth(source)
-
-        for _attempt in range(8):
-            candidate_name = f".codex-auth-import-{uuid.uuid4().hex}"
-            try:
-                os.mkdir(candidate_name, 0o700, dir_fd=app_descriptor)
-            except FileExistsError:
-                continue
-            staging_name = candidate_name
-            staging_descriptor = _open_directory(
-                app_directory / candidate_name,
-                parent_descriptor=app_descriptor,
-            )
-            break
-        if staging_descriptor is None or staging_name is None:
-            raise RuntimeError("Could not create a private Codex auth staging home")
-
-        staging_path = app_directory / staging_name
-        candidate_descriptor = os.open(
-            "auth.json",
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_EXCL
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-            dir_fd=staging_descriptor,
-        )
-        with os.fdopen(candidate_descriptor, "wb") as candidate:
-            candidate.write(source_payload)
-            candidate.flush()
-            os.fchmod(candidate.fileno(), 0o600)
-            os.fsync(candidate.fileno())
-        os.fsync(staging_descriptor)
-        _read_codex_auth(
-            staging_path / "auth.json",
-            directory_descriptor=staging_descriptor,
-        )
-        try:
-            completed = _run_codex_login_status(
-                values,
-                codex_home=staging_path,
-                runner=runner,
-            )
-            verified = completed.returncode == 0
-        except Exception as exc:  # noqa: BLE001 - candidate remains unpublished
-            raise RuntimeError("Reusable Codex authentication could not be verified") from exc
-        if not verified:
-            raise RuntimeError("Reusable Codex authentication could not be verified")
-        _read_codex_auth(
-            staging_path / "auth.json",
-            directory_descriptor=staging_descriptor,
-            harden_mode=True,
-        )
-
-        home_descriptor = _open_directory(
-            target_home,
-            parent_descriptor=app_descriptor,
-            create=True,
-        )
-        os.fsync(app_descriptor)
-        try:
-            try:
-                os.link(
-                    "auth.json",
-                    target.name,
-                    src_dir_fd=staging_descriptor,
-                    dst_dir_fd=home_descriptor,
-                    follow_symlinks=False,
-                )
-                os.fsync(home_descriptor)
-            except FileExistsError:
-                _read_codex_auth(
-                    target,
-                    directory_descriptor=home_descriptor,
-                    harden_mode=True,
-                )
-        finally:
-            os.close(home_descriptor)
-        return target
-    finally:
-        if staging_descriptor is not None:
-            os.close(staging_descriptor)
-        if staging_name is not None:
-            shutil.rmtree(app_directory / staging_name)
-        os.close(app_descriptor)
+        if source.is_symlink():
+            raise RuntimeError(f"Codex auth cache must not be a symlink: {source}")
+        if source.is_file() and source != target:
+            _validate_codex_auth_file(source)
+            ensure_private_directory(target.parent)
+            shutil.copy2(source, target)
+    _validate_codex_auth_file(target)
+    try:
+        target.chmod(0o600)
+    except OSError:
+        if os.name != "nt":
+            raise
+    return target
 
 
 def reuse_and_verify_codex_connection(
@@ -702,7 +503,7 @@ def reuse_and_verify_codex_connection(
 
     values = dict(_env(env))
     try:
-        ensure_jobctrl_codex_auth(values, runner=runner)
+        ensure_jobctrl_codex_auth(values)
     except RuntimeError:
         # A missing or invalid reusable source is not an error for this explicit
         # action. The isolated verification below returns the stable, secret-free
@@ -804,7 +605,7 @@ def verify_codex_connection(
 
     values = dict(_env(env))
     try:
-        _read_isolated_codex_auth(values)
+        _validate_codex_auth_file(codex_auth_path(values))
     except RuntimeError:
         return False, "not_configured", "Codex CLI is not authenticated"
     try:

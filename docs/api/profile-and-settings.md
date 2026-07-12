@@ -56,8 +56,7 @@ explicit sanitized store failure. See the
 The Codex verify response remains secret-free: it reports only provider,
 boolean result, bounded status, and a bounded message. The explicit import
 never overwrites JobCtrl's existing isolated auth or changes the normal Codex
-home. It invokes the same staged, no-replace importer retained by setup and
-generation; a failed candidate is not published.
+home. It invokes the same copy-once behavior retained by setup and generation.
 
 `PATCH /v1/settings` stores provider-scoped model choices as
 `preferred_models` in `dashboard.json` and returns them as `preferredModels`.

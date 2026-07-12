@@ -1151,10 +1151,9 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   `POST /v1/providers/codex/verify` is the explicit mutation that may validate
   and copy a reusable normal Codex CLI `auth.json` once when isolated auth is
   absent, then runs the isolated Codex CLI's `login status` command without
-  making a generation request. This is the same staged, no-replace importer
-  retained by setup and generation: failed candidates are not published,
-  existing isolated auth is never overwritten, and the normal Codex home is
-  unchanged. The response contains only secret-free `connected`,
+  making a generation request. This is the same copy-once behavior retained by
+  setup and generation: existing isolated auth is not overwritten, and the
+  normal Codex home is unchanged. The response contains only secret-free `connected`,
   `not_configured`, or `failed` results. RPC errors and malformed provider
   responses become sanitized `502`/`503` provider-operation errors.
 - `GET /v1/providers/models` returns `{ok: true, providers}` in stable Codex,

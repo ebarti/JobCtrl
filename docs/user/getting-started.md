@@ -107,9 +107,9 @@ not recorded there.
 
 Open **Settings → Credentials** and configure one provider:
 
-- **Codex:** setup and first generation safely reuse a valid normal Codex CLI
+- **Codex:** setup and first generation copy a valid normal Codex CLI
   login once, and **Reuse existing login or verify** invokes the same path from
-  Settings. Failed candidates are not published, existing isolated auth is not
+  Settings before checking the isolated login. Existing isolated auth is not
   overwritten, and the normal home is unchanged. If there is no login to reuse,
   authenticate the isolated home with a ChatGPT subscription or enroll an
   OpenAI API key through `codex login`. A raw `OPENAI_API_KEY` is not used

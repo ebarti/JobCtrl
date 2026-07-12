@@ -10,9 +10,9 @@ These tests pin both invariants for the Codex analysis leg:
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -29,21 +29,17 @@ def _isolate_homes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Pat
     source_codex_home = tmp_path / "source-codex"
     source_codex_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
-    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex-bin")
     monkeypatch.setenv("CODEX_HOME", str(source_codex_home))
-    original_ensure = adapter.ensure_jobctrl_codex_auth
-    monkeypatch.setattr(
-        adapter,
-        "ensure_jobctrl_codex_auth",
-        lambda: original_ensure(
-            runner=lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
-        ),
-    )
     return app_dir, source_codex_home
 
 
 def _mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
+
+
+def _assert_private_mode(path: Path, expected: int) -> None:
+    if os.name != "nt":
+        assert _mode(path) == expected
 
 
 def test_config_overrides_select_workspace_only_permission_profile() -> None:
@@ -76,14 +72,14 @@ def test_prepare_isolated_codex_home_copies_auth_outside_workspace(
     assert dirs.codex_home == app_dir / "codex_home"
     assert dirs.workdir == dirs.codex_home / "workspace"
     assert dirs.process_home == dirs.codex_home / "home"
-    assert _mode(dirs.codex_home) == 0o700
-    assert _mode(dirs.workdir) == 0o700
-    assert _mode(dirs.process_home) == 0o700
+    _assert_private_mode(dirs.codex_home, 0o700)
+    _assert_private_mode(dirs.workdir, 0o700)
+    _assert_private_mode(dirs.process_home, 0o700)
 
     copied_auth = dirs.codex_home / "auth.json"
     assert copied_auth.is_file()
     assert copied_auth.read_bytes() == payload
-    assert _mode(copied_auth) == 0o600
+    _assert_private_mode(copied_auth, 0o600)
     assert not (dirs.workdir / "auth.json").exists()
 
 
@@ -101,27 +97,6 @@ def test_catalog_prepare_does_not_copy_ambient_codex_auth(
     assert dirs.codex_home == app_dir / "codex_home"
     assert not (dirs.codex_home / "auth.json").exists()
     assert (source_codex_home / "auth.json").is_file()
-
-
-@pytest.mark.parametrize("unsafe_leaf", ["codex_home", "workspace", "home"])
-def test_prepare_isolated_codex_home_rejects_owned_directory_symlinks(
-    unsafe_leaf: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    app_dir, _source_codex_home = _isolate_homes(monkeypatch, tmp_path)
-    app_dir.mkdir()
-    codex_home = app_dir / "codex_home"
-    external = tmp_path / f"external-{unsafe_leaf}"
-    external.mkdir()
-    if unsafe_leaf == "codex_home":
-        codex_home.symlink_to(external, target_is_directory=True)
-    else:
-        codex_home.mkdir()
-        (codex_home / unsafe_leaf).symlink_to(external, target_is_directory=True)
-
-    with pytest.raises(RuntimeError, match="symlink"):
-        adapter._prepare_isolated_codex_home(ensure_auth=False)
 
 
 def test_isolated_codex_env_is_minimal_for_jobctrl_home(tmp_path: Path) -> None:
