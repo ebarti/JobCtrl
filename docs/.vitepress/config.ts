@@ -244,7 +244,6 @@ export default withMermaid(
       sidebar: SIDEBAR,
       socialLinks: [{ icon: "github", link: REPO_URL }],
       footer: {
-        message: "Documentation screenshots and examples use synthetic data unless noted.",
         copyright: `Copyright © 2026 Eloi Barti and JobCtrl contributors. Licensed under <a href="${REPO_URL}/blob/main/LICENSE">AGPL-3.0-only</a>. <a href="${REPO_URL}">Source code</a>.`,
       },
       search: {
