@@ -7,6 +7,7 @@ import { OpenArtifactAdapter } from "../shared/adapters/local/OpenArtifactAdapte
 import { SseEventStreamAdapter } from "../shared/adapters/local/SseEventStreamAdapter.js";
 import { StaticFeatureFlagAdapter } from "../shared/adapters/local/StaticFeatureFlagAdapter.js";
 import type { Ports } from "../shared/providers/PortsProvider.js";
+import { DemoApiClientAdapter } from "./DemoApiClientAdapter.js";
 import type { AppMode } from "./contracts.js";
 import {
   DemoWorkspaceEventStreamAdapter,
@@ -16,7 +17,6 @@ import {
   type DemoWorkspaceRepositoryOptions,
 } from "./workspace/index.js";
 import {
-  createDemoApiClientPlaceholder,
   DemoFeatureFlagAdapter,
   DemoOpenInOsAdapter,
   DemoSessionAdapter,
@@ -77,7 +77,7 @@ export async function createAppComposition(
   return {
     kind: "demo",
     ports: {
-      api: createDemoApiClientPlaceholder(),
+      api: new DemoApiClientAdapter(workspace),
       eventStream: new DemoWorkspaceEventStreamAdapter(workspace),
       storage: new DemoStorageAdapter(),
       session: new DemoSessionAdapter(),

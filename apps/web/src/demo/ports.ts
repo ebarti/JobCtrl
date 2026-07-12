@@ -1,6 +1,5 @@
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
-import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import type { FeatureFlagPort } from "../shared/ports/FeatureFlagPort.js";
 import type { OpenInOsPort } from "../shared/ports/OpenInOsPort.js";
 import type { Session, SessionPort } from "../shared/ports/SessionPort.js";
@@ -10,29 +9,9 @@ export class DemoCapabilityError extends Error {
   readonly code = "demo_capability_not_implemented" as const;
 
   constructor(method: string) {
-    super(
-      `Demo capability ${method} is not available until the demo adapter is initialized.`,
-    );
+    super(`Demo capability ${method} is not available in this demo phase.`);
     this.name = "DemoCapabilityError";
   }
-}
-
-/** P2 replaces these deliberate rejections with the complete read adapter. */
-export function createDemoApiClientPlaceholder(): ApiClientPort {
-  return new Proxy(
-    {},
-    {
-      get(_target, property) {
-        const method = String(property);
-        return () => {
-          if (method.endsWith("Url")) {
-            throw new DemoCapabilityError(method);
-          }
-          return Promise.reject(new DemoCapabilityError(method));
-        };
-      },
-    },
-  ) as ApiClientPort;
 }
 
 export class DemoSessionAdapter implements SessionPort {
@@ -59,7 +38,13 @@ export class DemoStorageAdapter implements StoragePort {
 }
 
 export class DemoFeatureFlagAdapter implements FeatureFlagPort {
-  get<T extends boolean | number | string>(_key: string, defaultValue: T): T {
+  get<T extends boolean | number | string>(key: string, defaultValue: T): T {
+    if (
+      key === "activityDetailDirectLoad" &&
+      typeof defaultValue === "boolean"
+    ) {
+      return true as T;
+    }
     return defaultValue;
   }
 }

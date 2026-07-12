@@ -181,6 +181,19 @@ export class DemoWorkspaceRepository {
     }
   }
 
+  /**
+   * Synchronous view of the repository's last authoritative adoption. This is
+   * available only after initialization and is cloned so synchronous ports can
+   * never mutate the workspace authority.
+   */
+  snapshotNow(): DemoWorkspaceSnapshot {
+    this.requireReady();
+    if (!this.authoritativeSnapshot) {
+      throw new Error("Demo workspace has no authoritative snapshot.");
+    }
+    return clone(this.authoritativeSnapshot);
+  }
+
   subscribe(
     listener: (notification: DemoWorkspaceNotification) => void,
   ): () => void {
@@ -454,8 +467,9 @@ export class DemoWorkspaceRepository {
     original: DemoWorkspaceSnapshot,
   ): Promise<DemoWorkspaceSnapshot> {
     const originalBlobIds = optionalBlobIds(original);
-    const migratedBlobIds =
-      originalBlobIds ?? [...(await this.store.readAllBlobs()).keys()];
+    const migratedBlobIds = originalBlobIds ?? [
+      ...(await this.store.readAllBlobs()).keys(),
+    ];
     const committed = await this.store.transact((stored, transaction) => {
       if (!stored) {
         throw new Error("Demo workspace disappeared during migration.");

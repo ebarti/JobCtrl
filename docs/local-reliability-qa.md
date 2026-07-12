@@ -70,11 +70,13 @@ The dedicated demo-workspace Playwright lane starts Vite only; it must not
 start or contact the product API or SSE endpoint. It proves same-profile tab
 sharing and concurrent writes, separate-context isolation, reload persistence,
 atomic reset/blob deletion, future IndexedDB-version refusal without downgrade,
-and post-commit domain-event delivery. Unit and component tests cover injected
+post-commit domain-event delivery, and populated direct-refresh coverage for
+the demo's dashboard, product routes, and seeded detail deep links. Unit and component tests cover injected
 quota/security fallbacks, schema revalidation, reset-epoch races, event-log
-loss, the reactive data-boundary warning, and the unchanged canonical event
-provider/invalidation router. Playwright artifacts are written outside the
-repository under the system temporary directory.
+loss, read-adapter query/404/capability parity, the reactive data-boundary
+warning, and the unchanged canonical event provider/invalidation router.
+Playwright artifacts are written outside the repository under the system
+temporary directory.
 
 <a id="token-foundation-qa-gate"></a>
 <a id="shared-primitive-qa-gate"></a>

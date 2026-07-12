@@ -1,6 +1,10 @@
 export { DEMO_ARTIFACTS, isDemoArtifactUrl } from "./artifacts.js";
 export { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 export {
+  DemoApiClientAdapter,
+  DemoResourceNotFoundError,
+} from "./DemoApiClientAdapter.js";
+export {
   demoTimestamp,
   materializeDemoReadModel,
   materializeDemoSeed,

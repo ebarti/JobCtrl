@@ -177,6 +177,23 @@ function buildRepository(
 }
 
 describe("DemoWorkspaceRepository", () => {
+  it("exposes an immutable synchronous clone only after initialization", async () => {
+    const repository = buildRepository(new SharedPersistentStore());
+    expect(() => repository.snapshotNow()).toThrow(
+      "DemoWorkspaceRepository must initialize before use.",
+    );
+    await repository.initialize();
+
+    const clone = repository.snapshotNow();
+    (clone.state as { title: string }).title = "caller mutation";
+    expect(repository.snapshotNow().state.title).toBe("JobCtrl product tour");
+
+    await repository.mutate((draft) => {
+      (draft.state as { title: string }).title = "authoritative mutation";
+    });
+    expect(repository.snapshotNow().state.title).toBe("authoritative mutation");
+  });
+
   it("seeds once, persists every required snapshot field, and reloads the same workspace", async () => {
     const store = new SharedPersistentStore();
     const first = buildRepository(store);
@@ -572,6 +589,67 @@ describe("DemoWorkspaceRepository", () => {
         expect.any(Object),
         expect.any(Object),
       );
+      scheduler.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let a stale rejected reconcile clear a newer scheduled timer", async () => {
+    vi.useFakeTimers();
+    try {
+      let now = 0;
+      const schedulerClock: DemoSchedulerClock = {
+        now: () => now,
+        setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
+        clearTimeout: (timer) => clearTimeout(timer),
+      };
+      const hub = new ChannelHub();
+      const store = new SharedPersistentStore();
+      const repository = buildRepository(store, hub.createFactory());
+      await repository.initialize();
+      const scheduler = new DemoWorkspaceScheduler(repository, schedulerClock);
+      const fired = vi.fn();
+      await scheduler.schedule(
+        {
+          scenarioId: "newer-than-stale-reconcile",
+          deadlineAt: new Date(25).toISOString(),
+          resetEpoch: 0,
+        },
+        fired,
+      );
+      const current = await repository.snapshot();
+      let rejectStaleSnapshot!: (error: Error) => void;
+      const staleSnapshot = new Promise<DemoWorkspaceSnapshot>(
+        (_resolve, reject) => {
+          rejectStaleSnapshot = reject;
+        },
+      );
+      const snapshotSpy = vi
+        .spyOn(repository, "snapshot")
+        .mockReturnValueOnce(staleSnapshot);
+
+      await store.memory.transact((_stored, transaction) => {
+        transaction.putSnapshot({ ...current, revision: current.revision + 2 });
+      });
+      hub.send({
+        source: "local",
+        kind: "commit",
+        workspaceId: current.workspaceId,
+        revision: current.revision + 2,
+        resetEpoch: current.resetEpoch,
+        lastEventSequence: current.lastEventSequence,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await scheduler.recover(fired);
+      rejectStaleSnapshot(new Error("deferred stale snapshot failure"));
+      await vi.advanceTimersByTimeAsync(0);
+
+      now = 25;
+      await vi.advanceTimersByTimeAsync(25);
+      expect(fired).toHaveBeenCalledTimes(1);
+      snapshotSpy.mockRestore();
       scheduler.dispose();
     } finally {
       vi.useRealTimers();

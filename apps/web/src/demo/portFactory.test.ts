@@ -13,6 +13,7 @@ import type {
   DemoWorkspaceStore,
   DemoWorkspaceTransaction,
 } from "./workspace/index.js";
+import { DemoApiClientAdapter } from "./DemoApiClientAdapter.js";
 import {
   DemoWorkspaceStorageError,
   InMemoryDemoWorkspaceStore,
@@ -23,7 +24,6 @@ import {
   resolveAppMode,
 } from "./portFactory.js";
 import {
-  DemoCapabilityError,
   DemoFeatureFlagAdapter,
   DemoOpenInOsAdapter,
   DemoSessionAdapter,
@@ -77,6 +77,9 @@ describe("port factory", () => {
     expect(direct.openInOs).toBeInstanceOf(OpenArtifactAdapter);
     expect(direct.telemetry).toBeInstanceOf(ConsoleTelemetryAdapter);
     expect(direct.featureFlags).toBeInstanceOf(StaticFeatureFlagAdapter);
+    expect(direct.featureFlags.get("activityDetailDirectLoad", false)).toBe(
+      false,
+    );
     expect(composition.ports.api).toBeInstanceOf(FetchApiClientAdapter);
   });
 
@@ -107,9 +110,14 @@ describe("port factory", () => {
       expect(composition.ports.featureFlags).toBeInstanceOf(
         DemoFeatureFlagAdapter,
       );
-      await expect(composition.ports.api.health()).rejects.toBeInstanceOf(
-        DemoCapabilityError,
-      );
+      expect(
+        composition.ports.featureFlags.get("activityDetailDirectLoad", false),
+      ).toBe(true);
+      expect(composition.ports.api).toBeInstanceOf(DemoApiClientAdapter);
+      await expect(composition.ports.api.health()).resolves.toMatchObject({
+        ok: true,
+        appDir: "browser-local-demo",
+      });
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       fetchSpy.mockRestore();
