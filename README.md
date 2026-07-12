@@ -334,10 +334,11 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
 - `dashboard.json` — non-secret runtime settings, including `dailyBudgetUsd`,
   apply controls, provider-scoped model IDs, and compensation source policy. It
   never stores provider credentials or feed contents.
-- `codex_home/` — the stable JobCtrl-owned Codex CLI home. Its `auth.json` may
-  reuse valid normal Codex CLI authentication once when absent; JobCtrl never
-  overwrites existing isolated auth or changes the normal Codex home. Prompt-
-  driven reads are limited to `codex_home/workspace/`.
+- `codex_home/` — the stable JobCtrl-owned Codex CLI home. Valid normal Codex
+  CLI authentication may be imported once when its `auth.json` is absent. This
+  stable authentication import never overwrites existing JobCtrl credentials
+  or changes the normal Codex home. Prompt-driven reads are limited to
+  `codex_home/workspace/`.
 - `gmail/` — Gmail OAuth client and private refresh/access token state.
 - `browser-capabilities.json`, `browser-profiles/`,
   `extension-capability-token`, `chrome-workers/`, `apply-workers/` — explicit

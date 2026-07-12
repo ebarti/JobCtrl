@@ -192,9 +192,9 @@ Choose one:
 
 Vertex project and location values select the target; they are not credentials.
 If `GOOGLE_APPLICATION_CREDENTIALS` is set, it must name an existing regular,
-loadable service-account JSON file. Otherwise JobCtrl checks the standard local
-gcloud ADC location, whose officially loadable ADC types (including
-`authorized_user`) remain supported.
+loadable service-account JSON file. The path is write-only and is not shown again.
+Otherwise JobCtrl checks the standard local gcloud ADC location, whose
+officially loadable ADC types (including `authorized_user`) remain supported.
 
 `LLM_MODEL` optionally overrides both the saved preference and the selected
 provider's default model.

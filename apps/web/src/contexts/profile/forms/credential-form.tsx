@@ -100,7 +100,11 @@ export function CredentialForm({
     (configured === null && unavailableReason !== "unsupported_platform");
   const unsupportedPlatform = unavailableReason === "unsupported_platform";
   const environmentManaged = effectiveSource === "environment";
-  const canEditKeychain = editable ?? (available && !inspectionUnknown && !environmentManaged);
+  const canEditKeychain =
+    available &&
+    !inspectionUnknown &&
+    !environmentManaged &&
+    (editable ?? true);
   const mutationError = updateCredential.error ?? deleteCredential.error;
   const mutationErrorMessage = credentialMutationErrorMessage(mutationError);
   const inputId = `credential-${credentialKey.toLowerCase()}`;
