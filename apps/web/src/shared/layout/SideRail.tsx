@@ -127,7 +127,7 @@ export function LocalModeCard() {
   const text =
     workspace.mode === "demo"
       ? workspace.runtime.storageMode === "indexeddb"
-        ? "Demo mode — shared browser profile"
+        ? "Demo mode — browser-local workspace"
         : "Demo mode — this tab only"
       : "Local mode — all data stays on device";
   return (

@@ -18,8 +18,10 @@ export function DemoWorkspaceNotice() {
       <strong>Public demo · synthetic browser-local data</strong>
       {runtime.storageMode === "indexeddb" ? (
         <span>
-          This workspace is shared with other tabs and people using this browser
-          profile. Do not enter personal data or secrets.
+          This workspace stays in this browser profile; it is not shared across
+          browser profiles or through a common demo environment. Other tabs and
+          anyone using this profile can see the same data. Do not enter personal
+          data or secrets.
         </span>
       ) : (
         <span>

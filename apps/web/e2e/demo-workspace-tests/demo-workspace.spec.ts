@@ -213,7 +213,7 @@ test("consent grant precedes IndexedDB, health, telemetry, and populated demo en
   )).toBe(false);
 
   await page.getByRole("button", { name: "Accept cookies and enter demo" }).click();
-  await expect(page.getByText("Demo mode — shared browser profile")).toBeVisible();
+  await expect(page.getByText("Demo mode — browser-local workspace")).toBeVisible();
   await expect.poll(async () => page.evaluate(async () =>
     (await indexedDB.databases()).some((database) => database.name === "jobctrl-demo"),
   )).toBe(true);
@@ -352,13 +352,13 @@ test("a fresh grant wins over a stale denied consent read", async ({ page, conte
 
   await page.goto("/");
   await page.getByRole("button", { name: "Accept cookies and enter demo" }).click();
-  await expect(page.getByText("Demo mode — shared browser profile")).toBeVisible();
+  await expect(page.getByText("Demo mode — browser-local workspace")).toBeVisible();
   releaseRead?.();
   await readResponseSent;
   await page.evaluate(() => new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   ));
-  await expect(page.getByText("Demo mode — shared browser profile")).toBeVisible();
+  await expect(page.getByText("Demo mode — browser-local workspace")).toBeVisible();
   await expect(page.getByRole("heading", { name: /Explore JobCtrl/i })).toHaveCount(0);
 });
 
@@ -549,7 +549,7 @@ scenarioTest(
   },
 );
 
-scenarioTest("demo shell renders the shared-profile and personal-data boundary without product network", async ({
+scenarioTest("demo shell renders the browser-profile isolation and personal-data boundary without product network", async ({
   page,
   context,
 }) => {
@@ -565,12 +565,14 @@ scenarioTest("demo shell renders the shared-profile and personal-data boundary w
   const notice = page.getByRole("status", {
     name: "Public demo data boundary",
   });
+  await expect(notice).toContainText("not shared across browser profiles");
+  await expect(notice).toContainText("common demo environment");
   await expect(notice).toContainText(
-    "shared with other tabs and people using this browser profile",
+    "Other tabs and anyone using this profile can see the same data",
   );
   await expect(notice).toContainText("Do not enter personal data or secrets");
   await expect(
-    page.getByText("Demo mode — shared browser profile"),
+    page.getByText("Demo mode — browser-local workspace"),
   ).toBeVisible();
   expect(productRequests).toEqual([]);
 });
