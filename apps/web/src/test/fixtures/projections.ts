@@ -1661,10 +1661,16 @@ export const sampleSettingsResponse: SettingsResponse = {
     autoApply: false,
     applyApprovalRequired: true,
     applyConcurrency: 2,
+    workerActivitySlots: 4,
     dailyBudgetUsd: 25,
     scoreCriteria: "Platform reliability and team leadership.",
     targetCriteria: "Director-plus infrastructure roles.",
     preferredModels: { claude: "sonnet" },
+  },
+  effectiveSettings: {
+    dailyBudgetUsd: { value: 25, source: "persisted", activation: "live", editable: true },
+    applyConcurrency: { value: 2, source: "persisted", activation: "next_poll", editable: true },
+    workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
   },
   paths: { settingsPath: "/tmp/jobctrl-test/settings.json" },
 };

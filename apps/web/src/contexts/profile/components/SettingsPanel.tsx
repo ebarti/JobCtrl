@@ -1,6 +1,5 @@
 import { useState } from "react";
 
-import type { ApiHealthResponse } from "../../../shared/ports/ApiClientPort.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Empty } from "../../../shared/ui/empty.js";
@@ -18,13 +17,17 @@ export function SettingsPanel() {
 
   return (
     <section className="card full">
-      <CardHeader title="Config" meta="execution" />
+      <CardHeader title="Cost and capacity" meta="general" />
       {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
       {settings ? (
         <>
-          <SettingsForm initial={settings} />
+          <SettingsForm
+            initial={settings}
+            effectiveSettings={settingsQuery.data!.effectiveSettings}
+            activeWorkerActivitySlots={healthQuery.data?.worker.heartbeat?.maxConcurrentActivities}
+            workerStatus={healthQuery.data?.worker.status}
+          />
           <ExtensionPairingSummary />
-          <TemporalRuntimeSummary health={healthQuery.data} isLoading={healthQuery.isPending} />
         </>
       ) : (
         <Empty title="Loading config." />
@@ -40,7 +43,6 @@ function ExtensionPairingSummary() {
   const [message, setMessage] = useState("");
   const [copyWarning, setCopyWarning] = useState("");
   const token = tokenQuery.data?.token ?? "";
-  const tokenPath = tokenQuery.data?.tokenPath ?? "";
 
   async function copyToken() {
     if (!token) {
@@ -95,10 +97,6 @@ function ExtensionPairingSummary() {
         </label>
         <dl>
           <div>
-            <dt>Token file</dt>
-            <dd>{tokenPath || (tokenQuery.isPending ? "loading" : "unknown")}</dd>
-          </div>
-          <div>
             <dt>Capabilities</dt>
             <dd>capture, autofill read</dd>
           </div>
@@ -124,50 +122,4 @@ function ExtensionPairingSummary() {
       </div>
     </div>
   );
-}
-
-function TemporalRuntimeSummary({
-  health,
-  isLoading,
-}: {
-  health: ApiHealthResponse | undefined;
-  isLoading: boolean;
-}) {
-  const heartbeat = health?.worker.heartbeat ?? null;
-  const unknown = isLoading ? "checking" : "unknown";
-
-  return (
-    <div className="runtime-summary" aria-label="Temporal runtime">
-      <div>
-        <h3>Temporal runtime</h3>
-        <p>Read from the active worker heartbeat.</p>
-      </div>
-      <dl>
-        <RuntimeMetric
-          label="Activity slots"
-          value={formatRuntimeNumber(heartbeat?.maxConcurrentActivities, unknown)}
-        />
-        <RuntimeMetric
-          label="Executor threads"
-          value={formatRuntimeNumber(heartbeat?.activityExecutorMaxWorkers, unknown)}
-        />
-        <RuntimeMetric label="Task queue" value={heartbeat?.taskQueue ?? unknown} />
-        <RuntimeMetric label="Worker health" value={health?.worker.status ?? unknown} />
-        <RuntimeMetric label="Startup env" value="JOBCTRL_MAX_CONCURRENT_ACTIVITIES" />
-      </dl>
-    </div>
-  );
-}
-
-function RuntimeMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt>{label}</dt>
-      <dd>{value}</dd>
-    </div>
-  );
-}
-
-function formatRuntimeNumber(value: number | null | undefined, fallback: string): string {
-  return value === null || value === undefined ? fallback : String(value);
 }

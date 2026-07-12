@@ -2215,6 +2215,7 @@ def worker(
         build_worker,
         get_temporal_client,
     )
+    from jobctrl.infrastructure.temporal.concurrency import resolve_max_concurrent_activities
     from jobctrl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
     from jobctrl.infrastructure.runtime_identity import (
         current_runtime_identity,
@@ -2234,19 +2235,25 @@ def worker(
             expected_app_dir=str(identity.app_dir),
             expected_db_path=str(identity.db_path),
         )
+        startup_activity_concurrency = resolve_max_concurrent_activities()
         worker = build_worker(
             client,
             workflows=WORKFLOWS,
             activities=ACTIVITIES,
             task_queue=queue,
+            max_concurrent_activities=startup_activity_concurrency.value,
         )
         worker_started_at = datetime.now(timezone.utc)
-        heartbeat_worker_id = write_worker_heartbeat(task_queue=queue)
+        heartbeat_worker_id = write_worker_heartbeat(
+            task_queue=queue,
+            max_concurrent_activities=startup_activity_concurrency.value,
+        )
         heartbeat_task = asyncio.create_task(
             _worker_heartbeat_loop(
                 queue,
                 heartbeat_worker_id,
                 worker_started_at=worker_started_at,
+                max_concurrent_activities=startup_activity_concurrency.value,
                 temporal_client=client,
             )
         )
@@ -2283,6 +2290,7 @@ async def _worker_heartbeat_loop(
     worker_id: str,
     *,
     worker_started_at: datetime | None = None,
+    max_concurrent_activities: int | None = None,
     interval_seconds: float = 15.0,
     temporal_client: Any = None,
 ) -> None:
@@ -2293,6 +2301,7 @@ async def _worker_heartbeat_loop(
                 task_queue,
                 worker_id,
                 worker_started_at=worker_started_at,
+                max_concurrent_activities=max_concurrent_activities,
             )
         except Exception:
             log.warning("Worker heartbeat loop iteration failed; will retry", exc_info=True)
@@ -2337,10 +2346,15 @@ def _worker_heartbeat_iteration(
     worker_id: str,
     *,
     worker_started_at: datetime | None = None,
+    max_concurrent_activities: int | None = None,
 ) -> None:
     from jobctrl.infrastructure.runtime_identity import write_worker_heartbeat
 
-    write_worker_heartbeat(task_queue=task_queue, worker_id=worker_id)
+    write_worker_heartbeat(
+        task_queue=task_queue,
+        worker_id=worker_id,
+        max_concurrent_activities=max_concurrent_activities,
+    )
 
 
 # Temporal execution status -> the terminal workflow-run status the reconciler

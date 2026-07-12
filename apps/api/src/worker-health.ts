@@ -1,8 +1,9 @@
-import { readFileSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 
 import { databaseExists, openReadOnlyDatabase } from "./db.js";
+import { readDashboardSettings } from "./settings-config.js";
 
 const WORKER_HEARTBEAT_TABLE = "worker_runtime_heartbeats";
 const LLM_SPEND_TABLE = "llm_spend";
@@ -151,7 +152,7 @@ export function readLlmSpendHealth(
   now = new Date(),
 ): LlmSpendHealthSnapshot {
   const day = now.toISOString().slice(0, 10);
-  const dailyBudgetUsd = readDailyBudgetUsd(settingsPath);
+  const dailyBudgetUsd = readDashboardSettings(settingsPath).settings.dailyBudgetUsd;
   const unlimited = dailyBudgetUsd <= 0;
   const usage = readTodayLlmSpend(dbPath, day);
   const overBudget = !unlimited && usage.estimatedUsd >= dailyBudgetUsd;
@@ -215,17 +216,6 @@ function readTodayLlmSpend(
     return { inputTokens: 0, outputTokens: 0, estimatedUsd: 0 };
   } finally {
     db?.close();
-  }
-}
-
-function readDailyBudgetUsd(settingsPath: string): number {
-  try {
-    const parsed = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
-    const raw = parsed.dailyBudgetUsd ?? parsed.daily_budget_usd;
-    const numberValue = Number(raw);
-    return Number.isFinite(numberValue) && numberValue >= 0 ? numberValue : 25;
-  } catch {
-    return 25;
   }
 }
 

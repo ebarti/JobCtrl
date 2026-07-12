@@ -1755,6 +1755,7 @@ export const SettingsUpdateRequestSchema = z
     autoApply: z.boolean().optional(),
     applyApprovalRequired: z.boolean().optional(),
     applyConcurrency: z.coerce.number().int().min(1).max(16).optional(),
+    workerActivitySlots: z.coerce.number().int().min(1).max(64).optional(),
     dailyBudgetUsd: z.coerce.number().min(0).optional(),
     scoreCriteria: z.string().max(8000).optional(),
     targetCriteria: z.string().max(8000).optional(),
@@ -3502,18 +3503,52 @@ export interface DashboardSettings {
   autoApply: boolean;
   applyApprovalRequired: boolean;
   applyConcurrency: number;
+  workerActivitySlots: number;
   dailyBudgetUsd: number;
   scoreCriteria: string;
   targetCriteria: string;
   preferredModels: Partial<Record<ProviderId, string>>;
 }
 
+export const SETTING_ACTIVATIONS = ["live", "next_poll", "restart"] as const;
+export type SettingActivation = (typeof SETTING_ACTIVATIONS)[number];
+
+export type EffectiveSetting<T> =
+  | {
+      value: T;
+      source: "environment";
+      activation: SettingActivation;
+      editable: false;
+    }
+  | {
+      value: T;
+      source: "persisted" | "default";
+      activation: SettingActivation;
+      editable: true;
+    };
+
+export interface EffectiveDashboardSettings {
+  dailyBudgetUsd: EffectiveSetting<number>;
+  applyConcurrency: EffectiveSetting<number>;
+  workerActivitySlots: EffectiveSetting<number>;
+}
+
 export interface SettingsResponse {
   ok: true;
   settings: DashboardSettings;
+  effectiveSettings: EffectiveDashboardSettings;
   paths: {
     settingsPath: string;
   };
+}
+
+export interface SettingManagedByEnvironmentResponse {
+  ok: false;
+  error: "setting_managed_by_environment";
+  field: "workerActivitySlots";
+  source: "environment";
+  activation: "restart";
+  message: string;
 }
 
 export const EXTENSION_CAPABILITY_VALUES = ["capture", "autofill_read"] as const;

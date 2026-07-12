@@ -1,7 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { http, HttpResponse } from "msw";
 
-import { sampleSettingsResponse } from "../../../test/fixtures/projections.js";
+import {
+  sampleHealthResponse,
+  sampleSettingsResponse,
+} from "../../../test/fixtures/projections.js";
 import { SettingsPanel } from "./SettingsPanel.js";
 
 const meta = {
@@ -13,6 +16,31 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Populated: Story = {};
+
+export const EnvironmentManagedRestartPending: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        http.get("*/v1/settings", () =>
+          HttpResponse.json({
+            ...sampleSettingsResponse,
+            settings: { ...sampleSettingsResponse.settings, workerActivitySlots: 8 },
+            effectiveSettings: {
+              ...sampleSettingsResponse.effectiveSettings,
+              workerActivitySlots: {
+                value: 8,
+                source: "environment",
+                activation: "restart",
+                editable: false,
+              },
+            },
+          }),
+        ),
+        http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
+      ],
+    },
+  },
+};
 
 export const Loading: Story = {
   parameters: {

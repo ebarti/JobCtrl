@@ -12,7 +12,7 @@ import { buildTestPorts } from "../../../test/testPorts.js";
 import { SettingsPanel } from "./SettingsPanel.js";
 
 describe("<SettingsPanel>", () => {
-  it("renders Temporal activity concurrency from worker health", async () => {
+  it("renders concise desired and active capacity from settings and worker health", async () => {
     renderWithProviders(<SettingsPanel />, {
       ports: buildTestPorts({
         api: {
@@ -32,14 +32,13 @@ describe("<SettingsPanel>", () => {
       }),
     });
 
-    expect(await screen.findByText("Temporal runtime")).toBeInTheDocument();
-    expect(screen.getByText("Activity slots")).toBeInTheDocument();
-    expect(screen.getByText("12")).toBeInTheDocument();
-    expect(screen.getByText("Executor threads")).toBeInTheDocument();
-    expect(screen.getByText("14")).toBeInTheDocument();
-    expect(
-      screen.getByText("JOBCTRL_MAX_CONCURRENT_ACTIVITIES"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Cost and capacity")).toBeInTheDocument();
+    expect(screen.getByLabelText("Worker activity slots")).toHaveValue(4);
+    expect(screen.getByText(/Desired: 4. Active: 12./)).toHaveTextContent("Restart pending");
+    expect(screen.queryByText("Executor threads")).not.toBeInTheDocument();
+    expect(screen.queryByText("Task queue")).not.toBeInTheDocument();
+    expect(screen.queryByText("JOBCTRL_MAX_CONCURRENT_ACTIVITIES")).not.toBeInTheDocument();
+    expect(screen.queryByText("Token file")).not.toBeInTheDocument();
   });
 
   it("copies and rotates the browser extension pairing token through ports", async () => {

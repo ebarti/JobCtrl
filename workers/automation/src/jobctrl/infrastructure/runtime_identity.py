@@ -13,7 +13,7 @@ from pathlib import Path
 from jobctrl import config
 from jobctrl.infrastructure.temporal.concurrency import (
     activity_executor_max_workers,
-    max_concurrent_activities_from_env,
+    resolve_max_concurrent_activities,
 )
 
 WORKER_HEARTBEAT_TABLE = "worker_runtime_heartbeats"
@@ -60,6 +60,7 @@ def write_worker_heartbeat(
     task_queue: str,
     worker_id: str | None = None,
     now: datetime | None = None,
+    max_concurrent_activities: int | None = None,
 ) -> str:
     identity = current_runtime_identity()
     resolved_worker_id = worker_id or _default_worker_id()
@@ -87,8 +88,12 @@ def write_worker_heartbeat(
             """
         )
         _ensure_heartbeat_runtime_columns(conn)
-        max_concurrent_activities = max_concurrent_activities_from_env()
-        executor_max_workers = activity_executor_max_workers(max_concurrent_activities)
+        active_max_concurrent_activities = (
+            max_concurrent_activities
+            if max_concurrent_activities is not None
+            else resolve_max_concurrent_activities().value
+        )
+        executor_max_workers = activity_executor_max_workers(active_max_concurrent_activities)
         conn.execute(
             f"""
             INSERT INTO {WORKER_HEARTBEAT_TABLE}
@@ -115,7 +120,7 @@ def write_worker_heartbeat(
                 task_queue,
                 timestamp,
                 timestamp,
-                max_concurrent_activities,
+                active_max_concurrent_activities,
                 executor_max_workers,
             ),
         )
