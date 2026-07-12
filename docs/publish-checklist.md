@@ -172,18 +172,23 @@ release_key_dir="$HOME/.jobctrl-release-secrets"
   umask 077
   mkdir -p "$release_key_dir"
   chmod 700 "$release_key_dir"
-  private_pem="$release_key_dir/jobctrl-release-v1.pem"
   private_der="$release_key_dir/jobctrl-release-v1.pk8"
-  if [[ -e "$private_pem" || -e "$private_der" ]]; then
+  if [[ -e "$private_der" ]]; then
     echo "release key already exists; refusing to overwrite it" >&2
     exit 1
   fi
-  openssl genpkey -algorithm ED25519 -out "$private_pem"
-  openssl pkey -in "$private_pem" -outform DER -out "$private_der"
+  node --input-type=module - "$private_der" <<'NODE'
+import { writeFileSync } from "node:fs";
+import { generateKeyPairSync } from "node:crypto";
+
+const { privateKey } = generateKeyPairSync("ed25519");
+const privateDer = Buffer.from(privateKey.export({ format: "der", type: "pkcs8" }));
+writeFileSync(process.argv[2], privateDer, { flag: "wx", mode: 0o600 });
+NODE
 )
 ```
 
-Back up both private-key files offline. Never commit them. Copy the canonical
+Back up the private-key file offline. Never commit it. Copy the canonical
 base64 PKCS#8 DER value for the `JOBCTRL_RELEASE_SIGNING_KEY` environment secret,
 then paste it into `release-signing` before running the next clipboard command:
 
