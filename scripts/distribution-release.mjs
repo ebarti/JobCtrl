@@ -334,7 +334,7 @@ function rawPublicKey(publicKey) {
 export function privateKeyFromBase64(encoded) {
   invariant(typeof encoded === "string" && encoded.length > 0 && !/\s/.test(encoded), "release signing key must be non-empty base64 PKCS#8 DER");
   const der = Buffer.from(encoded, "base64");
-  invariant(der.length > 48 && der.toString("base64") === encoded, "release signing key must be canonical base64 PKCS#8 DER");
+  invariant(der.toString("base64") === encoded, "release signing key must be canonical base64 PKCS#8 DER");
   let privateKey;
   try {
     privateKey = createPrivateKey({ key: der, format: "der", type: "pkcs8" });

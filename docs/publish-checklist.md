@@ -161,6 +161,60 @@ branches. Dispatch the workflow at `refs/tags/<release_tag>` so its own
 the resolver. These environment rules are the server-side defense against a
 modified branch workflow removing the in-workflow identity check:
 
+Generate the JobCtrl Ed25519 release key pair once, outside the repository. This
+key signs JobCtrl manifests and release descriptors; it is separate from the
+Apple Developer ID certificate used to sign macOS executables:
+
+```bash
+release_key_dir="$HOME/.jobctrl-release-secrets"
+(
+  set -euo pipefail
+  umask 077
+  mkdir -p "$release_key_dir"
+  chmod 700 "$release_key_dir"
+  private_pem="$release_key_dir/jobctrl-release-v1.pem"
+  private_der="$release_key_dir/jobctrl-release-v1.pk8"
+  if [[ -e "$private_pem" || -e "$private_der" ]]; then
+    echo "release key already exists; refusing to overwrite it" >&2
+    exit 1
+  fi
+  openssl genpkey -algorithm ED25519 -out "$private_pem"
+  openssl pkey -in "$private_pem" -outform DER -out "$private_der"
+)
+```
+
+Back up both private-key files offline. Never commit them. Copy the canonical
+base64 PKCS#8 DER value for the `JOBCTRL_RELEASE_SIGNING_KEY` environment secret,
+then paste it into `release-signing` before running the next clipboard command:
+
+```bash
+base64 < "$release_key_dir/jobctrl-release-v1.pk8" | tr -d '\n' | pbcopy
+```
+
+Derive and copy the matching raw 32-byte public key for the
+`JOBCTRL_RELEASE_PUBLIC_KEY` environment variable in `release-verification`:
+
+```bash
+node --input-type=module - "$release_key_dir/jobctrl-release-v1.pk8" <<'NODE' | pbcopy
+import { readFileSync } from "node:fs";
+import { createPrivateKey, createPublicKey } from "node:crypto";
+
+const privateDer = readFileSync(process.argv[2]);
+const privateKey = createPrivateKey({ key: privateDer, format: "der", type: "pkcs8" });
+if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("release key is not Ed25519");
+const spki = Buffer.from(createPublicKey(privateKey).export({ format: "der", type: "spki" }));
+const prefix = Buffer.from("302a300506032b6570032100", "hex");
+if (spki.length !== 44 || !spki.subarray(0, prefix.length).equals(prefix)) {
+  throw new Error("unexpected Ed25519 public-key encoding");
+}
+process.stdout.write(spki.subarray(prefix.length).toString("base64"));
+NODE
+```
+
+Set `JOBCTRL_RELEASE_KEY_ID` to `jobctrl-release-v1`. The signing workflow
+derives the public key from the protected private key and fails unless it
+exactly matches the independently protected verification value.
+
 - `release-signing`: `JOBCTRL_RELEASE_SIGNING_KEY`,
   `JOBCTRL_APPLE_DEVELOPER_ID_P12`,
   `JOBCTRL_APPLE_DEVELOPER_ID_PASSWORD`, `JOBCTRL_APPLE_SIGNING_IDENTITY`,
