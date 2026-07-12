@@ -37,8 +37,10 @@ from jobctrl.domain.materials.analysis import (
 from jobctrl.infrastructure.analysis.strict_schema import strict_json_schema
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
 from jobctrl.infrastructure.setup_probes import (
-    jobctrl_codex_home,
+    CODEX_NEUTRALIZED_AUTH_ENV,
     ensure_jobctrl_codex_auth,
+    ensure_private_directory,
+    jobctrl_codex_home,
     resolve_codex_binary,
 )
 from jobctrl.runtime import is_bundled_runtime
@@ -76,15 +78,6 @@ _CODEX_CONFIG_OVERRIDES = (
     f'default_permissions="{_CODEX_PERMISSION_PROFILE}"',
     _CODEX_PERMISSION_PROFILE_OVERRIDE,
 )
-_CODEX_BUNDLED_NEUTRALIZED_AUTH_ENV = (
-    "OPENAI_API_KEY",
-    "CODEX_ACCESS_TOKEN",
-    "CODEX_AGENT_IDENTITY_AUTH",
-    "CODEX_API_KEY",
-    "CODEX_REFRESH_TOKEN_URL_OVERRIDE",
-    "CODEX_REVOKE_TOKEN_URL_OVERRIDE",
-)
-_CODEX_HOME_DIRNAME = "codex_home"
 _CODEX_WORKSPACE_DIRNAME = "workspace"
 _CODEX_PROCESS_HOME_DIRNAME = "home"
 
@@ -110,15 +103,14 @@ def _prepare_isolated_codex_home(*, ensure_auth: bool = True) -> _CodexHomeDirs:
     """
 
     codex_home = _isolated_codex_home()
-    codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
-    codex_home.chmod(0o700)
+    if ensure_auth:
+        ensure_jobctrl_codex_auth()
+    ensure_private_directory(codex_home.parent)
+    ensure_private_directory(codex_home, parent=codex_home.parent)
     workdir = codex_home / _CODEX_WORKSPACE_DIRNAME
     process_home = codex_home / _CODEX_PROCESS_HOME_DIRNAME
     for directory in (workdir, process_home):
-        directory.mkdir(mode=0o700, exist_ok=True)
-        directory.chmod(0o700)
-    if ensure_auth:
-        ensure_jobctrl_codex_auth()
+        ensure_private_directory(directory, parent=codex_home)
     return _CodexHomeDirs(
         codex_home=codex_home,
         workdir=workdir,
@@ -132,7 +124,7 @@ def _isolated_codex_env(codex_home: Path, process_home: Path) -> dict[str, str]:
     env = {
         "CODEX_HOME": str(codex_home),
         "HOME": str(process_home),
-        **{key: "" for key in _CODEX_BUNDLED_NEUTRALIZED_AUTH_ENV},
+        **{key: "" for key in CODEX_NEUTRALIZED_AUTH_ENV},
     }
     if os.name == "nt":
         env["USERPROFILE"] = str(process_home)

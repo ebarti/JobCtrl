@@ -42,9 +42,9 @@ enter the system. They do not hold provider credentials or raw feed contents.
 | `PATCH /v1/credentials` | Store or replace a credential through the local credential adapter. |
 | `PATCH /v1/credentials/batch` | Atomically replace or remove one guided provider configuration. |
 | `DELETE /v1/credentials/:key` | Remove a stored credential. |
-| `GET /v1/providers/status` | Sanitized Codex/Claude/Google configuration and readiness. |
-| `GET /v1/providers/models` | Sanitized model choices in stable Codex/Claude/Google order. Codex and Google are live; Claude is explicitly provider aliases. |
-| `POST /v1/providers/codex/verify` | Verify isolated Codex CLI auth without a model call. |
+| `GET /v1/providers/status` | Read-only sanitized Codex/Claude/Google configuration and readiness; never copies ambient Codex auth. |
+| `GET /v1/providers/models` | Read-only sanitized model choices in stable Codex/Claude/Google order; never copies ambient Codex auth. Codex and Google are live; Claude is explicitly provider aliases. |
+| `POST /v1/providers/codex/verify` | Explicitly validate and import a reusable normal Codex CLI `auth.json` once when isolated auth is absent, then verify isolated auth without a model call. |
 | `GET /v1/extension/pairing-token` | Read the local extension pairing state. |
 
 Credential responses expose enough state for the UI to show whether a provider
@@ -52,6 +52,12 @@ is configured, but do not return stored secret material. Guided provider
 replacement rolls back on failure; an unrecoverable rollback is reported as an
 explicit sanitized store failure. See the
 [Security guide](../user/security.md) for the user-facing trust boundary.
+
+The Codex verify response remains secret-free: it reports only provider,
+boolean result, bounded status, and a bounded message. The explicit import
+never overwrites JobCtrl's existing isolated auth or changes the normal Codex
+home. It invokes the same staged, no-replace importer retained by setup and
+generation; a failed candidate is not published.
 
 `PATCH /v1/settings` stores provider-scoped model choices as
 `preferred_models` in `dashboard.json` and returns them as `preferredModels`.

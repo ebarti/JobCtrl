@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 import jobctrl.config
+from jobctrl.infrastructure import setup_probes
 from jobctrl.infrastructure.analysis import codex_analysis_adapter as adapter
 
 
@@ -27,7 +29,16 @@ def _isolate_homes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Pat
     source_codex_home = tmp_path / "source-codex"
     source_codex_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex-bin")
     monkeypatch.setenv("CODEX_HOME", str(source_codex_home))
+    original_ensure = adapter.ensure_jobctrl_codex_auth
+    monkeypatch.setattr(
+        adapter,
+        "ensure_jobctrl_codex_auth",
+        lambda: original_ensure(
+            runner=lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
+        ),
+    )
     return app_dir, source_codex_home
 
 
@@ -92,6 +103,27 @@ def test_catalog_prepare_does_not_copy_ambient_codex_auth(
     assert (source_codex_home / "auth.json").is_file()
 
 
+@pytest.mark.parametrize("unsafe_leaf", ["codex_home", "workspace", "home"])
+def test_prepare_isolated_codex_home_rejects_owned_directory_symlinks(
+    unsafe_leaf: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir, _source_codex_home = _isolate_homes(monkeypatch, tmp_path)
+    app_dir.mkdir()
+    codex_home = app_dir / "codex_home"
+    external = tmp_path / f"external-{unsafe_leaf}"
+    external.mkdir()
+    if unsafe_leaf == "codex_home":
+        codex_home.symlink_to(external, target_is_directory=True)
+    else:
+        codex_home.mkdir()
+        (codex_home / unsafe_leaf).symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="symlink"):
+        adapter._prepare_isolated_codex_home(ensure_auth=False)
+
+
 def test_isolated_codex_env_is_minimal_for_jobctrl_home(tmp_path: Path) -> None:
     codex_home = tmp_path / "codex_home"
     process_home = codex_home / "home"
@@ -100,7 +132,7 @@ def test_isolated_codex_env_is_minimal_for_jobctrl_home(tmp_path: Path) -> None:
 
     assert env["CODEX_HOME"] == str(codex_home)
     assert env["HOME"] == str(process_home)
-    assert all(env[key] == "" for key in adapter._CODEX_BUNDLED_NEUTRALIZED_AUTH_ENV)
+    assert all(env[key] == "" for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV)
 
 
 def test_bundled_codex_uses_persisted_auth_and_neutralizes_raw_keys(
@@ -167,7 +199,7 @@ def test_bundled_codex_factory_uses_persisted_credentials(
     assert codex.config.env["OPENAI_API_KEY"] == ""
     assert all(
         codex.config.env[key] == ""
-        for key in adapter._CODEX_BUNDLED_NEUTRALIZED_AUTH_ENV
+        for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV
     )
 
 

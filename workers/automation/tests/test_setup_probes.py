@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -69,19 +70,23 @@ def _write_service_account_adc(path: Path) -> None:
     )
 
 
-def _write_codex_auth(path: Path) -> None:
+def _write_codex_auth(path: Path, *, access_token: str = "test-access-token") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
             {
                 "tokens": {
-                    "access_token": "test-access-token",
+                    "access_token": access_token,
                     "refresh_token": "test-refresh-token",
                 }
             }
         ),
         encoding="utf-8",
     )
+
+
+def _successful_codex_status(*_args, **_kwargs):
+    return SimpleNamespace(returncode=0)
 
 
 def test_enabled_analysis_legs_default_aliases_and_validation() -> None:
@@ -103,6 +108,7 @@ def test_codex_requires_persisted_cli_auth_and_uses_stable_jobctrl_home(
     app_dir = tmp_path / "jobctrl"
     source_home = tmp_path / "source-codex"
     monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
     env = {"CODEX_HOME": str(source_home), "OPENAI_API_KEY": "sk-test"}
 
     raw_only = setup_probes.probe_codex_auth(env)
@@ -112,7 +118,10 @@ def test_codex_requires_persisted_cli_auth_and_uses_stable_jobctrl_home(
 
     source_home.mkdir()
     _write_codex_auth(source_home / "auth.json")
-    target = setup_probes.ensure_jobctrl_codex_auth(env)
+    target = setup_probes.ensure_jobctrl_codex_auth(
+        env,
+        runner=_successful_codex_status,
+    )
     assert target == app_dir / "codex_home/auth.json"
     assert target.is_file()
 
@@ -381,15 +390,224 @@ def test_verify_codex_uses_persisted_home_and_strips_raw_keys(
         seen.update(command=command, **kwargs)
         return SimpleNamespace(returncode=0)
 
-    result = setup_probes.verify_codex_connection(
-        {"OPENAI_API_KEY": "raw", "CODEX_API_KEY": "raw-alias"}, runner=runner
-    )
+    ambient_auth = {
+        key: f"ambient-{key.lower()}"
+        for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV
+    }
+    result = setup_probes.verify_codex_connection(ambient_auth, runner=runner)
     assert result == (True, "connected", "Codex CLI authentication verified")
     assert seen["command"][-2:] == ["login", "status"]
     child_env = seen["env"]
-    assert "OPENAI_API_KEY" not in child_env
-    assert "CODEX_API_KEY" not in child_env
+    assert all(key not in child_env for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV)
     assert child_env["CODEX_HOME"] == str(app_dir / "codex_home")
+
+
+def test_reuse_and_verify_codex_connection_copies_ambient_auth_once_and_strips_raw_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    source_home = tmp_path / "regular-codex"
+    source_auth = source_home / "auth.json"
+    _write_codex_auth(source_auth)
+    source_contents = source_auth.read_text(encoding="utf-8")
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+    calls: list[dict[str, object]] = []
+
+    def runner(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+        return SimpleNamespace(returncode=0)
+
+    ambient_auth = {
+        key: f"ambient-{key.lower()}"
+        for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV
+    }
+    result = setup_probes.reuse_and_verify_codex_connection(
+        {
+            "CODEX_HOME": str(source_home),
+            **ambient_auth,
+        },
+        runner=runner,
+    )
+
+    target = app_dir / "codex_home/auth.json"
+    assert result == (True, "connected", "Codex CLI authentication verified")
+    assert target.read_text(encoding="utf-8") == source_contents
+    assert source_auth.read_text(encoding="utf-8") == source_contents
+    assert len(calls) == 2
+    staging_env = calls[0]["env"]
+    stable_env = calls[1]["env"]
+    assert calls[0]["command"][-2:] == ["login", "status"]
+    assert Path(staging_env["CODEX_HOME"]).parent == app_dir
+    assert Path(staging_env["CODEX_HOME"]).name.startswith(".codex-auth-import-")
+    assert stable_env["CODEX_HOME"] == str(app_dir / "codex_home")
+    for child_env in (staging_env, stable_env):
+        assert all(
+            key not in child_env
+            for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV
+        )
+    assert not list(app_dir.glob(".codex-auth-import-*"))
+
+
+def test_reuse_and_verify_codex_connection_does_not_overwrite_isolated_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    target = app_dir / "codex_home/auth.json"
+    source = tmp_path / "regular-codex/auth.json"
+    _write_codex_auth(target, access_token="isolated-token")
+    _write_codex_auth(source, access_token="ambient-token")
+    target.chmod(0o644)
+    target_contents = target.read_bytes()
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+
+    result = setup_probes.reuse_and_verify_codex_connection(
+        {"CODEX_HOME": str(source.parent)},
+        runner=lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
+    )
+
+    assert result == (True, "connected", "Codex CLI authentication verified")
+    assert target.read_bytes() == target_contents
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert "ambient-token" in source.read_text(encoding="utf-8")
+
+
+def test_expired_codex_candidate_is_not_published_and_refreshed_source_can_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    source = tmp_path / "regular-codex/auth.json"
+    _write_codex_auth(source, access_token="expired-token")
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+
+    with pytest.raises(RuntimeError, match="could not be verified"):
+        setup_probes.ensure_jobctrl_codex_auth(
+            {"CODEX_HOME": str(source.parent)},
+            runner=lambda *_args, **_kwargs: SimpleNamespace(returncode=1),
+        )
+
+    target = app_dir / "codex_home/auth.json"
+    assert target.exists() is False
+    assert not list(app_dir.glob(".codex-auth-import-*"))
+    _write_codex_auth(source, access_token="refreshed-token")
+
+    result = setup_probes.ensure_jobctrl_codex_auth(
+        {"CODEX_HOME": str(source.parent)},
+        runner=_successful_codex_status,
+    )
+
+    assert result == target
+    assert "refreshed-token" in target.read_text(encoding="utf-8")
+    assert not list(app_dir.glob(".codex-auth-import-*"))
+
+
+@pytest.mark.parametrize("mutation", ["symlink", "directory", "chmod"])
+def test_codex_import_revalidates_and_hardens_candidate_after_live_verification(
+    mutation: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    source = tmp_path / "regular-codex/auth.json"
+    external = tmp_path / "replacement-auth.json"
+    _write_codex_auth(source, access_token="source-token")
+    _write_codex_auth(external, access_token="replacement-token")
+    source_bytes = source.read_bytes()
+    source_mode = stat.S_IMODE(source.stat().st_mode)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+
+    def mutate_candidate(_command, **kwargs):
+        candidate = Path(kwargs["env"]["CODEX_HOME"]) / "auth.json"
+        if mutation == "chmod":
+            candidate.chmod(0o644)
+        else:
+            candidate.unlink()
+            if mutation == "symlink":
+                candidate.symlink_to(external)
+            else:
+                candidate.mkdir()
+        return SimpleNamespace(returncode=0)
+
+    if mutation == "chmod":
+        target = setup_probes.ensure_jobctrl_codex_auth(
+            {"CODEX_HOME": str(source.parent)},
+            runner=mutate_candidate,
+        )
+        assert target.read_bytes() == source_bytes
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    else:
+        with pytest.raises(RuntimeError, match="symlink|regular file"):
+            setup_probes.ensure_jobctrl_codex_auth(
+                {"CODEX_HOME": str(source.parent)},
+                runner=mutate_candidate,
+            )
+        assert not (app_dir / "codex_home/auth.json").exists()
+    assert source.read_bytes() == source_bytes
+    assert stat.S_IMODE(source.stat().st_mode) == source_mode
+    assert not list(app_dir.glob(".codex-auth-import-*"))
+
+
+def test_codex_import_never_replaces_a_concurrent_valid_winner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    target = app_dir / "codex_home/auth.json"
+    source = tmp_path / "regular-codex/auth.json"
+    _write_codex_auth(source, access_token="candidate-token")
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+
+    def concurrent_winner(*_args, **_kwargs):
+        _write_codex_auth(target, access_token="winner-token")
+        target.chmod(0o644)
+        return SimpleNamespace(returncode=0)
+
+    result = setup_probes.ensure_jobctrl_codex_auth(
+        {"CODEX_HOME": str(source.parent)},
+        runner=concurrent_winner,
+    )
+
+    assert result == target
+    assert "winner-token" in target.read_text(encoding="utf-8")
+    assert "candidate-token" not in target.read_text(encoding="utf-8")
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert not list(app_dir.glob(".codex-auth-import-*"))
+
+
+@pytest.mark.parametrize("unsafe_leaf", ["home", "auth"])
+def test_codex_import_rejects_symlinks_in_the_owned_target_boundary(
+    unsafe_leaf: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    app_dir.mkdir()
+    source = tmp_path / "regular-codex/auth.json"
+    _write_codex_auth(source)
+    target_home = app_dir / "codex_home"
+    if unsafe_leaf == "home":
+        external_home = tmp_path / "external-home"
+        external_home.mkdir()
+        target_home.symlink_to(external_home, target_is_directory=True)
+    else:
+        target_home.mkdir()
+        external_auth = tmp_path / "external-auth.json"
+        _write_codex_auth(external_auth)
+        (target_home / "auth.json").symlink_to(external_auth)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+
+    with pytest.raises(RuntimeError, match="symlink"):
+        setup_probes.ensure_jobctrl_codex_auth(
+            {"CODEX_HOME": str(source.parent)},
+            runner=_successful_codex_status,
+        )
 
 
 @pytest.mark.parametrize(

@@ -44,7 +44,9 @@ describe("credential and browser privacy documentation contract", () => {
     expect(runtime).toContain("A batch either applies completely or restores its pre-change Keychain state");
     expect(runtime).toContain("`configured` state is `true`, `false`, or `null`");
     expect(runtime).toContain("Secret values used internally for rollback are never returned, logged, persisted in SQLite, or passed to Python by the API");
-    expect(runtime).toContain("`POST /v1/providers/codex/verify` runs `codex login status`");
+    expect(runtime).toContain("then runs `codex login status` without generating model output");
+    expect(runtime).toContain("same safe one-time importer used by setup and generation");
+    expect(runtime).toContain("It is read-only and never copies ambient Codex auth");
     expect(runtime).toContain("performs a non-interactive Keychain lookup only for a missing or empty value");
     expect(runtime).toContain("copied only into that process's environment");
     expect(runtime).toContain("There is no hot reload");
@@ -54,6 +56,8 @@ describe("credential and browser privacy documentation contract", () => {
     expect(completeApi).toContain("private batch snapshots are used only for compensating rollback, not provider runtime");
     expect(completeApi).toContain("`unavailableReason` as `unsupported_platform`, `inspection_failed`, or `null`");
     expect(completeApi).toContain("`503 credential_store_unavailable` with a sanitized operational or rollback failure reason");
+    expect(completeApi).toContain("is the explicit mutation that may validate and copy a reusable normal Codex CLI `auth.json` once");
+    expect(completeApi).toContain("It is read-only and never copies ambient Codex auth");
   });
 
   it("preserves owner-signoff state for credential claims", () => {

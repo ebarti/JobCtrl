@@ -940,11 +940,13 @@ def setup(
     from jobctrl.config import ensure_dirs, get_env_path, load_env
     from jobctrl.infrastructure.setup_probes import (
         ANALYSIS_LEGS_ENV,
+        CODEX_NEUTRALIZED_AUTH_ENV,
         antigravity_auth_kwargs,
         codex_auth_path,
         enabled_analysis_legs,
         ensure_jobctrl_codex_auth,
         jobctrl_codex_home,
+        prepare_jobctrl_codex_home,
         probe_analysis_setup,
         probe_antigravity_auth,
         probe_claude_auth,
@@ -1080,10 +1082,15 @@ def setup(
                 if dry_run:
                     authenticated_legs.append("codex")
                 else:
+                    try:
+                        prepare_jobctrl_codex_home()
+                    except RuntimeError as exc:
+                        console.print(f"[red]Unsafe JobCtrl Codex home:[/red] {exc}")
+                        raise typer.Exit(code=1) from exc
                     login_env = dict(os.environ)
                     login_env["CODEX_HOME"] = str(jobctrl_codex_home())
-                    login_env.pop("OPENAI_API_KEY", None)
-                    login_env.pop("CODEX_API_KEY", None)
+                    for auth_key in CODEX_NEUTRALIZED_AUTH_ENV:
+                        login_env.pop(auth_key, None)
                     proc = subprocess.run(
                         command,
                         input=stdin,

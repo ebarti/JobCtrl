@@ -330,9 +330,12 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
 - `tailored_resumes/`, `cover_letters/`, `logs/` — generated artifacts and
   logs.
 - `chrome-workers/`, `apply-workers/` — local browser/apply worker state.
-- `codex_home/` — JobCtrl-owned Codex home for local analysis. The adapter
-  copies Codex auth here from the user's regular Codex home and runs
-  prompt-driven commands from `codex_home/workspace/` only.
+- `codex_home/` — JobCtrl-owned Codex home for local analysis. Setup and the
+  first generation retain one-time reuse of a valid regular Codex CLI login;
+  Settings verification invokes the same safe reuse path. A candidate is
+  verified in private staging before publication, never overwrites existing
+  isolated auth, and never changes the normal Codex home. Prompt-driven
+  commands run from `codex_home/workspace/` only.
 - `backups/` — source-mode `jobctrl backup` snapshots and, once the P6-signed
   bundled channel is public, verified paired lifecycle snapshots.
 
@@ -506,7 +509,8 @@ locally. Start with [.env.example](.env.example); full reference:
 
 The cross-platform provider-credential path is the plaintext
 `~/.jobctrl/.env` file or the process environment. On macOS, **Settings →
-Credentials** guides one of three providers: authenticated Codex CLI, Claude
+Credentials** guides one of three providers: an existing authenticated Codex
+CLI reused into JobCtrl's isolated home (or fallback target-home login), Claude
 Agent SDK (Anthropic API key or supported cloud-provider credentials), or
 Google (Gemini key or Vertex AI ADC). One ready provider is sufficient for all
 core AI stages; a second provider is optional. After a provider is ready,
@@ -534,9 +538,12 @@ Keychain output.
 
 - `JOBCTRL_DIR` — override the local app directory.
 - `ANTHROPIC_API_KEY` or a supported Claude cloud-provider route — Claude.
-- `$JOBCTRL_DIR/codex_home/auth.json` — Codex; authenticate it with a ChatGPT
-  subscription or enroll an API key through `codex login --with-api-key`.
-  Raw OpenAI keys are not used directly.
+- `$JOBCTRL_DIR/codex_home/auth.json` — Codex; setup, first generation, or the
+  Settings verify action can safely reuse an existing normal Codex CLI login
+  once. Failed or expired candidates are not published, and existing isolated
+  auth is never overwritten. If there is no reusable login, authenticate this
+  isolated home with a ChatGPT subscription or enroll an API key through
+  `codex login --with-api-key`. Raw OpenAI keys are not used directly.
 - `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex AI ADC — Google.
 - `JOBCTRL_ANALYSIS_LEGS` — comma-separated enabled analysis legs when setup
   intentionally skips an unauthenticated leg.
