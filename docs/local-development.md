@@ -94,6 +94,30 @@ defaults to:
 - Temporal persistence: `.dev/temporal/temporal.db`
   (`JOBCTRL_TEMPORAL_DB` can override it)
 
+### Runtime Overrides
+
+Use these source-development overrides when troubleshooting a component or
+running isolated or multi-worktree stacks. Most contributors can keep the
+launcher defaults above.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `JOBCTRL_DIR` | `~/.jobctrl` | Local app directory for database, settings, artifacts, logs, browser worker state, and `.env`. |
+| `JOBCTRL_DB_PATH` | `$JOBCTRL_DIR/jobctrl.db` | TypeScript API database path. The Python worker ignores it and always uses `$JOBCTRL_DIR/jobctrl.db`, so overriding it desynchronizes the API from the worker — prefer `JOBCTRL_DIR` to move both. |
+| `JOBCTRL_DASHBOARD_CONFIG_PATH` | `$JOBCTRL_DIR/dashboard.json` | Non-secret settings file written by the TypeScript API and read by both API and worker (preferences, provider-scoped model IDs, apply approval gate, spend budget). |
+| `JOBCTRL_API_HOST` | `127.0.0.1` | Local API bind host. Non-loopback hosts require explicit opt-in. |
+| `JOBCTRL_API_PORT` / `PORT` | `8766` | Local API port. |
+| `JOBCTRL_API_ALLOW_REMOTE_BIND` | unset | Set to `1`, `true`, or `yes` to allow non-loopback API binding. This can expose private local data. |
+| `JOBCTRL_WEB_PORT` | `5173` | Requested Vite development port. |
+| `VITE_JOBCTRL_API_BASE_URL` | proxied `/v1` | Browser API origin when not using the default Vite proxy. |
+| `JOBCTRL_TEMPORAL_DB` | `.dev/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. |
+| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address used by the worker, CLI, and workflow-starting RPC. |
+| `TEMPORAL_NAMESPACE` | `default` | Temporal namespace. |
+| `JOBCTRL_MAX_CONCURRENT_ACTIVITIES` | `4` | Maximum Temporal activities the local worker runs at once (shown on the Settings page). Set in the worker environment and restart the worker to apply. |
+| `JOBCTRL_API_SSE_POLL_MS` | `250` | API event-stream database poll interval in milliseconds. |
+| `VITE_DEV_API_PROXY_TARGET` | `http://127.0.0.1:8766` | Vite dev-server `/v1` proxy target; override it for isolated or multi-worktree stacks. |
+| `VITE_GOOGLE_MAPS_API_KEY` | unset | Enables Google Maps address search in the Profile form. |
+
 Inspect the foreground stack from another terminal:
 
 ```bash

@@ -5,7 +5,7 @@ pageClass: jh-user-guide-page
 # Getting Started
 
 JobCtrl is a local application: the app, database, settings, and generated
-files stay on your Mac unless you explicitly connect an external provider.
+files stay on your computer unless you explicitly connect an external provider.
 Install it once, then use the same `jobctrl` command from any directory.
 
 ::: tip Want to explore before installing?
@@ -16,22 +16,24 @@ for a screen-by-screen walkthrough.
 
 ## What You Need
 
-- An Apple-silicon Mac running macOS 15 or newer.
+- For the bundled installer or Homebrew: an Apple-silicon Mac running macOS 15
+  or newer.
 - Internet access for installation, updates, and any hosted providers you
   choose to connect.
 - One supported LLM provider before you run scoring or material generation:
   Codex, Claude, or Google.
 
 The bundled install includes JobCtrl's application runtimes, workflow engine,
-PDF tooling, and managed headless browser. You do **not** need to install Git,
-Node.js, pnpm, Corepack, uv, Python, Temporal, Poppler, Playwright, or Chrome
-for the core product. A system Chrome or Chromium installation is optional and
-used only by capabilities that explicitly adopt an authenticated browser.
+PDF tooling, and managed headless browser. A system Chrome or Chromium
+installation is optional and used only by capabilities that explicitly adopt
+an authenticated browser.
 
 ## 1. Install JobCtrl
 
 Choose one acquisition method. The installer and Homebrew formula resolve the
-same signed JobCtrl release and provide the same `jobctrl` command.
+same signed JobCtrl release and provide the same `jobctrl` command. These public
+acquisition paths currently target Apple-silicon macOS. Native Windows is not
+yet a supported public installation path.
 
 ### Recommended: bundled installer
 
@@ -107,13 +109,8 @@ not recorded there.
 
 Open **Settings → Credentials** and configure one provider:
 
-- **Codex:** setup and first generation copy a valid normal Codex CLI
-  login once, and **Reuse existing login or verify** invokes the same path from
-  Settings before checking the isolated login. Existing isolated auth is not
-  overwritten, and the normal home is unchanged. If there is no login to reuse,
-  authenticate the isolated home with a ChatGPT subscription or enroll an
-  OpenAI API key through `codex login`. A raw `OPENAI_API_KEY` is not used
-  directly by JobCtrl.
+- **Codex:** have an authenticated Codex CLI. JobCtrl reuses that authentication;
+  API-key users may use Codex's `codex login --with-api-key` flow.
 - **Claude:** use an Anthropic API key or one of the guided Google Vertex,
   Amazon Bedrock, Claude Platform on AWS, or Microsoft Foundry routes.
 - **Google:** use a Gemini API key or Vertex AI Application Default

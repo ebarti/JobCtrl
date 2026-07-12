@@ -81,7 +81,6 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | `.env` | Plaintext provider credentials and runtime settings. Not encrypted at rest. |
 | `tailored_resumes/`, `cover_letters/` | Generated text, HTML, and PDF artifacts. |
 | `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state. |
-| `codex_home/` | JobCtrl-owned integration state, isolated from the normal Codex app home. |
 | `backups/` | Timestamped SQLite snapshots created by `jobctrl backup`. |
 | `gmail/` | Gmail OAuth client and token files. |
 | Baseline/legacy resume files | `resume.txt`, `resume.pdf`, and older local style/template files. |
@@ -91,13 +90,15 @@ directory; treat those logs as sensitive too.
 
 ### Credentials Outside The Workspace
 
-The macOS credential panel guides Codex, Claude, and Google setup. Anthropic and
-Gemini API keys plus cloud activation flags/non-secret identifiers can live in
-Keychain. Codex auth lives under the isolated `codex_home`; AWS, Google, and
-Azure credential files remain in their vendor stores. After environment-file
-loading, Python loads a Keychain entry at startup only when that environment
-value is missing or empty. Any non-empty environment value already present
-wins. Restart JobCtrl after saving or removing a value.
+The macOS credential panel guides Codex, Claude, and Google setup. Codex
+requires an authenticated Codex CLI. Reused authentication stays in sensitive
+local provider state outside SQLite and the prompt-readable workspace.
+Anthropic and Gemini API keys plus cloud activation flags/non-secret identifiers
+can live in Keychain; AWS, Google, and Azure credential files remain in their
+vendor stores. After environment-file loading, Python loads a Keychain entry at
+startup only when that environment value is missing or empty. Any non-empty
+environment value already present wins. Restart JobCtrl after saving or removing
+a value.
 
 Windows Credential Manager and Linux Secret Service/keyring adapters are
 planned; those platforms use `.env` or shell variables today. The panel returns
