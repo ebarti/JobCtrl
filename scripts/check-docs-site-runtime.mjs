@@ -493,13 +493,14 @@ try {
       rowCount: table?.querySelectorAll("tbody tr").length ?? 0,
       tableText: table?.textContent ?? "",
       hasWorkspaceScope: text.includes("every path below is relative to JOBCTRL_DIR"),
-      hasMacOnlyBoundary: text.includes("macOS-only credential panel"),
+      hasMacOnlyBoundary: text.includes("macOS credential panel"),
       hasRuntimeBoundary: text.includes("loads a Keychain entry at startup"),
       hasPrecedenceBoundary: text.includes("Any non-empty environment value already present wins"),
-      hasRestartBoundary: text.includes("Restart the worker"),
+      hasRestartBoundary: text.includes("Restart JobCtrl"),
       hasWindowsBoundary: text.includes("Windows Credential Manager"),
       hasLinuxBoundary: text.includes("Linux Secret Service/keyring"),
-      hasInspectionFailureBoundary: text.includes("Unknown (inspection_failed) means Keychain could not be inspected"),
+      hasInspectionFailureBoundary: text.includes("inspection_failed")
+        && text.includes("not that a credential is absent"),
       hasRetryBoundary: text.includes("unlock it and retry"),
       hasDefaultProtection: text.includes("Protected by default"),
     };
@@ -545,19 +546,39 @@ try {
 
   await page.goto(`http://127.0.0.1:${port}/architecture/runtime`, { waitUntil: "networkidle" });
   const credentialRuntimeContract = await page.evaluate(() => {
-    const text = document.querySelector(".vp-doc")?.textContent ?? "";
+    const heading = document.querySelector("#provider-credential-boundary");
+    const headingLevel = heading ? Number(heading.tagName.slice(1)) : 7;
+    const sectionElements = heading ? [heading] : [];
+    for (let element = heading?.nextElementSibling; element; element = element.nextElementSibling) {
+      const level = /^H[1-6]$/.test(element.tagName)
+        ? Number(element.tagName.slice(1))
+        : undefined;
+      if (level !== undefined && level <= headingLevel) break;
+      sectionElements.push(element);
+    }
+    const text = sectionElements
+      .map((element) => element.textContent ?? "")
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
     return {
-      hasBoundary: text.includes("Provider Credential Boundary"),
-      hasSubmittedValueBoundary: text.includes("sends one submitted value"),
-      hasPresenceOnlyBoundary: text.includes("responses use presence checks"),
-      hasTriStateBoundary: text.includes("configured state is true, false, or null"),
-      hasInspectionFailureBoundary: text.includes("unavailableReason: inspection_failed"),
+      hasBoundary: heading?.textContent?.includes("Provider Credential Boundary") ?? false,
+      hasAtomicBatchBoundary: text.includes("PATCH /v1/credentials/batch")
+        && text.includes("applies completely"),
+      hasPresenceOnlyBoundary: text.includes("responses return presence only"),
+      hasTriStateBoundary: text.includes("true, false, or null"),
+      hasInspectionFailureBoundary: text.includes("configured=null")
+        && text.includes("unavailableReason=inspection_failed"),
       hasSanitizedOperationalFailure: text.includes("503 credential_store_unavailable"),
-      hasFixedAllowlist: text.includes("same fixed allowlist"),
+      hasFixedAllowlist: text.includes("fixed allowlist covers"),
       hasMissingOrEmptyBoundary: text.includes("only for a missing or empty value"),
       hasProcessLocalBoundary: text.includes("only into that process's environment"),
       hasNoHotReloadBoundary: text.includes("There is no hot reload"),
       hasPlatformBoundary: text.includes("native Windows and Linux stores are planned"),
+      hasProviderStatusBoundary: text.includes("GET /v1/providers/status")
+        && text.includes("sanitized Codex/Claude/Google configuration and readiness"),
+      hasRestartRequiredBoundary: text.includes("requires a JobCtrl restart")
+        && text.includes("before new values become ready"),
     };
   });
   if (Object.values(credentialRuntimeContract).some((present) => !present)) {

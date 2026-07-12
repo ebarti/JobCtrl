@@ -366,9 +366,11 @@ is not a runtime secret read performed by the API:
   stay in their vendor stores. A batch either applies completely or restores
   its pre-change Keychain state; a recovery failure is explicit and sanitized.
   `GET /v1/credentials` and post-mutation responses return presence only; each
-  `configured` state is `true`, `false`, or `null`. Secret values used
-  internally for rollback are never returned, logged, persisted in SQLite, or
-  passed to Python by the API.
+  `configured` state is `true`, `false`, or `null`. An inspection failure is
+  `configured=null` with `unavailableReason=inspection_failed`, not an absent
+  credential. An operational credential-store failure is sanitized as `503
+  credential_store_unavailable`. Secret values used internally for rollback are
+  never returned, logged, persisted in SQLite, or passed to Python by the API.
 - `GET /v1/providers/status` asks the long-lived JSON-RPC process for sanitized
   Codex/Claude/Google configuration and readiness. `POST
   /v1/providers/codex/verify` runs `codex login status` against the isolated
