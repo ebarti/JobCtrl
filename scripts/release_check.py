@@ -7,6 +7,7 @@ W1. Pass ``--strict-prompt`` after W1 completes to promote them to failures.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -26,12 +27,16 @@ EXCLUDED_FILES = {
 TEXT_SUFFIXES = {
     "",
     ".cfg",
+    ".cjs",
     ".css",
     ".csv",
     ".html",
     ".ini",
     ".json",
+    ".js",
     ".md",
+    ".mjs",
+    ".map",
     ".py",
     ".sql",
     ".svg",
@@ -41,6 +46,74 @@ TEXT_SUFFIXES = {
     ".yaml",
     ".yml",
 }
+
+# JavaScript bundles are token-dense after minification. Two short employer
+# names in the private-profile tripwire have known substring collisions in a
+# production bundle, so emitted JavaScript checks them at identifier/token
+# boundaries instead. Source files, source maps, artifact names, and every
+# other privacy needle continue to use the complete raw-substring policy.
+MINIFIED_BUILD_SUFFIXES = {".cjs", ".js", ".mjs"}
+
+# Public-demo fixtures are deliberately a tiny, exact set.  The general PDF
+# ban below remains in force for every other file, including any additional
+# file placed under `demo/`.  These names are allowed only so the public build
+# can ship its two synthetic previews; their contents are still scanned as
+# untrusted fixture input in source, generated bundles, and archives.
+DEMO_PUBLIC_FIXTURE_FILENAMES = frozenset(
+    {
+        "application-preview.html",
+        "cover-letter.txt",
+        "interview-notes.txt",
+        "profile-resume.html",
+        "profile-resume.pdf",
+        "source-preview.html",
+        "tailored-resume.html",
+        "tailored-resume.pdf",
+    }
+)
+DEMO_PUBLIC_FIXTURE_PREFIXES = (
+    "apps/web/public/demo/",
+    "apps/web/dist/demo/",
+    "dist/web/demo/",
+    "dist/web-storybook/demo/",
+    "demo/",
+)
+DEMO_PUBLIC_PDF_SHA256_BY_FILENAME = {
+    "profile-resume.pdf": "b0e4b351dc0f4ef6138b65fb3aec2e43890ca118ee4695c2716d9555b02cf352",
+    "tailored-resume.pdf": "8fcfe632b3758e047fa04dcc9e1912a7065b07013e5dfaf4489fc14d9b0faaa1",
+}
+DEMO_BUILD_DIRS = (
+    Path("dist/web"),
+    Path("dist/web-storybook"),
+    Path("apps/web/dist"),
+)
+DEMO_FIXTURE_PRIVACY_PATTERNS = (
+    ("email", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)),
+    (
+        "domain",
+        re.compile(
+            r"(?<![/\w@.-])(?:www\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "phone",
+        re.compile(
+            r"(?<!\w)(?:\+\d{1,3}(?:[\s().-]*\d){6,14}|"
+            r"(?!\d{4}-\d{2}-\d{2}(?:T|\b))(?:\(?\d{2,4}\)?[ .-]){2,4}\d{2,4})(?!\d)"
+        ),
+    ),
+    (
+        "secret",
+        re.compile(r"\b(?:sk-[a-z0-9_-]+|api[_ -]?key|authorization:\s*bearer|begin private key)\b", re.IGNORECASE),
+    ),
+    ("full URL", re.compile(r"\b(?:https?|file)://", re.IGNORECASE)),
+    ("local path", re.compile(r"(?:^|[\s\"'])?(?:~/|/Users/|/home/|[A-Za-z]:\\\\)")),
+    (
+        "raw prompt/profile content",
+        re.compile(r"\b(?:system prompt|prompt template|instruction hierarchy|raw profile text|profile payload|resume source text)\b", re.IGNORECASE),
+    ),
+)
 
 ARCHIVE_DIRS = (
     Path("dist"),
@@ -212,6 +285,57 @@ FORBIDDEN_TEXT = (
     ),
 )
 
+MINIFIED_BUILD_COLLISION_VALUES = frozenset(
+    {
+        "Well" + "tech",
+        "Tes" + "la",
+    }
+)
+
+
+def minified_build_needles(
+    needles: Iterable[ForbiddenNeedle],
+) -> tuple[ForbiddenNeedle, ...]:
+    """Return raw-substring checks without known minification collisions.
+
+    The omitted values are still enforced by ``scan_minified_build_text`` at
+    identifier/token boundaries. Every other caller-supplied needle remains a
+    raw-substring check.
+    """
+    return tuple(
+        needle
+        for needle in needles
+        if needle.value not in MINIFIED_BUILD_COLLISION_VALUES
+    )
+
+
+def scan_minified_build_text(
+    label: str,
+    text: str,
+    rel: Path,
+    *,
+    needles: Iterable[ForbiddenNeedle] = FORBIDDEN_TEXT,
+) -> list[str]:
+    """Scan emitted JavaScript without identifier-substring false positives."""
+    all_needles = tuple(needles)
+    findings = scan_text(
+        label,
+        text,
+        rel,
+        needles=minified_build_needles(all_needles),
+    )
+    for needle in all_needles:
+        if needle.value not in MINIFIED_BUILD_COLLISION_VALUES:
+            continue
+        flags = 0 if needle.case_sensitive else re.IGNORECASE
+        if re.search(
+            rf"(?<![\w$]){re.escape(needle.value)}(?![\w$])",
+            text,
+            flags,
+        ):
+            findings.append(f"{label}: contains {needle.reason}")
+    return findings
+
 PUBLIC_COPYRIGHT_HOLDER = "El" + "oi Barti"
 PUBLIC_COPYRIGHT_SNIPPETS = (
     f"Copyright (C) 2026 {PUBLIC_COPYRIGHT_HOLDER}",
@@ -308,12 +432,23 @@ def scan_tree(
         try:
             text = (root / rel).read_text(encoding="utf-8")
         except UnicodeDecodeError:
+            # Preserve the original fail-safe source-tree behavior: every
+            # UTF-8 candidate is scanned regardless of extension, while true
+            # binary files are skipped. Exact demo fixtures still receive the
+            # byte-level PDF/digest scan below.
+            if _is_demo_fixture_location(rel):
+                result.findings.extend(scan_demo_fixture_contents(str(rel), rel, (root / rel).read_bytes()))
+            continue
+        except OSError:
             continue
         result.findings.extend(scan_text(str(rel), text, rel, needles=needles))
+        if _is_demo_fixture_location(rel):
+            result.findings.extend(scan_demo_fixture_contents(str(rel), rel, (root / rel).read_bytes()))
 
     result.findings.extend(scan_old_product_name_gate(root, file_paths))
     result.findings.extend(scan_structural_checks(root, tracked, release_tag=release_tag))
     result.extend(scan_prompt_tripwires(root, strict_prompt=strict_prompt))
+    result.findings.extend(scan_demo_build_outputs(root, needles=needles))
     result.findings.extend(scan_dist_archives(root, needles=needles))
     return result
 
@@ -328,7 +463,10 @@ def scan_name(
     findings = []
     name = rel.name
     suffix = rel.suffix.lower()
-    if name in FORBIDDEN_PATH_NAMES or suffix in FORBIDDEN_FILE_SUFFIXES:
+    if (
+        name in FORBIDDEN_PATH_NAMES
+        or (suffix in FORBIDDEN_FILE_SUFFIXES and not is_demo_public_fixture_path(rel))
+    ):
         findings.append(f"{label}: private/runtime file should not be committed")
 
     normalized = rel.as_posix().lower()
@@ -338,6 +476,93 @@ def scan_name(
     for needle in needles:
         if _contains_needle(label, needle):
             findings.append(f"{label}: contains {needle.reason}")
+    return findings
+
+
+def is_demo_public_fixture_path(rel: Path) -> bool:
+    """Return whether a path is one exact synthetic fixture allowed in public output."""
+    normalized = rel.as_posix()
+    for prefix in DEMO_PUBLIC_FIXTURE_PREFIXES:
+        if not normalized.startswith(prefix):
+            continue
+        name = normalized.removeprefix(prefix)
+        return "/" not in name and name in DEMO_PUBLIC_FIXTURE_FILENAMES
+    return False
+
+
+def _is_demo_fixture_location(rel: Path) -> bool:
+    normalized = rel.as_posix()
+    return any(normalized.startswith(prefix) for prefix in DEMO_PUBLIC_FIXTURE_PREFIXES)
+
+
+def scan_demo_fixture_contents(label: str, rel: Path, content: bytes) -> list[str]:
+    """Fail closed on sensitive content inside bundled synthetic public fixtures."""
+    findings: list[str] = []
+    if rel.suffix.lower() == ".pdf":
+        expected_digest = DEMO_PUBLIC_PDF_SHA256_BY_FILENAME.get(rel.name)
+        if expected_digest is None or hashlib.sha256(content).hexdigest() != expected_digest:
+            findings.append(f"{label}: demo PDF fixture does not match its pinned content digest")
+        if not content.startswith(b"%PDF-"):
+            findings.append(f"{label}: demo PDF fixture has an invalid PDF header")
+
+    text = content.decode("utf-8", errors="ignore")
+    for reason, pattern in DEMO_FIXTURE_PRIVACY_PATTERNS:
+        if pattern.search(text):
+            findings.append(f"{label}: demo fixture contains {reason}")
+    return findings
+
+
+def scan_file_contents(
+    label: str,
+    rel: Path,
+    content: bytes,
+    *,
+    needles: Iterable[ForbiddenNeedle] = FORBIDDEN_TEXT,
+) -> list[str]:
+    """Scan build/archive text members plus every public-demo fixture byte stream."""
+    findings: list[str] = []
+    if rel.suffix.lower() in TEXT_SUFFIXES:
+        try:
+            text = content.decode("utf-8")
+            if rel.suffix.lower() in MINIFIED_BUILD_SUFFIXES:
+                findings.extend(
+                    scan_minified_build_text(label, text, rel, needles=needles)
+                )
+            else:
+                findings.extend(scan_text(label, text, rel, needles=needles))
+        except UnicodeDecodeError:
+            pass
+    if _is_demo_fixture_location(rel):
+        findings.extend(scan_demo_fixture_contents(label, rel, content))
+    return findings
+
+
+def scan_demo_build_outputs(
+    root: Path = ROOT,
+    *,
+    needles: Iterable[ForbiddenNeedle] = FORBIDDEN_TEXT,
+) -> list[str]:
+    """Scan ignored web-build outputs, source maps, and copied demo fixture bytes."""
+    findings: list[str] = []
+    for build_dir in DEMO_BUILD_DIRS:
+        path = root / build_dir
+        if not path.exists():
+            continue
+        for file_path in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
+            rel = file_path.relative_to(root)
+            label = rel.as_posix()
+            name_findings = scan_name(label, rel, needles=needles)
+            findings.extend(name_findings)
+            if name_findings:
+                continue
+            findings.extend(
+                scan_file_contents(
+                    label,
+                    rel,
+                    file_path.read_bytes(),
+                    needles=needles,
+                )
+            )
     return findings
 
 
@@ -1287,12 +1512,12 @@ def scan_dist_archives(
         dist_path = root / dist
         if not dist_path.exists():
             continue
-        for archive in sorted(dist_path.glob("*")):
-            if archive.suffix == ".whl":
+        for archive in sorted(candidate for candidate in dist_path.rglob("*") if candidate.is_file()):
+            if archive.suffix in {".whl", ".zip"}:
                 findings.extend(scan_zip_archive(root, archive, needles=needles))
             elif archive.name.endswith(".tar.gz"):
                 findings.extend(scan_tar_archive(root, archive, needles=needles))
-            if expected_version is not None:
+            if expected_version is not None and (archive.suffix == ".whl" or archive.name.endswith(".tar.gz")):
                 findings.extend(
                     _distribution_version_findings(root, archive, expected_version)
                 )
@@ -1350,13 +1575,10 @@ def scan_zip_archive(
         for info in archive.infolist():
             member = Path(info.filename)
             label = f"{path.relative_to(root)}!{info.filename}"
-            findings.extend(scan_name(label, member, needles=needles))
-            if member.suffix in TEXT_SUFFIXES:
-                try:
-                    text = archive.read(info).decode("utf-8")
-                except UnicodeDecodeError:
-                    continue
-                findings.extend(scan_text(label, text, member, needles=needles))
+            name_findings = scan_name(label, member, needles=needles)
+            findings.extend(name_findings)
+            if not name_findings:
+                findings.extend(scan_file_contents(label, member, archive.read(info), needles=needles))
     return findings
 
 
@@ -1374,16 +1596,13 @@ def scan_tar_archive(
                 continue
             member = Path(info.name)
             label = f"{path.relative_to(root)}!{info.name}"
-            findings.extend(scan_name(label, member, needles=needles))
-            if member.suffix in TEXT_SUFFIXES:
-                extracted = archive.extractfile(info)
-                if extracted is None:
-                    continue
-                try:
-                    text = extracted.read().decode("utf-8")
-                except UnicodeDecodeError:
-                    continue
-                findings.extend(scan_text(label, text, member, needles=needles))
+            name_findings = scan_name(label, member, needles=needles)
+            findings.extend(name_findings)
+            if name_findings:
+                continue
+            extracted = archive.extractfile(info)
+            if extracted is not None:
+                findings.extend(scan_file_contents(label, member, extracted.read(), needles=needles))
     return findings
 
 

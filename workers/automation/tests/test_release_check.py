@@ -46,6 +46,133 @@ def test_public_copyright_attribution_does_not_disable_private_name_detection() 
     ) == ["README.md: contains private first name"]
 
 
+def test_public_demo_fixture_allowlist_is_exact_and_keeps_the_pdf_ban() -> None:
+    allowed = Path("apps/web/public/demo/profile-resume.pdf")
+
+    assert release_check.scan_name(allowed.as_posix(), allowed) == []
+    assert release_check.scan_name("uploads/resume.pdf", Path("uploads/resume.pdf")) == [
+        "uploads/resume.pdf: private/runtime file should not be committed"
+    ]
+    assert release_check.scan_name(
+        "apps/web/public/demo/unreviewed.pdf",
+        Path("apps/web/public/demo/unreviewed.pdf"),
+    ) == ["apps/web/public/demo/unreviewed.pdf: private/runtime file should not be committed"]
+
+
+def test_demo_fixture_scanner_checks_allowed_pdf_bytes_for_privacy_needles() -> None:
+    fixture = Path("apps/web/public/demo/profile-resume.pdf")
+    findings = release_check.scan_file_contents(
+        fixture.as_posix(),
+        fixture,
+        b"%PDF-1.4\ncontact@example.local\nsk-synthetic-token\n",
+    )
+
+    assert f"{fixture}: demo fixture contains email" in findings
+    assert f"{fixture}: demo fixture contains secret" in findings
+    assert f"{fixture}: demo PDF fixture does not match its pinned content digest" in findings
+
+
+def test_demo_fixture_scanner_rejects_general_domains_and_phone_contacts() -> None:
+    fixture = Path("apps/web/public/demo/source-preview.html")
+    private_domain = "real-employer" + ".tech"
+    private_phone = "+34 " + "612 345 678"
+
+    findings = release_check.scan_file_contents(
+        fixture.as_posix(),
+        fixture,
+        f"{private_domain}\n{private_phone}\n2031-01-02T03:04:05.000Z\n120000".encode(),
+    )
+
+    assert f"{fixture}: demo fixture contains domain" in findings
+    assert f"{fixture}: demo fixture contains phone" in findings
+    assert findings.count(f"{fixture}: demo fixture contains phone") == 1
+
+
+def test_demo_build_source_maps_and_archives_scan_fixture_bytes(tmp_path: Path) -> None:
+    source_map = tmp_path / "dist/web/assets/app.js.map"
+    _write(source_map, "SyntheticSecret")
+    source_map_findings = release_check.scan_demo_build_outputs(
+        tmp_path,
+        needles=(release_check.ForbiddenNeedle("SyntheticSecret", "synthetic identity"),),
+    )
+
+    archive = tmp_path / "dist/web/demo-build.zip"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(
+            "demo/profile-resume.pdf",
+            b"%PDF-1.4\ncontact@example.local\nsk-synthetic-token\n",
+        )
+    archive_findings = release_check.scan_zip_archive(tmp_path, archive)
+
+    assert "dist/web/assets/app.js.map: contains synthetic identity" in source_map_findings
+    assert "dist/web/demo-build.zip!demo/profile-resume.pdf: demo fixture contains email" in archive_findings
+    assert "dist/web/demo-build.zip!demo/profile-resume.pdf: demo fixture contains secret" in archive_findings
+    assert "dist/web/demo-build.zip!demo/profile-resume.pdf: demo PDF fixture does not match its pinned content digest" in archive_findings
+
+
+def test_source_tree_keeps_scanning_all_utf8_code_while_build_maps_are_scanned_explicitly(
+    tmp_path: Path,
+) -> None:
+    source_ts = Path("apps/web/src/demo-fixture.ts")
+    source_js = Path("apps/web/src/demo-fixture.js")
+    _write(tmp_path / source_ts, "SyntheticSecret")
+    _write(tmp_path / source_js, "SyntheticSecret")
+    _write(tmp_path / "dist/web/assets/app.js", "SyntheticSecret")
+    _write(tmp_path / "dist/web/assets/app.js.map", "SyntheticSecret")
+
+    result = release_check.scan_tree(
+        tmp_path,
+        needles=(release_check.ForbiddenNeedle("SyntheticSecret", "synthetic identity"),),
+        paths=(source_ts, source_js),
+        tracked_paths=(),
+    )
+
+    assert "apps/web/src/demo-fixture.ts: contains synthetic identity" in result.findings
+    assert "apps/web/src/demo-fixture.js: contains synthetic identity" in result.findings
+    assert "dist/web/assets/app.js: contains synthetic identity" in result.findings
+    assert "dist/web/assets/app.js.map: contains synthetic identity" in result.findings
+
+
+def test_minified_build_scan_excludes_only_known_employer_collisions(
+    tmp_path: Path,
+) -> None:
+    employers = ("Tes" + "la", "Well" + "tech")
+    private_identifier = "el" + "oi" + "barti"
+    private_secret = "sk-" + "release-secret"
+    source = Path("apps/web/src/demo-fixture.ts")
+    _write(tmp_path / source, employers[1])
+    _write(
+        tmp_path / "dist/web/assets/private-data.js",
+        f'const demo = "{private_identifier} {private_secret}";',
+    )
+    _write(
+        tmp_path / "dist/web/assets/literal-employers.js",
+        f'const firstEmployer = "{employers[0]}"; const secondEmployer = "{employers[1]}";',
+    )
+    _write(tmp_path / "dist/web/assets/collision.js", "create" + "SlatePlugin")
+    _write(tmp_path / "dist/web/assets/app.js.map", employers[1])
+
+    result = release_check.scan_tree(
+        tmp_path,
+        needles=(
+            *release_check.FORBIDDEN_TEXT,
+            release_check.ForbiddenNeedle(private_secret, "private release secret"),
+        ),
+        paths=(source,),
+        tracked_paths=(),
+    )
+
+    assert "apps/web/src/demo-fixture.ts: contains private employer evidence" in result.findings
+    assert "dist/web/assets/private-data.js: contains private username/domain" in result.findings
+    assert "dist/web/assets/private-data.js: contains private release secret" in result.findings
+    assert result.findings.count(
+        "dist/web/assets/literal-employers.js: contains private employer evidence"
+    ) == 2
+    assert "dist/web/assets/app.js.map: contains private employer evidence" in result.findings
+    assert "dist/web/assets/collision.js: contains private employer evidence" not in result.findings
+
+
 def test_release_check_catches_synthetic_violation_per_class(tmp_path: Path) -> None:
     blocked_distribution = "job" + "hunter"
     _write(

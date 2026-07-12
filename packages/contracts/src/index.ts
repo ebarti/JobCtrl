@@ -1,5 +1,6 @@
 export * from "./schemas.js";
 export * from "./rpc.js";
+export * from "./demo-fixture-contract.js";
 
 // Operations / Read-Side projection types — re-exported from
 // @jobctrl/domain-types so apps/api (which depends on contracts but
