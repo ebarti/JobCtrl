@@ -214,8 +214,8 @@ vanishes from the funnel.
 
 ## Local Commands
 
-These are source-development commands. The unpublished bundled product uses
-one native `jobctrl` executable for lifecycle and domain commands and does not
+These are source-development commands. The installed bundled product uses one
+native `jobctrl` executable for lifecycle and domain commands and does not
 expose uv, pnpm, or checkout paths.
 
 Python CLI:

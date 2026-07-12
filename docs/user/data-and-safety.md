@@ -77,7 +77,7 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | Path | Contents |
 | --- | --- |
 | `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, events, projections, settings, artifact metadata, review drafts, contacts, and workflows. Treat all three files as one database. |
-| `temporal.db` plus `-wal` / `-shm` | Bundled-runtime Temporal state. During a native bundled update or rollback, it is hash-snapshotted and restored only together with `jobctrl.db`; never restore just one member of that pair. The bundled implementation exists, but the signed channel is not public until signing, notarization, publication, and clean-machine QA execute. |
+| `temporal.db` plus `-wal` / `-shm` | Bundled-runtime Temporal state. During a native bundled update or rollback, it is hash-snapshotted and restored only together with `jobctrl.db`; never restore just one member of that pair. |
 | `.env` | Plaintext provider credentials and runtime settings. Not encrypted at rest. |
 | `tailored_resumes/`, `cover_letters/` | Generated text, HTML, and PDF artifacts. |
 | `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state. |

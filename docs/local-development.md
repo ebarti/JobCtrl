@@ -7,10 +7,9 @@ frontend, docs-site, and documentation-screenshot workflows.
 
 **Read this if** you are running or changing a source checkout. These commands
 install contributor dependencies and are deliberately different from the
-installed product contract. After the first signed bundled release is
-published, installed users will run `jobctrl start` and plain
-`jobctrl <command>` from any directory; they will not use this page's Git,
-pnpm, Corepack, uv, or checkout-relative commands.
+installed product contract. Installed users run `jobctrl start` and plain
+`jobctrl <command>` from any directory; they do not use this page's Git, pnpm,
+Corepack, uv, or checkout-relative commands.
 
 ## Install
 
@@ -34,12 +33,11 @@ created by `jobctrl init`.
 `--skip-system`, `--skip-doctor`, and `--run-doctor` for non-interactive,
 partial, or CLI-diagnostic runs.
 
-`scripts/get` is now the transport-only bootstrap boundary for the planned
-bundled distribution; it neither clones a checkout nor provisions contributor
-tools. The P0–P6 implementation exists, but no signed and notarized public
-artifact, authenticated release pointer, or stable Homebrew formula has been
-published. Its normal network path therefore still fails closed. Use
-`scripts/install` and the source commands on this page for contributor work.
+`scripts/get` is the transport-only bootstrap boundary for the bundled
+distribution; it neither clones a checkout nor provisions contributor tools.
+The public installer resolves the authenticated stable release pointer and
+delegates installation to the signed native installer. Contributors continue
+to use `scripts/install` and the source commands on this page.
 `docs/public/install.sh` must stay byte-for-byte identical to `scripts/get`;
 `pnpm docs:build` checks that before building the site.
 
@@ -58,7 +56,7 @@ Playwright browser binaries. System Chrome/Chromium is optional; contributor
 testing of apply behavior must explicitly enable a browser capability first.
 
 The source installer downloads separate web/E2E and Python-worker Playwright
-Chromium revisions. The bundled release candidate instead contains exactly one
+Chromium revisions. The bundled release instead contains exactly one
 managed Playwright Chromium headless shell for core discovery, enrichment, and
 PDF rendering, with no full Chrome/Chromium application. A system browser stays
 optional unless an authenticated-browser or auto-apply capability is explicitly

@@ -137,60 +137,6 @@ All screenshots use synthetic sample data. Open the [Product Tour](user/screensh
 for the complete Profile → Discovery → Pipeline → Jobs → Apply Review → Runs
 workflow, including job-detail evidence and resume editing.
 
-## Which operating style fits?
-
-<div class="jh-compare-fit-grid">
-  <div><strong>Choose JobCtrl</strong><span>when you want a structured application, visible audit records, durable automation, and optional supervised submission.</span></div>
-  <div><strong>Choose Career-Ops</strong><span>when human-readable files, several AI coding CLI choices, and a manual final submit click are the priority.</span></div>
-  <div><strong>Choose AI Job Search</strong><span>when you already work in Claude Code and prefer a tightly specified LaTeX drafter-reviewer workflow.</span></div>
-</div>
-
-## Method and limitations
-
-This page was last verified on **2026-07-09** against these exact snapshots:
-
-| Project | Default-branch snapshot |
-| --- | --- |
-| JobCtrl | [`15356b39790e8396d1892573f2810d2ebf7fb359`](https://github.com/ebarti/JobCtrl/tree/15356b39790e8396d1892573f2810d2ebf7fb359) |
-| Career-Ops | [`e9bacc484185f56cec210ea821bf1774e989acea`](https://github.com/santifer/career-ops/tree/e9bacc484185f56cec210ea821bf1774e989acea) |
-| AI Job Search | [`fea59fd8df52082d2a564fe82bdebe587f335d58`](https://github.com/MadsLorentzen/ai-job-search/tree/fea59fd8df52082d2a564fe82bdebe587f335d58) |
-
-Primary evidence came from first-party repository documentation, prompts,
-configuration, code, and repository issue threads. The issue pass inventoried
-every open Career-Ops issue, reviewed a risk-focused sample of its open and
-closed threads, and reviewed every AI Job Search issue on **2026-07-09**.
-User-authored reports were treated as field evidence, not proof of universal
-behavior.
-An issue was treated as a current limitation only when it matched the pinned code
-or a maintainer confirmed the behavior; an open fix pull request was not treated
-as shipped, and a closed defect fixed before the snapshot was not carried forward
-as current. Issue text was not accepted verbatim: for example, AI Job Search
-[issue #106](https://github.com/MadsLorentzen/ai-job-search/issues/106) still says
-`search_company` has zero tests, while the pinned snapshot already contains
-`SearchCompanyTests`; only the remaining direct `match_score` coverage gap is
-current, and it is too narrow to affect this product-level table.
-
-The projects were not benchmarked against the same jobs, profiles, models, or
-machines, so this page makes no claim about output quality, speed, reliability
-rates, or cost in practice. It is also not a security review, legal review, or
-certification that automated access complies with every job site's terms.
-
-Re-verify this page for every JobCtrl release and at least quarterly. Comparative
-claims should remain pinned to exact upstream commits; if a capability cannot be
-confirmed from a current primary source, mark it **Not evidenced** rather than
-inferring it from a project name or marketing copy.
-
-### Reading the statuses
-
-- **Present** means first-party documentation and implementation artifacts
-  support the capability in the cited snapshot. It does not mean this review
-  executed or benchmarked the upstream project.
-- **Partial** means the project covers a useful part of the capability, or uses
-  a narrower workflow.
-- **Not evidenced** means no matching capability was found in the cited public
-  snapshot. It does not mean the project could not add one or that a user could
-  not build it through customization.
-
 ## Appendix: evidence-backed capability matrix
 
 | Capability | JobCtrl | Career-Ops | AI Job Search |
