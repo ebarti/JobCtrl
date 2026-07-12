@@ -120,6 +120,7 @@ beforeEach(() => {
       daily_budget_usd: 12.5,
       score_criteria: "Security leadership and platform reliability.",
       target_criteria: "Director-plus infrastructure and security roles.",
+      preferred_models: { claude: "opus" },
     }),
   );
 });
@@ -8287,6 +8288,7 @@ describe("local TypeScript API", () => {
         dailyBudgetUsd: 12.5,
         scoreCriteria: "Security leadership and platform reliability.",
         targetCriteria: "Director-plus infrastructure and security roles.",
+        preferredModels: { claude: "opus" },
       },
       paths: {
         settingsPath: options.settingsPath,
@@ -8313,6 +8315,7 @@ describe("local TypeScript API", () => {
         dailyBudgetUsd: 25,
         scoreCriteria: "",
         targetCriteria: "",
+        preferredModels: {},
       },
     });
 
@@ -8604,6 +8607,211 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("returns a sanitized provider model catalog in stable provider order", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      result: {
+        providers: [
+          {
+            provider: "codex",
+            configured: true,
+            ready: true,
+            source: "live",
+            models: [{ id: "gpt-test", displayName: "GPT Test", isDefault: true }],
+          },
+          {
+            provider: "claude",
+            configured: true,
+            ready: true,
+            source: "provider_aliases",
+            models: [{ id: "sonnet", displayName: "Sonnet" }],
+          },
+          {
+            provider: "google",
+            configured: false,
+            ready: false,
+            source: "live",
+            models: [],
+            message: "Provider is not configured.",
+          },
+        ],
+      },
+    }));
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call, close: vi.fn(async () => undefined) },
+    });
+
+    const response = await app.inject({ method: "GET", url: "/v1/providers/models" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      providers: [
+        { provider: "codex", source: "live" },
+        { provider: "claude", source: "provider_aliases" },
+        { provider: "google", models: [] },
+      ],
+    });
+    expect(call).toHaveBeenCalledWith("provider_models", {});
+    await app.close();
+  });
+
+  it("validates, merges, and clears preferred models without persisting credentials", async () => {
+    const currentSettings = JSON.parse(fs.readFileSync(options.settingsPath, "utf8"));
+    currentSettings.preferred_models.google = "gemini-test";
+    fs.writeFileSync(options.settingsPath, JSON.stringify(currentSettings));
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      result: {
+        providers: [
+          {
+            provider: "codex",
+            configured: true,
+            ready: true,
+            source: "live",
+            models: [{ id: "gpt-test", displayName: "GPT Test" }],
+          },
+          {
+            provider: "claude",
+            configured: false,
+            ready: false,
+            source: "provider_aliases",
+            models: [],
+            message: "Provider is not configured.",
+          },
+          {
+            provider: "google",
+            configured: true,
+            ready: true,
+            source: "live",
+            models: [{ id: "gemini-test", displayName: "Gemini Test" }],
+          },
+        ],
+      },
+    }));
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call, close: vi.fn(async () => undefined) },
+    });
+
+    const save = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: { preferredModels: { codex: "gpt-test", claude: null } },
+    });
+
+    expect(save.statusCode, save.body).toBe(200);
+    expect(save.json().settings.preferredModels).toEqual({ codex: "gpt-test", google: "gemini-test" });
+    const persisted = JSON.parse(fs.readFileSync(options.settingsPath, "utf8"));
+    expect(persisted.preferred_models).toEqual({ codex: "gpt-test", google: "gemini-test" });
+    expect(JSON.stringify(persisted)).not.toMatch(/credential|api[_-]?key|token/i);
+    expect(call).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it("clears a preferred model without provider readiness or catalog access", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => {
+      throw new Error("catalog must not be called for a clear");
+    });
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call, close: vi.fn(async () => undefined) },
+    });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: { preferredModels: { claude: null } },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().settings.preferredModels).toEqual({});
+    expect(JSON.parse(fs.readFileSync(options.settingsPath, "utf8")).preferred_models).toEqual({});
+    expect(call).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("rejects unavailable providers and unoffered preferred models before persistence", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      result: {
+        providers: [
+          { provider: "codex", configured: true, ready: true, source: "live", models: [{ id: "gpt-test", displayName: "GPT Test" }] },
+          { provider: "claude", configured: false, ready: false, source: "provider_aliases", models: [], message: "Provider is not configured." },
+          { provider: "google", configured: true, ready: true, source: "live", models: [{ id: "gemini-test", displayName: "Gemini Test" }] },
+        ],
+      },
+    }));
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call, close: vi.fn(async () => undefined) },
+    });
+    const before = fs.readFileSync(options.settingsPath, "utf8");
+
+    const unavailable = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: { preferredModels: { claude: "sonnet" } },
+    });
+    const invalid = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: { preferredModels: { google: "gemini-unknown" } },
+    });
+
+    expect(unavailable.statusCode).toBe(409);
+    expect(unavailable.json().error).toBe("provider_not_ready");
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json().error).toBe("invalid_preferred_model");
+    expect(fs.readFileSync(options.settingsPath, "utf8")).toBe(before);
+    await app.close();
+  });
+
+  it("returns 503 when a ready provider's live catalog cannot be listed", async () => {
+    const marker = "secret-live-catalog-error";
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      result: {
+        providers: [
+          {
+            provider: "codex",
+            configured: true,
+            ready: true,
+            source: "live",
+            models: [],
+            message: "Live model catalog is temporarily unavailable.",
+          },
+          { provider: "claude", configured: true, ready: true, source: "provider_aliases", models: [{ id: "sonnet", displayName: "Sonnet" }] },
+          { provider: "google", configured: false, ready: false, source: "live", models: [], message: "Provider is not configured." },
+        ],
+      },
+    }));
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call, close: vi.fn(async () => undefined) },
+    });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: { preferredModels: { codex: marker } },
+    });
+
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toEqual({
+      ok: false,
+      error: "provider_models_failed",
+      message: "Provider models are temporarily unavailable.",
+    });
+    expect(response.body).not.toContain(marker);
+    await app.close();
+  });
+
   it("sanitizes provider dispatcher failures", async () => {
     const marker = "secret-provider-token";
     const providerDispatcher: JsonRpcDispatcher = {
@@ -8618,10 +8826,18 @@ describe("local TypeScript API", () => {
 
     const status = await app.inject({ method: "GET", url: "/v1/providers/status" });
     const verify = await app.inject({ method: "POST", url: "/v1/providers/codex/verify" });
+    const models = await app.inject({ method: "GET", url: "/v1/providers/models" });
+    const preferredModel = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: { preferredModels: { codex: "gpt-test" } },
+    });
 
     expect(status.statusCode, status.body).toBe(502);
     expect(verify.statusCode, verify.body).toBe(502);
-    expect(`${status.body}${verify.body}`).not.toContain(marker);
+    expect(models.statusCode, models.body).toBe(503);
+    expect(preferredModel.statusCode, preferredModel.body).toBe(503);
+    expect(`${status.body}${verify.body}${models.body}${preferredModel.body}`).not.toContain(marker);
 
     await app.close();
   });

@@ -9,6 +9,8 @@ export const profileKeys = {
   credentials: (tenantId: TenantId) => [...profileKeys.all(tenantId), "credentials"] as const,
   providerStatus: (tenantId: TenantId) =>
     [...profileKeys.all(tenantId), "provider-status"] as const,
+  providerModels: (tenantId: TenantId) =>
+    [...profileKeys.all(tenantId), "provider-models"] as const,
   resumeTemplates: (tenantId: TenantId) =>
     [...profileKeys.all(tenantId), "resume-templates"] as const,
 };

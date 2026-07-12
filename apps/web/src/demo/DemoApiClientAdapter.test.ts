@@ -9,6 +9,7 @@ import {
 } from "@jobctrl/contracts";
 
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
+import { sampleProviderModelsResponse } from "../test/fixtures/projections.js";
 import { FakeTelemetryPort } from "../test/testPorts.js";
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import {
@@ -183,6 +184,7 @@ const READ_CASES = [
   ],
   ["settings", (api: ApiClientPort) => api.settings()],
   ["credentials", (api: ApiClientPort) => api.credentials()],
+  ["providerModels", (api: ApiClientPort) => api.providerModels()],
   ["listContacts", (api: ApiClientPort) => api.listContacts()],
   [
     "contact",
@@ -208,6 +210,14 @@ const READ_METHODS = new Set<keyof ApiClientPort>(
 );
 
 describe("DemoApiClientAdapter", () => {
+  it("keeps the read-only synthetic model catalog aligned with the frontend contract fixture", async () => {
+    const { adapter } = await createAdapter();
+    const catalog = await adapter.providerModels();
+    expect(catalog.providers.find((provider) => provider.provider === "claude")?.models).toEqual(
+      sampleProviderModelsResponse.providers.find((provider) => provider.provider === "claude")?.models,
+    );
+  });
+
   it("covers every port member and reserves capability errors for unavailable methods", async () => {
     const { adapter } = await createAdapter();
     const fetchSpy = vi.spyOn(globalThis, "fetch");

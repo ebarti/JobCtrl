@@ -31,6 +31,7 @@ import { Route as OutreachIndexRouteImport } from "./routes/outreach.index";
 import { Route as JobsIndexRouteImport } from "./routes/jobs.index";
 import { Route as ArtifactsIndexRouteImport } from "./routes/artifacts.index";
 import { Route as SpikesTableFiltersRouteImport } from "./routes/spikes.table-filters";
+import { Route as SettingsModelsRouteImport } from "./routes/settings.models";
 import { Route as SettingsCredentialsRouteImport } from "./routes/settings.credentials";
 import { Route as RunsRunIdRouteImport } from "./routes/runs.$runId";
 import { Route as ProfileImportRouteImport } from "./routes/profile.import";
@@ -153,6 +154,11 @@ const SpikesTableFiltersRoute = SpikesTableFiltersRouteImport.update({
   path: "/spikes/table-filters",
   getParentRoute: () => rootRouteImport,
 } as any);
+const SettingsModelsRoute = SettingsModelsRouteImport.update({
+  id: "/models",
+  path: "/models",
+  getParentRoute: () => SettingsRoute,
+} as any);
 const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
   id: "/credentials",
   path: "/credentials",
@@ -232,6 +238,7 @@ export interface FileRoutesByFullPath {
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
+  "/settings/models": typeof SettingsModelsRoute;
   "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts/": typeof ArtifactsIndexRoute;
   "/jobs/": typeof JobsIndexRoute;
@@ -261,6 +268,7 @@ export interface FileRoutesByTo {
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
+  "/settings/models": typeof SettingsModelsRoute;
   "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts": typeof ArtifactsIndexRoute;
   "/jobs": typeof JobsIndexRoute;
@@ -297,6 +305,7 @@ export interface FileRoutesById {
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
+  "/settings/models": typeof SettingsModelsRoute;
   "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts/": typeof ArtifactsIndexRoute;
   "/jobs/": typeof JobsIndexRoute;
@@ -334,6 +343,7 @@ export interface FileRouteTypes {
     | "/profile/import"
     | "/runs/$runId"
     | "/settings/credentials"
+    | "/settings/models"
     | "/spikes/table-filters"
     | "/artifacts/"
     | "/jobs/"
@@ -363,6 +373,7 @@ export interface FileRouteTypes {
     | "/profile/import"
     | "/runs/$runId"
     | "/settings/credentials"
+    | "/settings/models"
     | "/spikes/table-filters"
     | "/artifacts"
     | "/jobs"
@@ -398,6 +409,7 @@ export interface FileRouteTypes {
     | "/profile/import"
     | "/runs/$runId"
     | "/settings/credentials"
+    | "/settings/models"
     | "/spikes/table-filters"
     | "/artifacts/"
     | "/jobs/"
@@ -587,6 +599,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SpikesTableFiltersRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/settings/models": {
+      id: "/settings/models";
+      path: "/models";
+      fullPath: "/settings/models";
+      preLoaderRoute: typeof SettingsModelsRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
     "/settings/credentials": {
       id: "/settings/credentials";
       path: "/credentials";
@@ -762,11 +781,13 @@ const RunsRouteWithChildren = RunsRoute._addFileChildren(RunsRouteChildren);
 
 interface SettingsRouteChildren {
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute;
+  SettingsModelsRoute: typeof SettingsModelsRoute;
   SettingsIndexRoute: typeof SettingsIndexRoute;
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsCredentialsRoute: SettingsCredentialsRoute,
+  SettingsModelsRoute: SettingsModelsRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 };
 

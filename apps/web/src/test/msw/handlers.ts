@@ -52,6 +52,7 @@ import {
   sampleHealthResponse,
   sampleOutcomeAnalyticsSummary,
   sampleProfileResponse,
+  sampleProviderModelsResponse,
   sampleResumeTemplateListResponse,
   sampleSettingsResponse,
 } from "../fixtures/projections.js";
@@ -875,6 +876,7 @@ export const handlers = [
   http.patch("*/v1/credentials", () => HttpResponse.json(sampleCredentialsResponse)),
   http.patch("*/v1/credentials/batch", () => HttpResponse.json(sampleCredentialsResponse)),
   http.delete("*/v1/credentials/:key", () => HttpResponse.json(sampleCredentialsResponse)),
+  http.get("*/v1/providers/models", () => HttpResponse.json(sampleProviderModelsResponse)),
   http.get("*/v1/providers/status", () => HttpResponse.json(sampleProviderStatusResponse)),
   http.post("*/v1/providers/codex/verify", () =>
     HttpResponse.json({

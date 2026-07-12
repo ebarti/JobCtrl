@@ -1,8 +1,11 @@
 import { test, expect } from "@playwright/test";
+import type { ProviderId } from "@jobctrl/contracts";
 
 import {
   sampleCredentialsResponse,
+  sampleProviderModelsResponse,
   sampleProviderStatusResponse,
+  sampleSettingsResponse,
 } from "../../src/test/fixtures/projections.js";
 import {
   removeClaudeProviderBatch,
@@ -231,4 +234,58 @@ test("Guided Claude and Google setup can be removed through confirmed provider b
     removeClaudeProviderBatch(),
     removeGoogleProviderBatch(),
   ]);
+});
+
+test("Model Selection requires a ready provider and saves one provider preference", async ({
+  page,
+}) => {
+  let settings = structuredClone(sampleSettingsResponse);
+  const submittedSettings: unknown[] = [];
+  await page.route("**/v1/providers/models", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(sampleProviderModelsResponse),
+    });
+  });
+  await page.route("**/v1/settings", async (route) => {
+    if (route.request().method() === "PATCH") {
+      const body = route.request().postDataJSON() as {
+        preferredModels?: Record<string, string | null>;
+      };
+      submittedSettings.push(body);
+      const nextPreferredModels: Partial<Record<ProviderId, string>> = {
+        ...settings.settings.preferredModels,
+      };
+      for (const [provider, model] of Object.entries(body.preferredModels ?? {})) {
+        const providerId = provider as ProviderId;
+        if (model === null) delete nextPreferredModels[providerId];
+        else nextPreferredModels[providerId] = model;
+      }
+      settings = {
+        ...settings,
+        settings: { ...settings.settings, preferredModels: nextPreferredModels },
+      };
+    }
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(settings) });
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/settings/models");
+
+  const google = page.locator('article[data-provider="google"]');
+  await google.getByRole("link", { name: "configure Google" }).click();
+  await expect(page).toHaveURL(/\/settings\/credentials$/);
+
+  await page.goto("/settings/models");
+  const claude = page.locator('article[data-provider="claude"]');
+  await claude.getByLabel("Preferred model").selectOption("opus");
+  await claude.getByRole("button", { name: "save model" }).click();
+
+  await expect(claude.getByRole("status")).toContainText(
+    "Claude preference saved for newly started work.",
+  );
+  expect(submittedSettings).toEqual([{ preferredModels: { claude: "opus" } }]);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true);
 });

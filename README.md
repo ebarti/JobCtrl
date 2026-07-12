@@ -325,6 +325,8 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
   the two databases as one verified pair, never as independent files.
 - `.env` — plaintext, cross-platform fallback for provider/API credentials
   and local runtime settings; it is not encrypted at rest.
+- `dashboard.json` — non-secret dashboard settings, including provider-scoped
+  preferred model IDs. It never stores provider credentials.
 - `tailored_resumes/`, `cover_letters/`, `logs/` — generated artifacts and
   logs.
 - `chrome-workers/`, `apply-workers/` — local browser/apply worker state.
@@ -507,7 +509,13 @@ The cross-platform provider-credential path is the plaintext
 Credentials** guides one of three providers: authenticated Codex CLI, Claude
 Agent SDK (Anthropic API key or supported cloud-provider credentials), or
 Google (Gemini key or Vertex AI ADC). One ready provider is sufficient for all
-core AI stages; a second provider is optional. Secret values managed by the
+core AI stages; a second provider is optional. After a provider is ready,
+Settings can save a preferred model for that provider. Codex and Google choices
+come from live provider catalogs; Claude exposes the provider-safe `sonnet`,
+`opus`, and `haiku` aliases rather than claiming live enumeration. A saved model
+never selects another provider. New adapters resolve models in this order:
+an explicit non-default workflow model, `LLM_MODEL`, the saved model for the
+selected ready provider, then that provider's default. Secret values managed by the
 panel are stored in the system Keychain, while AWS, Google, and Azure credential
 files remain owned by their vendor CLIs. At Python process startup, a non-empty
 environment value takes precedence over the corresponding Keychain entry.
@@ -532,7 +540,7 @@ Keychain output.
 - `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex AI ADC — Google.
 - `JOBCTRL_ANALYSIS_LEGS` — comma-separated enabled analysis legs when setup
   intentionally skips an unauthenticated leg.
-- `LLM_MODEL` — optional model override for the selected provider.
+- `LLM_MODEL` — optional model override ahead of the saved provider preference.
 - `VITE_GOOGLE_MAPS_API_KEY` — optional address search in the Profile form.
 - `PLAYWRIGHT_SKIP_BROWSER_GC=1` — keep other worktrees' Playwright browsers
   when running `playwright install` from this checkout.

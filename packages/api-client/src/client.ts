@@ -97,6 +97,7 @@ import type {
   ProfileImportResponse,
   ProfileUpdateRequest,
   ProviderStatusResponse,
+  ProviderModelCatalogResponse,
   PipelineStageRunResponse,
   QuarantineDecision,
   QuarantineDecisionResponse,
@@ -815,6 +816,10 @@ export class JobCtrlApiClient {
 
   providerStatus(): Promise<ProviderStatusResponse> {
     return this.get("/v1/providers/status");
+  }
+
+  providerModels(): Promise<ProviderModelCatalogResponse> {
+    return this.get("/v1/providers/models");
   }
 
   verifyCodexProvider(): Promise<CodexVerifyResponse> {

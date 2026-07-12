@@ -345,6 +345,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   ) {
     return this.client.updateCredentialsBatch(body);
   }
+  providerModels() {
+    return this.client.providerModels();
+  }
   providerStatus() {
     return this.client.providerStatus();
   }

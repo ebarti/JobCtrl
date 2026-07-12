@@ -435,6 +435,48 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return this.read((model) => model.profile.credentials);
   }
 
+  async providerModels(): Promise<ApiClientResponse<"providerModels">> {
+    return {
+      ok: true,
+      providers: [
+        {
+          provider: "codex",
+          configured: true,
+          ready: true,
+          source: "live",
+          models: [
+            { id: "gpt-5.5", displayName: "GPT-5.5", isDefault: true },
+            { id: "gpt-5.4", displayName: "GPT-5.4" },
+          ],
+          message: "Synthetic preview catalog; no Codex account is connected.",
+        },
+        {
+          provider: "claude",
+          configured: true,
+          ready: true,
+          source: "provider_aliases",
+          models: [
+            { id: "sonnet", displayName: "Sonnet" },
+            { id: "opus", displayName: "Opus", isDefault: true },
+            { id: "haiku", displayName: "Haiku" },
+          ],
+          message: "Synthetic preview of Claude provider-safe aliases.",
+        },
+        {
+          provider: "google",
+          configured: true,
+          ready: true,
+          source: "live",
+          models: [
+            { id: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro", isDefault: true },
+            { id: "gemini-2.5-flash", displayName: "Gemini 2.5 Flash" },
+          ],
+          message: "Synthetic preview catalog; no Google account is connected.",
+        },
+      ],
+    };
+  }
+
   async providerStatus(): Promise<ApiClientResponse<"providerStatus">> {
     return {
       ok: true,

@@ -51,6 +51,8 @@ import {
   ProfileImportRequestSchema,
   type ProfileConfigResponse,
   ProfileUpdateRequestSchema,
+  type ProviderModelCatalogItem,
+  ProviderModelCatalogResultSchema,
   ProviderStatusResultSchema,
   QuarantineDecisionSchema,
   RescoreJobRequestSchema,
@@ -2179,6 +2181,47 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
+    const selectedModels = Object.entries(body.preferredModels ?? {}).filter(
+      (entry): entry is ["codex" | "claude" | "google", string] => entry[1] !== null,
+    );
+    if (selectedModels.length > 0) {
+      let catalog: { providers: ProviderModelCatalogItem[] };
+      try {
+        catalog = await dispatchProviderModelCatalog(providerDispatcher);
+      } catch {
+        void reply.code(503);
+        return providerOperationError(
+          "provider_models_failed",
+          "Provider models are temporarily unavailable.",
+        );
+      }
+      for (const [provider, model] of selectedModels) {
+        const item = catalog.providers.find((candidate) => candidate.provider === provider);
+        if (!item?.ready) {
+          void reply.code(409);
+          return {
+            ok: false as const,
+            error: "provider_not_ready",
+            message: `${provider} must be ready before selecting a preferred model.`,
+          };
+        }
+        if (!item.models.some((candidate) => candidate.id === model)) {
+          if (item.source === "live" && item.models.length === 0 && item.message) {
+            void reply.code(503);
+            return providerOperationError(
+              "provider_models_failed",
+              "Provider models are temporarily unavailable.",
+            );
+          }
+          void reply.code(400);
+          return {
+            ok: false as const,
+            error: "invalid_preferred_model",
+            message: `${model} is not currently offered by ${provider}.`,
+          };
+        }
+      }
+    }
     try {
       return writeSettingsConfig({ settingsPath: options.settingsPath }, body);
     } catch (error) {
@@ -2284,6 +2327,19 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return providerOperationError(
         "provider_status_failed",
         "Provider status is temporarily unavailable.",
+      );
+    }
+  });
+
+  app.get("/v1/providers/models", async (_request, reply) => {
+    try {
+      const catalog = await dispatchProviderModelCatalog(providerDispatcher);
+      return { ok: true as const, providers: catalog.providers };
+    } catch {
+      void reply.code(503);
+      return providerOperationError(
+        "provider_models_failed",
+        "Provider models are temporarily unavailable.",
       );
     }
   });
@@ -2919,10 +2975,24 @@ function outreachTransitionError(reply: FastifyReply, error: unknown): { ok: fal
 }
 
 function providerOperationError(
-  error: "provider_status_failed" | "provider_verification_failed",
+  error: "provider_status_failed" | "provider_verification_failed" | "provider_models_failed",
   message: string,
 ) {
   return { ok: false as const, error, message };
+}
+
+async function dispatchProviderModelCatalog(
+  dispatcher: JsonRpcDispatcher,
+): Promise<{ providers: ProviderModelCatalogItem[] }> {
+  const response = await dispatcher.call("provider_models", {});
+  if (response.error) {
+    throw new Error("provider model catalog RPC failed");
+  }
+  const parsed = ProviderModelCatalogResultSchema.safeParse(response.result);
+  if (!parsed.success) {
+    throw new Error("provider model catalog RPC returned an invalid response");
+  }
+  return parsed.data;
 }
 
 function decodeRouteParam(value: string): string {

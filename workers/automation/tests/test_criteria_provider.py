@@ -5,6 +5,7 @@ from jobctrl.infrastructure.scoring.criteria_provider import (
     read_apply_concurrency,
     read_daily_budget_usd,
     read_min_fit_score,
+    read_preferred_model,
 )
 
 
@@ -18,7 +19,8 @@ def test_dashboard_settings_env_override_is_shared_by_worker_readers(
           "applyApprovalRequired": false,
           "applyConcurrency": 5,
           "dailyBudgetUsd": 13.5,
-          "minFitScore": 8
+          "minFitScore": 8,
+          "preferred_models": {"claude": "  opus  ", "codex": null}
         }""",
         encoding="utf-8",
     )
@@ -28,6 +30,9 @@ def test_dashboard_settings_env_override_is_shared_by_worker_readers(
     assert read_apply_concurrency() == 5
     assert read_daily_budget_usd() == 13.5
     assert read_min_fit_score() == 8
+    assert read_preferred_model("claude") == "opus"
+    assert read_preferred_model("codex") is None
+    assert read_preferred_model("local") is None
 
 
 def test_dashboard_settings_env_override_expands_home(monkeypatch, tmp_path) -> None:

@@ -1480,6 +1480,7 @@ export const DEMO_READ_MODEL = {
       dailyBudgetUsd: 20,
       scoreCriteria: "Synthetic demonstration criteria.",
       targetCriteria: "Synthetic demonstration target.",
+      preferredModels: { claude: "sonnet" },
     },
     paths: { settingsPath: "browser-local demo settings" },
   },

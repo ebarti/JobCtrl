@@ -1758,6 +1758,14 @@ export const SettingsUpdateRequestSchema = z
     dailyBudgetUsd: z.coerce.number().min(0).optional(),
     scoreCriteria: z.string().max(8000).optional(),
     targetCriteria: z.string().max(8000).optional(),
+    preferredModels: z
+      .object({
+        codex: z.string().trim().min(1).max(160).nullable().optional(),
+        claude: z.string().trim().min(1).max(160).nullable().optional(),
+        google: z.string().trim().min(1).max(160).nullable().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type SettingsUpdateRequest = z.infer<typeof SettingsUpdateRequestSchema>;
@@ -1847,6 +1855,62 @@ export type CredentialBatchUpdateRequest = z.infer<
 
 export const ProviderIds = ["codex", "claude", "google"] as const;
 export type ProviderId = (typeof ProviderIds)[number];
+
+export const ProviderModelCatalogSourceSchema = z.enum(["live", "provider_aliases"]);
+export type ProviderModelCatalogSource = z.infer<typeof ProviderModelCatalogSourceSchema>;
+
+export const ProviderModelSchema = z
+  .object({
+    id: z.string().trim().min(1).max(160),
+    displayName: z.string().trim().min(1).max(160),
+    isDefault: z.boolean().optional(),
+  })
+  .strict();
+export type ProviderModel = z.infer<typeof ProviderModelSchema>;
+
+export const ProviderModelCatalogItemSchema = z
+  .object({
+    provider: z.enum(ProviderIds),
+    configured: z.boolean(),
+    ready: z.boolean(),
+    source: ProviderModelCatalogSourceSchema,
+    models: z.array(ProviderModelSchema).max(512),
+    message: z.string().trim().min(1).max(240).optional(),
+  })
+  .strict();
+export type ProviderModelCatalogItem = z.infer<typeof ProviderModelCatalogItemSchema>;
+
+export const ProviderModelCatalogResultSchema = z
+  .object({
+    providers: z.array(ProviderModelCatalogItemSchema).length(ProviderIds.length),
+  })
+  .strict()
+  .superRefine(({ providers }, context) => {
+    for (const [index, provider] of providers.entries()) {
+      if (provider.provider !== ProviderIds[index]) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `providers must use stable ${ProviderIds.join(", ")} order`,
+          path: ["providers", index, "provider"],
+        });
+      }
+      const expectedSource = provider.provider === "claude" ? "provider_aliases" : "live";
+      if (provider.source !== expectedSource) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${provider.provider} catalog source must be ${expectedSource}`,
+          path: ["providers", index, "source"],
+        });
+      }
+      if (!provider.ready && provider.models.length > 0) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "unready providers must not return models",
+          path: ["providers", index, "models"],
+        });
+      }
+    }
+  });
 
 export const ProviderStatusModeSchema = z.string().trim().min(1).max(80).nullable();
 
@@ -3441,6 +3505,7 @@ export interface DashboardSettings {
   dailyBudgetUsd: number;
   scoreCriteria: string;
   targetCriteria: string;
+  preferredModels: Partial<Record<ProviderId, string>>;
 }
 
 export interface SettingsResponse {
@@ -3700,6 +3765,11 @@ export interface ProviderStatusResponse {
   providers: ProviderStatusItem[];
 }
 
+export interface ProviderModelCatalogResponse {
+  ok: true;
+  providers: ProviderModelCatalogItem[];
+}
+
 export interface CodexVerifyResponse {
   ok: true;
   verification: z.infer<typeof CodexVerifyResultSchema>;
@@ -3707,7 +3777,7 @@ export interface CodexVerifyResponse {
 
 export interface ProviderOperationErrorResponse {
   ok: false;
-  error: "provider_status_failed" | "provider_verification_failed";
+  error: "provider_status_failed" | "provider_verification_failed" | "provider_models_failed";
   message: string;
 }
 

@@ -13,6 +13,7 @@ import {
   GenerateInterviewPrepParamsSchema,
   ManualCaptureImportParamsSchema,
   ManualCaptureImportWorkflowResultSchema,
+  ProviderModelCatalogResultSchema,
   RefreshCompensationParamsSchema,
   RefreshCompensationResultSchema,
   RescoreJobParamsSchema,
@@ -20,6 +21,7 @@ import {
   RetailorCurrentPolicyParamsSchema,
   RetailorJobParamsSchema,
   RpcMethods,
+  SettingsUpdateRequestSchema,
   TailorJobParamsSchema,
 } from "../src/contracts.js";
 
@@ -62,6 +64,78 @@ describe("cancel_run RPC contract", () => {
   it("rejects responses with the wrong status literal", () => {
     expect(() =>
       CancelRunResultSchema.parse({ runId: "wf-123", status: "canceled" }),
+    ).toThrow();
+  });
+});
+
+describe("provider model contracts", () => {
+  it("registers provider_models and accepts the stable sanitized catalog", () => {
+    expect(RpcMethods.ProviderModels).toBe("provider_models");
+    expect(
+      ProviderModelCatalogResultSchema.parse({
+        providers: [
+          {
+            provider: "codex",
+            configured: true,
+            ready: true,
+            source: "live",
+            models: [{ id: "gpt-test", displayName: "GPT Test", isDefault: true }],
+          },
+          {
+            provider: "claude",
+            configured: true,
+            ready: true,
+            source: "provider_aliases",
+            models: [{ id: "sonnet", displayName: "Sonnet" }],
+          },
+          {
+            provider: "google",
+            configured: false,
+            ready: false,
+            source: "live",
+            models: [],
+            message: "Provider is not configured.",
+          },
+        ],
+      }).providers,
+    ).toHaveLength(3);
+  });
+
+  it("rejects reordered, secret-bearing, or unready nonempty catalogs", () => {
+    const providers = [
+      { provider: "claude", configured: true, ready: true, source: "provider_aliases", models: [] },
+      { provider: "codex", configured: true, ready: true, source: "live", models: [] },
+      { provider: "google", configured: false, ready: false, source: "live", models: [] },
+    ];
+    expect(() => ProviderModelCatalogResultSchema.parse({ providers })).toThrow();
+    expect(() =>
+      ProviderModelCatalogResultSchema.parse({
+        providers: [
+          { provider: "codex", configured: true, ready: true, source: "live", models: [], account: "secret" },
+          { provider: "claude", configured: true, ready: true, source: "provider_aliases", models: [] },
+          {
+            provider: "google",
+            configured: true,
+            ready: false,
+            source: "live",
+            models: [{ id: "gemini-test", displayName: "Gemini Test" }],
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  it("parses a strict trimmed preferred-model patch with nullable clears", () => {
+    expect(
+      SettingsUpdateRequestSchema.parse({
+        preferredModels: { codex: "  gpt-test  ", claude: null },
+      }),
+    ).toEqual({ preferredModels: { codex: "gpt-test", claude: null } });
+    expect(() =>
+      SettingsUpdateRequestSchema.parse({ preferredModels: { local: "model" } }),
+    ).toThrow();
+    expect(() =>
+      SettingsUpdateRequestSchema.parse({ preferredModels: { google: "   " } }),
     ).toThrow();
   });
 });

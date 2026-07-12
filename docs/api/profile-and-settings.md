@@ -43,6 +43,7 @@ enter the system. They do not hold provider credentials or raw feed contents.
 | `PATCH /v1/credentials/batch` | Atomically replace or remove one guided provider configuration. |
 | `DELETE /v1/credentials/:key` | Remove a stored credential. |
 | `GET /v1/providers/status` | Sanitized Codex/Claude/Google configuration and readiness. |
+| `GET /v1/providers/models` | Sanitized model choices in stable Codex/Claude/Google order. Codex and Google are live; Claude is explicitly provider aliases. |
 | `POST /v1/providers/codex/verify` | Verify isolated Codex CLI auth without a model call. |
 | `GET /v1/extension/pairing-token` | Read the local extension pairing state. |
 
@@ -51,6 +52,12 @@ is configured, but do not return stored secret material. Guided provider
 replacement rolls back on failure; an unrecoverable rollback is reported as an
 explicit sanitized store failure. See the
 [Security guide](../user/security.md) for the user-facing trust boundary.
+
+`PATCH /v1/settings` stores provider-scoped model choices as
+`preferred_models` in `dashboard.json` and returns them as `preferredModels`.
+Each supplied non-null ID must be in the current catalog for a ready provider;
+`null` clears a choice even when that provider is unavailable. The setting
+contains provider and model IDs only, never credentials or account metadata.
 
 ## Which Screen Owns What?
 

@@ -126,6 +126,33 @@ def read_apply_concurrency(
     return min(16, max(1, _int(value, default)))
 
 
+def read_preferred_model(
+    provider: str,
+    path: Path | str | None = None,
+) -> str | None:
+    """Read one validated provider-scoped model ID from dashboard settings."""
+
+    if provider not in {"codex", "claude", "google"}:
+        return None
+    settings = LocalScoringCriteriaProvider(path)._read_settings()
+    preferred = settings.get("preferred_models")
+    if preferred is None:
+        preferred = settings.get("preferredModels")
+    if not isinstance(preferred, dict):
+        return None
+    raw = preferred.get(provider)
+    if not isinstance(raw, str):
+        return None
+    model = raw.strip()
+    if (
+        not 0 < len(model) <= 160
+        or ":" in model
+        or any(ord(character) < 32 or ord(character) == 127 for character in model)
+    ):
+        return None
+    return model
+
+
 def _int(value: Any, default: int) -> int:
     try:
         return int(value)

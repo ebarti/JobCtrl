@@ -1097,6 +1097,134 @@ input[type="radio"] {
   margin-top: 10px;
 }
 
+.model-selection-intro {
+  display: grid;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  padding: 14px 16px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.model-selection-intro p,
+.provider-model-empty p,
+.provider-model-source,
+.provider-model-save-status {
+  margin: 0;
+}
+
+.provider-model-clear {
+  align-self: flex-start;
+  margin-top: 12px;
+}
+
+.model-selection-intro code {
+  color: var(--foreground);
+  font-family: var(--font-mono);
+}
+
+.model-catalog-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.model-catalog-error .tab {
+  flex: 0 0 auto;
+}
+
+.model-selection-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.model-selection-card {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.provider-model-source {
+  margin-top: 14px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.provider-model-empty,
+.provider-model-form {
+  display: grid;
+  gap: 12px;
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+}
+
+.provider-model-empty {
+  align-items: start;
+}
+
+.provider-model-empty p {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.provider-model-empty .tab {
+  justify-self: start;
+}
+
+.provider-model-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.provider-model-form .tab {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
+.provider-model-save-status {
+  margin-top: 12px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.provider-model-save-status[role="alert"] {
+  color: var(--destructive);
+}
+
+@media (max-width: 720px) {
+  .settings-tabs {
+    width: 100%;
+    flex-wrap: wrap;
+    border-radius: var(--radius);
+  }
+
+  .settings-tabs .tab {
+    min-width: 0;
+    flex: 1 1 120px;
+    text-align: center;
+  }
+
+  .model-catalog-error {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .model-catalog-error .tab,
+  .provider-model-form .tab,
+  .provider-model-clear {
+    width: 100%;
+  }
+
+  .provider-model-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .provider-form {
   display: grid;
   gap: 16px;
@@ -7641,6 +7769,10 @@ input[type="radio"] {
 
   .provider-mode-fields,
   .codex-auth-options {
+    grid-template-columns: 1fr;
+  }
+
+  .model-selection-list {
     grid-template-columns: 1fr;
   }
 

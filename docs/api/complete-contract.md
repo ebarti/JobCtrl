@@ -49,7 +49,7 @@ need:
 | [Pipeline and preparation actions](#pipeline-and-preparation-actions) | Global and per-job stage runs, rescore / re-tailor, retry, and per-job actions. |
 | [Discovery target search](#discovery-target-search) | How Discover honors the profile Target search and location / work-model filters. |
 | [Worker runtime and health](#worker-runtime-and-health) | `GET /v1/health`, the worker-readiness gate, and JSON-RPC transport hardening. |
-| [Settings and credentials](#settings-and-credentials) | `/v1/settings`, extension pairing token routes, and Keychain-backed `/v1/credentials`. |
+| [Settings and credentials](#settings-and-credentials) | `/v1/settings`, `/v1/providers/models`, extension pairing token routes, and Keychain-backed `/v1/credentials`. |
 | [Server-Sent Events](#server-sent-events-—-get-v1-events-stream) | The `GET /v1/events/stream` realtime contract. |
 
 ## Profile and preferences
@@ -1101,8 +1101,13 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
 - `GET /v1/settings` returns the runtime settings stored in the local
   settings file (`dashboard.json` under the app dir): apply approval gate,
   apply concurrency, discovery scheduling, LLM spend budget, and related
-  preferences. `PATCH /v1/settings` updates them; the web Preferences and
-  Settings forms use these routes.
+  preferences. The response's `preferredModels` is a strict partial mapping
+  keyed only by `codex`, `claude`, and `google`, and contains only nonempty
+  saved model IDs. `PATCH /v1/settings` updates them; a non-null preferred ID
+  must match the current ready-provider catalog, while `null` clears that
+  provider without requiring readiness. The canonical file key is
+  `preferred_models`; it stores provider/model IDs only. The web Preferences
+  and Settings forms use these routes.
 - `GET /v1/credentials` lists the fixed guided Claude/Google credential and
   cloud-mode keys plus the legacy OpenAI-key removal entry, with a label,
   storage kind,
@@ -1146,6 +1151,16 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   Codex CLI's `login status` command without making a generation request and
   returns `connected`, `not_configured`, or `failed`. RPC errors and malformed
   provider responses become sanitized `502`/`503` provider-operation errors.
+- `GET /v1/providers/models` returns `{ok: true, providers}` in stable Codex,
+  Claude, Google order. Each item includes `provider`, `configured`, `ready`,
+  `source`, `models`, and an optional bounded status message. Unready providers
+  return no models. Ready Codex and Google use authenticated live SDK listings
+  (`source: "live"`); ready Claude returns `sonnet`, `opus`, and `haiku` with
+  `source: "provider_aliases"`. Model entries expose only `id`, `displayName`,
+  and optional `isDefault`; account, auth, path, and secret metadata never
+  cross the JSON-RPC/API boundary. A preferred-model patch returns `409` when
+  its provider is not ready, `400` when the ID is not offered, and sanitized
+  `503` when validation cannot obtain a live catalog.
 - `GET /v1/extension/pairing-token` returns the local browser-extension
   capability token for the Settings pairing surface; `POST
   /v1/extension/pairing-token/rotate` replaces it. The token is generated under

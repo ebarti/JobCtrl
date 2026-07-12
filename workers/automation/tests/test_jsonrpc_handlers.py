@@ -95,7 +95,10 @@ def _seed_job(db_path: Path, url: str = "https://example.com/job/1") -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_default_handlers_are_registered() -> None:
+def test_default_handlers_are_registered(monkeypatch) -> None:
+    from jobctrl.infrastructure.llm import model_catalog
+
+    monkeypatch.setattr(model_catalog, "provider_model_catalog", lambda: {"providers": []})
     server = _server()
     methods = {
         "cancel_run",
@@ -110,6 +113,7 @@ def test_default_handlers_are_registered() -> None:
         "apply",
         "profile_import",
         "provider_status",
+        "provider_models",
         "provider_verify",
     }
     # Force dispatch on each method name with deliberately invalid params
@@ -177,6 +181,38 @@ def test_provider_verify_rejects_non_codex() -> None:
     )
     assert response is not None
     assert response.to_dict()["error"]["code"] == INVALID_PARAMS
+
+
+def test_provider_models_dispatches_sanitized_catalog(monkeypatch) -> None:
+    from jobctrl.infrastructure.llm import model_catalog
+
+    catalog = {
+        "providers": [
+            {"provider": "codex", "configured": True, "ready": True, "source": "live", "models": []},
+            {
+                "provider": "claude",
+                "configured": True,
+                "ready": True,
+                "source": "provider_aliases",
+                "models": [],
+            },
+            {
+                "provider": "google",
+                "configured": False,
+                "ready": False,
+                "source": "live",
+                "models": [],
+                "message": "Provider is not configured.",
+            },
+        ]
+    }
+    monkeypatch.setattr(model_catalog, "provider_model_catalog", lambda: catalog)
+    server = _server()
+
+    response = server.dispatch(JsonRpcRequest(method="provider_models", params={}, id=3))
+
+    assert response is not None
+    assert response.to_dict()["result"] == catalog
 
 
 def test_generate_interview_prep_starts_user_triggered_workflow() -> None:

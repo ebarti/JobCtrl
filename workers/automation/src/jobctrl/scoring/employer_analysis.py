@@ -71,7 +71,8 @@ def build_analyze_use_case(
         (leg_provider[leg] for leg in enabled_legs if leg_provider[leg] in ready),
         ready[0],
     )
-    llm = LlmAdapter(default_model=f"{selected_provider}:default")
+    llm = LlmAdapter(default_provider=selected_provider)
+    selected_provider = llm.provider_id
     adapters = []
     if "claude" in enabled_legs:
         adapters.append(ClaudeAnalysisAdapter())

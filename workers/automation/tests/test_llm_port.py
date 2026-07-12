@@ -158,6 +158,151 @@ def test_llm_adapter_keeps_explicit_model_over_environment_default(
     assert created == [("codex", "gpt-5.5")]
 
 
+def test_llm_adapter_uses_selected_ready_providers_saved_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    settings_path = tmp_path / "dashboard.json"
+    settings_path.write_text(
+        '{"preferred_models":{"claude":"opus","codex":"gpt-saved","google":"gemini-saved"}}',
+        encoding="utf-8",
+    )
+    created: list[tuple[str | None, str | None]] = []
+
+    def fake_make_backend(provider: str | None = None, model: str | None = None) -> _FakeClient:
+        created.append((provider, model))
+        client = _FakeClient(model=model or "provider-default")
+        client.provider_id = provider or "claude"
+        return client
+
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.setenv("JOBCTRL_DASHBOARD_CONFIG_PATH", str(settings_path))
+    monkeypatch.setattr(adapter_module, "_default_provider", lambda: "claude")
+    monkeypatch.setattr(adapter_module, "_make_backend", fake_make_backend)
+
+    LlmAdapter(default_model="default")
+
+    assert created == [("claude", "opus")]
+
+
+def test_llm_adapter_environment_default_suppresses_saved_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    settings_path = tmp_path / "dashboard.json"
+    settings_path.write_text('{"preferred_models":{"claude":"opus"}}', encoding="utf-8")
+    created: list[tuple[str | None, str | None]] = []
+
+    def fake_make_backend(provider: str | None = None, model: str | None = None) -> _FakeClient:
+        created.append((provider, model))
+        client = _FakeClient(model=model or "provider-default")
+        client.provider_id = provider or "claude"
+        return client
+
+    monkeypatch.setenv("LLM_MODEL", "default")
+    monkeypatch.setenv("JOBCTRL_DASHBOARD_CONFIG_PATH", str(settings_path))
+    monkeypatch.setattr(adapter_module, "_default_provider", lambda: "claude")
+    monkeypatch.setattr(adapter_module, "_make_backend", fake_make_backend)
+
+    LlmAdapter(default_model="default")
+
+    assert created == [("claude", None)]
+
+
+def test_get_llm_adapter_refreshes_changed_saved_model_without_mutating_warm_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    settings_path = tmp_path / "dashboard.json"
+    settings_path.write_text('{"preferred_models":{"claude":"model-a"}}', encoding="utf-8")
+
+    def fake_make_backend(provider: str | None = None, model: str | None = None) -> _FakeClient:
+        client = _FakeClient(model=model or "provider-default")
+        client.provider_id = provider or "claude"
+        return client
+
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.setenv("JOBCTRL_DASHBOARD_CONFIG_PATH", str(settings_path))
+    monkeypatch.setattr(adapter_module, "_default_provider", lambda: "claude")
+    monkeypatch.setattr(adapter_module, "_make_backend", fake_make_backend)
+    adapter_module.reset_llm_adapter()
+    try:
+        warm = adapter_module.get_llm_adapter()
+        assert warm.model == "model-a"
+        assert adapter_module.get_llm_adapter() is warm
+
+        settings_path.write_text('{"preferred_models":{"claude":"model-b"}}', encoding="utf-8")
+        refreshed = adapter_module.get_llm_adapter()
+
+        assert refreshed is not warm
+        assert refreshed.model == "model-b"
+        assert warm.model == "model-a"
+    finally:
+        adapter_module.reset_llm_adapter()
+
+
+def test_get_llm_adapter_restores_initial_provider_after_temporary_environment_route(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    settings_path = tmp_path / "dashboard.json"
+    settings_path.write_text('{"preferred_models":{"claude":"model-a"}}', encoding="utf-8")
+    provider_selections = 0
+
+    def fake_default_provider() -> str:
+        nonlocal provider_selections
+        provider_selections += 1
+        return "claude"
+
+    def fake_make_backend(provider: str | None = None, model: str | None = None) -> _FakeClient:
+        client = _FakeClient(model=model or "provider-default")
+        client.provider_id = provider or "claude"
+        return client
+
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.setenv("JOBCTRL_DASHBOARD_CONFIG_PATH", str(settings_path))
+    monkeypatch.setattr(adapter_module, "_default_provider", fake_default_provider)
+    monkeypatch.setattr(adapter_module, "_make_backend", fake_make_backend)
+    adapter_module.reset_llm_adapter()
+    try:
+        warm = adapter_module.get_llm_adapter()
+        assert adapter_module.get_llm_adapter() is warm
+        assert adapter_module.get_llm_adapter() is warm
+        assert provider_selections == 1
+
+        monkeypatch.setenv("LLM_MODEL", "google:env-model")
+        routed = adapter_module.get_llm_adapter()
+
+        assert routed is not warm
+        assert routed.provider_id == "google"
+        assert routed.model == "env-model"
+        assert provider_selections == 1
+
+        monkeypatch.delenv("LLM_MODEL")
+        restored = adapter_module.get_llm_adapter()
+
+        assert restored is not routed
+        assert restored.provider_id == "claude"
+        assert restored.model == "model-a"
+        assert warm.provider_id == "claude"
+        assert warm.model == "model-a"
+        assert routed.provider_id == "google"
+        assert routed.model == "env-model"
+        assert adapter_module.get_llm_adapter() is restored
+        assert provider_selections == 1
+    finally:
+        adapter_module.reset_llm_adapter()
+
+
+def test_get_llm_adapter_does_not_replace_injected_singleton(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    injected = LlmAdapter(client=_FakeClient(model="injected-model"))  # type: ignore[arg-type]
+    monkeypatch.setattr(adapter_module, "_singleton", injected)
+
+    assert adapter_module.get_llm_adapter() is injected
+
+
 def test_llm_adapter_rejects_unsupported_environment_model_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
