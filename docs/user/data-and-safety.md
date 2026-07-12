@@ -52,6 +52,12 @@ secrets. Post-accept withdrawal and immediate visitor-event deletion are not
 yet available in this MVP; retained data expires on the schedules above. The
 consent screen links to this disclosure before entry.
 
+After entry, the compact **Demo guide** links to seeded scoring evidence,
+tailored-material review, Apply Review/dry-run, and run history. Every shortcut
+and action is simulated; it does not contact employers, send messages, or make
+external changes. **Reset synthetic demo data** asks for confirmation, then
+replaces the browser-local workspace with the original examples.
+
 ## Local Data
 
 Default workspace:

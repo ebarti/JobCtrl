@@ -1006,11 +1006,14 @@ later visit.
 **Scope**
 
 - Add persistent Demo Mode identity and simulated-action language.
-- Add a concise guided tour and scenario shortcuts.
+- Add a concise guide with scenario shortcuts. Keep the MVP stateless: no
+  step/progress engine or forced walkthrough.
 - Add reset, install, docs, and privacy-notice controls.
 - Cover desktop/mobile, light/dark, keyboard, reduced-motion, and screen-reader
   paths.
-- Add per-state Storybook stories and a11y coverage.
+- Add colocated component, keyboard-focus, browser, and a11y coverage. A
+  Storybook demo-workspace decorator and per-state stories are deferred until
+  after the MVP instead of adding a second workspace harness in this slice.
 
 **Exit criterion**
 
