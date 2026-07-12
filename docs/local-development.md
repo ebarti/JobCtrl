@@ -150,6 +150,12 @@ Only the exact value `demo` selects this composition. A missing or invalid
 `VITE_JOBCTRL_APP_MODE` keeps the normal local composition, so a mistyped value
 cannot produce a partially mounted app.
 
+Demo mode now renders the static acceptance gate before creating IndexedDB.
+Without the same-origin consent Worker, acceptance remains fail-closed and the
+workspace does not initialize. The dedicated Playwright lane stubs the exact
+Worker contract for browser-local development; use a Cloudflare preview when
+manually testing real cookie persistence across reloads.
+
 The demo workspace persists in IndexedDB and is shared by tabs and people using
 the same browser profile. Separate browser profiles and private/incognito
 contexts are isolated. Reset rotates the workspace identity, clears pending

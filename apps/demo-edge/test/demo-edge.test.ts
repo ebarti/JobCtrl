@@ -14,6 +14,8 @@ import {
   RETENTION_SAFETY_MARGIN_SECONDS,
   TELEMETRY_GLOBAL_RATE_LIMIT_PER_MINUTE,
   TELEMETRY_RATE_LIMIT_PER_MINUTE,
+  actionNames,
+  routeNames,
   timingMetrics,
 } from "../src/contracts.js";
 import {
@@ -30,6 +32,7 @@ import {
   handleTelemetryPost,
 } from "../src/handlers.js";
 import { readStrictJson } from "../src/http.js";
+import { parseTelemetryEvent } from "../src/schema.js";
 import type { DemoRequestContext } from "../src/context.js";
 import { runRetention } from "../workers/retention.js";
 
@@ -170,6 +173,21 @@ beforeEach(async () => {
 });
 
 describe("API Worker consent and telemetry boundaries", () => {
+  it("accepts every closed browser route and action dimension", () => {
+    for (const route of routeNames) {
+      expect(parseTelemetryEvent({
+        name: "demo_route_viewed",
+        attributes: { route },
+      }), route).toBeDefined();
+    }
+    for (const action of actionNames) {
+      expect(parseTelemetryEvent({
+        name: "demo_action_started",
+        attributes: { action },
+      }), action).toBeDefined();
+    }
+  });
+
   it("exercises every routed endpoint and permits browser-equivalent safe GETs without Origin", async () => {
     expect((await dispatchDemoApi(context("/api/demo-consent", { method: "GET" }, testEnv, false).request, testEnv)).status).toBe(200);
     expect((await dispatchDemoApi(context("/api/demo-consent", {

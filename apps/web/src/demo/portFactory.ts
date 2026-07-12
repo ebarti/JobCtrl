@@ -28,6 +28,7 @@ export interface PortFactoryOptions {
   readonly mode: AppMode;
   readonly apiBaseUrl?: string;
   readonly demoPreviewOpener?: DemoArtifactPreviewOpener;
+  readonly demoTelemetry?: Ports["telemetry"];
   readonly demoWorkspace?: Omit<DemoWorkspaceRepositoryOptions, "store"> & {
     readonly store?: DemoWorkspaceRepositoryOptions["store"];
   };
@@ -83,6 +84,7 @@ export async function createAppComposition(
   });
   const initialization = await workspace.initialize();
   const api = new DemoApiClientAdapter(workspace, {
+    ...(options.demoTelemetry ? { telemetry: options.demoTelemetry } : {}),
     external: {
       opener: options.demoPreviewOpener ?? browserDemoArtifactPreviewOpener,
     },
@@ -99,7 +101,7 @@ export async function createAppComposition(
       session: new DemoSessionAdapter(),
       clipboard: new NavigatorClipboardAdapter(),
       openInOs: new DemoOpenInOsAdapter(api),
-      telemetry: new ConsoleTelemetryAdapter(),
+      telemetry: options.demoTelemetry ?? new ConsoleTelemetryAdapter(),
       featureFlags: new DemoFeatureFlagAdapter(),
     },
     workspace,

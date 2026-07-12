@@ -102,6 +102,12 @@ warning, and the unchanged canonical event provider/invalidation router.
 Playwright artifacts are written outside the repository under the system
 temporary directory.
 
+The same lane begins with three consent regressions: no IndexedDB, health, or
+product telemetry before a confirmed grant; anonymous decline redirects even
+when measurement fails; and a denied revisit renders the acceptance-required
+gate again. Existing product journeys use a granted same-origin API stub, so
+the full suite also proves the gate does not regress admitted sessions.
+
 <a id="token-foundation-qa-gate"></a>
 <a id="shared-primitive-qa-gate"></a>
 <a id="route-visual-qa-gate"></a>
