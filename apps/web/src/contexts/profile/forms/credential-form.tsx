@@ -104,6 +104,11 @@ export function CredentialForm({
   const mutationError = updateCredential.error ?? deleteCredential.error;
   const mutationErrorMessage = credentialMutationErrorMessage(mutationError);
   const inputId = `credential-${credentialKey.toLowerCase()}`;
+  const credentialDescriptionId = `${inputId}-description`;
+  const describedBy = [
+    credentialDescriptionId,
+    !canEditKeychain ? unavailableDescriptionId : undefined,
+  ].filter((value): value is string => value !== undefined).join(" ");
   return (
     <form
       className="credential-row-form"
@@ -126,16 +131,14 @@ export function CredentialForm({
       </span>
       <label className="title-stack" htmlFor={inputId}>
         <b>{label}</b>
-        <span>{credentialKey}</span>
       </label>
+      <span id={credentialDescriptionId}>{credentialKey}</span>
       <form.Field name="value">
         {(field) => (
           <input
             id={inputId}
             name={credentialKey}
-            aria-describedby={
-              !canEditKeychain ? unavailableDescriptionId : undefined
-            }
+            aria-describedby={describedBy}
             disabled={!canEditKeychain}
             placeholder={
               environmentManaged

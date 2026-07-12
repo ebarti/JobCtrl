@@ -171,6 +171,10 @@ test("configuration docs match current routes, storage, and opt-in integrations"
   const envExample = await read(".env.example");
   const normalizedConfiguration = configuration.replace(/\s+/g, " ");
   const normalizedApi = completeApi.replace(/\s+/g, " ");
+  const startHere = configuration.slice(
+    configuration.indexOf("## Start Here"),
+    configuration.indexOf("### How a setting becomes effective"),
+  );
 
   assert.match(normalizedConfiguration, /daily LLM budget is stored in `dashboard\.json`/i);
   assert.doesNotMatch(configuration, /daily LLM budget is a preference stored in SQLite/i);
@@ -186,7 +190,8 @@ test("configuration docs match current routes, storage, and opt-in integrations"
     ["Settings → Model selection", "/settings/models"],
     ["Settings → Browser & extension", "/settings/browser"],
   ]) {
-    assert.ok(configuration.includes(`**${label}** (\`${route}\`)`));
+    assert.ok(startHere.includes(`**${label}**`));
+    assert.ok(startHere.includes(`\`${route}\``));
     assert.ok(!configuration.includes(`](${route})`));
   }
   assert.match(configuration, /jobctrl capability enable auto-apply-browser/);

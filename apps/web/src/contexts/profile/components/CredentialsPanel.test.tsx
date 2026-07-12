@@ -312,7 +312,9 @@ describe("<CredentialsPanel>", () => {
     });
 
     expect(await screen.findByText(notice)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/API key/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Anthropic API key \(required\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Gemini API key \(required\)/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("CapSolver API key")).toBeDisabled();
     expect(screen.getByText(/Set GEMINI_API_KEY/i)).toBeInTheDocument();
     const codex = await providerCard("Codex");
     await userEvent.setup().click(

@@ -97,8 +97,7 @@ directory; treat those logs as sensitive too.
 
 The macOS credential panel guides Codex, Claude, and Google setup. Codex uses
 the stable, separate `$JOBCTRL_DIR/codex_home`. Codex-backed work requires
-Codex CLI to be installed and authenticated through its supported sign-in flow
-first. If its `auth.json` is absent,
+an authenticated Codex CLI first. If its `auth.json` is absent,
 setup or generation may copy valid authentication once from the effective
 normal Codex CLI home. JobCtrl never overwrites existing isolated auth or
 changes the normal home. The auth file remains outside

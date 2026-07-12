@@ -179,8 +179,8 @@ browser session but remains rate/budget limited. See
 
 ## Credentials
 
-Codex-backed work requires Codex CLI to be installed and authenticated through
-its supported sign-in flow before JobCtrl can reuse or verify that login.
+Codex-backed work requires an authenticated Codex CLI before JobCtrl can reuse
+or verify that login.
 
 | Secret | Boundary |
 | --- | --- |
