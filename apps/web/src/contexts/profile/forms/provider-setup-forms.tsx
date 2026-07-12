@@ -103,6 +103,14 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
   const [message, setMessage] = useState("");
   const [removalOpen, setRemovalOpen] = useState(false);
   const [removalError, setRemovalError] = useState("");
+  const environmentManaged = activeModeManagedByEnvironment(
+    claudeModeFromStatus(currentMode),
+    environmentManagedKeys,
+    CLAUDE_MODE_CREDENTIAL_KEYS,
+  );
+  const sharedAdcEnvironmentManaged = environmentManagedKeys.includes(
+    "GOOGLE_APPLICATION_CREDENTIALS",
+  );
   const form = useForm({
     defaultValues: {
       mode: "anthropic_api_key" as ClaudeMode,
@@ -117,6 +125,10 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
     },
     onSubmit: async ({ value, formApi }) => {
       setMessage("");
+      if (environmentManaged) {
+        setMessage("Claude setup is managed by the launch environment and is read-only here.");
+        return;
+      }
       const parsed = claudeValuesSchema.safeParse(value);
       if (!parsed.success) {
         setMessage(parsed.error.issues[0]?.message ?? "Review the Claude setup fields.");
@@ -147,6 +159,10 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
   async function removeProvider() {
     setMessage("");
     setRemovalError("");
+    if (environmentManaged) {
+      setRemovalError("Claude setup is managed by the launch environment and remains effective.");
+      return;
+    }
     try {
       const request = withoutEnvironmentManaged(removeClaudeProviderBatch(), environmentManagedKeys);
       if (request.operations.length === 0) {
@@ -172,6 +188,7 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
             value={field.state.value}
             onChange={field.handleChange}
             options={CLAUDE_OPTIONS}
+            disabled={environmentManaged}
           />
         )}
       </form.Field>
@@ -221,6 +238,7 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
                       name={field.name}
                       label="Existing service-account JSON path (optional)"
                       help="Write-only. Leave blank to use normal gcloud Application Default Credentials. JobCtrl never uploads or copies the file."
+                      disabled={sharedAdcEnvironmentManaged}
                       value={field.state.value}
                       onBlur={field.handleBlur}
                       onChange={field.handleChange}
@@ -284,8 +302,9 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
         pending={update.isPending}
         message={message}
         saveLabel="Save Claude setup"
+        readOnly={environmentManaged}
         removeAction={
-          configured ? (
+          configured && !environmentManaged ? (
             <ProviderRemovalDialog
               error={removalError}
               open={removalOpen}
@@ -300,6 +319,9 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
           ) : null
         }
       />
+      {environmentManaged ? (
+        <p className="provider-form-message" role="status">Claude's effective mode is owned by the launch environment; save and removal controls are read-only.</p>
+      ) : null}
     </form>
   );
 }
@@ -309,6 +331,14 @@ export function GoogleProviderForm({ configured, currentMode, environmentManaged
   const [message, setMessage] = useState("");
   const [removalOpen, setRemovalOpen] = useState(false);
   const [removalError, setRemovalError] = useState("");
+  const environmentManaged = activeModeManagedByEnvironment(
+    googleModeFromStatus(currentMode),
+    environmentManagedKeys,
+    GOOGLE_MODE_CREDENTIAL_KEYS,
+  );
+  const sharedAdcEnvironmentManaged = environmentManagedKeys.includes(
+    "GOOGLE_APPLICATION_CREDENTIALS",
+  );
   const form = useForm({
     defaultValues: {
       mode: "gemini_api_key" as GoogleMode,
@@ -319,6 +349,10 @@ export function GoogleProviderForm({ configured, currentMode, environmentManaged
     },
     onSubmit: async ({ value, formApi }) => {
       setMessage("");
+      if (environmentManaged) {
+        setMessage("Google setup is managed by the launch environment and is read-only here.");
+        return;
+      }
       const parsed = googleValuesSchema.safeParse(value);
       if (!parsed.success) {
         setMessage(parsed.error.issues[0]?.message ?? "Review the Google setup fields.");
@@ -349,6 +383,10 @@ export function GoogleProviderForm({ configured, currentMode, environmentManaged
   async function removeProvider() {
     setMessage("");
     setRemovalError("");
+    if (environmentManaged) {
+      setRemovalError("Google setup is managed by the launch environment and remains effective.");
+      return;
+    }
     try {
       const request = withoutEnvironmentManaged(removeGoogleProviderBatch(), environmentManagedKeys);
       if (request.operations.length === 0) {
@@ -374,6 +412,7 @@ export function GoogleProviderForm({ configured, currentMode, environmentManaged
             value={field.state.value}
             onChange={field.handleChange}
             options={GOOGLE_OPTIONS}
+            disabled={environmentManaged}
           />
         )}
       </form.Field>
@@ -413,6 +452,7 @@ export function GoogleProviderForm({ configured, currentMode, environmentManaged
                       name={field.name}
                       label="Existing service-account JSON path (optional)"
                       help="Write-only. Leave blank to use normal gcloud Application Default Credentials. JobCtrl never uploads or copies the file."
+                      disabled={sharedAdcEnvironmentManaged}
                       value={field.state.value}
                       onBlur={field.handleBlur}
                       onChange={field.handleChange}
@@ -429,8 +469,9 @@ export function GoogleProviderForm({ configured, currentMode, environmentManaged
         pending={update.isPending}
         message={message}
         saveLabel="Save Google setup"
+        readOnly={environmentManaged}
         removeAction={
-          configured ? (
+          configured && !environmentManaged ? (
             <ProviderRemovalDialog
               error={removalError}
               open={removalOpen}
@@ -445,6 +486,9 @@ export function GoogleProviderForm({ configured, currentMode, environmentManaged
           ) : null
         }
       />
+      {environmentManaged ? (
+        <p className="provider-form-message" role="status">Google's effective mode is owned by the launch environment; save and removal controls are read-only.</p>
+      ) : null}
     </form>
   );
 }
@@ -461,12 +505,14 @@ function ProviderChoices<T extends string>({
   value,
   onChange,
   options,
+  disabled = false,
 }: {
   legend: string;
   name: string;
   value: T;
   onChange: (value: T) => void;
   options: readonly ChoiceOption<T>[];
+  disabled?: boolean;
 }) {
   return (
     <fieldset className="provider-choice-fieldset">
@@ -482,6 +528,7 @@ function ProviderChoices<T extends string>({
                 name={name}
                 type="radio"
                 value={option.value}
+                disabled={disabled}
                 onChange={() => onChange(option.value)}
               />
               <span>
@@ -505,6 +552,7 @@ function SecretField({
   value,
   onBlur,
   onChange,
+  disabled = false,
 }: {
   id: string;
   name: string;
@@ -514,6 +562,7 @@ function SecretField({
   value: string;
   onBlur: () => void;
   onChange: (value: string) => void;
+  disabled?: boolean;
 }) {
   const [revealed, setRevealed] = useState(false);
   const helpId = `${id}-help`;
@@ -526,6 +575,7 @@ function SecretField({
           autoComplete="off"
           id={id}
           name={name}
+          disabled={disabled}
           required={required}
           type={revealed ? "text" : "password"}
           value={value}
@@ -536,6 +586,7 @@ function SecretField({
           aria-pressed={revealed}
           className="tab secret-reveal"
           type="button"
+          disabled={disabled}
           onClick={() => setRevealed((current) => !current)}
         >
           {revealed ? "Hide" : "Show"}
@@ -598,16 +649,18 @@ function ProviderFormActions({
   message,
   saveLabel,
   removeAction,
+  readOnly = false,
 }: {
   configured: boolean;
   pending: boolean;
   message: string;
   saveLabel: string;
   removeAction?: ReactNode;
+  readOnly?: boolean;
 }) {
   return (
     <div className="provider-form-footer">
-      <button className="tab on" disabled={pending} type="submit">
+      <button className="tab on" disabled={pending || readOnly} type="submit">
         {pending ? "Saving…" : saveLabel}
       </button>
       {removeAction}
@@ -720,6 +773,34 @@ function withoutEnvironmentManaged(
   const managed = new Set(environmentManagedKeys);
   return { operations: request.operations.filter((operation) => !managed.has(operation.key)) };
 }
+
+function activeModeManagedByEnvironment<TMode extends string>(
+  mode: TMode | null,
+  environmentManagedKeys: readonly CredentialKey[],
+  keysByMode: Readonly<Record<TMode, readonly CredentialKey[]>>,
+): boolean {
+  if (!mode) return false;
+  const managed = new Set(environmentManagedKeys);
+  return keysByMode[mode].some((key) => managed.has(key));
+}
+
+const CLAUDE_MODE_CREDENTIAL_KEYS: Readonly<Record<ClaudeMode, readonly CredentialKey[]>> = {
+  anthropic_api_key: ["ANTHROPIC_API_KEY"],
+  vertex: ["CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_VERTEX_PROJECT_ID", "CLOUD_ML_REGION"],
+  bedrock: ["CLAUDE_CODE_USE_BEDROCK", "AWS_PROFILE", "AWS_REGION"],
+  anthropic_aws: [
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+    "ANTHROPIC_AWS_WORKSPACE_ID",
+    "AWS_PROFILE",
+    "AWS_REGION",
+  ],
+  foundry: ["CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_FOUNDRY_RESOURCE"],
+};
+
+const GOOGLE_MODE_CREDENTIAL_KEYS: Readonly<Record<GoogleMode, readonly CredentialKey[]>> = {
+  gemini_api_key: ["GEMINI_API_KEY"],
+  vertex: ["GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"],
+};
 
 const CLAUDE_OPTIONS: readonly ChoiceOption<ClaudeMode>[] = [
   {

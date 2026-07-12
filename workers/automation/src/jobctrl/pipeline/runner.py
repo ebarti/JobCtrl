@@ -1138,9 +1138,10 @@ def _plan_discovery_schedule(
     limit: int,
     *,
     source_ids: tuple[str, ...] = (),
+    search_cfg: dict[str, Any] | None = None,
 ) -> DiscoverySchedule:
     scheduler = DiscoveryScheduler()
-    registry = config.load_source_registry()
+    registry = config.load_source_registry(search_cfg=search_cfg)
     if source_ids:
         selected = set(source_ids)
         registry = [entry for entry in registry if entry.source_id in selected]
@@ -1301,8 +1302,9 @@ def plan_discovery_source_families(
 ) -> dict[str, Any]:
     """Plan the runnable discovery source families in legacy order."""
     conn = init_db()
+    search_cfg = config.load_search_config()
     try:
-        seed_discovery_control_queues(conn, config.load_source_registry())
+        seed_discovery_control_queues(conn, config.load_source_registry(search_cfg=search_cfg))
     except Exception:
         log.debug("Failed to seed discovery control queues", exc_info=True)
     try:
@@ -1312,7 +1314,11 @@ def plan_discovery_source_families(
 
     selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
     source_filter_active = bool(selected_source_ids)
-    schedule = _plan_discovery_schedule(limit, source_ids=selected_source_ids)
+    schedule = _plan_discovery_schedule(
+        limit,
+        source_ids=selected_source_ids,
+        search_cfg=search_cfg,
+    )
     jobspy_sources = schedule.for_prefix("jobspy")
     ats_sources = tuple(
         source
@@ -1336,7 +1342,6 @@ def plan_discovery_source_families(
         resolved_max_parallel_discovery_families,
     )
 
-    search_cfg = config.load_search_config()
     active_activity_slots = (
         latest_active_max_concurrent_activities()
         or resolve_max_concurrent_activities().value
@@ -1350,6 +1355,7 @@ def plan_discovery_source_families(
             search_cfg,
             active_activity_slots,
         ),
+        "next_run_settings": _snapshot_discovery_next_run_settings(search_cfg),
     }
 
 
@@ -1377,16 +1383,24 @@ def run_discovery_source_family(
     progress_completed: int = 0,
     progress_total: int = 0,
     cancel_event: threading.Event | None = None,
+    next_run_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run one discovery source family and persist its lifecycle events."""
     selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
     source_filter_active = bool(selected_source_ids)
-    search_cfg = config.load_search_config() or {}
+    search_cfg = _apply_discovery_next_run_settings(
+        config.load_search_config() or {},
+        next_run_settings,
+    )
     bounded_workers = max(1, workers)
     provided_cancel_event = cancel_event
     cancel_event = cancel_event or threading.Event()
     conn = get_connection()
-    schedule = _plan_discovery_schedule(limit, source_ids=selected_source_ids)
+    schedule = _plan_discovery_schedule(
+        limit,
+        source_ids=selected_source_ids,
+        search_cfg=search_cfg,
+    )
     jobspy_sources = schedule.for_prefix("jobspy")
     ats_sources = tuple(
         source
@@ -1584,6 +1598,36 @@ def run_discovery_source_family(
         }
 
     raise ValueError(f"Unknown discovery source family: {family}")
+
+
+def _snapshot_discovery_next_run_settings(search_cfg: dict[str, Any]) -> dict[str, Any]:
+    """Capture settings whose public activation contract is the next run."""
+
+    defaults = search_cfg.get("defaults")
+    defaults = defaults if isinstance(defaults, dict) else {}
+    boards = search_cfg.get("boards")
+    return {
+        "boards": [str(board) for board in boards] if isinstance(boards, list) else [],
+        "results_per_site": int(defaults.get("results_per_site") or 50),
+        "hours_old": int(defaults.get("hours_old") or 72),
+    }
+
+
+def _apply_discovery_next_run_settings(
+    current: dict[str, Any],
+    snapshot: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Overlay only next-run values; next-source-family fields stay live."""
+
+    if not snapshot:
+        return current
+    effective = dict(current)
+    effective["boards"] = list(snapshot.get("boards") or [])
+    defaults = dict(effective.get("defaults") or {})
+    defaults["results_per_site"] = int(snapshot.get("results_per_site") or 50)
+    defaults["hours_old"] = int(snapshot.get("hours_old") or 72)
+    effective["defaults"] = defaults
+    return effective
 
 
 def run_discovery_enrichment_stage(

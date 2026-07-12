@@ -1,4 +1,4 @@
-import type { DiscoverySettingsUpdateRequest } from "@jobctrl/contracts";
+import type { DiscoverySettingsUpdateRequest, EffectiveSetting } from "@jobctrl/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
@@ -38,12 +38,16 @@ function patchDiscoverySettings(
   body: DiscoverySettingsUpdateRequest,
 ): DiscoverySettingsResponse {
   const effectiveSettings = { ...current.effectiveSettings };
+  const effectiveRecord = effectiveSettings as unknown as Record<string, EffectiveSetting<unknown>>;
   for (const [field, value] of Object.entries(body)) {
-    if (value === undefined || !(field in effectiveSettings)) continue;
-    const key = field as keyof typeof effectiveSettings;
-    const metadata = effectiveSettings[key];
-    if (metadata.editable) {
-      Object.assign(metadata, { value, source: "persisted" });
+    if (value === undefined || !(field in effectiveRecord)) continue;
+    const metadata = effectiveRecord[field];
+    if (metadata?.editable) {
+      effectiveRecord[field] = {
+        ...metadata,
+        value,
+        source: "persisted",
+      };
     }
   }
   return {

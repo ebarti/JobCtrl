@@ -30,6 +30,7 @@ class PlanDiscoverySourcesOutput:
     # Resolved from the env at planning time (in the activity) so the workflow
     # stays deterministic on replay. Default 1 = sequential (current behavior).
     max_parallel_families: int = 1
+    next_run_settings: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ class DiscoverySourceActivityInput:
     start_count: int = 0
     progress_completed: int = 0
     progress_total: int = 0
+    next_run_settings: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -131,6 +133,7 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
         progress_total=int(plan.get("progress_total") or 0),
         start_count=int(plan.get("start_count") or 0),
         max_parallel_families=max(1, int(plan.get("max_parallel_families") or 1)),
+        next_run_settings=dict(plan.get("next_run_settings") or {}),
     )
 
 
@@ -163,6 +166,7 @@ async def discovery_source_family_activity(
                 progress_completed=payload.progress_completed,
                 progress_total=payload.progress_total,
                 cancel_event=cancel_event,
+                next_run_settings=payload.next_run_settings,
             ),
             starting_message=f"discover {payload.family} starting",
             progress_message=f"discover {payload.family} still running",

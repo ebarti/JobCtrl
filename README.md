@@ -193,12 +193,14 @@ executable choice. When `autoApply: true`, a worker maintains one continuous App
 workflow, visible in Runs as the standing apply loop. With the default
 approval gate still on (`applyApprovalRequired: true`), that loop only submits
 jobs already approved in Apply Review and parks the rest for review. If you
-turn the approval gate off in Preferences, the settings form shows a
+turn the approval gate off under **Discovery → Runtime settings**, the form shows a
 persistent warning because the standing loop may submit eligible prepared
 jobs autonomously — still bounded by minimum fit score, the daily spend
 ceiling, at-most-once submit intent tracking, CAPTCHA fail-closed behavior,
 and the dry-run guard when a dry-run apply path is used. Use dry-run paths
 and narrow targets before allowing live submission.
+The auto-apply toggle, approval requirement, and minimum fit threshold are all
+owned by **Discovery → Runtime settings**.
 
 System Chrome/Chromium is never a core requirement. A source checkout uses its
 managed Playwright Chromium installs; the bundled release carries exactly one

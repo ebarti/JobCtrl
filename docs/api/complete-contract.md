@@ -66,21 +66,21 @@ and no item limit. The Python materials generation path creates a new materials
 generation for each re-tailored job, immediately follows it with cover-letter
 generation for jobs that are ready, and preserves older generations as
 superseded artifact data.
-The web Profile, Preferences, Discovery target search, and Settings forms
+The web Profile, Profile Target Search, Preferences, Discovery, and Settings forms
 autosave five seconds after the last edit using the same profile/settings
 mutation paths as the explicit Save buttons; failed validation or mutation
 errors stay on the local form surface.
-The Preferences Application configurations section owns the user-editable
-Location filter control and persists it through the local settings mutation;
-the Preferences Tailoring controls section owns generated-material policy such
+Profile **Target Search** owns the canonical user-editable location and work-model
+filters and persists them through the profile mutation path. The Preferences
+Tailoring controls section owns generated-material policy such
 as the adjacent-experience invention toggle, revision-gate minimum fit score,
 must-have coverage, and revision-attempt limits in the profile
 `tailoring_rules`. Verified facts and evidence-backed reframing are baseline
 non-inventing behavior, along with supported adjacent-experience translation;
 the Preferences toggle only allows or forbids invented adjacent-experience
 drafts. Draft adjacent claims require review and are not user-configured as an
-auto-approval bypass. The Discovery page (`/discovery`) owns target search,
-sources, scheduling, quarantine, and capture. Settings General (`/settings`)
+auto-approval bypass. The Discovery page (`/discovery`) composes the canonical
+Profile Target Search with sources, scheduling, quarantine, and capture. Settings General (`/settings`)
 owns spend/capacity, scoring, apply runtime, and compensation source policy.
 Credentials (`/settings/credentials`), model selection and AI execution policy
 (`/settings/models`), and browser capabilities plus extension pairing
@@ -998,10 +998,10 @@ version. Lowering it can make existing persisted scores eligible for
 
 ## Discovery target search
 
-Discover honors the profile Target search saved from the Discovery page.
+Discover honors the canonical Profile Target Search saved through the profile mutation path.
 Target roles replace the active discovery query list with exact role queries;
 target tracks, seniority floors, role areas, and specializations add structured
-intent for deterministic recall expansion. The Discovery UI constrains target
+intent for deterministic recall expansion. The Profile Target Search UI constrains target
 tracks to IC, management, and executive, and constrains seniority floors to the
 engineering IC, management, and executive ladder choices. Recall queries keep
 the same search tier as exact queries because relevance is determined after

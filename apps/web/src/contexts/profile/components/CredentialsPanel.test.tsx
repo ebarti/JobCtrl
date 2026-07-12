@@ -67,6 +67,7 @@ describe("<CredentialsPanel>", () => {
         credentials: sampleCredentialsResponse.credentials.map((credential) => ({
           ...credential,
           configured: false,
+          effectiveSource: "absent" as const,
         })),
       })),
       providerStatus: vi.fn(async () => ({
@@ -95,6 +96,10 @@ describe("<CredentialsPanel>", () => {
             "CLAUDE_CODE_USE_VERTEX",
             "GOOGLE_GENAI_USE_VERTEXAI",
           ].includes(credential.key),
+          effectiveSource: [
+            "CLAUDE_CODE_USE_VERTEX",
+            "GOOGLE_GENAI_USE_VERTEXAI",
+          ].includes(credential.key) ? "keychain" as const : "absent" as const,
         })),
       })),
       providerStatus: vi.fn(async () => ({
@@ -187,6 +192,40 @@ describe("<CredentialsPanel>", () => {
     await waitFor(() => expect(updateCredentialsBatch).toHaveBeenCalledWith(removeClaudeProviderBatch()));
     expect(await within(card).findByText(/Claude provider settings removed\. Restart JobCtrl/i)).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Remove Claude provider setup?" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an environment-owned provider visibly read-only and never reports removal", async () => {
+    const updateCredentialsBatch = vi.fn(async () => sampleCredentialsResponse);
+    renderPanel({
+      credentials: vi.fn(async () => ({
+        ...sampleCredentialsResponse,
+        credentials: sampleCredentialsResponse.credentials.map((credential) =>
+          credential.key === "GOOGLE_GENAI_USE_VERTEXAI"
+            ? {
+                ...credential,
+                configured: false,
+                effectiveSource: "environment" as const,
+                editable: false,
+              }
+            : credential,
+        ),
+      })),
+      providerStatus: vi.fn(async () => ({
+        ok: true as const,
+        providers: [
+          { provider: "google" as const, configured: true, ready: true, mode: "vertex" },
+        ],
+      })),
+      updateCredentialsBatch,
+    });
+
+    const card = await providerCard("Google");
+    expect(within(card).getByText(/effective mode is owned by the launch environment/i)).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Save Google setup" })).toBeDisabled();
+    expect(within(card).queryByRole("button", { name: "Remove Google setup" })).not.toBeInTheDocument();
+    expect(within(card).getAllByRole("radio").every((radio) => radio.hasAttribute("disabled"))).toBe(true);
+    expect(updateCredentialsBatch).not.toHaveBeenCalled();
+    expect(card).not.toHaveTextContent(/provider settings removed/i);
   });
 
   it("keeps a sanitized Google removal error inside the confirmation dialog", async () => {
@@ -341,6 +380,12 @@ function configuredProvidersResponse() {
         "GEMINI_API_KEY",
         "GOOGLE_GENAI_USE_VERTEXAI",
       ].includes(credential.key),
+      effectiveSource: [
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_USE_VERTEX",
+        "GEMINI_API_KEY",
+        "GOOGLE_GENAI_USE_VERTEXAI",
+      ].includes(credential.key) ? "keychain" as const : credential.effectiveSource,
     })),
   };
 }
