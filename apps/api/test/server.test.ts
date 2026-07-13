@@ -97,6 +97,7 @@ beforeEach(() => {
   options = {
     dbPath: path.join(tempDir, "jobctrl.db"),
     settingsPath: path.join(tempDir, "dashboard.json"),
+    settingsEnvironment: {},
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-profile-retailor" })),
     resumePdfRenderer: ({ htmlPath, pdfPath }) => {
       fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
@@ -8285,6 +8286,7 @@ describe("local TypeScript API", () => {
         autoApply: true,
         applyApprovalRequired: true,
         applyConcurrency: 3,
+        workerActivitySlots: 4,
         dailyBudgetUsd: 12.5,
         scoreCriteria: "Security leadership and platform reliability.",
         targetCriteria: "Director-plus infrastructure and security roles.",
@@ -8292,6 +8294,11 @@ describe("local TypeScript API", () => {
       },
       paths: {
         settingsPath: options.settingsPath,
+      },
+      effectiveSettings: {
+        dailyBudgetUsd: { value: 12.5, source: "persisted", activation: "live", editable: true },
+        applyConcurrency: { value: 3, source: "persisted", activation: "next_poll", editable: true },
+        workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
       },
     });
 
@@ -8312,6 +8319,7 @@ describe("local TypeScript API", () => {
         autoApply: false,
         applyApprovalRequired: true,
         applyConcurrency: 1,
+        workerActivitySlots: 4,
         dailyBudgetUsd: 25,
         scoreCriteria: "",
         targetCriteria: "",
@@ -8334,6 +8342,7 @@ describe("local TypeScript API", () => {
         autoApply: false,
         applyApprovalRequired: false,
         applyConcurrency: 2,
+        workerActivitySlots: 6,
         dailyBudgetUsd: 19.75,
         scoreCriteria: "Prioritize platform security, DevSecOps, and leadership scope.",
         targetCriteria: "Target senior engineering leadership roles.",
@@ -8350,6 +8359,7 @@ describe("local TypeScript API", () => {
         autoApply: false,
         applyApprovalRequired: false,
         applyConcurrency: 2,
+        workerActivitySlots: 6,
         dailyBudgetUsd: 19.75,
         scoreCriteria: "Prioritize platform security, DevSecOps, and leadership scope.",
         targetCriteria: "Target senior engineering leadership roles.",
@@ -8361,11 +8371,67 @@ describe("local TypeScript API", () => {
       min_fit_score: 9,
       auto_apply: false,
       apply_concurrency: 2,
+      worker_activity_slots: 6,
       daily_budget_usd: 19.75,
       score_criteria: "Prioritize platform security, DevSecOps, and leadership scope.",
       target_criteria: "Target senior engineering leadership roles.",
     });
 
+    await app.close();
+  });
+
+  it("exposes and protects environment-managed worker activity slots", async () => {
+    const before = fs.readFileSync(options.settingsPath, "utf8");
+    const app = buildApp({
+      ...options,
+      settingsEnvironment: { JOBCTRL_MAX_CONCURRENT_ACTIVITIES: "9" },
+    });
+
+    const read = await app.inject({ method: "GET", url: "/v1/settings" });
+    expect(read.statusCode, read.body).toBe(200);
+    expect(read.json()).toMatchObject({
+      settings: { workerActivitySlots: 9 },
+      effectiveSettings: {
+        workerActivitySlots: {
+          value: 9,
+          source: "environment",
+          activation: "restart",
+          editable: false,
+        },
+      },
+    });
+
+    const write = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: { workerActivitySlots: 7 },
+    });
+    expect(write.statusCode, write.body).toBe(409);
+    expect(write.json()).toEqual({
+      ok: false,
+      error: "setting_managed_by_environment",
+      field: "workerActivitySlots",
+      source: "environment",
+      activation: "restart",
+      message: "Worker activity slots are managed by the launch environment and require a worker restart.",
+    });
+    expect(fs.readFileSync(options.settingsPath, "utf8")).toBe(before);
+
+    await app.close();
+  });
+
+  it("rejects worker activity slots outside the public settings contract", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: { workerActivitySlots: 65 },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(JSON.parse(fs.readFileSync(options.settingsPath, "utf8"))).not.toHaveProperty(
+      "worker_activity_slots",
+    );
     await app.close();
   });
 

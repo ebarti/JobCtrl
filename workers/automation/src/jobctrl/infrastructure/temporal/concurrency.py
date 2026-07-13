@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+from jobctrl.infrastructure.scoring.criteria_provider import resolve_dashboard_settings_path
 
 
 DEFAULT_MAX_CONCURRENT_ACTIVITIES = 4
@@ -17,6 +23,12 @@ DEFAULT_MAX_CONCURRENT_ACTIVITIES = 4
 DEFAULT_MAX_PARALLEL_DISCOVERY_FAMILIES = 1
 
 
+@dataclass(frozen=True)
+class ResolvedActivityConcurrency:
+    value: int
+    source: Literal["environment", "persisted", "default"]
+
+
 def max_concurrent_activities_from_env(env: Mapping[str, str] | None = None) -> int:
     source = env if env is not None else os.environ
     raw = source.get("JOBCTRL_MAX_CONCURRENT_ACTIVITIES")
@@ -26,6 +38,44 @@ def max_concurrent_activities_from_env(env: Mapping[str, str] | None = None) -> 
         return max(1, int(raw))
     except ValueError:
         return DEFAULT_MAX_CONCURRENT_ACTIVITIES
+
+
+def resolve_max_concurrent_activities(
+    env: Mapping[str, str] | None = None,
+    settings_path: Path | str | None = None,
+) -> ResolvedActivityConcurrency:
+    """Resolve the worker launch value once: environment, dashboard, default."""
+    source = env if env is not None else os.environ
+    raw_env = source.get("JOBCTRL_MAX_CONCURRENT_ACTIVITIES")
+    if raw_env is not None and raw_env.strip() != "":
+        return ResolvedActivityConcurrency(
+            value=max_concurrent_activities_from_env(source),
+            source="environment",
+        )
+
+    path = resolve_dashboard_settings_path(settings_path)
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        parsed = {}
+    if isinstance(parsed, dict):
+        raw_persisted = parsed.get("worker_activity_slots")
+        if raw_persisted is None:
+            raw_persisted = parsed.get("workerActivitySlots")
+        try:
+            persisted = int(raw_persisted)
+        except (TypeError, ValueError):
+            pass
+        else:
+            return ResolvedActivityConcurrency(
+                value=min(64, max(1, persisted)),
+                source="persisted",
+            )
+
+    return ResolvedActivityConcurrency(
+        value=DEFAULT_MAX_CONCURRENT_ACTIVITIES,
+        source="default",
+    )
 
 
 def max_parallel_discovery_families_from_env(env: Mapping[str, str] | None = None) -> int:

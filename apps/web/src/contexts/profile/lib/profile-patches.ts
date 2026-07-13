@@ -1,5 +1,7 @@
 import type {
   CredentialKey,
+  EffectiveDashboardSettings,
+  EffectiveSetting,
   ProfileUpdateRequest,
   SettingsUpdateRequest,
 } from "@jobctrl/contracts";
@@ -93,9 +95,22 @@ export function patchSettingsResponse(current: unknown, body: SettingsUpdateRequ
         }).filter(([, value]) => typeof value === "string" && value.length > 0),
       )
     : current.settings.preferredModels;
+  const effectiveSettings: EffectiveDashboardSettings = { ...current.effectiveSettings };
+  for (const field of ["dailyBudgetUsd", "applyConcurrency", "workerActivitySlots"] as const) {
+    const value = body[field];
+    const metadata = effectiveSettings[field];
+    if (value !== undefined && metadata?.editable) {
+      effectiveSettings[field] = {
+        ...metadata,
+        value,
+        source: "persisted",
+      } as EffectiveSetting<number>;
+    }
+  }
   return {
     ...current,
     settings: { ...current.settings, ...overrides, preferredModels },
+    effectiveSettings,
   };
 }
 

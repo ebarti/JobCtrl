@@ -24,8 +24,15 @@ import {
 } from "@jobctrl/domain-types";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { matchingJobKeys, readSettingsConfig } from "./read-model.js";
+import { workerActivitySlotsManagedByEnvironment } from "./settings-config.js";
 
 export class InputError extends Error {}
+
+export class SettingManagedByEnvironmentError extends InputError {
+  readonly field = "workerActivitySlots" as const;
+  readonly source = "environment" as const;
+  readonly activation = "restart" as const;
+}
 
 export interface RetryFailedJobTarget {
   readonly jobUrl: string;
@@ -626,7 +633,11 @@ export function permanentlyDeleteJobs(db: SqliteDatabase, request: BulkJobMutati
   return { ok: true, count: jobKeys.length, jobKeys };
 }
 
-export function writeSettingsConfig(paths: { settingsPath: string }, request: SettingsUpdateRequest): SettingsResponse {
+export function writeSettingsConfig(
+  paths: { settingsPath: string },
+  request: SettingsUpdateRequest,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): SettingsResponse {
   const next = readJsonObject(paths.settingsPath);
   let wrote = false;
 
@@ -652,6 +663,14 @@ export function writeSettingsConfig(paths: { settingsPath: string }, request: Se
   }
   if (request.applyConcurrency !== undefined) {
     assign("apply_concurrency", request.applyConcurrency);
+  }
+  if (request.workerActivitySlots !== undefined) {
+    if (workerActivitySlotsManagedByEnvironment(environment)) {
+      throw new SettingManagedByEnvironmentError(
+        "Worker activity slots are managed by the launch environment and require a worker restart.",
+      );
+    }
+    assign("worker_activity_slots", request.workerActivitySlots);
   }
   if (request.dailyBudgetUsd !== undefined) {
     assign("daily_budget_usd", request.dailyBudgetUsd);
@@ -690,7 +709,7 @@ export function writeSettingsConfig(paths: { settingsPath: string }, request: Se
   }
 
   writeJson(paths.settingsPath, next);
-  return readSettingsConfig(paths);
+  return readSettingsConfig(paths, environment);
 }
 
 function updateLegacyJobColumnsForReset(

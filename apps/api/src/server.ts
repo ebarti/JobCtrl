@@ -280,6 +280,7 @@ import {
   hideJob,
   hideJobs,
   InputError,
+  SettingManagedByEnvironmentError,
   markJobApplied,
   markJobSkipped,
   permanentlyDeleteJob,
@@ -320,6 +321,8 @@ export interface BuildAppOptions {
   appDir?: string;
   dbPath: string;
   settingsPath: string;
+  /** Testable launch environment used to resolve effective settings. */
+  settingsEnvironment?: Readonly<Record<string, string | undefined>>;
   /** Absolute path to the prebuilt web root. Omit in source development. */
   webAssetsDir?: string;
   /** Private Python runtime command resolver. Defaults to source-checkout uv. */
@@ -530,7 +533,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/digest", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => {
-      const settings = readSettingsConfig({ settingsPath: options.settingsPath }).settings;
+      const settings = readSettingsConfig(
+        { settingsPath: options.settingsPath },
+        options.settingsEnvironment,
+      ).settings;
       return buildDigest(db, {
         applyReviewQueue: listApplyReviewQueue(db),
         budget: readLlmSpendHealth(options.dbPath, options.settingsPath),
@@ -2174,7 +2180,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
   });
 
-  app.get("/v1/settings", async () => readSettingsConfig({ settingsPath: options.settingsPath }));
+  app.get("/v1/settings", async () =>
+    readSettingsConfig(
+      { settingsPath: options.settingsPath },
+      options.settingsEnvironment,
+    ),
+  );
 
   app.patch("/v1/settings", async (request, reply) => {
     const body = parseBody(reply, SettingsUpdateRequestSchema, request.body ?? {});
@@ -2223,8 +2234,23 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
     }
     try {
-      return writeSettingsConfig({ settingsPath: options.settingsPath }, body);
+      return writeSettingsConfig(
+        { settingsPath: options.settingsPath },
+        body,
+        options.settingsEnvironment,
+      );
     } catch (error) {
+      if (error instanceof SettingManagedByEnvironmentError) {
+        void reply.code(409);
+        return {
+          ok: false as const,
+          error: "setting_managed_by_environment" as const,
+          field: error.field,
+          source: error.source,
+          activation: error.activation,
+          message: error.message,
+        };
+      }
       if (error instanceof InputError) {
         void reply.code(400);
         return { ok: false, error: "invalid_settings", message: error.message };

@@ -8,6 +8,9 @@ const meta = {
   component: SettingsForm,
   args: {
     initial: sampleSettingsResponse.settings,
+    effectiveSettings: sampleSettingsResponse.effectiveSettings,
+    activeWorkerActivitySlots: 4,
+    workerStatus: "healthy",
   },
 } satisfies Meta<typeof SettingsForm>;
 

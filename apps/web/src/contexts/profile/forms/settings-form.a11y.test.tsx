@@ -7,7 +7,14 @@ import { SettingsForm } from "./settings-form.js";
 
 describe("<SettingsForm> a11y", () => {
   it("has no critical axe violations on initial render", async () => {
-    const view = renderWithProviders(<SettingsForm initial={sampleSettingsResponse.settings} />);
+    const view = renderWithProviders(
+      <SettingsForm
+        initial={sampleSettingsResponse.settings}
+        effectiveSettings={sampleSettingsResponse.effectiveSettings}
+        activeWorkerActivitySlots={4}
+        workerStatus="healthy"
+      />,
+    );
     const results = await axe(view.container);
     expect(results).toHaveNoViolations();
   });

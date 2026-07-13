@@ -18,7 +18,7 @@ from temporalio.worker.workflow_sandbox import (
 from jobctrl.infrastructure.temporal.task_queues import JOBCTRL_TASK_QUEUE
 from jobctrl.infrastructure.temporal.concurrency import (
     activity_executor_max_workers,
-    max_concurrent_activities_from_env,
+    resolve_max_concurrent_activities,
 )
 from jobctrl.infrastructure.temporal.run_in_activity import set_activity_executor
 
@@ -58,15 +58,20 @@ def build_worker(
     workflows: Sequence[type],
     activities: Sequence[Any],
     task_queue: str = JOBCTRL_TASK_QUEUE,
+    max_concurrent_activities: int | None = None,
 ) -> Worker:
     """Build a ``temporalio.worker.Worker`` bound to the JobCtrl task queue."""
     workflow_list: list[type] = list(workflows)
     activity_list: list[Any] = list(activities)
     if not workflow_list and not activity_list:
         workflow_list.append(_BootstrapNoOpWorkflow)
-    max_concurrent_activities = _max_concurrent_activities()
+    active_max_concurrent_activities = (
+        max_concurrent_activities
+        if max_concurrent_activities is not None
+        else _max_concurrent_activities()
+    )
     activity_executor = ThreadPoolExecutor(
-        max_workers=activity_executor_max_workers(max_concurrent_activities)
+        max_workers=activity_executor_max_workers(active_max_concurrent_activities)
     )
     set_activity_executor(activity_executor)
     return Worker(
@@ -75,7 +80,7 @@ def build_worker(
         workflows=workflow_list,
         activities=activity_list,
         activity_executor=activity_executor,
-        max_concurrent_activities=max_concurrent_activities,
+        max_concurrent_activities=active_max_concurrent_activities,
         workflow_runner=SandboxedWorkflowRunner(
             restrictions=_PASSTHROUGH_RESTRICTIONS,
         ),
@@ -84,4 +89,4 @@ def build_worker(
 
 
 def _max_concurrent_activities() -> int:
-    return max_concurrent_activities_from_env()
+    return resolve_max_concurrent_activities().value

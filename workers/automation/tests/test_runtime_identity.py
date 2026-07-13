@@ -42,6 +42,43 @@ def test_worker_heartbeat_writes_runtime_identity(monkeypatch, tmp_path):
     )
 
 
+def test_worker_heartbeat_keeps_the_startup_concurrency_snapshot(monkeypatch, tmp_path):
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(runtime_identity.config, "APP_DIR", tmp_path)
+    monkeypatch.setattr(runtime_identity.config, "DB_PATH", db_path)
+    monkeypatch.setenv("JOBCTRL_MAX_CONCURRENT_ACTIVITIES", "2")
+
+    runtime_identity.write_worker_heartbeat(
+        task_queue="jobctrl-default",
+        worker_id="worker-test",
+        now=datetime(2026, 5, 20, 10, 0, tzinfo=UTC),
+        max_concurrent_activities=8,
+    )
+    (tmp_path / "dashboard.json").write_text(
+        '{"worker_activity_slots": 13}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JOBCTRL_MAX_CONCURRENT_ACTIVITIES", "3")
+    runtime_identity.write_worker_heartbeat(
+        task_queue="jobctrl-default",
+        worker_id="worker-test",
+        now=datetime(2026, 5, 20, 10, 1, tzinfo=UTC),
+        max_concurrent_activities=8,
+    )
+
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT max_concurrent_activities, activity_executor_max_workers "
+            "FROM worker_runtime_heartbeats WHERE worker_id = ?",
+            ("worker-test",),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row == (8, 10)
+
+
 def test_worker_heartbeat_migrates_legacy_runtime_columns(monkeypatch, tmp_path):
     db_path = tmp_path / "jobctrl.db"
     monkeypatch.setattr(runtime_identity.config, "APP_DIR", tmp_path)

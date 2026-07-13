@@ -29,7 +29,6 @@ import type {
   BulletProvenanceEntry,
   BulkJobMutationFilter,
   DashboardConversionFunnel,
-  DashboardSettings,
   DashboardSummary,
   DigestAcknowledgeResponse,
   DailyDigest,
@@ -82,6 +81,10 @@ import {
   resumeTemplateStateForJob,
 } from "./resume-templates.js";
 import { readWorkerHealth } from "./worker-health.js";
+import {
+  DEFAULT_DASHBOARD_SETTINGS,
+  readDashboardSettings,
+} from "./settings-config.js";
 
 const DEFAULT_TENANT = "local";
 const DEFAULT_PROFILE_ID = "default";
@@ -121,19 +124,6 @@ function sqlRankCase(column: string, ranks: Record<string, number>, fallback: nu
     .join(" ");
   return `(CASE ${column} ${arms} ELSE ${fallback} END)`;
 }
-
-const DEFAULT_SETTINGS: DashboardSettings = {
-  targetRole: "",
-  locationFilter: "",
-  minFitScore: 7,
-  autoApply: false,
-  applyApprovalRequired: true,
-  applyConcurrency: 1,
-  dailyBudgetUsd: 25,
-  scoreCriteria: "",
-  targetCriteria: "",
-  preferredModels: {},
-};
 
 interface JobListProjectionRow extends Record<string, unknown> {
   tenant_id: string;
@@ -672,7 +662,7 @@ function recordDigestReviewedEvent(
 }
 
 function normalizeDigestThreshold(value: number | null | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_SETTINGS.minFitScore;
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_DASHBOARD_SETTINGS.minFitScore;
   return Math.min(10, Math.max(1, Math.trunc(Number(value))));
 }
 
@@ -2464,10 +2454,14 @@ export function parseProfileShape(value: unknown): ProfileShape | null {
   return parsed.success ? parsed.data : null;
 }
 
-export function readSettingsConfig(paths: { settingsPath: string }): SettingsResponse {
+export function readSettingsConfig(
+  paths: { settingsPath: string },
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): SettingsResponse {
+  const resolved = readDashboardSettings(paths.settingsPath, environment);
   return {
     ok: true,
-    settings: normalizeSettings(readJson(paths.settingsPath, {})),
+    ...resolved,
     paths,
   };
 }
@@ -6228,66 +6222,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeSettings(raw: unknown): DashboardSettings {
-  const source = isRecord(raw) ? raw : {};
-  return {
-    targetRole: normalizeText(source.targetRole ?? source.target_role, DEFAULT_SETTINGS.targetRole),
-    locationFilter: normalizeText(source.locationFilter ?? source.location_filter, DEFAULT_SETTINGS.locationFilter),
-    minFitScore: normalizeInt(source.minFitScore ?? source.min_fit_score, DEFAULT_SETTINGS.minFitScore, 0, 10),
-    autoApply: normalizeBool(source.autoApply ?? source.auto_apply, DEFAULT_SETTINGS.autoApply),
-    applyApprovalRequired: normalizeBool(
-      source.applyApprovalRequired ?? source.apply_approval_required,
-      DEFAULT_SETTINGS.applyApprovalRequired,
-    ),
-    applyConcurrency: normalizeInt(
-      source.applyConcurrency ?? source.apply_concurrency,
-      DEFAULT_SETTINGS.applyConcurrency,
-      1,
-      16,
-    ),
-    dailyBudgetUsd: normalizeNumber(
-      source.dailyBudgetUsd ?? source.daily_budget_usd,
-      DEFAULT_SETTINGS.dailyBudgetUsd,
-      0,
-      Number.POSITIVE_INFINITY,
-    ),
-    scoreCriteria: normalizeText(source.scoreCriteria ?? source.score_criteria, DEFAULT_SETTINGS.scoreCriteria),
-    targetCriteria: normalizeText(source.targetCriteria ?? source.target_criteria, DEFAULT_SETTINGS.targetCriteria),
-    preferredModels: normalizePreferredModels(source.preferredModels ?? source.preferred_models),
-  };
-}
-
-function normalizePreferredModels(value: unknown): DashboardSettings["preferredModels"] {
-  if (!isRecord(value)) return {};
-  const result: DashboardSettings["preferredModels"] = {};
-  for (const provider of ["codex", "claude", "google"] as const) {
-    const model = typeof value[provider] === "string" ? value[provider].trim() : "";
-    if (model && model.length <= 160) {
-      result[provider] = model;
-    }
-  }
-  return result;
-}
-
-function normalizeText(value: unknown, fallback: string): string {
-  const text = stringField(value).trim();
-  return text.length <= 160 ? text : fallback;
-}
-
-function normalizeInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
-  const numberValue = Number.parseInt(stringField(value), 10);
-  if (!Number.isFinite(numberValue)) return fallback;
-  return Math.min(maximum, Math.max(minimum, numberValue));
-}
-
-function normalizeNumber(value: unknown, fallback: number, minimum: number, maximum: number): number {
-  if (value === null || value === undefined) return fallback;
-  const text = stringField(value).trim();
-  if (text === "") return fallback;
-  const numberValue = Number(text);
-  if (!Number.isFinite(numberValue)) return fallback;
-  return Math.min(maximum, Math.max(minimum, numberValue));
-}
 
 function normalizeBool(value: unknown, fallback: boolean): boolean {
   if (typeof value === "boolean") return value;

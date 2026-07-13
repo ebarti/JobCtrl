@@ -1298,6 +1298,15 @@ export class DemoLocalCommandExecutor {
       case "updateSettings": {
         const body = record(args[0]);
         Object.assign(draft.state.readModel.settings.settings, body);
+        for (const field of ["dailyBudgetUsd", "applyConcurrency", "workerActivitySlots"] as const) {
+          const value = numberValue(body[field]);
+          if (value !== null) {
+            Object.assign(draft.state.readModel.settings.effectiveSettings[field], {
+              value,
+              source: "persisted",
+            });
+          }
+        }
         const dailyBudgetUsd = numberValue(body.dailyBudgetUsd);
         if (dailyBudgetUsd !== null) {
           const spend = draft.state.readModel.dashboard.health.llmSpend;

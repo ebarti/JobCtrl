@@ -16,9 +16,17 @@ describe("<SettingsForm>", () => {
   });
 
   it("renders Settings as execution-only config", () => {
-    const { container } = renderWithProviders(<SettingsForm initial={sampleSettingsResponse.settings} />);
+    const { container } = renderWithProviders(
+      <SettingsForm
+        initial={sampleSettingsResponse.settings}
+        effectiveSettings={sampleSettingsResponse.effectiveSettings}
+        activeWorkerActivitySlots={4}
+        workerStatus="healthy"
+      />,
+    );
 
-    expect(screen.getByLabelText("Apply concurrency")).toHaveValue(2);
+    expect(screen.getByLabelText("Concurrent applications")).toHaveValue(2);
+    expect(screen.getByLabelText("Worker activity slots")).toHaveValue(4);
     expect(screen.getByLabelText("Daily LLM budget (USD)")).toHaveValue(25);
     expect(screen.queryByLabelText("Minimum fit score")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Target role")).not.toBeInTheDocument();
@@ -33,13 +41,17 @@ describe("<SettingsForm>", () => {
     const updateSettings = vi.fn(async (request): Promise<SettingsResponse> => ({
       ok: true,
       settings: { ...sampleSettingsResponse.settings, ...request },
+      effectiveSettings: sampleSettingsResponse.effectiveSettings,
       paths: sampleSettingsResponse.paths,
     }));
-    renderWithProviders(<SettingsForm initial={sampleSettingsResponse.settings} />, {
+    renderWithProviders(<SettingsForm
+      initial={sampleSettingsResponse.settings}
+      effectiveSettings={sampleSettingsResponse.effectiveSettings}
+    />, {
       ports: buildTestPorts({ api: { updateSettings } }),
     });
 
-    fireEvent.change(screen.getByLabelText("Apply concurrency"), {
+    fireEvent.change(screen.getByLabelText("Concurrent applications"), {
       target: { value: "4" },
     });
 
@@ -51,7 +63,11 @@ describe("<SettingsForm>", () => {
     });
 
     expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(updateSettings).toHaveBeenCalledWith({ applyConcurrency: 4, dailyBudgetUsd: 25 });
+    expect(updateSettings).toHaveBeenCalledWith({
+      applyConcurrency: 4,
+      dailyBudgetUsd: 25,
+      workerActivitySlots: 4,
+    });
   });
 
   it("keeps newer execution edits when an autosave response returns for an older snapshot", async () => {
@@ -64,11 +80,14 @@ describe("<SettingsForm>", () => {
           resolveUpdate = resolve;
         }),
     );
-    renderWithProviders(<SettingsForm initial={sampleSettingsResponse.settings} />, {
+    renderWithProviders(<SettingsForm
+      initial={sampleSettingsResponse.settings}
+      effectiveSettings={sampleSettingsResponse.effectiveSettings}
+    />, {
       ports: buildTestPorts({ api: { updateSettings } }),
     });
 
-    const applyConcurrency = screen.getByLabelText("Apply concurrency");
+    const applyConcurrency = screen.getByLabelText("Concurrent applications");
     fireEvent.change(applyConcurrency, {
       target: { value: "3" },
     });
@@ -87,6 +106,7 @@ describe("<SettingsForm>", () => {
       resolveUpdate?.({
         ok: true,
         settings: { ...sampleSettingsResponse.settings, ...request },
+        effectiveSettings: sampleSettingsResponse.effectiveSettings,
         paths: sampleSettingsResponse.paths,
       });
       await Promise.resolve();
@@ -94,6 +114,41 @@ describe("<SettingsForm>", () => {
 
     expect(applyConcurrency).toHaveValue(5);
     expect(screen.getByText("saved; newer changes pending")).toBeInTheDocument();
+  });
+
+  it("keeps an environment-managed worker value read-only and out of submissions", async () => {
+    const effectiveSettings = {
+      ...sampleSettingsResponse.effectiveSettings,
+      workerActivitySlots: {
+        value: 9,
+        source: "environment",
+        activation: "restart",
+        editable: false,
+      } as const,
+    };
+    const updateSettings = vi.fn(async (): Promise<SettingsResponse> => ({
+      ...sampleSettingsResponse,
+      settings: { ...sampleSettingsResponse.settings, workerActivitySlots: 9 },
+      effectiveSettings,
+    }));
+    renderWithProviders(
+      <SettingsForm
+        initial={{ ...sampleSettingsResponse.settings, workerActivitySlots: 9 }}
+        effectiveSettings={effectiveSettings}
+        activeWorkerActivitySlots={4}
+        workerStatus="healthy"
+      />,
+      { ports: buildTestPorts({ api: { updateSettings } }) },
+    );
+
+    expect(screen.getByLabelText("Worker activity slots")).toHaveAttribute("readonly");
+    expect(screen.getByText(/Managed by the launch environment/)).toBeInTheDocument();
+    expect(screen.getByText(/Restart pending/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Daily LLM budget (USD)"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+    expect(updateSettings.mock.calls[0]?.[0]).not.toHaveProperty("workerActivitySlots");
   });
 });
 
@@ -109,7 +164,7 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
 
     expect(screen.getByLabelText("Minimum fit score")).toHaveValue(7);
     expect(screen.getByLabelText("Auto apply")).not.toBeChecked();
-    expect(screen.queryByLabelText("Apply concurrency")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Concurrent applications")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Daily LLM budget (USD)")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Target role")).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Scoring rubric" })).not.toBeInTheDocument();
@@ -124,6 +179,7 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
     const updateSettings = vi.fn(async (request): Promise<SettingsResponse> => ({
       ok: true,
       settings: { ...sampleSettingsResponse.settings, ...request },
+      effectiveSettings: sampleSettingsResponse.effectiveSettings,
       paths: sampleSettingsResponse.paths,
     }));
     renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleSettingsResponse.settings} />, {
