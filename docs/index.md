@@ -10,6 +10,9 @@ hero:
     alt: JobCtrl dashboard showing pipeline progress, job counts, and apply runs
   actions:
     - theme: brand
+      text: Try the Live Demo
+      link: https://demo.jobctrl.dev/
+    - theme: alt
       text: Product Tour
       link: /user/screenshots
     - theme: alt

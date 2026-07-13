@@ -169,6 +169,21 @@ try {
     console.log("ok    / hero image");
   }
 
+  const heroBrandActions = await page.locator(".VPHome .VPHero .actions .VPButton.brand").evaluateAll((actions) =>
+    actions
+      .filter((action) => action.getClientRects().length > 0)
+      .map((action) => ({ text: action.textContent?.trim(), href: action.href })),
+  );
+  if (
+    heroBrandActions.length !== 1 ||
+    heroBrandActions[0]?.text !== "Try the Live Demo" ||
+    heroBrandActions[0]?.href !== "https://demo.jobctrl.dev/"
+  ) {
+    fail(`/: expected one visible brand action for Try the Live Demo, found ${JSON.stringify(heroBrandActions)}`);
+  } else {
+    console.log("ok    / live demo hero action");
+  }
+
   await page.goto(`http://127.0.0.1:${port}/user/screenshots`, { waitUntil: "networkidle" });
   const tourSidebar = await page.locator(".VPSidebar").innerText();
   if (/Developer Guide|System Architecture|API|Reference/.test(tourSidebar)) {
