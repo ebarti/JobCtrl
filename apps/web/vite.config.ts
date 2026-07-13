@@ -4,6 +4,8 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+const demoApiProxyTarget = process.env["VITE_DEMO_API_PROXY_TARGET"];
+
 export default defineConfig({
   plugins: [
     tanstackRouter({
@@ -25,6 +27,16 @@ export default defineConfig({
     strictPort: false,
     proxy: {
       "/v1": process.env["VITE_DEV_API_PROXY_TARGET"] ?? "http://127.0.0.1:8766",
+      ...(demoApiProxyTarget === undefined
+        ? {}
+        : {
+            // Preserve the browser-facing Host/Origin pair. The demo Worker
+            // intentionally rejects requests that are not same-origin.
+            "/api": {
+              target: demoApiProxyTarget,
+              changeOrigin: false,
+            },
+          }),
     },
   },
   build: {

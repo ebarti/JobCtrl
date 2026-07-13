@@ -109,6 +109,10 @@ launcher defaults above.
 | `JOBCTRL_API_PORT` / `PORT` | `8766` | Local API port. |
 | `JOBCTRL_API_ALLOW_REMOTE_BIND` | unset | Set to `1`, `true`, or `yes` to allow non-loopback API binding. This can expose private local data. |
 | `JOBCTRL_WEB_PORT` | `5173` | Requested Vite development port. |
+| `JOBCTRL_DOCS_PORT` | `4174` | Requested VitePress development port. |
+| `JOBCTRL_DEMO_WEB_PORT` | `5174` | Requested Vite development port for the browser-local demo. |
+| `JOBCTRL_DEMO_API_PORT` | `8787` | Local Wrangler port for the demo consent and telemetry API. |
+| `JOBCTRL_DEMO_STATE_DIR` | `.dev/demo/wrangler` | Local Wrangler/D1 persistence shared by demo migrations and the demo API process. |
 | `VITE_JOBCTRL_API_BASE_URL` | proxied `/v1` | Browser API origin when not using the default Vite proxy. |
 | `JOBCTRL_TEMPORAL_DB` | `.dev/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. |
 | `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address used by the worker, CLI, and workflow-starting RPC. |
@@ -116,6 +120,7 @@ launcher defaults above.
 | `JOBCTRL_MAX_CONCURRENT_ACTIVITIES` | `4` | Maximum Temporal activities the local worker runs at once (shown on the Settings page). Set in the worker environment and restart the worker to apply. |
 | `JOBCTRL_API_SSE_POLL_MS` | `250` | API event-stream database poll interval in milliseconds. |
 | `VITE_DEV_API_PROXY_TARGET` | `http://127.0.0.1:8766` | Vite dev-server `/v1` proxy target; override it for isolated or multi-worktree stacks. |
+| `VITE_DEMO_API_PROXY_TARGET` | launcher-managed | Vite dev-server `/api` proxy target for demo mode. The launcher sets it to the tracked local Wrangler process so consent stays same-origin. |
 | `VITE_GOOGLE_MAPS_API_KEY` | unset | Enables Google Maps address search in the Profile form. |
 
 Inspect the foreground stack from another terminal:
@@ -161,22 +166,44 @@ server proxies `/v1/*` to the TypeScript API by default.
 
 ### Public demo browser workspace
 
-Run the frontend-only public demo with synthetic data and no JobCtrl API,
-Temporal, worker, SSE, or host-OS integration:
+Run the complete local public demo—synthetic browser-local workspace plus the
+real local consent and telemetry Worker—with:
 
 ```bash
-VITE_JOBCTRL_APP_MODE=demo corepack pnpm web:dev
+pnpm demo:dev
 ```
 
-Only the exact value `demo` selects this composition. A missing or invalid
-`VITE_JOBCTRL_APP_MODE` keeps the normal local composition, so a mistyped value
-cannot produce a partially mounted app.
+This is the foreground form: keep the terminal open and press Ctrl-C to stop
+both tracked processes. For a detached demo that returns control to the shell,
+use the complete lifecycle:
+
+```bash
+pnpm demo:start
+pnpm demo:status
+pnpm demo:stop
+```
+
+`pnpm demo:start` applies pending migrations to the local D1 store, starts the
+Wrangler API on port `8787`, starts the demo-mode Vite app on requested port
+`5174`, prints both observed bindings, and returns. Vite proxies `/api/*` to
+Wrangler without changing the browser-facing origin, preserving the same-origin
+consent and secure-cookie boundary used in production. Local D1 state persists
+under `.dev/demo/wrangler/`; override the three `JOBCTRL_DEMO_*` variables in
+the table above for isolated multi-worktree sessions. Inspect process logs with
+`pnpm dev:logs demo-api` or `pnpm dev:logs demo-web`.
+
+The local demo does not start the JobCtrl API, Temporal, Python worker, SSE, or
+host-OS integrations. Only the exact value `demo` selects this frontend
+composition; the lifecycle command supplies it automatically. A missing or
+invalid `VITE_JOBCTRL_APP_MODE` keeps the normal local composition, so a
+mistyped value cannot produce a partially mounted app.
 
 Demo mode now renders the static acceptance gate before creating IndexedDB.
-Without the same-origin consent Worker, acceptance remains fail-closed and the
-workspace does not initialize. The dedicated Playwright lane stubs the exact
-Worker contract for browser-local development; use a Cloudflare preview when
-manually testing real cookie persistence across reloads.
+If the same-origin local Worker is unavailable, acceptance remains fail-closed
+and the workspace does not initialize. The local lifecycle runs the real Worker
+contract, so it supports manual cookie-persistence testing without a Cloudflare
+preview; the dedicated Playwright lane may still stub that contract for focused
+frontend tests.
 
 Each browser/storage profile has its own IndexedDB demo workspace. It is not
 shared across browser profiles or through a common demo environment, but tabs
@@ -452,6 +479,20 @@ pnpm docs:build
 pnpm docs:check:runtime
 pnpm docs:preview
 ```
+
+`pnpm docs:dev` is the foreground server and stops with Ctrl-C. For a tracked
+background server that returns control to the shell, use:
+
+```bash
+pnpm docs:start
+pnpm docs:status
+pnpm docs:stop
+```
+
+`pnpm docs:start` prints the observed VitePress URL (requested port `4174`) and
+returns. Use that URL because VitePress may select a higher port when the
+requested one is occupied. Its PID and log use the shared `.dev/` launcher
+state; inspect the log with `pnpm dev:logs docs`.
 
 `pnpm docs:build` fails on dead internal links, then runs
 `scripts/check-docs-site-links.mjs`, which fails if any href/src emitted into

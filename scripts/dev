@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # scripts/dev — JobCtrl local dev fleet launcher.
 #
-# Runs or daemonizes temporal / api / web / worker, tracks each by PID file
-# under .dev/pids/, captures stdout+stderr to .dev/logs/, and starts from a
-# clean owned process tree so stale local stack processes do not survive
-# between launches. Each (re)start rotates the previous run's log to
-# <name>.log.1 instead of truncating it, so a crash traceback survives the
-# next launch.
+# Runs or daemonizes the default temporal / api / web / worker fleet plus
+# explicitly selected docs and demo processes. It tracks each by PID file under
+# .dev/pids/, captures stdout+stderr to .dev/logs/, and starts from a clean
+# owned process tree so stale local processes do not survive between launches.
+# Each (re)start rotates the previous run's log to <name>.log.1 instead of
+# truncating it, so a crash traceback survives the next launch.
 #
 # Usage:
 #   scripts/dev run [name...]      Run named processes in the foreground
 #   scripts/dev start [name...]    Start named processes (or all if none given)
 #   scripts/dev stop  [name...]    Stop named (or all)
 #   scripts/dev restart [name...]  Stop then start
-#   scripts/dev status             Show pid, alive state, and worker health
+#   scripts/dev status [name...]   Show pid, alive state, and worker health
 #   scripts/dev logs <name>        tail -f the current log (prior run: <name>.log.1)
 #   scripts/dev setup              Install/sync Node and Python dependencies
 #   scripts/dev list               Print the process registry
@@ -27,9 +27,11 @@ PID_DIR="$DEV_DIR/pids"
 LOG_DIR="$DEV_DIR/logs"
 mkdir -p "$PID_DIR" "$LOG_DIR"
 
-# Process registry. To add a process: extend `process_names` and add a
-# matching arm in `process_command`.
+# The default fleet remains the four application processes. Auxiliary docs and
+# demo processes are opt-in so bare `scripts/dev run|start|stop|status` keeps
+# its existing application-stack contract.
 process_names() { echo "temporal api web worker"; }
+known_process_names() { echo "$(process_names) docs demo-api demo-web"; }
 
 process_command() {
   case "$1" in
@@ -37,6 +39,9 @@ process_command() {
     api)      echo "pnpm --filter @jobctrl/api dev" ;;
     web)      echo 'pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port "$JOBCTRL_WEB_PORT"' ;;
     worker)   echo "uv --project workers/automation run jobctrl worker" ;;
+    docs)     echo 'corepack pnpm exec vitepress dev docs --host 127.0.0.1 --port "$JOBCTRL_DOCS_PORT"' ;;
+    demo-api) echo 'corepack pnpm --filter @jobctrl/demo-edge exec wrangler d1 migrations apply DEMO_TELEMETRY_DB --local --config wrangler.api.jsonc --persist-to "$JOBCTRL_DEMO_STATE_DIR" && exec corepack pnpm --filter @jobctrl/demo-edge exec wrangler dev --config wrangler.api.jsonc --local --ip 127.0.0.1 --port "$JOBCTRL_DEMO_API_PORT" --persist-to "$JOBCTRL_DEMO_STATE_DIR"' ;;
+    demo-web) echo 'VITE_JOBCTRL_APP_MODE=demo VITE_DEMO_API_PROXY_TARGET="http://127.0.0.1:${JOBCTRL_DEMO_API_PORT}" exec corepack pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port "$JOBCTRL_DEMO_WEB_PORT"' ;;
     *)        return 1 ;;
   esac
 }
@@ -172,8 +177,12 @@ set_default_env() {
   export JOBCTRL_API_PORT="${JOBCTRL_API_PORT:-8766}"
   export VITE_JOBCTRL_API_BASE_URL="${VITE_JOBCTRL_API_BASE_URL:-http://${JOBCTRL_API_HOST}:${JOBCTRL_API_PORT}}"
   export JOBCTRL_WEB_PORT="${JOBCTRL_WEB_PORT:-5173}"
+  export JOBCTRL_DOCS_PORT="${JOBCTRL_DOCS_PORT:-4174}"
+  export JOBCTRL_DEMO_API_PORT="${JOBCTRL_DEMO_API_PORT:-8787}"
+  export JOBCTRL_DEMO_WEB_PORT="${JOBCTRL_DEMO_WEB_PORT:-5174}"
+  export JOBCTRL_DEMO_STATE_DIR="${JOBCTRL_DEMO_STATE_DIR:-$DEV_DIR/demo/wrangler}"
   export JOBCTRL_TEMPORAL_DB="${JOBCTRL_TEMPORAL_DB:-$DEV_DIR/temporal/temporal.db}"
-  mkdir -p "$(dirname "$JOBCTRL_TEMPORAL_DB")"
+  mkdir -p "$(dirname "$JOBCTRL_TEMPORAL_DB")" "$JOBCTRL_DEMO_STATE_DIR"
 }
 
 start_detached_command() {
@@ -233,7 +242,7 @@ PY
 start_one() {
   local name="$1"
   if ! is_known "$name"; then
-    echo "dev: unknown process '$name' (try: $(process_names))" >&2
+    echo "dev: unknown process '$name' (try: $(known_process_names))" >&2
     return 1
   fi
   ensure_not_running "$name"
@@ -291,6 +300,39 @@ print_binding_for() {
         echo "web: http://127.0.0.1:${JOBCTRL_WEB_PORT}/ (requested; startup log pending)"
       fi
       ;;
+    docs)
+      url=$(wait_for_log_url "$(log_file "$name")" 'http://127\.0\.0\.1:[0-9]+/?' || true)
+      if [[ -z "$url" ]]; then
+        url=$(read_log_url "$(log_file "$name")" 'http://localhost:[0-9]+/?')
+      fi
+      if [[ -n "$url" ]]; then
+        echo "docs: $url"
+      else
+        echo "docs: http://127.0.0.1:${JOBCTRL_DOCS_PORT}/ (requested; startup log pending)"
+      fi
+      ;;
+    demo-api)
+      url=$(wait_for_log_url "$(log_file "$name")" 'http://127\.0\.0\.1:[0-9]+/?' || true)
+      if [[ -z "$url" ]]; then
+        url=$(read_log_url "$(log_file "$name")" 'http://localhost:[0-9]+/?')
+      fi
+      if [[ -n "$url" ]]; then
+        echo "demo-api: $url"
+      else
+        echo "demo-api: http://127.0.0.1:${JOBCTRL_DEMO_API_PORT}/ (requested; startup log pending)"
+      fi
+      ;;
+    demo-web)
+      url=$(wait_for_log_url "$(log_file "$name")" 'http://127\.0\.0\.1:[0-9]+/?' || true)
+      if [[ -z "$url" ]]; then
+        url=$(read_log_url "$(log_file "$name")" 'http://localhost:[0-9]+/?')
+      fi
+      if [[ -n "$url" ]]; then
+        echo "demo-web: $url"
+      else
+        echo "demo-web: http://127.0.0.1:${JOBCTRL_DEMO_WEB_PORT}/ (requested; startup log pending)"
+      fi
+      ;;
     temporal)
       echo "temporal: grpc 127.0.0.1:7233, ui http://127.0.0.1:8233"
       ;;
@@ -301,7 +343,7 @@ print_binding_summary() {
   local printed=0 n
   for n in "$@"; do
     case "$n" in
-      api|web|temporal)
+      api|web|temporal|docs|demo-api|demo-web)
         if [[ "$printed" -eq 0 ]]; then
           echo "dev: bindings"
           printed=1
@@ -332,7 +374,7 @@ run_cleanup() {
 start_run_one() {
   local name="$1"
   if ! is_known "$name"; then
-    echo "dev: unknown process '$name' (try: $(process_names))" >&2
+    echo "dev: unknown process '$name' (try: $(known_process_names))" >&2
     return 1
   fi
   ensure_not_running "$name"
@@ -456,8 +498,16 @@ worker_health_status() {
 cmd_status() {
   load_env_file
   set_default_env
+  local targets=("$@")
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    for n in $(process_names); do targets+=("$n"); done
+  fi
   printf "%-10s %-8s %-8s %-10s %s\n" NAME STATE PID HEALTH LOG
-  for n in $(process_names); do
+  for n in "${targets[@]}"; do
+    if ! is_known "$n"; then
+      echo "dev: unknown process '$n' (try: $(known_process_names))" >&2
+      return 1
+    fi
     local state pid health log
     if is_running "$n"; then
       state="up"
@@ -478,7 +528,7 @@ cmd_status() {
 cmd_logs() {
   local name="${1:-}"
   if [[ -z "$name" ]]; then
-    echo "dev: logs requires a process name (try: $(process_names))" >&2
+    echo "dev: logs requires a process name (try: $(known_process_names))" >&2
     exit 2
   fi
   if ! is_known "$name"; then
@@ -497,7 +547,7 @@ cmd_setup() {
 }
 
 cmd_list() {
-  for n in $(process_names); do
+  for n in $(known_process_names); do
     printf "%-10s %s\n" "$n" "$(process_command "$n")"
   done
 }
@@ -515,7 +565,7 @@ main() {
     start)   cmd_start "$@" ;;
     stop)    cmd_stop "$@" ;;
     restart) cmd_restart "$@" ;;
-    status)  cmd_status ;;
+    status)  cmd_status "$@" ;;
     logs)    cmd_logs "$@" ;;
     setup)   cmd_setup ;;
     list)    cmd_list ;;
