@@ -1757,6 +1757,12 @@ export const SettingsUpdateRequestSchema = z
     applyConcurrency: z.coerce.number().int().min(1).max(16).optional(),
     workerActivitySlots: z.coerce.number().int().min(1).max(64).optional(),
     dailyBudgetUsd: z.coerce.number().min(0).optional(),
+    analysisLegs: z.array(z.enum(["codex", "claude", "google"])).min(1).optional(),
+    tailoringGeneratorModels: z.array(z.string().trim().min(1).max(160)).min(1).nullable().optional(),
+    tailoringJudgeModel: z.string().trim().min(1).max(160).nullable().optional(),
+    tailoringJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
+    applyMaxBudgetUsd: z.coerce.number().min(0).optional(),
+    applyTimeoutSeconds: z.coerce.number().int().min(60).max(3600).optional(),
     scoreCriteria: z.string().max(8000).optional(),
     targetCriteria: z.string().max(8000).optional(),
     preferredModels: z
@@ -2866,6 +2872,12 @@ export interface DailyDigestBudget {
   status: "ok" | "over_budget";
   estimatedUsd: number;
   dailyBudgetUsd: number;
+  analysisLegs: ProviderId[];
+  tailoringGeneratorModels: string[] | null;
+  tailoringJudgeModel: string | null;
+  tailoringJudgeMinScore: number;
+  applyMaxBudgetUsd: number;
+  applyTimeoutSeconds: number;
   remainingUsd: number | null;
   unlimited: boolean;
 }
@@ -3515,6 +3527,9 @@ export const SETTING_ACTIVATIONS = [
   "next_poll",
   "next_source_family",
   "next_run",
+  "next_analysis",
+  "next_workflow",
+  "next_apply_job",
   "restart",
 ] as const;
 export type SettingActivation = (typeof SETTING_ACTIVATIONS)[number];
@@ -3537,6 +3552,14 @@ export interface EffectiveDashboardSettings {
   dailyBudgetUsd: EffectiveSetting<number>;
   applyConcurrency: EffectiveSetting<number>;
   workerActivitySlots: EffectiveSetting<number>;
+  analysisLegs: EffectiveSetting<ProviderId[]>;
+  tailoringGeneratorModels: EffectiveSetting<string[] | null>;
+  tailoringJudgeModel: EffectiveSetting<string | null>;
+  tailoringJudgeMinScore: EffectiveSetting<number>;
+  applyMaxBudgetUsd: EffectiveSetting<number>;
+  applyTimeoutSeconds: EffectiveSetting<number>;
+  scoreCriteria: EffectiveSetting<string>;
+  targetCriteria: EffectiveSetting<string>;
 }
 
 export interface SettingsResponse {
@@ -3551,9 +3574,16 @@ export interface SettingsResponse {
 export interface SettingManagedByEnvironmentResponse {
   ok: false;
   error: "setting_managed_by_environment";
-  field: "workerActivitySlots";
+  field:
+    | "workerActivitySlots"
+    | "analysisLegs"
+    | "tailoringGeneratorModels"
+    | "tailoringJudgeModel"
+    | "tailoringJudgeMinScore"
+    | "applyMaxBudgetUsd"
+    | "applyTimeoutSeconds";
   source: "environment";
-  activation: "restart";
+  activation: SettingActivation;
   message: string;
 }
 

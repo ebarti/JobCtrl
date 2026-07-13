@@ -24,14 +24,22 @@ import {
 } from "@jobctrl/domain-types";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { matchingJobKeys, readSettingsConfig } from "./read-model.js";
-import { workerActivitySlotsManagedByEnvironment } from "./settings-config.js";
+import {
+  managedDashboardSetting,
+  type EnvironmentManagedDashboardField,
+} from "./settings-config.js";
 
 export class InputError extends Error {}
 
 export class SettingManagedByEnvironmentError extends InputError {
-  readonly field = "workerActivitySlots" as const;
   readonly source = "environment" as const;
-  readonly activation = "restart" as const;
+
+  constructor(
+    readonly field: EnvironmentManagedDashboardField,
+    readonly activation: NonNullable<ReturnType<typeof managedDashboardSetting>>,
+  ) {
+    super(`${field} is managed by the launch environment and cannot be changed here.`);
+  }
 }
 
 export interface RetryFailedJobTarget {
@@ -641,6 +649,21 @@ export function writeSettingsConfig(
   const next = readJsonObject(paths.settingsPath);
   let wrote = false;
 
+  for (const field of [
+    "workerActivitySlots",
+    "analysisLegs",
+    "tailoringGeneratorModels",
+    "tailoringJudgeModel",
+    "tailoringJudgeMinScore",
+    "applyMaxBudgetUsd",
+    "applyTimeoutSeconds",
+  ] as const) {
+    const activation = managedDashboardSetting(field, environment);
+    if (request[field] !== undefined && activation) {
+      throw new SettingManagedByEnvironmentError(field, activation);
+    }
+  }
+
   const assign = (key: string, value: unknown) => {
     next[key] = value;
     wrote = true;
@@ -665,15 +688,28 @@ export function writeSettingsConfig(
     assign("apply_concurrency", request.applyConcurrency);
   }
   if (request.workerActivitySlots !== undefined) {
-    if (workerActivitySlotsManagedByEnvironment(environment)) {
-      throw new SettingManagedByEnvironmentError(
-        "Worker activity slots are managed by the launch environment and require a worker restart.",
-      );
-    }
     assign("worker_activity_slots", request.workerActivitySlots);
   }
   if (request.dailyBudgetUsd !== undefined) {
     assign("daily_budget_usd", request.dailyBudgetUsd);
+  }
+  if (request.analysisLegs !== undefined) {
+    assign("analysis_legs", request.analysisLegs);
+  }
+  if (request.tailoringGeneratorModels !== undefined) {
+    assign("tailoring_generator_models", request.tailoringGeneratorModels);
+  }
+  if (request.tailoringJudgeModel !== undefined) {
+    assign("tailoring_judge_model", request.tailoringJudgeModel);
+  }
+  if (request.tailoringJudgeMinScore !== undefined) {
+    assign("tailoring_judge_min_score", request.tailoringJudgeMinScore);
+  }
+  if (request.applyMaxBudgetUsd !== undefined) {
+    assign("apply_max_budget_usd", request.applyMaxBudgetUsd);
+  }
+  if (request.applyTimeoutSeconds !== undefined) {
+    assign("apply_timeout_seconds", request.applyTimeoutSeconds);
   }
   if (request.scoreCriteria !== undefined) {
     assign("score_criteria", request.scoreCriteria);

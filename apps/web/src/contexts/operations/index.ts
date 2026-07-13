@@ -82,6 +82,7 @@ export { analyticsKeys } from "./analyticsKeys.js";
 export { dashboardKeys } from "./dashboardKeys.js";
 export { digestKeys } from "./digestKeys.js";
 export { healthKeys } from "./healthKeys.js";
+export { settingsKeys } from "./settingsKeys.js";
 export { jobsKeys } from "./jobsKeys.js";
 export { outcomesKeys } from "./outcomesKeys.js";
 export { workflowRunsKeys } from "./workflowRunsKeys.js";
@@ -113,6 +114,10 @@ export {
   useSourceRegistryQuery,
 } from "./hooks/useDiscoveryProductControlsQuery.js";
 export { useHealthQuery } from "./hooks/useHealthQuery.js";
+export {
+  useProviderModelCatalogQuery,
+  useSettingsPolicyQuery,
+} from "./hooks/useSettingsPolicyQueries.js";
 export { useJobApplicationOutcomesQuery } from "./hooks/useJobApplicationOutcomesQuery.js";
 export { useJobDetailQuery } from "./hooks/useJobDetailQuery.js";
 export { useJobsListQuery } from "./hooks/useJobsListQuery.js";

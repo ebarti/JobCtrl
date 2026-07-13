@@ -129,9 +129,15 @@ def parse_enabled_analysis_legs(raw: str | None) -> tuple[str, ...]:
 
 
 def enabled_analysis_legs(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
-    """Return the enabled employer-analysis legs from env, defaulting to all."""
+    """Return analysis legs from env, saved UI policy, or the all-legs default."""
+    source = _env(env)
+    if ANALYSIS_LEGS_ENV in source:
+        return parse_enabled_analysis_legs(source.get(ANALYSIS_LEGS_ENV))
+    if env is not None:
+        return parse_enabled_analysis_legs(None)
+    from jobctrl import config
 
-    return parse_enabled_analysis_legs(_env(env).get(ANALYSIS_LEGS_ENV))
+    return config.get_analysis_legs()
 
 
 def analysis_sdk_set_version(

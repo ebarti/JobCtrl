@@ -1305,13 +1305,12 @@ export class DemoLocalCommandExecutor {
       case "updateSettings": {
         const body = record(args[0]);
         Object.assign(draft.state.readModel.settings.settings, body);
-        for (const field of ["dailyBudgetUsd", "applyConcurrency", "workerActivitySlots"] as const) {
-          const value = numberValue(body[field]);
-          if (value !== null) {
-            Object.assign(draft.state.readModel.settings.effectiveSettings[field], {
-              value,
-              source: "persisted",
-            });
+        for (const [field, value] of Object.entries(body)) {
+          const metadata = draft.state.readModel.settings.effectiveSettings[
+            field as keyof typeof draft.state.readModel.settings.effectiveSettings
+          ];
+          if (metadata?.editable) {
+            Object.assign(metadata, { value, source: "persisted" });
           }
         }
         const dailyBudgetUsd = numberValue(body.dailyBudgetUsd);

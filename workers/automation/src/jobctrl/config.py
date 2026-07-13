@@ -1525,9 +1525,13 @@ def get_apply_timeout_seconds() -> int:
             log.warning("Invalid JOBCTRL_APPLY_TIMEOUT_SECONDS=%r; using default", raw)
         else:
             if parsed > 0:
-                return parsed
+                return min(3600, max(60, parsed))
             log.warning("JOBCTRL_APPLY_TIMEOUT_SECONDS must be positive; using default")
-    return int(DEFAULTS.get("apply_timeout", 900))
+    saved = _dashboard_setting("apply_timeout_seconds")
+    try:
+        return min(3600, max(60, int(saved)))
+    except (TypeError, ValueError):
+        return int(DEFAULTS.get("apply_timeout", 900))
 
 
 def get_apply_max_budget_usd() -> float:
@@ -1543,7 +1547,83 @@ def get_apply_max_budget_usd() -> float:
             if parsed >= 0:
                 return parsed
             log.warning("JOBCTRL_APPLY_MAX_BUDGET_USD must be non-negative; using default")
-    return float(DEFAULTS.get("apply_max_budget_usd", 5.00))
+    saved = _dashboard_setting("apply_max_budget_usd")
+    try:
+        return max(0.0, float(saved))
+    except (TypeError, ValueError):
+        return float(DEFAULTS.get("apply_max_budget_usd", 5.00))
+
+
+def get_analysis_legs() -> tuple[str, ...]:
+    """Return internal analysis leg identifiers from env, saved UI, or defaults."""
+    raw = os.environ.get("JOBCTRL_ANALYSIS_LEGS")
+    if not raw:
+        saved = _dashboard_setting("analysis_legs")
+        raw = ",".join(str(item) for item in saved) if isinstance(saved, list) else ""
+    aliases = {
+        "claude": "claude",
+        "anthropic": "claude",
+        "codex": "codex",
+        "openai": "codex",
+        "google": "antigravity",
+        "gemini": "antigravity",
+        "antigravity": "antigravity",
+    }
+    selected = []
+    for item in str(raw or "claude,codex,google").replace(";", ",").split(","):
+        leg = aliases.get(item.strip().lower())
+        if leg and leg not in selected:
+            selected.append(leg)
+    return tuple(leg for leg in ("claude", "codex", "antigravity") if leg in selected) or (
+        "claude",
+        "codex",
+        "antigravity",
+    )
+
+
+def get_tailoring_generator_models() -> tuple[str, ...]:
+    raw = (
+        os.environ.get("TAILORING_GENERATOR_MODELS")
+        or os.environ.get("TAILORING_GENERATOR_MODEL")
+        or os.environ.get("TAILOR_LLM_MODELS")
+    )
+    if raw:
+        return tuple(item.strip() for item in raw.split(",") if item.strip())
+    saved = _dashboard_setting("tailoring_generator_models")
+    return tuple(str(item).strip() for item in saved if str(item).strip()) if isinstance(saved, list) else ()
+
+
+def get_tailoring_judge_model() -> str | None:
+    raw = os.environ.get("TAILORING_JUDGE_MODEL") or os.environ.get("TAILOR_JUDGE_MODEL")
+    if raw:
+        return raw.strip() or None
+    saved = _dashboard_setting("tailoring_judge_model")
+    return str(saved).strip() or None if saved is not None else None
+
+
+def get_tailoring_judge_min_score() -> float:
+    raw = os.environ.get("TAILORING_JUDGE_MIN_SCORE") or os.environ.get("TAILOR_JUDGE_MIN_SCORE")
+    value = raw if raw else _dashboard_setting("tailoring_judge_min_score")
+    try:
+        return min(1.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.82
+
+
+def _dashboard_setting(key: str) -> object | None:
+    configured = os.environ.get("JOBCTRL_DASHBOARD_CONFIG_PATH", "").strip()
+    path = Path(configured).expanduser() if configured else APP_DIR / "dashboard.json"
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    camel = "".join(
+        part if index == 0 else part.capitalize()
+        for index, part in enumerate(key.split("_"))
+    )
+    return parsed.get(key, parsed.get(camel))
 
 
 def load_macos_keychain_fallbacks(
