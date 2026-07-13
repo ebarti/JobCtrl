@@ -484,6 +484,11 @@ rows, Levels.fyi, Glassdoor, and manual local reported-compensation imports. The
 estimate includes company name, normalized company, role title, normalized role,
 match scope, total compensation component, source count, sample count,
 confidence factors, selected evidence rows, and trimodal company-tier context.
+Each source snapshot carries an explicit `provenance` discriminator (`public`,
+`licensed`, `manual`, or `employer_posted`) together with its persisted
+attribution and snapshot version; public and licensed Levels.fyi rows remain
+distinct throughout the read model. Unknown sample support remains `null` and
+is never promoted to a one-sample claim.
 Selected evidence rows are the sanitized reported observations used to choose
 the range, including source id/display name, company, role, location, level,
 component, EUR/year range, sample count, release year, source URL when the
@@ -496,13 +501,14 @@ facts from existing `jobs.salary` values and description compensation text,
 imports all configured reported compensation observations, estimates matching
 existing jobs, and refreshes projections without running discovery, scoring,
 tailoring, cover, or apply automation. Explicit `--observations-json <file>`
-imports are additive with configured Levels.fyi feeds, configured Glassdoor
-feeds, and public Euro Top Tech rows. When reported evidence does not match, the
-estimator falls back to employer-posted salary facts already captured by
-JobCtrl as low-confidence posted-salary evidence. It falls back through same company/role,
-same-location role, same-company adjacent-role, trimodal company-tier, and broad
-market-baseline tiers so sparse real evidence still produces a best estimate
-with a wider confidence interval. Fallback matching is seniority-aware, so
+imports are additive with enabled tokenless public Levels.fyi pages, configured
+licensed Levels.fyi and Glassdoor feeds, and public Euro Top Tech rows. When
+reported evidence does not match, the estimator falls back to employer-posted
+salary facts already captured by JobCtrl as low-confidence posted-salary
+evidence. It falls back through same company/role, same-location role,
+same-company adjacent-role, trimodal company-tier, and broad market-baseline
+tiers so sparse real evidence still produces a best estimate with a wider
+confidence interval. Fallback matching is seniority-aware, so
 executive CTO/VP roles do not reuse staff, principal, or director observations
 unless the selected source row is also executive-level. It does not label those rows as Levels.fyi,
 Glassdoor, Euro Top Tech, or manual reported-compensation data unless that
@@ -517,9 +523,10 @@ avoid rerunning discovery, scoring, tailoring, cover, or apply automation. The
 request body may include `{ "observationsJsonPath": "/path/to/export.json" }`
 to import additional reported-compensation observations before estimating market
 evidence, or `{ "includeEuroTopTech": false }` to disable only the public Euro
-Top Tech import. Configured Levels.fyi and Glassdoor feeds still load by
-default. When no reported source matches, the estimator still falls back to the
-selected job's captured employer-posted salary facts when they can be safely annualized or when
+Top Tech import. Enabled tokenless public Levels.fyi pages and configured
+licensed Levels.fyi and Glassdoor feeds still load by default. When no reported
+source matches, the estimator still falls back to the selected job's captured
+employer-posted salary facts when they can be safely annualized or when
 high-value base-salary text can be treated as annual evidence without using
 bonus-only or one-sided rows. The refresh dispatches `refresh_compensation`,
 which starts `CompensationRefreshWorkflow`; the response is the standard

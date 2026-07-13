@@ -7,6 +7,7 @@ import type {
   MarketCompensationReason,
   MarketCompensationReasonCode,
   MarketCompensationSourceId,
+  MarketCompensationSourceProvenance,
   MarketCompensationSourceSnapshot,
   MarketCompensationWarning,
   MarketCompensationWarningCode,
@@ -110,6 +111,7 @@ const SOURCE_DEFAULTS: Record<
   {
     displayName: string;
     sourceType: "reported_compensation" | "posted_salary";
+    provenance: MarketCompensationSourceProvenance;
     snapshotVersion: string;
     geographyScope: string;
     aggregateBucket: string;
@@ -119,14 +121,16 @@ const SOURCE_DEFAULTS: Record<
   levels_fyi: {
     displayName: "Levels.fyi",
     sourceType: "reported_compensation",
+    provenance: "licensed",
     snapshotVersion: "reported-compensation-import-v1",
     geographyScope: "reported",
     aggregateBucket: "reported company-role compensation",
-    attribution: "Levels.fyi reported compensation data",
+    attribution: "Levels.fyi licensed compensation data",
   },
   glassdoor: {
     displayName: "Glassdoor",
     sourceType: "reported_compensation",
+    provenance: "licensed",
     snapshotVersion: "reported-compensation-import-v1",
     geographyScope: "reported",
     aggregateBucket: "reported company-role compensation",
@@ -135,6 +139,7 @@ const SOURCE_DEFAULTS: Record<
   manual_reported_compensation: {
     displayName: "Manual reported compensation import",
     sourceType: "reported_compensation",
+    provenance: "manual",
     snapshotVersion: "reported-compensation-import-v1",
     geographyScope: "reported",
     aggregateBucket: "reported company-role compensation",
@@ -143,6 +148,7 @@ const SOURCE_DEFAULTS: Record<
   euro_top_tech: {
     displayName: "Euro Top Tech",
     sourceType: "reported_compensation",
+    provenance: "public",
     snapshotVersion: "eurotoptech-data-public",
     geographyScope: "Europe",
     aggregateBucket: "reported company-role compensation",
@@ -151,6 +157,7 @@ const SOURCE_DEFAULTS: Record<
   posted_salary_text: {
     displayName: "Job posting salary text",
     sourceType: "posted_salary",
+    provenance: "employer_posted",
     snapshotVersion: "jobctrl-posted-compensation-v1",
     geographyScope: "reported",
     aggregateBucket: "employer-posted company-role compensation",
@@ -431,19 +438,69 @@ function parseSources(value: string): MarketCompensationSourceSnapshot[] {
       const typedSourceId = sourceId as MarketCompensationSourceId;
       const defaults = SOURCE_DEFAULTS[typedSourceId];
       if (sourceType !== defaults.sourceType) return null;
+      const provenance = sourceProvenance(entry.source_provenance, typedSourceId);
+      const releaseYear = nullableNumber(entry.release_year);
       return {
         sourceId: typedSourceId,
+        provenance,
         displayName: defaults.displayName,
         sourceType: defaults.sourceType,
-        releaseYear: nullableNumber(entry.release_year),
-        snapshotVersion: defaults.snapshotVersion,
+        releaseYear,
+        snapshotVersion: sourceSnapshotVersion(
+          entry.snapshot_version,
+          typedSourceId,
+          provenance,
+          releaseYear,
+        ),
         geographyScope: defaults.geographyScope,
         aggregateBucket: defaults.aggregateBucket,
-        attribution: defaults.attribution,
+        attribution: sourceAttribution(entry.attribution, typedSourceId, provenance),
         sampleCount: nullableNumber(entry.sample_count),
       };
     })
     .filter((entry): entry is MarketCompensationSourceSnapshot => entry !== null);
+}
+
+function sourceProvenance(
+  value: unknown,
+  sourceId: MarketCompensationSourceId,
+): MarketCompensationSourceProvenance {
+  if (sourceId === "levels_fyi" && (value === "public" || value === "licensed")) {
+    return value;
+  }
+  return SOURCE_DEFAULTS[sourceId].provenance;
+}
+
+function sourceSnapshotVersion(
+  value: unknown,
+  sourceId: MarketCompensationSourceId,
+  provenance: MarketCompensationSourceProvenance,
+  releaseYear: number | null,
+): string {
+  const stored = safeSourceMetadata(value);
+  if (stored) return stored;
+  if (sourceId === "levels_fyi" && provenance === "public") {
+    return releaseYear === null ? "levels-fyi-public" : `levels-fyi-public-${releaseYear}`;
+  }
+  return SOURCE_DEFAULTS[sourceId].snapshotVersion;
+}
+
+function sourceAttribution(
+  value: unknown,
+  sourceId: MarketCompensationSourceId,
+  provenance: MarketCompensationSourceProvenance,
+): string {
+  if (sourceId === "levels_fyi" && provenance === "public") {
+    return "Data source: Levels.fyi (https://www.levels.fyi)";
+  }
+  return safeSourceMetadata(value) ?? SOURCE_DEFAULTS[sourceId].attribution;
+}
+
+function safeSourceMetadata(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  if (!text || UNSAFE_FACTOR_REASON_PATTERN.test(text)) return null;
+  return text.slice(0, 160);
 }
 
 function parseStringList(value: string): string[] {

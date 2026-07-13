@@ -218,14 +218,16 @@ MARKET_SOURCE_DEFAULTS = {
     "levels_fyi": {
         "displayName": "Levels.fyi",
         "sourceType": "reported_compensation",
+        "provenance": "licensed",
         "snapshotVersion": "reported-compensation-import-v1",
         "geographyScope": "reported",
         "aggregateBucket": "reported company-role compensation",
-        "attribution": "Levels.fyi reported compensation data",
+        "attribution": "Levels.fyi licensed compensation data",
     },
     "glassdoor": {
         "displayName": "Glassdoor",
         "sourceType": "reported_compensation",
+        "provenance": "licensed",
         "snapshotVersion": "reported-compensation-import-v1",
         "geographyScope": "reported",
         "aggregateBucket": "reported company-role compensation",
@@ -234,6 +236,7 @@ MARKET_SOURCE_DEFAULTS = {
     "manual_reported_compensation": {
         "displayName": "Manual reported compensation import",
         "sourceType": "reported_compensation",
+        "provenance": "manual",
         "snapshotVersion": "reported-compensation-import-v1",
         "geographyScope": "reported",
         "aggregateBucket": "reported company-role compensation",
@@ -242,6 +245,7 @@ MARKET_SOURCE_DEFAULTS = {
     "euro_top_tech": {
         "displayName": "Euro Top Tech",
         "sourceType": "reported_compensation",
+        "provenance": "public",
         "snapshotVersion": "eurotoptech-data-public",
         "geographyScope": "Europe",
         "aggregateBucket": "reported company-role compensation",
@@ -250,6 +254,7 @@ MARKET_SOURCE_DEFAULTS = {
     "posted_salary_text": {
         "displayName": "Job posting salary text",
         "sourceType": "posted_salary",
+        "provenance": "employer_posted",
         "snapshotVersion": "jobctrl-posted-compensation-v1",
         "geographyScope": "reported",
         "aggregateBucket": "employer-posted company-role compensation",
@@ -4051,20 +4056,55 @@ def _market_sources(value: str) -> list[dict[str, Any]]:
         defaults = MARKET_SOURCE_DEFAULTS.get(source_id)
         if defaults is None or source_type != defaults["sourceType"]:
             continue
+        provenance = _market_source_provenance(item.get("source_provenance"), source_id)
+        release_year = _nullable_int(item.get("release_year"))
         sources.append(
             {
                 "sourceId": source_id,
+                "provenance": provenance,
                 "displayName": defaults["displayName"],
                 "sourceType": defaults["sourceType"],
-                "releaseYear": _nullable_int(item.get("release_year")),
-                "snapshotVersion": defaults["snapshotVersion"],
+                "releaseYear": release_year,
+                "snapshotVersion": _market_source_snapshot_version(
+                    item.get("snapshot_version"),
+                    source_id,
+                    provenance,
+                    release_year,
+                ),
                 "geographyScope": defaults["geographyScope"],
                 "aggregateBucket": defaults["aggregateBucket"],
-                "attribution": defaults["attribution"],
+                "attribution": _market_source_attribution(item.get("attribution"), source_id, provenance),
                 "sampleCount": _nullable_int(item.get("sample_count")),
             }
         )
     return sources
+
+
+def _market_source_provenance(value: object, source_id: str) -> str:
+    text = str(value or "").strip().casefold()
+    if source_id == "levels_fyi" and text in {"public", "licensed"}:
+        return text
+    return str(MARKET_SOURCE_DEFAULTS[source_id]["provenance"])
+
+
+def _market_source_snapshot_version(
+    value: object,
+    source_id: str,
+    provenance: str,
+    release_year: int | None,
+) -> str:
+    stored = _safe_market_evidence_text(value)
+    if stored:
+        return stored
+    if source_id == "levels_fyi" and provenance == "public":
+        return f"levels-fyi-public-{release_year}" if release_year is not None else "levels-fyi-public"
+    return str(MARKET_SOURCE_DEFAULTS[source_id]["snapshotVersion"])
+
+
+def _market_source_attribution(value: object, source_id: str, provenance: str) -> str:
+    if source_id == "levels_fyi" and provenance == "public":
+        return "Data source: Levels.fyi (https://www.levels.fyi)"
+    return _safe_market_evidence_text(value) or str(MARKET_SOURCE_DEFAULTS[source_id]["attribution"])
 
 
 def _market_evidence(value: str) -> list[dict[str, Any]]:

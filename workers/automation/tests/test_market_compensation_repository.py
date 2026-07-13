@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -49,6 +50,7 @@ def _seed_job(
 def _levels() -> ReportedCompensationObservation:
     return ReportedCompensationObservation(
         source_id="levels_fyi",
+        source_provenance="licensed",
         company_name="Acme AI",
         role_title="Senior Platform Engineer",
         level_label="Senior",
@@ -65,6 +67,7 @@ def _levels() -> ReportedCompensationObservation:
 def _glassdoor() -> ReportedCompensationObservation:
     return ReportedCompensationObservation(
         source_id="glassdoor",
+        source_provenance="licensed",
         company_name="Acme AI",
         role_title="Senior Platform Engineer",
         level_label="Senior",
@@ -327,6 +330,7 @@ def test_backfill_falls_back_to_posted_salary_when_reported_rows_are_too_weak(
     weak_reported_observations = (
         ReportedCompensationObservation(
             source_id="euro_top_tech",
+            source_provenance="public",
             company_name="Unrelated Company",
             role_title="Staff AI Engineer",
             minimum_amount=30_000,
@@ -339,6 +343,7 @@ def test_backfill_falls_back_to_posted_salary_when_reported_rows_are_too_weak(
         ),
         ReportedCompensationObservation(
             source_id="euro_top_tech",
+            source_provenance="public",
             company_name="Different Company",
             role_title="Staff AI Engineer",
             minimum_amount=250_000,
@@ -544,12 +549,15 @@ def test_user_source_settings_enable_tokenless_levels_public_pages(
         return (
             ReportedCompensationObservation(
                 source_id="levels_fyi",
+                source_provenance="public",
                 company_name="Levels.fyi market aggregate",
                 role_title="Software Engineer",
                 location="Madrid, Spain",
                 level_label="all levels",
                 minimum_amount=39_000,
                 maximum_amount=77_000,
+                release_year=2026,
+                snapshot_version="levels-fyi-public-2026",
                 sample_count=599,
                 attribution="Data source: Levels.fyi (https://www.levels.fyi)",
                 source_url="https://www.levels.fyi/t/software-engineer/locations/madrid-esp",
@@ -576,6 +584,59 @@ def test_user_source_settings_enable_tokenless_levels_public_pages(
     assert captured_public_urls == ["https://www.levels.fyi/t/software-engineer.md"]
     assert loaded.levels_fyi_count == 1
     assert loaded.levels_fyi_public_count == 1
+    assert loaded.licensed_count == 0
+
+
+@pytest.mark.parametrize(
+    ("raw_mode", "expected_public_count"),
+    [
+        (None, 0),
+        ("   ", 0),
+        ("public_markdown", 1),
+        ("public_api", 0),
+    ],
+    ids=("absent", "blank", "valid", "invalid"),
+)
+def test_worker_levels_public_access_mode_semantics(
+    raw_mode: str | None,
+    expected_public_count: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def load_public(*_args, **_kwargs):
+        return (
+            ReportedCompensationObservation(
+                source_id="levels_fyi",
+                source_provenance="public",
+                company_name="Levels.fyi market aggregate",
+                role_title="Software Engineer",
+                location="Madrid, Spain",
+                level_label="all levels",
+                minimum_amount=39_000,
+                maximum_amount=77_000,
+                release_year=2026,
+                snapshot_version="levels-fyi-public-2026",
+                sample_count=None,
+                attribution="Data source: Levels.fyi (https://www.levels.fyi)",
+                source_url="https://www.levels.fyi/t/software-engineer/locations/madrid-esp",
+            ),
+        )
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.sqlite_market_repository.load_levels_fyi_public_observations",
+        load_public,
+    )
+    env = {} if raw_mode is None else {"JOBCTRL_LEVELS_FYI_ACCESS_MODE": raw_mode}
+
+    loaded = load_default_reported_compensation_observations(
+        levels_fyi_targets=(LevelsFyiPublicTarget("Software Engineer", "Madrid, Spain"),),
+        include_eurotoptech=False,
+        env=env,
+        settings_path=tmp_path / "missing-dashboard.json",
+    )
+
+    assert loaded.levels_fyi_public_count == expected_public_count
+    assert loaded.levels_fyi_count == expected_public_count
     assert loaded.licensed_count == 0
 
 
@@ -766,6 +827,61 @@ def test_persisted_json_contains_safe_reported_source_fields(conn: sqlite3.Conne
     }
     assert "sources" not in payload
     assert "eurostat" not in json.dumps(payload).lower()
+
+
+def test_repository_preserves_public_and_licensed_levels_provenance(conn: sqlite3.Connection) -> None:
+    job_url = _seed_job(conn, url="https://example.com/jobs/levels-provenance")
+    public = ReportedCompensationObservation(
+        source_id="levels_fyi",
+        source_provenance="public",
+        company_name="Acme AI",
+        role_title="Senior Platform Engineer",
+        level_label="Senior",
+        company_tier="tier_2_ambitious",
+        location="Remote Europe",
+        minimum_amount=120_000,
+        maximum_amount=144_000,
+        release_year=2026,
+        snapshot_version="levels-fyi-public-2026",
+        sample_count=None,
+        attribution="Data source: Levels.fyi (https://www.levels.fyi)",
+        source_url="https://www.levels.fyi/t/software-engineer/locations/europe",
+    )
+    licensed = replace(
+        _levels(),
+        snapshot_version="levels-fyi-licensed-2026-q2",
+        attribution="Levels.fyi licensed Q2 export",
+    )
+    repo = SqliteMarketCompensationRepository(conn)
+
+    repo.estimate_and_save_job(
+        job_url=job_url,
+        title="Senior Platform Engineer",
+        company="Acme AI",
+        location="Remote Europe",
+        observations=(public, licensed),
+        estimated_at="2026-07-13T10:00:00Z",
+    )
+
+    loaded = repo.get_estimate("local", job_url)
+    assert loaded is not None
+    assert [(source.source_provenance, source.snapshot_version, source.attribution) for source in loaded.sources] == [
+        (
+            "public",
+            "levels-fyi-public-2026",
+            "Data source: Levels.fyi (https://www.levels.fyi)",
+        ),
+        ("licensed", "levels-fyi-licensed-2026-q2", "Levels.fyi licensed Q2 export"),
+    ]
+    assert loaded.sources[0].sample_count is None
+
+    stored = json.loads(
+        conn.execute(
+            "SELECT source_snapshot_json FROM job_market_compensation_estimates WHERE job_url = ?",
+            (job_url,),
+        ).fetchone()["source_snapshot_json"]
+    )
+    assert [item["source_provenance"] for item in stored] == ["public", "licensed"]
 
 
 def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.Connection) -> None:

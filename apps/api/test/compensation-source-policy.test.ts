@@ -124,6 +124,49 @@ describe("compensation source policy", () => {
     });
   });
 
+  it.each([
+    {
+      label: "absent",
+      env: {},
+      accessMode: "public_markdown",
+      enabled: false,
+      availability: "unavailable",
+      disabledReason: "Disabled in Compensation sources settings.",
+    },
+    {
+      label: "blank",
+      env: { JOBCTRL_LEVELS_FYI_ACCESS_MODE: "   " },
+      accessMode: "public_markdown",
+      enabled: false,
+      availability: "unavailable",
+      disabledReason: "Disabled in Compensation sources settings.",
+    },
+    {
+      label: "valid",
+      env: { JOBCTRL_LEVELS_FYI_ACCESS_MODE: "public_markdown" },
+      accessMode: "public_markdown",
+      enabled: true,
+      availability: "available",
+      disabledReason: null,
+    },
+    {
+      label: "invalid",
+      env: { JOBCTRL_LEVELS_FYI_ACCESS_MODE: "public_api" },
+      accessMode: "unavailable_until_permitted",
+      enabled: false,
+      availability: "unavailable",
+      disabledReason: "Configured Levels.fyi access mode is not permitted for compensation import.",
+    },
+  ])("keeps API Levels.fyi access semantics aligned for $label env values", (expected) => {
+    expect(source(listCompensationSources(expected.env), "levels_fyi")).toMatchObject({
+      accessMode: expected.accessMode,
+      availability: expected.availability,
+      configured: expected.availability === "available",
+      disabledReason: expected.disabledReason,
+      control: { enabled: expected.enabled },
+    });
+  });
+
   it("enables public Levels.fyi pages without credentials or coverage confirmation", async () => {
     const { app, cleanup } = withTempApp();
     try {

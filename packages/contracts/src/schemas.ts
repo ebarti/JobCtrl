@@ -4503,6 +4503,15 @@ export const MARKET_COMPENSATION_SOURCE_IDS = [
 ] as const;
 export type MarketCompensationSourceId = (typeof MARKET_COMPENSATION_SOURCE_IDS)[number];
 
+export const MARKET_COMPENSATION_SOURCE_PROVENANCE = [
+  "public",
+  "licensed",
+  "manual",
+  "employer_posted",
+] as const;
+export type MarketCompensationSourceProvenance =
+  (typeof MARKET_COMPENSATION_SOURCE_PROVENANCE)[number];
+
 export const MARKET_COMPENSATION_CONFIDENCE_BANDS = ["none", "low", "medium", "high"] as const;
 export type MarketCompensationConfidenceBand = (typeof MARKET_COMPENSATION_CONFIDENCE_BANDS)[number];
 
@@ -4575,6 +4584,7 @@ export interface MarketCompensationFactor {
 
 export interface MarketCompensationSourceSnapshot {
   sourceId: MarketCompensationSourceId;
+  provenance: MarketCompensationSourceProvenance;
   displayName: string;
   sourceType: "reported_compensation" | "posted_salary";
   releaseYear: number | null;

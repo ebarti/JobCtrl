@@ -26,6 +26,7 @@ MarketSourceId = Literal[
     "posted_salary_text",
 ]
 MarketSourceType = Literal["reported_compensation", "posted_salary"]
+MarketSourceProvenance = Literal["public", "licensed", "manual", "employer_posted"]
 MarketConfidenceBand = Literal["none", "low", "medium", "high"]
 MarketComponent = Literal["base_salary", "total_compensation"]
 MarketPeriod = Literal["year", "month"]
@@ -135,12 +136,13 @@ SOURCE_DISPLAY_NAMES: dict[MarketSourceId, str] = {
     "posted_salary_text": "Job posting salary text",
 }
 SOURCE_DEFAULT_SNAPSHOT_VERSION = "reported-compensation-import-v1"
-SOURCE_DEFAULT_ATTRIBUTION: dict[MarketSourceId, str] = {
-    "levels_fyi": "Data source: Levels.fyi (https://www.levels.fyi)",
-    "glassdoor": "Glassdoor reported compensation data",
-    "manual_reported_compensation": "Manual reported compensation import",
-    "euro_top_tech": "Euro Top Tech public crowdsourced compensation data",
-    "posted_salary_text": "Employer-posted salary text captured by JobCtrl",
+SOURCE_DEFAULT_ATTRIBUTION: dict[tuple[MarketSourceId, MarketSourceProvenance], str] = {
+    ("levels_fyi", "public"): "Data source: Levels.fyi (https://www.levels.fyi)",
+    ("levels_fyi", "licensed"): "Levels.fyi licensed compensation data",
+    ("glassdoor", "licensed"): "Glassdoor reported compensation data",
+    ("manual_reported_compensation", "manual"): "Manual reported compensation import",
+    ("euro_top_tech", "public"): "Euro Top Tech public crowdsourced compensation data",
+    ("posted_salary_text", "employer_posted"): "Employer-posted salary text captured by JobCtrl",
 }
 LEVELS_FYI_MARKET_AGGREGATE_COMPANY = "Levels.fyi market aggregate"
 UNSAFE_SOURCE_TEXT_PATTERNS = tuple(
@@ -262,6 +264,7 @@ class MarketConfidenceFactor:
 @dataclass(frozen=True)
 class MarketSourceSnapshot:
     source_id: MarketSourceId
+    source_provenance: MarketSourceProvenance
     display_name: str
     source_type: MarketSourceType
     release_year: int | None
@@ -299,6 +302,7 @@ class MarketEvidenceRow:
 @dataclass(frozen=True)
 class ReportedCompensationObservation:
     source_id: MarketSourceId
+    source_provenance: MarketSourceProvenance
     company_name: str
     role_title: str
     minimum_amount: int | None
@@ -311,7 +315,7 @@ class ReportedCompensationObservation:
     company_tier: CompanyCompensationTier = "unknown"
     release_year: int | None = 2026
     snapshot_version: str = SOURCE_DEFAULT_SNAPSHOT_VERSION
-    sample_count: int | None = 1
+    sample_count: int | None = None
     attribution: str | None = None
     source_url: str | None = None
 
@@ -479,7 +483,7 @@ def estimate_market_compensation(
         if row.minimum_amount is None and row.maximum_amount is None:
             insufficient_reasons.append("missing_reported_observation")
             continue
-        if (row.sample_count or 1) <= 0:
+        if row.sample_count is not None and row.sample_count <= 0:
             insufficient_reasons.append("low_sample_count")
             warnings.append("low_sample_count")
             continue
@@ -553,7 +557,7 @@ def estimate_market_compensation(
     location_scores = tuple(_location_score(location, row.location) for row in selected_rows)
     freshness_scores = tuple(_freshness_score(row.release_year, now) for row in selected_rows)
     source_count = len({row.source_id for row in selected_rows})
-    sample_count = sum(row.sample_count or 1 for row in selected_rows)
+    sample_count = _combined_sample_count(selected_rows)
     sample_score = _sample_score(sample_count)
     agreement_score, dispersion_warning, dispersion_insufficient = _agreement_score(selected_rows)
     company_tier, tier_inferred = _company_tier(selected_rows)
@@ -561,7 +565,7 @@ def estimate_market_compensation(
 
     if tier_inferred:
         warnings.append("trimodal_tier_inferred")
-    if sample_count < LOW_SAMPLE_THRESHOLD:
+    if sample_count is not None and sample_count < LOW_SAMPLE_THRESHOLD:
         warnings.append("low_sample_count")
         insufficient_reasons.append("low_sample_count")
     if min(location_scores) < MIN_CRITICAL_FACTOR_SCORE:
@@ -602,7 +606,15 @@ def estimate_market_compensation(
             ),
             _factor("component", 1.0, f"Component {component_value} matches the reported compensation rows."),
             _factor("freshness", freshness_score, "Reported source snapshots are inside the freshness window."),
-            _factor("sample", sample_score, f"Reported compensation sample count: {sample_count}."),
+            _factor(
+                "sample",
+                sample_score,
+                (
+                    f"Reported compensation sample count: {sample_count}."
+                    if sample_count is not None
+                    else "Reported compensation sample support is unknown."
+                ),
+            ),
             _factor(
                 "agreement", agreement_score, "Selected reported compensation rows are within dispersion tolerance."
             ),
@@ -923,13 +935,14 @@ def _snapshot(row: ReportedCompensationObservation) -> MarketSourceSnapshot:
     return sanitize_market_source_snapshot(
         MarketSourceSnapshot(
             source_id=row.source_id,
+            source_provenance=row.source_provenance,
             display_name=_display_name(row.source_id),
             source_type=_source_type(row.source_id),
             release_year=row.release_year,
             snapshot_version=row.snapshot_version,
             geography_scope=_safe_text(_reported_geography(row.location)),
             aggregate_bucket=_source_aggregate_bucket(row.source_id),
-            attribution=row.attribution or SOURCE_DEFAULT_ATTRIBUTION[row.source_id],
+            attribution=row.attribution or "",
             sample_count=row.sample_count,
         )
     )
@@ -1001,15 +1014,25 @@ def sanitize_market_source_snapshot(source: MarketSourceSnapshot) -> MarketSourc
     """Return a safe reported-source snapshot for persistence or API serialization."""
 
     source_id = source.source_id if source.source_id in MARKET_SOURCE_IDS else "manual_reported_compensation"
+    source_provenance = _source_provenance(source_id, source.source_provenance)
+    snapshot_version = _safe_text(source.snapshot_version) or _source_snapshot_version(
+        source_id,
+        source_provenance,
+        source.release_year,
+    )
+    attribution = _safe_text(source.attribution) or SOURCE_DEFAULT_ATTRIBUTION[(source_id, source_provenance)]
+    if source_id == "levels_fyi" and source_provenance == "public":
+        attribution = SOURCE_DEFAULT_ATTRIBUTION[(source_id, source_provenance)]
     return MarketSourceSnapshot(
         source_id=source_id,
+        source_provenance=source_provenance,
         display_name=_display_name(source_id),
         source_type=_source_type(source_id),
         release_year=source.release_year,
-        snapshot_version=_source_snapshot_version(source_id),
+        snapshot_version=snapshot_version,
         geography_scope=_safe_text(source.geography_scope) or "reported",
         aggregate_bucket=_source_aggregate_bucket(source_id),
-        attribution=SOURCE_DEFAULT_ATTRIBUTION[source_id],
+        attribution=attribution,
         sample_count=source.sample_count,
     )
 
@@ -1024,7 +1047,26 @@ def _source_type(source_id: str) -> MarketSourceType:
     return "posted_salary" if source_id == "posted_salary_text" else "reported_compensation"
 
 
-def _source_snapshot_version(source_id: str) -> str:
+def _source_provenance(source_id: MarketSourceId, value: str) -> MarketSourceProvenance:
+    allowed: dict[MarketSourceId, MarketSourceProvenance] = {
+        "levels_fyi": "licensed",
+        "glassdoor": "licensed",
+        "manual_reported_compensation": "manual",
+        "euro_top_tech": "public",
+        "posted_salary_text": "employer_posted",
+    }
+    if source_id == "levels_fyi" and value in {"public", "licensed"}:
+        return value  # type: ignore[return-value]
+    return allowed[source_id]
+
+
+def _source_snapshot_version(
+    source_id: str,
+    source_provenance: MarketSourceProvenance,
+    release_year: int | None,
+) -> str:
+    if source_id == "levels_fyi" and source_provenance == "public":
+        return f"levels-fyi-public-{release_year}" if release_year is not None else "levels-fyi-public"
     if source_id == "posted_salary_text":
         return "jobctrl-posted-compensation-v1"
     if source_id == "euro_top_tech":
@@ -1300,7 +1342,7 @@ def _confidence_interval(
     *,
     match_scope: MarketMatchScope,
     confidence_score: float,
-    sample_count: int,
+    sample_count: int | None,
     warnings: list[MarketWarningCode],
     rows: list[ReportedCompensationObservation],
     dispersion_insufficient: bool,
@@ -1314,7 +1356,7 @@ def _confidence_interval(
         "none": 0.6,
     }
     margin = margin_by_scope[match_scope]
-    if sample_count < LOW_SAMPLE_THRESHOLD:
+    if sample_count is None or sample_count < LOW_SAMPLE_THRESHOLD:
         margin += 0.12
     if "location_mismatch" in warnings:
         margin += 0.08
@@ -1375,6 +1417,13 @@ def _sample_score(sample_count: int | None) -> float:
     if sample_count >= 1:
         return 0.5
     return 0.0
+
+
+def _combined_sample_count(rows: list[ReportedCompensationObservation]) -> int | None:
+    counts = [row.sample_count for row in rows]
+    if any(count is None for count in counts):
+        return None
+    return sum(count for count in counts if count is not None)
 
 
 def _agreement_score(rows: list[ReportedCompensationObservation]) -> tuple[float, bool, bool]:
@@ -1462,11 +1511,11 @@ def _dedupe_reasons(values: list[MarketReasonCode]) -> tuple[MarketReasonCode, .
 
 
 def _dedupe_sources(values: tuple[MarketSourceSnapshot, ...]) -> tuple[MarketSourceSnapshot, ...]:
-    seen: set[tuple[MarketSourceId, str]] = set()
+    seen: set[tuple[MarketSourceId, MarketSourceProvenance, str]] = set()
     out: list[MarketSourceSnapshot] = []
     for value in values:
         value = sanitize_market_source_snapshot(value)
-        key = (value.source_id, value.snapshot_version)
+        key = (value.source_id, value.source_provenance, value.snapshot_version)
         if key in seen:
             continue
         seen.add(key)

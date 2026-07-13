@@ -36,6 +36,7 @@ from jobctrl.domain.compensation import (
     MarketCompensationEstimate,
     MarketConfidenceFactor,
     MarketEvidenceRow,
+    MarketSourceProvenance,
     MarketSourceSnapshot,
     ReportedCompensationObservation,
     estimate_market_compensation,
@@ -504,6 +505,7 @@ class SqliteMarketCompensationRepository:
             observations.append(
                 ReportedCompensationObservation(
                     source_id="posted_salary_text",
+                    source_provenance="employer_posted",
                     company_name=company,
                     role_title=role,
                     minimum_amount=minimum,
@@ -772,11 +774,16 @@ def _load_reported_compensation_payload(
     text: str,
     *,
     default_source_id: str | None,
+    source_provenance: MarketSourceProvenance | None = None,
 ) -> tuple[ReportedCompensationObservation, ...]:
     try:
         raw = json.loads(text)
     except json.JSONDecodeError:
-        return _load_reported_compensation_csv(text, default_source_id=default_source_id)
+        return _load_reported_compensation_csv(
+            text,
+            default_source_id=default_source_id,
+            source_provenance=source_provenance,
+        )
     items = raw.get("observations", raw) if isinstance(raw, dict) else raw
     if not isinstance(items, list):
         raise ValueError("reported compensation JSON must be a list or an object with an observations list")
@@ -784,7 +791,11 @@ def _load_reported_compensation_payload(
     for item in items:
         if not isinstance(item, dict):
             continue
-        observation = _observation_from_dict(item, default_source_id=default_source_id)
+        observation = _observation_from_dict(
+            item,
+            default_source_id=default_source_id,
+            source_provenance=source_provenance,
+        )
         if observation is not None:
             observations.append(observation)
     return tuple(observations)
@@ -794,10 +805,15 @@ def _load_reported_compensation_csv(
     text: str,
     *,
     default_source_id: str | None,
+    source_provenance: MarketSourceProvenance | None = None,
 ) -> tuple[ReportedCompensationObservation, ...]:
     observations: list[ReportedCompensationObservation] = []
     for item in csv.DictReader(text.splitlines()):
-        observation = _observation_from_dict(item, default_source_id=default_source_id)
+        observation = _observation_from_dict(
+            item,
+            default_source_id=default_source_id,
+            source_provenance=source_provenance,
+        )
         if observation is not None:
             observations.append(observation)
     return tuple(observations)
@@ -811,7 +827,13 @@ def _load_optional_observation_ref(
 ) -> tuple[ReportedCompensationObservation, ...]:
     if ref is None or str(ref).strip() == "":
         return ()
-    return _load_observation_ref(str(ref), default_source_id=default_source_id, auth_token=None, text_fetch=text_fetch)
+    return _load_observation_ref(
+        str(ref),
+        default_source_id=default_source_id,
+        source_provenance=None,
+        auth_token=None,
+        text_fetch=text_fetch,
+    )
 
 
 def _load_configured_provider_observations(
@@ -852,6 +874,7 @@ def _load_configured_provider_observations(
                 _load_observation_ref(
                     ref,
                     default_source_id=default_source_id,
+                    source_provenance="licensed",
                     auth_token=auth_token,
                     text_fetch=text_fetch,
                 )
@@ -865,6 +888,7 @@ def _load_observation_ref(
     ref: str,
     *,
     default_source_id: str | None,
+    source_provenance: MarketSourceProvenance | None,
     auth_token: str | None,
     text_fetch: TextFeedFetcher,
 ) -> tuple[ReportedCompensationObservation, ...]:
@@ -873,7 +897,11 @@ def _load_observation_ref(
         if body is None:
             # Gateway blocked / rate-limited the feed; recorded as an outcome.
             return ()
-        return _load_reported_compensation_payload(body, default_source_id=default_source_id)
+        return _load_reported_compensation_payload(
+            body,
+            default_source_id=default_source_id,
+            source_provenance=source_provenance,
+        )
 
     path = Path(ref).expanduser()
     if path.is_dir():
@@ -881,9 +909,19 @@ def _load_observation_ref(
         for child in sorted(path.iterdir()):
             if child.suffix.casefold() not in {".csv", ".json"}:
                 continue
-            observations.extend(load_reported_compensation_observations(child, default_source_id=default_source_id))
+            observations.extend(
+                _load_reported_compensation_payload(
+                    child.read_text(encoding="utf-8"),
+                    default_source_id=default_source_id,
+                    source_provenance=source_provenance,
+                )
+            )
         return tuple(observations)
-    return load_reported_compensation_observations(path, default_source_id=default_source_id)
+    return _load_reported_compensation_payload(
+        path.read_text(encoding="utf-8"),
+        default_source_id=default_source_id,
+        source_provenance=source_provenance,
+    )
 
 
 def _is_url(value: str) -> bool:
@@ -955,6 +993,7 @@ def _euro_top_tech_observation(data: dict[str, Any]) -> ReportedCompensationObse
     submitted_month = _text(data.get("submittedMonth"), default=None)
     return ReportedCompensationObservation(
         source_id="euro_top_tech",
+        source_provenance="public",
         company_name=_text(data.get("company"), default=None) or "Euro Top Tech community",
         role_title=role,
         minimum_amount=amount,
@@ -995,6 +1034,7 @@ def _observation_from_dict(
     data: dict[str, Any],
     *,
     default_source_id: str | None = None,
+    source_provenance: MarketSourceProvenance | None = None,
 ) -> ReportedCompensationObservation | None:
     source_id = _source_id(_pick(data, "source_id", "sourceId", "source") or default_source_id)
     company = _text(_pick(data, "company_name", "companyName", "company"))
@@ -1031,6 +1071,7 @@ def _observation_from_dict(
         return None
     return ReportedCompensationObservation(
         source_id=source_id,
+        source_provenance=source_provenance or _default_source_provenance(source_id),
         company_name=company,
         role_title=role,
         minimum_amount=minimum,
@@ -1045,7 +1086,7 @@ def _observation_from_dict(
         snapshot_version=_text(
             _pick(data, "snapshot_version", "snapshotVersion"), default="reported-compensation-import-v1"
         ),
-        sample_count=_nullable_int(_pick(data, "sample_count", "sampleCount", "samples")) or 1,
+        sample_count=_nullable_int(_pick(data, "sample_count", "sampleCount", "samples")),
         attribution=_text(_pick(data, "attribution"), default=None),
         source_url=_safe_evidence_url(
             _pick(
@@ -1121,6 +1162,7 @@ def _source_to_dict(source: MarketSourceSnapshot) -> dict[str, Any]:
     source = sanitize_market_source_snapshot(source)
     return {
         "source_id": source.source_id,
+        "source_provenance": source.source_provenance,
         "display_name": source.display_name,
         "source_type": source.source_type,
         "release_year": source.release_year,
@@ -1140,6 +1182,7 @@ def _source_from_dict(value: Any) -> MarketSourceSnapshot | None:
     return sanitize_market_source_snapshot(
         MarketSourceSnapshot(
             source_id=source_id,
+            source_provenance=_source_provenance(data.get("source_provenance"), source_id),
             display_name=str(data.get("display_name") or ""),
             source_type=_source_type(source_id),
             release_year=_nullable_int(data.get("release_year")),
@@ -1281,6 +1324,23 @@ def _source_id(value: Any) -> Any:
 
 def _source_type(source_id: str) -> Any:
     return "posted_salary" if source_id == "posted_salary_text" else "reported_compensation"
+
+
+def _default_source_provenance(source_id: str) -> MarketSourceProvenance:
+    if source_id == "levels_fyi" or source_id == "glassdoor":
+        return "licensed"
+    if source_id == "euro_top_tech":
+        return "public"
+    if source_id == "posted_salary_text":
+        return "employer_posted"
+    return "manual"
+
+
+def _source_provenance(value: Any, source_id: str) -> MarketSourceProvenance:
+    text = str(value or "").strip().casefold()
+    if source_id == "levels_fyi" and text in {"public", "licensed"}:
+        return text  # type: ignore[return-value]
+    return _default_source_provenance(source_id)
 
 
 def _display_name(source_id: str) -> str:

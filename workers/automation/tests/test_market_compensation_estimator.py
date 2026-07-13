@@ -18,11 +18,12 @@ def _levels(
     level: str = "Senior",
     tier: str = "tier_2_ambitious",
     location: str = "Remote Europe",
-    sample_count: int = 4,
+    sample_count: int | None = 4,
     release_year: int = 2026,
 ) -> ReportedCompensationObservation:
     return ReportedCompensationObservation(
         source_id="levels_fyi",
+        source_provenance="licensed",
         company_name=company,
         role_title=role,
         level_label=level,
@@ -50,6 +51,7 @@ def _glassdoor(
 ) -> ReportedCompensationObservation:
     return ReportedCompensationObservation(
         source_id="glassdoor",
+        source_provenance="licensed",
         company_name=company,
         role_title=role,
         level_label=level,
@@ -75,6 +77,7 @@ def _euro_top_tech(
 ) -> ReportedCompensationObservation:
     return ReportedCompensationObservation(
         source_id="euro_top_tech",
+        source_provenance="public",
         company_name=company,
         role_title=role,
         level_label=level,
@@ -98,6 +101,7 @@ def _posted_salary(
 ) -> ReportedCompensationObservation:
     return ReportedCompensationObservation(
         source_id="posted_salary_text",
+        source_provenance="employer_posted",
         company_name=company,
         role_title=role,
         level_label=None,
@@ -343,6 +347,24 @@ def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -
     assert any(factor.name == "location" for factor in weak_location.factors)
 
     assert any(factor.name == "agreement" for factor in source_dispersion.factors)
+
+
+def test_unknown_sample_support_stays_unknown_without_inventing_a_single_sample() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/unknown-support",
+        company="Acme AI",
+        title="Senior Platform Engineer",
+        location="Remote Europe",
+        observations=(_levels(sample_count=None),),
+        estimated_at="2026-07-13T10:00:00Z",
+    )
+
+    assert estimate.sample_count is None
+    assert estimate.sources[0].sample_count is None
+    assert estimate.evidence[0].sample_count is None
+    assert "low_sample_count" not in estimate.warnings
+    sample_factor = next(factor for factor in estimate.factors if factor.name == "sample")
+    assert sample_factor.reason == "Reported compensation sample support is unknown."
 
 
 def test_same_location_role_fallback_estimates_when_company_role_is_missing() -> None:

@@ -449,6 +449,7 @@ def _page_observations(page: _PublicSalaryPage) -> tuple[ReportedCompensationObs
     observations = [
         ReportedCompensationObservation(
             source_id="levels_fyi",
+            source_provenance="public",
             company_name=LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
             role_title=page.role_title,
             minimum_amount=minimum,
@@ -472,6 +473,7 @@ def _page_observations(page: _PublicSalaryPage) -> tuple[ReportedCompensationObs
         observations.append(
             ReportedCompensationObservation(
                 source_id="levels_fyi",
+                source_provenance="public",
                 company_name=company.name,
                 role_title=page.role_title,
                 minimum_amount=amount,
@@ -483,7 +485,7 @@ def _page_observations(page: _PublicSalaryPage) -> tuple[ReportedCompensationObs
                 level_label="all levels",
                 release_year=page.release_year,
                 snapshot_version=snapshot,
-                sample_count=1,
+                sample_count=None,
                 attribution=LEVELS_FYI_ATTRIBUTION,
                 source_url=page.canonical_url,
             )

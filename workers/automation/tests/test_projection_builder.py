@@ -587,6 +587,7 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
         observations=(
             ReportedCompensationObservation(
                 source_id="levels_fyi",
+                source_provenance="licensed",
                 company_name="ExampleCo",
                 role_title="Senior Software Developer",
                 level_label="Senior",
@@ -600,6 +601,7 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
             ),
             ReportedCompensationObservation(
                 source_id="glassdoor",
+                source_provenance="licensed",
                 company_name="ExampleCo",
                 role_title="Senior Software Developer",
                 level_label="Senior",

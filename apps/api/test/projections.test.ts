@@ -436,8 +436,11 @@ function insertCompensationRows(dbPath: string): void {
     JSON.stringify([
       {
         source_id: "levels_fyi",
+        source_provenance: "licensed",
         source_type: "reported_compensation",
         release_year: 2026,
+        snapshot_version: "levels-fyi-licensed-2026-q2",
+        attribution: "Levels.fyi licensed Q2 export",
         sample_count: 4,
       },
       {
@@ -445,6 +448,15 @@ function insertCompensationRows(dbPath: string): void {
         source_type: "reported_compensation",
         release_year: 2026,
         sample_count: 3,
+      },
+      {
+        source_id: "levels_fyi",
+        source_provenance: "public",
+        source_type: "reported_compensation",
+        release_year: 2026,
+        snapshot_version: "levels-fyi-public-2026",
+        attribution: "Data source: Levels.fyi (https://www.levels.fyi)",
+        sample_count: null,
       },
     ]),
     JSON.stringify([
@@ -868,11 +880,21 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           expect.arrayContaining([
             expect.objectContaining({
               sourceId: "levels_fyi",
+              provenance: "licensed",
               displayName: "Levels.fyi",
+              snapshotVersion: "levels-fyi-licensed-2026-q2",
+              attribution: "Levels.fyi licensed Q2 export",
             }),
             expect.objectContaining({
               sourceId: "glassdoor",
               displayName: "Glassdoor",
+            }),
+            expect.objectContaining({
+              sourceId: "levels_fyi",
+              provenance: "public",
+              snapshotVersion: "levels-fyi-public-2026",
+              attribution: "Data source: Levels.fyi (https://www.levels.fyi)",
+              sampleCount: null,
             }),
           ]),
         );

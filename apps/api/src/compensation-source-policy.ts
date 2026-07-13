@@ -133,13 +133,23 @@ function levelsSource(
   env: EnvLike,
   preference: StoredCompensationSourcePreference | undefined,
 ): CompensationSourcePolicySummary {
+  const rawEnvironmentAccessMode =
+    env["JOBCTRL_LEVELS_FYI_ACCESS_MODE"]?.trim().toLowerCase() ?? "";
   const environmentAccessMode = normalizeAccessMode(
     env["JOBCTRL_LEVELS_FYI_ACCESS_MODE"],
   );
+  const environmentAccessPermitted = environmentAccessMode
+    ? LEVELS_ACCESS_MODES.has(environmentAccessMode)
+    : false;
+  const invalidEnvironmentAccessMode =
+    !preference && Boolean(rawEnvironmentAccessMode) && !environmentAccessPermitted;
+  const environmentOrDefaultAccessMode = rawEnvironmentAccessMode
+    ? environmentAccessMode
+    : "public_markdown";
   const accessMode = preference
     ? preference.accessMode
-    : (environmentAccessMode ?? "public_markdown");
-  const enabled = preference?.enabled ?? Boolean(environmentAccessMode);
+    : environmentOrDefaultAccessMode;
+  const enabled = preference?.enabled ?? environmentAccessPermitted;
   const accessPermitted = accessMode ? LEVELS_ACCESS_MODES.has(accessMode) : false;
   const publicMarkdown = accessMode === "public_markdown";
   const europeCoverageConfirmed =
@@ -150,7 +160,9 @@ function levelsSource(
     accessPermitted &&
     (publicMarkdown || europeCoverageConfirmed);
   const disabledReason =
-    !enabled
+    invalidEnvironmentAccessMode
+      ? "Configured Levels.fyi access mode is not permitted for compensation import."
+      : !enabled
       ? "Disabled in Compensation sources settings."
       : levelsDisabledReason(
           accessMode,

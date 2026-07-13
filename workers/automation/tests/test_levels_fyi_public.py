@@ -69,8 +69,14 @@ Use of this data requires attribution to **Levels.fyi**.
     assert aggregate.location == "Madrid, Spain"
     assert aggregate.level_label == "all levels"
     assert aggregate.attribution == LEVELS_FYI_ATTRIBUTION
+    assert aggregate.source_provenance == "public"
+    assert aggregate.snapshot_version == "levels-fyi-public-2026"
+    assert aggregate.sample_count is None
     assert company.company_name == "Example Cloud"
     assert company.minimum_amount == 111_000
+    assert company.source_provenance == "public"
+    assert company.snapshot_version == "levels-fyi-public-2026"
+    assert company.sample_count is None
 
 
 def test_empty_markdown_falls_back_to_public_next_data() -> None:
@@ -132,4 +138,5 @@ def test_empty_markdown_falls_back_to_public_next_data() -> None:
     assert (aggregate.minimum_amount, aggregate.maximum_amount) == (81_900, 152_100)
     assert company.company_name == "Example Systems"
     assert company.minimum_amount == 187_200
+    assert company.sample_count is None
     assert all(row.currency == "EUR" for row in observations)
