@@ -454,12 +454,13 @@ does not revoke Google's server-side grant.
 ## Compensation Sources
 
 **Settings → General → Compensation sources** records local access policy for
-Levels.fyi and Glassdoor. Saving this policy is network-free and does not fetch
-or store a feed. Levels.fyi defaults to **Public Markdown**, which needs no API
-key or token. When enabled, a later compensation refresh derives
-job-family/location pages from your current jobs, reads the provider-published
-`.md` salary route, and falls back to the same public page's structured data
-when a location Markdown response is empty. Derived evidence carries
+Levels.fyi and Glassdoor. Saving this source-policy setting changes local
+configuration only; it is not a provider connection and does not fetch or store
+a feed. Levels.fyi defaults to **Public Markdown**, which needs no API key or
+token. When enabled, a later compensation refresh derives job-family/location
+pages from your current jobs, reads the provider-published `.md` salary route,
+and falls back to the same public page's structured data when a location
+Markdown response is empty. Derived evidence carries
 `Data source: Levels.fyi (https://www.levels.fyi)` and links to the canonical
 salary page.
 
