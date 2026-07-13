@@ -270,6 +270,16 @@ def provider_status(params: dict[str, Any]) -> dict[str, Any]:
     return {"providers": [provider_status_snapshot(provider) for provider in providers]}
 
 
+def provider_models(params: dict[str, Any]) -> dict[str, Any]:
+    """Return sanitized ready-provider model catalogs in stable API order."""
+
+    if params:
+        raise invalid_params("provider_models does not accept parameters")
+    from jobctrl.infrastructure.llm.model_catalog import provider_model_catalog
+
+    return provider_model_catalog()
+
+
 def provider_verify(params: dict[str, Any]) -> dict[str, Any]:
     """Verify persisted Codex CLI auth without making a model-generation call."""
 
@@ -541,6 +551,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     # ensemble inline (no timeout, D-19) and persists the canonical analysis.
     server.register("analyze_job", analyze_job, mode="sync")
     server.register("provider_status", provider_status, mode="sync")
+    server.register("provider_models", provider_models, mode="sync")
     server.register("provider_verify", provider_verify, mode="sync")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("generate_interview_prep", generate_interview_prep, mode="workflow")

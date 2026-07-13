@@ -295,6 +295,7 @@ Current responsibilities:
 - artifacts list/detail endpoints
 - artifact open endpoint with known-path validation
 - profile/settings read and write endpoints
+- sanitized provider-model catalog reads and preferred-model validation
 - resume PDF import draft endpoint (via JSON-RPC `profile_import`, which starts
   `ProfileImportWorkflow`)
 - manual-capture import endpoints (via JSON-RPC `manual_capture_import`, which
@@ -312,16 +313,17 @@ Simple state-transition writes (`resetJobStage`, `retryFailedJobs`,
 soft delete/restore, hide/unhide, permanent delete, and settings writes)
 execute inline in the TS process against shared `@jobctrl/domain-types`
 value objects; the full cancel action additionally fires `cancel_run` over
-JSON-RPC to signal the Temporal workflow. Complex commands travel through
-`SubprocessJsonRpcAdapter` to the long-lived `jobctrl rpc` subprocess. The
-JSON-RPC surface is fifteen methods: twelve workflow-mode methods whose handlers
-return a workflow spec that the RPC server starts on Temporal (`run_stage`,
+JSON-RPC to signal the Temporal workflow. Complex commands and provider reads
+travel through `SubprocessJsonRpcAdapter` to the long-lived `jobctrl rpc`
+subprocess. Workflow-mode handlers return a workflow spec that the RPC server
+starts on Temporal (`run_stage`,
 `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `tailor_job`,
 `retailor_job`, `retailor_current_policy`, `refresh_compensation`, `apply`,
 `profile_import`, `manual_capture_import`, `generate_interview_prep`,
-`run_contact_research`), plus the synchronous `analyze_job` (inline three-SDK
-employer analysis), `generate_outreach_draft`, and `cancel_run` (cooperative
-Temporal cancellation). The
+`run_contact_research`). Synchronous handlers include `analyze_job` (inline
+three-SDK employer analysis), `generate_outreach_draft`, `provider_status`,
+`provider_models`, `provider_verify`, and `cancel_run` (cooperative Temporal
+cancellation). The
 per-job maintenance methods `rescore_job`, `tailor_job`, and `retailor_job`
 start `JobPreparationWorkflow` runs directly. Workflow-mode dispatch returns
 `{runId, workflowId, firstExecutionRunId}`; callers can pass `awaitResult`
@@ -378,6 +380,17 @@ is not a runtime secret read performed by the API:
   loading is process-start scoped, Settings combines fresh presence with the
   last runtime status and requires a JobCtrl restart before new values become
   ready.
+- `GET /v1/providers/models` uses the same JSON-RPC boundary. Ready Codex uses
+  the isolated JobCtrl-owned Codex App Server SDK's live `model/list` without
+  shelling out, copying ambient auth, or returning account data. Ready Google
+  uses the authenticated `google-genai` live model list for Gemini-key or
+  Vertex/ADC configuration. Claude returns the SDK's provider-safe `sonnet`,
+  `opus`, and `haiku` aliases with `source=provider_aliases`; it does not claim
+  a live cross-platform enumeration. Unready providers return no models.
+- A `preferredModels` settings patch is validated against that current ready
+  catalog before `writeSettingsConfig` merges the canonical `preferred_models`
+  object into `dashboard.json`. Clears do not require readiness. Persistence
+  stores provider/model IDs only and remains separate from credentials.
 - Provider-consuming Python CLI, RPC, and worker startup paths call
   `config.load_env()`. After env files are loaded, it considers the same fixed
   provider allowlist and performs a non-interactive Keychain lookup only for a
@@ -409,6 +422,20 @@ The worker package lives under `workers/automation`. Each bounded context owns
 its aggregate, repository (in `infrastructure/<context>/`), and ports (in
 `domain/ports/`). The CLI is the human-facing driving adapter; the JSON-RPC
 server (`jobctrl rpc`) is the API-facing driving adapter.
+
+New `LlmAdapter` instances resolve a model without changing the established
+ready-provider order (Claude, Codex, Google): explicit non-default workflow
+model, then `LLM_MODEL`, then `preferred_models[selected_ready_provider]` from
+the dashboard path resolved through `JOBCTRL_DASHBOARD_CONFIG_PATH`, then the
+selected provider's SDK default. A saved ID cannot select another provider.
+Each `get_llm_adapter()` acquisition compares that effective `(provider, model)`
+selection under the singleton lock, reusing the process-stable selected provider
+instead of repeating SDK/readiness probes. A changed `LLM_MODEL` route or saved
+preference can replace the singleton for newly started work; provider auth and
+readiness changes require restart/reset. Previously returned adapters remain
+untouched for in-flight work. Employer-analysis wiring passes its leg-backed
+provider separately from model selection, so env and saved-model precedence is
+preserved while the actual synthesizer provider always has a draft leg.
 
 ### Crawl Politeness Gateway (R10)
 

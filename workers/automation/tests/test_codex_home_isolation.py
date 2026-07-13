@@ -76,6 +76,22 @@ def test_prepare_isolated_codex_home_copies_auth_outside_workspace(
     assert not (dirs.workdir / "auth.json").exists()
 
 
+def test_catalog_prepare_does_not_copy_ambient_codex_auth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app_dir, source_codex_home = _isolate_homes(monkeypatch, tmp_path)
+    (source_codex_home / "auth.json").write_text(
+        '{"OPENAI_API_KEY":"sk-must-not-copy"}',
+        encoding="utf-8",
+    )
+
+    dirs = adapter._prepare_isolated_codex_home(ensure_auth=False)
+
+    assert dirs.codex_home == app_dir / "codex_home"
+    assert not (dirs.codex_home / "auth.json").exists()
+    assert (source_codex_home / "auth.json").is_file()
+
+
 def test_isolated_codex_env_is_minimal_for_jobctrl_home(tmp_path: Path) -> None:
     codex_home = tmp_path / "codex_home"
     process_home = codex_home / "home"

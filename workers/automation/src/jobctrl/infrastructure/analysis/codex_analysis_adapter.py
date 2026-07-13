@@ -101,8 +101,13 @@ def _isolated_codex_home() -> Path:
     return jobctrl_codex_home()
 
 
-def _prepare_isolated_codex_home() -> _CodexHomeDirs:
-    """Create the stable isolated home and require persisted CLI authentication."""
+def _prepare_isolated_codex_home(*, ensure_auth: bool = True) -> _CodexHomeDirs:
+    """Create the stable isolated home and optionally enroll persisted auth.
+
+    Generation keeps the historical one-time enrollment behavior. Read-only
+    catalog discovery passes ``ensure_auth=False`` so listing models can use an
+    already-ready JobCtrl-owned session without copying ambient credentials.
+    """
 
     codex_home = _isolated_codex_home()
     codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -112,7 +117,8 @@ def _prepare_isolated_codex_home() -> _CodexHomeDirs:
     for directory in (workdir, process_home):
         directory.mkdir(mode=0o700, exist_ok=True)
         directory.chmod(0o700)
-    ensure_jobctrl_codex_auth()
+    if ensure_auth:
+        ensure_jobctrl_codex_auth()
     return _CodexHomeDirs(
         codex_home=codex_home,
         workdir=workdir,
@@ -158,6 +164,36 @@ def _load_async_codex_factory() -> AsyncCodexFactory:
         # explicit escape hatch for setup-managed platform fallbacks.
         config_kwargs["codex_bin"] = str(resolve_codex_binary())
         return AsyncCodex(config=CodexConfig(**config_kwargs))
+
+    return _make
+
+
+def _load_catalog_async_codex_factory() -> AsyncCodexFactory:
+    """Build the isolated SDK client for secret-free live model discovery.
+
+    Provider readiness already proves that the JobCtrl-owned auth file exists.
+    This read path deliberately does not call ``ensure_jobctrl_codex_auth`` and
+    therefore cannot import ambient user auth as a side effect.
+    """
+
+    from jobctrl.runtime import activate_provider_pack
+
+    if is_bundled_runtime():
+        from jobctrl.config import APP_DIR
+
+        activate_provider_pack("codex-provider-runtime", app_dir=APP_DIR)
+    from openai_codex import AsyncCodex, CodexConfig  # type: ignore[import-untyped]
+
+    def _make() -> Any:
+        dirs = _prepare_isolated_codex_home(ensure_auth=False)
+        return AsyncCodex(
+            config=CodexConfig(
+                cwd=str(dirs.workdir),
+                env=_isolated_codex_env(dirs.codex_home, dirs.process_home),
+                config_overrides=_CODEX_CONFIG_OVERRIDES,
+                codex_bin=str(resolve_codex_binary()),
+            )
+        )
 
     return _make
 

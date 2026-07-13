@@ -96,7 +96,7 @@ attestation; leave it empty when there is no truthful answer.
 | --- | --- | --- |
 | `JOBCTRL_DIR` | `~/.jobctrl` | Local app directory for database, settings, artifacts, logs, browser worker state, and `.env`. |
 | `JOBCTRL_DB_PATH` | `$JOBCTRL_DIR/jobctrl.db` | TypeScript API database path. The Python worker ignores it and always uses `$JOBCTRL_DIR/jobctrl.db`, so overriding it desynchronizes the API from the worker — prefer `JOBCTRL_DIR` to move both. |
-| `JOBCTRL_DASHBOARD_CONFIG_PATH` | `$JOBCTRL_DIR/dashboard.json` | Settings file written by the TypeScript API and read by both API and worker (preferences, apply approval gate, spend budget). |
+| `JOBCTRL_DASHBOARD_CONFIG_PATH` | `$JOBCTRL_DIR/dashboard.json` | Non-secret settings file written by the TypeScript API and read by both API and worker (preferences, provider-scoped model IDs, apply approval gate, spend budget). |
 | `JOBCTRL_API_HOST` | `127.0.0.1` | Local API bind host. Non-loopback hosts require explicit opt-in. |
 | `JOBCTRL_API_PORT` / `PORT` | `8766` | Local API port. |
 | `JOBCTRL_API_ALLOW_REMOTE_BIND` | unset | Set to `1`, `true`, or `yes` to allow non-loopback API binding. This can expose private local data. |
@@ -116,6 +116,32 @@ Choose one provider in **Settings → Credentials**, then restart JobCtrl and us
 `jobctrl doctor`. The pipeline model spec defaults to `default`, which resolves
 through a ready provider. Explicit model specs use `codex:`, `claude:`, or
 `google:`; `gemini:` remains an alias for the Google SDK route.
+
+Model selection becomes available only after the corresponding provider is
+ready. The Codex and Google lists are live catalogs fetched through their
+authenticated SDKs. Claude's Agent SDK has no safe universal list across its
+API and cloud routes, so JobCtrl labels its list as provider aliases and offers
+`sonnet`, `opus`, and `haiku`. Only provider and model IDs are written to
+`dashboard.json`; credentials remain on the credential boundary.
+
+A saved preference is scoped to its provider and cannot change which provider
+JobCtrl selects. Newly constructed adapters use this precedence:
+
+1. explicit non-default workflow model;
+2. `LLM_MODEL`;
+3. saved preference for the selected ready provider;
+4. that provider's default.
+
+Provider selection itself keeps the default readiness order Claude, then
+Codex, then Google. Explicit `provider:model` workflow values and
+`LLM_MODEL=provider:model` keep selecting the named provider. Existing adapters
+and in-flight work keep their resolved model. Newly started work rechecks the
+effective selection when it acquires the shared adapter and receives a new
+adapter object when `LLM_MODEL` or the saved preference changed; no worker
+restart is required for a preferred-model edit. The initially selected ready
+provider stays process-stable on warm acquisitions so status checks do not rerun
+for every workflow. Provider credential/readiness changes retain their existing
+restart requirement (or require an explicit adapter reset).
 
 ### Codex
 
@@ -176,7 +202,8 @@ loadable service-account JSON file. Otherwise JobCtrl checks the standard local
 gcloud ADC location, whose officially loadable ADC types (including
 `authorized_user`) remain supported.
 
-`LLM_MODEL` optionally overrides the selected provider's default model.
+`LLM_MODEL` optionally overrides both the saved preference and the selected
+provider's default model.
 
 ## Employer-Analysis Ensemble
 

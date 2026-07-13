@@ -662,6 +662,28 @@ export function writeSettingsConfig(paths: { settingsPath: string }, request: Se
   if (request.targetCriteria !== undefined) {
     assign("target_criteria", request.targetCriteria);
   }
+  if (request.preferredModels !== undefined) {
+    const rawCurrent = isRecord(next.preferred_models)
+      ? next.preferred_models
+      : isRecord(next.preferredModels)
+        ? next.preferredModels
+        : {};
+    const preferredModels: Record<string, string> = {};
+    for (const provider of ["codex", "claude", "google"] as const) {
+      const current = rawCurrent[provider];
+      if (typeof current === "string" && current.trim() && current.trim().length <= 160) {
+        preferredModels[provider] = current.trim();
+      }
+      const update = request.preferredModels[provider];
+      if (update === null) {
+        delete preferredModels[provider];
+      } else if (update !== undefined) {
+        preferredModels[provider] = update;
+      }
+    }
+    assign("preferred_models", preferredModels);
+    delete next.preferredModels;
+  }
 
   if (!wrote) {
     throw new InputError("At least one settings field is required.");

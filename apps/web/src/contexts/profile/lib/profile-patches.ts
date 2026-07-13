@@ -83,11 +83,19 @@ export function patchSettingsResponse(current: unknown, body: SettingsUpdateRequ
     return current;
   }
   const overrides = Object.fromEntries(
-    Object.entries(body).filter(([, value]) => value !== undefined),
+    Object.entries(body).filter(([key, value]) => key !== "preferredModels" && value !== undefined),
   );
+  const preferredModels = body.preferredModels
+    ? Object.fromEntries(
+        Object.entries({
+          ...current.settings.preferredModels,
+          ...body.preferredModels,
+        }).filter(([, value]) => typeof value === "string" && value.length > 0),
+      )
+    : current.settings.preferredModels;
   return {
     ...current,
-    settings: { ...current.settings, ...overrides },
+    settings: { ...current.settings, ...overrides, preferredModels },
   };
 }
 

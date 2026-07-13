@@ -3,11 +3,12 @@ import { Link, Outlet, createFileRoute, useRouterState } from "@tanstack/react-r
 import { PageHead } from "../shared/ui/page-head.js";
 
 const TABS: ReadonlyArray<{
-  readonly to: "/settings" | "/settings/credentials";
+  readonly to: "/settings" | "/settings/credentials" | "/settings/models";
   readonly label: string;
 }> = [
   { to: "/settings", label: "general" },
   { to: "/settings/credentials", label: "credentials" },
+  { to: "/settings/models", label: "model selection" },
 ];
 
 export const Route = createFileRoute("/settings")({

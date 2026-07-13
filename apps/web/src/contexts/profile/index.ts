@@ -2,6 +2,8 @@ export { profileKeys } from "./queryKeys.js";
 
 export { useCredentialsQuery } from "./hooks/useCredentialsQuery.js";
 export { useProviderStatusQuery } from "./hooks/useProviderStatusQuery.js";
+export { useProviderModelsQuery } from "./hooks/useProviderModelsQuery.js";
+export { ModelSelectionPanel } from "./components/ModelSelectionPanel.js";
 export { useDeleteCredentialMutation } from "./hooks/useDeleteCredentialMutation.js";
 export { useExtensionCapabilityTokenQuery } from "./hooks/useExtensionCapabilityTokenQuery.js";
 export { useImportResumeMutation } from "./hooks/useImportResumeMutation.js";

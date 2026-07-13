@@ -92,6 +92,7 @@ import type {
   ProfileImportRequest,
   ProfileImportResponse,
   ProfileUpdateRequest,
+  ProviderModelCatalogResponse,
   ProviderStatusResponse,
   PipelineStageRunResponse,
   QuarantineDecision,
@@ -336,6 +337,7 @@ export interface ApiClientPort {
   updateCredential(body: CredentialUpdateRequest): Promise<CredentialsResponse>;
   deleteCredential(key: CredentialKey): Promise<CredentialsResponse>;
   updateCredentialsBatch(body: CredentialBatchUpdateRequest): Promise<CredentialsResponse>;
+  providerModels(): Promise<ProviderModelCatalogResponse>;
   providerStatus(): Promise<ProviderStatusResponse>;
   verifyCodexProvider(): Promise<CodexVerifyResponse>;
 

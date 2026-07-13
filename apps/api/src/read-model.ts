@@ -132,6 +132,7 @@ const DEFAULT_SETTINGS: DashboardSettings = {
   dailyBudgetUsd: 25,
   scoreCriteria: "",
   targetCriteria: "",
+  preferredModels: {},
 };
 
 interface JobListProjectionRow extends Record<string, unknown> {
@@ -6252,7 +6253,20 @@ function normalizeSettings(raw: unknown): DashboardSettings {
     ),
     scoreCriteria: normalizeText(source.scoreCriteria ?? source.score_criteria, DEFAULT_SETTINGS.scoreCriteria),
     targetCriteria: normalizeText(source.targetCriteria ?? source.target_criteria, DEFAULT_SETTINGS.targetCriteria),
+    preferredModels: normalizePreferredModels(source.preferredModels ?? source.preferred_models),
   };
+}
+
+function normalizePreferredModels(value: unknown): DashboardSettings["preferredModels"] {
+  if (!isRecord(value)) return {};
+  const result: DashboardSettings["preferredModels"] = {};
+  for (const provider of ["codex", "claude", "google"] as const) {
+    const model = typeof value[provider] === "string" ? value[provider].trim() : "";
+    if (model && model.length <= 160) {
+      result[provider] = model;
+    }
+  }
+  return result;
 }
 
 function normalizeText(value: unknown, fallback: string): string {

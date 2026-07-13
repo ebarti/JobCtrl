@@ -117,7 +117,12 @@ def _resolve_default_model_spec(default_model: str | None) -> tuple[str | None, 
     provider, selected_model, label = _parse_model_spec(default_model)
     if label != "default":
         return provider, selected_model, label
-    return _parse_model_spec(os.environ.get("LLM_MODEL"))
+    environment_model = os.environ.get("LLM_MODEL")
+    if environment_model is not None and environment_model.strip():
+        provider, selected_model, label = _parse_model_spec(environment_model)
+        # An explicit ``LLM_MODEL=default`` still outranks the saved preference.
+        return provider, selected_model, "environment:default" if label == "default" else label
+    return None, None, "default"
 
 
 def _run_sync(awaitable: Awaitable[Any]) -> Any:
@@ -571,20 +576,56 @@ def _make_backend(provider: str | None, model: str | None) -> _Backend:
     raise RuntimeError(f"Unsupported LLM provider: {selected}")
 
 
+def _effective_default_selection(
+    default_model: str | None = None,
+    *,
+    default_provider: str | None = None,
+) -> tuple[str, str | None]:
+    """Resolve the provider/model facts that determine a new adapter default."""
+
+    provider, selected_model, label = _resolve_default_model_spec(default_model)
+    selected_provider = provider or default_provider or _default_provider()
+    if label == "default":
+        from jobctrl.infrastructure.scoring.criteria_provider import read_preferred_model
+
+        selected_model = read_preferred_model(selected_provider)
+    return selected_provider, selected_model
+
+
 class LlmAdapter:
     """Routes model-neutral calls to one authenticated provider backend."""
 
-    def __init__(self, client: Any | None = None, *, default_model: str | None = None) -> None:
+    def __init__(
+        self,
+        client: Any | None = None,
+        *,
+        default_model: str | None = None,
+        default_provider: str | None = None,
+        _resolved_default: tuple[str, str | None] | None = None,
+    ) -> None:
         if client is not None:
             self._client: Any = client
             self._provider_id = str(getattr(client, "provider_id", "injected"))
             self._clients: dict[str, Any] = {"default": client}
+            self._default_selection: tuple[str, str | None] | None = None
+            self._injected = True
             return
-        provider, selected_model, label = _resolve_default_model_spec(default_model)
+        provider, selected_model = _resolved_default or _effective_default_selection(
+            default_model,
+            default_provider=default_provider,
+        )
         backend = _make_backend(provider, selected_model)
         self._client = backend
         self._provider_id = backend.provider_id
-        self._clients = {"default": backend, label: backend}
+        self._clients = {
+            "default": backend,
+            f"{provider}:default": backend,
+        }
+        if selected_model is not None:
+            self._clients[selected_model] = backend
+            self._clients[f"{provider}:{selected_model}"] = backend
+        self._default_selection = (provider, selected_model)
+        self._injected = False
 
     @property
     def client(self) -> Any:
@@ -677,20 +718,29 @@ class LlmAdapter:
 
 _lock = threading.Lock()
 _singleton: LlmAdapter | None = None
+_singleton_default_provider: str | None = None
 
 
 def get_llm_adapter() -> LlmAdapter:
-    global _singleton
+    global _singleton, _singleton_default_provider
     with _lock:
         if _singleton is None:
-            _singleton = LlmAdapter()
+            _singleton_default_provider = _default_provider()
+            _singleton = LlmAdapter(default_provider=_singleton_default_provider)
+        elif not getattr(_singleton, "_injected", True):
+            selection = _effective_default_selection(
+                default_provider=_singleton_default_provider,
+            )
+            if selection != _singleton._default_selection:
+                _singleton = LlmAdapter(_resolved_default=selection)
         return _singleton
 
 
 def reset_llm_adapter() -> None:
-    global _singleton
+    global _singleton, _singleton_default_provider
     with _lock:
         _singleton = None
+        _singleton_default_provider = None
 
 
 __all__ = [

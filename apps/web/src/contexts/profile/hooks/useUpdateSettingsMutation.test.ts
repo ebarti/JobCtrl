@@ -21,6 +21,7 @@ const initialSettings = {
     dailyBudgetUsd: 25,
     scoreCriteria: "x",
     targetCriteria: "y",
+    preferredModels: { claude: "sonnet" },
   },
   paths: { settingsPath: "/tmp/jh.json" },
 };

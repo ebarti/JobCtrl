@@ -18,7 +18,7 @@ const MODULE_URLS = {
   eventStream: "/src/demo/workspace/DemoWorkspaceEventStreamAdapter.ts",
 } as const;
 const STATIC_HOST = "/demo/source-preview.html";
-const CURRENT_DEMO_SEED_VERSION = "2026-07-12.1";
+const CURRENT_DEMO_SEED_VERSION = "2026-07-12.2";
 
 function configuredOrigin(baseURL: string | undefined): string {
   if (!baseURL) throw new Error("Demo Playwright baseURL is required.");

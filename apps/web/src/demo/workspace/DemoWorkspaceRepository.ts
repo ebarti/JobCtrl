@@ -1002,7 +1002,7 @@ function workspaceUpgrade(
   return null;
 }
 
-const REFRESHABLE_DEMO_SEED_VERSIONS = new Set(["2026-07-11.1"]);
+const REFRESHABLE_DEMO_SEED_VERSIONS = new Set(["2026-07-11.1", "2026-07-12.1"]);
 
 /** Only reviewed legacy fixtures may be destructively replaced. */
 function classifyDemoSeedVersion(

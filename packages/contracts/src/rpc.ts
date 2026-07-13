@@ -80,6 +80,7 @@ export const RpcMethods = {
   ManualCaptureImport: "manual_capture_import",
   CancelRun: "cancel_run",
   ProviderStatus: "provider_status",
+  ProviderModels: "provider_models",
   ProviderVerify: "provider_verify",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];

@@ -21,6 +21,7 @@ import type {
   OutcomeAnalyticsSummary,
   PaginatedResponse,
   ProfileConfigResponse,
+  ProviderModelCatalogResponse,
   ProviderStatusResponse,
   ResumeTemplateState,
   ResumeTemplateListResponse,
@@ -1663,6 +1664,7 @@ export const sampleSettingsResponse: SettingsResponse = {
     dailyBudgetUsd: 25,
     scoreCriteria: "Platform reliability and team leadership.",
     targetCriteria: "Director-plus infrastructure roles.",
+    preferredModels: { claude: "sonnet" },
   },
   paths: { settingsPath: "/tmp/jobctrl-test/settings.json" },
 };
@@ -1871,6 +1873,43 @@ export const sampleProviderStatusResponse: ProviderStatusResponse = {
     { provider: "codex", configured: true, ready: true, mode: "subscription" },
     { provider: "claude", configured: true, ready: true, mode: "anthropic_api_key" },
     { provider: "google", configured: false, ready: false, mode: null },
+  ],
+};
+
+export const sampleProviderModelsResponse: ProviderModelCatalogResponse = {
+  ok: true,
+  providers: [
+    {
+      provider: "codex",
+      configured: true,
+      ready: true,
+      source: "live",
+      models: [
+        { id: "gpt-5.5", displayName: "GPT-5.5", isDefault: true },
+        { id: "gpt-5.4", displayName: "GPT-5.4" },
+      ],
+      message: "Codex model catalog is current.",
+    },
+    {
+      provider: "claude",
+      configured: true,
+      ready: true,
+      source: "provider_aliases",
+      models: [
+        { id: "sonnet", displayName: "Sonnet" },
+        { id: "opus", displayName: "Opus", isDefault: true },
+        { id: "haiku", displayName: "Haiku" },
+      ],
+      message: "Claude aliases are available.",
+    },
+    {
+      provider: "google",
+      configured: false,
+      ready: false,
+      source: "live",
+      models: [],
+      message: "Google is not configured.",
+    },
   ],
 };
 

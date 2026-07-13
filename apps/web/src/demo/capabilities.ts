@@ -101,6 +101,7 @@ export const DEMO_CAPABILITY_MANIFEST = {
   updateCredential: unavailable("The public demo never reads or accepts credentials."),
   deleteCredential: unavailable("The public demo has no credential store."),
   updateCredentialsBatch: unavailable("The public demo never reads or accepts credentials."),
+  providerModels: local("Shows a deterministic, read-only sample model catalog."),
   providerStatus: local("Shows an unconfigured, read-only provider explanation."),
   verifyCodexProvider: unavailable("The public demo cannot inspect host Codex authentication."),
   listContacts: local("Reads synthetic contacts."),
