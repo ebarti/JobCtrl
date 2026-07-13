@@ -1,9 +1,13 @@
 import type { CredentialsResponse } from "@jobctrl/contracts";
-import { waitFor } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { axe } from "jest-axe";
 import { describe, expect, it, vi } from "vitest";
 
-import { sampleCredentialsResponse } from "../../../test/fixtures/projections.js";
+import {
+  sampleCredentialsResponse,
+  sampleProviderStatusResponse,
+} from "../../../test/fixtures/projections.js";
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { CredentialsPanel } from "./CredentialsPanel.js";
@@ -17,8 +21,7 @@ function responseFor(
       : state === "inspection_failed"
         ? "inspection_failed"
         : null;
-  const configured =
-    state === "present" ? true : state === "absent" ? false : null;
+  const configured = state === "present" ? true : state === "absent" ? false : null;
   return {
     ...sampleCredentialsResponse,
     store: {
@@ -39,14 +42,35 @@ describe("<CredentialsPanel> a11y", () => {
     async (state) => {
       const view = renderWithProviders(<CredentialsPanel />, {
         ports: buildTestPorts({
-          api: { credentials: vi.fn(async () => responseFor(state)) },
+          api: {
+            credentials: vi.fn(async () => responseFor(state)),
+            providerStatus: vi.fn(async () => sampleProviderStatusResponse),
+          },
         }),
       });
-      await waitFor(() =>
-        expect(view.container.querySelector("form")).not.toBeNull(),
-      );
-
+      await screen.findByRole("heading", { name: "LLM providers" });
       expect(await axe(view.container)).toHaveNoViolations();
+    },
+  );
+
+  it.each(["Claude", "Google"] as const)(
+    "has no axe violations in the open %s removal confirmation",
+    async (provider) => {
+      const user = userEvent.setup();
+      renderWithProviders(<CredentialsPanel />, {
+        ports: buildTestPorts({
+          api: {
+            credentials: vi.fn(async () => responseFor("present")),
+            providerStatus: vi.fn(async () => sampleProviderStatusResponse),
+          },
+        }),
+      });
+      await user.click(
+        await screen.findByRole("button", { name: `Remove ${provider} setup` }),
+      );
+      await screen.findByRole("dialog", { name: `Remove ${provider} provider setup?` });
+
+      expect(await axe(document.body)).toHaveNoViolations();
     },
   );
 });

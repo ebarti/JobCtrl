@@ -22,8 +22,11 @@ describe("credential and browser privacy documentation contract", () => {
     const readme = normalizeWhitespace(readRepoFile("README.md"));
 
     expect(readme).toContain("plaintext, cross-platform fallback");
-    expect(readme).toContain("On macOS only, Settings can");
-    expect(readme).toContain("only a missing or empty allowlisted value");
+    expect(readme).toContain("On macOS, **Settings → Credentials** guides one of three providers");
+    expect(readme).toContain("One ready provider is sufficient for all core AI stages");
+    expect(readme).toContain("Secret values managed by the panel are stored in the system Keychain");
+    expect(readme).toContain("AWS, Google, and Azure credential files remain owned by their vendor CLIs");
+    expect(readme).toContain("a non-empty environment value takes precedence");
     expect(readme).toContain("Keychain edits are not hot-reloaded");
     expect(readme).toContain("Windows Credential Manager");
     expect(readme).toContain("Linux Secret Service/keyring");
@@ -37,18 +40,20 @@ describe("credential and browser privacy documentation contract", () => {
     const completeApi = normalizeWhitespace(readRepoFile("docs/api/complete-contract.md"));
 
     expect(runtime).toContain("### Provider Credential Boundary");
-    expect(runtime).toContain("passes that value to the `JobCtrl` macOS Keychain service");
-    expect(runtime).toContain("same fixed allowlist");
+    expect(runtime).toContain("uses `PATCH /v1/credentials/batch` to replace one provider configuration");
+    expect(runtime).toContain("A batch either applies completely or restores its pre-change Keychain state");
     expect(runtime).toContain("`configured` state is `true`, `false`, or `null`");
-    expect(runtime).toContain("`unavailableReason: inspection_failed`");
-    expect(runtime).toContain("sanitized `503 credential_store_unavailable`");
-    expect(runtime).toContain("only into that process's environment");
+    expect(runtime).toContain("Secret values used internally for rollback are never returned, logged, persisted in SQLite, or passed to Python by the API");
+    expect(runtime).toContain("`POST /v1/providers/codex/verify` runs `codex login status`");
+    expect(runtime).toContain("performs a non-interactive Keychain lookup only for a missing or empty value");
+    expect(runtime).toContain("copied only into that process's environment");
     expect(runtime).toContain("There is no hot reload");
-    expect(completeApi).toContain("`PATCH /v1/credentials` receives the submitted value");
+    expect(completeApi).toContain("`PATCH /v1/credentials/batch` validates the complete allowlisted operation plan");
+    expect(completeApi).toContain("restores the exact pre-change state on failure without exposing values");
     expect(completeApi).toContain("`GET` and `DELETE` never return stored values");
-    expect(completeApi).toContain("never reads a stored value back for provider runtime use");
+    expect(completeApi).toContain("private batch snapshots are used only for compensating rollback, not provider runtime");
     expect(completeApi).toContain("`unavailableReason` as `unsupported_platform`, `inspection_failed`, or `null`");
-    expect(completeApi).toContain("`503 credential_store_unavailable` with reason `operational_failure`");
+    expect(completeApi).toContain("`503 credential_store_unavailable` with a sanitized operational or rollback failure reason");
   });
 
   it("preserves owner-signoff state for credential claims", () => {

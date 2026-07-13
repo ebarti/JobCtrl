@@ -37,8 +37,8 @@ class LlmPort(Protocol):
     """Driven port for chat-style LLM completion.
 
     Implementations live under ``infrastructure/llm/``. The local adapter
-    wraps the existing ``jobctrl.llm.LLMClient``. A future cloud adapter
-    will route through a tenant-aware gateway.
+    routes through the sanctioned Claude, Codex, or Google provider SDK. A
+    future cloud adapter will route through a tenant-aware gateway.
     """
 
     def chat(

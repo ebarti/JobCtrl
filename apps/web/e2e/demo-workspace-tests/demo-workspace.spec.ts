@@ -20,6 +20,11 @@ const MODULE_URLS = {
 const STATIC_HOST = "/demo/source-preview.html";
 const CURRENT_DEMO_SEED_VERSION = "2026-07-12.1";
 
+function configuredOrigin(baseURL: string | undefined): string {
+  if (!baseURL) throw new Error("Demo Playwright baseURL is required.");
+  return new URL(baseURL).origin;
+}
+
 const scenarioTest = test.extend<{ demoNetworkBoundary: void }>({
   demoNetworkBoundary: [
     async ({ baseURL, context }, use) => {
@@ -645,7 +650,9 @@ scenarioTest("Dashboard Failures opens the failed job counted by the KPI", async
 scenarioTest("every P2 product route and seeded deep link renders populated across direct refreshes", async ({
   page,
   context,
+  baseURL,
 }) => {
+  const demoOrigin = configuredOrigin(baseURL);
   const productRequests: string[] = [];
   const externalRequests: string[] = [];
   const runtimeErrors: string[] = [];
@@ -654,7 +661,7 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
     if (url.pathname.startsWith("/v1/")) {
       productRequests.push(url.pathname);
     }
-    if (url.origin !== "http://127.0.0.1:5198") {
+    if (url.origin !== demoOrigin) {
       externalRequests.push(request.url());
     }
   });
@@ -677,7 +684,7 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
     ["/analytics", "Outcome analytics", "bundled-capture"],
     ["/profile", "Profile", "Baseline resume editor"],
     ["/settings", "Settings", "Config"],
-    ["/settings/credentials", "Settings", "OpenAI API Key"],
+    ["/settings/credentials", "Settings", "Codex"],
     ["/outreach", "Contacts", "Synthetic hiring partner"],
     [
       "/outreach/contact-demo-hiring-partner",
@@ -790,13 +797,15 @@ scenarioTest("same-context tabs share, serialize concurrent writes, and survive 
 scenarioTest("eventless discovery and settings writes resync across tabs and survive reload", async ({
   page,
   context,
+  baseURL,
 }) => {
+  const demoOrigin = configuredOrigin(baseURL);
   const productRequests: string[] = [];
   const externalRequests: string[] = [];
   context.on("request", (request) => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/v1/")) productRequests.push(url.pathname);
-    if (url.origin !== "http://127.0.0.1:5198") externalRequests.push(request.url());
+    if (url.origin !== demoOrigin) externalRequests.push(request.url());
   });
   const second = await context.newPage();
 
@@ -828,13 +837,15 @@ scenarioTest("eventless discovery and settings writes resync across tabs and sur
 scenarioTest("discovery promotes a source and imports a manual capture through the real browser-local UI", async ({
   page,
   context,
+  baseURL,
 }) => {
+  const demoOrigin = configuredOrigin(baseURL);
   const productRequests: string[] = [];
   const externalRequests: string[] = [];
   context.on("request", (request) => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/v1/")) productRequests.push(url.pathname);
-    if (url.origin !== "http://127.0.0.1:5198") externalRequests.push(request.url());
+    if (url.origin !== demoOrigin) externalRequests.push(request.url());
   });
 
   await page.goto("/discovery");
@@ -865,13 +876,15 @@ scenarioTest("discovery promotes a source and imports a manual capture through t
 scenarioTest("score correction is browser-local, cross-tab visible, reload durable, and network-free", async ({
   page,
   context,
+  baseURL,
 }) => {
+  const demoOrigin = configuredOrigin(baseURL);
   const productRequests: string[] = [];
   const externalRequests: string[] = [];
   context.on("request", (request) => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/v1/")) productRequests.push(url.pathname);
-    if (url.origin !== "http://127.0.0.1:5198") externalRequests.push(request.url());
+    if (url.origin !== demoOrigin) externalRequests.push(request.url());
   });
 
   const second = await context.newPage();

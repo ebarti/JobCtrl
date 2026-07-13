@@ -38,7 +38,24 @@ _LEGACY_TOKENS = ("job" + "ctl", _LEGACY_TOKEN)
 
 KEYCHAIN_SERVICE = "JobCtrl"
 KEYCHAIN_SECURITY_BINARY = "/usr/bin/security"
-KEYCHAIN_PROVIDER_KEYS = ("OPENAI_API_KEY", "GEMINI_API_KEY", "LLM_URL")
+KEYCHAIN_PROVIDER_KEYS = (
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+    "ANTHROPIC_AWS_WORKSPACE_ID",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "ANTHROPIC_VERTEX_PROJECT_ID",
+    "CLOUD_ML_REGION",
+    "ANTHROPIC_FOUNDRY_RESOURCE",
+    "AWS_PROFILE",
+    "AWS_REGION",
+    "GEMINI_API_KEY",
+    "GOOGLE_GENAI_USE_VERTEXAI",
+    "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION",
+)
 KEYCHAIN_ACCOUNT_MAPPING = "key"
 KEYCHAIN_REQUIRES_WORKER_RESTART = True
 KEYCHAIN_LOOKUP_TIMEOUT_SECONDS = 2.0
@@ -1596,7 +1613,7 @@ def get_tier() -> int:
     """
     load_env()
 
-    has_llm = any(os.environ.get(k) for k in ("GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_URL"))
+    has_llm = _has_core_llm_provider()
     if not has_llm:
         return 1
 
@@ -1627,6 +1644,17 @@ def _has_claude_apply_runtime() -> bool:
     return shutil.which(binary) is not None or Path(binary).expanduser().exists()
 
 
+def _has_core_llm_provider() -> bool:
+    """Return whether at least one sanctioned provider is ready end to end."""
+
+    try:
+        from jobctrl.infrastructure.setup_probes import core_llm_ready
+
+        return core_llm_ready()
+    except Exception:  # noqa: BLE001 - tier detection degrades to Tier 1
+        return False
+
+
 def check_tier(required: int, feature: str) -> None:
     """Raise SystemExit with a clear message if the current tier is too low.
 
@@ -1643,10 +1671,10 @@ def check_tier(required: int, feature: str) -> None:
     _console = Console(stderr=True)
 
     missing: list[str] = []
-    if required >= 2 and not any(os.environ.get(k) for k in ("GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_URL")):
+    if required >= 2 and not _has_core_llm_provider():
         missing.append(
-            "LLM provider — run [bold]jobctrl init[/bold] or set GEMINI_API_KEY, OPENAI_API_KEY, or LLM_URL; "
-            "run [bold]jobctrl doctor[/bold] for ensemble-leg auth"
+            "LLM provider — authenticate Claude, Codex, or Google; "
+            "run [bold]jobctrl setup[/bold] and [bold]jobctrl doctor[/bold] for provider diagnostics"
         )
     if required >= 3:
         if not _has_claude_apply_runtime():

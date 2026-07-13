@@ -225,12 +225,13 @@ which model machinery each uses:
 2. **Employer analysis is the mandatory front-half.** Before the fit score,
    scoring ensures a canonical employer analysis via
    `scoring/employer_analysis.py` / `scoring/scorer.py`. This is produced by the
-   three-SDK agent ensemble (Claude Agent SDK + Codex SDK + Antigravity/Gemini,
-   synthesized by Claude) and emits `EmployerAnalyzed`. The same analysis is
-   reused by tailoring, so it is not recomputed per stage.
-3. **The fit score itself comes from the httpx LLM client.** The scoring
-   use-case calls `LlmPort.chat_json` (the httpx `LLMClient` behind the
-   adapter), which returns a structured fit score, band, criteria, and trace.
+   provider ensemble (Claude Agent SDK + Codex SDK + Google SDK) and emits
+   `EmployerAnalyzed`. Healthy optional legs run in parallel; synthesis uses a
+   ready provider, so Claude is not mandatory. The same analysis is reused by
+   tailoring, so it is not recomputed per stage.
+3. **The fit score uses the same provider-neutral port.** The scoring use-case
+   calls `LlmPort.chat_json`; the selected Claude, Codex, or Google SDK backend
+   returns a structured fit score, band, criteria, and trace.
    Deterministic policy resolution (rubric weights, thresholds, calibration
    anchors) is applied *separately* from the raw LLM output.
 

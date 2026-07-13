@@ -252,7 +252,7 @@ async def test_discovery_preparation_fanout_activity_uses_root_workflow_fanout(
             tailor_models=("draft",),
             tailor_judge_model="judge",
             tailor_judge_min_score=8.5,
-            llm_model="local:model",
+            llm_model="codex:model",
         )
     )
 
@@ -262,7 +262,7 @@ async def test_discovery_preparation_fanout_activity_uses_root_workflow_fanout(
         "limit": 5,
         "workers": 3,
         "validation_mode": "strict",
-        "llm_model": "local:model",
+        "llm_model": "codex:model",
         "tailor_models": ("draft",),
         "tailor_judge_model": "judge",
         "tailor_judge_min_score": 8.5,
@@ -335,7 +335,7 @@ def test_build_per_job_handoff_starts_scored_prep_with_params(
             per_job_handoff=True,
             min_score=8,
             validation_mode="strict",
-            llm_model="local:model",
+            llm_model="codex:model",
             tailor_models=("draft",),
             tailor_judge_model="judge",
             tailor_judge_min_score=8.5,
@@ -348,7 +348,7 @@ def test_build_per_job_handoff_starts_scored_prep_with_params(
     _, kwargs = calls[0]
     assert kwargs["min_score"] == 8
     assert kwargs["validation_mode"] == "strict"
-    assert kwargs["llm_model"] == "local:model"
+    assert kwargs["llm_model"] == "codex:model"
     assert kwargs["tailor_models"] == ("draft",)
     assert kwargs["tailor_judge_model"] == "judge"
     assert kwargs["tailor_judge_min_score"] == 8.5

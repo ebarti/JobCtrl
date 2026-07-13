@@ -5,7 +5,7 @@ export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"
 export type Stage = (typeof STAGES)[number];
 export const PIPELINE_RUN_STAGES = ["discover", "score", "tailor", "cover", "apply"] as const;
 export type PipelineRunStage = (typeof PIPELINE_RUN_STAGES)[number];
-export const DEFAULT_PIPELINE_LLM_MODEL = "gemini:gemini-3.5-flash" as const;
+export const DEFAULT_PIPELINE_LLM_MODEL = "default" as const;
 export const PIPELINE_ACTION_JOB_KEY = "pipeline" as const;
 export const MIN_TAILORING_FIT_SCORE = 6 as const;
 
@@ -1762,7 +1762,24 @@ export const SettingsUpdateRequestSchema = z
   .strict();
 export type SettingsUpdateRequest = z.infer<typeof SettingsUpdateRequestSchema>;
 
-export const CredentialKeys = ["OPENAI_API_KEY", "GEMINI_API_KEY", "LLM_URL"] as const;
+export const CredentialKeys = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "ANTHROPIC_AWS_WORKSPACE_ID",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "ANTHROPIC_VERTEX_PROJECT_ID",
+  "CLOUD_ML_REGION",
+  "ANTHROPIC_FOUNDRY_RESOURCE",
+  "AWS_PROFILE",
+  "AWS_REGION",
+  "GEMINI_API_KEY",
+  "GOOGLE_GENAI_USE_VERTEXAI",
+  "GOOGLE_CLOUD_PROJECT",
+  "GOOGLE_CLOUD_LOCATION",
+] as const;
 export type CredentialKey = (typeof CredentialKeys)[number];
 
 export const CREDENTIAL_VALUE_MAX_LENGTH = 8_000;
@@ -1785,6 +1802,79 @@ export const CredentialUpdateRequestSchema = z
   })
   .strict();
 export type CredentialUpdateRequest = z.infer<typeof CredentialUpdateRequestSchema>;
+
+export const CredentialBatchOperationSchema = z.discriminatedUnion("operation", [
+  z
+    .object({
+      operation: z.literal("set"),
+      key: z.enum(CredentialKeys),
+      value: CredentialUpdateRequestSchema.shape.value,
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("delete"),
+      key: z.enum(CredentialKeys),
+    })
+    .strict(),
+]);
+export type CredentialBatchOperation = z.infer<typeof CredentialBatchOperationSchema>;
+
+export const CredentialBatchUpdateRequestSchema = z
+  .object({
+    operations: z
+      .array(CredentialBatchOperationSchema)
+      .min(1, "At least one credential operation is required.")
+      .max(CredentialKeys.length),
+  })
+  .strict()
+  .superRefine(({ operations }, context) => {
+    const seen = new Set<CredentialKey>();
+    for (const operation of operations) {
+      if (seen.has(operation.key)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Each credential key may appear only once per batch.",
+          path: ["operations"],
+        });
+      }
+      seen.add(operation.key);
+    }
+  });
+export type CredentialBatchUpdateRequest = z.infer<
+  typeof CredentialBatchUpdateRequestSchema
+>;
+
+export const ProviderIds = ["codex", "claude", "google"] as const;
+export type ProviderId = (typeof ProviderIds)[number];
+
+export const ProviderStatusModeSchema = z.string().trim().min(1).max(80).nullable();
+
+export const ProviderStatusItemSchema = z
+  .object({
+    provider: z.enum(ProviderIds),
+    configured: z.boolean(),
+    ready: z.boolean(),
+    mode: ProviderStatusModeSchema,
+    message: z.string().trim().max(240).optional(),
+  })
+  .strict();
+export type ProviderStatusItem = z.infer<typeof ProviderStatusItemSchema>;
+
+export const ProviderStatusResultSchema = z
+  .object({
+    providers: z.array(ProviderStatusItemSchema).max(ProviderIds.length),
+  })
+  .strict();
+
+export const CodexVerifyResultSchema = z
+  .object({
+    provider: z.literal("codex"),
+    ok: z.boolean(),
+    status: z.enum(["connected", "not_configured", "failed"]),
+    message: z.string().trim().min(1).max(240),
+  })
+  .strict();
 
 export const JobListQuerySchema = z
   .object({
@@ -3601,7 +3691,23 @@ export interface CredentialsResponse {
 export interface CredentialStoreErrorResponse {
   ok: false;
   error: "credential_store_unavailable";
-  reason: "operational_failure" | "unsupported_platform";
+  reason: "operational_failure" | "partial_failure" | "unsupported_platform";
+  message: string;
+}
+
+export interface ProviderStatusResponse {
+  ok: true;
+  providers: ProviderStatusItem[];
+}
+
+export interface CodexVerifyResponse {
+  ok: true;
+  verification: z.infer<typeof CodexVerifyResultSchema>;
+}
+
+export interface ProviderOperationErrorResponse {
+  ok: false;
+  error: "provider_status_failed" | "provider_verification_failed";
   message: string;
 }
 

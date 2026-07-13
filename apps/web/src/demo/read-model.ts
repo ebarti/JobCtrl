@@ -1465,7 +1465,6 @@ export const DEMO_READ_MODEL = {
       credentials: [
         { key: "OPENAI_API_KEY", label: "OpenAI API Key", configured: null, storage: "keychain" },
         { key: "GEMINI_API_KEY", label: "Gemini API Key", configured: null, storage: "keychain" },
-        { key: "LLM_URL", label: "Custom LLM URL", configured: null, storage: "keychain" },
       ],
     },
   },

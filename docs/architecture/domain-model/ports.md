@@ -68,7 +68,7 @@ from SQLite to Postgres without changing Discovery logic.
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
 | `DetailPageFetcherPort` | `PlaywrightBrowserAdapter` (local Playwright instance) | `BrowserbaseAdapter` (**Browserbase** managed browser fleet; sessions allocated per-tenant with concurrency cap; fallback: headless Chromium in **Kubernetes pods** with Playwright) |
-| `LlmPort` | A single `LlmAdapter` (`infrastructure/llm/llm_client.py`) that selects the provider from the model-spec prefix (`gemini:` / `openai:` / `local:`) and wraps the legacy `LLMClient` — there is no per-provider adapter class | `CloudLlmGatewayAdapter` (internal gateway service fronting Anthropic Claude / Google Gemini / OpenAI APIs with per-tenant token metering, rate limiting, and cost attribution via **Billing** context) |
+| `LlmPort` | Provider-routed `LlmAdapter` (`infrastructure/llm/llm_client.py`): Claude Agent SDK, Codex SDK, or Google SDK; `default` resolves to one ready provider | `CloudLlmGatewayAdapter` (internal gateway service fronting hosted providers with per-tenant token metering, rate limiting, and cost attribution via **Billing** context) |
 | `EnrichmentRepository` | `SqliteEnrichmentRepository` | `PostgresEnrichmentRepository` (RDS Postgres, tenant-scoped) |
 
 **Seam justification:** Enrichment's Playwright dependency is the primary
@@ -108,7 +108,7 @@ local SQLite and hosted Postgres adapters expose the same aggregate contract.
 
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
-| `LlmPort` | A single `LlmAdapter`, prefix-dispatched by model spec (see Enrichment) | `CloudLlmGatewayAdapter` (see Enrichment; shared gateway service) |
+| `LlmPort` | Provider-routed `LlmAdapter`; plain and structured calls share the selected ready SDK backend | `CloudLlmGatewayAdapter` (see Enrichment; shared gateway service) |
 | `ScoreRepository` | `SqliteScoreRepository` | `PostgresScoreRepository` (RDS Postgres, tenant-scoped) |
 | `ProfileSnapshotPort` | `LocalProfileSnapshotAdapter` (reads the SQLite-backed Profile repository) | `ProfileServiceGrpcClient` (internal **gRPC** call to Profile service; tenant context propagated via gRPC metadata) |
 
@@ -130,8 +130,8 @@ local SQLite and hosted Postgres adapters expose the same aggregate contract.
 
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
-| `LlmPort` | A single `LlmAdapter`, prefix-dispatched by model spec (see Enrichment) | `CloudLlmGatewayAdapter` (shared gateway; see Enrichment) |
-| `AnalysisDraftPort` / `AnalysisSynthesizerPort` | The 3-SDK agent ensemble (`infrastructure/analysis/`): `ClaudeAnalysisAdapter`, `CodexAnalysisAdapter`, and `AntigravityAnalysisAdapter` draft employer/company analysis in parallel; `ClaudeAnalysisSynthesizer` merges them via `run_ensemble`. This is a **second LLM path**, distinct from the prefix-dispatched `LlmPort` above | Same ensemble fronted by the cloud LLM gateway, with per-tenant token metering |
+| `LlmPort` | Provider-routed `LlmAdapter`; plain and structured calls share the selected ready SDK backend | `CloudLlmGatewayAdapter` (shared gateway; see Enrichment) |
+| `AnalysisDraftPort` / `AnalysisSynthesizerPort` | Claude, Codex, and Google draft adapters run independently; `LlmAnalysisSynthesizer` reconciles through any ready `LlmPort` backend. A sole ready provider is included even when a stale optional-leg list omitted it | Same ensemble fronted by the cloud LLM gateway, with per-tenant token metering |
 | `PdfRendererPort` | `HtmlResumePdfAdapter` (structured resume HTML/CSS + Playwright renderer with layout boxes), `PlaywrightHtmlPdfAdapter` (cover letters) | HTML/CSS + Playwright/Chromium resume rendering. Cover letters: `WeasyPrintAdapter` (pure-Python HTML→PDF, no browser needed in cloud) |
 | `ArtifactStoragePort` | `LocalFilesystemAdapter` (writes to `~/.jobctrl/tailored_resumes/`, etc.) | `S3ArtifactAdapter` (**AWS S3** with tenant-prefixed keys: `s3://jobctrl-artifacts/{tenantId}/{jobId}/`; presigned URLs for browser download; lifecycle policy for cost control) |
 | `MaterialsRepository` | `SqliteMaterialsRepository` | `PostgresMaterialsRepository` (RDS Postgres, tenant-scoped) |

@@ -48,10 +48,12 @@ import type {
   CompensationSourcePolicyUpdateRequest,
   CompensationSourceRegistryResponse,
   CredentialKey,
+  CredentialBatchUpdateRequest,
   CorrectScoreRequest,
   CorrectScoreResponse,
   CredentialsResponse,
   CredentialUpdateRequest,
+  CodexVerifyResponse,
   DigestAcknowledgeRequest,
   DigestAcknowledgeResponse,
   DashboardSummary,
@@ -94,6 +96,7 @@ import type {
   ProfileImportRequest,
   ProfileImportResponse,
   ProfileUpdateRequest,
+  ProviderStatusResponse,
   PipelineStageRunResponse,
   QuarantineDecision,
   QuarantineDecisionResponse,
@@ -802,6 +805,20 @@ export class JobCtrlApiClient {
 
   deleteCredential(key: CredentialKey): Promise<CredentialsResponse> {
     return this.delete(`/v1/credentials/${encodeURIComponent(key)}`);
+  }
+
+  updateCredentialsBatch(
+    body: CredentialBatchUpdateRequest,
+  ): Promise<CredentialsResponse> {
+    return this.patch("/v1/credentials/batch", body);
+  }
+
+  providerStatus(): Promise<ProviderStatusResponse> {
+    return this.get("/v1/providers/status");
+  }
+
+  verifyCodexProvider(): Promise<CodexVerifyResponse> {
+    return this.post("/v1/providers/codex/verify", {});
   }
 
   retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse> {

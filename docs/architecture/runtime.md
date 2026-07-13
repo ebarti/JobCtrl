@@ -56,10 +56,12 @@ paths are appended after the core runtime; core overlap is rejected and
 provider-to-provider overlap requires signed-identical wheel records. In
 bundled mode Claude accepts API/cloud authentication only, launches with
 `--bare`, and does not probe or reuse consumer Claude Code OAuth or Keychain
-credentials. Bundled Codex accepts only `OPENAI_API_KEY`, forces API login with
-ephemeral credential storage, and never reads or copies ambient
-`CODEX_HOME/auth.json`; source mode retains its existing isolated auth-copy
-workflow. Structured Claude analysis/voice calls expose no built-in tools.
+credentials. Codex uses persisted CLI authentication in the stable
+`$JOBCTRL_DIR/codex_home`; raw OpenAI keys are accepted only as stdin enrollment
+input to `codex login --with-api-key`, never as a direct runtime credential.
+When isolated auth is absent, setup may copy a regular Codex CLI `auth.json`
+once without overwriting later JobCtrl-owned state. Structured Claude
+analysis/voice calls expose no built-in tools.
 Codex analysis disables its shell, denies approvals, and gives any command
 child an empty inherited environment, so provider API keys authenticate the SDK
 transport without becoming model-readable tool input.
@@ -357,23 +359,29 @@ artifacts, or apply submission authority.
 Provider credential storage crosses the TypeScript/Python process boundary; it
 is not a runtime secret read performed by the API:
 
-- On macOS, the web Settings form sends one submitted value to
-  `PATCH /v1/credentials`. The loopback TypeScript API accepts only the fixed
-  allowlist `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `LLM_URL`, then passes that
-  value to the `JobCtrl` macOS Keychain service. `GET` and post-mutation
-  responses use presence checks; each `configured` state is `true`, `false`, or
-  `null`. `false` means confirmed absent, while `null` plus
-  `unavailableReason: inspection_failed` means the store could not be inspected
-  and must not be treated as missing. The API never reads a stored value back
-  for provider execution or returns one over HTTP. Unsupported mutation hosts
-  receive a sanitized `409 credential_store_unavailable`; operational Keychain
-  failures receive sanitized `503 credential_store_unavailable` with
-  `operational_failure`, never raw command output. A user can unlock Keychain if
-  needed and retry.
+- On macOS, the web Settings form uses `PATCH /v1/credentials/batch` to replace
+  one provider configuration. The fixed allowlist covers the Anthropic/Gemini
+  keys, Claude/Google cloud activation flags and non-secret identifiers, and a
+  legacy `OPENAI_API_KEY` deletion path. AWS, Google, and Azure credential files
+  stay in their vendor stores. A batch either applies completely or restores
+  its pre-change Keychain state; a recovery failure is explicit and sanitized.
+  `GET /v1/credentials` and post-mutation responses return presence only; each
+  `configured` state is `true`, `false`, or `null`. An inspection failure is
+  `configured=null` with `unavailableReason=inspection_failed`, not an absent
+  credential. An operational credential-store failure is sanitized as `503
+  credential_store_unavailable`. Secret values used internally for rollback are
+  never returned, logged, persisted in SQLite, or passed to Python by the API.
+- `GET /v1/providers/status` asks the long-lived JSON-RPC process for sanitized
+  Codex/Claude/Google configuration and readiness. `POST
+  /v1/providers/codex/verify` runs `codex login status` against the isolated
+  home without generating model output. Because Python environment/Keychain
+  loading is process-start scoped, Settings combines fresh presence with the
+  last runtime status and requires a JobCtrl restart before new values become
+  ready.
 - Provider-consuming Python CLI, RPC, and worker startup paths call
-  `config.load_env()`. After env files are loaded, it considers that same fixed
-  allowlist and performs a non-interactive Keychain lookup only for a missing or
-  empty value. Each lookup uses the fixed `/usr/bin/security` binary with a
+  `config.load_env()`. After env files are loaded, it considers the same fixed
+  provider allowlist and performs a non-interactive Keychain lookup only for a
+  missing or empty value. Each lookup uses the fixed `/usr/bin/security` binary with a
   two-second timeout and no stdin. A successful value is copied only into that
   process's environment; a non-empty environment value always wins.
 - Keychain resolution is cached for the life of the Python process. There is no

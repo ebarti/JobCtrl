@@ -31,7 +31,6 @@ from jobctrl.database import init_db
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.profile import get_profile_repository
-from jobctrl.llm import DEFAULT_GEMINI_MODEL
 
 console = Console()
 
@@ -406,30 +405,27 @@ def _setup_ai_features() -> None:
         console.print("[dim]Discovery-only mode. You can configure AI later with [bold]jobctrl init[/bold].[/dim]")
         return
 
-    console.print("Supported providers: [bold]Gemini[/bold] (recommended, free tier), OpenAI, local (Ollama/llama.cpp)")
+    console.print("Supported providers: [bold]Google[/bold], Claude, or Codex CLI")
     provider = Prompt.ask(
         "Provider",
-        choices=["gemini", "openai", "local"],
-        default="gemini",
+        choices=["google", "claude", "codex"],
+        default="google",
     )
 
     env_lines = ["# JobCtrl configuration", ""]
 
-    if provider == "gemini":
+    if provider == "google":
         api_key = Prompt.ask("Gemini API key (from aistudio.google.com)")
-        model = Prompt.ask("Model", default=DEFAULT_GEMINI_MODEL)
         env_lines.append(f"GEMINI_API_KEY={api_key}")
-        env_lines.append(f"LLM_MODEL={model}")
-    elif provider == "openai":
-        api_key = Prompt.ask("OpenAI API key")
-        model = Prompt.ask("Model", default="gpt-4o-mini")
-        env_lines.append(f"OPENAI_API_KEY={api_key}")
-        env_lines.append(f"LLM_MODEL={model}")
-    elif provider == "local":
-        url = Prompt.ask("Local LLM endpoint URL", default="http://localhost:8080/v1")
-        model = Prompt.ask("Model name", default="local-model")
-        env_lines.append(f"LLM_URL={url}")
-        env_lines.append(f"LLM_MODEL={model}")
+    elif provider == "claude":
+        api_key = Prompt.ask("Anthropic API key")
+        env_lines.append(f"ANTHROPIC_API_KEY={api_key}")
+    elif provider == "codex":
+        codex_home = APP_DIR / "codex_home"
+        console.print(
+            "[dim]After this wizard, authenticate the isolated Codex CLI with "
+            f"`CODEX_HOME={codex_home} codex login` or run `jobctrl setup --launch-logins`.[/dim]"
+        )
 
     env_lines.append("")
     ENV_PATH.write_text("\n".join(env_lines), encoding="utf-8")

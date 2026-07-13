@@ -1,3 +1,4 @@
+import { CredentialKeys } from "@jobctrl/contracts";
 import type {
   ArtifactDetail,
   ArtifactTailoringExplanation,
@@ -20,6 +21,7 @@ import type {
   OutcomeAnalyticsSummary,
   PaginatedResponse,
   ProfileConfigResponse,
+  ProviderStatusResponse,
   ResumeTemplateState,
   ResumeTemplateListResponse,
   SettingsResponse,
@@ -1855,10 +1857,20 @@ export const sampleCredentialsResponse: CredentialsResponse = {
     unavailableReason: null,
     requiresWorkerRestart: true,
   },
-  credentials: [
-    { key: "OPENAI_API_KEY", label: "OpenAI API Key", configured: true, storage: "keychain" },
-    { key: "GEMINI_API_KEY", label: "Gemini API Key", configured: false, storage: "keychain" },
-    { key: "LLM_URL", label: "Custom LLM URL", configured: false, storage: "keychain" },
+  credentials: CredentialKeys.map((key) => ({
+    key,
+    label: key,
+    configured: key === "ANTHROPIC_API_KEY",
+    storage: "keychain" as const,
+  })),
+};
+
+export const sampleProviderStatusResponse: ProviderStatusResponse = {
+  ok: true,
+  providers: [
+    { provider: "codex", configured: true, ready: true, mode: "subscription" },
+    { provider: "claude", configured: true, ready: true, mode: "anthropic_api_key" },
+    { provider: "google", configured: false, ready: false, mode: null },
   ],
 };
 

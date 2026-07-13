@@ -503,14 +503,18 @@ locally. Start with [.env.example](.env.example); full reference:
 [Configuration](https://jobctrl.dev/user/configuration).
 
 The cross-platform provider-credential path is the plaintext
-`~/.jobctrl/.env` file or the process environment. On macOS only, Settings can
-instead store `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `LLM_URL` in the system
-Keychain. At Python process startup, after env files are loaded, a non-empty
-environment value takes precedence; only a missing or empty allowlisted value
-is copied from Keychain into that process. Keychain edits are not hot-reloaded,
-so restart the worker or full stack after saving or removing one. Native Windows
-Credential Manager and Linux Secret Service/keyring adapters are planned, not
-shipped; use `.env` or the shell on those platforms today. The macOS panel
+`~/.jobctrl/.env` file or the process environment. On macOS, **Settings →
+Credentials** guides one of three providers: authenticated Codex CLI, Claude
+Agent SDK (Anthropic API key or supported cloud-provider credentials), or
+Google (Gemini key or Vertex AI ADC). One ready provider is sufficient for all
+core AI stages; a second provider is optional. Secret values managed by the
+panel are stored in the system Keychain, while AWS, Google, and Azure credential
+files remain owned by their vendor CLIs. At Python process startup, a non-empty
+environment value takes precedence over the corresponding Keychain entry.
+Keychain edits are not hot-reloaded, so restart JobCtrl after saving or
+removing one. Native Windows Credential Manager and Linux Secret
+Service/keyring adapters are planned, not shipped; use `.env` or the shell on
+those platforms today. The macOS panel
 distinguishes **not configured** from **status unknown**: an unknown
 (`inspection_failed`) result means Keychain could not be inspected, not that the
 entry is absent. Unlock Keychain if it is locked, then retry; operational
@@ -521,17 +525,14 @@ Keychain output.
 <summary><b>Common variables</b></summary>
 
 - `JOBCTRL_DIR` — override the local app directory.
-- `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL` — general LLM access.
-- `ANTHROPIC_API_KEY` or local Claude credentials — Claude employer-analysis
-  leg.
-- `CODEX_HOME/auth.json` — Codex employer-analysis leg; a bare
-  `OPENAI_API_KEY` must be enrolled with `codex login --with-api-key` or
-  `jobctrl setup`.
-- `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex ADC env — Antigravity/Gemini
-  employer-analysis leg.
+- `ANTHROPIC_API_KEY` or a supported Claude cloud-provider route — Claude.
+- `$JOBCTRL_DIR/codex_home/auth.json` — Codex; authenticate it with a ChatGPT
+  subscription or enroll an API key through `codex login --with-api-key`.
+  Raw OpenAI keys are not used directly.
+- `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex AI ADC — Google.
 - `JOBCTRL_ANALYSIS_LEGS` — comma-separated enabled analysis legs when setup
   intentionally skips an unauthenticated leg.
-- `LLM_MODEL` — default model for the configured provider.
+- `LLM_MODEL` — optional model override for the selected provider.
 - `VITE_GOOGLE_MAPS_API_KEY` — optional address search in the Profile form.
 - `PLAYWRIGHT_SKIP_BROWSER_GC=1` — keep other worktrees' Playwright browsers
   when running `playwright install` from this checkout.

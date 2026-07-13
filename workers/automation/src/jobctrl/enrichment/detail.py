@@ -741,8 +741,8 @@ def _make_llm_extractor() -> LlmExtractor:
     """Build a Tier-3 extractor backed by the canonical LlmAdapter.
 
     Factored out so tests can swap a stub LlmPort. The adapter is the only
-    LlmPort-shaped wrapper around the underlying LLMClient — calling
-    LLMClient directly would now violate the port's signature (model kw,
+    LlmPort-shaped provider router — calling a provider client directly would
+    violate the port's signature (model kw,
     chat_json, etc.).
     """
     return LlmExtractor(llm=get_llm_adapter())

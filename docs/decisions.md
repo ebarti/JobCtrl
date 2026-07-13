@@ -836,6 +836,44 @@ Consequences:
 
 Cites: PRs #145, #147 (3-way leg), #149, #205, #213.
 
+## 2026-07-12: One Ready Provider Serves Core LLM And Analysis Paths
+
+Status: accepted; supersedes the mandatory Claude-synthesis and separate
+prefix-dispatched-HTTP portions of the 2026-06-09 ensemble decision.
+
+Decision: Codex, Claude, and Google are the three release providers. Any one
+ready provider must support plain and schema-constrained `LlmPort` calls,
+employer-analysis drafting, and employer-analysis synthesis. The draft ensemble
+remains N-leg and partial-failure safe, but `LlmAnalysisSynthesizer` uses a ready
+provider-neutral backend; no vendor is a universal prerequisite. A stale
+optional-leg list cannot exclude the sole ready provider.
+
+Authentication follows the provider SDK boundaries: Codex requires persisted
+CLI authentication in JobCtrl's stable isolated home; raw OpenAI keys are only
+stdin enrollment input. Claude accepts an Anthropic API key or the supported
+Vertex, Bedrock, Claude Platform on AWS, and Foundry credential chains, not
+consumer CLI OAuth. Google accepts a Gemini key or verified Vertex Application
+Default Credentials. Local/custom HTTP and direct OpenAI routes are deferred.
+
+Rationale:
+
+- first-run success must require one provider, not a particular vendor or a
+  three-account matrix
+- the same typed port and telemetry contract should govern scoring, materials,
+  and analysis instead of preserving two incompatible provider paths
+- multiple independent drafts remain useful, but diversity is a recommendation
+  rather than a launch blocker
+- provider credentials remain in vendor-owned stores or local Keychain, never
+  in SQLite or prompt-readable state
+
+Consequences:
+
+- the default pipeline model is `default` and resolves through a ready provider
+- setup, doctor, status, and tier gating share the one-provider readiness rule
+- Settings exposes three guided provider cards and provider-level revocation
+- local/custom-provider support requires a future explicit product contract
+  before it can re-enter setup or runtime routing
+
 ## 2026-06-09: Generated-Materials Audit Is Served From Canonical Provenance Rows
 
 Status: accepted

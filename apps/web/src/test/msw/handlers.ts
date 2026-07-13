@@ -43,6 +43,7 @@ import {
   makeWorkflowRunsPage,
   makeWorkflowRunDetail,
   sampleCredentialsResponse,
+  sampleProviderStatusResponse,
   sampleDailyDigest,
   sampleDashboardSummary,
   sampleDiscoverySettingsResponse,
@@ -872,7 +873,20 @@ export const handlers = [
 
   http.get("*/v1/credentials", () => HttpResponse.json(sampleCredentialsResponse)),
   http.patch("*/v1/credentials", () => HttpResponse.json(sampleCredentialsResponse)),
+  http.patch("*/v1/credentials/batch", () => HttpResponse.json(sampleCredentialsResponse)),
   http.delete("*/v1/credentials/:key", () => HttpResponse.json(sampleCredentialsResponse)),
+  http.get("*/v1/providers/status", () => HttpResponse.json(sampleProviderStatusResponse)),
+  http.post("*/v1/providers/codex/verify", () =>
+    HttpResponse.json({
+      ok: true,
+      verification: {
+        provider: "codex",
+        ok: true,
+        status: "connected",
+        message: "Codex CLI authentication is ready.",
+      },
+    }),
+  ),
 
   http.get("*/v1/contacts", ({ request }) => {
     const url = new URL(request.url);

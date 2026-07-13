@@ -1,22 +1,21 @@
-"""setup/doctor surface the always-required Claude synthesis auth.
-
-Every employer-analysis run reconciles its legs with the Claude Agent SDK
-(``ClaudeAnalysisSynthesizer``) regardless of ``JOBCTRL_ANALYSIS_LEGS``. These
-tests drive the CLI surfaces with a faked synthesis-auth probe — no real vendor
-CLI or network — and assert the user-facing readiness signals.
-"""
+"""Setup/doctor expose one core-provider gate, not a Claude synthesis gate."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
+import jobctrl.config
+from jobctrl import cli as cli_module
 from jobctrl.cli import app
 from jobctrl.infrastructure import setup_probes
 
-_SETUP_ARGS = [
+
+_ARGS = [
     "setup",
     "--skip-system",
     "--skip-dependencies",
@@ -24,61 +23,186 @@ _SETUP_ARGS = [
     "--skip-doctor",
     "--non-interactive",
     "--dry-run",
+    "--json",
 ]
 
+_MUTATING_SETUP_ARGS = [arg for arg in _ARGS if arg != "--dry-run"]
+_HUMAN_SETUP_ARGS = [arg for arg in _MUTATING_SETUP_ARGS if arg != "--json"]
 
-def _fake_synthesis(ok: bool):
-    note = (
-        "ANTHROPIC_API_KEY"
-        if ok
-        else (
-            "required for ensemble synthesis even when the claude leg is disabled; "
-            "set ANTHROPIC_API_KEY or enroll local Claude credentials"
-        )
+
+def _write_codex_auth(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"tokens": {"access_token": "test-access-token"}}),
+        encoding="utf-8",
     )
-    return lambda env=None: setup_probes.ProbeResult("Claude synthesis auth", ok, note)
 
 
-def test_setup_warns_analysis_not_ready_without_synthesis_auth(
+def _prepare_codex_setup_test(
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    app_dir: Path,
+    source_home: Path,
 ) -> None:
-    monkeypatch.setenv("JOBCTRL_ANALYSIS_LEGS", "codex,antigravity")
-    monkeypatch.setattr(setup_probes, "probe_claude_synthesis_auth", _fake_synthesis(False))
+    monkeypatch.setenv("JOBCTRL_ANALYSIS_LEGS", "codex")
+    monkeypatch.setenv("CODEX_HOME", str(source_home))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(jobctrl.config, "ensure_dirs", lambda: app_dir.mkdir(parents=True))
+    monkeypatch.setattr(jobctrl.config, "load_env", lambda: ())
+    monkeypatch.setattr(cli_module, "_write_env_updates", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        setup_probes,
+        "resolve_codex_binary",
+        lambda env=None: app_dir / "codex",
+    )
+    monkeypatch.setattr(setup_probes, "_CODEX_AUTH_STATUS_CACHE", {})
+    original_verify = setup_probes.verify_codex_connection
 
-    result = CliRunner().invoke(app, _SETUP_ARGS)
+    def verify_codex_connection(env=None):
+        return original_verify(
+            env,
+            runner=lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
+        )
+
+    monkeypatch.setattr(
+        setup_probes,
+        "verify_codex_connection",
+        verify_codex_connection,
+    )
+
+    def probe_analysis_setup(env=None):
+        probe = setup_probes.probe_codex_auth(env)
+        return [
+            setup_probes.ProbeResult(
+                "core LLM provider",
+                probe.ok,
+                "ready: codex" if probe.ok else "authenticate a provider",
+            )
+        ]
+
+    monkeypatch.setattr(setup_probes, "probe_analysis_setup", probe_analysis_setup)
+
+
+def test_setup_json_reports_any_provider_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JOBCTRL_ANALYSIS_LEGS", "codex")
+    monkeypatch.setattr(
+        setup_probes,
+        "probe_analysis_setup",
+        lambda env=None: [setup_probes.ProbeResult("core LLM provider", True, "ready: codex")],
+    )
+    monkeypatch.setattr(
+        setup_probes,
+        "probe_codex_auth",
+        lambda env=None: setup_probes.ProbeResult("Codex analysis auth", True, "persisted CLI auth"),
+    )
+
+    result = CliRunner().invoke(app, _ARGS)
 
     assert result.exit_code == 0, result.output
-    text = " ".join(result.output.split())
-    assert "Employer analysis is NOT ready" in text
-    assert "synthesis" in text.lower()
+    payload = json.loads(result.output)
+    assert payload["analysisReady"] is True
 
 
-def test_setup_reports_ready_with_synthesis_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("JOBCTRL_ANALYSIS_LEGS", "codex,antigravity")
-    monkeypatch.setattr(setup_probes, "probe_claude_synthesis_auth", _fake_synthesis(True))
+def test_setup_json_reports_none_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JOBCTRL_ANALYSIS_LEGS", "codex")
+    monkeypatch.setattr(
+        setup_probes,
+        "probe_analysis_setup",
+        lambda env=None: [setup_probes.ProbeResult("core LLM provider", False, "authenticate a provider")],
+    )
+    monkeypatch.setattr(
+        setup_probes,
+        "probe_codex_auth",
+        lambda env=None: setup_probes.ProbeResult("Codex analysis auth", False, "not authenticated"),
+    )
 
-    result = CliRunner().invoke(app, _SETUP_ARGS)
+    result = CliRunner().invoke(app, _ARGS)
 
     assert result.exit_code == 0, result.output
-    text = " ".join(result.output.split())
-    assert "Employer analysis is NOT ready" not in text
-    assert "synthesis auth ready" in text.lower()
+    payload = json.loads(result.output)
+    assert payload["analysisReady"] is False
+    assert payload["analysisNotReadyReason"] == "authenticate a provider"
 
 
-def test_doctor_shows_red_synthesis_auth_when_claude_absent(
+def test_setup_copies_and_uses_valid_ambient_codex_auth(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("JOBCTRL_ANALYSIS_LEGS", "codex,antigravity")
-    monkeypatch.setenv("COLUMNS", "220")  # keep the row on one line for the assert
-    monkeypatch.setattr(setup_probes, "probe_claude_synthesis_auth", _fake_synthesis(False))
+    app_dir = tmp_path / "jobctrl"
+    source_home = tmp_path / "source-codex"
+    _write_codex_auth(source_home / "auth.json")
+    _prepare_codex_setup_test(
+        monkeypatch,
+        app_dir=app_dir,
+        source_home=source_home,
+    )
 
-    with patch(
-        "jobctrl.infrastructure.temporal.client.Client.connect",
-        new=AsyncMock(side_effect=RuntimeError("connection refused")),
-    ):
-        result = CliRunner().invoke(app, ["doctor"])
+    result = CliRunner().invoke(app, _MUTATING_SETUP_ARGS)
 
     assert result.exit_code == 0, result.output
-    text = " ".join(result.output.split())
-    # doctor renders a not-ok probe as red MISSING; the synthesis line must be it.
-    assert "Claude synthesis auth MISSING" in text
+    payload = json.loads(result.output)
+    assert payload["analysisReady"] is True
+    core_row = next(row for row in payload["analysis"] if row["name"] == "core LLM provider")
+    assert core_row["ok"] is True
+    target = app_dir / "codex_home/auth.json"
+    assert target.is_file()
+    assert target.read_bytes() == (source_home / "auth.json").read_bytes()
+
+
+def test_setup_human_output_has_no_stale_warning_after_copying_codex_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    source_home = tmp_path / "source-codex"
+    _write_codex_auth(source_home / "auth.json")
+    _prepare_codex_setup_test(
+        monkeypatch,
+        app_dir=app_dir,
+        source_home=source_home,
+    )
+
+    result = CliRunner().invoke(app, _HUMAN_SETUP_ARGS)
+
+    assert result.exit_code == 0, result.output
+    assert "core LLM provider" in result.output
+    assert "WARN" not in result.output
+    assert "Core AI provider ready." in result.output
+
+
+@pytest.mark.parametrize("source_kind", ["invalid", "symlink"])
+def test_setup_rejects_unsafe_ambient_codex_auth_without_creating_target(
+    source_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    source_home = tmp_path / "source-codex"
+    source = source_home / "auth.json"
+    source.parent.mkdir(parents=True)
+    if source_kind == "invalid":
+        source.write_text("{}", encoding="utf-8")
+    else:
+        real_source = tmp_path / "real-auth.json"
+        _write_codex_auth(real_source)
+        source.symlink_to(real_source)
+    _prepare_codex_setup_test(
+        monkeypatch,
+        app_dir=app_dir,
+        source_home=source_home,
+    )
+
+    result = CliRunner().invoke(app, _MUTATING_SETUP_ARGS)
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["analysisReady"] is False
+    target = app_dir / "codex_home/auth.json"
+    assert target.exists() is False
+    assert target.parent.exists() is False
+    if source_kind == "invalid":
+        assert source.read_text(encoding="utf-8") == "{}"
+    else:
+        assert source.is_symlink()

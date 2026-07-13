@@ -53,3 +53,34 @@ test("comparison omits the annotated recommendation and methodology sections", a
   assert.doesNotMatch(comparison, /jh-compare-fit-grid/);
   assert.match(comparison, /^## Appendix: evidence-backed capability matrix$/m);
 });
+
+test("launch provider guidance requires one of Codex, Claude, or Google", async () => {
+  const readme = await read("README.md");
+  const gettingStarted = await read("docs/user/getting-started.md");
+  const configuration = await read("docs/user/configuration.md");
+  const envExample = await read(".env.example");
+  const publicProviderCopy = [
+    readme,
+    gettingStarted,
+    configuration,
+    envExample,
+    await read("docs/user/security.md"),
+    await read("docs/user/data-and-safety.md"),
+    await read("docs/architecture/runtime.md"),
+    await read("docs/api/complete-contract.md"),
+  ].join("\n");
+
+  assert.match(gettingStarted, /One ready provider is sufficient/);
+  assert.match(configuration, /^### Codex$/m);
+  assert.match(configuration, /^### Claude$/m);
+  assert.match(configuration, /^### Google$/m);
+  assert.match(configuration, /codex login --with-api-key/);
+  assert.match(configuration, /CLAUDE_CODE_USE_BEDROCK/);
+  assert.match(configuration, /CLAUDE_CODE_USE_ANTHROPIC_AWS/);
+  assert.match(configuration, /CLAUDE_CODE_USE_VERTEX/);
+  assert.match(configuration, /CLAUDE_CODE_USE_FOUNDRY/);
+  assert.match(configuration, /GOOGLE_APPLICATION_CREDENTIALS/);
+  assert.doesNotMatch(publicProviderCopy, /LLM_URL|LLM_API_KEY/);
+  assert.doesNotMatch(gettingStarted, /local OpenAI-compatible/i);
+  assert.doesNotMatch(readme, /OpenAI-backed scoring|general LLM access.*OPENAI_API_KEY/i);
+});

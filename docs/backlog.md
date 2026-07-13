@@ -35,6 +35,13 @@ publication and P7 clean-machine product QA remain open.
 
 ## Release Hardening Follow-Ups
 
+- Design local/custom LLM support as a complete provider contract after the
+  public release. It must define guided endpoint/auth setup, structured-output
+  capability checks, connection verification, model discovery, telemetry and
+  spend semantics, every core `LlmPort` operation, employer-analysis synthesis,
+  and fail-closed readiness before `LLM_URL` or an equivalent setting can return
+  to the product surface. The v2.0 release supports only Codex, Claude, and
+  Google.
 - Implement the explicitly deferred W2.4 spend-control delta after v2.0.0:
   attribute every recorded LLM usage entry to its workflow lane, capture apply
   subprocess usage in the same ledger, enforce configurable per-lane daily

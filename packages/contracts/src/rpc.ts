@@ -79,6 +79,8 @@ export const RpcMethods = {
   ProfileImport: "profile_import",
   ManualCaptureImport: "manual_capture_import",
   CancelRun: "cancel_run",
+  ProviderStatus: "provider_status",
+  ProviderVerify: "provider_verify",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 

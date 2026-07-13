@@ -48,10 +48,12 @@ import type {
   ScheduleFollowUpRequest,
   DueFollowUpsResponse,
   CredentialKey,
+  CredentialBatchUpdateRequest,
   CorrectScoreRequest,
   CorrectScoreResponse,
   CredentialsResponse,
   CredentialUpdateRequest,
+  CodexVerifyResponse,
   DigestAcknowledgeRequest,
   DigestAcknowledgeResponse,
   DashboardSummary,
@@ -90,6 +92,7 @@ import type {
   ProfileImportRequest,
   ProfileImportResponse,
   ProfileUpdateRequest,
+  ProviderStatusResponse,
   PipelineStageRunResponse,
   QuarantineDecision,
   QuarantineDecisionResponse,
@@ -332,6 +335,9 @@ export interface ApiClientPort {
   credentials(): Promise<CredentialsResponse>;
   updateCredential(body: CredentialUpdateRequest): Promise<CredentialsResponse>;
   deleteCredential(key: CredentialKey): Promise<CredentialsResponse>;
+  updateCredentialsBatch(body: CredentialBatchUpdateRequest): Promise<CredentialsResponse>;
+  providerStatus(): Promise<ProviderStatusResponse>;
+  verifyCodexProvider(): Promise<CodexVerifyResponse>;
 
   listContacts(query?: Partial<ContactListQuery>): Promise<ContactListResponse>;
   contact(contactId: string): Promise<ContactDetailResponse>;

@@ -24,7 +24,3 @@ export const Configured: Story = {
 export const Gemini: Story = {
   args: { credentialKey: "GEMINI_API_KEY", label: "Gemini API key", configured: true },
 };
-
-export const Endpoint: Story = {
-  args: { credentialKey: "LLM_URL", label: "LLM endpoint", configured: false },
-};

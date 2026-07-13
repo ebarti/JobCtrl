@@ -1,6 +1,11 @@
 import { EventEmitter } from "node:events";
 
-import { CREDENTIAL_VALUE_MAX_LENGTH } from "@jobctrl/contracts";
+import {
+  CREDENTIAL_VALUE_MAX_LENGTH,
+  CredentialKeys,
+  type CredentialBatchOperation,
+  type CredentialKey,
+} from "@jobctrl/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -12,6 +17,7 @@ import {
 } from "../src/credentials.js";
 
 const SECRET = "test-secret-must-not-appear";
+const NOT_FOUND = "The specified item could not be found.";
 
 function result(
   code = 0,
@@ -24,6 +30,48 @@ function result(
 } {
   return { code, stderr, stdout };
 }
+
+function statefulKeychainRunner(
+  initial: ReadonlyMap<CredentialKey, string>,
+  failedMutationAttempts: ReadonlySet<number> = new Set(),
+) {
+  const state = new Map(initial);
+  let mutationAttempt = 0;
+  const runSecurity = vi.fn<SecurityCommandRunner>(async (args, options) => {
+    const accountIndex = args.indexOf("-a") + 1;
+    const key = args[accountIndex] as CredentialKey;
+    if (args[0] === "find-generic-password") {
+      if (!state.has(key)) return result(44, NOT_FOUND);
+      return result(0, "", args.includes("-w") ? `${state.get(key) ?? ""}\n` : "");
+    }
+
+    const currentAttempt = mutationAttempt;
+    mutationAttempt += 1;
+    if (failedMutationAttempts.has(currentAttempt)) {
+      return result(1, SECRET, SECRET);
+    }
+    if (args[0] === "add-generic-password") {
+      state.set(key, options.sensitiveInput ?? "");
+    } else {
+      state.delete(key);
+    }
+    return result();
+  });
+  return { runSecurity, state };
+}
+
+const BATCH_OPERATIONS = [
+  { operation: "set", key: "ANTHROPIC_API_KEY", value: `${SECRET}-new-anthropic` },
+  { operation: "set", key: "AWS_PROFILE", value: `${SECRET}-new-profile` },
+  { operation: "delete", key: "GEMINI_API_KEY" },
+  { operation: "delete", key: "GOOGLE_CLOUD_PROJECT" },
+] as const satisfies readonly CredentialBatchOperation[];
+
+const PRE_BATCH_STATE = new Map<CredentialKey, string>([
+  ["ANTHROPIC_API_KEY", `  ${SECRET}-old-anthropic  `],
+  ["GEMINI_API_KEY", `${SECRET}-old-gemini`],
+  ["GOOGLE_CLOUD_PROJECT", `${SECRET}-old-project`],
+]);
 
 describe("KeychainCredentialStore", () => {
   afterEach(() => {
@@ -58,6 +106,14 @@ describe("KeychainCredentialStore", () => {
         name: "CredentialStoreUnavailableError",
         reason: "unsupported_platform",
       });
+      await expect(
+        store.applyBatch([
+          { operation: "delete", key: "ANTHROPIC_API_KEY" },
+        ]),
+      ).rejects.toMatchObject({
+        name: "CredentialStoreUnavailableError",
+        reason: "unsupported_platform",
+      });
       expect(runSecurity).not.toHaveBeenCalled();
     },
   );
@@ -80,12 +136,10 @@ describe("KeychainCredentialStore", () => {
         (credential) => credential.configured === true,
       ),
     ).toBe(true);
-    expect(runSecurity).toHaveBeenCalledTimes(3);
-    for (const [key, call] of [
-      "OPENAI_API_KEY",
-      "GEMINI_API_KEY",
-      "LLM_URL",
-    ].map((key, index) => [key, runSecurity.mock.calls[index]] as const)) {
+    expect(runSecurity).toHaveBeenCalledTimes(CredentialKeys.length);
+    for (const [key, call] of CredentialKeys.map(
+      (key, index) => [key, runSecurity.mock.calls[index]] as const,
+    )) {
       expect(call?.[0]).toEqual([
         "find-generic-password",
         "-s",
@@ -183,11 +237,12 @@ describe("KeychainCredentialStore", () => {
       available: false,
       unavailableReason: "inspection_failed",
     });
-    expect(response.credentials.map(({ configured }) => configured)).toEqual([
-      true,
-      false,
-      null,
-    ]);
+    expect(response.credentials.map(({ key, configured }) => [key, configured])).toEqual(
+      CredentialKeys.map((key) => [
+        key,
+        key === "OPENAI_API_KEY" ? true : key === "GEMINI_API_KEY" ? false : null,
+      ]),
+    );
   });
 
   it("keeps spawn failures and malformed runner results unknown without leaking errors", async () => {
@@ -238,7 +293,7 @@ describe("KeychainCredentialStore", () => {
     await vi.advanceTimersByTimeAsync(25);
     const response = await pending;
 
-    expect(runSecurity).toHaveBeenCalledTimes(3);
+    expect(runSecurity).toHaveBeenCalledTimes(CredentialKeys.length);
     expect(response.store.unavailableReason).toBe("inspection_failed");
     expect(
       response.credentials.every(
@@ -342,6 +397,67 @@ describe("KeychainCredentialStore", () => {
       expect(String(error)).not.toContain(SECRET);
       expect(JSON.stringify(error)).not.toContain(SECRET);
     }
+  });
+
+  it("applies a mixed batch without returning captured or submitted values", async () => {
+    const { runSecurity, state } = statefulKeychainRunner(PRE_BATCH_STATE);
+    const store = new KeychainCredentialStore({ platform: "darwin", runSecurity });
+
+    const response = await store.applyBatch(BATCH_OPERATIONS);
+
+    expect(state.get("ANTHROPIC_API_KEY")).toBe(`${SECRET}-new-anthropic`);
+    expect(state.get("AWS_PROFILE")).toBe(`${SECRET}-new-profile`);
+    expect(state.has("GEMINI_API_KEY")).toBe(false);
+    expect(state.has("GOOGLE_CLOUD_PROJECT")).toBe(false);
+    expect(JSON.stringify(response)).not.toContain(SECRET);
+    expect(runSecurity.mock.calls.filter(([args]) => args[0] === "find-generic-password" && args.includes("-w"))).toHaveLength(4);
+    expect(JSON.stringify(runSecurity.mock.calls.map(([args]) => args))).not.toContain(SECRET);
+  });
+
+  it.each([
+    ["first set", 0],
+    ["second set", 1],
+    ["first delete", 2],
+    ["second delete", 3],
+  ] as const)(
+    "restores the exact pre-batch state when the %s operation boundary fails",
+    async (_label, failedMutationAttempt) => {
+      const { runSecurity, state } = statefulKeychainRunner(
+        PRE_BATCH_STATE,
+        new Set([failedMutationAttempt]),
+      );
+      const store = new KeychainCredentialStore({ platform: "darwin", runSecurity });
+
+      const error = await store.applyBatch(BATCH_OPERATIONS).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(CredentialStoreUnavailableError);
+      expect(error).toMatchObject({ reason: "operational_failure" });
+      expect(state.size).toBe(PRE_BATCH_STATE.size);
+      for (const [key, value] of PRE_BATCH_STATE) {
+        expect(state.get(key)).toBe(value);
+      }
+      expect(String(error)).not.toContain(SECRET);
+      expect(JSON.stringify(error)).not.toContain(SECRET);
+      expect(JSON.stringify(runSecurity.mock.calls.map(([args]) => args))).not.toContain(SECRET);
+    },
+  );
+
+  it("surfaces a sanitized partial-failure state when compensating recovery fails", async () => {
+    const { runSecurity, state } = statefulKeychainRunner(
+      PRE_BATCH_STATE,
+      new Set([1, 2]),
+    );
+    const store = new KeychainCredentialStore({ platform: "darwin", runSecurity });
+
+    const error = await store.applyBatch(BATCH_OPERATIONS).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(CredentialStoreUnavailableError);
+    expect(error).toMatchObject({ reason: "partial_failure" });
+    expect(String(error)).toContain("recovery was incomplete");
+    expect(String(error)).not.toContain(SECRET);
+    expect(JSON.stringify(error)).not.toContain(SECRET);
+    expect(state.get("ANTHROPIC_API_KEY")).toBe(`${SECRET}-new-anthropic`);
+    expect(JSON.stringify(runSecurity.mock.calls.map(([args]) => args))).not.toContain(SECRET);
   });
 });
 
@@ -452,6 +568,43 @@ describe("default security command runner", () => {
       "utf8",
     );
     expect(stdin.destroy).not.toHaveBeenCalled();
+  });
+
+  it("preserves private snapshot stdout exactly instead of trimming credential spaces", async () => {
+    const stdin = Object.assign(new EventEmitter(), {
+      destroy: vi.fn(),
+      end: vi.fn(),
+    });
+    const stdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+    const stderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+    const childEmitter = Object.assign(new EventEmitter(), {
+      stdin,
+      stdout,
+      stderr,
+      kill: vi.fn(() => true),
+    });
+    const runner = createSecurityCommandRunner(
+      () => childEmitter as SecurityChildProcess,
+    );
+    const args = [
+      "find-generic-password",
+      "-s",
+      "JobCtrl",
+      "-a",
+      "ANTHROPIC_API_KEY",
+      "-w",
+    ];
+
+    const command = runner(args, { timeoutMs: 2_000 });
+    stdout.emit("data", `  ${SECRET}  \n`);
+    childEmitter.emit("close", 0);
+
+    await expect(command).resolves.toEqual(
+      result(0, "", `  ${SECRET}  \n`),
+    );
+    expect(stdin.end).toHaveBeenCalledTimes(1);
+    expect(stdin.end.mock.calls[0]).toEqual([]);
+    expect(args).not.toContain(SECRET);
   });
 
   it("rejects empty, unbounded, control-character, misplaced, and non-write sensitive input before spawn", async () => {

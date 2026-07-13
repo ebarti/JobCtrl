@@ -51,7 +51,7 @@ PROMPT_VERSION = "employer-analysis-v1"
 # or model ids change so the cache invalidates (D-12). The local composition
 # root overrides this with ``JOBCTRL_ANALYSIS_LEGS`` when a user intentionally
 # disables a leg, so cache keys also reflect degraded-mode setup choices.
-SDK_SET_VERSION = "claude+codex+antigravity-v1"
+SDK_SET_VERSION = "claude+codex+antigravity-v2-synth-default"
 
 RequirementTier = Literal["must_have", "nice_to_have"]
 

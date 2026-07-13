@@ -1,7 +1,12 @@
 import { spawn } from "node:child_process";
 
-import type { CredentialKey, CredentialsResponse } from "./contracts.js";
+import type {
+  CredentialBatchOperation,
+  CredentialKey,
+  CredentialsResponse,
+} from "./contracts.js";
 import {
+  CREDENTIAL_VALUE_MAX_LENGTH,
   CredentialKeys,
   CredentialUpdateRequestSchema,
 } from "./contracts.js";
@@ -13,7 +18,7 @@ export const KEYCHAIN_REQUIRES_WORKER_RESTART = true as const;
 /** Hard ceiling for every macOS `security` invocation, mirrored by the Python runtime. */
 export const KEYCHAIN_COMMAND_TIMEOUT_MS = 2_000;
 
-const MAX_CAPTURED_OUTPUT_CHARS = 4_096;
+const MAX_CAPTURED_OUTPUT_CHARS = CREDENTIAL_VALUE_MAX_LENGTH + 2;
 const CONFIRMED_NOT_FOUND_MESSAGES = new Set([
   "The specified item could not be found.",
   "The specified item could not be found in the keychain.",
@@ -21,14 +26,28 @@ const CONFIRMED_NOT_FOUND_MESSAGES = new Set([
 
 const LABELS: Record<CredentialKey, string> = {
   OPENAI_API_KEY: "OpenAI API key",
+  ANTHROPIC_API_KEY: "Anthropic API key",
+  CLAUDE_CODE_USE_VERTEX: "Claude Google Cloud Agent Platform mode",
+  ANTHROPIC_VERTEX_PROJECT_ID: "Claude Google Cloud project",
+  CLOUD_ML_REGION: "Claude Google Cloud region",
+  CLAUDE_CODE_USE_BEDROCK: "Claude Amazon Bedrock mode",
+  CLAUDE_CODE_USE_ANTHROPIC_AWS: "Claude Platform on AWS mode",
+  ANTHROPIC_AWS_WORKSPACE_ID: "Claude Platform on AWS workspace",
+  CLAUDE_CODE_USE_FOUNDRY: "Claude Microsoft Foundry mode",
+  ANTHROPIC_FOUNDRY_RESOURCE: "Claude Microsoft Foundry resource",
+  AWS_REGION: "AWS region",
+  AWS_PROFILE: "AWS profile",
   GEMINI_API_KEY: "Gemini API key",
-  LLM_URL: "LLM endpoint",
+  GOOGLE_GENAI_USE_VERTEXAI: "Google Vertex AI mode",
+  GOOGLE_CLOUD_PROJECT: "Google Cloud project",
+  GOOGLE_CLOUD_LOCATION: "Google Cloud location",
 };
 
 export interface CredentialStore {
   list(): Promise<CredentialsResponse>;
   set(key: CredentialKey, value: string): Promise<CredentialsResponse>;
   delete(key: CredentialKey): Promise<CredentialsResponse>;
+  applyBatch(operations: readonly CredentialBatchOperation[]): Promise<CredentialsResponse>;
 }
 
 export interface SecurityCommandResult {
@@ -76,6 +95,7 @@ export type SecurityProcessSpawner = (
 
 export type CredentialStoreFailureReason =
   | "operational_failure"
+  | "partial_failure"
   | "unsupported_platform";
 
 const CREDENTIAL_STORE_MESSAGES: Record<CredentialStoreFailureReason, string> =
@@ -84,6 +104,8 @@ const CREDENTIAL_STORE_MESSAGES: Record<CredentialStoreFailureReason, string> =
       "macOS Keychain credential editing is unavailable on this platform.",
     operational_failure:
       "macOS Keychain is temporarily unavailable. Unlock Keychain Access and retry.",
+    partial_failure:
+      "Credential update failed and Keychain recovery was incomplete. Provider credentials may be partially updated; inspect Keychain before retrying.",
   };
 
 export class CredentialStoreUnavailableError extends Error {
@@ -108,6 +130,10 @@ export interface KeychainCredentialStoreOptions {
   runSecurity?: SecurityCommandRunner;
   commandTimeoutMs?: number;
 }
+
+type KeychainSnapshot =
+  | { configured: false }
+  | { configured: true; value: string };
 
 export class KeychainCredentialStore implements CredentialStore {
   private readonly platform: NodeJS.Platform;
@@ -141,6 +167,89 @@ export class KeychainCredentialStore implements CredentialStore {
 
   async set(key: CredentialKey, value: string): Promise<CredentialsResponse> {
     this.ensureSupported();
+    await this.setWithoutInspection(key, value);
+    return this.list();
+  }
+
+  async delete(key: CredentialKey): Promise<CredentialsResponse> {
+    this.ensureSupported();
+    await this.deleteWithoutInspection(key);
+    return this.list();
+  }
+
+  async applyBatch(
+    operations: readonly CredentialBatchOperation[],
+  ): Promise<CredentialsResponse> {
+    this.ensureSupported();
+    const snapshots = new Map<CredentialKey, KeychainSnapshot>();
+    for (const operation of operations) {
+      if (!snapshots.has(operation.key)) {
+        snapshots.set(operation.key, await this.snapshot(operation.key));
+      }
+    }
+
+    try {
+      for (const operation of operations) {
+        await this.applyOperation(operation);
+      }
+    } catch {
+      const restored = await this.restoreSnapshots(snapshots);
+      throw new CredentialStoreUnavailableError(
+        restored ? "operational_failure" : "partial_failure",
+      );
+    }
+    return this.list();
+  }
+
+  private async applyOperation(operation: CredentialBatchOperation): Promise<void> {
+    if (operation.operation === "set") {
+      await this.setWithoutInspection(operation.key, operation.value);
+    } else {
+      await this.deleteWithoutInspection(operation.key);
+    }
+  }
+
+  private async snapshot(key: CredentialKey): Promise<KeychainSnapshot> {
+    const result = await this.execute([
+      "find-generic-password",
+      "-s",
+      KEYCHAIN_SERVICE,
+      "-a",
+      keychainAccount(key),
+      "-w",
+    ]);
+    if (result.code === 0) {
+      const value = stripTerminalLineEnding(result.stdout);
+      if (!CredentialUpdateRequestSchema.safeParse({ key, value }).success) {
+        throw new CredentialStoreUnavailableError("operational_failure");
+      }
+      return { configured: true, value };
+    }
+    if (isConfirmedNotFound(result)) {
+      return { configured: false };
+    }
+    throw new CredentialStoreUnavailableError("operational_failure");
+  }
+
+  private async restoreSnapshots(
+    snapshots: ReadonlyMap<CredentialKey, KeychainSnapshot>,
+  ): Promise<boolean> {
+    let restored = true;
+    for (const [key, snapshot] of snapshots) {
+      try {
+        if (snapshot.configured) {
+          await this.setWithoutInspection(key, snapshot.value);
+        } else {
+          await this.deleteWithoutInspection(key);
+        }
+      } catch {
+        restored = false;
+      }
+    }
+    return restored;
+  }
+
+  private async setWithoutInspection(key: CredentialKey, value: string): Promise<void> {
     const result = await this.execute(
       [
         "add-generic-password",
@@ -156,11 +265,9 @@ export class KeychainCredentialStore implements CredentialStore {
     if (result.code !== 0) {
       throw new CredentialStoreUnavailableError("operational_failure");
     }
-    return this.list();
   }
 
-  async delete(key: CredentialKey): Promise<CredentialsResponse> {
-    this.ensureSupported();
+  private async deleteWithoutInspection(key: CredentialKey): Promise<void> {
     const result = await this.execute([
       "delete-generic-password",
       "-s",
@@ -171,7 +278,6 @@ export class KeychainCredentialStore implements CredentialStore {
     if (result.code !== 0 && !isConfirmedNotFound(result)) {
       throw new CredentialStoreUnavailableError("operational_failure");
     }
-    return this.list();
   }
 
   private async inspect(key: CredentialKey): Promise<boolean | null> {
@@ -328,7 +434,7 @@ export function createSecurityCommandRunner(
           resolve({
             code: code ?? 1,
             stderr: stderr.trim(),
-            stdout: stdout.trim(),
+            stdout,
           }),
         );
       });
@@ -413,6 +519,14 @@ function keychainPromptInput(sensitiveInput: string): string {
   // Bare `-w` confirms a new value by prompting twice. One bounded write
   // supplies both answers and closes stdin; the value never enters argv.
   return `${sensitiveInput}\n${sensitiveInput}\n`;
+}
+
+function stripTerminalLineEnding(value: string): string {
+  return value.endsWith("\r\n")
+    ? value.slice(0, -2)
+    : value.endsWith("\n")
+      ? value.slice(0, -1)
+      : value;
 }
 
 function isSecurityCommandResult(

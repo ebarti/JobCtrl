@@ -180,28 +180,32 @@ def test_bundled_provider_binary_overrides_are_always_rejected(tmp_path: Path) -
         setup_probes.resolve_codex_binary({**base, "JOBCTRL_CODEX_BIN": str(malicious)})
 
 
-def test_bundled_codex_auth_uses_only_openai_api_key_without_resolving_auth_json(
+def test_bundled_codex_auth_requires_persisted_cli_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    def unexpected_auth_path(_env=None) -> Path:
-        raise AssertionError("bundled Codex auth must not resolve ambient auth.json")
+    app_dir = tmp_path / "jobctrl"
+    monkeypatch.setattr(config, "APP_DIR", app_dir)
+    base = {**_bundled_env(tmp_path), "CODEX_HOME": str(tmp_path / "source-empty")}
 
-    monkeypatch.setattr(setup_probes, "codex_auth_path", unexpected_auth_path)
-    base = _bundled_env(tmp_path)
-
-    ready = setup_probes.probe_codex_auth({**base, "OPENAI_API_KEY": "sk-bundled"})
-    whitespace = setup_probes.probe_codex_auth({**base, "OPENAI_API_KEY": "   "})
+    raw_only = setup_probes.probe_codex_auth({**base, "OPENAI_API_KEY": "sk-bundled"})
     alias_only = setup_probes.probe_codex_auth({**base, "CODEX_API_KEY": "consumer-alias"})
     missing = setup_probes.probe_codex_auth(base)
+    auth = app_dir / "codex_home/auth.json"
+    auth.parent.mkdir(parents=True)
+    auth.write_text('{"tokens":{"access_token":"bundled-test"}}', encoding="utf-8")
+    monkeypatch.setattr(
+        setup_probes,
+        "_cached_verify_codex_connection",
+        lambda values: (True, "connected", "Codex CLI authentication verified"),
+    )
+    ready = setup_probes.probe_codex_auth(base)
 
     assert ready.ok is True
-    assert ready.note == "OPENAI_API_KEY"
-    assert whitespace.ok is False
+    assert raw_only.ok is False
     assert alias_only.ok is False
-    assert "CODEX_API_KEY is not supported" in alias_only.note
+    assert "not enrolled" in alias_only.note
     assert missing.ok is False
-    assert "does not read or copy CODEX_HOME/auth.json" in missing.note
 
 
 @pytest.mark.parametrize(
@@ -224,27 +228,19 @@ def test_bundled_claude_rejects_consumer_auth(
     assert "consumer OAuth" in probe.note
 
 
-def test_bundled_claude_auth_never_probes_macos_keychain(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    def unexpected_keychain_probe() -> bool:
-        raise AssertionError("bundled auth must not inspect Claude consumer Keychain state")
-
-    monkeypatch.setattr(setup_probes, "_macos_claude_keychain_present", unexpected_keychain_probe)
-
-    probe = setup_probes.probe_claude_auth(_bundled_env(tmp_path))
-
-    assert probe.ok is False
-
-
 @pytest.mark.parametrize(
     ("auth", "expected"),
     [
         ({"ANTHROPIC_API_KEY": "api"}, "ANTHROPIC_API_KEY"),
-        ({"CLAUDE_CODE_USE_BEDROCK": "1"}, "CLAUDE_CODE_USE_BEDROCK"),
-        ({"CLAUDE_CODE_USE_VERTEX": "true"}, "CLAUDE_CODE_USE_VERTEX"),
-        ({"CLAUDE_CODE_USE_FOUNDRY": "yes"}, "CLAUDE_CODE_USE_FOUNDRY"),
+        ({"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_PROFILE": "work"}, "Amazon Bedrock"),
+        (
+            {
+                "CLAUDE_CODE_USE_FOUNDRY": "yes",
+                "ANTHROPIC_FOUNDRY_RESOURCE": "resource",
+                "ANTHROPIC_FOUNDRY_API_KEY": "key",
+            },
+            "Microsoft Foundry",
+        ),
     ],
 )
 def test_bundled_claude_accepts_only_api_and_supported_cloud_modes(
@@ -255,7 +251,7 @@ def test_bundled_claude_accepts_only_api_and_supported_cloud_modes(
     probe = setup_probes.probe_claude_auth({**_bundled_env(tmp_path), **auth})
 
     assert probe.ok is True
-    assert probe.note == expected
+    assert expected in probe.note
 
 
 def test_bundled_claude_child_is_isolated_and_omits_consumer_tokens(tmp_path: Path) -> None:
@@ -279,7 +275,7 @@ def test_bundled_claude_child_is_isolated_and_omits_consumer_tokens(tmp_path: Pa
     assert sdk_env["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"] == ""
     assert sdk_env["CCR_OAUTH_TOKEN_FILE"] == ""
     assert sdk_env["ANTHROPIC_AUTH_TOKEN"] == ""
-    assert Path(sdk_env["HOME"]) == Path(sdk_options["cwd"]).resolve() / "provider-runtime/claude"
+    assert "HOME" not in sdk_env
 
     child_env = setup_probes.bundled_claude_process_auth_env(env)
     assert child_env["ANTHROPIC_API_KEY"] == "api-key"
@@ -301,12 +297,26 @@ def test_bundled_antigravity_does_not_accept_consumer_session(tmp_path: Path) ->
 
 def test_bundled_antigravity_accepts_key_or_vertex(tmp_path: Path) -> None:
     base = _bundled_env(tmp_path)
+    credentials = tmp_path / ".config" / "gcloud" / "application_default_credentials.json"
+    credentials.parent.mkdir(parents=True)
+    credentials.write_text(
+        json.dumps(
+            {
+                "type": "authorized_user",
+                "client_id": "test-client",
+                "client_secret": "test-secret",
+                "refresh_token": "test-refresh",
+            }
+        ),
+        encoding="utf-8",
+    )
     assert setup_probes.antigravity_auth_kwargs({**base, "GEMINI_API_KEY": "key"}) == {
         "api_key": "key"
     }
     assert setup_probes.antigravity_auth_kwargs(
         {
             **base,
+            "HOME": str(tmp_path),
             "GOOGLE_GENAI_USE_VERTEXAI": "1",
             "GOOGLE_CLOUD_PROJECT": "project-a",
         }

@@ -1,10 +1,10 @@
 """
 Unified LLM client for JobCtrl.
 
-Auto-detects provider from environment:
-  GEMINI_API_KEY  -> Google Gemini (default: gemini-3.5-flash)
-  OPENAI_API_KEY  -> OpenAI (default: gpt-4o-mini)
-  LLM_URL         -> Local llama.cpp / Ollama compatible endpoint
+Auto-detects HTTP providers from environment:
+  GEMINI_API_KEY / GOOGLE_API_KEY -> Google Gemini (default: gemini-3.5-flash)
+
+A raw OpenAI key is Codex CLI enrollment input, not a direct HTTP provider.
 
 LLM_MODEL env var overrides the model name for any provider.
 """
@@ -28,8 +28,6 @@ from jobctrl.model_defaults import DEFAULT_GEMINI_MODEL
 
 log = logging.getLogger(__name__)
 
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-DEFAULT_LOCAL_MODEL = "local-model"
 
 
 @dataclass(frozen=True)
@@ -201,9 +199,7 @@ def _provider_config(provider: str | None, model_override: str | None = None) ->
     Reads env at call time (not module import time) so that load_env() called
     in _bootstrap() is always visible here.
     """
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
-    openai_key = os.environ.get("OPENAI_API_KEY", "")
-    local_url = os.environ.get("LLM_URL", "")
+    gemini_key = os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
     env_model = os.environ.get("LLM_MODEL", "")
     selected_model = (model_override or "").strip()
     provider = (provider or "").strip().lower() or None
@@ -211,7 +207,7 @@ def _provider_config(provider: str | None, model_override: str | None = None) ->
     if provider in {"default", "auto"}:
         provider = None
 
-    if provider == "gemini":
+    if provider in {"gemini", "google"}:
         if not gemini_key:
             raise RuntimeError("Gemini model requested but GEMINI_API_KEY is not set.")
         return (
@@ -220,48 +216,19 @@ def _provider_config(provider: str | None, model_override: str | None = None) ->
             gemini_key,
         )
 
-    if provider == "openai":
-        if not openai_key:
-            raise RuntimeError("OpenAI model requested but OPENAI_API_KEY is not set.")
-        return (
-            "https://api.openai.com/v1",
-            selected_model or env_model or DEFAULT_OPENAI_MODEL,
-            openai_key,
-        )
+    if provider is not None:
+        raise RuntimeError(f"Unsupported direct LLM provider: {provider}")
 
-    if provider == "local":
-        if not local_url:
-            raise RuntimeError("Local model requested but LLM_URL is not set.")
-        return (
-            local_url.rstrip("/"),
-            selected_model or env_model or DEFAULT_LOCAL_MODEL,
-            os.environ.get("LLM_API_KEY", ""),
-        )
-
-    if gemini_key and not local_url:
+    if gemini_key:
         return (
             "https://generativelanguage.googleapis.com/v1beta/openai",
             selected_model or env_model or DEFAULT_GEMINI_MODEL,
             gemini_key,
         )
 
-    if openai_key and not local_url:
-        return (
-            "https://api.openai.com/v1",
-            selected_model or env_model or DEFAULT_OPENAI_MODEL,
-            openai_key,
-        )
-
-    if local_url:
-        return (
-            local_url.rstrip("/"),
-            selected_model or env_model or DEFAULT_LOCAL_MODEL,
-            os.environ.get("LLM_API_KEY", ""),
-        )
-
     raise RuntimeError(
         "No LLM provider configured. "
-        "Set GEMINI_API_KEY, OPENAI_API_KEY, or LLM_URL in your environment."
+        "Authenticate Claude or Codex, or set GEMINI_API_KEY or GOOGLE_API_KEY."
     )
 
 

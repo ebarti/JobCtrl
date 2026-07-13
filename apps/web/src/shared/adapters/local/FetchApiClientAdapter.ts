@@ -340,6 +340,17 @@ export class FetchApiClientAdapter implements ApiClientPort {
   deleteCredential(key: Parameters<JobCtrlApiClient["deleteCredential"]>[0]) {
     return this.client.deleteCredential(key);
   }
+  updateCredentialsBatch(
+    body: Parameters<JobCtrlApiClient["updateCredentialsBatch"]>[0],
+  ) {
+    return this.client.updateCredentialsBatch(body);
+  }
+  providerStatus() {
+    return this.client.providerStatus();
+  }
+  verifyCodexProvider() {
+    return this.client.verifyCodexProvider();
+  }
   retryStage(jobKey: string, body: Parameters<JobCtrlApiClient["retryStage"]>[1]) {
     return this.client.retryStage(jobKey, body);
   }

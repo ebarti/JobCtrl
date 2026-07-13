@@ -27,7 +27,9 @@ import {
   PIPELINE_ACTION_JOB_KEY,
   type PipelineStageRunResponse,
   CredentialKeys,
+  CredentialBatchUpdateRequestSchema,
   CredentialUpdateRequestSchema,
+  CodexVerifyResultSchema,
   DeleteJobRequestSchema,
   DigestAcknowledgeRequestSchema,
   DiscoverySettingsUpdateRequestSchema,
@@ -49,6 +51,7 @@ import {
   ProfileImportRequestSchema,
   type ProfileConfigResponse,
   ProfileUpdateRequestSchema,
+  ProviderStatusResultSchema,
   QuarantineDecisionSchema,
   RescoreJobRequestSchema,
   RefreshCompensationRequestSchema,
@@ -190,6 +193,7 @@ import {
   type ProfilePreviewRenderer,
   type ProfileImporter,
 } from "./local-actions.js";
+import type { JsonRpcDispatcher } from "./json-rpc-adapter.js";
 import {
   createWorkerManualCaptureImporter,
   ManualCaptureImportError,
@@ -323,6 +327,8 @@ export interface BuildAppOptions {
   outreachDraftGenerator?: OutreachDraftGenerator;
   artifactOpener?: ArtifactOpener;
   credentialStore?: CredentialStore;
+  /** Test seam for provider status and verification over the long-lived RPC worker. */
+  providerDispatcher?: JsonRpcDispatcher;
   manualCaptureImporter?: ManualCaptureImporter;
   gmailFeedbackScanner?: GmailFeedbackScanner;
   placeValidator?: PlaceValidator;
@@ -339,6 +345,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   installVitestInjectMutationDefaults(app);
   const appDir = options.appDir ?? path.dirname(options.dbPath);
   const pythonRuntime = options.pythonRuntime ?? defaultSourcePythonRuntime;
+  const actionContext = { appDir, dbPath: options.dbPath };
   const actionDispatcher =
     options.actionDispatcher ??
     createActionDispatcher(undefined, createRuntimeJsonRpcDispatcherFactory(pythonRuntime));
@@ -346,6 +353,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const outreachDraftGenerator = options.outreachDraftGenerator ?? createOutreachDraftGenerator(pythonRuntime);
   const artifactOpener = options.artifactOpener ?? defaultArtifactOpener;
   const credentialStore = options.credentialStore ?? new KeychainCredentialStore();
+  const providerDispatcher =
+    options.providerDispatcher ??
+    createRuntimeJsonRpcDispatcherFactory(pythonRuntime)(actionContext);
   const manualCaptureImporter =
     options.manualCaptureImporter ?? createWorkerManualCaptureImporter({ pythonRuntime });
   const gmailFeedbackScanner =
@@ -353,7 +363,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const profileImporter = options.profileImporter ?? createProfileImporter(pythonRuntime);
   const profilePreviewRenderer = options.profilePreviewRenderer ?? createProfilePreviewRenderer(pythonRuntime);
   const resumePdfRenderer = options.resumePdfRenderer ?? createResumeHtmlPdfRenderer(pythonRuntime, appDir);
-  const actionContext = { appDir, dbPath: options.dbPath };
   const requireHealthyWorkerForActions =
     options.requireHealthyWorkerForActions ?? !options.actionDispatcher;
   ensureLocalCapabilityToken(appDir);
@@ -2204,6 +2213,31 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
   });
 
+  app.patch("/v1/credentials/batch", async (request, reply) => {
+    const body = parseBody(
+      reply,
+      CredentialBatchUpdateRequestSchema,
+      request.body ?? {},
+    );
+    if (!body) {
+      return undefined;
+    }
+    try {
+      return await credentialStore.applyBatch(body.operations);
+    } catch (error) {
+      if (error instanceof CredentialStoreUnavailableError) {
+        void reply.code(error.reason === "unsupported_platform" ? 409 : 503);
+        return {
+          ok: false,
+          error: "credential_store_unavailable",
+          reason: error.reason,
+          message: error.message,
+        };
+      }
+      throw error;
+    }
+  });
+
   app.delete<{ Params: { key: string } }>("/v1/credentials/:key", async (request, reply) => {
     const key = decodeRouteParam(request.params.key);
     if (!CredentialKeys.includes(key as (typeof CredentialKeys)[number])) {
@@ -2223,6 +2257,64 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         };
       }
       throw error;
+    }
+  });
+
+  app.get("/v1/providers/status", async (_request, reply) => {
+    try {
+      const response = await providerDispatcher.call("provider_status", {});
+      if (response.error) {
+        void reply.code(502);
+        return providerOperationError(
+          "provider_status_failed",
+          "Provider status is temporarily unavailable.",
+        );
+      }
+      const parsed = ProviderStatusResultSchema.safeParse(response.result);
+      if (!parsed.success) {
+        void reply.code(502);
+        return providerOperationError(
+          "provider_status_failed",
+          "Provider status returned an invalid response.",
+        );
+      }
+      return { ok: true as const, providers: parsed.data.providers };
+    } catch {
+      void reply.code(503);
+      return providerOperationError(
+        "provider_status_failed",
+        "Provider status is temporarily unavailable.",
+      );
+    }
+  });
+
+  app.post("/v1/providers/codex/verify", async (_request, reply) => {
+    try {
+      const response = await providerDispatcher.call("provider_verify", {
+        provider: "codex",
+      });
+      if (response.error) {
+        void reply.code(502);
+        return providerOperationError(
+          "provider_verification_failed",
+          "Codex verification could not be completed.",
+        );
+      }
+      const parsed = CodexVerifyResultSchema.safeParse(response.result);
+      if (!parsed.success) {
+        void reply.code(502);
+        return providerOperationError(
+          "provider_verification_failed",
+          "Codex verification returned an invalid response.",
+        );
+      }
+      return { ok: true as const, verification: parsed.data };
+    } catch {
+      void reply.code(503);
+      return providerOperationError(
+        "provider_verification_failed",
+        "Codex verification is temporarily unavailable.",
+      );
     }
   });
 
@@ -2824,6 +2916,13 @@ function outreachTransitionError(reply: FastifyReply, error: unknown): { ok: fal
     return { ok: false, error: "invalid_outreach_transition", message: error.message };
   }
   throw error;
+}
+
+function providerOperationError(
+  error: "provider_status_failed" | "provider_verification_failed",
+  message: string,
+) {
+  return { ok: false as const, error, message };
 }
 
 function decodeRouteParam(value: string): string {

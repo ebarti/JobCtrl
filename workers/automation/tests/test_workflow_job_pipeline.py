@@ -505,7 +505,7 @@ async def test_pipeline_workflow_preserves_stage_options():
                         retailor=True,
                         min_score=8,
                         validation_mode="strict",
-                        tailor_models=("local:fast", "openai:accurate"),
+                        tailor_models=("codex:fast", "claude:accurate"),
                         tailor_judge_model="gemini:judge",
                         tailor_judge_min_score=0.9,
                     ),
@@ -521,7 +521,7 @@ async def test_pipeline_workflow_preserves_stage_options():
     assert by_stage["score"]["rescore"] is True
     assert by_stage["tailor"]["min_score"] == 8
     assert by_stage["tailor"]["retailor"] is True
-    assert by_stage["tailor"]["tailor_models"] == ("local:fast", "openai:accurate")
+    assert by_stage["tailor"]["tailor_models"] == ("codex:fast", "claude:accurate")
     assert by_stage["tailor"]["tailor_judge_model"] == "gemini:judge"
     assert by_stage["tailor"]["tailor_judge_min_score"] == pytest.approx(0.9)
 

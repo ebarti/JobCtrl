@@ -297,13 +297,15 @@ apply-worker state, or raw logs and traces. Use synthetic fixtures or
 **Store credentials in a secret port.** Credentials must use a secret port or
 explicit environment variables, never SQLite, snapshots, logs, traces, or
 artifacts (TR-013). The macOS-only API store
-(`apps/api/src/credentials.ts`) accepts submitted values only for
-`OPENAI_API_KEY`, `GEMINI_API_KEY`, and `LLM_URL`; it can write, presence-check,
-and delete those Keychain entries without reading them back for provider runtime
-or returning their values. Presence is tri-state: `configured: false` means
+(`apps/api/src/credentials.ts`) accepts only the fixed Claude/Google guided
+allowlist plus legacy OpenAI-key deletion. It can atomically replace a provider
+configuration, presence-check, and remove those Keychain entries without
+returning values. Private reads are limited to compensating rollback after a
+failed batch and must never be logged or sent over HTTP. Presence is tri-state:
+`configured: false` means
 confirmed absent; `configured: null` with `inspection_failed` means unknown and
 must not be collapsed into absence. Unsupported mutations return a sanitized
-409, operational store failures a sanitized 503 with `operational_failure`, and
+409, operational store failures a sanitized 503 with an explicit failure reason, and
 neither exposes raw `security` output. After env-file loading, the shared Python
 `config.load_env()` boundary loads a missing or empty value through a bounded,
 non-interactive Keychain lookup once per process; any non-empty environment
