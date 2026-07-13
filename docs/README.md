@@ -18,9 +18,10 @@
 
 - [`user/getting-started.md`](user/getting-started.md): install, configure, run,
   and seed a disposable workspace.
-- [`user/configuration.md`](user/configuration.md): runtime variables,
-  provider keys, local data paths, telemetry, browser automation, Gmail, and
-  screenshot/test workspaces.
+- [`user/configuration.md`](user/configuration.md): user-facing profile and
+  provider choices, local data, spend controls, discovery, browser automation,
+  Gmail, compensation sources, observability, and test/documentation
+  workspaces.
 - [`user/normal-flows.md`](user/normal-flows.md): expected product flows from
   setup through review and apply.
 - [`user/data-and-safety.md`](user/data-and-safety.md): local data boundaries,
@@ -70,8 +71,9 @@
 - [`architecture/tailoring.md`](architecture/tailoring.md): resume tailoring
   prompt contract, generated JSON shape, validation/judge/fabrication gates,
   provenance, audit metadata, and safe change points.
-- [`local-development.md`](local-development.md): setup, run, build, test, lint
-  commands, and the synthetic documentation-screenshot workflow.
+- [`local-development.md`](local-development.md): setup, run, runtime
+  overrides, build, test, lint commands, and the synthetic
+  documentation-screenshot workflow.
 - [`developer/first-run-ttfv.md`](developer/first-run-ttfv.md): owner-run
   real-path first-run time-to-value measurement protocol and generated record
   commands.

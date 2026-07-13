@@ -21,6 +21,26 @@ test("public onboarding leads with bundled acquisition and keeps source advanced
   assert.ok(installer >= 0 && installer < homebrew && homebrew < source);
   assert.match(gettingStarted, /Only this option requires Git/);
   assert.doesNotMatch(gettingStarted, /^## \d+\. Source-Checkout Requirements$/m);
+  assert.match(
+    gettingStarted,
+    /For the bundled installer or Homebrew: an Apple-silicon Mac running macOS 15\s+or newer\./,
+  );
+  const normalizedOnboarding = [gettingStarted, readme].map((document) =>
+    document.replace(/\s+/g, " "),
+  );
+  for (const document of normalizedOnboarding) {
+    assert.match(
+      document,
+      /Native Windows is not yet a supported public installation path\./i,
+    );
+    assert.doesNotMatch(
+      document,
+      /Windows compatibility currently uses this source-development path until a signed Windows bundle is published\./i,
+    );
+  }
+  assert.match(gettingStarted, /stay on your computer/);
+  assert.doesNotMatch(gettingStarted, /stay on your Mac/);
+  assert.doesNotMatch(gettingStarted, /You do \*\*not\*\* need to install Git/);
 
   const publicCopy = [
     readme,
@@ -59,24 +79,77 @@ test("launch provider guidance requires one of Codex, Claude, or Google", async 
   const gettingStarted = await read("docs/user/getting-started.md");
   const configuration = await read("docs/user/configuration.md");
   const envExample = await read(".env.example");
+  const security = await read("docs/user/security.md");
+  const dataAndSafety = await read("docs/user/data-and-safety.md");
   const publicProviderCopy = [
     readme,
     gettingStarted,
     configuration,
     envExample,
-    await read("docs/user/security.md"),
-    await read("docs/user/data-and-safety.md"),
+    security,
+    dataAndSafety,
     await read("docs/architecture/runtime.md"),
     await read("docs/api/complete-contract.md"),
+  ].join("\n");
+  const publicCodexCopy = [
+    readme,
+    gettingStarted,
+    configuration,
+    envExample,
+    security,
+    dataAndSafety,
   ].join("\n");
 
   assert.match(gettingStarted, /One ready provider is sufficient/);
   assert.match(configuration, /^### Codex$/m);
   assert.match(configuration, /^### Claude$/m);
   assert.match(configuration, /^### Google$/m);
-  assert.match(gettingStarted, /Reuse existing login or verify/);
-  assert.match(configuration, /validates the regular CLI `auth\.json` before copying it/);
-  assert.match(configuration, /codex login --with-api-key/);
+  for (const document of [
+    readme,
+    gettingStarted,
+    configuration,
+    envExample,
+    security,
+    dataAndSafety,
+  ]) {
+    assert.match(document, /authenticated Codex CLI/i);
+  }
+
+  const readmeConfigurationStart = readme.indexOf("## Configuration");
+  const readmeDevelopmentStart = readme.indexOf(
+    "## Development",
+    readmeConfigurationStart,
+  );
+  assert.ok(
+    readmeConfigurationStart >= 0 &&
+      readmeDevelopmentStart > readmeConfigurationStart,
+  );
+  const readmeConfiguration = readme.slice(
+    readmeConfigurationStart,
+    readmeDevelopmentStart,
+  );
+  assert.doesNotMatch(
+    `${readmeConfiguration}\n${gettingStarted}`,
+    /auth\.json|setup --launch-logins|isolated (?:Codex )?home|copy-once|fallback target-home/i,
+  );
+
+  const codexStart = configuration.indexOf("### Codex");
+  const claudeStart = configuration.indexOf("### Claude", codexStart);
+  assert.ok(codexStart >= 0 && claudeStart > codexStart);
+  const codexSection = configuration.slice(codexStart, claudeStart);
+  assert.match(codexSection, /codex login --with-api-key/);
+  assert.doesNotMatch(
+    codexSection,
+    /CODEX_HOME|codex_home|auth\.json|setup --launch-logins|isolated (?:Codex )?home|fallback target-home/i,
+  );
+  assert.doesNotMatch(
+    publicCodexCopy,
+    /CODEX_HOME|codex_home|auth\.json|setup --launch-logins|isolated (?:Codex )?home|fallback target-home/i,
+  );
+  assert.doesNotMatch(
+    publicCodexCopy,
+    /\b(?:Codex (?:CLI )?login|credentials?|authentication) (?:copy|copying|import|importing|staging)\b|\b(?:copy|copying|import|importing) (?:an? )?(?:existing |valid |normal )*(?:Codex (?:CLI )?login|credentials?|authentication)\b|\b(?:copy-once|reusable-login importer)\b/i,
+  );
   assert.match(configuration, /CLAUDE_CODE_USE_BEDROCK/);
   assert.match(configuration, /CLAUDE_CODE_USE_ANTHROPIC_AWS/);
   assert.match(configuration, /CLAUDE_CODE_USE_VERTEX/);
@@ -85,4 +158,115 @@ test("launch provider guidance requires one of Codex, Claude, or Google", async 
   assert.doesNotMatch(publicProviderCopy, /LLM_URL|LLM_API_KEY/);
   assert.doesNotMatch(gettingStarted, /local OpenAI-compatible/i);
   assert.doesNotMatch(readme, /OpenAI-backed scoring|general LLM access.*OPENAI_API_KEY/i);
+});
+
+test("runtime overrides stay in contributor documentation", async () => {
+  const configuration = await read("docs/user/configuration.md");
+  const localDevelopment = await read("docs/local-development.md");
+  const expectedRuntimeOverrides = [
+    ["`JOBCTRL_DIR`", "`~/.jobctrl`"],
+    ["`JOBCTRL_DB_PATH`", "`$JOBCTRL_DIR/jobctrl.db`"],
+    ["`JOBCTRL_DASHBOARD_CONFIG_PATH`", "`$JOBCTRL_DIR/dashboard.json`"],
+    ["`JOBCTRL_API_HOST`", "`127.0.0.1`"],
+    ["`JOBCTRL_API_PORT` / `PORT`", "`8766`"],
+    ["`JOBCTRL_API_ALLOW_REMOTE_BIND`", "unset"],
+    ["`JOBCTRL_WEB_PORT`", "`5173`"],
+    ["`VITE_JOBCTRL_API_BASE_URL`", "proxied `/v1`"],
+    ["`JOBCTRL_TEMPORAL_DB`", "`.dev/temporal/temporal.db`"],
+    ["`TEMPORAL_ADDRESS`", "`localhost:7233`"],
+    ["`TEMPORAL_NAMESPACE`", "`default`"],
+    ["`JOBCTRL_MAX_CONCURRENT_ACTIVITIES`", "`4`"],
+    ["`JOBCTRL_API_SSE_POLL_MS`", "`250`"],
+    ["`VITE_DEV_API_PROXY_TARGET`", "`http://127.0.0.1:8766`"],
+    ["`VITE_GOOGLE_MAPS_API_KEY`", "unset"],
+  ];
+  const developerOnlyLocalDataVariables = [
+    "JOBCTRL_DB_PATH",
+    "JOBCTRL_DASHBOARD_CONFIG_PATH",
+    "JOBCTRL_API_HOST",
+    "JOBCTRL_API_PORT",
+    "JOBCTRL_API_ALLOW_REMOTE_BIND",
+    "JOBCTRL_WEB_PORT",
+    "VITE_JOBCTRL_API_BASE_URL",
+    "JOBCTRL_TEMPORAL_DB",
+    "TEMPORAL_ADDRESS",
+    "TEMPORAL_NAMESPACE",
+    "JOBCTRL_API_SSE_POLL_MS",
+    "VITE_DEV_API_PROXY_TARGET",
+  ];
+
+  assert.doesNotMatch(configuration, /^## Core Runtime$/m);
+  assert.doesNotMatch(configuration, /One isolated development\/QA stack/);
+
+  const localDataStart = configuration.indexOf("## Local Data");
+  const nextSection = configuration.indexOf("\n## ", localDataStart + 1);
+  assert.ok(localDataStart >= 0 && nextSection > localDataStart);
+  const localData = configuration.slice(localDataStart, nextSection);
+  for (const variable of developerOnlyLocalDataVariables) {
+    assert.ok(!localData.includes(`\`${variable}\``));
+  }
+  assert.match(localData, /`~\/.jobctrl`/);
+  assert.match(localData, /set\s+`JOBCTRL_DIR`\s+before starting JobCtrl/i);
+  assert.match(localData, /\[Data, Privacy & Safety\]\(data-and-safety\.md\)/);
+  assert.match(
+    localData,
+    /\[Local Development → Runtime Overrides\]\(\.\.\/local-development\.md#runtime-overrides\)/,
+  );
+  assert.doesNotMatch(localData, /^\| Variable \|/m);
+  assert.match(localDevelopment, /^### Runtime Overrides$/m);
+
+  const runtimeOverridesStart = localDevelopment.indexOf(
+    "### Runtime Overrides",
+  );
+  const nextRuntimeSubsection = localDevelopment.indexOf(
+    "\n### ",
+    runtimeOverridesStart + 1,
+  );
+  assert.ok(
+    runtimeOverridesStart >= 0 &&
+      nextRuntimeSubsection > runtimeOverridesStart,
+  );
+  const runtimeOverrides = localDevelopment.slice(
+    runtimeOverridesStart,
+    nextRuntimeSubsection,
+  );
+  const tableLines = runtimeOverrides
+    .split(/\r?\n/)
+    .filter((line) => /^\s*\|/.test(line));
+  const parseTableRow = (line) =>
+    line
+      .trim()
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .map((cell) => cell.trim());
+
+  assert.equal(tableLines.length, expectedRuntimeOverrides.length + 2);
+  assert.deepEqual(parseTableRow(tableLines[0]), [
+    "Variable",
+    "Default",
+    "What it does",
+  ]);
+  assert.deepEqual(parseTableRow(tableLines[1]), ["---", "---", "---"]);
+  const runtimeRows = tableLines.slice(2).map(parseTableRow);
+  assert.deepEqual(
+    runtimeRows.map(([variable, defaultValue]) => [variable, defaultValue]),
+    expectedRuntimeOverrides,
+  );
+
+  const descriptions = new Map(
+    runtimeRows.map(([variable, , description]) => [variable, description]),
+  );
+  assert.match(
+    descriptions.get("`JOBCTRL_DB_PATH`"),
+    /Python worker ignores it.*desynchronizes the API from the worker.*prefer `JOBCTRL_DIR`/i,
+  );
+  assert.match(
+    descriptions.get("`JOBCTRL_API_HOST`"),
+    /Non-loopback hosts require explicit opt-in/i,
+  );
+  assert.match(
+    descriptions.get("`JOBCTRL_API_ALLOW_REMOTE_BIND`"),
+    /Set to `1`, `true`, or `yes` to allow non-loopback API binding.*expose private local data/i,
+  );
 });

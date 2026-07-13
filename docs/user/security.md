@@ -172,7 +172,7 @@ browser session but remains rate/budget limited. See
 | Secret | Boundary |
 | --- | --- |
 | Provider/runtime keys | Shell, plaintext `~/.jobctrl/.env`, or the guided macOS Keychain boundary; never SQLite. |
-| Codex login | Persisted under JobCtrl's isolated `codex_home`; setup, first generation, and Settings verification can copy valid authentication once from an existing normal login. Existing isolated auth is not overwritten, and the normal home is unchanged. Raw OpenAI keys are enrollment input only. |
+| Codex login | JobCtrl requires an authenticated Codex CLI. Reused authentication stays in sensitive local provider state outside SQLite and the prompt-readable workspace. |
 | Claude/Google web entries | Keychain for API keys plus cloud activation flags/non-secret identifiers; AWS, Google, and Azure credential files remain in their vendor stores. Status only is returned. |
 | CAPTCHA key | `CAPSOLVER_API_KEY` read by the owned local solver, not the model. |
 | Job-site passwords | Optional local profile value typed through a focused-field credential tool, never returned to the model. |

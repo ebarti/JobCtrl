@@ -65,6 +65,9 @@ Or acquire the same signed build with Homebrew:
 brew install ebarti/tap/jobctrl
 ```
 
+These public acquisition paths currently target Apple-silicon macOS. Native
+Windows is not yet a supported public installation path.
+
 Both methods install one native `jobctrl` command plus its managed private
 runtime. Start the complete local product from any directory:
 
@@ -330,12 +333,6 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
 - `tailored_resumes/`, `cover_letters/`, `logs/` — generated artifacts and
   logs.
 - `chrome-workers/`, `apply-workers/` — local browser/apply worker state.
-- `codex_home/` — JobCtrl-owned Codex home for local analysis. Setup and the
-  first generation retain one-time reuse of a valid regular Codex CLI login;
-  Settings verification invokes the same copy-once behavior before checking
-  the isolated login. Existing isolated auth is not overwritten, and the normal
-  Codex home is not changed. Prompt-driven commands run from
-  `codex_home/workspace/` only.
 - `backups/` — source-mode `jobctrl backup` snapshots and, once the P6-signed
   bundled channel is public, verified paired lifecycle snapshots.
 
@@ -507,13 +504,12 @@ registries. Compensation-source opt-ins are managed from Settings and stored
 locally. Start with [.env.example](.env.example); full reference:
 [Configuration](https://jobctrl.dev/user/configuration).
 
-The cross-platform provider-credential path is the plaintext
+Providers that accept environment credentials can use the plaintext
 `~/.jobctrl/.env` file or the process environment. On macOS, **Settings →
-Credentials** guides one of three providers: an existing authenticated Codex
-CLI reused into JobCtrl's isolated home (or fallback target-home login), Claude
-Agent SDK (Anthropic API key or supported cloud-provider credentials), or
-Google (Gemini key or Vertex AI ADC). One ready provider is sufficient for all
-core AI stages; a second provider is optional. After a provider is ready,
+Credentials** guides one of three providers: an authenticated Codex CLI,
+Claude Agent SDK (Anthropic API key or supported cloud-provider credentials),
+or Google (Gemini key or Vertex AI ADC). One ready provider is sufficient for
+all core AI stages; a second provider is optional. After a provider is ready,
 Settings can save a preferred model for that provider. Codex and Google choices
 come from live provider catalogs; Claude exposes the provider-safe `sonnet`,
 `opus`, and `haiku` aliases rather than claiming live enumeration. A saved model
@@ -538,11 +534,6 @@ Keychain output.
 
 - `JOBCTRL_DIR` — override the local app directory.
 - `ANTHROPIC_API_KEY` or a supported Claude cloud-provider route — Claude.
-- `$JOBCTRL_DIR/codex_home/auth.json` — Codex; setup, first generation, or the
-  Settings verify action can copy an existing valid normal Codex CLI login
-  once. Existing isolated auth is not overwritten. If there is no reusable login, authenticate this
-  isolated home with a ChatGPT subscription or enroll an API key through
-  `codex login --with-api-key`. Raw OpenAI keys are not used directly.
 - `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex AI ADC — Google.
 - `JOBCTRL_ANALYSIS_LEGS` — comma-separated enabled analysis legs when setup
   intentionally skips an unauthenticated leg.
