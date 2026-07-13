@@ -1,4 +1,4 @@
-# Scoring
+# Scoring Policy
 
 How a discovered job becomes a defensible fit score: profile retrieval feeds a
 deterministic, versioned scoring policy over structured evidence. Execution-level
@@ -9,17 +9,28 @@ detail lives in the [Stage Walkthrough](pipeline/stages.md); the domain model is
 on, and what it must not be used for.
 
 ```mermaid
-flowchart LR
-    JOBS["Normalized jobs"] --> RETRIEVE["Retrieve a top-N pool"]
-    RETRIEVE --> SCORE["Score against profile + versioned policy"]
-    SCORE --> RESULT["Fit score + evidence + trace"]
-    RESULT --> REVIEW["API and jobs drawer"]
-    REVIEW -->|user correction| POLICY["New score version + calibration anchor"]
-    POLICY --> SCORE
+flowchart TB
+    JOBS@{ icon: "tabler:briefcase", form: "rounded", label: "Normalized jobs", h: 64 }
+    RETRIEVE@{ icon: "tabler:filter", form: "rounded", label: "Retrieve<br/>top-N pool", h: 64 }
+    SCORE@{ icon: "tabler:scale", form: "rounded", label: "Score<br/>profile + policy", h: 64 }
+    RESULT@{ shape: "docs", label: "Fit score<br/>evidence + trace" }
+    REVIEW@{ icon: "tabler:browser", form: "rounded", label: "API +<br/>jobs drawer", h: 64 }
+    POLICY@{ icon: "tabler:adjustments", form: "rounded", label: "Next policy version<br/>+ calibration anchor", h: 64 }
 
-    class JOBS,RETRIEVE,SCORE,POLICY py
-    class RESULT store
-    class REVIEW ts
+    subgraph DECISION["Candidate decision"]
+      direction LR
+      JOBS -->|candidate pool| RETRIEVE
+      RETRIEVE -->|top N| SCORE
+    end
+
+    subgraph AUDIT["Evidence and calibration"]
+      direction LR
+      RESULT -->|shown in| REVIEW
+      REVIEW -->|user correction| POLICY
+    end
+
+    SCORE -->|decision record| RESULT
+    POLICY -.->|next scoring run| SCORE
 ```
 
 Retrieval narrows the candidate pool before any LLM call; a user correction feeds

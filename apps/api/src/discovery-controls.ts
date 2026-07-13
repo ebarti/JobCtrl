@@ -57,6 +57,9 @@ const DEFAULT_TENANT = "local";
 export const EXTENSION_MANUAL_CAPTURE_SOURCE_ID = "manual_capture:extension";
 const EXTENSION_MANUAL_CAPTURE_REASON: ManualActionReasonValue = "browser_extension_capture";
 const DEFAULT_DISCOVERY_SETTINGS: DiscoverySettings = {
+  minFitScore: 7,
+  autoApply: false,
+  applyApprovalRequired: true,
   boards: ["indeed", "linkedin", "zip_recruiter"],
   resultsPerSite: 50,
   hoursOld: 72,
@@ -69,30 +72,6 @@ const DEFAULT_DISCOVERY_SETTINGS: DiscoverySettings = {
   crawlUserAgentContact: "https://github.com/ebarti/JobCtrl",
   source: "database",
 };
-
-type DiscoveryEnvironment = Readonly<Record<string, string | undefined>>;
-type EnvironmentManagedDiscoveryField =
-  | "roleFilterMode"
-  | "roleFilterModel"
-  | "maxParallelFamilies"
-  | "crawlUserAgentProduct"
-  | "crawlUserAgentContact";
-
-const DISCOVERY_ENVIRONMENT_KEYS: Record<EnvironmentManagedDiscoveryField, string> = {
-  roleFilterMode: "JOBCTRL_DISCOVERY_LLM_ROLE_FILTER",
-  roleFilterModel: "JOBCTRL_DISCOVERY_ROLE_FILTER_MODEL",
-  maxParallelFamilies: "JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES",
-  crawlUserAgentProduct: "JOBCTRL_CRAWL_UA_PRODUCT",
-  crawlUserAgentContact: "JOBCTRL_CRAWL_UA_CONTACT",
-};
-
-export class DiscoverySettingManagedByEnvironmentError extends Error {
-  readonly source = "environment" as const;
-
-  constructor(readonly field: EnvironmentManagedDiscoveryField) {
-    super(`${field} is managed by the launch environment and cannot be changed here.`);
-  }
-}
 
 const EUROPE_TARGET_MARKERS = [
   "barcelona",
@@ -353,25 +332,25 @@ export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
 
 export function readDiscoverySettings(
   db: SqliteDatabase,
-  environment: DiscoveryEnvironment = process.env,
 ): DiscoverySettingsResponse {
   ensureDiscoveryControlTables(db);
   const stored = readDiscoverySearchConfig(db);
-  return resolvedDiscoverySettings(stored.config, environment, stored.persisted);
+  return resolvedDiscoverySettings(stored.config, stored.persisted);
 }
 
 export function writeDiscoverySettings(
   db: SqliteDatabase,
   request: DiscoverySettingsUpdateRequest,
-  environment: DiscoveryEnvironment = process.env,
 ): DiscoverySettingsResponse {
   ensureDiscoveryControlTables(db);
   const stored = readDiscoverySearchConfig(db);
   const currentConfig = stored.config;
   const current = discoverySettingsFromConfig(currentConfig);
-  assertWritableDiscoverySettings(request, environment);
   const next: DiscoverySettings = {
     ...current,
+    minFitScore: request.minFitScore ?? current.minFitScore,
+    autoApply: request.autoApply ?? current.autoApply,
+    applyApprovalRequired: request.applyApprovalRequired ?? current.applyApprovalRequired,
     boards: request.boards ?? current.boards,
     resultsPerSite: request.resultsPerSite ?? current.resultsPerSite,
     hoursOld: request.hoursOld ?? current.hoursOld,
@@ -384,6 +363,7 @@ export function writeDiscoverySettings(
     crawlUserAgentContact: request.crawlUserAgentContact ?? current.crawlUserAgentContact,
   };
   const now = new Date().toISOString();
+  const config = configFromDiscoverySettings(next, currentConfig);
   db.prepare(`
     INSERT INTO discovery_settings (
       tenant_id, search_config_json, created_at, updated_at
@@ -391,8 +371,8 @@ export function writeDiscoverySettings(
     ON CONFLICT(tenant_id) DO UPDATE SET
       search_config_json = excluded.search_config_json,
       updated_at = excluded.updated_at
-  `).run(DEFAULT_TENANT, JSON.stringify(configFromDiscoverySettings(next, currentConfig)), now, now);
-  return resolvedDiscoverySettings(configFromDiscoverySettings(next, currentConfig), environment, true);
+  `).run(DEFAULT_TENANT, JSON.stringify(config), now, now);
+  return resolvedDiscoverySettings(config, true);
 }
 
 function readDiscoverySearchConfig(db: SqliteDatabase): {
@@ -419,7 +399,19 @@ function readDiscoverySearchConfig(db: SqliteDatabase): {
 
 function discoverySettingsFromConfig(config: Record<string, unknown>): DiscoverySettings {
   const defaults = recordValue(config.defaults);
+  const automation = recordValue(config.automation);
   return {
+    minFitScore: boundedInt(
+      automation.min_fit_score,
+      DEFAULT_DISCOVERY_SETTINGS.minFitScore,
+      0,
+      10,
+    ),
+    autoApply: boolValue(automation.auto_apply, DEFAULT_DISCOVERY_SETTINGS.autoApply),
+    applyApprovalRequired: boolValue(
+      automation.apply_approval_required,
+      DEFAULT_DISCOVERY_SETTINGS.applyApprovalRequired,
+    ),
     boards: boardList(config.boards),
     resultsPerSite: positiveInt(defaults.results_per_site, DEFAULT_DISCOVERY_SETTINGS.resultsPerSite),
     hoursOld: positiveInt(defaults.hours_old, DEFAULT_DISCOVERY_SETTINGS.hoursOld),
@@ -447,6 +439,12 @@ function configFromDiscoverySettings(
   const defaults = recordValue(base.defaults);
   return {
     ...base,
+    automation: {
+      ...recordValue(base.automation),
+      min_fit_score: settings.minFitScore,
+      auto_apply: settings.autoApply,
+      apply_approval_required: settings.applyApprovalRequired,
+    },
     boards: settings.boards,
     scheduling_enabled: settings.schedulingEnabled,
     schedule_cron: settings.scheduleCron,
@@ -480,11 +478,26 @@ function configFromDiscoverySettings(
 
 function resolvedDiscoverySettings(
   config: Record<string, unknown>,
-  environment: DiscoveryEnvironment,
   persisted: boolean,
 ): DiscoverySettingsResponse {
   const stored = discoverySettingsFromConfig(config);
+  const automation = recordValue(config.automation);
   const effectiveSettings: EffectiveDiscoverySettings = {
+    minFitScore: setting(
+      stored.minFitScore,
+      "next_run",
+      persisted && Object.hasOwn(automation, "min_fit_score"),
+    ),
+    autoApply: setting(
+      stored.autoApply,
+      "next_poll",
+      persisted && Object.hasOwn(automation, "auto_apply"),
+    ),
+    applyApprovalRequired: setting(
+      stored.applyApprovalRequired,
+      "next_apply_job",
+      persisted && Object.hasOwn(automation, "apply_approval_required"),
+    ),
     boards: setting(stored.boards, "next_run", persisted && Object.hasOwn(config, "boards")),
     resultsPerSite: setting(
       stored.resultsPerSite,
@@ -533,49 +546,9 @@ function resolvedDiscoverySettings(
     ),
   };
 
-  applyEnvironmentSetting(
-    effectiveSettings,
-    "roleFilterMode",
-    environment,
-    roleFilterMode(environment.JOBCTRL_DISCOVERY_LLM_ROLE_FILTER),
-  );
-  applyEnvironmentSetting(
-    effectiveSettings,
-    "roleFilterModel",
-    environment,
-    nullableString(environment.JOBCTRL_DISCOVERY_ROLE_FILTER_MODEL),
-  );
-  if (environment.JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES?.trim()) {
-    applyEnvironmentSetting(
-      effectiveSettings,
-      "maxParallelFamilies",
-      environment,
-      boundedInt(environment.JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES, 1, 1, 4),
-    );
-  }
-  applyEnvironmentSetting(
-    effectiveSettings,
-    "crawlUserAgentProduct",
-    environment,
-    nonEmptyString(environment.JOBCTRL_CRAWL_UA_PRODUCT, DEFAULT_DISCOVERY_SETTINGS.crawlUserAgentProduct),
-  );
-  applyEnvironmentSetting(
-    effectiveSettings,
-    "crawlUserAgentContact",
-    environment,
-    stringValue(environment.JOBCTRL_CRAWL_UA_CONTACT, ""),
-  );
-
   return {
     ok: true,
-    settings: {
-      ...stored,
-      roleFilterMode: effectiveSettings.roleFilterMode.value,
-      roleFilterModel: effectiveSettings.roleFilterModel.value,
-      maxParallelFamilies: effectiveSettings.maxParallelFamilies.value,
-      crawlUserAgentProduct: effectiveSettings.crawlUserAgentProduct.value,
-      crawlUserAgentContact: effectiveSettings.crawlUserAgentContact.value,
-    },
+    settings: stored,
     effectiveSettings,
   };
 }
@@ -588,36 +561,6 @@ function setting<T>(
   return persisted
     ? { value, source: "persisted", activation, editable: true }
     : { value, source: "default", activation, editable: true };
-}
-
-function applyEnvironmentSetting<K extends EnvironmentManagedDiscoveryField>(
-  settings: EffectiveDiscoverySettings,
-  field: K,
-  environment: DiscoveryEnvironment,
-  value: EffectiveDiscoverySettings[K]["value"],
-): void {
-  const envKey = DISCOVERY_ENVIRONMENT_KEYS[field];
-  if (!Object.hasOwn(environment, envKey)) return;
-  settings[field] = {
-    value,
-    source: "environment",
-    activation: settings[field].activation,
-    editable: false,
-  } as EffectiveDiscoverySettings[K];
-}
-
-function assertWritableDiscoverySettings(
-  request: DiscoverySettingsUpdateRequest,
-  environment: DiscoveryEnvironment,
-): void {
-  for (const field of Object.keys(DISCOVERY_ENVIRONMENT_KEYS) as EnvironmentManagedDiscoveryField[]) {
-    const managed = field === "maxParallelFamilies"
-      ? Boolean(environment[DISCOVERY_ENVIRONMENT_KEYS[field]]?.trim())
-      : Object.hasOwn(environment, DISCOVERY_ENVIRONMENT_KEYS[field]);
-    if (managed && request[field] !== undefined) {
-      throw new DiscoverySettingManagedByEnvironmentError(field);
-    }
-  }
 }
 
 function recordValue(value: unknown): Record<string, unknown> {

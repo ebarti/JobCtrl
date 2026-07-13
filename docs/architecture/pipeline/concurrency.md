@@ -10,17 +10,23 @@ running in parallel, or hunting a throughput bottleneck.
 
 ```mermaid
 flowchart LR
-    CLI["CLI / API / schedule"] -->|start workflows| TQ["Task queue jobctrl-default"]
-    TQ --> W["Python worker process"]
+    CLI@{ icon: "tabler:player-play", form: "rounded", label: "CLI · API · schedule", h: 64 }
+    TQ@{ icon: "tabler:list-check", form: "rounded", label: "Task queue<br/>jobctrl-default", h: 64 }
+    W@{ icon: "tabler:brand-python", form: "rounded", label: "Python worker", h: 64 }
+    CLI -->|"start workflows"| TQ --> W
     subgraph W2["Worker capacity"]
-        SLOTS["Activity slots: JOBCTRL_MAX_CONCURRENT_ACTIVITIES (default 4)"]
-        EXEC["ThreadPoolExecutor: slots + 2 threads"]
+        SLOTS@{ icon: "tabler:layout-grid", form: "rounded", label: "Activity slots<br/>default 4", h: 64 }
+        EXEC@{ icon: "tabler:cpu", form: "rounded", label: "Thread pool<br/>slots + 2", h: 64 }
     end
+    D@{ icon: "tabler:radar", form: "rounded", label: "Discover workflow<br/>per-source family", h: 64 }
+    P@{ icon: "tabler:git-merge", form: "rounded", label: "Job pipeline<br/>ordered stages", h: 64 }
+    A@{ icon: "tabler:send", form: "rounded", label: "Apply workflow<br/>single-flight per job", h: 64 }
+    BUDGET@{ icon: "tabler:currency-dollar", form: "rounded", label: "Spend preflight", h: 64 }
     W --- W2
-    W --> D["DiscoverWorkflow: per-family activities, sequential by default (gated parallel)"]
-    W --> P["JobPipelineWorkflow: stages in order, child workflows for discover / apply"]
-    W --> A["ApplyWorkflow: single-flight per job id"]
-    BUDGET["check_spend_budget preflight"] -.->|blocks over-budget starts| D & P & A
+    W --> D
+    W --> P
+    W --> A
+    BUDGET -.->|"blocks over-budget starts"| D & P & A
 
     class CLI,W,SLOTS,EXEC,D,P,A,BUDGET py
     class TQ infra
@@ -33,17 +39,17 @@ A single long-lived worker process (`jobctrl worker`) polls the
 its capacity, both fixed at worker startup in
 `infrastructure/temporal/worker.py`:
 
-- **Activity slots** — `JOBCTRL_MAX_CONCURRENT_ACTIVITIES` (default `4`):
-  the maximum number of Temporal activities running at once, across all
-  workflows.
+- **Activity slots** — the `worker_activity_slots` Setting in `config.json`
+  (default `4`): the maximum number of Temporal activities running at once,
+  across all workflows.
 - **Executor threads** — a worker-owned `ThreadPoolExecutor` sized
   `slots + 2`, so blocking stage work never spills into the process default
   executor.
 
 The worker heartbeat records both values, `GET /v1/health` returns them, and
 the Settings page shows them, so the running capacity is always inspectable.
-Changing capacity means setting the environment variable and restarting the
-worker — it is process configuration, not a runtime setting.
+Changing `worker_activity_slots` in Settings writes `config.json`; restart the
+worker to apply the new capacity.
 
 Two knobs that look like Temporal concurrency but are not:
 
@@ -58,7 +64,8 @@ Two knobs that look like Temporal concurrency but are not:
 
 - **DiscoverWorkflow** plans sources once (`plan_discovery_sources`), then runs
   the `discovery_source_family` activities **one family at a time by default**
-  (`JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES=1`). This is deliberate isolation:
+  (`max_parallel_families=1` in Discovery Runtime's SQLite-backed settings).
+  This is deliberate isolation:
   each family gets its own activity-level timeout, heartbeat, and retry policy,
   and a family failure is recorded (`families_failed`) while the run continues to
   the next family. Raising the cap runs families concurrently (R9 Phase 3,
@@ -97,8 +104,8 @@ Two knobs that look like Temporal concurrency but are not:
   best-effort (a start failure is logged and left for the fan-out backstop,
   never mistaken for an enrichment failure).
 - **Parallel source families (R9 Phase 3, gated, default off).** Families are
-  processed in batches of `JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES` (default
-  `1` = sequential = today's behavior). With a value > 1, that many families'
+  processed in batches of the Discovery Runtime `max_parallel_families` value
+  (default `1` = sequential = today's behavior). With a value > 1, that many families'
   **source crawls** run concurrently (`asyncio.gather` over the batch); the
   batch's streaming enrichment + score-only fan-out then runs **once** afterward,
   so enrichment (which drains globally) never runs concurrently and concurrent
@@ -121,16 +128,16 @@ Two knobs that look like Temporal concurrency but are not:
 
 | Bound | Mechanism | Where |
 | --- | --- | --- |
-| Activity slots | `JOBCTRL_MAX_CONCURRENT_ACTIVITIES`, executor `slots + 2` | `infrastructure/temporal/worker.py` |
-| Parallel discovery families | `JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES` (default `1`) | `infrastructure/temporal/concurrency.py`, `discovery/workflow.py` |
+| Activity slots | Settings `worker_activity_slots`, executor `slots + 2` | `config.json`, `infrastructure/temporal/worker.py` |
+| Parallel discovery families | Discovery Runtime `max_parallel_families` (default `1`) | SQLite, `infrastructure/temporal/concurrency.py`, `discovery/workflow.py` |
 | LLM spend | `check_spend_budget` preflight stops spendful workflows at the daily ceiling | [Spend Ceiling](operations.md#spend-ceiling) |
 | Retries | per-activity retry policies from the error taxonomy | [Envelope & Activities](envelope.md) |
-| Worker readiness | worker-backed API actions return 503 until a healthy heartbeat exists | [Runtime Boundaries](../runtime.md) |
+| Worker readiness | worker-backed API actions return 503 until a healthy heartbeat exists | [Runtime & Processes](../runtime.md) |
 | Apply single-flight | per-job workflow id + submit-intent checkpoint | [Stage Walkthrough](stages.md#apply) |
 
 ### Worker-Capacity Analysis (Parallel Families)
 
-`JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES` is off by default (`1`) because
+Discovery Runtime `max_parallel_families` is off by default (`1`) because
 browser/resource contention is the first-class risk of running families
 concurrently: there is operational history of uncontrolled browser concurrency
 destroying long runs. For a chosen cap `M`:
@@ -138,7 +145,7 @@ destroying long runs. For a chosen cap `M`:
 - **Peak activity slots.** Up to `M` `discovery_source_family` activities run at
   once, competing with the interleaved enrichment + fan-out + per-job
   `JobPreparationWorkflow`s from Phases 1–2 for the same
-  `JOBCTRL_MAX_CONCURRENT_ACTIVITIES` slots (default 4). Temporal queues the
+  `worker_activity_slots` setting (default 4). Temporal queues the
   excess, so `M` above the slot count buys nothing. **Keep `M` ≤ activity
   slots**, and leave headroom for the streamed prep work.
 - **Peak concurrent browsers.** Enrichment runs once per batch (never

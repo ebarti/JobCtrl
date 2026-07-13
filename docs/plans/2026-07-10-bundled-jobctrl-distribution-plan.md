@@ -133,7 +133,7 @@ payload from clean builds before any packaged-size claim is published.
 
 | Current source-install component | Observed logical footprint / count |
 | --- | --- |
-| pnpm workspace | 85 unique direct JavaScript packages (44 runtime-direct, 43 development-direct, with cross-workspace overlap); 1,480 lock records; approximately 897 MiB in the preserved source observation |
+| pnpm workspace | 87 unique direct JavaScript packages (44 runtime-direct, 45 development-direct, with cross-workspace overlap); 1,482 lock records; approximately 897 MiB in the preserved source observation |
 | Python worker environment | 18 core-runtime, 4 provider-runtime, and 6 development direct dependencies; 103 uv lock records; approximately 909 MiB in the preserved source observation |
 | Playwright browsers | Node Playwright 1.59.1 revision 1217 plus Python Playwright 1.58.0 revision 1208; approximately 1.0 GiB combined |
 | uv-managed Python | approximately 319 MiB when uv must provision Python |
@@ -143,9 +143,9 @@ payload from clean builds before any packaged-size claim is published.
 
 The direct-dependency counts above are the current checked-in values in
 `source-baseline.json`. They supersede the original planning count and the
-intermediate Phase 0 count: the checked-in audit now reports 85 unique direct
+intermediate Phase 0 count: the checked-in audit now reports 87 unique direct
 JavaScript packages, 44 runtime-direct packages, 43 development-direct
-packages, 1,480 pnpm lock records, and 103 uv lock records. The footprint
+packages, 1,482 pnpm lock records, and 103 uv lock records. The footprint
 observations remain historical and directional; their mixed accounting context
 is recorded separately from those reproducible counts.
 

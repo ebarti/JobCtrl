@@ -664,6 +664,9 @@ export const DEMO_READ_MODEL = {
     settings: {
       ok: true,
       settings: {
+        minFitScore: 7,
+        autoApply: false,
+        applyApprovalRequired: true,
         boards: ["indeed", "linkedin"],
         resultsPerSite: 12,
         hoursOld: 72,
@@ -677,6 +680,9 @@ export const DEMO_READ_MODEL = {
         source: "database",
       },
       effectiveSettings: {
+        minFitScore: { value: 7, source: "persisted", activation: "next_run", editable: true },
+        autoApply: { value: false, source: "persisted", activation: "next_poll", editable: true },
+        applyApprovalRequired: { value: true, source: "persisted", activation: "next_apply_job", editable: true },
         boards: { value: ["indeed", "linkedin"], source: "persisted", activation: "next_run", editable: true },
         resultsPerSite: { value: 12, source: "persisted", activation: "next_run", editable: true },
         hoursOld: { value: 72, source: "persisted", activation: "next_run", editable: true },
@@ -1474,7 +1480,7 @@ export const DEMO_READ_MODEL = {
     credentials: {
       ok: true,
       store: {
-        kind: "macos_keychain",
+        kind: "config_and_macos_keychain",
         available: false,
         unavailableReason: "unsupported_platform",
         requiresWorkerRestart: true,
@@ -1488,11 +1494,6 @@ export const DEMO_READ_MODEL = {
   settings: {
     ok: true,
     settings: {
-      targetRole: "Platform systems lead",
-      locationFilter: "Distributed",
-      minFitScore: 7,
-      autoApply: false,
-      applyApprovalRequired: true,
       applyConcurrency: 1,
       workerActivitySlots: 4,
       dailyBudgetUsd: 20,
@@ -1504,10 +1505,9 @@ export const DEMO_READ_MODEL = {
       applyTimeoutSeconds: 900,
       scoreCriteria: "Synthetic demonstration criteria.",
       targetCriteria: "Synthetic demonstration target.",
-      preferredModels: { claude: "sonnet" },
+      preferredModels: { claude: "claude-sonnet-5" },
     },
     effectiveSettings: {
-      llmModelOverride: { value: null, source: "default", activation: "next_workflow", editable: true },
       dailyBudgetUsd: { value: 20, source: "persisted", activation: "live", editable: true },
       applyConcurrency: { value: 1, source: "persisted", activation: "next_poll", editable: true },
       workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
@@ -1520,7 +1520,7 @@ export const DEMO_READ_MODEL = {
       scoreCriteria: { value: "Synthetic demonstration criteria.", source: "persisted", activation: "next_run", editable: true },
       targetCriteria: { value: "Synthetic demonstration target.", source: "persisted", activation: "next_run", editable: true },
     },
-    paths: { settingsPath: "browser-local demo settings" },
+    paths: { configPath: "browser-local demo config" },
   },
   contacts: {
     list: {

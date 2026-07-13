@@ -27,7 +27,7 @@ from jobctrl.runtime import (
     provider_runtime_home,
 )
 
-ANALYSIS_LEGS_ENV = "JOBCTRL_ANALYSIS_LEGS"
+ANALYSIS_LEGS_CONFIG_KEY = "analysis_legs"
 CODEX_BIN_ENV = "JOBCTRL_CODEX_BIN"
 CLAUDE_BIN_ENV = "JOBCTRL_CLAUDE_BIN"
 
@@ -124,17 +124,12 @@ def parse_enabled_analysis_legs(raw: str | None) -> tuple[str, ...]:
         if value not in normalized:
             normalized.append(value)
     if not normalized:
-        raise ValueError(f"{ANALYSIS_LEGS_ENV} must name at least one analysis leg")
+        raise ValueError(f"{ANALYSIS_LEGS_CONFIG_KEY} must name at least one analysis leg")
     return tuple(leg for leg in ANALYSIS_LEG_ORDER if leg in normalized)
 
 
-def enabled_analysis_legs(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
-    """Return analysis legs from env, saved UI policy, or the all-legs default."""
-    source = _env(env)
-    if ANALYSIS_LEGS_ENV in source:
-        return parse_enabled_analysis_legs(source.get(ANALYSIS_LEGS_ENV))
-    if env is not None:
-        return parse_enabled_analysis_legs(None)
+def enabled_analysis_legs() -> tuple[str, ...]:
+    """Return analysis legs from config.json or the all-legs default."""
     from jobctrl import config
 
     return config.get_analysis_legs()
@@ -870,7 +865,7 @@ def probe_analysis_setup(env: Mapping[str, str] | None = None) -> list[ProbeResu
 
     values = _env(env)
     try:
-        legs = enabled_analysis_legs(values)
+        legs = enabled_analysis_legs()
     except ValueError as exc:
         return [ProbeResult("analysis legs enabled", False, str(exc))]
     provider_pairs = (
@@ -917,7 +912,7 @@ def core_llm_ready(env: Mapping[str, str] | None = None) -> bool:
 
 
 __all__ = [
-    "ANALYSIS_LEGS_ENV",
+    "ANALYSIS_LEGS_CONFIG_KEY",
     "ANALYSIS_LEG_ORDER",
     "CLAUDE_BIN_ENV",
     "CODEX_BIN_ENV",

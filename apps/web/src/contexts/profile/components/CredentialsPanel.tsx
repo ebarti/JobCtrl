@@ -42,7 +42,7 @@ export function CredentialsPanel() {
   const configured = (keys: readonly CredentialKey[]) =>
     keys.some((key) => {
       const source = credentials.find((entry) => entry.key === key)?.effectiveSource;
-      return source === "environment" || source === "keychain";
+      return source === "environment" || source === "keychain" || source === "config";
     });
   const claudeConfigured = configured(CLAUDE_KEYS);
   const googleConfigured = configured(GOOGLE_KEYS);
@@ -96,7 +96,7 @@ export function CredentialsPanel() {
                 }
               />
             </ProviderCard>
-            {store.available ? (
+            {store.available || store.unavailableReason === "unsupported_platform" ? (
               <>
                 <ProviderCard
                   description="Choose one direct or third-party Claude Agent SDK authentication route."
@@ -109,6 +109,7 @@ export function CredentialsPanel() {
                     configured={claudeConfigured}
                     currentMode={claudeCurrentMode}
                     environmentManagedKeys={environmentManagedKeys}
+                    secretStorageAvailable={store.available}
                   />
                 </ProviderCard>
                 <ProviderCard
@@ -122,6 +123,7 @@ export function CredentialsPanel() {
                     configured={googleConfigured}
                     currentMode={googleCurrentMode}
                     environmentManagedKeys={environmentManagedKeys}
+                    secretStorageAvailable={store.available}
                   />
                 </ProviderCard>
               </>
@@ -174,7 +176,7 @@ function ProviderSetupNotice({
   if (store.unavailableReason === "unsupported_platform") {
     return (
       <div className="banner credential-store-notice credential-store-notice--guidance">
-        Guided secret storage is available only with macOS Keychain. Configure the same variables in the worker environment on this platform.
+        Non-secret provider settings remain editable in config.json. API-key entry is unavailable until this platform has a supported secure-storage adapter; externally authenticated cloud routes remain available.
       </div>
     );
   }
@@ -188,7 +190,7 @@ function ProviderSetupNotice({
   return (
     <div className="banner credential-store-notice credential-store-notice--guidance">
       <span>
-        Claude and Google settings saved here stay in macOS Keychain. Restart JobCtrl after a change so its API provider process and worker reload Keychain values.
+        Provider modes and non-secret connection fields are saved in config.json. API keys stay in macOS Keychain. Restart JobCtrl after a change so provider processes reload both sources.
       </span>
       {providerStatusError ? (
         <span className="provider-status-warning" role="status">
@@ -452,6 +454,11 @@ function providerOwnership(
   const ownedKeys = new Set<CredentialKey>(keys);
   const entries = credentials.filter((entry) => ownedKeys.has(entry.key));
   if (entries.some((entry) => entry.effectiveSource === "environment")) return "launch environment";
+  if (
+    entries.some((entry) => entry.effectiveSource === "config") &&
+    entries.some((entry) => entry.effectiveSource === "keychain")
+  ) return "config.json + macOS Keychain";
+  if (entries.some((entry) => entry.effectiveSource === "config")) return "config.json";
   if (entries.some((entry) => entry.effectiveSource === "keychain")) return "macOS Keychain";
   if (status?.mode && status.mode !== "api_key") return "external cloud credential chain";
   if (entries.some((entry) => entry.effectiveSource === "inspection_unknown")) return "inspection unavailable";
@@ -477,7 +484,7 @@ function inferConfiguredMode(
   fallback: string | null | undefined,
 ): string | null | undefined {
   const configuredModes = modeKeys.flatMap(([key, mode]) =>
-    ["environment", "keychain"].includes(credentials.find((entry) => entry.key === key)?.effectiveSource ?? "")
+    ["environment", "keychain", "config"].includes(credentials.find((entry) => entry.key === key)?.effectiveSource ?? "")
       ? [mode]
       : [],
   );

@@ -15,7 +15,7 @@ export type {
   ArtifactSummary,
   ArtifactsListInput,
   CredentialsResponse,
-  DashboardSettings,
+  JobCtrlSettings,
   DashboardSummary,
   DigestAcknowledgeRequest,
   DigestAcknowledgeResponse,
@@ -106,6 +106,7 @@ export { useApplicationOutcomesQuery } from "./hooks/useApplicationOutcomesQuery
 export { useArtifactDetailQuery } from "./hooks/useArtifactDetailQuery.js";
 export { useArtifactsListQuery } from "./hooks/useArtifactsListQuery.js";
 export { useDashboardSummaryQuery } from "./hooks/useDashboardSummaryQuery.js";
+export { useDiscoverySettingsQuery } from "./hooks/useDiscoverySettingsQuery.js";
 export { useAcknowledgeDigestMutation, useDigestQuery } from "./hooks/useDigestQuery.js";
 export { useResumeReviewDraftQuery } from "./hooks/useResumeReviewDraftQuery.js";
 export {

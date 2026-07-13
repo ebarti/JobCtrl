@@ -16,6 +16,8 @@
 import { nextTick, onMounted, onUnmounted, ref } from "vue";
 import { MERMAID_DARK, MERMAID_LIGHT } from "./mermaid-theme";
 
+type MermaidApi = (typeof import("mermaid"))["default"];
+
 const props = defineProps({
   graph: { type: String, required: true },
   id: { type: String, required: true },
@@ -28,9 +30,21 @@ const diagramLayout = ref<"balanced" | "scroll">("balanced");
 let observer: MutationObserver | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let renderToken = 0;
+let iconPacksRegistered = false;
 
 const MIN_LABEL_HEIGHT = 12;
 const MAX_SCROLL_WIDTH = 1440;
+
+function registerIconPacks(mermaid: MermaidApi): void {
+  if (iconPacksRegistered) return;
+  mermaid.registerIconPacks([
+    {
+      name: "tabler",
+      loader: () => import("@iconify-json/tabler").then((module) => module.icons),
+    },
+  ]);
+  iconPacksRegistered = true;
+}
 
 function svgSize(svgElement: SVGSVGElement): { width: number; height: number } | null {
   const values = (svgElement.getAttribute("viewBox") ?? "")
@@ -87,11 +101,12 @@ async function renderChart() {
   const token = ++renderToken;
   try {
     const { default: mermaid } = await import("mermaid");
+    registerIconPacks(mermaid);
     const dark = document.documentElement.classList.contains("dark");
     // initialize() fully resets config each call, so palette switches are clean.
     mermaid.initialize(structuredClone(dark ? MERMAID_DARK : MERMAID_LIGHT));
     const code = decodeURIComponent(props.graph);
-    const rendered = await mermaid.mermaidAPI.render(props.id, code);
+    const rendered = await mermaid.render(props.id, code);
     if (token !== renderToken) return; // a newer render superseded this one
     // Salt forces v-html to re-apply when mermaid re-renders into an identical
     // string after a theme toggle removed the node out of Vue's sight.

@@ -13,7 +13,7 @@ function withTempApp(options: { estimateTable?: boolean } = {}) {
   seedDatabase(dbPath, options);
   const app = buildApp({
     dbPath,
-    settingsPath: path.join(dir, "dashboard.json"),
+    configPath: path.join(dir, "config.json"),
   });
   return {
     app,

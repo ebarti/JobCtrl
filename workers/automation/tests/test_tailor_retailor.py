@@ -453,7 +453,7 @@ def test_tailor_cli_passes_tailoring_model_controls(monkeypatch):
     assert captured["kwargs"]["tailor_judge_min_score"] == 0.9
 
 
-def test_tailor_cli_preserves_omitted_judge_min_score_for_env_default(monkeypatch):
+def test_tailor_cli_preserves_omitted_judge_min_score_for_saved_default(monkeypatch):
     runner = CliRunner()
     captured = {}
 
@@ -461,7 +461,6 @@ def test_tailor_cli_preserves_omitted_judge_min_score_for_env_default(monkeypatc
         captured["stage"] = stage
         captured["kwargs"] = kwargs
 
-    monkeypatch.setenv("TAILORING_JUDGE_MIN_SCORE", "0.77")
     monkeypatch.setattr("jobctrl.cli._run_stage_command", fake_run_stage_command)
 
     result = runner.invoke(
@@ -482,7 +481,7 @@ def test_tailor_cli_preserves_omitted_judge_min_score_for_env_default(monkeypatc
     assert captured["kwargs"]["tailor_judge_min_score"] is None
 
 
-def test_tailor_policy_prefers_explicit_judge_min_score_over_env(monkeypatch):
+def test_tailor_policy_prefers_explicit_judge_min_score_over_legacy_environment(monkeypatch):
     monkeypatch.setenv("TAILORING_JUDGE_MIN_SCORE", "0.3")
 
     policy = _build_llm_policy(tailor_judge_min_score=0.9)
@@ -490,8 +489,11 @@ def test_tailor_policy_prefers_explicit_judge_min_score_over_env(monkeypatch):
     assert policy.judge_min_score == 0.9
 
 
-def test_tailor_policy_uses_env_judge_min_score_when_omitted(monkeypatch):
-    monkeypatch.setenv("TAILORING_JUDGE_MIN_SCORE", "0.77")
+def test_tailor_policy_uses_saved_judge_min_score_when_omitted(monkeypatch, tmp_path):
+    settings_path = tmp_path / "config.json"
+    settings_path.write_text('{"tailoring_judge_min_score": 0.77}', encoding="utf-8")
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(settings_path))
+    monkeypatch.setenv("TAILORING_JUDGE_MIN_SCORE", "0.3")
 
     policy = _build_llm_policy(tailor_judge_min_score=None)
 

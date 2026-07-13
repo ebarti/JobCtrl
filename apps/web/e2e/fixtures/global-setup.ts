@@ -5,7 +5,7 @@ import path from "node:path";
 interface SeedReport {
   appDir: string;
   dbPath: string;
-  settingsPath: string;
+  configPath: string;
 }
 
 function findRepoRoot(start: string): string {

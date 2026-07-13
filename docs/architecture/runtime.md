@@ -1,4 +1,4 @@
-# Runtime Boundaries
+# Runtime & Processes
 
 JobCtrl runs as four long-lived local processes, plus a `jobctrl rpc`
 subprocess the TypeScript API spawns on demand. This page walks each runtime
@@ -218,10 +218,10 @@ The provider stack as wired in `apps/web/src/main.tsx` (top-down):
 
 ```mermaid
 flowchart LR
-  BOOT["Bootstrap<br/>main.tsx · ports · tenant · query client"]
-  REALTIME["Realtime<br/>EventStreamProvider · invalidation router"]
-  PRESENT["Presentation providers<br/>theme · density · tooltip · toaster"]
-  APP["Application<br/>router · AppShell · routes · views"]
+  BOOT@{ icon: "tabler:rocket", form: "rounded", label: "Bootstrap<br/>main.tsx · ports · tenant · query client", h: 64 }
+  REALTIME@{ icon: "tabler:broadcast", form: "rounded", label: "Realtime<br/>event stream · invalidation router", h: 64 }
+  PRESENT@{ icon: "tabler:palette", form: "rounded", label: "Presentation<br/>theme · density · feedback", h: 64 }
+  APP@{ icon: "tabler:layout-dashboard", form: "rounded", label: "Application<br/>router · shell · routes · views", h: 64 }
 
   BOOT --> REALTIME --> PRESENT --> APP
 
@@ -238,15 +238,15 @@ in `shared/providers/`.
 
 ```mermaid
 flowchart LR
-  Worker["Python worker<br/>+ apps/api writes"]
+  Worker@{ icon: "tabler:brand-python", form: "rounded", label: "Python worker<br/>+ API writes", h: 64 }
   Events[("job_events<br/>(SQLite)")]
-  Endpoint["GET /v1/events/stream<br/>(text/event-stream;<br/>COALESCE tenant filter)"]
-  ES["EventSource<br/>(browser auto-reconnect via Last-Event-ID)"]
-  Provider["EventStreamProvider"]
-  Parser["parseDomainEvent<br/>(Zod-validated DomainEvent)"]
-  Router["InvalidationRouter<br/>Record&lt;DomainEvent['eventType'], InvalidationHandler&gt;"]
-  Keys["Query-key registry<br/>(jobsKeys / dashboardKeys / artifactsKeys / …)"]
-  Cache["TanStack Query cache<br/>invalidateQueries / setQueryData"]
+  Endpoint@{ icon: "tabler:api", form: "rounded", label: "SSE endpoint<br/>GET /v1/events/stream", h: 64 }
+  ES@{ icon: "tabler:browser", form: "rounded", label: "EventSource<br/>browser reconnect", h: 64 }
+  Provider@{ icon: "tabler:antenna-bars-5", form: "rounded", label: "Event stream provider", h: 64 }
+  Parser@{ icon: "tabler:braces", form: "rounded", label: "Typed event parser<br/>Zod validation", h: 64 }
+  Router@{ icon: "tabler:route", form: "rounded", label: "Invalidation router", h: 64 }
+  Keys@{ icon: "tabler:key", form: "rounded", label: "Query-key registry", h: 64 }
+  Cache@{ icon: "tabler:database-cog", form: "rounded", label: "TanStack Query cache", h: 64 }
 
   Worker --> Events
   Events --> Endpoint
@@ -392,12 +392,12 @@ is not a runtime secret read performed by the API:
   JobCtrl-owned Codex App Server SDK's live `model/list` without shelling out
   or returning account data. Ready Google
   uses the authenticated `google-genai` live model list for Gemini-key or
-  Vertex/ADC configuration. Claude returns the SDK's provider-safe `sonnet`,
-  `opus`, and `haiku` aliases with `source=provider_aliases`; it does not claim
-  a live cross-platform enumeration. Unready providers return no models.
+  Vertex/ADC configuration. Ready Claude reads the `models` catalog returned by
+  the same Claude Agent SDK runtime initialization used for its configured API
+  or cloud route. All three use `source=live`; unready providers return no models.
 - A `preferredModels` settings patch is validated against that current ready
   catalog before `writeSettingsConfig` merges the canonical `preferred_models`
-  object into `dashboard.json`. Clears do not require readiness. Persistence
+  object into `config.json`. Clears do not require readiness. Persistence
   stores provider/model IDs only and remains separate from credentials.
 - Provider-consuming Python CLI, RPC, and worker startup paths call
   `config.load_env()`. After env files are loaded, it considers the same fixed
@@ -414,19 +414,18 @@ is not a runtime secret read performed by the API:
 ### Configuration Resolution And Activation
 
 Launch controls are resolved at their owning boundary rather than through one
-global configuration object. Candidate Profile target search is canonical;
-legacy dashboard target-role/location fields are migration fallbacks. SQLite
-owns discovery runtime and scheduling. `dashboard.json` owns non-secret
-cross-process controls, model IDs, AI execution policy, and apply limits.
-Keychain/environment adapters own secrets, while browser capability and
-extension-token files own explicit browser adoption and pairing.
+global configuration object. SQLite owns every durable value composed on the
+Discovery page, including target search, runtime, scheduling, and Apply gates.
+`config.json` owns non-secret values under Settings, including cross-process
+controls, provider configuration, model IDs, AI execution policy, browser
+adoption metadata, and apply limits. Keychain owns actual secrets, while the
+copied browser profile and extension token remain protected separate artifacts.
 
-Where supported, precedence is explicit per-run input, environment compatibility
-override, saved value, then built-in default. Deny switches remain authoritative.
-API responses expose effective source, editability, and activation timing so the
-frontend can render environment-owned controls read-only and distinguish live,
-next-poll/run/workflow, and restart-required changes. The health heartbeat is
-the source of truth for active worker activity slots; `dashboard.json` holds the
+Normal settings resolve from the saved owner and then the built-in default;
+explicit per-workflow model input may override a saved provider preference.
+API responses expose source and activation timing so the frontend can
+distinguish live, next-poll/run/workflow, and restart-required changes. The health heartbeat is
+the source of truth for active worker activity slots; `config.json` holds the
 desired value until restart. Browser capability mutations and extension-token
 rotation are live, while Python Keychain consumers load secrets at process start.
 
@@ -452,17 +451,17 @@ server (`jobctrl rpc`) is the API-facing driving adapter.
 
 New `LlmAdapter` instances resolve a model without changing the established
 ready-provider order (Claude, Codex, Google): explicit non-default workflow
-model, then `LLM_MODEL`, then `preferred_models[selected_ready_provider]` from
-the dashboard path resolved through `JOBCTRL_DASHBOARD_CONFIG_PATH`, then the
-selected provider's SDK default. A saved ID cannot select another provider.
+model, then `preferred_models[selected_ready_provider]` from `config.json`, then
+the selected provider's SDK default. A saved ID cannot select another provider.
 Each `get_llm_adapter()` acquisition compares that effective `(provider, model)`
 selection under the singleton lock, reusing the process-stable selected provider
-instead of repeating SDK/readiness probes. A changed `LLM_MODEL` route or saved
-preference can replace the singleton for newly started work; provider auth and
+instead of repeating SDK/readiness probes. A changed saved preference can
+replace the singleton for newly started work; provider auth and
 readiness changes require restart/reset. Previously returned adapters remain
 untouched for in-flight work. Employer-analysis wiring passes its leg-backed
-provider separately from model selection, so env and saved-model precedence is
-preserved while the actual synthesizer provider always has a draft leg.
+provider separately from model selection, so explicit and saved-model
+precedence is preserved while the actual synthesizer provider always has a
+draft leg.
 
 ### Crawl Politeness Gateway (R10)
 
@@ -509,11 +508,12 @@ split lives under `workers/automation/src/jobctrl/infrastructure/temporal/`:
   so workflow code can construct activity-input dataclasses at the workflow
   boundary (the sandbox proxy mechanism otherwise refuses to instantiate
   frozen dataclasses imported through `imports_passed_through()`). Activity
-  execution is bounded by `JOBCTRL_MAX_CONCURRENT_ACTIVITIES` (default `4`)
-  and a worker-owned `ThreadPoolExecutor(max_workers = concurrency + 2)`, so
-  blocking stage work no longer spills into the process default executor. The
-  worker heartbeat records both values for `GET /v1/health` and Settings-page
-  runtime visibility (see [Concurrency & Fan-out](pipeline/concurrency.md)).
+  execution is bounded by the `worker_activity_slots` value saved in
+  `config.json` (default `4`) and a worker-owned
+  `ThreadPoolExecutor(max_workers = slots + 2)`, so blocking stage work no
+  longer spills into the process default executor. The worker heartbeat records
+  both values for `GET /v1/health` and Settings-page runtime visibility (see
+  [Concurrency & Fan-out](pipeline/concurrency.md)).
 - `run_in_activity.py` — shared helper for running synchronous domain work from
   async Temporal activities while heartbeating. Cancellation sets a cooperative
   `threading.Event`, waits up to the activity's cancel deadline for the worker

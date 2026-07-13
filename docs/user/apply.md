@@ -1,0 +1,184 @@
+# Apply
+
+Apply is JobCtrl's employer-facing boundary. Use this page to configure the
+profile facts an application may use, review generated materials, choose the
+approval and automation mode, adopt an optional system browser, and connect
+Gmail for bounded verification or an explicitly approved email application.
+The practical review sequence is in [Daily Workflow](normal-flows.md); the
+enforcement model is in [Security](security.md#approval-and-control-gates).
+
+::: info Command spelling
+Command blocks on this page use the canonical installed spelling,
+`jobctrl <command>`. Contributors running from source can use the
+checkout-prefixed commands in [Local Development](../local-development.md).
+:::
+
+## Candidate Profile Application Fields
+
+Your active Candidate Profile is stored in the `jobctrl.db` SQLite database;
+there is no second JSON-backed runtime profile. Values entered through the
+Profile screen or `jobctrl init` are validated and saved to SQLite.
+
+The Candidate Profile includes these `application_attestations` fields for
+legal or screening questions that Apply automation is not allowed to infer:
+
+- `age_18_plus`
+- `background_check_consent`
+- `felony_conviction`
+- `previously_worked_at_employer`
+
+Use `true` or `false` only when the answer is explicitly true or false for you.
+Leave unknown answers as `null`; live apply automation fails with
+`missing_profile_data:<field>` instead of guessing. `jobctrl doctor` warns
+when required attestations are incomplete, and Apply Review surfaces the same
+missing fields before approval when the local profile row has unknown values.
+
+The profile also supports `application_preferences.how_heard` for common
+“How did you hear about us?” questions. It is a preference, not a legal
+attestation; leave it empty when there is no truthful answer.
+
+## Materials And Resume Rendering
+
+Use **Settings → Model selection → AI execution policy** for the
+primary/fallback tailoring generators, the tailoring judge model, and its
+minimum score. These non-secret desired values are stored in `config.json` and
+apply to newly started workflows. Provider credentials remain on the secret
+boundary described in [Configuration](configuration.md#llm-providers).
+
+The default resume renderer is HTML/CSS printed through Playwright. Apply Review
+loads the generated HTML source into a rich-text editor so text, formatting, and
+hyperlink edits, comments, validation, final PDF rendering, and layout boxes stay
+tied to the same material generation.
+
+## Approval And Automation Modes
+
+Apply automation can submit applications. Use dry runs and narrow targets before
+approving real submission. Persistence follows the editing surface: every value
+shown on `/discovery` is stored in SQLite, while every non-secret desired value
+under `/settings/**` is stored in
+[`config.json`](../api/profile-and-settings.md#config-json-field-reference).
+
+| Setting | Where to edit it | Storage | Default | What it does |
+| --- | --- | --- | --- | --- |
+| `autoApply` | **Discovery → Automation settings** | SQLite `jobctrl.db` | `false` | When `true`, a running worker keeps exactly one continuous Apply workflow active for eligible prepared jobs only while `auto-apply-browser` is explicitly ready. The loop appears in Runs as the standing apply loop. Turning it back off cancels that loop. |
+| `applyApprovalRequired` | **Discovery → Automation settings** | SQLite `jobctrl.db` | `true` | When `true`, live submit waits for Apply Review approval; the standing loop parks unapproved jobs as awaiting approval. When `false`, manually started live runs and the standing loop may submit eligible jobs without review. |
+| `minFitScore` | **Discovery → Automation settings** | SQLite `jobctrl.db` | `7` | Minimum score for jobs claimed by apply automation, including the standing loop. |
+| `applyConcurrency` | **Settings → General** | `config.json` | `1` | Number of concurrent apply workers used by apply automation. The standing loop re-reads this setting when it polls. |
+| `applyMaxBudgetUsd` | **Settings → General → Application runtime** | `config.json` | `5` | Per-application AI-agent budget cap in USD. |
+| `applyTimeoutSeconds` | **Settings → General → Application runtime** | `config.json` | `900` | Time limit in seconds for one application-agent run. |
+
+Combinations matter:
+
+- `autoApply: false`, `applyApprovalRequired: true` is the default supervised
+  mode: no standing loop exists and live submit requires Apply Review approval.
+- `autoApply: true`, `applyApprovalRequired: true` is a supervised standing
+  loop: eligible approved jobs can submit, and unapproved jobs are parked for
+  Apply Review.
+- `autoApply: true`, `applyApprovalRequired: false` is autonomous live submit:
+  the standing loop may submit eligible prepared jobs without human review,
+  while the minimum score, daily spend ceiling, at-most-once submit intent,
+  CAPTCHA fail-closed behavior, and dry-run guard still apply.
+
+The daily LLM ceiling and shared setting precedence remain in
+[Configuration](configuration.md#llm-spend-budget). Approval is bound to the
+current materials, profile, application URL, and qualifying dry-run evidence as
+described in [Security](security.md#apply-approval-is-required-by-default).
+
+## Browser Apply Automation
+
+Use **Settings → Browser & extension** to inspect the managed core browser,
+enable or disable auto-apply and authenticated LinkedIn capabilities, copy a
+LinkedIn profile with explicit consent, and pair or rotate the extension token.
+System browsers are never auto-detected: enabling either optional capability
+requires an explicit Chrome/Chromium executable path. The path is write-only
+and is not shown again. A source profile path is cleared after the copy request
+and is never returned, logged, or persisted. Rotating the pairing token takes
+effect immediately. Existing extensions are disconnected; the UI never exposes
+the token's file path. The CLI commands below remain an equivalent operator
+surface.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `JOBCTRL_CLAUDE_BIN` | unset | Explicit apply-agent Claude runtime override. By default apply uses a system `claude` when present, then the pinned Claude Agent SDK bundled binary. |
+| `CAPSOLVER_API_KEY` | unset | Configure from **Settings → Credentials** on macOS or the environment elsewhere. It explicitly opts a started apply run into sending a supported widget's site key and page URL to CapSolver. Restart the relevant Python worker after a Keychain edit. The owned solver keeps keys and tokens out of the model prompt; unsupported, unconfigured, or failed solves stop the apply path. |
+| `JOBCTRL_LINKEDIN_APPLY_RESOLVER` | capability-controlled | Set to `0` to disable authenticated LinkedIn outbound apply URL resolution after it has been explicitly enabled. It cannot enable the feature by itself. |
+| `JOBCTRL_LINKEDIN_APPLY_CHROME_PROFILE` | browser default | Chrome profile name inside the resolver user-data directory. |
+| `JOBCTRL_LINKEDIN_APPLY_HEADLESS` | visible Chrome | Set to `1` to run the resolver headless. |
+
+The source checkout installs managed Playwright Chromium for discovery,
+enrichment, and PDF rendering. The bundled release contains exactly one managed
+Playwright Chromium headless shell for those core paths and no full
+Chrome/Chromium application. System Chrome/Chromium is optional in both modes
+and is never auto-detected or adopted for authenticated operations. Non-secret
+desired capability choices, including the adopted executable configuration,
+saved under **Settings → Browser & extension** are stored in `config.json`:
+
+```bash
+jobctrl capability list
+jobctrl capability enable auto-apply-browser --browser-path /path/to/Chrome
+jobctrl capability enable authenticated-linkedin-browser --browser-path /path/to/Chrome \
+  --copy-profile-from /path/to/Chrome-profile --consent-copy-profile
+jobctrl capability disable auto-apply-browser
+```
+
+The managed optional browser-pack choice intentionally reports unavailable until
+JobCtrl has a signed pack supply chain; the command does not download an
+unsigned browser. Authenticated LinkedIn resolution remains unavailable until a
+separate, explicitly consented copy of an existing profile exists under
+`$JOBCTRL_DIR/browser-profiles/linkedin-apply-url-resolver`. JobCtrl never
+persists the source-profile path, and `--yes` cannot imply profile-copy consent.
+
+Capability changes are live through `/v1/browser-capabilities`. The extension
+pairing token remains a separate private local artifact managed through
+`/v1/extension/pairing-token`, and copied browser-profile contents remain under
+`$JOBCTRL_DIR/browser-profiles/`; neither is embedded in `config.json`.
+
+## Gmail Connector And Sending Boundary
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `JOBCTRL_GMAIL_DIR` | `~/.jobctrl/gmail` | First-party Gmail connector auth directory. |
+| `JOBCTRL_GMAIL_OAUTH_CLIENT_PATH` | `$JOBCTRL_GMAIL_DIR/oauth-client.json` | Google OAuth Desktop client file. |
+| `JOBCTRL_GMAIL_TOKEN_PATH` | `$JOBCTRL_GMAIL_DIR/token.json` | Token written by `jobctrl gmail-auth`. |
+
+Authenticate with:
+
+```bash
+jobctrl gmail-auth
+jobctrl doctor
+```
+
+Before running the first command, enable the Gmail API in a Google Cloud
+project, create an OAuth **Desktop app** client, and save its downloaded JSON as
+`$JOBCTRL_GMAIL_OAUTH_CLIENT_PATH`. The command opens Google's consent flow and
+writes a private local token to `$JOBCTRL_GMAIL_TOKEN_PATH`; `jobctrl doctor`
+then re-checks readiness.
+
+The connector requests `gmail.readonly` and `gmail.send`. Read-only access is
+used for bounded verification-code and outcome lookups. Send access is used
+only for the owned email-application path after a dry-run records the recipient
+and attachment candidate and Apply Review approves that exact binding. Raw
+Gmail bodies stay local and are not copied into events, telemetry, broad
+projections, or logs.
+
+To disconnect, delete the local token and revoke the OAuth client's access in
+your Google Account's third-party access controls. Re-run `jobctrl gmail-auth`
+to grant access again. Removing only the local token prevents JobCtrl reuse but
+does not revoke Google's server-side grant.
+
+## Outreach Follow-Ups
+
+Outreach follow-ups are **surfaced-only reminders** — JobCtrl never sends and
+has no outreach-send capability. Their posture:
+
+- **Conservative cadence defaults.** When you schedule a follow-up without picking
+  a date, JobCtrl suggests one **7 calendar days after the application was
+  submitted** for the first nudge, and **14 calendar days** for a subsequent nudge
+  if you have logged no reply. Every suggested date is **fully editable per
+  thread** — the suggestion is only a starting point.
+- **Default-off automation.** Any optional recurring follow-up reminder is
+  **disabled by default** (`reminders_enabled = false`, mirroring discovery
+  `scheduling_enabled`). Even when enabled it only *surfaces* due items in the
+  **Follow-ups** list and badge — it never sends and never acts on your behalf.
+- **A follow-up is due** purely as a read-time computation over its date and the
+  clock; marking one done or dismissing it is always your explicit action.

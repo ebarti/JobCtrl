@@ -81,7 +81,7 @@ function withTempApp(generator?: OutreachDraftGenerator) {
   db.close();
   const app = buildApp({
     dbPath,
-    settingsPath: path.join(dir, "dashboard.json"),
+    configPath: path.join(dir, "config.json"),
     requireHealthyWorkerForActions: false,
     ...(generator ? { outreachDraftGenerator: generator } : {}),
   });

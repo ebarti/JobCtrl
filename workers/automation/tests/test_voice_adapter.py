@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from jobctrl.domain.materials.voice import VoiceRequest
+from jobctrl.infrastructure.materials import voice_adapter
 from jobctrl.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter
 
 
@@ -43,6 +44,23 @@ class ResultMessage:
 class _FakeClaudeOptions:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
+
+
+def _isolated_sdk_options() -> dict[str, object]:
+    return {
+        "cwd": "/tmp/jobctrl-test",
+        "env": {
+            "CLAUDE_CONFIG_DIR": "/tmp/jobctrl-test/claude_home/config",
+            "CLAUDE_CODE_OAUTH_TOKEN": "",
+        },
+        "extra_args": {"bare": None},
+        "setting_sources": [],
+    }
+
+
+@pytest.fixture(autouse=True)
+def _stub_authenticated_sdk_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(voice_adapter, "bundled_claude_sdk_options", _isolated_sdk_options)
 
 
 def _fake_query(
@@ -104,6 +122,9 @@ async def test_passes_voice_schema_empty_tools_and_no_turn_cap() -> None:
     assert opts["tools"] == []  # built-in file/shell tools are absent
     assert opts["allowed_tools"] == []  # no tools are auto-approved
     assert opts["output_format"]["type"] == "json_schema"
+    assert opts["setting_sources"] == []
+    assert opts["extra_args"] == {"bare": None}
+    assert opts["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == ""
     # The schema is the VoicePayload schema (prose-only: executive_profile + experience).
     props = opts["output_format"]["schema"]["properties"]
     assert "executive_profile" in props and "experience_updates" in props

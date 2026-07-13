@@ -11,6 +11,7 @@ export type PythonInvocation =
 
 export interface PythonRuntimeContext {
   readonly appDir: string;
+  readonly configPath?: string;
 }
 
 export interface ResolvedPythonCommand {
@@ -59,6 +60,7 @@ export function createSourcePythonRuntime(
         cwd: context.appDir,
         env: runtimeEnvironment(environment, context.appDir, {
           JOBCTRL_RUNTIME_MODE: "source",
+          ...(context.configPath ? { JOBCTRL_CONFIG_PATH: context.configPath } : {}),
         }),
       };
     },
@@ -95,6 +97,7 @@ export function createBundledPythonRuntime(
         env: bundledRuntimeEnvironment(environment, context.appDir, {
           JOBCTRL_PAYLOAD_DIR: payloadDir,
           JOBCTRL_RUNTIME_MODE: "bundled",
+          ...(context.configPath ? { JOBCTRL_CONFIG_PATH: context.configPath } : {}),
           PLAYWRIGHT_BROWSERS_PATH: path.join(payloadDir, "chromium"),
         }),
       };

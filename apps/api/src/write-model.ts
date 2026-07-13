@@ -24,23 +24,9 @@ import {
 } from "@jobctrl/domain-types";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { matchingJobKeys, readSettingsConfig } from "./read-model.js";
-import {
-  managedDashboardSetting,
-  type EnvironmentManagedDashboardField,
-} from "./settings-config.js";
+import { updateConfigObject } from "./config-file.js";
 
 export class InputError extends Error {}
-
-export class SettingManagedByEnvironmentError extends InputError {
-  readonly source = "environment" as const;
-
-  constructor(
-    readonly field: EnvironmentManagedDashboardField,
-    readonly activation: NonNullable<ReturnType<typeof managedDashboardSetting>>,
-  ) {
-    super(`${field} is managed by the launch environment and cannot be changed here.`);
-  }
-}
 
 export interface RetryFailedJobTarget {
   readonly jobUrl: string;
@@ -642,110 +628,45 @@ export function permanentlyDeleteJobs(db: SqliteDatabase, request: BulkJobMutati
 }
 
 export function writeSettingsConfig(
-  paths: { settingsPath: string },
+  paths: { configPath: string },
   request: SettingsUpdateRequest,
-  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): SettingsResponse {
-  const next = readJsonObject(paths.settingsPath);
-  let wrote = false;
+  updateConfigObject(paths.configPath, (next) => {
+    let wrote = false;
+    const assign = (key: string, value: unknown) => {
+      next[key] = value;
+      wrote = true;
+    };
 
-  for (const field of [
-    "workerActivitySlots",
-    "analysisLegs",
-    "tailoringGeneratorModels",
-    "tailoringJudgeModel",
-    "tailoringJudgeMinScore",
-    "applyMaxBudgetUsd",
-    "applyTimeoutSeconds",
-  ] as const) {
-    const activation = managedDashboardSetting(field, environment);
-    if (request[field] !== undefined && activation) {
-      throw new SettingManagedByEnvironmentError(field, activation);
-    }
-  }
-
-  const assign = (key: string, value: unknown) => {
-    next[key] = value;
-    wrote = true;
-  };
-
-  if (request.targetRole !== undefined) {
-    assign("target_role", request.targetRole);
-  }
-  if (request.locationFilter !== undefined) {
-    assign("location_filter", request.locationFilter);
-  }
-  if (request.minFitScore !== undefined) {
-    assign("min_fit_score", request.minFitScore);
-  }
-  if (request.autoApply !== undefined) {
-    assign("auto_apply", request.autoApply);
-  }
-  if (request.applyApprovalRequired !== undefined) {
-    assign("apply_approval_required", request.applyApprovalRequired);
-  }
-  if (request.applyConcurrency !== undefined) {
-    assign("apply_concurrency", request.applyConcurrency);
-  }
-  if (request.workerActivitySlots !== undefined) {
-    assign("worker_activity_slots", request.workerActivitySlots);
-  }
-  if (request.dailyBudgetUsd !== undefined) {
-    assign("daily_budget_usd", request.dailyBudgetUsd);
-  }
-  if (request.analysisLegs !== undefined) {
-    assign("analysis_legs", request.analysisLegs);
-  }
-  if (request.tailoringGeneratorModels !== undefined) {
-    assign("tailoring_generator_models", request.tailoringGeneratorModels);
-  }
-  if (request.tailoringJudgeModel !== undefined) {
-    assign("tailoring_judge_model", request.tailoringJudgeModel);
-  }
-  if (request.tailoringJudgeMinScore !== undefined) {
-    assign("tailoring_judge_min_score", request.tailoringJudgeMinScore);
-  }
-  if (request.applyMaxBudgetUsd !== undefined) {
-    assign("apply_max_budget_usd", request.applyMaxBudgetUsd);
-  }
-  if (request.applyTimeoutSeconds !== undefined) {
-    assign("apply_timeout_seconds", request.applyTimeoutSeconds);
-  }
-  if (request.scoreCriteria !== undefined) {
-    assign("score_criteria", request.scoreCriteria);
-  }
-  if (request.targetCriteria !== undefined) {
-    assign("target_criteria", request.targetCriteria);
-  }
-  if (request.preferredModels !== undefined) {
-    const rawCurrent = isRecord(next.preferred_models)
-      ? next.preferred_models
-      : isRecord(next.preferredModels)
-        ? next.preferredModels
-        : {};
-    const preferredModels: Record<string, string> = {};
-    for (const provider of ["codex", "claude", "google"] as const) {
-      const current = rawCurrent[provider];
-      if (typeof current === "string" && current.trim() && current.trim().length <= 160) {
-        preferredModels[provider] = current.trim();
+    if (request.applyConcurrency !== undefined) assign("apply_concurrency", request.applyConcurrency);
+    if (request.workerActivitySlots !== undefined) assign("worker_activity_slots", request.workerActivitySlots);
+    if (request.dailyBudgetUsd !== undefined) assign("daily_budget_usd", request.dailyBudgetUsd);
+    if (request.analysisLegs !== undefined) assign("analysis_legs", request.analysisLegs);
+    if (request.tailoringGeneratorModels !== undefined) assign("tailoring_generator_models", request.tailoringGeneratorModels);
+    if (request.tailoringJudgeModel !== undefined) assign("tailoring_judge_model", request.tailoringJudgeModel);
+    if (request.tailoringJudgeMinScore !== undefined) assign("tailoring_judge_min_score", request.tailoringJudgeMinScore);
+    if (request.applyMaxBudgetUsd !== undefined) assign("apply_max_budget_usd", request.applyMaxBudgetUsd);
+    if (request.applyTimeoutSeconds !== undefined) assign("apply_timeout_seconds", request.applyTimeoutSeconds);
+    if (request.scoreCriteria !== undefined) assign("score_criteria", request.scoreCriteria);
+    if (request.targetCriteria !== undefined) assign("target_criteria", request.targetCriteria);
+    if (request.preferredModels !== undefined) {
+      const rawCurrent = isRecord(next.preferred_models) ? next.preferred_models : {};
+      const preferredModels: Record<string, string> = {};
+      for (const provider of ["codex", "claude", "google"] as const) {
+        const current = rawCurrent[provider];
+        if (typeof current === "string" && current.trim() && current.trim().length <= 160) {
+          preferredModels[provider] = current.trim();
+        }
+        const update = request.preferredModels[provider];
+        if (update === null) delete preferredModels[provider];
+        else if (update !== undefined) preferredModels[provider] = update;
       }
-      const update = request.preferredModels[provider];
-      if (update === null) {
-        delete preferredModels[provider];
-      } else if (update !== undefined) {
-        preferredModels[provider] = update;
-      }
+      assign("preferred_models", preferredModels);
     }
-    assign("preferred_models", preferredModels);
-    delete next.preferredModels;
-  }
 
-  if (!wrote) {
-    throw new InputError("At least one settings field is required.");
-  }
-
-  writeJson(paths.settingsPath, next);
-  return readSettingsConfig(paths, environment);
+    if (!wrote) throw new InputError("At least one settings field is required.");
+  });
+  return readSettingsConfig(paths);
 }
 
 function updateLegacyJobColumnsForReset(

@@ -15,12 +15,12 @@ Unless overridden by `JOBCTRL_DIR`, the local authority root is
 | --- | --- |
 | `jobctrl.db` plus WAL/SHM | Canonical profile, jobs, discovery settings, events, projections, materials metadata, reviews, contacts, outcomes, and workflow rows. |
 | `temporal.db` plus WAL/SHM | Bundled Temporal history; native lifecycle treats it and `jobctrl.db` as one restore pair. |
-| `dashboard.json` | Non-secret runtime settings including spend/capacity, apply controls, scoring guidance, provider-scoped model IDs, AI execution policy, and compensation source policy. |
+| `config.json` | Non-secret Settings values including spend/capacity, scoring guidance, provider metadata, provider-scoped model IDs, AI execution policy, compensation source policy, and browser-adoption metadata. |
 | `.env`, `gmail/` | Plaintext environment credentials and Gmail OAuth client/token state. |
 | `codex_home/` | Stable JobCtrl-owned Codex state; auth is outside the prompt-readable `workspace/` subtree. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated and separately acquired provider runtime state. |
 | `tailored_resumes/`, `cover_letters/`, `logs/` | Generated material and logs registered by SQLite metadata where applicable. |
-| `browser-capabilities.json`, `browser-profiles/`, `extension-capability-token`, `chrome-workers/`, `apply-workers/` | Browser adoption/consent, extension pairing, copied profiles, and browser/apply execution state. |
+| `browser-profiles/`, `extension-capability-token`, `chrome-workers/`, `apply-workers/` | Consented copied profiles, extension pairing, and browser/apply execution state. Browser-adoption metadata is in `config.json`. |
 | `backups/` and legacy `resume.*` / style files | User-created database snapshots and pre-migration resume inputs. |
 
 Developer supervisors additionally use checkout-local `.dev/` process, log,
@@ -34,18 +34,25 @@ diagram shows the main relationships; the table below names the exact tables.
 
 ```mermaid
 flowchart LR
-    PROFILE["Candidate Profile"] --> SCORE["Scoring + fit evidence"]
-    JOB["Jobs + stage state"] --> SCORE
-    SCORE --> MATERIALS["Materials + artifacts"]
-    PROFILE --> MATERIALS
-    MATERIALS --> APPLY["Apply reviews + outcomes"]
-    JOB --> OUTREACH["Contacts + outreach"]
-    JOB --> OPS["Events + read projections"]
-    APPLY --> OPS
-    OUTREACH --> OPS
-    MATERIALS --> FILES["Generated local files"]
+    PROFILE@{ icon: "tabler:user", form: "rounded", label: "Candidate<br/>Profile", h: 64 }
+    JOB@{ icon: "tabler:briefcase", form: "rounded", label: "Jobs +<br/>stage state", h: 64 }
+    SCORE@{ icon: "tabler:scale", form: "rounded", label: "Scoring +<br/>fit evidence", h: 64 }
+    MATERIALS@{ icon: "tabler:file-text", form: "rounded", label: "Materials +<br/>artifacts", h: 64 }
+    APPLY@{ icon: "tabler:shield-check", form: "rounded", label: "Apply reviews<br/>+ outcomes", h: 64 }
+    OUTREACH@{ icon: "tabler:message", form: "rounded", label: "Contacts +<br/>outreach", h: 64 }
+    OPS@{ shape: "cyl", label: "Events +<br/>read projections" }
+    FILES@{ shape: "docs", label: "Generated<br/>local files" }
 
-    class PROFILE,JOB,SCORE,MATERIALS,APPLY,OUTREACH,OPS,FILES store
+    PROFILE -->|evidence| SCORE
+    JOB -->|posting facts| SCORE
+    SCORE -->|fit context| MATERIALS
+    PROFILE -->|candidate facts| MATERIALS
+    MATERIALS -->|reviewable artifacts| APPLY
+    JOB -->|employer contacts| OUTREACH
+    JOB -->|events| OPS
+    APPLY -->|terminal events| OPS
+    OUTREACH -->|contact events| OPS
+    MATERIALS -->|writes| FILES
 ```
 
 Within the job-owned families, one `jobs` row (keyed by posting URL) is the hub:
@@ -66,9 +73,9 @@ SQLite in `~/.jobctrl/jobctrl.db` is the local source of truth for jobs,
 stage states, events, artifacts, normalized Candidate Profile data, profile
 rendering settings/template text, run visibility, apply-review decisions,
 application outcomes, linked email evidence, and outcome suggestions. The
-projection tables (above) are also stored here. Dashboard settings remain
-file-backed until their own storage migration. `dashboard.json` owns the daily
-budget, capacity/apply controls, scoring guidance, AI execution policy,
+projection tables (above) are also stored here. Discovery-page controls remain
+SQLite-backed. `config.json` owns non-secret Settings values: the daily
+budget, capacity controls, scoring guidance, provider configuration, AI execution policy,
 preferred model IDs, and Levels.fyi/Glassdoor enablement, access-basis, and
 licensed-feed coverage policy. Public Levels.fyi Markdown needs no credential.
 Credentials, feed paths/URLs, feed contents, and provider payloads do not belong
@@ -121,21 +128,21 @@ those projection columns only; it does not parse raw salary text on read.
 ```mermaid
 flowchart LR
     subgraph FS["Local filesystem (workspace dir)"]
-        DB[("jobctrl.db + -wal/-shm")]
-        ART["artifacts: resumes, cover letters, PDFs, imported PDFs"]
-        LOGS["logs incl. per-worker agent log"]
+        DB@{ shape: "cyl", label: "jobctrl.db<br/>+ -wal/-shm" }
+        ART@{ shape: "docs", label: "Artifacts<br/>resumes · letters · PDFs" }
+        LOGS@{ icon: "tabler:terminal-2", form: "rounded", label: "Logs<br/>including worker agent log", h: 64 }
     end
-    GEN["Materials / Apply stages"] -->|write files| ART
-    GEN -->|"register rows (job_artifacts, job_materials_artifacts)"| DB
-    APPLY["Apply launcher"] -->|"apply_log row in the same tx as the terminal event"| DB
-    APPLY -->|write| LOGS
-    DB -->|"artifact_list_projections"| API["TypeScript API"]
-    API --> WEB["Web app artifact views"]
+    GEN@{ icon: "tabler:file-text", form: "rounded", label: "Materials /<br/>Apply stages", h: 64 }
+    APPLY@{ icon: "tabler:send", form: "rounded", label: "Apply<br/>launcher", h: 64 }
+    API@{ icon: "tabler:api", form: "rounded", label: "TypeScript API", h: 64 }
+    WEB@{ icon: "tabler:browser", form: "rounded", label: "Web app<br/>artifact views", h: 64 }
 
-    class GEN,APPLY py
-    class API ts
-    class WEB ui
-    class DB,ART,LOGS store
+    GEN -->|writes files| ART
+    GEN -->|registers artifact rows| DB
+    APPLY -->|apply_log + terminal event transaction| DB
+    APPLY -->|writes| LOGS
+    DB -->|artifact_list_projections| API
+    API -->|artifact read models| WEB
 ```
 
 A file and its database registration are written together; the read model serves

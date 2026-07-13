@@ -48,6 +48,6 @@ export function ApplyRuntimeSettingsPanel() {
   );
 }
 
-function policyContext(source: "environment" | "persisted" | "default"): string {
-  return `${source === "environment" ? "Managed by the launch environment" : source === "persisted" ? "Saved setting" : "Using the default"}; applies to the next Apply job.`;
+function policyContext(source: "persisted" | "default"): string {
+  return `${source === "persisted" ? "Saved in config.json" : "Using the default"}; applies to the next Apply job.`;
 }

@@ -170,17 +170,17 @@ explicitly by finalize/reconciler) and the TypeScript `refreshProjections` (in
 the API). Both rebuild the same projection tables from the same events.
 
 ```mermaid
-flowchart LR
-    Events[("job_events (append-only)")]
-    Metrics[("operational_attempt_metrics")]
-    Stages[("job_stage_states")]
-    Agg[("aggregate tables")]
-    PB["ProjectionBuilder (Python worker)"]
-    RP["refreshProjections (TypeScript API)"]
-    Proj[("projection tables<br/>job_list / job_detail / dashboard /<br/>artifacts / apply_run / workflow_run")]
-    Api["TypeScript API read endpoints"]
-    SSE["GET /v1/events/stream (250ms poll)"]
-    UI["React + TanStack Query"]
+flowchart TB
+    Events@{ shape: cyl, label: "job_events<br/>append-only" }
+    Metrics@{ shape: cyl, label: "operational<br/>attempt metrics" }
+    Stages@{ shape: cyl, label: "job stage states" }
+    Agg@{ shape: cyl, label: "aggregate tables" }
+    PB@{ icon: "tabler:brand-python", form: "rounded", h: 64, label: "ProjectionBuilder<br/>Python worker" }
+    RP@{ icon: "tabler:refresh", form: "rounded", h: 64, label: "refreshProjections<br/>TypeScript API" }
+    Proj@{ shape: cyl, label: "projection tables<br/>jobs · dashboard · artifacts<br/>apply runs · workflow runs" }
+    Api@{ icon: "tabler:api", form: "rounded", h: 64, label: "TypeScript API<br/>read endpoints" }
+    SSE@{ icon: "tabler:radio", form: "rounded", h: 64, label: "Event stream<br/>250 ms poll" }
+    UI@{ icon: "tabler:layout-dashboard", form: "rounded", h: 64, label: "React views<br/>TanStack Query" }
 
     Events --> PB
     Events --> RP

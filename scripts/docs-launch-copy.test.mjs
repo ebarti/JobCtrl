@@ -163,6 +163,7 @@ test("launch provider guidance requires one of Codex, Claude, or Google", async 
 test("configuration docs match current routes, storage, and opt-in integrations", async () => {
   const readme = await read("README.md");
   const configuration = await read("docs/user/configuration.md");
+  const apply = await read("docs/user/apply.md");
   const dataAndSafety = await read("docs/user/data-and-safety.md");
   const security = await read("docs/user/security.md");
   const storage = await read("docs/architecture/storage.md");
@@ -170,16 +171,17 @@ test("configuration docs match current routes, storage, and opt-in integrations"
   const completeApi = await read("docs/api/complete-contract.md");
   const envExample = await read(".env.example");
   const normalizedConfiguration = configuration.replace(/\s+/g, " ");
+  const normalizedApply = apply.replace(/\s+/g, " ");
   const normalizedApi = completeApi.replace(/\s+/g, " ");
   const startHere = configuration.slice(
     configuration.indexOf("## Start Here"),
     configuration.indexOf("### How a setting becomes effective"),
   );
 
-  assert.match(normalizedConfiguration, /daily LLM budget is stored in `dashboard\.json`/i);
+  assert.match(normalizedConfiguration, /daily LLM budget is stored in `config\.json`/i);
   assert.doesNotMatch(configuration, /daily LLM budget is a preference stored in SQLite/i);
   assert.match(normalizedApi, /scheduling mutation boundary; `\/v1\/settings` does not own discovery cadence/i);
-  assert.match(normalizedApi, /configured `dailyBudgetUsd` from `dashboard\.json`/i);
+  assert.match(normalizedApi, /configured `dailyBudgetUsd` from `config\.json`/i);
 
   for (const [label, route] of [
     ["Profile", "/profile"],
@@ -188,31 +190,33 @@ test("configuration docs match current routes, storage, and opt-in integrations"
     ["Settings → General", "/settings"],
     ["Settings → Credentials", "/settings/credentials"],
     ["Settings → Model selection", "/settings/models"],
-    ["Settings → Browser & extension", "/settings/browser"],
   ]) {
     assert.ok(startHere.includes(`**${label}**`));
     assert.ok(startHere.includes(`\`${route}\``));
     assert.ok(!configuration.includes(`](${route})`));
   }
-  assert.match(configuration, /jobctrl capability enable auto-apply-browser/);
-  assert.match(configuration, /environment compatibility override → saved UI value → built-in default/);
+  assert.match(normalizedApply, /jobctrl capability enable auto-apply-browser/);
+  assert.match(
+    normalizedConfiguration,
+    /Environment variables are not an alternate persistence store for non-secret UI settings/,
+  );
   assert.match(configuration, /worker activity slots show desired versus active values/);
-  assert.match(configuration, /The path is write-only and is not shown again/);
-  assert.match(configuration, /Rotating the pairing token takes effect immediately/);
-  assert.match(configuration, /not a provider connection/i);
+  assert.match(normalizedApply, /The path is write-only and is not shown again/);
+  assert.match(normalizedApply, /Rotating the pairing token takes effect immediately/);
 
   for (const document of [readme, dataAndSafety, security, storage]) {
-    assert.match(document, /dashboard\.json/);
+    assert.match(document, /config\.json/);
+    assert.doesNotMatch(document, /dashboard\.json/);
     assert.match(document, /codex_home/);
-    assert.match(document, /browser-capabilities\.json/);
+    assert.doesNotMatch(document, /browser-capabilities\.json/);
   }
 
   assert.doesNotMatch(envExample, /CHROME_PATH|JOBCTRL_API_HOST|JOBCTRL_API_PORT|VITE_GOOGLE_MAPS_API_KEY|TEMPORAL_ADDRESS/);
   assert.match(envExample, /docs\/local-development\.md/);
   assert.match(envExample, /^# CAPSOLVER_API_KEY=$/m);
-  assert.match(configuration, /gmail\.readonly/);
-  assert.match(configuration, /gmail\.send/);
-  assert.match(configuration, /Removing only the local token.*does not revoke/is);
+  assert.match(apply, /gmail\.readonly/);
+  assert.match(apply, /gmail\.send/);
+  assert.match(apply, /Removing only the local token.*does not revoke/is);
 
   for (const document of [readme, configuration, dataAndSafety, security, observability]) {
     assert.match(document, /metadata-only/i);
@@ -226,7 +230,7 @@ test("runtime overrides stay in contributor documentation", async () => {
   const expectedRuntimeOverrides = [
     ["`JOBCTRL_DIR`", "`~/.jobctrl`"],
     ["`JOBCTRL_DB_PATH`", "`$JOBCTRL_DIR/jobctrl.db`"],
-    ["`JOBCTRL_DASHBOARD_CONFIG_PATH`", "`$JOBCTRL_DIR/dashboard.json`"],
+    ["`JOBCTRL_CONFIG_PATH`", "`$JOBCTRL_DIR/config.json`"],
     ["`JOBCTRL_API_HOST`", "`127.0.0.1`"],
     ["`JOBCTRL_API_PORT` / `PORT`", "`8766`"],
     ["`JOBCTRL_API_ALLOW_REMOTE_BIND`", "unset"],
@@ -239,7 +243,6 @@ test("runtime overrides stay in contributor documentation", async () => {
     ["`JOBCTRL_TEMPORAL_DB`", "`.dev/temporal/temporal.db`"],
     ["`TEMPORAL_ADDRESS`", "`localhost:7233`"],
     ["`TEMPORAL_NAMESPACE`", "`default`"],
-    ["`JOBCTRL_MAX_CONCURRENT_ACTIVITIES`", "`4`"],
     ["`JOBCTRL_API_SSE_POLL_MS`", "`250`"],
     ["`VITE_DEV_API_PROXY_TARGET`", "`http://127.0.0.1:8766`"],
     ["`VITE_DEMO_API_PROXY_TARGET`", "launcher-managed"],
@@ -247,7 +250,7 @@ test("runtime overrides stay in contributor documentation", async () => {
   ];
   const developerOnlyLocalDataVariables = [
     "JOBCTRL_DB_PATH",
-    "JOBCTRL_DASHBOARD_CONFIG_PATH",
+    "JOBCTRL_CONFIG_PATH",
     "JOBCTRL_API_HOST",
     "JOBCTRL_API_PORT",
     "JOBCTRL_API_ALLOW_REMOTE_BIND",

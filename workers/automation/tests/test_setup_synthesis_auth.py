@@ -47,7 +47,6 @@ def _prepare_codex_setup_test(
     app_dir: Path,
     source_home: Path,
 ) -> None:
-    monkeypatch.setenv("JOBCTRL_ANALYSIS_LEGS", "codex")
     monkeypatch.setenv("CODEX_HOME", str(source_home))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("CODEX_API_KEY", raising=False)
@@ -89,7 +88,6 @@ def _prepare_codex_setup_test(
 
 
 def test_setup_json_reports_any_provider_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("JOBCTRL_ANALYSIS_LEGS", "codex")
     monkeypatch.setattr(
         setup_probes,
         "probe_analysis_setup",
@@ -109,7 +107,6 @@ def test_setup_json_reports_any_provider_ready(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_setup_json_reports_none_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("JOBCTRL_ANALYSIS_LEGS", "codex")
     monkeypatch.setattr(
         setup_probes,
         "probe_analysis_setup",

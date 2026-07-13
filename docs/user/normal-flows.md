@@ -1,6 +1,10 @@
 ---
-pageClass: jh-user-guide-page jh-visual-doc jh-daily-workflow-page jh-outline-page
+pageClass: jh-visual-doc jh-daily-workflow-page jh-outline-page
 ---
+
+<script setup lang="ts">
+import DailyWorkflowJourney from "../.vitepress/theme/DailyWorkflowJourney.vue";
+</script>
 
 # Daily Workflow
 
@@ -17,28 +21,11 @@ use the checkout-prefixed commands documented in
 [Local Development](../local-development.md).
 :::
 
-```mermaid
-flowchart LR
-  subgraph Setup["One-time setup"]
-    Profile["Create your<br/>profile"] --> Configure["Configure<br/>discovery"]
-  end
-  subgraph Loop["Daily loop"]
-    Discover["Discover<br/>finds and prepares"] --> Review["Review<br/>jobs and scores"]
-    Review --> ApplyReview["Edit and approve<br/>materials"]
-    ApplyReview --> DryRun["Rehearse with<br/>a dry run"]
-    DryRun --> Submit["Approve live<br/>submission"]
-    Submit -. "next batch" .-> Discover
-  end
-  Configure --> Discover
+<DailyWorkflowJourney />
 
-  class Profile,Configure,Review,ApplyReview,Submit ui
-  class Discover,DryRun py
-```
-
-*Purple steps are yours; green steps are JobCtrl's. Setup happens once, the
-loop repeats. Under the hood, Discover runs Enrich, Score, and Materials for
-each eligible job. Live submission approval is bound to the current materials,
-profile version, application URL, and dry-run evidence.*
+Under the hood, Discover runs Enrich, Score, Tailor, and Cover work for each
+eligible job. Live submission approval is bound to the current materials,
+profile version, application URL, and dry-run evidence.
 
 <WorkflowSurfaceSelector />
 
@@ -80,6 +67,9 @@ for structured profile fields and resume review.
 
 </WorkflowSurfacePanel>
 
+[Candidate Profile](candidate-profile.md) defines which facts and preferences
+belong to the profile, how versions are used, and which later stages consume it.
+
 ## 2. Configure Discovery
 
 <WorkflowSurfacePanel surface="web">
@@ -111,9 +101,11 @@ work:
 jobctrl doctor
 ```
 
-Discovery targets and automation preferences are normally edited in the
-Discovery page and stored locally. Environment-backed settings, such as provider
-credentials and crawl politeness controls, are covered in
+Discovery targets and runtime preferences are normally edited on the Discovery
+page, and every field on that page persists in SQLite. [Discovery](discovery.md)
+explains how target controls compile into queries, when runtime and schedule
+changes activate, and how crawl politeness is enforced. Provider credentials,
+model policy, and the shared spend ceiling remain in
 [Configuration](configuration.md).
 
 </WorkflowSurfacePanel>
@@ -167,6 +159,9 @@ Internal stages such as Enrich and Score, and material generation (the `tailor`
 and `cover` commands), stay visible in job detail and diagnostics, but the
 user-facing preparation stage is Discover.
 
+[Enrichment & Extraction](enrichment-and-extraction.md) explains how captured
+postings become normalized, provenance-bearing job records before scoring.
+
 ## 4. Review Jobs
 
 <WorkflowSurfacePanel surface="web">
@@ -218,6 +213,10 @@ Use the job detail drawer to inspect:
 Failed preparation work can be retried per job or in bulk without automatically
 starting apply automation.
 
+[Scoring](scoring-and-employer-analysis.md) owns the fit
+decision model; [Compensation Evidence](compensation-evidence.md) owns the
+salary evidence shown alongside it.
+
 ## 5. Inspect The Evidence Map
 
 <WorkflowSurfacePanel surface="web">
@@ -265,6 +264,10 @@ web app before using anything.
 Generated material records are kept as audit history. Re-generation does not
 destroy the accepted material already in use; a replacement becomes active only
 after it validates and you approve it.
+
+[Materials & Tailoring](materials-and-tailoring.md) explains provenance,
+validation, accepted-artifact history, and the boundary between generation and
+human approval.
 
 ## 7. Generate Interview Prep (Beta)
 
@@ -370,7 +373,7 @@ anything.
 
 </WorkflowSurfacePanel>
 
-Auto apply is separate from a one-off dry run. When the Discovery automation
+Auto apply is separate from a one-off dry run. When the Apply automation
 setting `autoApply` is on, a running worker keeps one continuous Apply workflow
 active only after you explicitly enable `auto-apply-browser` with
 `jobctrl capability enable auto-apply-browser --browser-path /path/to/Chrome`;
@@ -387,8 +390,9 @@ Only approve real submission after inspecting the dry run, final materials,
 field mapping, blockers, and apply-run history. Submit approval is valid only
 for the materials generation, profile version, and application URL shown in
 Apply Review, and requires full dry-run evidence unless you explicitly accept a
-listed partial dry-run with its blocked channels. The full approval model is on
-the [Security](security.md) page.
+listed partial dry-run with its blocked channels. [Apply](apply.md) owns the
+application fields, material policy, automation modes, browser capability, and
+Gmail setup. The full approval model is on the [Security](security.md) page.
 
 ## 10. Inspect Progress
 
@@ -431,6 +435,9 @@ you pass `--acknowledge`, which marks the displayed digest as reviewed.
 *The Runs page lists workflow runs with status, mode, timing, and a link into the web interface of Temporal, the workflow engine.*
 
 </WorkflowSurfacePanel>
+
+[Outcomes & Feedback](outcomes-and-feedback.md) explains which application and
+interview facts become canonical outcomes and how analytics read them.
 
 ## 11. Keep Contacts (Optional)
 
@@ -502,6 +509,9 @@ transport of any kind, drafts terminate at copy/export, a thread only becomes
 follow-up data never affects scoring or apply decisions.
 
 </WorkflowSurfacePanel>
+
+[Contacts & Outreach](contacts-and-outreach.md) defines contact provenance,
+research confirmation, draft ownership, and the boundary around sending.
 
 <WorkflowSurfacePanel surface="cli">
 

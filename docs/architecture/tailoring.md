@@ -72,17 +72,29 @@ profile structure decides where generated text can go.
 ## End-to-End Flow
 
 ```mermaid
-flowchart LR
-    INPUTS["1. Plan<br/>job · profile · employer analysis · fit report"] --> DRAFT["2. Draft<br/>structured generator output"]
-    DRAFT --> CHECK["3. Validate<br/>schema · render · quality · judge"]
-    CHECK -->|repairable| DRAFT
-    CHECK --> VOICE["4. Refine<br/>optional voice pass"]
-    VOICE --> GATE["5. Protect<br/>fabrication + prose gates"]
-    GATE -->|reject or repair| DRAFT
-    GATE --> SAVE["6. Persist<br/>provenance · coverage · artifacts"]
+flowchart TB
+    INPUTS@{ icon: "tabler:clipboard-list", form: "rounded", label: "1. Plan<br/>job · profile · analysis · fit", h: 64 }
+    DRAFT@{ icon: "tabler:pencil", form: "rounded", label: "2. Draft<br/>structured output", h: 64 }
+    CHECK@{ icon: "tabler:shield-check", form: "rounded", label: "3. Validate<br/>schema · render · quality · judge", h: 64 }
+    VOICE@{ icon: "tabler:message", form: "rounded", label: "4. Refine<br/>optional voice pass", h: 64 }
+    GATE@{ icon: "tabler:shield-lock", form: "rounded", label: "5. Protect<br/>fabrication + prose gates", h: 64 }
+    SAVE@{ shape: "docs", label: "6. Persist<br/>provenance · coverage · artifacts" }
 
-    class INPUTS,DRAFT,CHECK,VOICE,GATE py
-    class SAVE store
+    subgraph CREATE["Create a grounded candidate"]
+      direction LR
+      INPUTS -->|tailoring plan| DRAFT
+      DRAFT -->|candidate| CHECK
+    end
+
+    subgraph APPROVE["Refine and approve"]
+      direction LR
+      VOICE -->|refined text| GATE
+      GATE -->|approved artifact| SAVE
+    end
+
+    CHECK -->|accepted draft| VOICE
+    CHECK -.->|repairable issue| DRAFT
+    GATE -.->|reject or repair| DRAFT
 ```
 
 The loop is deliberate: a candidate is persisted as approved only after the

@@ -14,77 +14,130 @@
   sensitive-data handling rules.
 - [`../CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md): community standards.
 
-## End-User Guides
+## Published Guide
 
-- [`user/getting-started.md`](user/getting-started.md): install, configure, run,
-  and seed a disposable workspace.
-- [`user/configuration.md`](user/configuration.md): user-facing profile and
-  provider choices, local data, spend controls, discovery, browser automation,
-  Gmail, compensation sources, observability, and test/documentation
-  workspaces.
-- [`user/normal-flows.md`](user/normal-flows.md): expected product flows from
-  setup through review and apply.
-- [`user/data-and-safety.md`](user/data-and-safety.md): local data boundaries,
-  generated artifacts, and open-source sharing guidance.
-- [`user/security.md`](user/security.md): security model, what leaves the
-  machine, approval/control gates, credential storage, and the apply-agent
-  threat model.
-- [`user/screenshots.md`](user/screenshots.md): public screenshot generation
-  command and covered UI surfaces.
+The documentation site exposes one guide to every reader. The folders below
+are stable source and URL locations, not separate audience silos. Each concept
+has one defining page; other pages summarize it briefly and link to that owner.
 
-## Developer Docs
+### Start Here
 
-- [`developer/README.md`](developer/README.md): contributor entry point and
-  architecture/QA reading path.
-- [`developer/security.md`](developer/security.md): trust boundary and threat
-  model, locality enforcement, apply-path containment, secret/data hygiene, the
-  `release_check.py` gate, and hosted-future security seams.
-- [`architecture/index.md`](architecture/index.md): system shape,
-  bounded-context composition, core data flow, and local commands — the System
-  Architecture section map.
-- [`architecture/runtime.md`](architecture/runtime.md): runtime boundaries —
-  frontend, TypeScript product API, Python automation engine, local Temporal.
-- [`architecture/observability.md`](architecture/observability.md): the
-  OpenTelemetry → Langfuse export of LLM, workflow, and JSON-RPC spans.
-- [`architecture/storage.md`](architecture/storage.md): SQLite layout and
-  generated local files.
-- [`architecture/scoring.md`](architecture/scoring.md): retrieval before
-  scoring and the fit-assessment policy.
-- [`architecture/materials.md`](architecture/materials.md): employer analysis,
-  per-bullet provenance, voice pass + final audit, and the tailoring
-  explanation read model.
-- [`architecture/read-model.md`](architecture/read-model.md): apply feedback
-  loop and read-model projections.
-- [`architecture/pipeline/`](architecture/pipeline/index.md):
-  workflow-by-workflow pipeline execution on Temporal — envelope and activities
-  (`envelope.md`), concurrency and fan-out (`concurrency.md`), stage
-  walkthrough with sequence diagrams (`stages.md`), and operations,
-  persistence, and events (`operations.md`).
+- [`index.md`](index.md): documentation homepage and product entry points.
+- [`comparison.md`](comparison.md): evidence-backed comparison with alternative
+  job-search workflows and tools.
+- [`user/screenshots.md`](user/screenshots.md): visual product tour.
+- [`user/getting-started.md`](user/getting-started.md): install, first-run setup,
+  provider readiness, first workflow, update, rollback, and removal.
+- [`user/normal-flows.md`](user/normal-flows.md): the complete supervised daily
+  workflow and the web/CLI surfaces for each step.
+
+### The Job-Search Lifecycle
+
+- [`user/candidate-profile.md`](user/candidate-profile.md): canonical candidate
+  facts, preferences, attestations, versions, and downstream consumers.
+- [`user/discovery.md`](user/discovery.md): target search, source registry,
+  runtime controls, schedules, crawl policy, and SQLite ownership.
+- [`user/enrichment-and-extraction.md`](user/enrichment-and-extraction.md): job
+  capture, extraction, normalization, deduplication, snapshots, and provenance.
+- [`user/scoring-and-employer-analysis.md`](user/scoring-and-employer-analysis.md):
+  fit evidence, requirement assessment, policy, corrections, and ranking; it
+  consumes the employer analysis owned by Discovery.
+- [`user/materials-and-tailoring.md`](user/materials-and-tailoring.md): generated
+  materials, provenance, validation, review, and accepted-artifact history.
+- [`user/apply.md`](user/apply.md): application fields, approval and automation
+  modes, browser capabilities, Gmail, and follow-up controls.
+- [`user/outcomes-and-feedback.md`](user/outcomes-and-feedback.md): application
+  outcomes, timelines, analytics, feedback, and projection boundaries.
+- [`user/contacts-and-outreach.md`](user/contacts-and-outreach.md): contact facts,
+  supervised research, provenance, outreach drafts, and sending boundaries.
+- [`user/compensation-evidence.md`](user/compensation-evidence.md): compensation
+  extraction, public and licensed sources, normalization, and confidence.
+
+### Configuration & Trust
+
+- [`user/configuration.md`](user/configuration.md): non-secret settings,
+  credentials, effective-value ownership, provider/model choices, and budgets.
+- [`user/data-and-safety.md`](user/data-and-safety.md): local data inventory,
+  outbound data boundaries, retention, and responsible use.
+- [`user/security.md`](user/security.md): user-visible guarantees, hardening,
+  approval gates, credential storage, and reporting.
+- [`developer/security.md`](developer/security.md): threat model, enforcement
+  points, apply-path containment, release gates, and future security seams.
+
+### Build & Verify
+
+- [`developer/README.md`](developer/README.md): contributor start and reading
+  router.
+- [`developer/repository-and-ownership-map.md`](developer/repository-and-ownership-map.md):
+  repository surfaces, bounded-context owners, and change routing.
+- [`local-development.md`](local-development.md): install, run, build, lint,
+  troubleshooting, and documentation-screenshot workflows.
+- [`developer/documentation-standards.md`](developer/documentation-standards.md):
+  concept ownership, page structure, terminology, diagrams, and stable surfaces.
+- [`local-reliability-qa.md`](local-reliability-qa.md): validation-path chooser.
+- [`developer/qa/regression-catalog.md`](developer/qa/regression-catalog.md):
+  risk families, invariants, and regression proof.
+- [`developer/qa/browser-smoke.md`](developer/qa/browser-smoke.md): browser smoke
+  assertions.
+- [`developer/qa/frontend.md`](developer/qa/frontend.md): frontend test layers
+  and accessibility bar.
+- [`developer/first-run-ttfv.md`](developer/first-run-ttfv.md): first-run
+  time-to-value validation protocol.
+- [`developer/qa/complete-checklist.md`](developer/qa/complete-checklist.md):
+  exhaustive local QA checklist.
+
+### How JobCtrl Works
+
+- [`architecture/index.md`](architecture/index.md): current system map and
+  bounded-context composition.
+- [`architecture/runtime.md`](architecture/runtime.md): process ownership,
+  lifetimes, readiness, and TypeScript-to-Python boundaries.
+- [`architecture/pipeline/`](architecture/pipeline/index.md): Temporal workflow
+  catalog, stage execution, activities and retries, concurrency, scheduling,
+  operations, and recovery.
+- [`architecture/data-events-and-projections.md`](architecture/data-events-and-projections.md):
+  the distinction between domain state, events, projections, and telemetry.
+- [`architecture/storage.md`](architecture/storage.md): physical SQLite and file
+  authorities.
+- [`architecture/read-model.md`](architecture/read-model.md): apply feedback and
+  projection details.
+- [`architecture/scoring.md`](architecture/scoring.md): scoring algorithm,
+  evidence, policy, and calibration.
+- [`architecture/materials.md`](architecture/materials.md): employer analysis
+  and cross-artifact auditability.
+- [`architecture/tailoring.md`](architecture/tailoring.md): resume-tailoring
+  prompt and validation contract.
+- [`architecture/contracts-types-and-api-boundaries.md`](architecture/contracts-types-and-api-boundaries.md):
+  schema ownership and cross-process contract boundaries.
+- [`architecture/frontend/`](architecture/frontend/index.md): frontend system
+  overview; numbered deep references are listed below.
+- [`architecture/observability.md`](architecture/observability.md): telemetry,
+  traces, propagation, and Langfuse export.
+
+### Reference
+
+- [`local-ts-api.md`](local-ts-api.md): route-family chooser and cross-cutting
+  TypeScript API conventions.
+- [`api/profile-and-settings.md`](api/profile-and-settings.md),
+  [`api/jobs-and-materials.md`](api/jobs-and-materials.md), and
+  [`api/operations-and-events.md`](api/operations-and-events.md): focused API
+  semantics by route family.
+- [`api/complete-contract.md`](api/complete-contract.md): exhaustive wire-level
+  route, field, status, error, and Server-Sent Events contract.
 - [`architecture/domain-model/`](architecture/domain-model/index.md): canonical
-  DDD + hexagonal architecture (§1–§11 preserved across subpages): strategic
-  and tactical design, ports, integration, persistence, cloud seams, risks,
-  and glossary.
+  backend design (§1–§11), split into strategic design, tactical design, ports,
+  integration, persistence, explicitly future cloud seams, and reference.
 - [`architecture/frontend/`](architecture/frontend/index.md): canonical
-  frontend architecture (§1–§15 preserved across subpages): contexts, patterns,
-  state and ports, SSE realtime, integration, testing, folder structure, and
-  reference.
-- [`architecture/tailoring.md`](architecture/tailoring.md): resume tailoring
-  prompt contract, generated JSON shape, validation/judge/fabrication gates,
-  provenance, audit metadata, and safe change points.
-- [`local-development.md`](local-development.md): setup, run, runtime
-  overrides, build, test, lint commands, and the synthetic
-  documentation-screenshot workflow.
-- [`developer/first-run-ttfv.md`](developer/first-run-ttfv.md): owner-run
-  real-path first-run time-to-value measurement protocol and generated record
-  commands.
-- [`local-ts-api.md`](local-ts-api.md): local TypeScript API overview and route
-  family map. Focused references live under [`api/`](api/), with the exhaustive
-  field-level reference in [`api/complete-contract.md`](api/complete-contract.md).
-- [`local-reliability-qa.md`](local-reliability-qa.md): QA command and checklist
-  chooser. Focused regression, browser, and frontend guides live under
-  [`developer/qa/`](developer/qa/), alongside the exhaustive checklist.
-- [`requirements.md`](requirements.md): product and technical requirements that
-  must stay true as implementation changes.
+  frontend design (§1–§15), split into contexts, structure, patterns, state and
+  ports, realtime, integration, testing, and reference.
+
+## Repository-Only Project Records
+
+These documents remain in the repository but are not separate site sections:
+
+- [`requirements.md`](requirements.md): product and technical invariants.
 - [`decisions.md`](decisions.md): accepted architecture decision records.
 - [`backlog.md`](backlog.md): detailed engineering backlog and deferred work.
-- [`plans/`](plans/): proposal and implementation records.
+- [`claims-ledger.md`](claims-ledger.md): launch-claim evidence and status.
+- [`plans/`](plans/): active proposals and immutable implemented-plan history.
+- [`incidents/`](incidents/): incident records and corrective actions.

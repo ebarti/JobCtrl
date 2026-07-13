@@ -1,14 +1,18 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { sampleSettingsResponse } from "../../../test/fixtures/projections.js";
+import {
+  sampleDiscoverySettingsResponse,
+  sampleSettingsResponse,
+} from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { renderWithProviders } from "../../../test/render.js";
 import {
-  DiscoveryAutomationSettingsForm,
   SettingsForm,
 } from "./settings-form.js";
 import type { SettingsResponse } from "../../operations/types.js";
+import { DiscoveryAutomationSettingsForm } from "../../discovery/components/DiscoveryAutomationSettingsPanel.js";
+import type { DiscoverySettingsResponse } from "@jobctrl/contracts";
 
 describe("<SettingsForm>", () => {
   afterEach(() => {
@@ -116,14 +120,14 @@ describe("<SettingsForm>", () => {
     expect(screen.getByText("saved; newer changes pending")).toBeInTheDocument();
   });
 
-  it("keeps an environment-managed worker value read-only and out of submissions", async () => {
+  it("keeps the saved worker value editable and reports restart state", async () => {
     const effectiveSettings = {
       ...sampleSettingsResponse.effectiveSettings,
       workerActivitySlots: {
         value: 9,
-        source: "environment",
+        source: "persisted",
         activation: "restart",
-        editable: false,
+        editable: true,
       } as const,
     };
     const updateSettings = vi.fn(async (): Promise<SettingsResponse> => ({
@@ -141,16 +145,14 @@ describe("<SettingsForm>", () => {
       { ports: buildTestPorts({ api: { updateSettings } }) },
     );
 
-    expect(screen.getByLabelText("Worker activity slots")).toHaveAttribute("readonly");
-    expect(screen.getByText(/Managed by the launch environment/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Worker activity slots")).not.toHaveAttribute("readonly");
+    expect(screen.getByText(/Saved in config.json; requires a worker restart/)).toBeInTheDocument();
     expect(screen.getByText(/Restart pending/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Daily LLM budget (USD)"), { target: { value: "30" } });
     fireEvent.click(screen.getByRole("button", { name: "save" }));
 
     await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.not.objectContaining({ workerActivitySlots: expect.anything() }),
-    );
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({ workerActivitySlots: 9 }));
   });
 });
 
@@ -161,7 +163,7 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
 
   it("renders Discovery automation controls without duplicated targeting filters", () => {
     const { container } = renderWithProviders(
-      <DiscoveryAutomationSettingsForm initial={sampleSettingsResponse.settings} />,
+      <DiscoveryAutomationSettingsForm initial={sampleDiscoverySettingsResponse} />,
     );
 
     expect(screen.getByLabelText("Minimum fit score")).toHaveValue(7);
@@ -178,14 +180,13 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
   });
 
   it("saves automation settings as a partial settings update", async () => {
-    const updateSettings = vi.fn(async (request): Promise<SettingsResponse> => ({
+    const updateDiscoverySettings = vi.fn(async (request): Promise<DiscoverySettingsResponse> => ({
       ok: true,
-      settings: { ...sampleSettingsResponse.settings, ...request },
-      effectiveSettings: sampleSettingsResponse.effectiveSettings,
-      paths: sampleSettingsResponse.paths,
+      settings: { ...sampleDiscoverySettingsResponse.settings, ...request },
+      effectiveSettings: sampleDiscoverySettingsResponse.effectiveSettings,
     }));
-    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleSettingsResponse.settings} />, {
-      ports: buildTestPorts({ api: { updateSettings } }),
+    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleDiscoverySettingsResponse} />, {
+      ports: buildTestPorts({ api: { updateDiscoverySettings } }),
     });
 
     fireEvent.change(screen.getByLabelText("Minimum fit score"), {
@@ -194,8 +195,8 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
     fireEvent.click(screen.getByLabelText("Auto apply"));
     fireEvent.click(screen.getByRole("button", { name: /^save automation settings$/i }));
 
-    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
-    expect(updateSettings).toHaveBeenCalledWith({
+    await waitFor(() => expect(updateDiscoverySettings).toHaveBeenCalledTimes(1));
+    expect(updateDiscoverySettings).toHaveBeenCalledWith({
       autoApply: true,
       applyApprovalRequired: true,
       minFitScore: 9,
@@ -203,7 +204,7 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
   });
 
   it("warns when live apply approval is disabled", async () => {
-    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleSettingsResponse.settings} />);
+    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleDiscoverySettingsResponse} />);
 
     fireEvent.click(
       screen.getByRole("checkbox", { name: /Require approval before live submit/i }),
@@ -215,7 +216,7 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
   });
 
   it("describes supervised and autonomous auto-apply combinations", async () => {
-    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleSettingsResponse.settings} />);
+    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleDiscoverySettingsResponse} />);
 
     expect(screen.getByRole("status")).toHaveTextContent(
       "Default supervised mode: no standing apply loop runs, and live submit requires Apply Review approval.",
@@ -223,7 +224,7 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
 
     fireEvent.click(screen.getByLabelText("Auto apply"));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Auto apply is supervised: a standing loop polls eligible jobs, and live submit waits for Apply Review approval.",
+      "Auto apply is supervised: the standing loop polls eligible jobs, and live submit waits for Apply Review approval.",
     );
 
     fireEvent.click(
@@ -235,7 +236,7 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
   });
 
   it("undos automation checkbox changes with the keyboard shortcut", async () => {
-    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleSettingsResponse.settings} />);
+    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleDiscoverySettingsResponse} />);
 
     const autoApply = screen.getByLabelText("Auto apply");
     fireEvent.click(autoApply);

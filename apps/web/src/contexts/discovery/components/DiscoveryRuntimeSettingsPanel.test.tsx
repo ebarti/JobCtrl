@@ -18,7 +18,7 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
     expect(screen.getAllByText(/requires a worker restart/).length).toBeGreaterThan(0);
   });
 
-  it("keeps environment-managed controls read-only and out of writes", async () => {
+  it("keeps SQLite-owned controls editable and includes changed values in writes", async () => {
     const user = userEvent.setup();
     const managed = {
       ...sampleDiscoverySettingsResponse,
@@ -27,9 +27,9 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
         ...sampleDiscoverySettingsResponse.effectiveSettings,
         maxParallelFamilies: {
           value: 4,
-          source: "environment" as const,
+          source: "persisted" as const,
           activation: "next_run" as const,
-          editable: false as const,
+          editable: true as const,
         },
       },
     };
@@ -41,14 +41,14 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
       } }),
     });
 
-    expect(await screen.findByLabelText("Parallel source families")).toHaveAttribute("readonly");
+    expect(await screen.findByLabelText("Parallel source families")).not.toHaveAttribute("readonly");
     await user.clear(screen.getByLabelText("Results per board"));
     await user.type(screen.getByLabelText("Results per board"), "25");
     await user.click(screen.getByRole("button", { name: "save runtime settings" }));
 
     await waitFor(() => expect(updateDiscoverySettings).toHaveBeenCalledTimes(1));
     expect(updateDiscoverySettings).toHaveBeenCalledWith(
-      expect.not.objectContaining({ maxParallelFamilies: expect.anything() }),
+      expect.objectContaining({ maxParallelFamilies: 4 }),
     );
   });
 

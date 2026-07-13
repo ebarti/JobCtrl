@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 from jobctrl.infrastructure.compensation.sqlite_market_repository import (
     COMPENSATION_FEED_POLICY,
@@ -78,7 +79,7 @@ class _FeedServer:
         self._thread.join(timeout=2)
 
 
-def test_licensed_feed_url_fetched_with_honest_user_agent() -> None:
+def test_licensed_feed_url_fetched_with_honest_user_agent(tmp_path: Path) -> None:
     feed = json.dumps(
         {
             "observations": [
@@ -94,16 +95,30 @@ def test_licensed_feed_url_fetched_with_honest_user_agent() -> None:
             ]
         }
     ).encode("utf-8")
+    settings_path = tmp_path / "config.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "compensation_sources": {
+                    "levels_fyi": {
+                        "enabled": True,
+                        "access_mode": "licensed_data_feed",
+                        "europe_coverage_confirmed": True,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     with _FeedServer(feed) as server:
         env = {
-            "JOBCTRL_LEVELS_FYI_ACCESS_MODE": "licensed_data_feed",
-            "JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE": "true",
             "JOBCTRL_LEVELS_FYI_OBSERVATIONS_URL": f"{server.base_url}/levels.json",
         }
         load_default_reported_compensation_observations(
             include_eurotoptech=False,
             env=env,
             opener=public_loopback_opener(),
+            settings_path=settings_path,
         )
     # The licensed URL feed was fetched through the gateway with the honest UA.
     assert server.seen_user_agents, "licensed feed URL was never fetched"

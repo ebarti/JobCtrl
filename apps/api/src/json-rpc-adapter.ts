@@ -33,6 +33,8 @@ import {
 export interface JsonRpcCallOptions {
   /** Working directory for the worker process (defaults to repo root). */
   appDir?: string;
+  /** Canonical non-secret settings file for the worker process. */
+  configPath?: string;
   /** Override the default ``uv`` binary. Useful for tests. */
   uvBinary?: string;
   /** Override the worker project directory. Useful for tests. */
@@ -69,6 +71,7 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
   private closed = false;
   private readonly options: {
     appDir: string;
+    configPath?: string;
     pythonRuntime: PythonRuntimeCommandResolver;
     requestTimeoutMs: number;
   };
@@ -76,6 +79,7 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
   constructor(options: JsonRpcCallOptions = {}) {
     this.options = {
       appDir: options.appDir ?? AUTOMATION_PROJECT_DIR,
+      ...(options.configPath ? { configPath: options.configPath } : {}),
       pythonRuntime:
         options.pythonRuntime ??
         createSourcePythonRuntime({
@@ -138,7 +142,10 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
 
     const command = this.options.pythonRuntime.resolve(
       { kind: "cli", args: ["rpc"] },
-      { appDir: this.options.appDir },
+      {
+        appDir: this.options.appDir,
+        ...(this.options.configPath ? { configPath: this.options.configPath } : {}),
+      },
     );
     const child = spawn(command.executable, command.argv, {
       cwd: command.cwd,
@@ -224,6 +231,7 @@ function dispatcherKey(options: JsonRpcCallOptions = {}): string {
     });
   return JSON.stringify({
     appDir: options.appDir ?? AUTOMATION_PROJECT_DIR,
+    configPath: options.configPath ?? null,
     pythonRuntime: pythonRuntime.id,
   });
 }

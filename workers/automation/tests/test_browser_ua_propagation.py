@@ -1,13 +1,13 @@
-"""R10 #316 High 1 — the owner-overridable honest UA reaches every browser surface.
+"""R10 #316 High 1 — the SQLite-owned honest UA reaches every browser surface.
 
 Before the fix, the three Playwright surfaces (``PlaywrightDetailPageFetcher``,
 ``smartextract.collect_page_intelligence``, ``detail.scrape_site_batch``) bound
 their page/context ``user_agent`` from an import-time ``default_honest_user_agent()``
-constant. That made ``JOBCTRL_CRAWL_UA_*`` env overrides invisible to the browser
+constant. That made Discovery's saved crawl identity invisible to the browser
 fetch, and — worse — the gateway would evaluate ``robots.txt`` as the *overridden*
 identity while the page fetched as the *default* one.
 
-Each test here sets an owner UA override, drives the surface through a gateway whose
+Each test here supplies the saved Discovery identity to a gateway whose
 robots port records the identity it is evaluated with, and asserts that the browser
 context/page was stamped with the SAME overridden string the gateway used for robots
 — i.e. robots identity == fetch identity == owner override, by construction. All
@@ -26,7 +26,7 @@ from jobctrl.domain.discovery.source_registry import (
     ENRICHMENT_CRAWL_POLICY,
     SMART_EXTRACT_EXPERIMENTAL_POLICY,
 )
-from jobctrl.domain.ports.politeness import RobotsVerdict, default_honest_user_agent
+from jobctrl.domain.ports.politeness import HonestUserAgent, RobotsVerdict, default_honest_user_agent
 from jobctrl.enrichment import detail
 from jobctrl.infrastructure.enrichment.playwright_fetcher import PlaywrightDetailPageFetcher
 from jobctrl.infrastructure.network import (
@@ -36,7 +36,7 @@ from jobctrl.infrastructure.network import (
     PublicUrlDecision,
     RunBudgetCounter,
 )
-from jobctrl.infrastructure.network.politeness import UA_CONTACT_ENV, UA_PRODUCT_ENV
+from jobctrl.infrastructure.network.politeness import resolve_honest_user_agent
 
 from .politeness_helpers import no_sleep_limiter
 
@@ -152,9 +152,13 @@ class _OfflineLlm:
         raise AssertionError("LLM tier must not run in these fixtures")
 
 
-def _owner_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(UA_PRODUCT_ENV, OWNER_PRODUCT)
-    monkeypatch.setenv(UA_CONTACT_ENV, OWNER_CONTACT)
+def _saved_discovery_identity() -> HonestUserAgent:
+    return resolve_honest_user_agent({
+        "crawl_user_agent": {
+            "product": OWNER_PRODUCT,
+            "contact": OWNER_CONTACT,
+        }
+    })
 
 
 def _allow_fetcher_url_safety(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -172,9 +176,12 @@ def _allow_smartextract_url_safety(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(smartextract, "validate_public_http_url", lambda _url: PublicUrlDecision(True))
 
 
-def _spy_gateway(robots: _UASpyRobots) -> PolitenessGateway:
-    # Constructed after the env override so its UA reflects the owner value.
-    return PolitenessGateway(robots=robots, rate_limiter=no_sleep_limiter())
+def _spy_gateway(robots: _UASpyRobots, user_agent: HonestUserAgent) -> PolitenessGateway:
+    return PolitenessGateway(
+        user_agent=user_agent,
+        robots=robots,
+        rate_limiter=no_sleep_limiter(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -185,10 +192,9 @@ def _spy_gateway(robots: _UASpyRobots) -> PolitenessGateway:
 def test_playwright_fetcher_context_uses_owner_overridden_ua(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _owner_override(monkeypatch)
     _allow_fetcher_url_safety(monkeypatch)
     robots = _UASpyRobots()
-    gateway = _spy_gateway(robots)
+    gateway = _spy_gateway(robots, _saved_discovery_identity())
     session = PolitenessSession(
         gateway,
         policy=ENRICHMENT_CRAWL_POLICY,
@@ -215,10 +221,9 @@ def test_playwright_fetcher_context_uses_owner_overridden_ua(
 
 
 def test_smartextract_page_uses_owner_overridden_ua(monkeypatch: pytest.MonkeyPatch) -> None:
-    _owner_override(monkeypatch)
     _allow_smartextract_url_safety(monkeypatch)
     robots = _UASpyRobots()
-    gateway = _spy_gateway(robots)
+    gateway = _spy_gateway(robots, _saved_discovery_identity())
     session = PolitenessSession(
         gateway,
         policy=SMART_EXTRACT_EXPERIMENTAL_POLICY,
@@ -245,7 +250,6 @@ def test_smartextract_page_uses_owner_overridden_ua(monkeypatch: pytest.MonkeyPa
 def test_enrichment_batch_context_uses_owner_overridden_ua(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _owner_override(monkeypatch)
     _allow_detail_url_safety(monkeypatch)
     monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "0")
     # Tier-1 (JSON-LD) success so navigation proceeds without touching the LLM.
@@ -265,7 +269,7 @@ def test_enrichment_batch_context_uses_owner_overridden_ua(
     monkeypatch.setattr(detail, "_collect_main_content", lambda _page: "<main>role</main>")
 
     robots = _UASpyRobots()
-    gateway = _spy_gateway(robots)
+    gateway = _spy_gateway(robots, _saved_discovery_identity())
     rec = _RecordingPlaywright()
     monkeypatch.setattr(detail, "sync_playwright", lambda: rec)
 

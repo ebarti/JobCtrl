@@ -42,6 +42,7 @@ import {
 export interface ActionDispatchContext {
   appDir: string;
   dbPath: string;
+  configPath?: string;
 }
 
 export interface ActionDispatchResult {
@@ -66,6 +67,7 @@ export function createRuntimeJsonRpcDispatcherFactory(
   return (context) =>
     getDefaultJsonRpcDispatcher({
       appDir: context.appDir,
+      ...(context.configPath ? { configPath: context.configPath } : {}),
       pythonRuntime,
     });
 }
@@ -116,6 +118,7 @@ export function createActionDispatcher(
   dispatcherFactory: JsonRpcDispatcherFactory = (context) =>
     getDefaultJsonRpcDispatcher({
       appDir: context.appDir,
+      ...(context.configPath ? { configPath: context.configPath } : {}),
       pythonRuntime: defaultSourcePythonRuntime,
     }),
 ): ActionDispatcher {

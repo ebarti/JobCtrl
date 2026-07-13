@@ -3,7 +3,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 
 import { databaseExists, openReadOnlyDatabase } from "./db.js";
-import { readDashboardSettings } from "./settings-config.js";
+import { readJobCtrlSettings } from "./settings-config.js";
 
 const WORKER_HEARTBEAT_TABLE = "worker_runtime_heartbeats";
 const LLM_SPEND_TABLE = "llm_spend";
@@ -148,11 +148,11 @@ export function readWorkerHealth(dbPath: string, now = new Date()): WorkerHealth
 
 export function readLlmSpendHealth(
   dbPath: string,
-  settingsPath: string,
+  configPath: string,
   now = new Date(),
 ): LlmSpendHealthSnapshot {
   const day = now.toISOString().slice(0, 10);
-  const dailyBudgetUsd = readDashboardSettings(settingsPath).settings.dailyBudgetUsd;
+  const dailyBudgetUsd = readJobCtrlSettings(configPath).settings.dailyBudgetUsd;
   const unlimited = dailyBudgetUsd <= 0;
   const usage = readTodayLlmSpend(dbPath, day);
   const overBudget = !unlimited && usage.estimatedUsd >= dailyBudgetUsd;

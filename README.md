@@ -329,20 +329,21 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
 - `temporal.db` — bundled-runtime Temporal persistence. It is rollback-critical
   alongside `jobctrl.db`: a bundled release transition snapshots and restores
   the two databases as one verified pair, never as independent files.
-- `.env` — plaintext, cross-platform fallback for provider/API credentials
-  and local runtime settings; it is not encrypted at rest.
-- `dashboard.json` — non-secret runtime settings, including `dailyBudgetUsd`,
-  apply controls, provider-scoped model IDs, and compensation source policy. It
-  never stores provider credentials or feed contents.
+- `.env` — plaintext, cross-platform fallback for provider/API credentials; it
+  is not encrypted at rest.
+- `config.json` — non-secret runtime settings, including `dailyBudgetUsd`,
+  apply controls, provider-scoped model IDs, compensation source policy, and
+  browser capability choices. It never stores provider credentials or feed
+  contents.
 - `codex_home/` — the stable JobCtrl-owned Codex CLI home. Valid normal Codex
   CLI authentication may be imported once when its `auth.json` is absent. This
   stable authentication import never overwrites existing JobCtrl credentials
   or changes the normal Codex home. Prompt-driven reads are limited to
   `codex_home/workspace/`.
 - `gmail/` — Gmail OAuth client and private refresh/access token state.
-- `browser-capabilities.json`, `browser-profiles/`,
-  `extension-capability-token`, `chrome-workers/`, `apply-workers/` — explicit
-  browser adoption, copied profiles, extension pairing, and browser/apply state.
+- `browser-profiles/`, `extension-capability-token`, `chrome-workers/`,
+  `apply-workers/` — copied profiles, extension pairing, and browser/apply
+  state. Browser capability choices live in `config.json`.
 - `provider-packs/`, `provider-runtime/`, `claude_home/` — provider runtime
   packages and isolated provider state when those paths are used.
 - `tailored_resumes/`, `cover_letters/`, `logs/` — generated artifacts and
@@ -374,14 +375,12 @@ gateway that honors `robots.txt` — failing closed on an inconclusive fetch
 robots endpoint at all (DNS failure or refused connection) — paces each host,
 bounds each run's request budget, and sends an honest `User-Agent`
 (`JobCtrl/<version> (+<repo url>)`) that never impersonates a browser. Review
-or override that identity before crawling real sites via
-`JOBCTRL_CRAWL_UA_PRODUCT` / `JOBCTRL_CRAWL_UA_CONTACT`
-([Configuration → Crawl Politeness](https://jobctrl.dev/user/configuration#crawl-politeness));
-`jobctrl doctor` prints the effective value. Direct targets, redirects, and
-Playwright subrequests must also be public HTTP(S) destinations; loopback,
-private, link-local, metadata-service, and file URLs are blocked before content
-extraction or LLM enrichment. JobCtrl never bypasses login, paywall, CAPTCHA,
-rate-limit, or bot-control gates.
+review or change that identity in **Discovery → Runtime**; the saved policy is
+held in SQLite and `jobctrl doctor` prints the effective value. Direct targets,
+redirects, and Playwright subrequests must also be public HTTP(S) destinations;
+loopback, private, link-local, metadata-service, and file URLs are blocked
+before content extraction or LLM enrichment. JobCtrl never bypasses login,
+paywall, CAPTCHA, rate-limit, or bot-control gates.
 
 ### Back Up And Restore
 
@@ -514,7 +513,7 @@ different CLI surfaces. Source contributors can use
 ## Configuration
 
 Configuration comes from SQLite-backed profile/discovery stores,
-`dashboard.json` runtime settings, environment variables
+`config.json` Settings values, credential environment variables
 (`~/.jobctrl/.env`, repo `.env`, or the shell), and package-shipped source
 registries. Compensation-source policy is managed from Settings and stored
 locally; it is not a feed connection. Start with [.env.example](.env.example); full reference:
@@ -523,11 +522,10 @@ locally; it is not a feed connection. Start with [.env.example](.env.example); f
 The web app centralizes launch configuration across **Settings → General**
 (spend, capacity, scoring, apply runtime), **Credentials**, **Model selection**
 (provider preference and AI execution policy), and **Browser & extension**.
-Discovery owns its target, runtime, automation, source, and schedule controls.
-Where an environment override exists, the UI shows the effective source and
-makes environment-owned controls read-only. Saved changes are labeled as live,
-next poll/run/workflow, or restart-required; worker activity slots show desired
-versus active values.
+Discovery owns its target, runtime, automation, source, and schedule controls
+in SQLite. Settings owns every non-secret Settings value in `config.json`.
+Saved changes are labeled as live, next poll/run/workflow, or restart-required;
+worker activity slots show desired versus active values.
 
 Providers that accept environment credentials can use the plaintext
 `~/.jobctrl/.env` file or the process environment. On macOS, **Settings →
@@ -535,12 +533,12 @@ Credentials** guides one of three providers: an authenticated Codex CLI,
 Claude Agent SDK (Anthropic API key or supported cloud-provider credentials),
 or Google (Gemini key or Vertex AI ADC). One ready provider is sufficient for
 all core AI stages; a second provider is optional. After a provider is ready,
-Settings can save a preferred model for that provider. Codex and Google choices
-come from live provider catalogs; Claude exposes the provider-safe `sonnet`,
-`opus`, and `haiku` aliases rather than claiming live enumeration. A saved model
-never selects another provider. New adapters resolve models in this order:
-an explicit non-default workflow model, `LLM_MODEL`, the saved model for the
-selected ready provider, then that provider's default. Secret values managed by the
+Settings can save a preferred model for that provider. Codex, Claude, and Google
+choices come from the live catalog exposed by the authenticated provider
+runtime; JobCtrl does not maintain a hand-written model list. A saved model never
+selects another provider. New adapters resolve models in this order: an
+explicit non-default workflow model, the saved model for the selected ready
+provider, then that provider's default. Secret values managed by the
 panel are stored in the system Keychain, while AWS, Google, and Azure credential
 files remain owned by their vendor CLIs. At Python process startup, a non-empty
 environment value takes precedence over the corresponding Keychain entry.
@@ -562,9 +560,6 @@ Keychain output.
 - `JOBCTRL_DIR` — override the local app directory.
 - `ANTHROPIC_API_KEY` or a supported Claude cloud-provider route — Claude.
 - `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex AI ADC — Google.
-- `JOBCTRL_ANALYSIS_LEGS` — comma-separated enabled analysis legs when setup
-  intentionally skips an unauthenticated leg.
-- `LLM_MODEL` — optional model override ahead of the saved provider preference.
 - `VITE_GOOGLE_MAPS_API_KEY` — optional address search in the Profile form.
 - `PLAYWRIGHT_SKIP_BROWSER_GC=1` — keep other worktrees' Playwright browsers
   when running `playwright install` from this checkout.
@@ -579,7 +574,7 @@ Discovery scheduling is stored in SQLite through
 `GET/PATCH /v1/discovery/settings`: `scheduling_enabled` defaults to
 `false`; `schedule_cron` defaults to `0 7 * * *` and only runs after you
 enable it. LLM spend is tracked locally; its `dailyBudgetUsd` ceiling is stored
-in `dashboard.json`, defaults to `25`
+in `config.json`, defaults to `25`
 (`0` = unlimited), spendful workflows run a budget preflight, and the health
 surface shows today's estimated spend.
 

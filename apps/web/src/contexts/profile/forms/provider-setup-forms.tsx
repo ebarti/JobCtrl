@@ -1,7 +1,11 @@
 import { useForm } from "@tanstack/react-form";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { z } from "zod";
-import type { CredentialBatchUpdateRequest, CredentialKey } from "@jobctrl/contracts";
+import {
+  SecretCredentialKeys,
+  type CredentialBatchUpdateRequest,
+  type CredentialKey,
+} from "@jobctrl/contracts";
 
 import { Button } from "../../../shared/ui/button.js";
 import {
@@ -96,9 +100,15 @@ interface ProviderFormProps {
   configured: boolean;
   currentMode?: string | null | undefined;
   environmentManagedKeys?: readonly CredentialKey[];
+  secretStorageAvailable?: boolean;
 }
 
-export function ClaudeProviderForm({ configured, currentMode, environmentManagedKeys = [] }: ProviderFormProps) {
+export function ClaudeProviderForm({
+  configured,
+  currentMode,
+  environmentManagedKeys = [],
+  secretStorageAvailable = true,
+}: ProviderFormProps) {
   const update = useUpdateCredentialsBatchMutation();
   const [message, setMessage] = useState("");
   const [removalOpen, setRemovalOpen] = useState(false);
@@ -113,7 +123,7 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
   );
   const form = useForm({
     defaultValues: {
-      mode: "anthropic_api_key" as ClaudeMode,
+      mode: (secretStorageAvailable ? "anthropic_api_key" : "vertex") as ClaudeMode,
       apiKey: "",
       vertexProjectId: "",
       vertexRegion: "global",
@@ -135,7 +145,10 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
         return;
       }
       try {
-        const request = withoutEnvironmentManaged(buildClaudeCredentialBatch(parsed.data), environmentManagedKeys);
+        const request = withoutUnavailableSecrets(
+          withoutEnvironmentManaged(buildClaudeCredentialBatch(parsed.data), environmentManagedKeys),
+          secretStorageAvailable,
+        );
         formApi.setFieldValue("googleApplicationCredentials", "");
         if (request.operations.length === 0) {
           setMessage("Claude setup is managed by the launch environment and is read-only here.");
@@ -164,7 +177,10 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
       return;
     }
     try {
-      const request = withoutEnvironmentManaged(removeClaudeProviderBatch(), environmentManagedKeys);
+      const request = withoutUnavailableSecrets(
+        withoutEnvironmentManaged(removeClaudeProviderBatch(), environmentManagedKeys),
+        secretStorageAvailable,
+      );
       if (request.operations.length === 0) {
         setRemovalError("Claude setup is managed by the launch environment and cannot be removed here.");
         return;
@@ -189,6 +205,7 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
             onChange={field.handleChange}
             options={CLAUDE_OPTIONS}
             disabled={environmentManaged}
+            disabledValues={secretStorageAvailable ? [] : ["anthropic_api_key"]}
           />
         )}
       </form.Field>
@@ -204,6 +221,7 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
                     label="Anthropic API key"
                     help="Stored only in macOS Keychain. JobCtrl never returns the value after saving."
                     required
+                    disabled={!secretStorageAvailable}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={field.handleChange}
@@ -326,7 +344,12 @@ export function ClaudeProviderForm({ configured, currentMode, environmentManaged
   );
 }
 
-export function GoogleProviderForm({ configured, currentMode, environmentManagedKeys = [] }: ProviderFormProps) {
+export function GoogleProviderForm({
+  configured,
+  currentMode,
+  environmentManagedKeys = [],
+  secretStorageAvailable = true,
+}: ProviderFormProps) {
   const update = useUpdateCredentialsBatchMutation();
   const [message, setMessage] = useState("");
   const [removalOpen, setRemovalOpen] = useState(false);
@@ -341,7 +364,7 @@ export function GoogleProviderForm({ configured, currentMode, environmentManaged
   );
   const form = useForm({
     defaultValues: {
-      mode: "gemini_api_key" as GoogleMode,
+      mode: (secretStorageAvailable ? "gemini_api_key" : "vertex") as GoogleMode,
       apiKey: "",
       projectId: "",
       location: "us-central1",
@@ -359,7 +382,10 @@ export function GoogleProviderForm({ configured, currentMode, environmentManaged
         return;
       }
       try {
-        const request = withoutEnvironmentManaged(buildGoogleCredentialBatch(parsed.data), environmentManagedKeys);
+        const request = withoutUnavailableSecrets(
+          withoutEnvironmentManaged(buildGoogleCredentialBatch(parsed.data), environmentManagedKeys),
+          secretStorageAvailable,
+        );
         formApi.setFieldValue("googleApplicationCredentials", "");
         if (request.operations.length === 0) {
           setMessage("Google setup is managed by the launch environment and is read-only here.");
@@ -388,7 +414,10 @@ export function GoogleProviderForm({ configured, currentMode, environmentManaged
       return;
     }
     try {
-      const request = withoutEnvironmentManaged(removeGoogleProviderBatch(), environmentManagedKeys);
+      const request = withoutUnavailableSecrets(
+        withoutEnvironmentManaged(removeGoogleProviderBatch(), environmentManagedKeys),
+        secretStorageAvailable,
+      );
       if (request.operations.length === 0) {
         setRemovalError("Google setup is managed by the launch environment and cannot be removed here.");
         return;
@@ -413,6 +442,7 @@ export function GoogleProviderForm({ configured, currentMode, environmentManaged
             onChange={field.handleChange}
             options={GOOGLE_OPTIONS}
             disabled={environmentManaged}
+            disabledValues={secretStorageAvailable ? [] : ["gemini_api_key"]}
           />
         )}
       </form.Field>
@@ -428,6 +458,7 @@ export function GoogleProviderForm({ configured, currentMode, environmentManaged
                     label="Gemini API key"
                     help="Stored only in macOS Keychain and never returned by the API."
                     required
+                    disabled={!secretStorageAvailable}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={field.handleChange}
@@ -506,6 +537,7 @@ function ProviderChoices<T extends string>({
   onChange,
   options,
   disabled = false,
+  disabledValues = [],
 }: {
   legend: string;
   name: string;
@@ -513,6 +545,7 @@ function ProviderChoices<T extends string>({
   onChange: (value: T) => void;
   options: readonly ChoiceOption<T>[];
   disabled?: boolean;
+  disabledValues?: readonly T[];
 }) {
   return (
     <fieldset className="provider-choice-fieldset">
@@ -528,7 +561,7 @@ function ProviderChoices<T extends string>({
                 name={name}
                 type="radio"
                 value={option.value}
-                disabled={disabled}
+                disabled={disabled || disabledValues.includes(option.value)}
                 onChange={() => onChange(option.value)}
               />
               <span>
@@ -700,7 +733,7 @@ function ProviderRemovalDialog({
         <DialogHeader>
           <DialogTitle>Remove {provider} provider setup?</DialogTitle>
           <DialogDescription>
-            This removes every {provider} setting managed by JobCtrl from macOS Keychain.
+            This removes the provider's non-secret connection settings from config.json and its API key from macOS Keychain.
             External vendor CLI and cloud credentials are unchanged. Restart JobCtrl afterward
             so its API provider process and worker stop using the previous configuration.
           </DialogDescription>
@@ -759,11 +792,11 @@ function googleModeFromStatus(mode: string | null | undefined): GoogleMode | nul
 function providerMutationMessage(error: unknown): string {
   return error instanceof Error
     ? `Could not save provider settings. ${error.message}`
-    : "Could not save provider settings. Retry after checking Keychain Access.";
+    : "Could not save provider settings. Check config.json access and Keychain Access, then retry.";
 }
 
 function providerRemovalMessage(provider: "Claude" | "Google"): string {
-  return `Could not remove ${provider} provider settings. No successful removal was confirmed. Unlock Keychain Access and retry.`;
+  return `Could not remove ${provider} provider settings. No successful removal was confirmed. Check config.json access and Keychain Access, then retry.`;
 }
 
 function withoutEnvironmentManaged(
@@ -772,6 +805,17 @@ function withoutEnvironmentManaged(
 ): CredentialBatchUpdateRequest {
   const managed = new Set(environmentManagedKeys);
   return { operations: request.operations.filter((operation) => !managed.has(operation.key)) };
+}
+
+function withoutUnavailableSecrets(
+  request: CredentialBatchUpdateRequest,
+  secretStorageAvailable: boolean,
+): CredentialBatchUpdateRequest {
+  if (secretStorageAvailable) return request;
+  const secretKeys = new Set<CredentialKey>(SecretCredentialKeys);
+  return {
+    operations: request.operations.filter((operation) => !secretKeys.has(operation.key)),
+  };
 }
 
 function activeModeManagedByEnvironment<TMode extends string>(

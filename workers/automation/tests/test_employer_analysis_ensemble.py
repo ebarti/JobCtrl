@@ -25,6 +25,7 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysis,
     JobAnalysisDraft,
 )
+from jobctrl.infrastructure.analysis import claude_analysis_adapter
 from jobctrl.infrastructure.analysis.claude_analysis_adapter import (
     ClaudeAnalysisAdapter,
     ClaudeAnalysisSynthesizer,
@@ -99,6 +100,27 @@ class ResultMessage:
 class _FakeClaudeOptions:
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
+
+
+def _isolated_sdk_options() -> dict[str, object]:
+    return {
+        "cwd": "/tmp/jobctrl-test",
+        "env": {
+            "CLAUDE_CONFIG_DIR": "/tmp/jobctrl-test/claude_home/config",
+            "CLAUDE_CODE_OAUTH_TOKEN": "",
+        },
+        "extra_args": {"bare": None},
+        "setting_sources": [],
+    }
+
+
+@pytest.fixture(autouse=True)
+def _stub_authenticated_sdk_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        claude_analysis_adapter,
+        "bundled_claude_sdk_options",
+        _isolated_sdk_options,
+    )
 
 
 def _fake_claude_query(
@@ -190,6 +212,9 @@ class TestClaudeAdapter:
         assert opts["tools"] == []  # built-in file/shell tools are absent
         assert opts["allowed_tools"] == []  # no tools are auto-approved
         assert opts["output_format"]["type"] == "json_schema"
+        assert opts["setting_sources"] == []
+        assert opts["extra_args"] == {"bare": None}
+        assert opts["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == ""
 
     async def test_raises_on_structured_output_retry_exhaustion(self) -> None:
         def query(*, prompt: str, options: Any):

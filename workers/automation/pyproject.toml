@@ -47,7 +47,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["build>=1.2", "hatchling==1.29.0", "pytest>=7.0", "pytest-asyncio>=0.23", "pytest-randomly>=4.0", "ruff>=0.1"]
 providers = [
-    "claude-agent-sdk==0.2.87",
+    "claude-agent-sdk==0.2.115",
     "openai-codex==0.1.0b3",
     "openai-codex-cli-bin==0.137.0a4",
     "google-antigravity==0.1.2",
@@ -58,7 +58,7 @@ providers = [
 # and acquire provider wheels separately through the signed provider-pack path.
 [dependency-groups]
 provider-runtime = [
-    "claude-agent-sdk==0.2.87",
+    "claude-agent-sdk==0.2.115",
     "openai-codex==0.1.0b3",
     "openai-codex-cli-bin==0.137.0a4",
     "google-antigravity==0.1.2",
@@ -109,8 +109,7 @@ default-groups = ["provider-runtime"]
 # release. Keep this override until upstream loosens its dependency metadata.
 override-dependencies = ["markdownify==0.14.1"]
 
-# The workspace dependency cutoff (UV_EXCLUDE_NEWER) blocks google-antigravity
-# 0.1.2 (published 2026-06-04). The Antigravity (Gemini) ensemble leg needs it;
-# this per-package override (mirroring ~/Github/mestre) lets just this package
-# past the cutoff without moving the global cutoff for everything else.
-exclude-newer-package = { "google-antigravity" = "2026-06-04T21:19:27Z" }
+# The workspace dependency cutoff (UV_EXCLUDE_NEWER) intentionally freezes the
+# broad dependency graph. Provider runtimes move independently, so admit only
+# their audited releases without moving the global cutoff for everything else.
+exclude-newer-package = { "google-antigravity" = "2026-06-04T21:19:27Z", "claude-agent-sdk" = "2026-07-10T00:00:00Z" }

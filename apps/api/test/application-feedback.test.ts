@@ -29,7 +29,7 @@ beforeEach(() => {
   })) as ReturnType<typeof vi.fn> & ActionDispatcher;
   options = {
     dbPath: path.join(tempDir, "jobctrl.db"),
-    settingsPath: path.join(tempDir, "dashboard.json"),
+    configPath: path.join(tempDir, "config.json"),
     actionDispatcher,
   };
   seedDatabase(options.dbPath);

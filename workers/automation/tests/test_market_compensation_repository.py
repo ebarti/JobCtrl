@@ -487,7 +487,7 @@ def test_user_source_settings_enable_levels_feed_without_process_policy_env(
         ),
         encoding="utf-8",
     )
-    settings_path = tmp_path / "dashboard.json"
+    settings_path = tmp_path / "config.json"
     settings_path.write_text(
         json.dumps(
             {
@@ -517,7 +517,7 @@ def test_user_source_settings_enable_tokenless_levels_public_pages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings_path = tmp_path / "dashboard.json"
+    settings_path = tmp_path / "config.json"
     settings_path.write_text(
         json.dumps(
             {
@@ -626,13 +626,24 @@ def test_worker_levels_public_access_mode_semantics(
         "jobctrl.infrastructure.compensation.sqlite_market_repository.load_levels_fyi_public_observations",
         load_public,
     )
-    env = {} if raw_mode is None else {"JOBCTRL_LEVELS_FYI_ACCESS_MODE": raw_mode}
+    settings_path = tmp_path / "config.json"
+    source_preferences: dict[str, object] = {}
+    if raw_mode is not None:
+        source_preferences["levels_fyi"] = {
+            "enabled": True,
+            "access_mode": raw_mode,
+            "europe_coverage_confirmed": False,
+        }
+    settings_path.write_text(
+        json.dumps({"compensation_sources": source_preferences}),
+        encoding="utf-8",
+    )
 
     loaded = load_default_reported_compensation_observations(
         levels_fyi_targets=(LevelsFyiPublicTarget("Software Engineer", "Madrid, Spain"),),
         include_eurotoptech=False,
-        env=env,
-        settings_path=tmp_path / "missing-dashboard.json",
+        env={},
+        settings_path=settings_path,
     )
 
     assert loaded.levels_fyi_public_count == expected_public_count
@@ -640,7 +651,7 @@ def test_worker_levels_public_access_mode_semantics(
     assert loaded.licensed_count == 0
 
 
-def test_user_source_settings_can_disable_an_environment_configured_feed(
+def test_user_source_settings_can_disable_a_configured_feed(
     tmp_path: Path,
 ) -> None:
     glassdoor_path = tmp_path / "glassdoor.json"
@@ -656,7 +667,7 @@ def test_user_source_settings_can_disable_an_environment_configured_feed(
         ),
         encoding="utf-8",
     )
-    settings_path = tmp_path / "dashboard.json"
+    settings_path = tmp_path / "config.json"
     settings_path.write_text(
         json.dumps(
             {
@@ -674,7 +685,6 @@ def test_user_source_settings_can_disable_an_environment_configured_feed(
     loaded = load_default_reported_compensation_observations(
         include_eurotoptech=False,
         env={
-            "JOBCTRL_GLASSDOOR_ACCESS_MODE": "written_permission",
             "JOBCTRL_GLASSDOOR_OBSERVATIONS_PATH": str(glassdoor_path),
         },
         settings_path=settings_path,

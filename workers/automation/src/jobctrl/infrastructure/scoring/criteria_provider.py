@@ -1,6 +1,6 @@
 """Local scoring criteria provider.
 
-Loads the dashboard settings written by the TypeScript API and folds those
+Loads config.json settings written by the TypeScript API and folds those
 settings together with the profile snapshot's preference fields. The scorer
 receives an explicit ``ScoringCriteria`` payload, so prompt construction and
 persistence never have to reach into global settings.
@@ -8,53 +8,37 @@ persistence never have to reach into global settings.
 
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
 from typing import Any
 
-from jobctrl.config import APP_DIR
+from jobctrl.config import get_config_path, load_config_file
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.scoring.value_objects import ScoringCriteria
 
 
-DEFAULT_SETTINGS_PATH = APP_DIR / "dashboard.json"
-
-
 class LocalScoringCriteriaProvider:
-    """Load local scoring settings from ``~/.jobctrl/dashboard.json``."""
+    """Load local scoring settings from ``~/.jobctrl/config.json``."""
 
     def __init__(self, path: Path | str | None = None) -> None:
-        self._path = resolve_dashboard_settings_path(path)
+        self._path = resolve_config_path(path)
 
     def load(self, profile_snapshot: ProfileSnapshot) -> ScoringCriteria:
-        settings = self._read_settings()
+        settings = read_config_settings(self._path)
         return ScoringCriteria.from_profile_snapshot(
             profile_snapshot,
-            min_fit_score=_int(settings.get("min_fit_score"), 7),
+            min_fit_score=read_min_fit_score(),
             criteria_text=str(settings.get("score_criteria") or ""),
             target_criteria=str(settings.get("target_criteria") or ""),
         )
 
-    def _read_settings(self) -> dict[str, Any]:
-        if not self._path.exists():
-            return {}
-        try:
-            parsed = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-
 
 def read_apply_approval_required(
-    path: Path | str | None = None,
     *,
     default: bool = True,
 ) -> bool:
-    settings = LocalScoringCriteriaProvider(path)._read_settings()
-    value = settings.get("apply_approval_required")
-    if value is None:
-        value = settings.get("applyApprovalRequired")
+    from jobctrl.config import load_discovery_automation_settings
+
+    value = load_discovery_automation_settings().get("apply_approval_required")
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -67,14 +51,12 @@ def read_apply_approval_required(
 
 
 def read_auto_apply_enabled(
-    path: Path | str | None = None,
     *,
     default: bool = False,
 ) -> bool:
-    settings = LocalScoringCriteriaProvider(path)._read_settings()
-    value = settings.get("auto_apply")
-    if value is None:
-        value = settings.get("autoApply")
+    from jobctrl.config import load_discovery_automation_settings
+
+    value = load_discovery_automation_settings().get("auto_apply")
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -91,10 +73,8 @@ def read_daily_budget_usd(
     *,
     default: float = 25.0,
 ) -> float:
-    settings = LocalScoringCriteriaProvider(path)._read_settings()
+    settings = read_config_settings(path)
     value = settings.get("daily_budget_usd")
-    if value is None:
-        value = settings.get("dailyBudgetUsd")
     try:
         budget = float(value)
     except (TypeError, ValueError):
@@ -103,14 +83,12 @@ def read_daily_budget_usd(
 
 
 def read_min_fit_score(
-    path: Path | str | None = None,
     *,
     default: int = 7,
 ) -> int:
-    settings = LocalScoringCriteriaProvider(path)._read_settings()
-    value = settings.get("min_fit_score")
-    if value is None:
-        value = settings.get("minFitScore")
+    from jobctrl.config import load_discovery_automation_settings
+
+    value = load_discovery_automation_settings().get("min_fit_score")
     return min(10, max(0, _int(value, default)))
 
 
@@ -119,10 +97,8 @@ def read_apply_concurrency(
     *,
     default: int = 1,
 ) -> int:
-    settings = LocalScoringCriteriaProvider(path)._read_settings()
+    settings = read_config_settings(path)
     value = settings.get("apply_concurrency")
-    if value is None:
-        value = settings.get("applyConcurrency")
     return min(16, max(1, _int(value, default)))
 
 
@@ -130,14 +106,12 @@ def read_preferred_model(
     provider: str,
     path: Path | str | None = None,
 ) -> str | None:
-    """Read one validated provider-scoped model ID from dashboard settings."""
+    """Read one validated provider-scoped model ID from config.json."""
 
     if provider not in {"codex", "claude", "google"}:
         return None
-    settings = LocalScoringCriteriaProvider(path)._read_settings()
+    settings = read_config_settings(path)
     preferred = settings.get("preferred_models")
-    if preferred is None:
-        preferred = settings.get("preferredModels")
     if not isinstance(preferred, dict):
         return None
     raw = preferred.get(provider)
@@ -160,11 +134,14 @@ def _int(value: Any, default: int) -> int:
         return default
 
 
-def resolve_dashboard_settings_path(path: Path | str | None = None) -> Path:
-    """Resolve the worker settings file using the same override as the API."""
+def resolve_config_path(path: Path | str | None = None) -> Path:
+    """Resolve config.json using the same runtime path boundary as the API."""
     if path is not None:
         return Path(path).expanduser()
-    configured = os.environ.get("JOBCTRL_DASHBOARD_CONFIG_PATH", "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    return DEFAULT_SETTINGS_PATH
+    return get_config_path()
+
+
+def read_config_settings(path: Path | str | None = None) -> dict[str, Any]:
+    """Read the canonical non-secret Settings document or fail on corruption."""
+
+    return load_config_file(path=resolve_config_path(path), strict=True)

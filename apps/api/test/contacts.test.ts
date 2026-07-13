@@ -42,7 +42,7 @@ function withTempApp() {
     );
   `);
   db.close();
-  const app = buildApp({ dbPath, settingsPath: path.join(dir, "dashboard.json") });
+  const app = buildApp({ dbPath, configPath: path.join(dir, "config.json") });
   cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
   return { app, dbPath };
 }

@@ -211,14 +211,412 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
 }
 
 /* --------------------------------------------------------------------------
-   Audience-specific navigation: user-guide pages should not look like a
-   developer reference manual. Hide by stable destination links rather than
-   sidebar position so group insertions/reordering cannot hide the wrong set.
+   Daily workflow journey: a semantic, icon-led portrait flow. Actor labels and
+   ordered lists carry the meaning; color and the timeline reinforce it.
    -------------------------------------------------------------------------- */
-.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/developer/"]),
-.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/architecture/"]),
-.Layout.jh-user-guide-page .VPSidebar #VPSidebarNav > .group:has(a[href="/local-ts-api"]) {
-  display: none;
+.jh-daily-journey {
+  --jh-journey-agent: #047857;
+  --jh-journey-agent-soft: #ecfdf5;
+  --jh-journey-human: var(--vp-c-brand-1);
+  --jh-journey-human-soft: var(--vp-c-brand-soft);
+  position: relative;
+  width: min(680px, 100%);
+  margin: 1.75rem auto 2.5rem;
+  padding: clamp(1rem, 3vw, 1.5rem);
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--vp-c-brand-1), var(--vp-c-divider) 58%);
+  border-radius: 1.25rem;
+  background:
+    radial-gradient(
+      circle at 92% 1%,
+      color-mix(in oklab, var(--jh-journey-agent-soft), transparent 12%),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 3% 15%,
+      color-mix(in oklab, var(--jh-journey-human-soft), transparent 8%),
+      transparent 38%
+    ),
+    var(--jh-doc-surface);
+  box-shadow: 0 20px 58px rgba(15, 23, 42, 0.12);
+}
+
+.dark .jh-daily-journey {
+  --jh-journey-agent: #34d399;
+  --jh-journey-agent-soft: color-mix(in oklab, #064e3b, var(--vp-c-bg) 48%);
+  box-shadow: 0 24px 68px rgba(0, 0, 0, 0.34);
+}
+
+.jh-daily-journey__caption {
+  display: grid;
+  gap: 0.4rem;
+  max-width: 58ch;
+  margin-inline: auto;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.jh-daily-journey__caption > strong {
+  color: var(--vp-c-text-1);
+  font-size: clamp(1.45rem, 4vw, 2rem);
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+}
+
+.jh-daily-journey__caption > span:last-child {
+  color: var(--vp-c-text-2);
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.jh-daily-journey__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  justify-self: center;
+  gap: 0.4rem;
+  color: var(--jh-journey-human);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.jh-daily-journey__eyebrow svg {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.jh-daily-journey__legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1.1rem auto 1.25rem;
+}
+
+.jh-daily-journey__legend-item {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: 0.4rem;
+  padding-inline: 0.7rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: var(--vp-c-bg);
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
+.jh-daily-journey__legend-item svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.jh-daily-journey__legend-item--human {
+  color: var(--jh-journey-human);
+}
+
+.jh-daily-journey__legend-item--agent {
+  color: var(--jh-journey-agent);
+}
+
+.jh-daily-journey__phase {
+  position: relative;
+  padding: clamp(0.85rem, 2.5vw, 1.15rem);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 1rem;
+  background: color-mix(in oklab, var(--vp-c-bg), transparent 4%);
+}
+
+.jh-daily-journey__phase--setup {
+  border-color: color-mix(in oklab, var(--jh-journey-human), var(--vp-c-divider) 60%);
+}
+
+.jh-daily-journey__phase--loop {
+  border-color: color-mix(in oklab, var(--jh-journey-agent), var(--vp-c-divider) 60%);
+}
+
+.jh-daily-journey__phase-heading {
+  display: grid;
+  grid-template-columns: 2.7rem minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: center;
+  margin-block-end: 0.9rem;
+}
+
+.jh-daily-journey__phase-heading > span {
+  display: grid;
+  width: 2.7rem;
+  height: 2.7rem;
+  place-items: center;
+  border-radius: 0.8rem;
+  background: var(--jh-journey-human-soft);
+  color: var(--jh-journey-human);
+  font-size: 0.75rem;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+
+.jh-daily-journey__phase--loop .jh-daily-journey__phase-heading > span {
+  background: var(--jh-journey-agent-soft);
+  color: var(--jh-journey-agent);
+}
+
+.jh-daily-journey__phase-heading div {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.jh-daily-journey__phase-heading strong {
+  color: var(--vp-c-text-1);
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.jh-daily-journey__phase-heading small {
+  color: var(--vp-c-text-2);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.vp-doc .jh-daily-journey__steps {
+  position: relative;
+  display: grid;
+  gap: 0.75rem;
+  margin: 0 !important;
+  padding: 0 !important;
+  list-style: none !important;
+}
+
+.jh-daily-journey__steps::before {
+  position: absolute;
+  z-index: 0;
+  top: 1.8rem;
+  bottom: 1.8rem;
+  left: 2.55rem;
+  width: 2px;
+  border-radius: 999px;
+  background: linear-gradient(
+    var(--jh-journey-human),
+    color-mix(in oklab, var(--jh-journey-human), var(--jh-journey-agent) 50%),
+    var(--jh-journey-agent)
+  );
+  content: "";
+}
+
+.jh-daily-journey__phase--setup .jh-daily-journey__steps::before {
+  background: var(--jh-journey-human);
+}
+
+.jh-daily-journey__step {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 3.35rem minmax(0, 1fr) auto;
+  grid-template-areas: "icon copy actor";
+  gap: 0.85rem;
+  align-items: center;
+  min-height: 5rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--vp-c-divider);
+  border-inline-start-width: 3px;
+  border-radius: 0.85rem;
+  background: color-mix(in oklab, var(--vp-c-bg), transparent 1%);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.jh-daily-journey__step--human {
+  border-inline-start-color: var(--jh-journey-human);
+}
+
+.jh-daily-journey__step--agent {
+  border-inline-start-color: var(--jh-journey-agent);
+}
+
+.jh-daily-journey__icon {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-area: icon;
+  width: 3.35rem;
+  height: 3.35rem;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 1rem;
+  background: var(--vp-c-bg);
+  box-shadow: 0 0 0 0.32rem var(--vp-c-bg);
+}
+
+.jh-daily-journey__step--human .jh-daily-journey__icon {
+  background: var(--jh-journey-human-soft);
+  color: var(--jh-journey-human);
+}
+
+.jh-daily-journey__step--agent .jh-daily-journey__icon {
+  background: var(--jh-journey-agent-soft);
+  color: var(--jh-journey-agent);
+}
+
+.jh-daily-journey__icon svg {
+  width: 1.72rem;
+  height: 1.72rem;
+}
+
+.jh-daily-journey__copy {
+  display: grid;
+  grid-area: copy;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.jh-daily-journey__copy strong {
+  color: var(--vp-c-text-1);
+  font-size: 0.94rem;
+  line-height: 1.3;
+}
+
+.jh-daily-journey__copy > span {
+  color: var(--vp-c-text-2);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.jh-daily-journey__actor {
+  display: inline-flex;
+  grid-area: actor;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.75rem;
+  padding-inline: 0.62rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.jh-daily-journey__step--human .jh-daily-journey__actor {
+  background: var(--jh-journey-human-soft);
+  color: var(--jh-journey-human);
+}
+
+.jh-daily-journey__step--agent .jh-daily-journey__actor {
+  background: var(--jh-journey-agent-soft);
+  color: var(--jh-journey-agent);
+}
+
+.jh-daily-journey__handoff {
+  display: grid;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
+  margin: 0.3rem auto;
+  border: 1px solid color-mix(in oklab, var(--jh-journey-agent), var(--vp-c-divider) 48%);
+  border-radius: 999px;
+  background: var(--vp-c-bg);
+  color: var(--jh-journey-agent);
+}
+
+.jh-daily-journey__handoff svg {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.jh-daily-journey__repeat {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-block-start: 0.85rem;
+  padding: 0.72rem 0.85rem;
+  border: 1px dashed var(--jh-journey-agent);
+  border-radius: 0.8rem;
+  background: var(--jh-journey-agent-soft);
+  color: var(--vp-c-text-2);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.jh-daily-journey__repeat svg {
+  width: 1.3rem;
+  height: 1.3rem;
+  flex: 0 0 auto;
+  color: var(--jh-journey-agent);
+}
+
+.jh-daily-journey__repeat strong {
+  color: var(--vp-c-text-1);
+}
+
+@media (max-width: 560px) {
+  .jh-daily-journey {
+    padding: 0.75rem;
+    border-radius: 1rem;
+  }
+
+  .jh-daily-journey__caption > strong {
+    font-size: 1.35rem;
+  }
+
+  .jh-daily-journey__phase {
+    padding: 0.7rem;
+  }
+
+  .jh-daily-journey__phase-heading {
+    grid-template-columns: 2.35rem minmax(0, 1fr);
+    gap: 0.6rem;
+  }
+
+  .jh-daily-journey__phase-heading > span {
+    width: 2.35rem;
+    height: 2.35rem;
+  }
+
+  .jh-daily-journey__steps::before {
+    left: 2.02rem;
+  }
+
+  .jh-daily-journey__step {
+    grid-template-columns: 2.7rem minmax(0, 1fr);
+    grid-template-areas:
+      "icon actor"
+      "icon copy";
+    gap: 0.2rem 0.7rem;
+    min-height: 5.15rem;
+    padding: 0.72rem;
+  }
+
+  .jh-daily-journey__icon {
+    width: 2.7rem;
+    height: 2.7rem;
+    align-self: center;
+    border-radius: 0.8rem;
+  }
+
+  .jh-daily-journey__icon svg {
+    width: 1.4rem;
+    height: 1.4rem;
+  }
+
+  .jh-daily-journey__actor {
+    justify-self: start;
+  }
+}
+
+@media (forced-colors: active) {
+  .jh-daily-journey,
+  .jh-daily-journey__phase,
+  .jh-daily-journey__step,
+  .jh-daily-journey__icon,
+  .jh-daily-journey__legend-item,
+  .jh-daily-journey__handoff,
+  .jh-daily-journey__repeat {
+    border-color: CanvasText;
+    background: Canvas;
+    box-shadow: none;
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -529,6 +927,16 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
 .vp-doc .mermaid .edgeLabel {
   margin: 0;
   line-height: 1.35;
+}
+
+.vp-doc .mermaid .icon-shape .label {
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.vp-doc .mermaid .icon-shape .label p {
+  padding-inline: 0.25rem;
+  line-height: 1.25;
 }
 
 /* --------------------------------------------------------------------------

@@ -21,11 +21,11 @@ def test_gemini_provider_defaults_to_stable_gemini_35(monkeypatch):
     assert api_key == "test-gemini-key"
 
 
-def test_llm_model_override_still_wins_for_gemini(monkeypatch):
+def test_legacy_llm_model_environment_override_is_ignored_for_gemini(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
     monkeypatch.setenv("LLM_MODEL", "custom-gemini-model")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     _base_url, model, _api_key = _detect_provider()
 
-    assert model == "custom-gemini-model"
+    assert model == DEFAULT_GEMINI_MODEL

@@ -330,11 +330,11 @@ def test_load_search_config_reads_profile_target_search_from_db(tmp_path, monkey
     assert loaded["target_region"] == "europe"
 
 
-def test_legacy_dashboard_location_is_fallback_only_when_profile_target_is_empty(
+def test_legacy_config_target_fields_are_ignored_when_profile_target_is_empty(
     tmp_path, monkeypatch
 ) -> None:
     db_path = tmp_path / "jobctrl.db"
-    dashboard_path = tmp_path / "dashboard.json"
+    dashboard_path = tmp_path / "config.json"
     dashboard_path.write_text(
         '{"location_filter": "Legacy City", "target_role": "Legacy Role"}',
         encoding="utf-8",
@@ -358,14 +358,14 @@ def test_legacy_dashboard_location_is_fallback_only_when_profile_target_is_empty
     conn.commit()
     conn.close()
     monkeypatch.setattr(config, "DB_PATH", db_path)
-    monkeypatch.setenv("JOBCTRL_DASHBOARD_CONFIG_PATH", str(dashboard_path))
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(dashboard_path))
 
     loaded = config.load_search_config()
 
-    assert loaded["queries"][0]["query"] == "Legacy Role"
+    assert loaded["queries"][0]["query"] == "Software Engineer"
     assert loaded["locations"] == [{
-        "label": "legacy-city",
-        "location": "Legacy City",
+        "label": "home-city-home-country",
+        "location": "Home City, Home Country",
         "remote": False,
     }]
 

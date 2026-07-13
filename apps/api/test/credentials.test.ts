@@ -1,8 +1,13 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   CREDENTIAL_VALUE_MAX_LENGTH,
   CredentialKeys,
+  ProviderConfigurationKeys,
+  SecretCredentialKeys,
   type CredentialBatchOperation,
   type CredentialKey,
 } from "@jobctrl/contracts";
@@ -70,17 +75,23 @@ const BATCH_OPERATIONS = [
 const PRE_BATCH_STATE = new Map<CredentialKey, string>([
   ["ANTHROPIC_API_KEY", `  ${SECRET}-old-anthropic  `],
   ["GEMINI_API_KEY", `${SECRET}-old-gemini`],
-  ["GOOGLE_CLOUD_PROJECT", `${SECRET}-old-project`],
 ]);
+
+let configDirectory = "";
+let configPath = "";
 
 describe("KeychainCredentialStore", () => {
   beforeEach(() => {
+    configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-credentials-"));
+    configPath = path.join(configDirectory, "config.json");
+    vi.stubEnv("JOBCTRL_CONFIG_PATH", configPath);
     for (const key of CredentialKeys) vi.stubEnv(key, "");
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllEnvs();
+    fs.rmSync(configDirectory, { force: true, recursive: true });
   });
 
   it("reports environment ownership separately and rejects ineffective writes without echoing values", async () => {
@@ -88,7 +99,7 @@ describe("KeychainCredentialStore", () => {
     const store = new KeychainCredentialStore({
       platform: "darwin",
       runSecurity,
-      env: { CAPSOLVER_API_KEY: SECRET },
+      env: { CAPSOLVER_API_KEY: SECRET, JOBCTRL_CONFIG_PATH: configPath },
     });
 
     const response = await store.list();
@@ -111,7 +122,7 @@ describe("KeychainCredentialStore", () => {
   });
 
   it.each(["linux", "win32"] as const)(
-    "returns an explicit unsupported capability without spawning security on %s",
+    "keeps config-backed provider settings editable without spawning security on %s",
     async (platform) => {
       const runSecurity = vi.fn<SecurityCommandRunner>();
       const store = new KeychainCredentialStore({ platform, runSecurity });
@@ -120,17 +131,49 @@ describe("KeychainCredentialStore", () => {
 
       expect(runSecurity).not.toHaveBeenCalled();
       expect(response.store).toEqual({
-        kind: "macos_keychain",
+        kind: "config_and_macos_keychain",
         available: false,
         unavailableReason: "unsupported_platform",
         requiresWorkerRestart: true,
       });
-      expect(
-        response.credentials.every(
-          (credential) => credential.configured === null,
-        ),
-      ).toBe(true);
-      expect(response.credentials.every((credential) => credential.effectiveSource === "inspection_unknown")).toBe(true);
+      expect(response.credentials.filter((credential) => credential.storage === "config")).toEqual(
+        ProviderConfigurationKeys.map((key) => expect.objectContaining({
+          key,
+          configured: false,
+          effectiveSource: "absent",
+          editable: true,
+        })),
+      );
+      expect(response.credentials.filter((credential) => credential.storage === "keychain")).toEqual(
+        SecretCredentialKeys.map((key) => expect.objectContaining({
+          key,
+          configured: null,
+          effectiveSource: "inspection_unknown",
+          editable: false,
+        })),
+      );
+
+      const updated = await store.applyBatch([
+        { operation: "set", key: "GOOGLE_GENAI_USE_VERTEXAI", value: "true" },
+        { operation: "set", key: "GOOGLE_CLOUD_PROJECT", value: "jobctrl-test-project" },
+        { operation: "set", key: "GOOGLE_CLOUD_LOCATION", value: "europe-west1" },
+      ]);
+
+      expect(updated.credentials.find((credential) => credential.key === "GOOGLE_CLOUD_PROJECT")).toMatchObject({
+        configured: true,
+        storage: "config",
+        effectiveSource: "config",
+        editable: true,
+      });
+      expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).toMatchObject({
+        provider_connections: {
+          google: {
+            mode: "vertex",
+            project_id: "jobctrl-test-project",
+            location: "europe-west1",
+          },
+        },
+      });
       await expect(store.set("OPENAI_API_KEY", SECRET)).rejects.toMatchObject({
         name: "CredentialStoreUnavailableError",
         reason: "unsupported_platform",
@@ -164,13 +207,14 @@ describe("KeychainCredentialStore", () => {
       available: true,
       unavailableReason: null,
     });
-    expect(
-      response.credentials.every(
-        (credential) => credential.configured === true,
-      ),
-    ).toBe(true);
-    expect(runSecurity).toHaveBeenCalledTimes(CredentialKeys.length);
-    for (const [key, call] of CredentialKeys.map(
+    expect(response.credentials.filter((credential) => credential.storage === "keychain").every(
+      (credential) => credential.configured === true,
+    )).toBe(true);
+    expect(response.credentials.filter((credential) => credential.storage === "config").every(
+      (credential) => credential.configured === false,
+    )).toBe(true);
+    expect(runSecurity).toHaveBeenCalledTimes(SecretCredentialKeys.length);
+    for (const [key, call] of SecretCredentialKeys.map(
       (key, index) => [key, runSecurity.mock.calls[index]] as const,
     )) {
       expect(call?.[0]).toEqual([
@@ -237,16 +281,17 @@ describe("KeychainCredentialStore", () => {
       const response = await store.list();
 
       expect(response.store).toEqual({
-        kind: "macos_keychain",
+        kind: "config_and_macos_keychain",
         available: false,
         unavailableReason: "inspection_failed",
         requiresWorkerRestart: true,
       });
-      expect(
-        response.credentials.every(
-          (credential) => credential.configured === null,
-        ),
-      ).toBe(true);
+      expect(response.credentials.filter((credential) => credential.storage === "keychain").every(
+        (credential) => credential.configured === null && credential.editable === false,
+      )).toBe(true);
+      expect(response.credentials.filter((credential) => credential.storage === "config").every(
+        (credential) => credential.configured === false && credential.editable,
+      )).toBe(true);
       expect(JSON.stringify(response)).not.toContain(SECRET);
       expect(JSON.stringify(response)).not.toContain(stderr);
     },
@@ -273,7 +318,13 @@ describe("KeychainCredentialStore", () => {
     expect(response.credentials.map(({ key, configured }) => [key, configured])).toEqual(
       CredentialKeys.map((key) => [
         key,
-        key === "OPENAI_API_KEY" ? true : key === "GEMINI_API_KEY" ? false : null,
+        key === "OPENAI_API_KEY"
+          ? true
+          : key === "GEMINI_API_KEY"
+            ? false
+            : SecretCredentialKeys.some((secretKey) => secretKey === key)
+              ? null
+              : false,
       ]),
     );
   });
@@ -302,11 +353,12 @@ describe("KeychainCredentialStore", () => {
 
     for (const response of [failed, malformed]) {
       expect(response.store.unavailableReason).toBe("inspection_failed");
-      expect(
-        response.credentials.every(
-          (credential) => credential.configured === null,
-        ),
-      ).toBe(true);
+      expect(response.credentials.filter((credential) => credential.storage === "keychain").every(
+        (credential) => credential.configured === null,
+      )).toBe(true);
+      expect(response.credentials.filter((credential) => credential.storage === "config").every(
+        (credential) => credential.configured === false,
+      )).toBe(true);
       expect(JSON.stringify(response)).not.toContain(SECRET);
     }
   });
@@ -326,13 +378,14 @@ describe("KeychainCredentialStore", () => {
     await vi.advanceTimersByTimeAsync(25);
     const response = await pending;
 
-    expect(runSecurity).toHaveBeenCalledTimes(CredentialKeys.length);
+    expect(runSecurity).toHaveBeenCalledTimes(SecretCredentialKeys.length);
     expect(response.store.unavailableReason).toBe("inspection_failed");
-    expect(
-      response.credentials.every(
-        (credential) => credential.configured === null,
-      ),
-    ).toBe(true);
+    expect(response.credentials.filter((credential) => credential.storage === "keychain").every(
+      (credential) => credential.configured === null,
+    )).toBe(true);
+    expect(response.credentials.filter((credential) => credential.storage === "config").every(
+      (credential) => credential.configured === false,
+    )).toBe(true);
   });
 
   it("clears every store-layer deadline when an injected runner rejects early", async () => {
@@ -434,24 +487,34 @@ describe("KeychainCredentialStore", () => {
 
   it("applies a mixed batch without returning captured or submitted values", async () => {
     const { runSecurity, state } = statefulKeychainRunner(PRE_BATCH_STATE);
+    fs.writeFileSync(configPath, JSON.stringify({
+      provider_connections: {
+        google: { mode: "vertex", project_id: `${SECRET}-old-project` },
+      },
+    }));
     const store = new KeychainCredentialStore({ platform: "darwin", runSecurity });
 
     const response = await store.applyBatch(BATCH_OPERATIONS);
 
     expect(state.get("ANTHROPIC_API_KEY")).toBe(`${SECRET}-new-anthropic`);
-    expect(state.get("AWS_PROFILE")).toBe(`${SECRET}-new-profile`);
     expect(state.has("GEMINI_API_KEY")).toBe(false);
-    expect(state.has("GOOGLE_CLOUD_PROJECT")).toBe(false);
+    expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).toMatchObject({
+      provider_connections: {
+        claude: { aws_profile: `${SECRET}-new-profile` },
+        google: { mode: "vertex" },
+      },
+    });
+    expect(JSON.parse(fs.readFileSync(configPath, "utf8")).provider_connections.google).not.toHaveProperty(
+      "project_id",
+    );
     expect(JSON.stringify(response)).not.toContain(SECRET);
-    expect(runSecurity.mock.calls.filter(([args]) => args[0] === "find-generic-password" && args.includes("-w"))).toHaveLength(4);
+    expect(runSecurity.mock.calls.filter(([args]) => args[0] === "find-generic-password" && args.includes("-w"))).toHaveLength(2);
     expect(JSON.stringify(runSecurity.mock.calls.map(([args]) => args))).not.toContain(SECRET);
   });
 
   it.each([
     ["first set", 0],
-    ["second set", 1],
-    ["first delete", 2],
-    ["second delete", 3],
+    ["delete", 1],
   ] as const)(
     "restores the exact pre-batch state when the %s operation boundary fails",
     async (_label, failedMutationAttempt) => {

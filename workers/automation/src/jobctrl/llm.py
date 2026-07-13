@@ -6,7 +6,7 @@ Auto-detects HTTP providers from environment:
 
 A raw OpenAI key is Codex CLI enrollment input, not a direct HTTP provider.
 
-LLM_MODEL env var overrides the model name for any provider.
+Model selection comes from an explicit workflow request or config.json.
 """
 
 import json
@@ -200,7 +200,6 @@ def _provider_config(provider: str | None, model_override: str | None = None) ->
     in _bootstrap() is always visible here.
     """
     gemini_key = os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
-    env_model = os.environ.get("LLM_MODEL", "")
     selected_model = (model_override or "").strip()
     provider = (provider or "").strip().lower() or None
 
@@ -212,7 +211,7 @@ def _provider_config(provider: str | None, model_override: str | None = None) ->
             raise RuntimeError("Gemini model requested but GEMINI_API_KEY is not set.")
         return (
             "https://generativelanguage.googleapis.com/v1beta/openai",
-            selected_model or env_model or DEFAULT_GEMINI_MODEL,
+            selected_model or DEFAULT_GEMINI_MODEL,
             gemini_key,
         )
 
@@ -222,7 +221,7 @@ def _provider_config(provider: str | None, model_override: str | None = None) ->
     if gemini_key:
         return (
             "https://generativelanguage.googleapis.com/v1beta/openai",
-            selected_model or env_model or DEFAULT_GEMINI_MODEL,
+            selected_model or DEFAULT_GEMINI_MODEL,
             gemini_key,
         )
 

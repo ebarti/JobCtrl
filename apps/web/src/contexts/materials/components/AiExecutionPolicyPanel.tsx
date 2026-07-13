@@ -86,6 +86,6 @@ function ModelSelectControl({ name, label, models, value, readOnly, help, onChan
   return <div className="field"><label htmlFor={`ai-policy-${name}`}>{label}</label><select id={`ai-policy-${name}`} name={name} disabled={readOnly} aria-describedby={helpId} value={value} onChange={(event) => onChange(event.target.value)}><option value="">Provider/default policy</option>{options.map((model) => <option key={model.value} value={model.value}>{model.label}</option>)}</select><small id={helpId}>{help}</small></div>;
 }
 
-function context(source: "environment" | "persisted" | "default", activation: string): string {
-  return `${source === "environment" ? "Managed by the launch environment" : source === "persisted" ? "Saved setting" : "Using provider/default policy"}; applies to the ${activation}.`;
+function context(source: "persisted" | "default", activation: string): string {
+  return `${source === "persisted" ? "Saved in config.json" : "Using provider/default policy"}; applies to the ${activation}.`;
 }

@@ -10,7 +10,7 @@ describe("<BrowserCapabilitiesPanel>", () => {
 
     expect(await screen.findByText("Core managed browser")).toBeInTheDocument();
     expect(screen.getByText(/never auto-detects or adopts Chrome/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/Write-only/i)).toHaveLength(2);
+    expect(screen.getAllByText(/status API does not echo local paths/i)).toHaveLength(2);
     expect(screen.queryByRole("button", { name: /download/i })).not.toBeInTheDocument();
   });
 });

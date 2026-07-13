@@ -9,12 +9,12 @@ const repoRoot = path.resolve(here, "..", "..", "..");
 const E2E_DIR =
   process.env["JOBCTRL_E2E_APP_DIR"] ?? path.join(os.tmpdir(), "jobctrl-e2e-current");
 const E2E_DB = process.env["JOBCTRL_E2E_DB_PATH"] ?? path.join(E2E_DIR, "jobctrl.db");
-const E2E_SETTINGS =
-  process.env["JOBCTRL_E2E_SETTINGS_PATH"] ?? path.join(E2E_DIR, "dashboard.json");
+const E2E_CONFIG =
+  process.env["JOBCTRL_E2E_CONFIG_PATH"] ?? path.join(E2E_DIR, "config.json");
 
 process.env["JOBCTRL_E2E_APP_DIR"] = E2E_DIR;
 process.env["JOBCTRL_E2E_DB_PATH"] = E2E_DB;
-process.env["JOBCTRL_E2E_SETTINGS_PATH"] = E2E_SETTINGS;
+process.env["JOBCTRL_E2E_CONFIG_PATH"] = E2E_CONFIG;
 
 // Ports default to 8767/5174 (unchanged) but are overridable so parallel
 // worktrees / local stacks can run E2E without colliding on a busy port.
@@ -52,7 +52,7 @@ export default defineConfig({
         JOBCTRL_API_PORT: API_PORT,
         JOBCTRL_DIR: E2E_DIR,
         JOBCTRL_DB_PATH: E2E_DB,
-        JOBCTRL_DASHBOARD_CONFIG_PATH: E2E_SETTINGS,
+        JOBCTRL_CONFIG_PATH: E2E_CONFIG,
         // INSPECT-01: route material-generation dispatch to the deterministic
         // E2E stub (no worker subprocess, no LLM) while keeping the
         // worker-readiness gate live against the seeded heartbeat.

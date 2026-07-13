@@ -57,7 +57,7 @@ function withTempApp(starter?: ContactResearchStarter) {
   db.close();
   const app = buildApp({
     dbPath,
-    settingsPath: path.join(dir, "dashboard.json"),
+    configPath: path.join(dir, "config.json"),
     requireHealthyWorkerForActions: false,
     ...(starter ? { contactResearchStarter: starter } : {}),
   });

@@ -169,12 +169,13 @@ and **committed** (not gitignored).
 
 ```mermaid
 flowchart TD
-    ROOT["__root.tsx<br/>providers · shell · not-found"]
-    ROOT --> WORK["Work overview<br/>dashboard · jobs · artifacts"]
-    ROOT --> PROFILE["Candidate setup<br/>profile · import · preferences · settings"]
-    ROOT --> REVIEW["Review and execution<br/>apply-review · runs · pipelines"]
-    ROOT --> DISCOVERY["Sourcing and outreach<br/>discovery · outreach"]
-    ROOT --> DEBUG["Diagnostics<br/>debug · activity detail · dev spikes"]
+    ROOT@{ icon: "tabler:hierarchy-2", form: "rounded", h: 64, label: "__root.tsx<br/>providers · shell · not-found" }
+    WORK@{ icon: "tabler:layout-dashboard", form: "rounded", h: 64, label: "Work overview<br/>dashboard · jobs · artifacts" }
+    PROFILE@{ icon: "tabler:id", form: "rounded", h: 64, label: "Candidate setup<br/>profile · import · preferences · settings" }
+    REVIEW@{ icon: "tabler:clipboard-check", form: "rounded", h: 64, label: "Review and execution<br/>apply-review · runs · pipelines" }
+    DISCOVERY@{ icon: "tabler:radar", form: "rounded", h: 64, label: "Sourcing and outreach<br/>discovery · outreach" }
+    DEBUG@{ icon: "tabler:bug", form: "rounded", h: 64, label: "Diagnostics<br/>debug · activity detail · dev spikes" }
+    ROOT --> WORK & PROFILE & REVIEW & DISCOVERY & DEBUG
 
     class ROOT,WORK,PROFILE,REVIEW,DISCOVERY,DEBUG ui
 ```

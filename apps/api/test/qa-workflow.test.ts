@@ -22,7 +22,7 @@ beforeEach(() => {
   workspace = createQaWorkspace();
   options = {
     dbPath: workspace.dbPath,
-    settingsPath: workspace.settingsPath,
+    configPath: workspace.configPath,
     profilePreviewRenderer: async () => ({
       pdfBytes: Buffer.from("%PDF-1.4\n% QA preview\n"),
       htmlText: '<main class="resume-page">QA preview</main>',
@@ -181,27 +181,37 @@ describe("seeded local QA workflow", () => {
     const settings = await app.inject({ method: "GET", url: "/v1/settings" });
     expect(settings.statusCode, settings.body).toBe(200);
     expect(settings.json().settings).toMatchObject({
-      minFitScore: 7,
       scoreCriteria: "Prioritize platform reliability, security, and engineering leadership.",
       targetCriteria: "Remote-friendly senior engineering leadership roles.",
     });
+
+    const discoverySettings = await app.inject({ method: "GET", url: "/v1/discovery/settings" });
+    expect(discoverySettings.statusCode, discoverySettings.body).toBe(200);
+    expect(discoverySettings.json().settings).toMatchObject({ minFitScore: 7 });
 
     const updateSettings = await app.inject({
       method: "PATCH",
       url: "/v1/settings",
       headers: LOOPBACK_HEADERS,
       payload: {
-        minFitScore: 8,
         scoreCriteria: "QA score criteria",
         targetCriteria: "QA targeting criteria",
       },
     });
     expect(updateSettings.statusCode, updateSettings.body).toBe(200);
-    expect(JSON.parse(fs.readFileSync(workspace.settingsPath, "utf8"))).toMatchObject({
-      min_fit_score: 8,
+    expect(JSON.parse(fs.readFileSync(workspace.configPath, "utf8"))).toMatchObject({
       score_criteria: "QA score criteria",
       target_criteria: "QA targeting criteria",
     });
+
+    const updateDiscovery = await app.inject({
+      method: "PATCH",
+      url: "/v1/discovery/settings",
+      headers: LOOPBACK_HEADERS,
+      payload: { minFitScore: 8 },
+    });
+    expect(updateDiscovery.statusCode, updateDiscovery.body).toBe(200);
+    expect(updateDiscovery.json().settings).toMatchObject({ minFitScore: 8 });
 
     const profileResponse = await app.inject({ method: "GET", url: "/v1/profile" });
     expect(profileResponse.statusCode, profileResponse.body).toBe(200);
@@ -265,7 +275,7 @@ function createMemoryCredentialStore(): CredentialStore {
   const list = async (): Promise<CredentialsResponse> => ({
     ok: true,
     store: {
-      kind: "macos_keychain",
+      kind: "config_and_macos_keychain",
       available: true,
       unavailableReason: null,
       requiresWorkerRestart: true,

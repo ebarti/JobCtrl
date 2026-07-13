@@ -12,9 +12,9 @@ describe("credential and browser privacy documentation contract", () => {
   it("distinguishes discovery browsers from application-submission automation", () => {
     const dataSafety = readRepoFile("docs/user/data-and-safety.md");
 
-    expect(dataSafety).toContain("Discovery or enrichment may launch a browser?");
+    expect(dataSafety).toContain("Can Discovery or enrichment launch a browser?");
     expect(dataSafety).toContain("Smart extraction and some detail enrichment use Playwright");
-    expect(dataSafety).toContain("Application-submission browser automation always running?");
+    expect(dataSafety).toContain("Does application-submission browser automation run continuously?");
     expect(dataSafety).not.toContain("Browser/apply automation always running?");
   });
 

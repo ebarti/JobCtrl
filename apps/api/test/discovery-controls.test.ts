@@ -79,7 +79,7 @@ function withTempDb(): { dbPath: string; dir: string; cleanup: () => void } {
 function options(dbPath: string, dir: string) {
   return {
     dbPath,
-    settingsPath: path.join(dir, "dashboard.json"),
+    configPath: path.join(dir, "config.json"),
   };
 }
 

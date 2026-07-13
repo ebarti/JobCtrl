@@ -486,13 +486,13 @@ export class DemoApiClientAdapter implements ApiClientPort {
           provider: "claude",
           configured: true,
           ready: true,
-          source: "provider_aliases",
+          source: "live",
           models: [
-            { id: "sonnet", displayName: "Sonnet" },
-            { id: "opus", displayName: "Opus", isDefault: true },
-            { id: "haiku", displayName: "Haiku" },
+            { id: "claude-fable-5", displayName: "Fable 5" },
+            { id: "claude-opus-4-8", displayName: "Opus 4.8", isDefault: true },
+            { id: "claude-sonnet-5", displayName: "Sonnet 5" },
           ],
-          message: "Synthetic preview of Claude provider-safe aliases.",
+          message: "Synthetic preview catalog; no Claude account is connected.",
         },
         {
           provider: "google",

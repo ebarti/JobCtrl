@@ -104,7 +104,7 @@ launcher defaults above.
 | --- | --- | --- |
 | `JOBCTRL_DIR` | `~/.jobctrl` | Local app directory for database, settings, artifacts, logs, browser worker state, and `.env`. |
 | `JOBCTRL_DB_PATH` | `$JOBCTRL_DIR/jobctrl.db` | TypeScript API database path. The Python worker ignores it and always uses `$JOBCTRL_DIR/jobctrl.db`, so overriding it desynchronizes the API from the worker — prefer `JOBCTRL_DIR` to move both. |
-| `JOBCTRL_DASHBOARD_CONFIG_PATH` | `$JOBCTRL_DIR/dashboard.json` | Non-secret settings file written by the TypeScript API and read by both API and worker (preferences, provider-scoped model IDs, apply approval gate, spend budget). |
+| `JOBCTRL_CONFIG_PATH` | `$JOBCTRL_DIR/config.json` | Non-secret Settings file written by the TypeScript API and read by both API and worker (general controls, provider metadata, browser adoption, and provider-scoped model IDs). Discovery-page values remain in SQLite. |
 | `JOBCTRL_API_HOST` | `127.0.0.1` | Local API bind host. Non-loopback hosts require explicit opt-in. |
 | `JOBCTRL_API_PORT` / `PORT` | `8766` | Local API port. |
 | `JOBCTRL_API_ALLOW_REMOTE_BIND` | unset | Set to `1`, `true`, or `yes` to allow non-loopback API binding. This can expose private local data. |
@@ -117,7 +117,6 @@ launcher defaults above.
 | `JOBCTRL_TEMPORAL_DB` | `.dev/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. |
 | `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address used by the worker, CLI, and workflow-starting RPC. |
 | `TEMPORAL_NAMESPACE` | `default` | Temporal namespace. |
-| `JOBCTRL_MAX_CONCURRENT_ACTIVITIES` | `4` | Maximum Temporal activities the local worker runs at once (shown on the Settings page). Set in the worker environment and restart the worker to apply. |
 | `JOBCTRL_API_SSE_POLL_MS` | `250` | API event-stream database poll interval in milliseconds. |
 | `VITE_DEV_API_PROXY_TARGET` | `http://127.0.0.1:8766` | Vite dev-server `/v1` proxy target; override it for isolated or multi-worktree stacks. |
 | `VITE_DEMO_API_PROXY_TARGET` | launcher-managed | Vite dev-server `/api` proxy target for demo mode. The launcher sets it to the tracked local Wrangler process so consent stays same-origin. |
@@ -308,6 +307,25 @@ pnpm extension:e2e
 
 Regenerate public documentation screenshots with `pnpm docs:screenshots` — see
 [Documentation Screenshots](#documentation-screenshots).
+
+## Test And Documentation Workspaces
+
+These contributor-only variables isolate synthetic QA, screenshot generation,
+and CI from a real JobCtrl workspace:
+
+| Variable | What it does |
+| --- | --- |
+| `JOBCTRL_E2E_APP_DIR` | Disposable app directory used by Playwright e2e. |
+| `JOBCTRL_E2E_DB_PATH` | E2E database path. |
+| `JOBCTRL_E2E_SETTINGS_PATH` | E2E settings path. |
+| `JOBCTRL_E2E_API_PORT` | E2E API port. |
+| `JOBCTRL_E2E_WEB_PORT` | E2E web port. |
+| `JOBCTRL_E2E_STUB_DISPATCH` | Routes selected dispatches through deterministic test stubs. |
+| `JOBCTRL_DOCS_SCREENSHOTS` | Opts the Playwright run into rewriting the synthetic documentation screenshots under `docs/`. |
+| `VITE_JOBCTRL_SHOW_DEVTOOLS` | Shows TanStack Router and Query devtools in local Vite dev builds. |
+| `VITE_JOBCTRL_HIDE_DEVTOOLS` | Compatibility override that hides TanStack devtools even when the show flag is set. |
+
+Never point these paths at a real `~/.jobctrl` workspace.
 
 ## Build the bundled payload
 

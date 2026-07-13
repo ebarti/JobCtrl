@@ -636,7 +636,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         // A read triggers the TS projection refresh, which materialises the
@@ -772,7 +772,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         // The detail read triggers a full projection refresh (first run rebuilds

@@ -588,7 +588,7 @@ test("fixture builds are bytewise reproducible in different directories", async 
     measurementStatus: "unavailable-fixture",
     packCount: 3,
     wheelCount: 46,
-    downloadBytes: 189423573,
+    downloadBytes: 197692585,
     installedBytes: null,
     fileCount: null,
     treeSha256: null,

@@ -7,11 +7,6 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 PROVIDER_ORDER = ("codex", "claude", "google")
-CLAUDE_ALIASES = (
-    {"id": "sonnet", "displayName": "Sonnet"},
-    {"id": "opus", "displayName": "Opus", "isDefault": True},
-    {"id": "haiku", "displayName": "Haiku"},
-)
 _LIVE_FAILURE_MESSAGE = "Live model catalog is temporarily unavailable."
 
 
@@ -19,6 +14,7 @@ def provider_model_catalog(
     *,
     status_loader: Callable[[str], Mapping[str, object]] | None = None,
     codex_factory: Callable[[], Any] | None = None,
+    claude_factory: Callable[[], Any] | None = None,
     google_client_factory: Callable[[], Any] | None = None,
 ) -> dict[str, list[dict[str, object]]]:
     """Return stable, sanitized catalogs without auth or account metadata."""
@@ -33,12 +29,11 @@ def provider_model_catalog(
         status = status_loader(provider)
         configured = bool(status.get("configured"))
         ready = bool(status.get("ready"))
-        source = "provider_aliases" if provider == "claude" else "live"
         item: dict[str, object] = {
             "provider": provider,
             "configured": configured,
             "ready": ready,
-            "source": source,
+            "source": "live",
             "models": [],
         }
         if not ready:
@@ -47,11 +42,14 @@ def provider_model_catalog(
                 if configured
                 else "Provider is not configured."
             )
-        elif provider == "claude":
-            item["models"] = [dict(model) for model in CLAUDE_ALIASES]
         elif provider == "codex":
             try:
                 item["models"] = _codex_models(codex_factory)
+            except Exception:  # noqa: BLE001 - boundary must never leak SDK/auth details
+                item["message"] = _LIVE_FAILURE_MESSAGE
+        elif provider == "claude":
+            try:
+                item["models"] = _claude_models(claude_factory)
             except Exception:  # noqa: BLE001 - boundary must never leak SDK/auth details
                 item["message"] = _LIVE_FAILURE_MESSAGE
         else:
@@ -96,6 +94,64 @@ def _normalize_codex_models(items: Iterable[Any]) -> list[dict[str, object]]:
         if bool(_field(item, "is_default")):
             model["isDefault"] = True
         models.append(model)
+        if len(models) == 512:
+            break
+    return models
+
+
+def _claude_models(factory: Callable[[], Any] | None) -> list[dict[str, object]]:
+    client_factory = factory or _default_claude_client_factory
+
+    async def load() -> Any:
+        async with client_factory() as client:
+            return await client.get_server_info()
+
+    server_info = asyncio.run(load())
+    if not isinstance(server_info, Mapping):
+        raise RuntimeError("Claude runtime returned no initialization metadata")
+    items = server_info.get("models")
+    if not isinstance(items, list):
+        raise RuntimeError("Claude runtime returned no model catalog")
+    return _normalize_claude_models(items)
+
+
+def _default_claude_client_factory() -> Any:
+    from jobctrl.infrastructure.setup_probes import bundled_claude_sdk_options
+    from jobctrl.runtime import activate_provider_pack, is_bundled_runtime
+
+    if is_bundled_runtime():
+        from jobctrl.config import APP_DIR
+
+        activate_provider_pack("claude-agent-sdk", app_dir=APP_DIR)
+    from claude_agent_sdk import (  # type: ignore[import-untyped]
+        ClaudeAgentOptions,
+        ClaudeSDKClient,
+    )
+
+    options = ClaudeAgentOptions(
+        tools=[],
+        allowed_tools=[],
+        **bundled_claude_sdk_options(),
+    )
+    return ClaudeSDKClient(options)
+
+
+def _normalize_claude_models(items: Iterable[Any]) -> list[dict[str, object]]:
+    models: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for item in items:
+        model_id = _safe_text(
+            _field(item, "value") or _field(item, "model") or _field(item, "id")
+        )
+        if not model_id or model_id == "default" or model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append(
+            {
+                "id": model_id,
+                "displayName": _safe_text(_field(item, "display_name")) or model_id,
+            }
+        )
         if len(models) == 512:
             break
     return models
@@ -197,4 +253,4 @@ def _safe_text(value: Any) -> str:
     return text
 
 
-__all__ = ["CLAUDE_ALIASES", "PROVIDER_ORDER", "provider_model_catalog"]
+__all__ = ["PROVIDER_ORDER", "provider_model_catalog"]

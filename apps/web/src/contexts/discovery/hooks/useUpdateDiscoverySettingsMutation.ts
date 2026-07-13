@@ -47,6 +47,12 @@ function patchDiscoverySettings(
   }
 
   const effectiveSettings: EffectiveDiscoverySettings = {
+    minFitScore: persistedValue(current.effectiveSettings.minFitScore, body.minFitScore),
+    autoApply: persistedValue(current.effectiveSettings.autoApply, body.autoApply),
+    applyApprovalRequired: persistedValue(
+      current.effectiveSettings.applyApprovalRequired,
+      body.applyApprovalRequired,
+    ),
     boards: persistedValue(current.effectiveSettings.boards, body.boards),
     resultsPerSite: persistedValue(
       current.effectiveSettings.resultsPerSite,
@@ -83,6 +89,11 @@ function patchDiscoverySettings(
     ...current,
     settings: {
       ...current.settings,
+      ...(body.minFitScore !== undefined ? { minFitScore: body.minFitScore } : {}),
+      ...(body.autoApply !== undefined ? { autoApply: body.autoApply } : {}),
+      ...(body.applyApprovalRequired !== undefined
+        ? { applyApprovalRequired: body.applyApprovalRequired }
+        : {}),
       ...(body.boards !== undefined ? { boards: body.boards } : {}),
       ...(body.resultsPerSite !== undefined ? { resultsPerSite: body.resultsPerSite } : {}),
       ...(body.hoursOld !== undefined ? { hoursOld: body.hoursOld } : {}),

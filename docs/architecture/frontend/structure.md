@@ -279,11 +279,14 @@ apps/web/
 ```
 
 ```mermaid
-flowchart LR
-    ROUTES["routes/<br/>URL + typed search state"] --> VIEWS["views/<br/>composition only"]
-    VIEWS --> CONTEXTS["contexts/<br/>domain reads, writes, and UI"]
-    CONTEXTS --> SHARED["shared/<br/>ports, adapters, providers, primitives"]
-    TESTS["test/ + e2e/<br/>MSW, fixtures, browser flows"] -.-> ROUTES
+flowchart TD
+    ROUTES@{ icon: "tabler:route", form: "rounded", h: 64, label: "routes/<br/>URL + typed search state" }
+    VIEWS@{ icon: "tabler:layout-dashboard", form: "rounded", h: 64, label: "views/<br/>composition only" }
+    CONTEXTS@{ icon: "tabler:stack-2", form: "rounded", h: 64, label: "contexts/<br/>domain reads, writes, and UI" }
+    SHARED@{ icon: "tabler:box", form: "rounded", h: 64, label: "shared/<br/>ports, adapters, providers, primitives" }
+    TESTS@{ icon: "tabler:test-pipe", form: "rounded", h: 64, label: "test/ + e2e/<br/>MSW, fixtures, browser flows" }
+    ROUTES --> VIEWS --> CONTEXTS --> SHARED
+    TESTS -.-> ROUTES
     TESTS -.-> CONTEXTS
 
     class ROUTES,VIEWS,CONTEXTS,SHARED ui

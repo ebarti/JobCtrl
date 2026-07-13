@@ -18,10 +18,10 @@ it comprises **220 colocated `*.test.ts(x)`** under `apps/web/src`
 
 ```mermaid
 graph TB
-    E["End-to-end (Playwright)<br/>Critical flows on real backend"]
-    I["Integration (Vitest + RTL + MSW)<br/>Hooks, components, route loaders<br/>against mocked API"]
-    U["Unit (Vitest)<br/>Pure selectors, query-key factories,<br/>invalidation router, formatters"]
-    S["Storybook<br/>Component-driven dev + visual regression"]
+    E@{ icon: "tabler:browser-check", form: "rounded", h: 64, label: "End-to-end<br/>Playwright · critical real-backend flows" }
+    I@{ icon: "tabler:plug-connected", form: "rounded", h: 64, label: "Integration<br/>Vitest · RTL · MSW" }
+    U@{ icon: "tabler:test-pipe", form: "rounded", h: 64, label: "Unit<br/>selectors · query keys · invalidation" }
+    S@{ icon: "tabler:components", form: "rounded", h: 64, label: "Storybook<br/>component dev + visual regression" }
     U --> I --> E
     S -. "drives I" .-> I
 ```

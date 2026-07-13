@@ -12,7 +12,7 @@ import { useDeleteCredentialMutation } from "./useDeleteCredentialMutation.js";
 const initialCredentials = {
   ok: true as const,
   store: {
-    kind: "macos_keychain" as const,
+    kind: "config_and_macos_keychain" as const,
     available: true,
     unavailableReason: null,
     requiresWorkerRestart: true as const,

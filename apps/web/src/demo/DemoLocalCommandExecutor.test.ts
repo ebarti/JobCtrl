@@ -214,7 +214,7 @@ const LOCAL_CASES = [
   ["cancelWorkflowRun", (api) => api.cancelWorkflowRun("run-materials-progress")],
   ["updateProfile", (api) => api.updateProfile({ templateText: "Updated bundled template" })],
   ["importResume", (api) => api.importResume({ filename: "demo.pdf", pdfBase64: "ZGVtbw==", importProfile: true, importStyle: true })],
-  ["updateSettings", (api) => api.updateSettings({ targetRole: "Synthetic systems director", minFitScore: 8 })],
+  ["updateSettings", (api) => api.updateSettings({ dailyBudgetUsd: 12, workerActivitySlots: 8 })],
   ["createContact", (api) => api.createContact({ role: "recruiter", employer: "Demo Workshop", attributes: [{ kind: "name", value: "Synthetic contact" }] })],
   ["updateContact", (api) => api.updateContact("contact-demo-hiring-partner", { role: "hiring_manager" })],
   ["deleteContact", (api) => api.deleteContact("contact-demo-hiring-partner", { reason: "Demo cleanup" })],
@@ -622,9 +622,9 @@ describe("DemoLocalCommandExecutor", () => {
 
   it("keeps settings, apply review, and job-template projections consistent", async () => {
     const { adapter, repository } = await harness();
-    await expect(adapter.updateSettings({ dailyBudgetUsd: 12, targetRole: "Demo architect" })).resolves.toMatchObject({
+    await expect(adapter.updateSettings({ dailyBudgetUsd: 12, workerActivitySlots: 8 })).resolves.toMatchObject({
       ok: true,
-      settings: { dailyBudgetUsd: 12, targetRole: "Demo architect" },
+      settings: { dailyBudgetUsd: 12, workerActivitySlots: 8 },
       effectiveSettings: {
         dailyBudgetUsd: { value: 12, source: "persisted" },
       },
@@ -1011,12 +1011,12 @@ describe("DemoLocalCommandExecutor", () => {
     const { adapter, repository } = await harness(store);
     const before = repository.snapshotNow();
     store.failNext = true;
-    await expect(adapter.updateSettings({ targetRole: "Must roll back" })).rejects.toBeInstanceOf(
+    await expect(adapter.updateSettings({ dailyBudgetUsd: 99 })).rejects.toBeInstanceOf(
       DemoCommandPersistenceError,
     );
     const after = repository.snapshotNow();
-    expect(after.state.readModel.settings.settings.targetRole).toBe(
-      before.state.readModel.settings.settings.targetRole,
+    expect(after.state.readModel.settings.settings.dailyBudgetUsd).toBe(
+      before.state.readModel.settings.settings.dailyBudgetUsd,
     );
   });
 });

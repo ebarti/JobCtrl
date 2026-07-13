@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, type MutableRefObject, type RefObject } fro
 const AUTOSAVE_DELAY_MS = 5_000;
 const MAX_UNDO_DEPTH = 50;
 
-interface AutosaveUndoControllerProps<TValues> {
+export interface AutosaveUndoControllerProps<TValues> {
   readonly formRef: RefObject<HTMLFormElement | null>;
   readonly isDirty: boolean;
   readonly isSubmitting: boolean;

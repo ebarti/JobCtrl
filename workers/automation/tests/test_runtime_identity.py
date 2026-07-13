@@ -12,7 +12,7 @@ def test_worker_heartbeat_writes_runtime_identity(monkeypatch, tmp_path):
     db_path = tmp_path / "jobctrl.db"
     monkeypatch.setattr(runtime_identity.config, "APP_DIR", tmp_path)
     monkeypatch.setattr(runtime_identity.config, "DB_PATH", db_path)
-    monkeypatch.setenv("JOBCTRL_MAX_CONCURRENT_ACTIVITIES", "8")
+    (tmp_path / "config.json").write_text('{"worker_activity_slots": 8}', encoding="utf-8")
 
     worker_id = runtime_identity.write_worker_heartbeat(
         task_queue="jobctrl-default",
@@ -46,7 +46,6 @@ def test_worker_heartbeat_keeps_the_startup_concurrency_snapshot(monkeypatch, tm
     db_path = tmp_path / "jobctrl.db"
     monkeypatch.setattr(runtime_identity.config, "APP_DIR", tmp_path)
     monkeypatch.setattr(runtime_identity.config, "DB_PATH", db_path)
-    monkeypatch.setenv("JOBCTRL_MAX_CONCURRENT_ACTIVITIES", "2")
 
     runtime_identity.write_worker_heartbeat(
         task_queue="jobctrl-default",
@@ -54,11 +53,10 @@ def test_worker_heartbeat_keeps_the_startup_concurrency_snapshot(monkeypatch, tm
         now=datetime(2026, 5, 20, 10, 0, tzinfo=UTC),
         max_concurrent_activities=8,
     )
-    (tmp_path / "dashboard.json").write_text(
+    (tmp_path / "config.json").write_text(
         '{"worker_activity_slots": 13}',
         encoding="utf-8",
     )
-    monkeypatch.setenv("JOBCTRL_MAX_CONCURRENT_ACTIVITIES", "3")
     runtime_identity.write_worker_heartbeat(
         task_queue="jobctrl-default",
         worker_id="worker-test",

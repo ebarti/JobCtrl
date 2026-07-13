@@ -1,7 +1,3 @@
----
-pageClass: jh-user-guide-page
----
-
 # Getting Started
 
 JobCtrl is a local application: the app, database, settings, and generated
@@ -103,7 +99,8 @@ updates, and rollbacks.
 Open **Profile** in the web app and add or import the facts JobCtrl may use for
 scoring and tailoring. Your profile is the source of truth for every later
 stage; JobCtrl must not invent experience, skills, or achievements that are
-not recorded there.
+not recorded there. [Candidate Profile](candidate-profile.md) explains the
+profile's boundaries, versioning, and downstream consumers.
 
 ### Connect an LLM provider
 
@@ -119,7 +116,7 @@ One ready provider is sufficient for scoring, materials, and employer
 analysis. Connecting a second provider can improve ensemble diversity, but it
 is a recommendation, not a requirement.
 
-Claude, Google, and CapSolver values saved to Keychain take effect when the
+Claude and Google values saved to Keychain take effect when the
 relevant Python process next starts. Restart JobCtrl after those edits:
 
 ```bash
@@ -128,8 +125,9 @@ jobctrl start
 ```
 
 You can also store provider settings in `~/.jobctrl/.env`. See
-[Configuration](configuration.md) for provider choices, precedence, budgets,
-and feature-specific credentials.
+[Configuration](configuration.md) for provider choices, precedence, and
+budgets. Apply-specific browser, CAPTCHA, and Gmail setup is in
+[Apply](apply.md).
 
 ### Verify provider readiness
 

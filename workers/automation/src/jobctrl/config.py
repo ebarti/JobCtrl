@@ -8,7 +8,10 @@ import re
 import shutil
 import sqlite3
 import subprocess
-from collections.abc import Callable, Mapping, MutableMapping
+import tempfile
+import time
+from collections.abc import Callable, Iterator, Mapping, MutableMapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -33,6 +36,11 @@ log = logging.getLogger(__name__)
 
 APP_DIRNAME = ".jobctrl"
 DB_FILENAME = "jobctrl.db"
+CONFIG_FILENAME = "config.json"
+CONFIG_LOCK_DIRECTORY = ".config.lock"
+CONFIG_LOCK_TIMEOUT_SECONDS = 30.0
+CONFIG_LOCK_STALE_SECONDS = 15 * 60.0
+CONFIG_LOCK_RETRY_SECONDS = 0.01
 _LEGACY_TOKEN = "job" + "hunter"
 _LEGACY_TOKENS = ("job" + "ctl", _LEGACY_TOKEN)
 
@@ -41,6 +49,10 @@ KEYCHAIN_SECURITY_BINARY = "/usr/bin/security"
 KEYCHAIN_PROVIDER_KEYS = (
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "CAPSOLVER_API_KEY",
+)
+PROVIDER_CONFIGURATION_KEYS = (
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_ANTHROPIC_AWS",
     "ANTHROPIC_AWS_WORKSPACE_ID",
@@ -51,12 +63,10 @@ KEYCHAIN_PROVIDER_KEYS = (
     "ANTHROPIC_FOUNDRY_RESOURCE",
     "AWS_PROFILE",
     "AWS_REGION",
-    "GEMINI_API_KEY",
     "GOOGLE_GENAI_USE_VERTEXAI",
     "GOOGLE_CLOUD_PROJECT",
     "GOOGLE_CLOUD_LOCATION",
     "GOOGLE_APPLICATION_CREDENTIALS",
-    "CAPSOLVER_API_KEY",
 )
 KEYCHAIN_ACCOUNT_MAPPING = "key"
 KEYCHAIN_REQUIRES_WORKER_RESTART = True
@@ -119,6 +129,10 @@ def _keychain_account(key: str) -> str:
 
 class WorkspaceMigrationError(RuntimeError):
     """Raised when a legacy database schema migration cannot proceed safely."""
+
+
+class ConfigFileError(RuntimeError):
+    """Raised when config.json cannot be read or written without data loss."""
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
@@ -512,35 +526,23 @@ def load_search_config() -> dict:
 
 def effective_discovery_search_config(
     search_cfg: Mapping[str, object] | None = None,
-    env: Mapping[str, str] | None = None,
 ) -> dict:
-    """Apply launch-environment precedence to persisted discovery settings."""
-    source = env if env is not None else os.environ
+    """Normalize the SQLite-owned discovery settings for execution."""
     effective = json.loads(json.dumps(dict(search_cfg or _default_discovery_search_config())))
 
     role_filter = dict(effective.get("role_filter") or {})
-    if "JOBCTRL_DISCOVERY_LLM_ROLE_FILTER" in source:
-        role_filter["mode"] = _role_filter_mode(source.get("JOBCTRL_DISCOVERY_LLM_ROLE_FILTER"))
-    else:
-        role_filter["mode"] = _role_filter_mode(role_filter.get("mode"))
-    if "JOBCTRL_DISCOVERY_ROLE_FILTER_MODEL" in source:
-        role_filter["model"] = source.get("JOBCTRL_DISCOVERY_ROLE_FILTER_MODEL", "").strip() or None
+    role_filter["mode"] = _role_filter_mode(role_filter.get("mode"))
+    role_filter["model"] = str(role_filter.get("model") or "").strip() or None
     effective["role_filter"] = role_filter
 
-    raw_parallel = source.get("JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES", "").strip()
-    if raw_parallel:
-        effective["max_parallel_families"] = min(4, max(1, _positive_int(raw_parallel) or 1))
-    else:
-        effective["max_parallel_families"] = min(
-            4,
-            max(1, _positive_int(effective.get("max_parallel_families")) or 1),
-        )
+    effective["max_parallel_families"] = min(
+        4,
+        max(1, _positive_int(effective.get("max_parallel_families")) or 1),
+    )
 
     crawl_user_agent = dict(effective.get("crawl_user_agent") or {})
-    if "JOBCTRL_CRAWL_UA_PRODUCT" in source:
-        crawl_user_agent["product"] = source.get("JOBCTRL_CRAWL_UA_PRODUCT", "").strip() or "JobCtrl"
-    if "JOBCTRL_CRAWL_UA_CONTACT" in source:
-        crawl_user_agent["contact"] = source.get("JOBCTRL_CRAWL_UA_CONTACT", "").strip()
+    crawl_user_agent["product"] = str(crawl_user_agent.get("product") or "").strip() or "JobCtrl"
+    crawl_user_agent["contact"] = str(crawl_user_agent.get("contact") or "").strip()
     effective["crawl_user_agent"] = crawl_user_agent
     return effective
 
@@ -562,6 +564,45 @@ def load_discovery_schedule_settings() -> tuple[bool, str]:
     enabled = _bool_config(search_cfg.get("scheduling_enabled"), False)
     cron = str(search_cfg.get("schedule_cron") or "0 7 * * *").strip() or "0 7 * * *"
     return enabled, cron
+
+
+def load_discovery_automation_settings() -> dict[str, object]:
+    """Return the automation controls persisted with the Discovery page."""
+    search_cfg = _load_discovery_search_config_from_db() or _default_discovery_search_config()
+    automation = search_cfg.get("automation")
+    automation = automation if isinstance(automation, dict) else {}
+    raw_min_score = automation.get("min_fit_score")
+    try:
+        min_fit_score = min(10, max(0, int(raw_min_score)))
+    except (TypeError, ValueError):
+        min_fit_score = 7
+    return {
+        "min_fit_score": min_fit_score,
+        "auto_apply": _bool_config(automation.get("auto_apply"), False),
+        "apply_approval_required": _bool_config(
+            automation.get("apply_approval_required"),
+            True,
+        ),
+    }
+
+
+def save_discovery_automation_settings(
+    *,
+    auto_apply: bool,
+    apply_approval_required: bool,
+) -> None:
+    """Persist Apply automation choices with the SQLite-owned Discovery settings."""
+    search_cfg = _load_discovery_search_config_from_db() or _default_discovery_search_config()
+    raw_automation = search_cfg.get("automation")
+    automation = dict(raw_automation) if isinstance(raw_automation, dict) else {}
+    automation.update(
+        {
+            "auto_apply": bool(auto_apply),
+            "apply_approval_required": bool(apply_approval_required),
+        }
+    )
+    search_cfg["automation"] = automation
+    _save_discovery_search_config_to_db(search_cfg)
 
 
 def outreach_follow_up_reminders_enabled(config: dict | None = None) -> bool:
@@ -852,7 +893,7 @@ def _country_location_accepts(country_key: str, fallback: str) -> list[str]:
 
 def _load_profile_target_search() -> dict[str, list[str]]:
     if not DB_PATH.exists():
-        return _target_search_with_legacy_dashboard()
+        return _empty_target_search()
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -861,7 +902,7 @@ def _load_profile_target_search() -> dict[str, list[str]]:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'candidate_profiles'"
         ).fetchone()
         if table is None:
-            return _target_search_with_legacy_dashboard()
+            return _empty_target_search()
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()}
         row = conn.execute(
             f"""
@@ -879,9 +920,8 @@ def _load_profile_target_search() -> dict[str, list[str]]:
             (str(LOCAL_TENANT), "default"),
         ).fetchone()
         if row is None:
-            return _target_search_with_legacy_dashboard()
-        legacy = _load_legacy_dashboard_target_search()
-        roles = _split_target_text(row["experience_target_role"]) or legacy["roles"]
+            return _empty_target_search()
+        roles = _split_target_text(row["experience_target_role"])
         locations = _split_target_text(row["experience_target_locations"])
         return {
             "roles": roles,
@@ -889,12 +929,12 @@ def _load_profile_target_search() -> dict[str, list[str]]:
             "seniority": _split_target_text(row["experience_target_seniority_floor"]),
             "functions": _split_target_text(row["experience_target_functions"]),
             "specializations": _split_target_text(row["experience_target_specializations"]),
-            "locations": locations or legacy["locations"] or _profile_home_location(row),
+            "locations": locations or _profile_home_location(row),
             "work_models": _split_target_text(row["experience_target_work_models"]),
         }
     except Exception:
         log.debug("Failed to load profile target-search preferences", exc_info=True)
-        return _target_search_with_legacy_dashboard()
+        return _empty_target_search()
     finally:
         if conn is not None:
             conn.close()
@@ -909,29 +949,6 @@ def _empty_target_search() -> dict[str, list[str]]:
         "specializations": [],
         "locations": [],
         "work_models": [],
-    }
-
-
-def _target_search_with_legacy_dashboard() -> dict[str, list[str]]:
-    target = _empty_target_search()
-    target.update(_load_legacy_dashboard_target_search())
-    return target
-
-
-def _load_legacy_dashboard_target_search() -> dict[str, list[str]]:
-    configured = os.environ.get("JOBCTRL_DASHBOARD_CONFIG_PATH", "").strip()
-    path = Path(configured).expanduser() if configured else APP_DIR / "dashboard.json"
-    try:
-        parsed = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        parsed = {}
-    if not isinstance(parsed, dict):
-        parsed = {}
-    return {
-        "roles": _split_target_text(parsed.get("target_role") or parsed.get("targetRole")),
-        "locations": _split_target_text(
-            parsed.get("location_filter") or parsed.get("locationFilter")
-        ),
     }
 
 
@@ -1518,18 +1535,7 @@ def get_apply_timeout_seconds() -> int:
     verification, so local operators may need to tune the timeout without a
     code change.
     """
-    load_env()
-    raw = os.environ.get("JOBCTRL_APPLY_TIMEOUT_SECONDS")
-    if raw:
-        try:
-            parsed = int(raw)
-        except ValueError:
-            log.warning("Invalid JOBCTRL_APPLY_TIMEOUT_SECONDS=%r; using default", raw)
-        else:
-            if parsed > 0:
-                return min(3600, max(60, parsed))
-            log.warning("JOBCTRL_APPLY_TIMEOUT_SECONDS must be positive; using default")
-    saved = _dashboard_setting("apply_timeout_seconds")
+    saved = _config_setting("apply_timeout_seconds")
     try:
         return min(3600, max(60, int(saved)))
     except (TypeError, ValueError):
@@ -1538,18 +1544,7 @@ def get_apply_timeout_seconds() -> int:
 
 def get_apply_max_budget_usd() -> float:
     """Return the per-run Claude apply budget cap in USD."""
-    load_env()
-    raw = os.environ.get("JOBCTRL_APPLY_MAX_BUDGET_USD")
-    if raw:
-        try:
-            parsed = float(raw)
-        except ValueError:
-            log.warning("Invalid JOBCTRL_APPLY_MAX_BUDGET_USD=%r; using default", raw)
-        else:
-            if parsed >= 0:
-                return parsed
-            log.warning("JOBCTRL_APPLY_MAX_BUDGET_USD must be non-negative; using default")
-    saved = _dashboard_setting("apply_max_budget_usd")
+    saved = _config_setting("apply_max_budget_usd")
     try:
         return max(0.0, float(saved))
     except (TypeError, ValueError):
@@ -1557,11 +1552,9 @@ def get_apply_max_budget_usd() -> float:
 
 
 def get_analysis_legs() -> tuple[str, ...]:
-    """Return internal analysis leg identifiers from env, saved UI, or defaults."""
-    raw = os.environ.get("JOBCTRL_ANALYSIS_LEGS")
-    if not raw:
-        saved = _dashboard_setting("analysis_legs")
-        raw = ",".join(str(item) for item in saved) if isinstance(saved, list) else ""
+    """Return internal analysis leg identifiers from config.json or defaults."""
+    saved = _config_setting("analysis_legs")
+    raw = ",".join(str(item) for item in saved) if isinstance(saved, list) else ""
     aliases = {
         "claude": "claude",
         "anthropic": "claude",
@@ -1584,48 +1577,248 @@ def get_analysis_legs() -> tuple[str, ...]:
 
 
 def get_tailoring_generator_models() -> tuple[str, ...]:
-    raw = (
-        os.environ.get("TAILORING_GENERATOR_MODELS")
-        or os.environ.get("TAILORING_GENERATOR_MODEL")
-        or os.environ.get("TAILOR_LLM_MODELS")
-    )
-    if raw:
-        return tuple(item.strip() for item in raw.split(",") if item.strip())
-    saved = _dashboard_setting("tailoring_generator_models")
+    saved = _config_setting("tailoring_generator_models")
     return tuple(str(item).strip() for item in saved if str(item).strip()) if isinstance(saved, list) else ()
 
 
 def get_tailoring_judge_model() -> str | None:
-    raw = os.environ.get("TAILORING_JUDGE_MODEL") or os.environ.get("TAILOR_JUDGE_MODEL")
-    if raw:
-        return raw.strip() or None
-    saved = _dashboard_setting("tailoring_judge_model")
+    saved = _config_setting("tailoring_judge_model")
     return str(saved).strip() or None if saved is not None else None
 
 
 def get_tailoring_judge_min_score() -> float:
-    raw = os.environ.get("TAILORING_JUDGE_MIN_SCORE") or os.environ.get("TAILOR_JUDGE_MIN_SCORE")
-    value = raw if raw else _dashboard_setting("tailoring_judge_min_score")
+    value = _config_setting("tailoring_judge_min_score")
     try:
         return min(1.0, max(0.0, float(value)))
     except (TypeError, ValueError):
         return 0.82
 
 
-def _dashboard_setting(key: str) -> object | None:
-    configured = os.environ.get("JOBCTRL_DASHBOARD_CONFIG_PATH", "").strip()
-    path = Path(configured).expanduser() if configured else APP_DIR / "dashboard.json"
+def get_config_path(*, app_dir: Path | None = None) -> Path:
+    """Return the one file that owns persisted, non-secret Settings values."""
+    if app_dir is not None:
+        return Path(app_dir) / CONFIG_FILENAME
+    configured = os.environ.get("JOBCTRL_CONFIG_PATH", "").strip()
+    return Path(configured).expanduser() if configured else APP_DIR / CONFIG_FILENAME
+
+
+def load_config_file(
+    *,
+    path: Path | str | None = None,
+    app_dir: Path | None = None,
+    strict: bool = False,
+) -> dict[str, object]:
+    if path is not None and app_dir is not None:
+        raise ValueError("path and app_dir are mutually exclusive")
+    resolved_path = Path(path).expanduser() if path is not None else get_config_path(app_dir=app_dir)
     try:
-        parsed = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+        parsed = json.loads(resolved_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        if strict:
+            raise ConfigFileError(f"{resolved_path.name} must contain valid JSON") from exc
+        return {}
     if not isinstance(parsed, dict):
-        return None
-    camel = "".join(
-        part if index == 0 else part.capitalize()
-        for index, part in enumerate(key.split("_"))
+        if strict:
+            raise ConfigFileError(f"{resolved_path.name} must contain a JSON object")
+        return {}
+    return parsed
+
+
+@contextmanager
+def config_file_lock(
+    *,
+    path: Path | str | None = None,
+    app_dir: Path | None = None,
+) -> Iterator[None]:
+    """Serialize config.json transactions across the TypeScript and Python runtimes."""
+    if path is not None and app_dir is not None:
+        raise ValueError("path and app_dir are mutually exclusive")
+    resolved_path = Path(path).expanduser() if path is not None else get_config_path(app_dir=app_dir)
+    _ensure_config_parent(resolved_path)
+    lock_path = resolved_path.parent / CONFIG_LOCK_DIRECTORY
+    deadline = time.monotonic() + CONFIG_LOCK_TIMEOUT_SECONDS
+
+    while True:
+        try:
+            lock_path.mkdir(mode=0o700)
+            break
+        except FileExistsError:
+            try:
+                lock_stat = lock_path.lstat()
+            except FileNotFoundError:
+                continue
+            if not lock_path.is_dir() or lock_path.is_symlink():
+                raise ConfigFileError("The settings lock path is not a directory")
+            if time.time() - lock_stat.st_mtime > CONFIG_LOCK_STALE_SECONDS:
+                try:
+                    lock_path.rmdir()
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    # A non-empty or otherwise unremovable lock is still an
+                    # active/untrusted lock.  Keep the normal wait/timeout
+                    # behavior instead of spinning forever.
+                    pass
+                else:
+                    continue
+            if time.monotonic() >= deadline:
+                raise ConfigFileError(
+                    f"{resolved_path.name} is busy; retry after the current settings update finishes"
+                )
+            time.sleep(CONFIG_LOCK_RETRY_SECONDS)
+
+    try:
+        yield
+    finally:
+        try:
+            lock_path.rmdir()
+        except FileNotFoundError:
+            pass
+
+
+@contextmanager
+def edit_config_file(
+    *,
+    path: Path | str | None = None,
+    app_dir: Path | None = None,
+) -> Iterator[dict[str, object]]:
+    """Yield the latest config object and commit its mutation as one transaction."""
+    if path is not None and app_dir is not None:
+        raise ValueError("path and app_dir are mutually exclusive")
+    resolved_path = Path(path).expanduser() if path is not None else get_config_path(app_dir=app_dir)
+    with config_file_lock(path=resolved_path):
+        config = load_config_file(path=resolved_path, strict=True)
+        yield config
+        _write_config_file_unlocked(config, resolved_path)
+
+
+def write_config_file(
+    config: Mapping[str, object],
+    *,
+    path: Path | str | None = None,
+    app_dir: Path | None = None,
+) -> None:
+    """Atomically replace config.json while keeping it private to the user."""
+    if path is not None and app_dir is not None:
+        raise ValueError("path and app_dir are mutually exclusive")
+    resolved_path = Path(path).expanduser() if path is not None else get_config_path(app_dir=app_dir)
+    with config_file_lock(path=resolved_path):
+        _write_config_file_unlocked(config, resolved_path)
+
+
+def update_config_file(
+    updates: Mapping[str, object],
+    *,
+    path: Path | str | None = None,
+    app_dir: Path | None = None,
+) -> dict[str, object]:
+    """Merge top-level settings without discarding unrelated concurrent updates."""
+    with edit_config_file(path=path, app_dir=app_dir) as config:
+        config.update(updates)
+    return config
+
+
+def _write_config_file_unlocked(config: Mapping[str, object], resolved_path: Path) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{resolved_path.name}.",
+        dir=resolved_path.parent,
     )
-    return parsed.get(key, parsed.get(camel))
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(dict(config), handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, resolved_path)
+        resolved_path.chmod(0o600)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _ensure_config_parent(resolved_path: Path) -> None:
+    """Create a private JobCtrl config directory without changing shared parents."""
+    parent = resolved_path.parent
+    created: list[Path] = []
+    candidate = parent
+    while not candidate.exists():
+        created.append(candidate)
+        if candidate.parent == candidate:
+            break
+        candidate = candidate.parent
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for created_parent in created:
+        created_parent.chmod(0o700)
+    if parent.resolve() == (APP_DIR / CONFIG_FILENAME).parent.resolve():
+        parent.chmod(0o700)
+
+
+def _config_setting(key: str) -> object | None:
+    return load_config_file().get(key)
+
+
+def provider_configuration_environment(
+    config: Mapping[str, object] | None = None,
+) -> dict[str, str]:
+    """Translate canonical provider connection config into SDK environment inputs."""
+    root = config if config is not None else load_config_file()
+    connections = root.get("provider_connections")
+    connections = connections if isinstance(connections, dict) else {}
+    claude = connections.get("claude")
+    claude = claude if isinstance(claude, dict) else {}
+    google = connections.get("google")
+    google = google if isinstance(google, dict) else {}
+    shared = connections.get("shared")
+    shared = shared if isinstance(shared, dict) else {}
+    values: dict[str, str] = {}
+
+    claude_mode = str(claude.get("mode") or "").strip()
+    mode_key = {
+        "vertex": "CLAUDE_CODE_USE_VERTEX",
+        "bedrock": "CLAUDE_CODE_USE_BEDROCK",
+        "anthropic_aws": "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+        "foundry": "CLAUDE_CODE_USE_FOUNDRY",
+    }.get(claude_mode)
+    if mode_key:
+        values[mode_key] = "1"
+    _copy_provider_config(values, "ANTHROPIC_VERTEX_PROJECT_ID", claude.get("vertex_project_id"))
+    _copy_provider_config(values, "CLOUD_ML_REGION", claude.get("vertex_region"))
+    _copy_provider_config(values, "ANTHROPIC_AWS_WORKSPACE_ID", claude.get("aws_workspace_id"))
+    _copy_provider_config(values, "ANTHROPIC_FOUNDRY_RESOURCE", claude.get("foundry_resource"))
+    _copy_provider_config(values, "AWS_PROFILE", claude.get("aws_profile"))
+    _copy_provider_config(values, "AWS_REGION", claude.get("aws_region"))
+
+    if str(google.get("mode") or "").strip() == "vertex":
+        values["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
+    _copy_provider_config(values, "GOOGLE_CLOUD_PROJECT", google.get("project_id"))
+    _copy_provider_config(values, "GOOGLE_CLOUD_LOCATION", google.get("location"))
+    _copy_provider_config(
+        values,
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        shared.get("google_application_credentials_path"),
+    )
+    return values
+
+
+def _copy_provider_config(target: dict[str, str], key: str, value: object) -> None:
+    normalized = str(value or "").strip()
+    if normalized:
+        target[key] = normalized
+
+
+def load_provider_configuration(
+    *,
+    env: MutableMapping[str, str] = os.environ,
+) -> None:
+    """Make config.json the only persisted authority for non-secret provider settings."""
+    configured = provider_configuration_environment()
+    for key in PROVIDER_CONFIGURATION_KEYS:
+        env.pop(key, None)
+    env.update(configured)
 
 
 def load_macos_keychain_fallbacks(
@@ -1739,6 +1932,7 @@ def load_env() -> tuple[KeychainFallbackDiagnostic, ...]:
         # Source-install compatibility: contributors may keep checkout-local
         # values in CWD .env. This discovery path is forbidden in bundled mode.
         load_dotenv()
+    load_provider_configuration()
     if _KEYCHAIN_FALLBACK_DIAGNOSTICS is None or not KEYCHAIN_REQUIRES_WORKER_RESTART:
         _KEYCHAIN_FALLBACK_DIAGNOSTICS = load_macos_keychain_fallbacks()
     return _KEYCHAIN_FALLBACK_DIAGNOSTICS

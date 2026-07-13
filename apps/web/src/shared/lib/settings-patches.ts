@@ -1,5 +1,5 @@
 import type {
-  EffectiveDashboardSettings,
+  EffectiveJobCtrlSettings,
   EffectiveSetting,
   SettingsResponse,
   SettingsUpdateRequest,
@@ -36,7 +36,7 @@ export function patchSettingsResponse(
         }).filter(([, value]) => typeof value === "string" && value.length > 0),
       )
     : current.settings.preferredModels;
-  const effectiveSettings: EffectiveDashboardSettings = {
+  const effectiveSettings: EffectiveJobCtrlSettings = {
     ...current.effectiveSettings,
     dailyBudgetUsd: persistedValue(
       current.effectiveSettings.dailyBudgetUsd,
@@ -88,13 +88,6 @@ export function patchSettingsResponse(
     ...current,
     settings: {
       ...current.settings,
-      ...(body.targetRole !== undefined ? { targetRole: body.targetRole } : {}),
-      ...(body.locationFilter !== undefined ? { locationFilter: body.locationFilter } : {}),
-      ...(body.minFitScore !== undefined ? { minFitScore: body.minFitScore } : {}),
-      ...(body.autoApply !== undefined ? { autoApply: body.autoApply } : {}),
-      ...(body.applyApprovalRequired !== undefined
-        ? { applyApprovalRequired: body.applyApprovalRequired }
-        : {}),
       ...(body.applyConcurrency !== undefined
         ? { applyConcurrency: body.applyConcurrency }
         : {}),

@@ -1,7 +1,3 @@
----
-pageClass: jh-user-guide-page
----
-
 # Data, Privacy & Safety
 
 JobCtrl stores your working data on your computer. Network access happens only
@@ -9,22 +5,24 @@ when a feature you start—or a schedule you explicitly enable—needs a configu
 external service.
 
 This page owns the data inventory and responsible-use boundaries. For the
-controls that enforce risky actions, read [Security](security.md). For exact
-settings, read [Configuration](configuration.md).
+controls that enforce risky actions, read [Security](security.md). Feature
+settings live in [Discovery](discovery.md) and [Apply](apply.md); shared
+providers, precedence, and spend controls live in
+[Configuration](configuration.md).
 
 ## Privacy Quick Answer
 
 | Question | Answer |
 | --- | --- |
-| Hosted backend or JobCtrl account required? | ✕ **No.** App, API, worker, database, and files run locally. |
-| Database and generated files stored locally? | ✓ **Yes, by default.** They live under `JOBCTRL_DIR` (normally `~/.jobctrl/`). |
-| Model or provider calls automatic? | ◐ **Only when used and configured.** Generation and opted-in research call providers during runs you start or schedules you explicitly enable. |
-| Discovery makes network requests? | ◐ **Only when used.** Discovery contacts sources during runs you start or schedules you explicitly enable. |
-| Telemetry enabled by default? | ✕ **No.** Langfuse requires configuration; `LANGFUSE_DISABLE=1` overrides it. |
-| Discovery or enrichment may launch a browser? | ◐ **Only when needed.** Smart extraction and some detail enrichment use Playwright during runs you start or schedules you explicitly enable. |
-| Application-submission browser automation always running? | ✕ **No.** It starts only through apply/dry-run work you initiate or a standing loop you explicitly enable. |
-| Employer-facing submission or email send by default? | ✕ **No.** Browser submission and Gmail application sending are explicit guarded actions. |
-| Outreach sends messages? | ✕ **No.** Drafts end at copy/export; send logs are user attestations. |
+| Do I need a hosted backend or a JobCtrl account? | ✕ **No.** App, API, worker, database, and files run locally. |
+| Are the database and generated files stored locally? | ✓ **Yes, by default.** They live under `JOBCTRL_DIR` (normally `~/.jobctrl/`). |
+| Does JobCtrl call AI models or other providers automatically? | ◐ **Only when you use a configured feature.** Generation and opted-in research call providers during runs you start or schedules you explicitly enable. |
+| Does Discovery make network requests? | ✓ **Yes—that is how it searches configured job sources and, for AI-assisted steps, communicates with the model providers you selected.** Requests occur during runs you start or schedules you explicitly enable. |
+| Is telemetry enabled by default? | ✕ **No.** Langfuse requires configuration; `LANGFUSE_DISABLE=1` overrides it. |
+| Can Discovery or enrichment launch a browser? | ◐ **Only when needed.** Smart extraction and some detail enrichment use Playwright during runs you start or schedules you explicitly enable. |
+| Does application-submission browser automation run continuously? | ✕ **No.** It starts only through apply/dry-run work you initiate or a standing loop you explicitly enable. |
+| Does JobCtrl submit applications or send employer-facing email by default? | ✕ **No.** Browser submission and Gmail application sending are explicit guarded actions. |
+| Does Outreach send messages automatically? | ✕ **No.** Drafts end at copy/export; send logs are user attestations. |
 
 Local-first does not mean offline. Discovery fetches sources, generation calls
 models, and live apply contacts an employer only when you use those features.
@@ -78,13 +76,13 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | --- | --- |
 | `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, review drafts, contacts, and workflows. Treat all three files as one database. |
 | `temporal.db` plus `-wal` / `-shm` | Bundled-runtime Temporal state. During a native bundled update or rollback, it is hash-snapshotted and restored only together with `jobctrl.db`; never restore just one member of that pair. |
-| `dashboard.json` | Non-secret runtime settings: daily budget, apply controls, preferred model IDs, and compensation source policy. No credentials or feed contents. |
-| `.env` | Plaintext provider credentials and runtime settings. Not encrypted at rest. |
+| `config.json` | Non-secret Settings values: general controls, provider configuration metadata, preferred model IDs, compensation source policy, and browser-adoption metadata. No API keys or feed contents. |
+| `.env` | Legacy/plaintext provider credentials used by remaining compatibility paths. Not encrypted at rest. |
 | `codex_home/` | Stable JobCtrl-owned Codex CLI state. `auth.json` is outside the prompt-readable `workspace/` subtree. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated or separately acquired provider runtime state. |
 | `tailored_resumes/`, `cover_letters/` | Generated text, HTML, and PDF artifacts. |
 | `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state, including CAPTCHA usage metadata when applicable. |
-| `browser-capabilities.json`, `browser-profiles/` | Explicit system-browser adoption state and consented copied profiles. |
+| `browser-profiles/` | Consented copied browser profiles. Non-secret adoption metadata lives in `config.json`. |
 | `extension-capability-token` | Private local browser-extension pairing secret. |
 | `backups/` | Timestamped SQLite snapshots created by `jobctrl backup`. |
 | `gmail/` | Gmail OAuth client and token files. |

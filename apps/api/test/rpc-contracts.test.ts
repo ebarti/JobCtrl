@@ -85,7 +85,7 @@ describe("provider model contracts", () => {
             provider: "claude",
             configured: true,
             ready: true,
-            source: "provider_aliases",
+            source: "live",
             models: [{ id: "sonnet", displayName: "Sonnet" }],
           },
           {
@@ -103,7 +103,7 @@ describe("provider model contracts", () => {
 
   it("rejects reordered, secret-bearing, or unready nonempty catalogs", () => {
     const providers = [
-      { provider: "claude", configured: true, ready: true, source: "provider_aliases", models: [] },
+      { provider: "claude", configured: true, ready: true, source: "live", models: [] },
       { provider: "codex", configured: true, ready: true, source: "live", models: [] },
       { provider: "google", configured: false, ready: false, source: "live", models: [] },
     ];
@@ -112,7 +112,7 @@ describe("provider model contracts", () => {
       ProviderModelCatalogResultSchema.parse({
         providers: [
           { provider: "codex", configured: true, ready: true, source: "live", models: [], account: "secret" },
-          { provider: "claude", configured: true, ready: true, source: "provider_aliases", models: [] },
+          { provider: "claude", configured: true, ready: true, source: "live", models: [] },
           {
             provider: "google",
             configured: true,

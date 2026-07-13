@@ -81,10 +81,7 @@ import {
   resumeTemplateStateForJob,
 } from "./resume-templates.js";
 import { readWorkerHealth } from "./worker-health.js";
-import {
-  DEFAULT_DASHBOARD_SETTINGS,
-  readDashboardSettings,
-} from "./settings-config.js";
+import { readJobCtrlSettings } from "./settings-config.js";
 
 const DEFAULT_TENANT = "local";
 const DEFAULT_PROFILE_ID = "default";
@@ -662,7 +659,7 @@ function recordDigestReviewedEvent(
 }
 
 function normalizeDigestThreshold(value: number | null | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_DASHBOARD_SETTINGS.minFitScore;
+  if (typeof value !== "number" || !Number.isFinite(value)) return 7;
   return Math.min(10, Math.max(1, Math.trunc(Number(value))));
 }
 
@@ -2455,10 +2452,9 @@ export function parseProfileShape(value: unknown): ProfileShape | null {
 }
 
 export function readSettingsConfig(
-  paths: { settingsPath: string },
-  environment: Readonly<Record<string, string | undefined>> = process.env,
+  paths: { configPath: string },
 ): SettingsResponse {
-  const resolved = readDashboardSettings(paths.settingsPath, environment);
+  const resolved = readJobCtrlSettings(paths.configPath);
   return {
     ok: true,
     ...resolved,

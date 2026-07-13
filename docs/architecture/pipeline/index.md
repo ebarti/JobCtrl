@@ -23,7 +23,7 @@ back to one: the old sequential/threaded runner was deleted. If work takes
 longer than an HTTP request, it runs on the Python worker under Temporal.
 
 This section is the deep-dive companion to the
-[System Architecture](../index.md) overview: that page names the runtime
+[System Overview](../index.md): that page names the runtime
 boundaries and system topology — the web app, the TypeScript API, the Python
 worker, Temporal, SQLite, and the Server-Sent Events (SSE) stream — while these
 pages follow the work through them, from a button click or CLI command, across

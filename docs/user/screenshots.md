@@ -1,5 +1,5 @@
 ---
-pageClass: jh-user-guide-page jh-visual-doc jh-product-tour-page jh-outline-page
+pageClass: jh-visual-doc jh-product-tour-page jh-outline-page
 ---
 
 # Product Tour
@@ -26,7 +26,9 @@ tailoring builds on. This is the single source of truth JobCtrl scores and
 tailors against, so the more accurate it is, the better every later step works.
 
 **What to do here:** fill in everything you can and keep it truthful — every
-score and every generated resume builds on this page.
+score and every generated resume builds on this page. [Candidate Profile](candidate-profile.md)
+explains which facts belong here, how versions work, and which later stages
+consume them.
 
 ## Configure Discovery
 
@@ -38,7 +40,9 @@ and which job boards and sources to use. These settings drive every Discover run
 so they decide which jobs even show up.
 
 **What to do here:** set target roles, locations, and a seniority floor, and
-pick your boards. Tight targets beat broad ones.
+pick your boards. Tight targets beat broad ones. See [Discovery](discovery.md)
+for the exact target-search, source, schedule, and crawl controls. Every value
+edited on this page persists in SQLite.
 
 ## Run The Pipeline
 
@@ -89,7 +93,9 @@ This is where you decide whether a job is worth applying to.
 
 **What to decide here:** whether the score's evidence convinces you this job
 deserves an application. Good looks like matched requirements you actually
-have; a red flag is a high score whose evidence you cannot personally back.
+have; a red flag is a high score whose evidence you cannot personally back. See
+[Scoring](scoring-and-employer-analysis.md) for the decision
+model and [Compensation Evidence](compensation-evidence.md) for the salary data.
 
 ## Apply Review
 
@@ -103,7 +109,9 @@ own line comments. You can reply to comments and — only after saving and
 validating — approve a dry run or a real submission.
 
 **What to do here:** edit until the resume reads right and stays truthful,
-rehearse with a dry run, and approve the submission when you are satisfied.
+rehearse with a dry run, and approve the submission when you are satisfied. See
+[Materials & Tailoring](materials-and-tailoring.md) for the artifact audit trail
+and [Apply](apply.md) for approval modes, browser automation, and Gmail setup.
 
 ## Runs History
 
