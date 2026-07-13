@@ -231,6 +231,10 @@ test("runtime overrides stay in contributor documentation", async () => {
     ["`JOBCTRL_API_PORT` / `PORT`", "`8766`"],
     ["`JOBCTRL_API_ALLOW_REMOTE_BIND`", "unset"],
     ["`JOBCTRL_WEB_PORT`", "`5173`"],
+    ["`JOBCTRL_DOCS_PORT`", "`4174`"],
+    ["`JOBCTRL_DEMO_WEB_PORT`", "`5174`"],
+    ["`JOBCTRL_DEMO_API_PORT`", "`8787`"],
+    ["`JOBCTRL_DEMO_STATE_DIR`", "`.dev/demo/wrangler`"],
     ["`VITE_JOBCTRL_API_BASE_URL`", "proxied `/v1`"],
     ["`JOBCTRL_TEMPORAL_DB`", "`.dev/temporal/temporal.db`"],
     ["`TEMPORAL_ADDRESS`", "`localhost:7233`"],
@@ -238,6 +242,7 @@ test("runtime overrides stay in contributor documentation", async () => {
     ["`JOBCTRL_MAX_CONCURRENT_ACTIVITIES`", "`4`"],
     ["`JOBCTRL_API_SSE_POLL_MS`", "`250`"],
     ["`VITE_DEV_API_PROXY_TARGET`", "`http://127.0.0.1:8766`"],
+    ["`VITE_DEMO_API_PROXY_TARGET`", "launcher-managed"],
     ["`VITE_GOOGLE_MAPS_API_KEY`", "unset"],
   ];
   const developerOnlyLocalDataVariables = [
@@ -247,12 +252,17 @@ test("runtime overrides stay in contributor documentation", async () => {
     "JOBCTRL_API_PORT",
     "JOBCTRL_API_ALLOW_REMOTE_BIND",
     "JOBCTRL_WEB_PORT",
+    "JOBCTRL_DOCS_PORT",
+    "JOBCTRL_DEMO_WEB_PORT",
+    "JOBCTRL_DEMO_API_PORT",
+    "JOBCTRL_DEMO_STATE_DIR",
     "VITE_JOBCTRL_API_BASE_URL",
     "JOBCTRL_TEMPORAL_DB",
     "TEMPORAL_ADDRESS",
     "TEMPORAL_NAMESPACE",
     "JOBCTRL_API_SSE_POLL_MS",
     "VITE_DEV_API_PROXY_TARGET",
+    "VITE_DEMO_API_PROXY_TARGET",
   ];
 
   assert.doesNotMatch(configuration, /^## Core Runtime$/m);
