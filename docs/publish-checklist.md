@@ -276,8 +276,10 @@ lane.
 `https://releases.jobctrl.dev` custom domain, and repository immutable Releases
 are provisioned. The protected `release-publication` environment still needs
 bucket-scoped R2 credentials and `JOBCTRL_RELEASE_ADMIN_READ_TOKEN`, followed
-by the first live signed-release verification. No user-facing curl or Homebrew
-stable-install claim may be made until that hosted path has completed.
+by the first live signed-release verification. GitHub Actions jobs are also
+currently zero-step blocked by the repository account billing/spending state.
+No user-facing curl or Homebrew stable-install claim may be made until those
+hosted gates have completed.
 
 ### 9.5 — Homebrew tap publication (signed-release-gated)
 
