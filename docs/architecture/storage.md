@@ -69,10 +69,10 @@ application outcomes, linked email evidence, and outcome suggestions. The
 projection tables (above) are also stored here. Dashboard settings remain
 file-backed until their own storage migration. `dashboard.json` owns the daily
 budget, capacity/apply controls, scoring guidance, AI execution policy,
-preferred model IDs, and safe Levels.fyi/Glassdoor
-access-basis and coverage policy. That policy is not a feed connection;
-credentials, feed paths/URLs, feed contents, and provider payloads do not belong
-in the file.
+preferred model IDs, and Levels.fyi/Glassdoor enablement, access-basis, and
+licensed-feed coverage policy. Public Levels.fyi Markdown needs no credential.
+Credentials, feed paths/URLs, feed contents, and provider payloads do not belong
+in the settings file.
 The `digest_state` projection table stores the local daily digest review
 watermark; passive Dashboard and CLI reads do not update it, and only explicit
 acknowledge actions advance it.
@@ -102,8 +102,9 @@ low-sample warnings. High-value posted base-salary text with an omitted period
 can be treated as annual evidence for market estimation, but bonus-only and
 one-sided rows are rejected. The `jobctrl compensation-refresh` command
 reparses existing posted salary text, imports explicit local
-observations, configured licensed Levels.fyi and Glassdoor feeds, and public
-Euro Top Tech observations additively, writes estimates for existing jobs, and
+observations, tokenless public Levels.fyi salary pages, configured licensed
+Levels.fyi and Glassdoor feeds, and public Euro Top Tech observations
+additively, writes estimates for existing jobs, and
 refreshes projections without running the job pipeline. It
 does not alter raw `jobs.salary`, scoring, ranking, filtering, apply readiness,
 or apply dispatch behavior.

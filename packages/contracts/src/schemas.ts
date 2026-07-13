@@ -3713,6 +3713,7 @@ export type CompensationSourceType = (typeof COMPENSATION_SOURCE_TYPES)[number];
 export const COMPENSATION_SOURCE_ACCESS_MODES = [
   "local_posting_text",
   "public_dataset",
+  "public_markdown",
   "public_taxonomy",
   "licensed_api",
   "licensed_data_feed",
@@ -3725,6 +3726,7 @@ export const COMPENSATION_SOURCE_ACCESS_MODES = [
 export type CompensationSourceAccessMode = (typeof COMPENSATION_SOURCE_ACCESS_MODES)[number];
 
 export const LEVELS_FYI_COMPENSATION_ACCESS_MODES = [
+  "public_markdown",
   "licensed_api",
   "licensed_data_feed",
   "enterprise_mcp",
@@ -3843,6 +3845,7 @@ export const CompensationSourcePolicyUpdateRequestSchema = z
     if (
       value.sourceId === "levels_fyi" &&
       value.enabled &&
+      value.accessMode !== "public_markdown" &&
       !value.europeCoverageConfirmed
     ) {
       context.addIssue({
@@ -4500,6 +4503,15 @@ export const MARKET_COMPENSATION_SOURCE_IDS = [
 ] as const;
 export type MarketCompensationSourceId = (typeof MARKET_COMPENSATION_SOURCE_IDS)[number];
 
+export const MARKET_COMPENSATION_SOURCE_PROVENANCE = [
+  "public",
+  "licensed",
+  "manual",
+  "employer_posted",
+] as const;
+export type MarketCompensationSourceProvenance =
+  (typeof MARKET_COMPENSATION_SOURCE_PROVENANCE)[number];
+
 export const MARKET_COMPENSATION_CONFIDENCE_BANDS = ["none", "low", "medium", "high"] as const;
 export type MarketCompensationConfidenceBand = (typeof MARKET_COMPENSATION_CONFIDENCE_BANDS)[number];
 
@@ -4572,6 +4584,7 @@ export interface MarketCompensationFactor {
 
 export interface MarketCompensationSourceSnapshot {
   sourceId: MarketCompensationSourceId;
+  provenance: MarketCompensationSourceProvenance;
   displayName: string;
   sourceType: "reported_compensation" | "posted_salary";
   releaseYear: number | null;

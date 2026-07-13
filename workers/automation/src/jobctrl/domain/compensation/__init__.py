@@ -2,6 +2,7 @@
 
 from jobctrl.domain.compensation.market import (
     ESTIMATOR_VERSION,
+    LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
     MARKET_CONFIDENCE_BANDS,
     MARKET_ESTIMATE_STATES,
     MARKET_REASON_CODES,
@@ -10,6 +11,7 @@ from jobctrl.domain.compensation.market import (
     MarketCompensationEstimate,
     MarketConfidenceFactor,
     MarketEvidenceRow,
+    MarketSourceProvenance,
     MarketSourceSnapshot,
     ReportedCompensationObservation,
     estimate_market_compensation,
@@ -30,6 +32,7 @@ from jobctrl.domain.compensation.posted import (
 __all__ = [
     "CONFIDENCE_LEVELS",
     "ESTIMATOR_VERSION",
+    "LEVELS_FYI_MARKET_AGGREGATE_COMPANY",
     "MARKET_CONFIDENCE_BANDS",
     "MARKET_ESTIMATE_STATES",
     "MARKET_REASON_CODES",
@@ -43,6 +46,7 @@ __all__ = [
     "MarketCompensationEstimate",
     "MarketConfidenceFactor",
     "MarketEvidenceRow",
+    "MarketSourceProvenance",
     "MarketSourceSnapshot",
     "PostedCompensationFact",
     "ReportedCompensationObservation",

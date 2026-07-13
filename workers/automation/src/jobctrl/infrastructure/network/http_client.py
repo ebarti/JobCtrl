@@ -11,6 +11,7 @@ the limiter) rather than surfaced as a failure.
 
 from __future__ import annotations
 
+import gzip
 import json
 import urllib.error
 import urllib.request
@@ -135,14 +136,15 @@ class GatewayHttpClient:
                 request.add_header(key, value)
             try:
                 with self._opener.open(request, timeout=timeout or self._default_timeout) as response:
-                    return response.read()
+                    raw = response.read()
+                    headers = getattr(response, "headers", None)
+                    content_encoding = headers.get("Content-Encoding") if headers is not None else None
+                    return gzip.decompress(raw) if str(content_encoding or "").casefold() == "gzip" else raw
             except UnsafePublicDestinationError:
                 return None
             except urllib.error.HTTPError as exc:
                 if exc.code in (429, 503):
-                    retry_after = parse_retry_after(
-                        exc.headers.get("Retry-After") if exc.headers else None
-                    )
+                    retry_after = parse_retry_after(exc.headers.get("Retry-After") if exc.headers else None)
                     if retry_after:
                         self._session.note_retry_after(url, retry_after)
                     self._session.record_server_rate_limit(url, retry_after)

@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from jobctrl.domain.compensation import ReportedCompensationObservation, estimate_market_compensation
+from jobctrl.domain.compensation import (
+    LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
+    ReportedCompensationObservation,
+    estimate_market_compensation,
+)
 
 
 def _levels(
@@ -14,11 +18,12 @@ def _levels(
     level: str = "Senior",
     tier: str = "tier_2_ambitious",
     location: str = "Remote Europe",
-    sample_count: int = 4,
+    sample_count: int | None = 4,
     release_year: int = 2026,
 ) -> ReportedCompensationObservation:
     return ReportedCompensationObservation(
         source_id="levels_fyi",
+        source_provenance="licensed",
         company_name=company,
         role_title=role,
         level_label=level,
@@ -46,6 +51,7 @@ def _glassdoor(
 ) -> ReportedCompensationObservation:
     return ReportedCompensationObservation(
         source_id="glassdoor",
+        source_provenance="licensed",
         company_name=company,
         role_title=role,
         level_label=level,
@@ -71,6 +77,7 @@ def _euro_top_tech(
 ) -> ReportedCompensationObservation:
     return ReportedCompensationObservation(
         source_id="euro_top_tech",
+        source_provenance="public",
         company_name=company,
         role_title=role,
         level_label=level,
@@ -94,6 +101,7 @@ def _posted_salary(
 ) -> ReportedCompensationObservation:
     return ReportedCompensationObservation(
         source_id="posted_salary_text",
+        source_provenance="employer_posted",
         company_name=company,
         role_title=role,
         level_label=None,
@@ -161,9 +169,18 @@ def test_executive_titles_use_executive_baseline_not_staff_plus_fallback() -> No
         location="Spain (Remote)",
         observations=(
             _euro_top_tech(role="Chief Product Officer", minimum=315_000, maximum=315_000),
-            _euro_top_tech(company="US based startup", role="COO", minimum=175_000, maximum=175_000, location="Prague, Czechia"),
-            _euro_top_tech(role="Staff Software Engineer", level="Staff / Engineering Manager", minimum=147_000, maximum=147_000),
-            _euro_top_tech(role="Principal / Director Software Engineer", level="Principal / Director", minimum=350_000, maximum=350_000),
+            _euro_top_tech(
+                company="US based startup", role="COO", minimum=175_000, maximum=175_000, location="Prague, Czechia"
+            ),
+            _euro_top_tech(
+                role="Staff Software Engineer", level="Staff / Engineering Manager", minimum=147_000, maximum=147_000
+            ),
+            _euro_top_tech(
+                role="Principal / Director Software Engineer",
+                level="Principal / Director",
+                minimum=350_000,
+                maximum=350_000,
+            ),
         ),
         estimated_at="2026-06-19T10:00:00Z",
     )
@@ -332,6 +349,24 @@ def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -
     assert any(factor.name == "agreement" for factor in source_dispersion.factors)
 
 
+def test_unknown_sample_support_stays_unknown_without_inventing_a_single_sample() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/unknown-support",
+        company="Acme AI",
+        title="Senior Platform Engineer",
+        location="Remote Europe",
+        observations=(_levels(sample_count=None),),
+        estimated_at="2026-07-13T10:00:00Z",
+    )
+
+    assert estimate.sample_count is None
+    assert estimate.sources[0].sample_count is None
+    assert estimate.evidence[0].sample_count is None
+    assert "low_sample_count" not in estimate.warnings
+    sample_factor = next(factor for factor in estimate.factors if factor.name == "sample")
+    assert sample_factor.reason == "Reported compensation sample support is unknown."
+
+
 def test_same_location_role_fallback_estimates_when_company_role_is_missing() -> None:
     estimate = estimate_market_compensation(
         job_url="https://example.com/jobs/missing",
@@ -350,6 +385,44 @@ def test_same_location_role_fallback_estimates_when_company_role_is_missing() ->
     assert estimate.confidence_interval_minimum_amount is not None
     assert estimate.confidence_interval_minimum_amount < estimate.minimum_amount
     assert "company_role_fallback" in estimate.warnings
+
+
+def test_levels_public_market_fallback_uses_aggregate_instead_of_top_payer_range() -> None:
+    aggregate = _levels(
+        company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
+        role="Software Engineer",
+        minimum=39_000,
+        maximum=77_000,
+        level="all levels",
+        location="Madrid, Spain",
+        sample_count=599,
+        tier="unknown",
+    )
+    top_payer = _levels(
+        company="Datadog",
+        role="Software Engineer",
+        minimum=111_000,
+        maximum=111_000,
+        level="all levels",
+        location="Madrid, Spain",
+        sample_count=1,
+        tier="unknown",
+    )
+
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/senior-platform",
+        company="Different Company",
+        title="Senior Platform Engineer",
+        location="Madrid, Spain",
+        observations=(aggregate, top_payer),
+        estimated_at="2026-07-12T10:00:00Z",
+    )
+
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.match_scope == "same_location_role_fallback"
+    assert estimate.minimum_amount == 39_000
+    assert estimate.maximum_amount == 77_000
+    assert [row.company_name for row in estimate.evidence] == [LEVELS_FYI_MARKET_AGGREGATE_COMPANY]
 
 
 def test_missing_company_is_insufficient_instead_of_location_title_estimation() -> None:

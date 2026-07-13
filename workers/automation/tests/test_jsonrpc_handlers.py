@@ -642,6 +642,7 @@ def test_refresh_compensation_without_observations_uses_euro_top_tech_and_update
         return (
             ReportedCompensationObservation(
                 source_id="euro_top_tech",
+                source_provenance="public",
                 company_name="Airbnb",
                 role_title="Staff Software Engineer",
                 minimum_amount=242_000,
@@ -744,6 +745,7 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
         return (
             ReportedCompensationObservation(
                 source_id="euro_top_tech",
+                source_provenance="public",
                 company_name="Acme AI",
                 role_title="Senior Platform Engineer",
                 minimum_amount=160_000,

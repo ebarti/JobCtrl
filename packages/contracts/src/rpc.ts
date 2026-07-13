@@ -281,6 +281,7 @@ export const RefreshCompensationResultSchema = z
     localReportedObservationsLoaded: z.number().int().min(0).default(0),
     licensedReportedObservationsLoaded: z.number().int().min(0).default(0),
     levelsFyiObservationsLoaded: z.number().int().min(0).default(0),
+    levelsFyiPublicObservationsLoaded: z.number().int().min(0).default(0),
     glassdoorObservationsLoaded: z.number().int().min(0).default(0),
     euroTopTechObservationsLoaded: z.number().int().min(0).default(0),
     estimatesRefreshed: z.number().int().min(0),

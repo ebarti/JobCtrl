@@ -274,6 +274,7 @@ describe("preparation RPC contracts", () => {
       localReportedObservationsLoaded: 0,
       licensedReportedObservationsLoaded: 0,
       levelsFyiObservationsLoaded: 0,
+      levelsFyiPublicObservationsLoaded: 0,
       glassdoorObservationsLoaded: 0,
       euroTopTechObservationsLoaded: 0,
       estimatesRefreshed: 1,

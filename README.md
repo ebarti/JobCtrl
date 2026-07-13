@@ -432,9 +432,9 @@ fixtures are never a production upgrade path.
 
 1. Create or import a candidate profile.
 2. Configure target roles, locations, work models, and application
-   preferences. In Settings, record Levels.fyi or Glassdoor compensation
-   source policy only when you have matching access; this policy does not
-   connect a feed.
+   preferences. In Settings, opt into tokenless public Levels.fyi salary pages,
+   a licensed Levels.fyi feed, or Glassdoor only when you have the matching
+   permitted access.
 3. Run Discover from the UI or CLI, optionally targeting a single source from
    the Pipelines tab when you want a lighter retry.
 4. Review jobs, scores, blockers, compensation evidence, and audit history.

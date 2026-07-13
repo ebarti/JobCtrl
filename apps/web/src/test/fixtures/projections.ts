@@ -195,6 +195,7 @@ export const sampleCompensationAudit: JobCompensationAudit = {
       sources: [
         {
           sourceId: "levels_fyi",
+          provenance: "licensed",
           displayName: "Levels.fyi",
           sourceType: "reported_compensation",
           releaseYear: 2026,
@@ -206,6 +207,7 @@ export const sampleCompensationAudit: JobCompensationAudit = {
         },
         {
           sourceId: "glassdoor",
+          provenance: "licensed",
           displayName: "Glassdoor",
           sourceType: "reported_compensation",
           releaseYear: 2026,

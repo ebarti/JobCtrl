@@ -133,19 +133,37 @@ function levelsSource(
   env: EnvLike,
   preference: StoredCompensationSourcePreference | undefined,
 ): CompensationSourcePolicySummary {
+  const rawEnvironmentAccessMode =
+    env["JOBCTRL_LEVELS_FYI_ACCESS_MODE"]?.trim().toLowerCase() ?? "";
   const environmentAccessMode = normalizeAccessMode(
     env["JOBCTRL_LEVELS_FYI_ACCESS_MODE"],
   );
-  const accessMode = preference ? preference.accessMode : environmentAccessMode;
-  const enabled = preference?.enabled ?? Boolean(environmentAccessMode);
+  const environmentAccessPermitted = environmentAccessMode
+    ? LEVELS_ACCESS_MODES.has(environmentAccessMode)
+    : false;
+  const invalidEnvironmentAccessMode =
+    !preference && Boolean(rawEnvironmentAccessMode) && !environmentAccessPermitted;
+  const environmentOrDefaultAccessMode = rawEnvironmentAccessMode
+    ? environmentAccessMode
+    : "public_markdown";
+  const accessMode = preference
+    ? preference.accessMode
+    : environmentOrDefaultAccessMode;
+  const enabled = preference?.enabled ?? environmentAccessPermitted;
   const accessPermitted = accessMode ? LEVELS_ACCESS_MODES.has(accessMode) : false;
+  const publicMarkdown = accessMode === "public_markdown";
   const europeCoverageConfirmed =
     preference?.europeCoverageConfirmed ??
     isTrue(env["JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE"]);
-  const available = enabled && accessPermitted && europeCoverageConfirmed;
+  const available =
+    enabled &&
+    accessPermitted &&
+    (publicMarkdown || europeCoverageConfirmed);
   const disabledReason =
-    preference && !enabled
-      ? "Disabled by the user in Compensation sources settings."
+    invalidEnvironmentAccessMode
+      ? "Configured Levels.fyi access mode is not permitted for compensation import."
+      : !enabled
+      ? "Disabled in Compensation sources settings."
       : levelsDisabledReason(
           accessMode,
           accessPermitted,
@@ -161,15 +179,23 @@ function levelsSource(
     accessMode: reportedAccessMode,
     availability: available ? "available" : "unavailable",
     licenseStatus: accessPermitted ? "permitted" : "requires_license",
-    termsUrl: "https://www.levels.fyi/offerings/data/",
-    sourceUrl: "https://www.levels.fyi/",
+    termsUrl: "https://www.levels.fyi/about/terms.html",
+    sourceUrl: "https://www.levels.fyi/llms.txt",
     freshnessPolicy: available
-      ? "Use only the freshness window provided by the licensed data agreement."
-      : "Unavailable until permitted access and Europe coverage are explicitly configured.",
+      ? publicMarkdown
+        ? "Reads the provider-published public salary page during compensation refresh."
+        : "Use only the freshness window provided by the licensed data agreement."
+      : "Disabled until the user enables this source in Compensation sources settings.",
     attributionRequirement: available
-      ? "Follow the active licensed data agreement."
-      : "Do not display imported Levels.fyi compensation data.",
-    supportedFields: available ? licensedBenchmarkFields() : [],
+      ? publicMarkdown
+        ? "Display Data source: Levels.fyi (https://www.levels.fyi) and preserve the canonical page URL."
+        : "Follow the active licensed data agreement."
+      : "Do not display Levels.fyi compensation data until the source is enabled.",
+    supportedFields: available
+      ? publicMarkdown
+        ? publicLevelsFields()
+        : licensedBenchmarkFields()
+      : [],
     disabledReason,
     configured: available,
     control: {
@@ -177,18 +203,28 @@ function levelsSource(
       enabled,
       accessMode: accessPermitted && accessMode ? accessMode : null,
       allowedAccessModes: [...LEVELS_FYI_COMPENSATION_ACCESS_MODES],
-      europeCoverageRequired: true,
+      europeCoverageRequired: !publicMarkdown,
       europeCoverageConfirmed,
     },
     coverage: {
-      geography: "licensed_provider_configured",
-      regions: europeCoverageConfirmed ? ["Europe"] : [],
-      notes: europeCoverageConfirmed
-        ? "Europe coverage has been explicitly configured."
-        : "Europe coverage is not configured.",
+      geography: publicMarkdown
+        ? "job_matched_public_pages"
+        : "licensed_provider_configured",
+      regions: available
+        ? publicMarkdown
+          ? ["job-matched locations"]
+          : ["Europe"]
+        : [],
+      notes: publicMarkdown
+        ? "Coverage follows public Levels.fyi pages matched to current job roles and locations."
+        : europeCoverageConfirmed
+          ? "Europe coverage has been explicitly configured."
+          : "Europe coverage is not configured.",
     },
     notes: [
-      "Refresh automatically loads configured licensed rows from JOBCTRL_LEVELS_FYI_OBSERVATIONS_PATH or JOBCTRL_LEVELS_FYI_OBSERVATIONS_URL when access is permitted.",
+      publicMarkdown
+        ? "Refresh reads tokenless provider-published Markdown pages and falls back to the same public page's structured data when needed."
+        : "Refresh automatically loads configured licensed rows from JOBCTRL_LEVELS_FYI_OBSERVATIONS_PATH or JOBCTRL_LEVELS_FYI_OBSERVATIONS_URL when access is permitted.",
     ],
   };
 }
@@ -313,6 +349,16 @@ function licensedBenchmarkFields(): CompensationSupportedField[] {
   ];
 }
 
+function publicLevelsFields(): CompensationSupportedField[] {
+  return [
+    "market_range",
+    "total_compensation",
+    "sample_count",
+    "freshness",
+    "attribution",
+  ];
+}
+
 function normalizeAccessMode(value: string | undefined): CompensationSourceAccessMode | null {
   const normalized = value?.trim().toLowerCase();
   if (!normalized) {
@@ -325,6 +371,7 @@ function isCompensationSourceAccessMode(value: string): value is CompensationSou
   return (
     value === "local_posting_text" ||
     value === "public_dataset" ||
+    value === "public_markdown" ||
     value === "public_taxonomy" ||
     value === "licensed_api" ||
     value === "licensed_data_feed" ||
@@ -426,11 +473,14 @@ function levelsDisabledReason(
   accessPermitted: boolean,
   europeCoverageConfirmed: boolean,
 ): string | null {
+  if (accessMode === "public_markdown") {
+    return null;
+  }
   if (accessPermitted && europeCoverageConfirmed) {
     return null;
   }
   if (!accessMode) {
-    return "Requires licensed Levels.fyi access mode and explicit Europe coverage confirmation.";
+    return "Choose public Markdown or a licensed Levels.fyi access mode.";
   }
   if (!accessPermitted) {
     return "Configured Levels.fyi access mode is not permitted for compensation import.";

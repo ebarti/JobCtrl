@@ -389,28 +389,34 @@ coverage notes, safe operator notes, and safe control metadata. The control
 metadata distinguishes fixed local/public sources from the user-owned
 Levels.fyi and Glassdoor preferences and lists only the permitted access-mode
 choices. It does not return credentials, raw provider payloads, private-account
-state, local paths, scraped salary data, feed URLs, or salary observations.
+state, local paths, feed URLs, or salary observations.
 
 `PATCH /v1/compensation/sources` persists one user-owned source preference in
 the local dashboard settings file and returns the refreshed registry. A
 Levels.fyi update contains `sourceId: "levels_fyi"`, `enabled`, `accessMode`,
 and `europeCoverageConfirmed`; a Glassdoor update contains
 `sourceId: "glassdoor"`, `enabled`, and `accessMode`. Enabling Levels.fyi is
-rejected unless the access mode is `licensed_api`, `licensed_data_feed`, or
-`enterprise_mcp` and Europe coverage is confirmed. Enabling Glassdoor is
-rejected unless the access mode is `partner_api` or `written_permission`.
+accepted with tokenless `public_markdown` and no coverage confirmation. The
+`licensed_api`, `licensed_data_feed`, and `enterprise_mcp` modes still require
+Europe coverage confirmation. Enabling Glassdoor is rejected unless the access
+mode is `partner_api` or `written_permission`.
 Disabling either source remains allowed and takes precedence over a legacy
 environment-variable configuration.
 
 The registry read and preference write are network-free. They do not fetch,
-scrape, cache, or return provider payloads. The registry lists posted salary
+cache, or return provider payloads. The registry lists posted salary
 text, Euro Top Tech, Levels.fyi, Glassdoor, and the temporary manual
 reported-compensation import as safe policy entries. An explicit saved
 preference is the source-policy gate for Levels.fyi or Glassdoor. Until a
 preference exists, `JOBCTRL_LEVELS_FYI_ACCESS_MODE`,
 `JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE`, and
 `JOBCTRL_GLASSDOOR_ACCESS_MODE` retain their compatibility behavior.
-When available, refresh paths automatically load licensed Levels.fyi rows from
+When `public_markdown` is enabled, refresh paths derive public
+job-family/location routes from the current jobs, read Levels.fyi's documented
+Markdown representation, and fall back to the same public page's structured
+data when the Markdown response is empty. Requests need no credential, and
+derived evidence carries the provider-required attribution and canonical URL.
+When a licensed mode is enabled, refresh paths load Levels.fyi rows from
 `JOBCTRL_LEVELS_FYI_OBSERVATIONS_PATH` or
 `JOBCTRL_LEVELS_FYI_OBSERVATIONS_URL` and Glassdoor rows from
 `JOBCTRL_GLASSDOOR_OBSERVATIONS_PATH` or
@@ -478,6 +484,11 @@ rows, Levels.fyi, Glassdoor, and manual local reported-compensation imports. The
 estimate includes company name, normalized company, role title, normalized role,
 match scope, total compensation component, source count, sample count,
 confidence factors, selected evidence rows, and trimodal company-tier context.
+Each source snapshot carries an explicit `provenance` discriminator (`public`,
+`licensed`, `manual`, or `employer_posted`) together with its persisted
+attribution and snapshot version; public and licensed Levels.fyi rows remain
+distinct throughout the read model. Unknown sample support remains `null` and
+is never promoted to a one-sample claim.
 Selected evidence rows are the sanitized reported observations used to choose
 the range, including source id/display name, company, role, location, level,
 component, EUR/year range, sample count, release year, source URL when the
@@ -490,13 +501,14 @@ facts from existing `jobs.salary` values and description compensation text,
 imports all configured reported compensation observations, estimates matching
 existing jobs, and refreshes projections without running discovery, scoring,
 tailoring, cover, or apply automation. Explicit `--observations-json <file>`
-imports are additive with configured Levels.fyi feeds, configured Glassdoor
-feeds, and public Euro Top Tech rows. When reported evidence does not match, the
-estimator falls back to employer-posted salary facts already captured by
-JobCtrl as low-confidence posted-salary evidence. It falls back through same company/role,
-same-location role, same-company adjacent-role, trimodal company-tier, and broad
-market-baseline tiers so sparse real evidence still produces a best estimate
-with a wider confidence interval. Fallback matching is seniority-aware, so
+imports are additive with enabled tokenless public Levels.fyi pages, configured
+licensed Levels.fyi and Glassdoor feeds, and public Euro Top Tech rows. When
+reported evidence does not match, the estimator falls back to employer-posted
+salary facts already captured by JobCtrl as low-confidence posted-salary
+evidence. It falls back through same company/role, same-location role,
+same-company adjacent-role, trimodal company-tier, and broad market-baseline
+tiers so sparse real evidence still produces a best estimate with a wider
+confidence interval. Fallback matching is seniority-aware, so
 executive CTO/VP roles do not reuse staff, principal, or director observations
 unless the selected source row is also executive-level. It does not label those rows as Levels.fyi,
 Glassdoor, Euro Top Tech, or manual reported-compensation data unless that
@@ -511,9 +523,10 @@ avoid rerunning discovery, scoring, tailoring, cover, or apply automation. The
 request body may include `{ "observationsJsonPath": "/path/to/export.json" }`
 to import additional reported-compensation observations before estimating market
 evidence, or `{ "includeEuroTopTech": false }` to disable only the public Euro
-Top Tech import. Configured Levels.fyi and Glassdoor feeds still load by
-default. When no reported source matches, the estimator still falls back to the
-selected job's captured employer-posted salary facts when they can be safely annualized or when
+Top Tech import. Enabled tokenless public Levels.fyi pages and configured
+licensed Levels.fyi and Glassdoor feeds still load by default. When no reported
+source matches, the estimator still falls back to the selected job's captured
+employer-posted salary facts when they can be safely annualized or when
 high-value base-salary text can be treated as annual evidence without using
 bonus-only or one-sided rows. The refresh dispatches `refresh_compensation`,
 which starts `CompensationRefreshWorkflow`; the response is the standard

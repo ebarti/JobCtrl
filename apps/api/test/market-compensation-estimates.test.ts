@@ -288,6 +288,60 @@ describe("market compensation estimates API", () => {
     }
   });
 
+  it("preserves public and licensed Levels.fyi snapshot provenance", async () => {
+    const { app, dbPath, cleanup } = withTempApp();
+    insertEstimate(dbPath, "https://example.com/jobs/estimated", {
+      sources: [
+        {
+          source_id: "levels_fyi",
+          source_provenance: "public",
+          source_type: "reported_compensation",
+          release_year: 2026,
+          snapshot_version: "levels-fyi-public-2026",
+          attribution: "Data source: Levels.fyi (https://www.levels.fyi)",
+          sample_count: null,
+        },
+        {
+          source_id: "levels_fyi",
+          source_provenance: "licensed",
+          source_type: "reported_compensation",
+          release_year: 2026,
+          snapshot_version: "levels-fyi-licensed-2026-q2",
+          attribution: "Levels.fyi licensed Q2 export",
+          sample_count: 12,
+        },
+      ],
+    });
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/estimated")}/compensation/market`,
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      const body = response.json() as Extract<MarketCompensationEstimateResponse, { recordStatus: "recorded" }>;
+      expect(body.estimate.sources).toEqual([
+        expect.objectContaining({
+          sourceId: "levels_fyi",
+          provenance: "public",
+          snapshotVersion: "levels-fyi-public-2026",
+          attribution: "Data source: Levels.fyi (https://www.levels.fyi)",
+          sampleCount: null,
+        }),
+        expect.objectContaining({
+          sourceId: "levels_fyi",
+          provenance: "licensed",
+          snapshotVersion: "levels-fyi-licensed-2026-q2",
+          attribution: "Levels.fyi licensed Q2 export",
+          sampleCount: 12,
+        }),
+      ]);
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("serves trimodal fallback and source-conflict evidence from canonical market rows", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     const db = new Database(dbPath);

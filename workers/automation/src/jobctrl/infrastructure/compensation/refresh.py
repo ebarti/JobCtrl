@@ -9,6 +9,7 @@ from typing import Any
 
 from jobctrl.database import get_connection
 from jobctrl.infrastructure.compensation import (
+    LevelsFyiPublicTarget,
     SqliteMarketCompensationRepository,
     SqlitePostedCompensationRepository,
     load_default_reported_compensation_observations,
@@ -57,9 +58,15 @@ def refresh_compensation_facts(
     if observation_file is not None and not observation_file.exists():
         raise ValueError(f"observationsJsonPath does not exist: {observation_file}")
     compensation_run_id = f"compensation:{refreshed_at}"
+    levels_fyi_targets = _levels_fyi_targets(
+        conn,
+        job_url=job_url,
+        limit=1 if job_url else limit,
+    )
     try:
         source_load = load_default_reported_compensation_observations(
             local_observations_path=observation_file,
+            levels_fyi_targets=levels_fyi_targets,
             include_eurotoptech=include_euro_top_tech,
             eurotoptech_max_pages=euro_top_tech_max_pages,
             recorder_conn=conn,
@@ -69,6 +76,7 @@ def refresh_compensation_facts(
         log.warning("Reported compensation sources could not be fully loaded: %s", exc)
         source_load = load_default_reported_compensation_observations(
             local_observations_path=observation_file,
+            levels_fyi_targets=levels_fyi_targets,
             include_eurotoptech=False,
             eurotoptech_max_pages=euro_top_tech_max_pages,
             recorder_conn=conn,
@@ -94,9 +102,36 @@ def refresh_compensation_facts(
         "localReportedObservationsLoaded": source_load.local_count,
         "licensedReportedObservationsLoaded": source_load.licensed_count,
         "levelsFyiObservationsLoaded": source_load.levels_fyi_count,
+        "levelsFyiPublicObservationsLoaded": source_load.levels_fyi_public_count,
         "glassdoorObservationsLoaded": source_load.glassdoor_count,
         "euroTopTechObservationsLoaded": source_load.euro_top_tech_count,
         "estimatesRefreshed": estimate_count,
         "marketRefreshSkipped": False,
         "tenantId": tenant_id,
     }
+
+
+def _levels_fyi_targets(
+    conn: Any,
+    *,
+    job_url: str | None,
+    limit: int,
+) -> tuple[LevelsFyiPublicTarget, ...]:
+    sql = "SELECT title, location FROM jobs"
+    params: list[Any] = []
+    if job_url:
+        sql += " WHERE url = ?"
+        params.append(job_url)
+    sql += " ORDER BY url"
+    if limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
+    return tuple(
+        LevelsFyiPublicTarget(
+            role_title=str(row["title"] or ""),
+            location=str(row["location"]) if row["location"] else None,
+        )
+        for row in rows
+        if row["title"]
+    )

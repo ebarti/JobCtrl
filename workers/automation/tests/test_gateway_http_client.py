@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import socket
 import sqlite3
 import urllib.error
@@ -40,8 +41,9 @@ class _DisallowRobots(RobotsPort):
 
 
 class _FakeResponse:
-    def __init__(self, body: bytes) -> None:
+    def __init__(self, body: bytes, headers: dict[str, str] | None = None) -> None:
         self._body = body
+        self.headers = headers or {}
 
     def __enter__(self) -> "_FakeResponse":
         return self
@@ -54,16 +56,22 @@ class _FakeResponse:
 
 
 class _RecordingOpener:
-    def __init__(self, body: bytes = b"{}", raise_exc: Exception | None = None) -> None:
+    def __init__(
+        self,
+        body: bytes = b"{}",
+        raise_exc: Exception | None = None,
+        response_headers: dict[str, str] | None = None,
+    ) -> None:
         self.body = body
         self.raise_exc = raise_exc
+        self.response_headers = response_headers or {}
         self.requests: list[object] = []
 
     def open(self, request: object, timeout: float | None = None) -> _FakeResponse:
         self.requests.append(request)
         if self.raise_exc is not None:
             raise self.raise_exc
-        return _FakeResponse(self.body)
+        return _FakeResponse(self.body, self.response_headers)
 
 
 def _resolver_for(*addresses: str):
@@ -136,6 +144,32 @@ def test_allowed_fetch_returns_json_with_honest_user_agent() -> None:
     assert "Mozilla" not in request.get_header("User-agent")
 
 
+def test_fetch_text_decodes_declared_gzip_without_adding_authentication() -> None:
+    opener = _RecordingOpener(
+        body=gzip.compress(b"<html>public salary page</html>"),
+        response_headers={"Content-Encoding": "gzip"},
+    )
+    gateway = PolitenessGateway(
+        user_agent=HONEST_UA,
+        robots=_AllowAllRobots(),
+        rate_limiter=HostRateLimiter(),
+    )
+    client = GatewayHttpClient(
+        _session(gateway, policy=_policy(), conn=_conn()),
+        opener=opener,
+    )
+
+    text = client.fetch_text(
+        "http://api.example.com/salary",
+        extra_headers={"Accept-Encoding": "gzip"},
+    )
+
+    assert text == "<html>public salary page</html>"
+    request = opener.requests[0]
+    assert request.get_header("Accept-encoding") == "gzip"
+    assert request.get_header("Authorization") is None
+
+
 def test_public_opener_rejects_private_feed_destination_without_socket() -> None:
     gateway = PolitenessGateway(user_agent=HONEST_UA, robots=_AllowAllRobots(), rate_limiter=HostRateLimiter())
     conn = _conn()
@@ -169,9 +203,7 @@ def test_budget_exhaustion_returns_none_and_records() -> None:
 
     assert client.fetch_json("http://host/a") == {}
     assert client.fetch_json("http://host/b") is None
-    row = conn.execute(
-        "SELECT * FROM operational_attempt_metrics WHERE failure_category='budget_exhausted'"
-    ).fetchone()
+    row = conn.execute("SELECT * FROM operational_attempt_metrics WHERE failure_category='budget_exhausted'").fetchone()
     assert row is not None
     assert row["is_operational_failure"] == 0
 
@@ -183,15 +215,17 @@ def test_server_429_is_recorded_as_rate_limit_and_delays_next_request() -> None:
     conn = _conn()
     opener = _RecordingOpener(
         raise_exc=urllib.error.HTTPError(
-            "http://host/jobs", 429, "Too Many Requests", {"Retry-After": "30"}, None  # type: ignore[arg-type]
+            "http://host/jobs",
+            429,
+            "Too Many Requests",
+            {"Retry-After": "30"},
+            None,  # type: ignore[arg-type]
         )
     )
     client = GatewayHttpClient(_session(gateway, policy=_policy(), conn=conn), opener=opener)
 
     assert client.fetch_json("http://host/jobs") is None
-    row = conn.execute(
-        "SELECT * FROM operational_attempt_metrics WHERE failure_category='rate_limited'"
-    ).fetchone()
+    row = conn.execute("SELECT * FROM operational_attempt_metrics WHERE failure_category='rate_limited'").fetchone()
     assert row is not None
     assert row["is_scrape_failure"] == 0
     # Retry-After fed to the limiter: the next slot for the host waits ~30s.
@@ -207,16 +241,18 @@ def test_absurd_retry_after_is_clamped_and_next_fetch_is_skipped() -> None:
     conn = _conn()
     opener = _RecordingOpener(
         raise_exc=urllib.error.HTTPError(
-            "http://host/jobs", 429, "Too Many Requests", {"Retry-After": "999999999"}, None  # type: ignore[arg-type]
+            "http://host/jobs",
+            429,
+            "Too Many Requests",
+            {"Retry-After": "999999999"},
+            None,  # type: ignore[arg-type]
         )
     )
     client = GatewayHttpClient(_session(gateway, policy=_policy(), conn=conn), opener=opener)
 
     # First fetch: the server issues a 429 with an absurd Retry-After.
     assert client.fetch_json("http://host/jobs") is None
-    row = conn.execute(
-        "SELECT * FROM operational_attempt_metrics WHERE failure_category='rate_limited'"
-    ).fetchone()
+    row = conn.execute("SELECT * FROM operational_attempt_metrics WHERE failure_category='rate_limited'").fetchone()
     assert row is not None and row["is_scrape_failure"] == 0
     # Clamped at the sink: the host cooldown never reflects the absurd value.
     assert 0.0 < limiter.hard_rate_limit_remaining("host") <= 300.0

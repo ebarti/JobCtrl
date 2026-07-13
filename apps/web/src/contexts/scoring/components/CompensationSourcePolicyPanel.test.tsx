@@ -62,35 +62,36 @@ function policyResponse(): CompensationSourceRegistryResponse {
         sourceId: "levels_fyi",
         displayName: "Levels.fyi",
         sourceType: "reported_compensation",
-        accessMode: "unavailable_until_permitted",
+        accessMode: "public_markdown",
         availability: "unavailable",
-        licenseStatus: "requires_license",
-        termsUrl: "https://www.levels.fyi/offerings/data/",
-        sourceUrl: "https://www.levels.fyi/",
-        freshnessPolicy: "Unavailable until permitted access and Europe coverage are explicitly configured.",
-        attributionRequirement: "Do not display imported Levels.fyi compensation data.",
+        licenseStatus: "permitted",
+        termsUrl: "https://www.levels.fyi/about/terms.html",
+        sourceUrl: "https://www.levels.fyi/llms.txt",
+        freshnessPolicy: "Disabled until the user enables this source in Compensation sources settings.",
+        attributionRequirement: "Do not display Levels.fyi compensation data until the source is enabled.",
         supportedFields: [],
-        disabledReason: "Requires licensed Levels.fyi access mode and explicit Europe coverage confirmation.",
+        disabledReason: "Disabled in Compensation sources settings.",
         configured: false,
         control: {
           kind: "user_preference",
           enabled: false,
-          accessMode: null,
+          accessMode: "public_markdown",
           allowedAccessModes: [
+            "public_markdown",
             "licensed_api",
             "licensed_data_feed",
             "enterprise_mcp",
           ],
-          europeCoverageRequired: true,
+          europeCoverageRequired: false,
           europeCoverageConfirmed: false,
         },
         coverage: {
-          geography: "licensed_provider_configured",
+          geography: "job_matched_public_pages",
           regions: [],
-          notes: "Europe coverage is not configured.",
+          notes: "Coverage follows public Levels.fyi pages matched to current job roles and locations.",
         },
         notes: [
-          "Refresh automatically loads configured licensed rows from JOBCTRL_LEVELS_FYI_OBSERVATIONS_PATH or JOBCTRL_LEVELS_FYI_OBSERVATIONS_URL when access is permitted.",
+          "Refresh reads tokenless provider-published Markdown pages and falls back to the same public page's structured data when needed.",
         ],
       },
       {
@@ -156,9 +157,7 @@ describe("<CompensationSourcePolicyPanel>", () => {
     );
     expect(table).toHaveTextContent("Show attribution to Euro Top Tech");
     expect(table).toHaveTextContent("Levels.fyi");
-    expect(table).toHaveTextContent(
-      "Requires licensed Levels.fyi access mode and explicit Europe coverage confirmation.",
-    );
+    expect(table).toHaveTextContent("Disabled in Compensation sources settings.");
     expect(table).toHaveTextContent("Glassdoor");
     expect(table).toHaveTextContent("Requires Glassdoor partner API access or written permission.");
     expect(table).toHaveTextContent("none until permitted");
@@ -178,15 +177,15 @@ describe("<CompensationSourcePolicyPanel>", () => {
       screen.getByRole("combobox", { name: "Levels.fyi access mode" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("switch", { name: "Confirm Levels.fyi Europe coverage" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("switch", { name: "Confirm Levels.fyi Europe coverage" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Enable Glassdoor" })).toBeInTheDocument();
     expect(
       screen.getByRole("combobox", { name: "Glassdoor access mode" }),
     ).toBeInTheDocument();
   });
 
-  it("persists a Levels.fyi coverage preference through the API port", async () => {
+  it("enables tokenless public Levels.fyi access through the API port", async () => {
     const user = userEvent.setup();
     const updateCompensationSourcePolicy = vi.fn(async () => policyResponse());
     renderWithProviders(<CompensationSourcePolicyPanel />, {
@@ -200,16 +199,16 @@ describe("<CompensationSourcePolicyPanel>", () => {
 
     await user.click(
       await screen.findByRole("switch", {
-        name: "Confirm Levels.fyi Europe coverage",
+        name: "Enable Levels.fyi",
       }),
     );
 
     await waitFor(() =>
       expect(updateCompensationSourcePolicy).toHaveBeenCalledWith({
         sourceId: "levels_fyi",
-        enabled: false,
-        accessMode: null,
-        europeCoverageConfirmed: true,
+        enabled: true,
+        accessMode: "public_markdown",
+        europeCoverageConfirmed: false,
       }),
     );
   });
