@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import re
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -924,6 +925,42 @@ def _workflow_executable_text(body: str) -> str:
     )
 
 
+def _workflow_shell_commands(body: str) -> tuple[str, ...]:
+    commands: list[str] = []
+    continuation = ""
+    for raw_line in _workflow_executable_text(body).splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        continuation = f"{continuation} {line}".strip()
+        if continuation.endswith("\\"):
+            continuation = continuation[:-1].rstrip()
+            continue
+        commands.append(continuation)
+        continuation = ""
+    if continuation:
+        commands.append(continuation)
+    return tuple(commands)
+
+
+def _workflow_has_conditional_put(body: str, flag: str, value: str) -> bool:
+    for command in _workflow_shell_commands(body):
+        try:
+            tokens = shlex.split(command, comments=True, posix=True)
+        except ValueError:
+            continue
+        for index in range(len(tokens) - 2):
+            if tokens[index : index + 3] != ["aws", "s3api", "put-object"]:
+                continue
+            arguments = tokens[index + 3 :]
+            if any(
+                arguments[position : position + 2] == [flag, value]
+                for position in range(len(arguments) - 1)
+            ):
+                return True
+    return False
+
+
 def _release_distribution_findings(root: Path) -> list[str]:
     try:
         workflow = (root / RELEASE_DISTRIBUTION_WORKFLOW_PATH).read_text(encoding="utf-8")
@@ -1169,13 +1206,20 @@ def _release_distribution_findings(root: Path) -> list[str]:
                 )
                 break
     publish_immutable = jobs.get("publish-immutable")
-    if publish_immutable is not None and "--if-none-match '*'" not in publish_immutable:
+    if publish_immutable is not None and not _workflow_has_conditional_put(
+        publish_immutable, "--if-none-match", "*"
+    ):
         findings.append(
             f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: publish-immutable must protect immutable R2 object creation"
         )
     promote = jobs.get("promote-channel-pointer")
     if promote is not None and (
-        "--if-none-match '*'" not in promote or '--if-match "$etag"' not in promote
+        not _workflow_has_conditional_put(
+            promote, "--if-none-match", "*"
+        )
+        or not _workflow_has_conditional_put(
+            promote, "--if-match", "$etag"
+        )
     ):
         findings.append(
             f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: promote-channel-pointer must compare-and-swap an existing R2 channel pointer and protect first creation"

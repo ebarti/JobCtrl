@@ -806,6 +806,31 @@ def test_distribution_requires_native_conditional_r2_publication(
     assert any("protect immutable R2 object creation" in item for item in findings)
     assert any("compare-and-swap an existing R2 channel pointer" in item for item in findings)
 
+    comment_spoofed = workflow.replace("--if-none-match '*'", "").replace(
+        '--if-match "$etag"', ""
+    )
+    comment_spoofed = comment_spoofed.replace(
+        "  publish-immutable:\n",
+        "  publish-immutable:\n    # aws s3api put-object --if-none-match '*'\n",
+        1,
+    ).replace(
+        "  promote-channel-pointer:\n",
+        "  promote-channel-pointer:\n"
+        "    # aws s3api put-object --if-match \"$etag\"\n"
+        "    # aws s3api put-object --if-none-match '*'\n",
+        1,
+    )
+    spoof_root = tmp_path / "comment-spoof"
+    _write(spoof_root / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH, comment_spoofed)
+    _write(spoof_root / release_check.SIGNING_POLICY_PATH, policy)
+
+    spoof_findings = release_check._release_distribution_findings(spoof_root)
+    assert any("protect immutable R2 object creation" in item for item in spoof_findings)
+    assert any(
+        "compare-and-swap an existing R2 channel pointer" in item
+        for item in spoof_findings
+    )
+
 
 def test_distribution_dispatch_must_execute_from_the_audited_release_tag(
     tmp_path: Path,
