@@ -19,13 +19,10 @@ optional unless a feature you want depends on it.
 
 ::: info Command spelling
 Command blocks on this page use the canonical installed spelling,
-`jobctrl <command>`. The signed bundle is not public yet, so current
-source-checkout users invoke those commands through the source-only uv prefix
-shown in [Getting Started](getting-started.md#source-cli).
-That prefix syncs the checkout's Python environment when needed and selects it;
-it is not a different CLI. Once the bundle is published, the native `jobctrl`
-executable is both the app launcher and the domain CLI from any directory after
-either curl or Homebrew acquisition.
+`jobctrl <command>`. The native executable is both the app launcher and the
+domain CLI from any directory after either curl or Homebrew acquisition.
+Contributors running from source can use the checkout-prefixed commands in
+[Local Development](../local-development.md).
 :::
 
 ## Start Here
@@ -171,8 +168,8 @@ or run the Codex device login locally, then rerun `jobctrl setup`.
 Those `CODEX_HOME` instructions describe the current source mode. Bundled mode
 accepts `OPENAI_API_KEY` for its verified managed Codex provider pack, performs
 an isolated ephemeral API login, and never reads or copies ambient
-`CODEX_HOME/auth.json`. The signed bundle is not public yet, so source users
-still follow the source-mode instructions above.
+`CODEX_HOME/auth.json`. Source contributors follow the source-mode instructions
+above; installed users use the managed provider-pack path.
 
 ## LLM Spend Budget
 
@@ -300,8 +297,8 @@ tied to the same material generation.
 | `JOBCTRL_LINKEDIN_APPLY_CHROME_PROFILE` | browser default | Chrome profile name inside the resolver user-data directory. |
 | `JOBCTRL_LINKEDIN_APPLY_HEADLESS` | visible Chrome | Set to `1` to run the resolver headless. |
 
-The current source checkout installs managed Playwright Chromium for discovery,
-enrichment, and PDF rendering. The bundled release candidate contains exactly
+The source checkout installs managed Playwright Chromium for discovery,
+enrichment, and PDF rendering. The bundled release contains exactly
 one managed Playwright Chromium headless shell for those core paths and no full
 Chrome/Chromium application. System Chrome/Chromium is optional in both modes
 and is never auto-detected or adopted for authenticated operations. Its choices

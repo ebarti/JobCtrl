@@ -4,265 +4,184 @@ pageClass: jh-user-guide-page
 
 # Getting Started
 
-JobCtrl runs entirely on your own computer. The current guide begins with Git
-already available, then takes you from a new source checkout to the app open in
-your browser. It is not yet a literal empty-machine bootstrap: `scripts/install`
-cannot run until after `git clone`. A bundled implementation exists, but no
-signed and notarized public artifact or stable Homebrew formula has been
-published yet. It is local-first: your data stays on your machine unless you
-explicitly configure an external provider.
+JobCtrl is a local application: the app, database, settings, and generated
+files stay on your Mac unless you explicitly connect an external provider.
+Install it once, then use the same `jobctrl` command from any directory.
 
-::: tip Want to see the product first?
-The [Product Tour](screenshots.md) walks through every screen with captioned,
-zoomable screenshots — no install required.
+::: tip Want to explore before installing?
+Open the [live demo](https://demo.jobctrl.dev) for an interactive workspace
+with synthetic browser-local data, or use the [Product Tour](screenshots.md)
+for a screen-by-screen walkthrough.
 :::
 
-## What You'll Have When You're Done
+## What You Need
 
-- JobCtrl running locally, open in your browser at a local web address.
-- A local workspace under `~/.jobctrl/` holding your database, settings, and
-  generated files.
-- At least one LLM (large language model) provider connected for scoring and
-  materials, plus vendor auth for any enabled employer-analysis ensemble legs.
-- The commands to start, check, and stop the app whenever you need it.
+- An Apple-silicon Mac running macOS 15 or newer.
+- Internet access for installation, updates, and any hosted providers you
+  choose to connect.
+- One supported LLM provider or a local OpenAI-compatible endpoint before you
+  run scoring or material generation.
 
-::: warning Current source path versus the installed command contract
-The commands on this page run JobCtrl from a source checkout because that is
-the only public path today. Git, Node, Corepack/pnpm, uv, Python, Temporal,
-Playwright browsers, and checkout-relative commands are source-development
-concerns.
+The bundled install includes JobCtrl's application runtimes, workflow engine,
+PDF tooling, and managed headless browser. You do **not** need to install Git,
+Node.js, pnpm, Corepack, uv, Python, Temporal, Poppler, Playwright, or Chrome
+for the core product. A system Chrome or Chromium installation is optional and
+used only by capabilities that explicitly adopt an authenticated browser.
 
-Once the first signed bundled release is published, both curl and Homebrew will
-acquire the same runtime and the same native `jobctrl` executable. Every
-installed user will run `jobctrl start` from any directory and use that same
-binary for `jobctrl init`, `jobctrl doctor`, and all other domain commands.
-There will be no install-method-specific start command and no source clone.
-The first bundle targets Apple-silicon macOS 15 or newer.
-:::
+## 1. Install JobCtrl
 
-## 1. Source-Checkout Requirements
+Choose one acquisition method. The installer and Homebrew formula resolve the
+same signed JobCtrl release and provide the same `jobctrl` command.
 
-These are requirements for building and running the repository, not for the
-future bundled product. Installing them is the bulk of source setup — expect
-roughly 15–30 minutes end to end, mostly downloads.
+### Recommended: bundled installer
 
-- **Git** — downloads and updates the source checkout. JobCtrl's application
-  runtime does not use Git; the requirement exists only because the current
-  public setup starts with `git clone`. Install Git yourself before following
-  this guide.
-- **Python 3.11 or newer** — the language the Python worker is written in.
-- **Node.js 20.19 or newer** — the JavaScript runtime behind the TypeScript API
-  and the web app.
-- **pnpm, via Corepack** — installs the project's JavaScript dependencies.
-  Some current Node distributions, including Homebrew Node, do not bundle
-  Corepack; the guided installer can offer `brew install corepack` when needed.
-- **uv** — a fast installer and environment manager for Python.
-- **Temporal CLI** — runs a local Temporal (the workflow engine) with
-  `temporal server start-dev`.
-- **Two Playwright Chromium installs** — the source workspace currently keeps
-  one for web/E2E development and one for the Python worker's discovery and
-  tailored-resume PDF rendering.
-- **Chrome or Chromium** (optional) — adopt one explicitly only if you enable
-  authenticated apply capabilities; it is not required for core setup.
+```bash
+curl -fsSL https://jobctrl.dev/install.sh | sh
+```
 
-::: details Optional tools — skip these on a first install
-- **Google Maps API key** — enables address autocomplete in the Profile form.
-- **Gmail OAuth Desktop client** — enables bounded verification-code and
-  application-outcome lookups plus approval-bound application sends.
-- **CAPTCHA-solving key** — only for auto-apply runs that explicitly opt into it.
-:::
+The installer selects the current stable Apple-silicon build, verifies it,
+places the versioned runtime under your user account, and adds `jobctrl` to
+your shell path. Open a new terminal if the command is not available in the
+terminal that ran the installer.
 
-The source dependency audit currently records 85 unique direct JavaScript
-packages, 1,480 pnpm lock records, and 103 uv lock records. A simple sum of the
-preserved 2026-07-10 planning observations is about 4.28 GiB with system Chrome
-skipped, or 5.58 GiB with the separately optional 1.3 GiB Chrome from that
-reference machine included. `scripts/install` never installs system Chrome.
-The observations include the whole 1.18 GiB reference-machine Homebrew closure
-and mix accounting contexts, so they are directional—not a reproducible
-additive install size or the production bundle size.
+### Homebrew
 
-The tracked bundle inventory instead declares 15 core runtime components, one
-bundled optional-capability adapter, three provider packs fetched only from
-their official channels when selected, and two developer-only components
-excluded from the artifact. The core carries the API/web/worker, Node, Python,
-Temporal, PDF.js, Python Playwright, Playwright MCP, and one Playwright Chromium
-headless shell—not a full Chrome/Chromium app. There is no public bundle-size
-claim until the first signed artifact publishes its per-component size report.
+```bash
+brew install ebarti/tap/jobctrl
+```
 
-## 2. Prepare The Source Checkout
+Homebrew installs the same signed release identity. It does not build JobCtrl
+from source or install a separate developer toolchain.
 
-Clone the repository and run the guided installer:
+### Build and run from source
+
+Use the source option when you want to inspect, modify, or contribute to the
+codebase:
 
 ```bash
 git clone https://github.com/ebarti/JobCtrl.git
 cd JobCtrl
 scripts/install
-```
-
-The guided first-run installer checks your system tools, installs the JavaScript
-and Python dependencies, and downloads both source-development Playwright
-Chromium builds. It also runs `jobctrl setup`,
-which detects Claude/Codex/Antigravity auth and persists any intentionally
-enabled or skipped analysis legs. Expect a few minutes on the first run.
-It can offer missing machine tools through Homebrew only when Homebrew is
-already installed; otherwise it reports what you must install yourself.
-
-If your machine already has the system tools and browsers, this non-interactive
-command is enough:
-
-```bash
-corepack pnpm dev:setup
-```
-
-Syncs the JavaScript and Python dependencies without the guided system checks.
-
-If Playwright Chromium is missing:
-
-```bash
-uv --project workers/automation run playwright install chromium
-```
-
-Downloads the Chromium build that Playwright uses for PDF rendering.
-
-## 3. Optionally Initialize The Source CLI {#source-cli}
-
-Most users can start with the local web app; it does not require
-`jobctrl init`. A dedicated welcome/onboarding flow can make profile and search
-setup smoother later, but initialization is not a prerequisite for opening the
-web experience.
-
-Use the CLI initialization path only when you want to drive JobCtrl through
-terminal commands such as `jobctrl run`, `jobctrl discover`, or `jobctrl job`:
-
-```bash
-uv --project workers/automation run jobctrl init
-uv --project workers/automation run jobctrl doctor
-```
-
-The `uv --project workers/automation run` prefix tells uv to sync the Python
-environment owned by this checkout when needed, select it, and run its
-`jobctrl` console entry point. It is not a second CLI. An installed bundled
-release drops that source-only prefix because the native `jobctrl` executable
-dispatches the same commands through its private Python runtime.
-
-`jobctrl init` creates your local CLI workspace, profile, resume, and search
-configuration under `~/.jobctrl/`. `jobctrl doctor` checks which features are
-available: local database, LLM provider, Temporal, browser automation, the Gmail
-connector, approval-gate posture, broad-board/CAPTCHA warnings, application
-attestations, and telemetry. The installer already ran `jobctrl setup`; rerun it
-later only when vendor auth or analysis-leg choices change.
-
-At minimum, connect one general LLM provider. Start from the example file:
-
-```bash
-cp .env.example ~/.jobctrl/.env
-```
-
-Copies the example environment file into your local workspace so you can fill in
-your own keys.
-
-Then open `~/.jobctrl/.env` in any editor and set one of:
-
-- `GEMINI_API_KEY` — a Google Gemini key.
-- `OPENAI_API_KEY` — an OpenAI key.
-- `LLM_URL` — the address of a local, OpenAI-compatible model server.
-
-The employer-analysis ensemble is checked separately by `jobctrl setup` and
-`jobctrl doctor`:
-
-- Claude uses `ANTHROPIC_API_KEY` or local Claude credentials
-  (`CLAUDE_CODE_OAUTH_TOKEN` / existing Claude login) as a local convenience.
-- Codex needs persisted `CODEX_HOME/auth.json`; a bare `OPENAI_API_KEY` must be
-  enrolled with `codex login --with-api-key` before that leg is ready.
-- Antigravity uses `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Vertex ADC env.
-
-Every run reconciles the ensemble with a Claude synthesis pass, so Claude auth is
-required even if you disable the `claude` leg via `JOBCTRL_ANALYSIS_LEGS`. When
-it is missing, `setup` reports analysis as not ready and `doctor` shows a red
-`Claude synthesis auth` row.
-
-See [Configuration](configuration.md) for the full list of settings.
-
-## 4. Start The Source Stack
-
-```bash
 corepack pnpm dev
 ```
 
-Starts everything and keeps it running in the foreground. The launcher starts:
+Only this option requires Git and the source-development toolchain. Keep the
+`corepack pnpm dev` terminal open while using the source build and stop it with
+Ctrl-C. See [Local Development](../local-development.md) for prerequisites,
+isolated workspaces, component commands, and contributor QA.
 
-- **Temporal** (the workflow engine) — keeps each pipeline stage running
-  reliably.
-- **the TypeScript API** — the local service the web app talks to.
-- **the web app** — the page you open in your browser to use JobCtrl.
-- **the Python worker** — a Temporal worker process that does the actual
-  pipeline work.
+## 2. Start JobCtrl
 
-Keep the terminal open while you use the app. The launcher prints the web
-address; it is normally `http://127.0.0.1:5173/`, but Vite may pick another port
-if 5173 is busy. Opening that address lands you on the dashboard.
-
-![JobCtrl dashboard showing pipeline progress, job counts, and apply runs](../assets/screenshots/dashboard.png)
-*The dashboard summarizes pipeline progress, job counts, source health, and recent apply runs.*
-
-To watch the stack from a second terminal:
+After a bundled or Homebrew install, start the complete local application from
+any directory:
 
 ```bash
-corepack pnpm dev:status
-corepack pnpm dev:logs worker
+jobctrl start
 ```
 
-The first lists the running services and their health; the second streams the
-Python worker's logs. Stop the whole stack with Ctrl-C in the terminal running
-`corepack pnpm dev`.
-
-### Optional Browser Extension
-
-To save a job directly from the current browser tab, build the local extension:
+JobCtrl waits for its local services to become healthy and opens the app in
+your browser. The following lifecycle commands use the same installed binary:
 
 ```bash
-corepack pnpm extension:build
+jobctrl status
+jobctrl open
+jobctrl logs worker
+jobctrl stop
 ```
 
-Then load `dist/extension/` as an unpacked Chrome/Chromium extension, open
-JobCtrl Settings, copy the browser-extension pairing token into the extension
-popup, and click **Save job** on an http(s) job page. On supported ATS
-application pages, **Review autofill** opens deterministic profile-backed
-suggestions that you accept before fields are filled. The extension talks only
-to the local API. It cannot submit applications.
+Use `jobctrl start --no-open` when you do not want a browser window, or
+`jobctrl start --foreground` when another process should supervise JobCtrl.
+Your workspace is stored under `~/.jobctrl/` by default and survives stops,
+updates, and rollbacks.
 
-## 5. Use A Disposable Workspace For Testing
+## 3. Complete First-Run Setup
 
-Use a throwaway workspace when testing risky flows, taking screenshots, or
-preparing a bug report — never your real `~/.jobctrl` data.
+### Create your profile
+
+Open **Profile** in the web app and add or import the facts JobCtrl may use for
+scoring and tailoring. Your profile is the source of truth for every later
+stage; JobCtrl must not invent experience, skills, or achievements that are
+not recorded there.
+
+### Connect an LLM provider
+
+Open the credential panel in the web app and configure one of:
+
+- `GEMINI_API_KEY` for Google Gemini;
+- `OPENAI_API_KEY` for OpenAI;
+- `LLM_URL` for a local OpenAI-compatible model server.
+
+Credential changes take effect when the Python worker next starts. Restart
+JobCtrl after adding or removing a credential:
 
 ```bash
-corepack pnpm qa:seed /tmp/jobctrl-qa
-JOBCTRL_DIR=/tmp/jobctrl-qa corepack pnpm dev
+jobctrl stop
+jobctrl start
 ```
 
-The first command fills a separate folder with synthetic profile, job, score,
-materials, and worker data. The second starts the app pointed at that folder
-instead of your real one.
+You can also store provider settings in `~/.jobctrl/.env`. See
+[Configuration](configuration.md) for provider choices, precedence, budgets,
+and feature-specific credentials.
 
-::: warning
-The seeded workspace is synthetic and safe to share. Keep it separate from your
-real `~/.jobctrl` workspace so real data never mixes in.
-:::
+### Check optional provider integrations
 
-## 6. First Useful Checks
+Run the guided setup when you want JobCtrl to detect local Claude, Codex, or
+Antigravity authentication and record which employer-analysis legs you intend
+to use:
 
 ```bash
-uv --project workers/automation run jobctrl pipeline-status
-uv --project workers/automation run jobctrl runs
-curl http://127.0.0.1:8766/v1/health
+jobctrl setup
+jobctrl doctor
 ```
 
-The first prints a status summary; the second lists recent workflow runs; the
-third asks the TypeScript API whether it is healthy and reports today's
-estimated LLM spend against your budget.
+`jobctrl doctor` reports readiness without printing secret values. Employer
+analysis requires Claude synthesis authentication even when the Claude draft
+leg itself is disabled.
 
-If the app shows the worker as missing or stale, check
-`corepack pnpm dev:status` and the worker logs before starting any pipeline
-stage. When you are ready to run the pipeline,
-[Daily Workflow](normal-flows.md) walks through the daily loop.
+The web app does not require `jobctrl init`. Run it only if you want starter
+files for terminal-driven workflows:
+
+```bash
+jobctrl init
+```
+
+## 4. Run Your First Workflow
+
+Use the web app to configure discovery targets, inspect jobs and scores, edit
+generated materials, rehearse a dry run, and approve any live submission.
+[Daily Workflow](normal-flows.md) walks through the complete supervised loop.
+
+For a quick terminal-side readiness check:
+
+```bash
+jobctrl doctor
+jobctrl pipeline-status
+jobctrl runs
+```
+
+Start with a dry run. JobCtrl does not submit in dry-run mode, and live
+submission remains behind the configured approval gate.
+
+## Optional Browser Capabilities
+
+The bundled managed browser covers discovery, enrichment, PDF rendering, and
+other headless core workflows. Install or adopt a system Chrome/Chromium
+profile only when you explicitly enable an authenticated-browser or auto-apply
+capability that needs it.
+
+The optional browser extension can save the current job page and review
+deterministic profile-backed autofill suggestions. It talks only to JobCtrl's
+loopback API and cannot submit an application by itself. Pair it from
+**Settings** using the local browser-extension token.
+
+## Update, Roll Back, Or Remove JobCtrl
+
+```bash
+jobctrl update
+jobctrl rollback
+jobctrl uninstall
+```
+
+Updates and rollbacks preserve `~/.jobctrl/`. Uninstall also preserves your
+data unless you explicitly request and confirm removal with
+`jobctrl uninstall --remove-data`.

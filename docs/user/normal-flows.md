@@ -11,12 +11,10 @@ each page below, see the [Product Tour](screenshots.md).
 
 ::: info Command spelling
 This guide uses the canonical installed spelling, `jobctrl <command>`. The
-signed bundle is not public yet, so current source-checkout users invoke those
-commands through the source-only uv prefix shown in
-[Getting Started](getting-started.md#source-cli).
-That prefix is not a different CLI. Once published, the same native executable
-also owns `jobctrl start`, `stop`, and `status`, regardless of whether curl or
-Homebrew acquired it.
+same native executable owns `jobctrl start`, `stop`, and `status`, regardless
+of whether curl or Homebrew acquired it. Contributors running from source can
+use the checkout-prefixed commands documented in
+[Local Development](../local-development.md).
 :::
 
 ```mermaid

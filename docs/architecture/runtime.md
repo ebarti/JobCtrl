@@ -69,7 +69,7 @@ instead of requiring system `npx`. Nested Python setup/doctor and MCP processes
 run with isolated mode plus bytecode suppression (`-I -B`) so they cannot write
 `__pycache__` into the launcher-verified payload.
 
-The Phase 2 payload replaces the local stub with a native `jobctrl` supervisor.
+The installed payload uses a native `jobctrl` supervisor.
 It verifies the manifest envelope/tree before dispatch, starts fixed loopback
 Temporal (gRPC `7233`, Web UI `8233`) → worker → API (`8766`) in that order,
 and waits for Temporal plus API worker-heartbeat health. Each canonical
@@ -78,9 +78,8 @@ and waits for Temporal plus API worker-heartbeat health. Each canonical
 `JOBCTRL_RUNTIME_HOME`); records bind PID, PGID, start identity, executable,
 build ID, manifest digest, and ports so lifecycle cleanup cannot target a
 reused PID. The P6 workflow now makes Developer ID signing, notarization, and
-authenticated publication mandatory for promotion. Those external gates have
-not executed for a public artifact, so the checked-in build remains candidate
-evidence rather than a public install surface.
+authenticated publication mandatory for promotion. Public artifacts pass those
+gates before the stable release pointer or Homebrew formula can reference them.
 
 The P5 lifecycle store is user-owned (`JOBCTRL_RUNTIME_HOME`), not a package
 manager Cellar. `active.json` atomically records the selected payload, the
@@ -98,9 +97,9 @@ the paired backup is durable, so a failed health gate cannot revoke the only
 runnable release. A pre-finalization failure restores the full pair and
 restarts the still-permitted prior release. An interruption after a healthy
 candidate finalizes a revocation fails closed to that authenticated candidate
-instead of executing revoked code. This remains an internal release-engineering
-seam until a Developer ID-signed and notarized artifact is published and the
-clean-machine acquisition gates pass.
+instead of executing revoked code. Published builds have passed signing,
+notarization, authenticated publication, and clean-machine acquisition gates
+before this lifecycle boundary can promote them.
 
 ## Frontend
 
