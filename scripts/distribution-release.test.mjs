@@ -24,6 +24,7 @@ import {
   createAppleSigningPlan,
   notarizeAndStaplePayload,
   publishedCandidateSmokePlan,
+  privateKeyFromBase64,
   renderPinnedInstallScript,
   recordPublishedCandidateSmoke,
   releasePublicKeyBase64,
@@ -39,6 +40,28 @@ import {
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const execFileAsync = promisify(execFile);
+
+test("release signing accepts standard canonical Ed25519 PKCS#8 DER", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const privateKeyDer = Buffer.from(privateKey.export({ format: "der", type: "pkcs8" }));
+  const publicKeyDer = Buffer.from(publicKey.export({ format: "der", type: "spki" }));
+  const encodedPrivateKey = privateKeyDer.toString("base64");
+
+  assert.equal(privateKeyDer.length, 48, "the standard Ed25519 PKCS#8 encoding is 48 bytes");
+  const importedPrivateKey = privateKeyFromBase64(encodedPrivateKey);
+  assert.equal(importedPrivateKey.asymmetricKeyType, "ed25519");
+  assert.equal(
+    releasePublicKeyBase64(importedPrivateKey),
+    publicKeyDer.subarray(12).toString("base64"),
+  );
+
+  assert.throws(() => privateKeyFromBase64(`${encodedPrivateKey}\n`), /non-empty base64 PKCS#8 DER/);
+  assert.throws(() => privateKeyFromBase64(`${encodedPrivateKey}=`), /canonical base64 PKCS#8 DER/);
+  assert.throws(() => privateKeyFromBase64(Buffer.from("not a DER key").toString("base64")), /Ed25519 PKCS#8 DER key/);
+  const { privateKey: ecPrivateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const ecPrivateKeyBase64 = Buffer.from(ecPrivateKey.export({ format: "der", type: "pkcs8" })).toString("base64");
+  assert.throws(() => privateKeyFromBase64(ecPrivateKeyBase64), /release signing key must be Ed25519/);
+});
 
 test("tracked release-authority bundles are byte-reproducible with pinned esbuild", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-finalizer-rebuild-"));
@@ -88,6 +111,14 @@ test("tracked release-authority bundles dispatch exactly one intended CLI", asyn
   );
   assert.equal(typeof importedFinalizer.privateKeyFromBase64, "function");
   assert.equal(typeof importedFinalizer.releasePublicKeyBase64, "function");
+  const bundledPrivateKeyDer = Buffer.from(
+    generateKeyPairSync("ed25519").privateKey.export({ format: "der", type: "pkcs8" }),
+  );
+  assert.equal(bundledPrivateKeyDer.length, 48);
+  assert.equal(
+    importedFinalizer.privateKeyFromBase64(bundledPrivateKeyDer.toString("base64")).asymmetricKeyType,
+    "ed25519",
+  );
   const pointerPath = path.join(root, "channel-pointer.json");
   const pointerRun = await execFileAsync(
     process.execPath,
