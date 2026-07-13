@@ -701,12 +701,18 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     "gh release create \"$RELEASE_TAG\"",
     "gh release edit \"$RELEASE_TAG\" --draft=false",
     "channel-pointer.json",
-    "If-Match:",
-    "If-None-Match: *",
+    "aws s3api put-object",
+    "--if-match \"$etag\"",
+    "--if-none-match '*'",
+    "JOBCTRL_R2_ACCESS_KEY_ID",
+    "JOBCTRL_R2_SECRET_ACCESS_KEY",
+    "JOBCTRL_R2_ACCOUNT_ID",
+    "JOBCTRL_R2_BUCKET",
     "channel-promotion-evidence.json",
     "immutableDescriptorUrl",
     "brew audit --strict --formula \"$release/jobctrl.rb\"",
   ]) assert.ok(releaseWorkflow.includes(marker), `missing release workflow marker ${marker}`);
+  assert.doesNotMatch(releaseWorkflow, /JOBCTRL_RELEASE_UPLOAD_BASE_URL/);
   assert.doesNotMatch(homebrewWorkflow, /workflow_dispatch:/);
   assert.match(homebrewWorkflow, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
   assert.match(homebrewWorkflow, /--trust "\$TRUST_PATH"/);

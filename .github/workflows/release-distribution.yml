@@ -764,12 +764,20 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
-      - name: Publish checksum-checked immutable candidate assets
+      - name: Publish checksum-checked immutable candidate assets to R2
         env:
-          RELEASE_UPLOAD_BASE_URL: ${{ secrets.JOBCTRL_RELEASE_UPLOAD_BASE_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.JOBCTRL_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.JOBCTRL_R2_SECRET_ACCESS_KEY }}
+          AWS_REGION: auto
+          R2_ACCOUNT_ID: ${{ vars.JOBCTRL_R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.JOBCTRL_R2_BUCKET }}
         run: |
           set -euo pipefail
-          test -n "$RELEASE_UPLOAD_BASE_URL"
+          test -n "$AWS_ACCESS_KEY_ID"
+          test -n "$AWS_SECRET_ACCESS_KEY"
+          [[ "$R2_ACCOUNT_ID" =~ ^[a-f0-9]{32}$ ]]
+          [[ "$R2_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]
+          r2_endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           release="$RUNNER_TEMP/release"
           upload_immutable() {
             local source="$1" destination="$2" expected actual existing status
@@ -785,7 +793,13 @@ jobs:
               echo "failed to read immutable release path $destination (HTTP $status)" >&2
               exit 1
             fi
-            if ! curl --fail --silent --show-error --proto '=https' --tlsv1.2 -H 'If-None-Match: *' --upload-file "$source" "$RELEASE_UPLOAD_BASE_URL/$destination"; then
+            if ! aws s3api put-object \
+              --endpoint-url "$r2_endpoint" \
+              --bucket "$R2_BUCKET" \
+              --key "$destination" \
+              --body "$source" \
+              --if-none-match '*' \
+              --no-cli-pager >/dev/null; then
               actual="$(curl --fail --silent --show-error --proto '=https' --tlsv1.2 "https://releases.jobctrl.dev/$destination" | shasum -a 256 | awk '{print $1}')"
               test "$actual" = "$expected"
               return
@@ -1034,22 +1048,37 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
-      - name: Atomically promote one channel pointer with compare-and-swap
+      - name: Atomically promote one R2 channel pointer with compare-and-swap
         if: ${{ steps.cas-state.outputs.requires_write == 'true' }}
         env:
-          RELEASE_UPLOAD_BASE_URL: ${{ secrets.JOBCTRL_RELEASE_UPLOAD_BASE_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.JOBCTRL_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.JOBCTRL_R2_SECRET_ACCESS_KEY }}
+          AWS_REGION: auto
+          R2_ACCOUNT_ID: ${{ vars.JOBCTRL_R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.JOBCTRL_R2_BUCKET }}
         run: |
           set -euo pipefail
-          test -n "$RELEASE_UPLOAD_BASE_URL"
+          test -n "$AWS_ACCESS_KEY_ID"
+          test -n "$AWS_SECRET_ACCESS_KEY"
+          [[ "$R2_ACCOUNT_ID" =~ ^[a-f0-9]{32}$ ]]
+          [[ "$R2_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]
+          r2_endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           pointer="$RUNNER_TEMP/release/channel-pointer.json"
           destination="v1/$RELEASE_CHANNEL/darwin-arm64.json"
           mode="$(<"$RUNNER_TEMP/channel-mode")"
+          put_args=(
+            --endpoint-url "$r2_endpoint"
+            --bucket "$R2_BUCKET"
+            --key "$destination"
+            --body "$pointer"
+            --no-cli-pager
+          )
           if [[ "$mode" = replace ]]; then
             etag="$(<"$RUNNER_TEMP/channel-etag")"
             case "$etag" in ""|*$'\r'*|*$'\n'*) echo "invalid prevalidated ETag" >&2; exit 1 ;; esac
-            curl --fail --silent --show-error --proto '=https' --tlsv1.2 -H "If-Match: $etag" --upload-file "$pointer" "$RELEASE_UPLOAD_BASE_URL/$destination"
+            aws s3api put-object "${put_args[@]}" --if-match "$etag" >/dev/null
           elif [[ "$mode" = create ]]; then
-            curl --fail --silent --show-error --proto '=https' --tlsv1.2 -H 'If-None-Match: *' --upload-file "$pointer" "$RELEASE_UPLOAD_BASE_URL/$destination"
+            aws s3api put-object "${put_args[@]}" --if-none-match '*' >/dev/null
           else
             echo "invalid prevalidated promotion mode" >&2
             exit 1

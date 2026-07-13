@@ -962,8 +962,14 @@ def _release_distribution_findings(root: Path) -> list[str]:
         "channel-pointer.json": "does not carry one finalized atomic channel-pointer object through publication",
         "https://releases.jobctrl.dev/$destination": "does not checksum-read canonical published assets",
         "v1/$RELEASE_CHANNEL/darwin-arm64.json": "does not promote the compiled canonical channel path",
-        "If-Match:": "does not compare-and-swap an existing channel pointer",
-        "If-None-Match: *": "does not protect first channel-pointer creation",
+        "aws s3api put-object": "does not publish directly through the authenticated R2 S3 API",
+        'https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com': "does not bind writes to the configured R2 account endpoint",
+        "AWS_ACCESS_KEY_ID: ${{ secrets.JOBCTRL_R2_ACCESS_KEY_ID }}": "does not use protected bucket-scoped R2 access-key identity",
+        "AWS_SECRET_ACCESS_KEY: ${{ secrets.JOBCTRL_R2_SECRET_ACCESS_KEY }}": "does not use protected bucket-scoped R2 secret authority",
+        "R2_ACCOUNT_ID: ${{ vars.JOBCTRL_R2_ACCOUNT_ID }}": "does not use protected R2 account configuration",
+        "R2_BUCKET: ${{ vars.JOBCTRL_R2_BUCKET }}": "does not use protected R2 bucket configuration",
+        '--if-match "$etag"': "does not compare-and-swap an existing R2 channel pointer",
+        "--if-none-match '*'": "does not protect immutable R2 object creation",
         "channel-promotion-evidence.json": "does not retain channel-promotion recovery evidence",
         "immutableDescriptorUrl": "does not smoke the immutable candidate descriptor before promotion",
         "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02": "does not hand signed assets across clean jobs as artifacts",
@@ -1112,7 +1118,7 @@ def _release_distribution_findings(root: Path) -> list[str]:
                 f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: {job_name} checkout must set persist-credentials false"
             )
         if re.search(
-            r"secrets\.(?:JOBCTRL_RELEASE_SIGNING_KEY|JOBCTRL_APPLE_[A-Z0-9_]+|JOBCTRL_RELEASE_UPLOAD_BASE_URL|HOMEBREW_TAP_DEPLOY_KEY)",
+            r"secrets\.(?:JOBCTRL_RELEASE_SIGNING_KEY|JOBCTRL_APPLE_[A-Z0-9_]+|JOBCTRL_R2_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)|HOMEBREW_TAP_DEPLOY_KEY)",
             body,
         ) or "environment: release-signing" in body or "environment: release-publication" in body:
             findings.append(
@@ -1137,12 +1143,43 @@ def _release_distribution_findings(root: Path) -> list[str]:
                 f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: publication job {job_name} executes repository or dependency code"
             )
         job_header = body.partition("\n    steps:")[0]
-        for credential in ("GH_TOKEN:", "JOBCTRL_RELEASE_UPLOAD_BASE_URL"):
+        for credential in ("GH_TOKEN:", "AWS_ACCESS_KEY_ID:", "AWS_SECRET_ACCESS_KEY:"):
             if credential in job_header:
                 findings.append(
                     f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: {job_name} exposes {credential.rstrip(':')} at job scope"
                 )
+    if "JOBCTRL_RELEASE_UPLOAD_BASE_URL" in workflow:
+        findings.append(
+            f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: publication must use bucket-scoped native R2 credentials instead of a generic upload URL"
+        )
+    for job_name in ("publish-immutable", "promote-channel-pointer"):
+        body = jobs.get(job_name)
+        if body is None:
+            continue
+        for marker in (
+            "AWS_ACCESS_KEY_ID: ${{ secrets.JOBCTRL_R2_ACCESS_KEY_ID }}",
+            "AWS_SECRET_ACCESS_KEY: ${{ secrets.JOBCTRL_R2_SECRET_ACCESS_KEY }}",
+            "R2_ACCOUNT_ID: ${{ vars.JOBCTRL_R2_ACCOUNT_ID }}",
+            "R2_BUCKET: ${{ vars.JOBCTRL_R2_BUCKET }}",
+            "aws s3api put-object",
+        ):
+            if marker not in body:
+                findings.append(
+                    f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: {job_name} must publish with protected bucket-scoped R2 S3 authority"
+                )
+                break
+    publish_immutable = jobs.get("publish-immutable")
+    if publish_immutable is not None and "--if-none-match '*'" not in publish_immutable:
+        findings.append(
+            f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: publish-immutable must protect immutable R2 object creation"
+        )
     promote = jobs.get("promote-channel-pointer")
+    if promote is not None and (
+        "--if-none-match '*'" not in promote or '--if-match "$etag"' not in promote
+    ):
+        findings.append(
+            f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: promote-channel-pointer must compare-and-swap an existing R2 channel pointer and protect first creation"
+        )
     if promote is not None and (
         "needs: [resolve, sign, package-signed-candidate, smoke-and-verify]" not in promote
         or "EXPECTED_SIGNER_POINTER_SHA256: ${{ needs.sign.outputs.channel_pointer_sha256 }}" not in promote

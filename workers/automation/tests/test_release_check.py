@@ -781,6 +781,32 @@ def test_distribution_privileged_jobs_reject_dependency_or_repo_execution(
     )
 
 
+def test_distribution_requires_native_conditional_r2_publication(
+    tmp_path: Path,
+) -> None:
+    workflow = (
+        release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    policy = (release_check.ROOT / release_check.SIGNING_POLICY_PATH).read_text(
+        encoding="utf-8"
+    )
+    assert "JOBCTRL_RELEASE_UPLOAD_BASE_URL" not in workflow
+    assert "secrets.JOBCTRL_R2_ACCESS_KEY_ID" in workflow
+    assert "secrets.JOBCTRL_R2_SECRET_ACCESS_KEY" in workflow
+    assert "vars.JOBCTRL_R2_ACCOUNT_ID" in workflow
+    assert "vars.JOBCTRL_R2_BUCKET" in workflow
+
+    insecure = workflow.replace("--if-none-match '*'", "").replace(
+        '--if-match "$etag"', ""
+    )
+    _write(tmp_path / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH, insecure)
+    _write(tmp_path / release_check.SIGNING_POLICY_PATH, policy)
+
+    findings = release_check._release_distribution_findings(tmp_path)
+    assert any("protect immutable R2 object creation" in item for item in findings)
+    assert any("compare-and-swap an existing R2 channel pointer" in item for item in findings)
+
+
 def test_distribution_dispatch_must_execute_from_the_audited_release_tag(
     tmp_path: Path,
 ) -> None:
