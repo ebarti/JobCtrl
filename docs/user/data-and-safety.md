@@ -76,11 +76,16 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 
 | Path | Contents |
 | --- | --- |
-| `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, events, projections, settings, artifact metadata, review drafts, contacts, and workflows. Treat all three files as one database. |
+| `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, review drafts, contacts, and workflows. Treat all three files as one database. |
 | `temporal.db` plus `-wal` / `-shm` | Bundled-runtime Temporal state. During a native bundled update or rollback, it is hash-snapshotted and restored only together with `jobctrl.db`; never restore just one member of that pair. |
+| `dashboard.json` | Non-secret runtime settings: daily budget, apply controls, preferred model IDs, and compensation source policy. No credentials or feed contents. |
 | `.env` | Plaintext provider credentials and runtime settings. Not encrypted at rest. |
+| `codex_home/` | Stable JobCtrl-owned Codex CLI state. `auth.json` is outside the prompt-readable `workspace/` subtree. |
+| `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated or separately acquired provider runtime state. |
 | `tailored_resumes/`, `cover_letters/` | Generated text, HTML, and PDF artifacts. |
-| `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state. |
+| `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state, including CAPTCHA usage metadata when applicable. |
+| `browser-capabilities.json`, `browser-profiles/` | Explicit system-browser adoption state and consented copied profiles. |
+| `extension-capability-token` | Private local browser-extension pairing secret. |
 | `backups/` | Timestamped SQLite snapshots created by `jobctrl backup`. |
 | `gmail/` | Gmail OAuth client and token files. |
 | Baseline/legacy resume files | `resume.txt`, `resume.pdf`, and older local style/template files. |
@@ -90,9 +95,14 @@ directory; treat those logs as sensitive too.
 
 ### Credentials Outside The Workspace
 
-The macOS credential panel guides Codex, Claude, and Google setup. Codex
-requires an authenticated Codex CLI. Reused authentication stays in sensitive
-local provider state outside SQLite and the prompt-readable workspace.
+The macOS credential panel guides Codex, Claude, and Google setup. Codex uses
+the stable, separate `$JOBCTRL_DIR/codex_home`. Codex-backed work requires
+an authenticated Codex CLI first. If its `auth.json` is absent,
+setup or generation may copy valid authentication once from the effective
+normal Codex CLI home. JobCtrl never overwrites existing isolated auth or
+changes the normal home. The auth file remains outside
+`codex_home/workspace/`, the only JobCtrl Codex subtree available to
+prompt-driven reads.
 Anthropic and Gemini API keys plus cloud activation flags/non-secret identifiers
 can live in Keychain; AWS, Google, and Azure credential files remain in their
 vendor stores. After environment-file loading, Python loads a Keychain entry at
@@ -136,8 +146,8 @@ records something you did. Follow-ups are reminders and never act automatically.
 | Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | Apply prompt, reviewed materials, profile application fields, and page interaction. |
 | Gmail | Authenticated verification, bounded outcome feedback, or an approved email application | Scoped queries/evidence or the exact approved recipient/attachment. |
 | Google Maps | Profile location autocomplete with a configured key | Address text typed into the location field. |
-| CAPTCHA provider | Supported widget detected with a configured solver | Site key and page URL through the owned local tool. |
-| Langfuse/OpenTelemetry | Explicitly configured telemetry | LLM, workflow, and JSON-RPC traces. |
+| CAPTCHA provider | Supported widget during an apply run you explicitly start or a standing loop you enable, with a configured solver | Site key and page URL through the owned local tool. |
+| Langfuse/OpenTelemetry | Explicitly configured telemetry | Metadata-only LLM, workflow, and JSON-RPC spans: provider/model, operation/stage, outcome, token counts, and safe sizes. |
 
 Review [Security → What Leaves Your Machine](security.md#what-leaves-your-machine)
 before enabling a provider.
@@ -192,9 +202,10 @@ Current estimated spend appears on the health surface.
 
 ## Telemetry
 
-Langfuse export is off unless configured. When enabled, prompts, completions,
-workflow spans, and JSON-RPC spans may be exported. Set `LANGFUSE_DISABLE=1` to
-force opt-out.
+Langfuse export is off unless configured. When enabled, it exports metadata-only
+LLM, workflow, and JSON-RPC spans. Raw prompts, messages, job/profile/material
+text, completions, credentials, local paths, logs, and database content are not
+exported as span attributes. Set `LANGFUSE_DISABLE=1` to force opt-out.
 
 ## Public Bug Reports
 

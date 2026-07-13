@@ -248,6 +248,81 @@ async def test_discovery_source_family_activity_treats_skipped_limit_as_success(
     assert result.source_ids == ["ats:x"]
 
 
+@pytest.mark.asyncio
+async def test_discovery_next_run_settings_stay_frozen_after_planning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    persisted = {
+        "boards": ["indeed"],
+        "defaults": {"results_per_site": 20, "hours_old": 48},
+        "role_filter": {"mode": "auto", "model": None},
+        "crawl_user_agent": {"product": "JobCtrl", "contact": "old@example.test"},
+    }
+    planned_settings = runner._snapshot_discovery_next_run_settings(persisted)
+    monkeypatch.setattr(
+        runner,
+        "plan_discovery_source_families",
+        lambda **_kwargs: {
+            "families": ["jobspy"],
+            "progress_total": 3,
+            "start_count": 0,
+            "max_parallel_families": 1,
+            "next_run_settings": planned_settings,
+        },
+    )
+    plan = activities.plan_discovery_sources(
+        activities.PlanDiscoverySourcesInput(tenant_id="local")
+    )
+
+    persisted = {
+        "boards": ["linkedin"],
+        "defaults": {"results_per_site": 99, "hours_old": 1},
+        "role_filter": {"mode": "llm", "model": "claude:sonnet"},
+        "crawl_user_agent": {"product": "Changed", "contact": "new@example.test"},
+    }
+    captured: dict[str, object] = {}
+
+    async def fake_run_blocking(fn, **_kwargs):
+        return fn()
+
+    def fake_run_family(family: str, **kwargs):
+        captured.update(kwargs)
+        return {"family": family, "status": "ok", "result": {}, "source_ids": []}
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
+        fake_run_blocking,
+    )
+    monkeypatch.setattr(runner, "run_discovery_source_family", fake_run_family)
+
+    await activities.discovery_source_family_activity(
+        DiscoverySourceActivityInput(
+            tenant_id="local",
+            family="jobspy",
+            next_run_settings=plan.next_run_settings,
+        )
+    )
+
+    assert captured["next_run_settings"] == planned_settings
+    captured_settings = captured["next_run_settings"]
+    assert isinstance(captured_settings, dict)
+    effective = runner._apply_discovery_next_run_settings(
+        persisted,
+        captured_settings,
+    )
+    assert effective["boards"] == ["indeed"]
+    assert effective["defaults"] == {"results_per_site": 20, "hours_old": 48}
+    assert effective["role_filter"] == {"mode": "llm", "model": "claude:sonnet"}
+    assert effective["crawl_user_agent"] == {
+        "product": "Changed",
+        "contact": "new@example.test",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Per-site fault isolation (THE incident shape)
 # ---------------------------------------------------------------------------

@@ -193,12 +193,14 @@ executable choice. When `autoApply: true`, a worker maintains one continuous App
 workflow, visible in Runs as the standing apply loop. With the default
 approval gate still on (`applyApprovalRequired: true`), that loop only submits
 jobs already approved in Apply Review and parks the rest for review. If you
-turn the approval gate off in Preferences, the settings form shows a
+turn the approval gate off under **Discovery → Runtime settings**, the form shows a
 persistent warning because the standing loop may submit eligible prepared
 jobs autonomously — still bounded by minimum fit score, the daily spend
 ceiling, at-most-once submit intent tracking, CAPTCHA fail-closed behavior,
 and the dry-run guard when a dry-run apply path is used. Use dry-run paths
 and narrow targets before allowing live submission.
+The auto-apply toggle, approval requirement, and minimum fit threshold are all
+owned by **Discovery → Runtime settings**.
 
 System Chrome/Chromium is never a core requirement. A source checkout uses its
 managed Playwright Chromium installs; the bundled release carries exactly one
@@ -296,11 +298,12 @@ is opt-in and configuration-gated:
   Raw email bodies stay local; outgoing sends require the `gmail.send` scope.
 - **Google Maps** — address autocomplete, only if you set
   `VITE_GOOGLE_MAPS_API_KEY`.
-- **CAPTCHA solving** — supported widgets are handled only through the owned
-  local solver tool when configured; no solver key travels through the model
-  prompt.
-- **Langfuse / OpenTelemetry** — traces, only when you configure it
-  (`LANGFUSE_DISABLE=1` opts out even with credentials present).
+- **CAPTCHA solving** — configure CapSolver only when you explicitly authorize
+  sending a supported widget's site key and page URL during apply; the owned
+  local tool keeps the solver key and returned token out of the model prompt.
+- **Langfuse / OpenTelemetry** — metadata-only traces, only when you configure
+  them: provider/model, operation/stage, outcome, token counts, and safe sizes,
+  never raw prompts, job/profile/material text, or completions.
 
 The apply prompt is the largest single batch of personal data that can leave.
 Full per-call breakdown:
@@ -321,18 +324,29 @@ JobCtrl service.
 
 By default, JobCtrl writes local data under `~/.jobctrl/`:
 
-- `jobctrl.db` — local SQLite database with profile, jobs, events,
-  projections, settings, and artifact metadata.
+- `jobctrl.db` — local SQLite database with profile, jobs, discovery settings,
+  events, projections, and artifact metadata.
 - `temporal.db` — bundled-runtime Temporal persistence. It is rollback-critical
   alongside `jobctrl.db`: a bundled release transition snapshots and restores
   the two databases as one verified pair, never as independent files.
 - `.env` — plaintext, cross-platform fallback for provider/API credentials
   and local runtime settings; it is not encrypted at rest.
-- `dashboard.json` — non-secret dashboard settings, including provider-scoped
-  preferred model IDs. It never stores provider credentials.
+- `dashboard.json` — non-secret runtime settings, including `dailyBudgetUsd`,
+  apply controls, provider-scoped model IDs, and compensation source policy. It
+  never stores provider credentials or feed contents.
+- `codex_home/` — the stable JobCtrl-owned Codex CLI home. Valid normal Codex
+  CLI authentication may be imported once when its `auth.json` is absent. This
+  stable authentication import never overwrites existing JobCtrl credentials
+  or changes the normal Codex home. Prompt-driven reads are limited to
+  `codex_home/workspace/`.
+- `gmail/` — Gmail OAuth client and private refresh/access token state.
+- `browser-capabilities.json`, `browser-profiles/`,
+  `extension-capability-token`, `chrome-workers/`, `apply-workers/` — explicit
+  browser adoption, copied profiles, extension pairing, and browser/apply state.
+- `provider-packs/`, `provider-runtime/`, `claude_home/` — provider runtime
+  packages and isolated provider state when those paths are used.
 - `tailored_resumes/`, `cover_letters/`, `logs/` — generated artifacts and
   logs.
-- `chrome-workers/`, `apply-workers/` — local browser/apply worker state.
 - `backups/` — source-mode `jobctrl backup` snapshots and, once the P6-signed
   bundled channel is public, verified paired lifecycle snapshots.
 
@@ -418,8 +432,9 @@ fixtures are never a production upgrade path.
 
 1. Create or import a candidate profile.
 2. Configure target roles, locations, work models, and application
-   preferences. In Settings, opt into Levels.fyi or Glassdoor compensation
-   feeds only when you have the matching licensed or permitted access.
+   preferences. In Settings, record Levels.fyi or Glassdoor compensation
+   source policy only when you have matching access; this policy does not
+   connect a feed.
 3. Run Discover from the UI or CLI, optionally targeting a single source from
    the Pipelines tab when you want a lighter retry.
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
@@ -498,11 +513,21 @@ different CLI surfaces. Source contributors can use
 
 ## Configuration
 
-Configuration comes from local profile/settings stores, environment variables
+Configuration comes from SQLite-backed profile/discovery stores,
+`dashboard.json` runtime settings, environment variables
 (`~/.jobctrl/.env`, repo `.env`, or the shell), and package-shipped source
-registries. Compensation-source opt-ins are managed from Settings and stored
-locally. Start with [.env.example](.env.example); full reference:
+registries. Compensation-source policy is managed from Settings and stored
+locally; it is not a feed connection. Start with [.env.example](.env.example); full reference:
 [Configuration](https://jobctrl.dev/user/configuration).
+
+The web app centralizes launch configuration across **Settings → General**
+(spend, capacity, scoring, apply runtime), **Credentials**, **Model selection**
+(provider preference and AI execution policy), and **Browser & extension**.
+Discovery owns its target, runtime, automation, source, and schedule controls.
+Where an environment override exists, the UI shows the effective source and
+makes environment-owned controls read-only. Saved changes are labeled as live,
+next poll/run/workflow, or restart-required; worker activity slots show desired
+versus active values.
 
 Providers that accept environment credentials can use the plaintext
 `~/.jobctrl/.env` file or the process environment. On macOS, **Settings →
@@ -519,8 +544,10 @@ selected ready provider, then that provider's default. Secret values managed by 
 panel are stored in the system Keychain, while AWS, Google, and Azure credential
 files remain owned by their vendor CLIs. At Python process startup, a non-empty
 environment value takes precedence over the corresponding Keychain entry.
-Keychain edits are not hot-reloaded, so restart JobCtrl after saving or
-removing one. Native Windows Credential Manager and Linux Secret
+Claude, Google, and CapSolver Keychain edits are not hot-reloaded by Python, so
+restart the relevant process after saving or removing one. Preferred models,
+browser capabilities, and extension pairing do not require that restart.
+Native Windows Credential Manager and Linux Secret
 Service/keyring adapters are planned, not shipped; use `.env` or the shell on
 those platforms today. The macOS panel
 distinguishes **not configured** from **status unknown**: an unknown
@@ -548,11 +575,18 @@ Keychain output.
 
 </details>
 
-Discovery scheduling is stored in SQLite: `scheduling_enabled` defaults to
+Discovery scheduling is stored in SQLite through
+`GET/PATCH /v1/discovery/settings`: `scheduling_enabled` defaults to
 `false`; `schedule_cron` defaults to `0 7 * * *` and only runs after you
-enable it. LLM spend is tracked locally; `dailyBudgetUsd` defaults to `25`
+enable it. LLM spend is tracked locally; its `dailyBudgetUsd` ceiling is stored
+in `dashboard.json`, defaults to `25`
 (`0` = unlimited), spendful workflows run a budget preflight, and the health
 surface shows today's estimated spend.
+
+Optional system-browser capabilities and extension pairing are also available
+from **Settings → Browser & extension**. Enabling an authenticated or auto-apply
+browser requires an explicit Chrome/Chromium path; JobCtrl does not auto-detect
+or adopt it. Browser enable/disable and pairing-token rotation are live.
 
 ## Development
 

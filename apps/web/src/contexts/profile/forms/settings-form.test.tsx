@@ -148,7 +148,9 @@ describe("<SettingsForm>", () => {
     fireEvent.click(screen.getByRole("button", { name: "save" }));
 
     await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
-    expect(updateSettings.mock.calls[0]?.[0]).not.toHaveProperty("workerActivitySlots");
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.not.objectContaining({ workerActivitySlots: expect.anything() }),
+    );
   });
 });
 

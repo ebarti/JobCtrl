@@ -114,14 +114,12 @@ describe("provider credential plans", () => {
       { operation: "delete", key: "ANTHROPIC_FOUNDRY_RESOURCE" },
       { operation: "delete", key: "AWS_REGION" },
       { operation: "delete", key: "AWS_PROFILE" },
-      { operation: "delete", key: "GOOGLE_APPLICATION_CREDENTIALS" },
     ]);
     expect(removeGoogleProviderBatch().operations).toEqual([
       { operation: "delete", key: "GEMINI_API_KEY" },
       { operation: "delete", key: "GOOGLE_GENAI_USE_VERTEXAI" },
       { operation: "delete", key: "GOOGLE_CLOUD_PROJECT" },
       { operation: "delete", key: "GOOGLE_CLOUD_LOCATION" },
-      { operation: "delete", key: "GOOGLE_APPLICATION_CREDENTIALS" },
     ]);
     expect(removeClaudeProviderBatch().operations).not.toContainEqual(
       expect.objectContaining({ key: "OPENAI_API_KEY" }),
@@ -129,5 +127,50 @@ describe("provider credential plans", () => {
     expect(removeGoogleProviderBatch().operations).not.toContainEqual(
       expect.objectContaining({ key: "OPENAI_API_KEY" }),
     );
+  });
+
+  it("preserves shared ADC when either provider switches routes or is removed", () => {
+    const batches = [
+      buildClaudeCredentialBatch({ ...claudeBase, mode: "anthropic_api_key" }),
+      buildGoogleCredentialBatch({
+        mode: "gemini_api_key",
+        apiKey: "gemini-secret",
+        projectId: "",
+        location: "",
+        googleApplicationCredentials: "",
+      }),
+      removeClaudeProviderBatch(),
+      removeGoogleProviderBatch(),
+    ];
+
+    for (const batch of batches) {
+      expect(batch.operations).not.toContainEqual({
+        operation: "delete",
+        key: "GOOGLE_APPLICATION_CREDENTIALS",
+      });
+    }
+  });
+
+  it("lets either Vertex provider update the one shared ADC value explicitly", () => {
+    const claude = buildClaudeCredentialBatch({
+      ...claudeBase,
+      mode: "vertex",
+      googleApplicationCredentials: "/private/shared-adc.json",
+    });
+    const google = buildGoogleCredentialBatch({
+      mode: "vertex",
+      apiKey: "",
+      projectId: "project-id",
+      location: "us-central1",
+      googleApplicationCredentials: "/private/shared-adc.json",
+    });
+
+    for (const batch of [claude, google]) {
+      expect(batch.operations).toContainEqual({
+        operation: "set",
+        key: "GOOGLE_APPLICATION_CREDENTIALS",
+        value: "/private/shared-adc.json",
+      });
+    }
   });
 });

@@ -47,7 +47,9 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
     await user.click(screen.getByRole("button", { name: "save runtime settings" }));
 
     await waitFor(() => expect(updateDiscoverySettings).toHaveBeenCalledTimes(1));
-    expect(updateDiscoverySettings.mock.calls[0]?.[0]).not.toHaveProperty("maxParallelFamilies");
+    expect(updateDiscoverySettings).toHaveBeenCalledWith(
+      expect.not.objectContaining({ maxParallelFamilies: expect.anything() }),
+    );
   });
 
   it("announces restart pending after saving schedule changes", async () => {

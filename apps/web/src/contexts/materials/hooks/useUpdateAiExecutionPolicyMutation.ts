@@ -14,7 +14,7 @@ export function useUpdateAiExecutionPolicyMutation(): UseMutationResult<Settings
   return useMutation(createOptimisticMutation(queryClient, {
     mutationKey: [...settingsKeys.settings(tenantId), "materials-policy"],
     mutationFn: (body: SettingsUpdateRequest) => api.updateSettings(body),
-    optimisticUpdates: (body: SettingsUpdateRequest) => [{ queryKey: settingsKeys.settings(tenantId), patch: (current: SettingsResponse) => patchSettingsResponse(current, body) }],
+    optimisticUpdates: (body: SettingsUpdateRequest) => [{ queryKey: settingsKeys.settings(tenantId), patch: (current) => patchSettingsResponse(current, body) }],
     settle: () => [settingsKeys.settings(tenantId)],
   }));
 }

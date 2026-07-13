@@ -63,6 +63,9 @@ When isolated auth is absent, setup and generation retain one-time reuse
 of a regular Codex CLI `auth.json`; the explicit Codex provider verify action
 uses the same copy-once behavior before checking the isolated login. Existing
 JobCtrl-owned auth is not overwritten, and the normal Codex home is unchanged.
+The auth file stays outside `codex_home/workspace/`; the permissions profile
+denies root reads and grants prompt-driven reads only to that workspace subtree
+plus minimal provider runtime paths.
 Structured Claude analysis/voice calls expose no built-in tools.
 Codex analysis disables its shell, denies approvals, and gives any command
 child an empty inherited environment, so provider API keys authenticate the SDK
@@ -407,6 +410,25 @@ is not a runtime secret read performed by the API:
   Settings edit. Non-macOS processes do not probe Keychain and use env files or
   their inherited environment today; native Windows and Linux stores are
   planned, not shipped.
+
+### Configuration Resolution And Activation
+
+Launch controls are resolved at their owning boundary rather than through one
+global configuration object. Candidate Profile target search is canonical;
+legacy dashboard target-role/location fields are migration fallbacks. SQLite
+owns discovery runtime and scheduling. `dashboard.json` owns non-secret
+cross-process controls, model IDs, AI execution policy, and apply limits.
+Keychain/environment adapters own secrets, while browser capability and
+extension-token files own explicit browser adoption and pairing.
+
+Where supported, precedence is explicit per-run input, environment compatibility
+override, saved value, then built-in default. Deny switches remain authoritative.
+API responses expose effective source, editability, and activation timing so the
+frontend can render environment-owned controls read-only and distinguish live,
+next-poll/run/workflow, and restart-required changes. The health heartbeat is
+the source of truth for active worker activity slots; `dashboard.json` holds the
+desired value until restart. Browser capability mutations and extension-token
+rotation are live, while Python Keychain consumers load secrets at process start.
 
 ## Python Automation Engine
 

@@ -145,7 +145,9 @@ export function CredentialsPanel() {
             effectiveSource={capSolver.effectiveSource}
             editable={capSolver.editable}
             available={store.available}
-            unavailableReason={store.unavailableReason ?? undefined}
+            {...(store.unavailableReason !== null
+              ? { unavailableReason: store.unavailableReason }
+              : {})}
           />
         </section>
       ) : null}

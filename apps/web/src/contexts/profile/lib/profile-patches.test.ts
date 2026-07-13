@@ -4,6 +4,12 @@ import { sampleSettingsResponse } from "../../../test/fixtures/projections.js";
 import { patchSettingsResponse } from "./profile-patches.js";
 
 describe("patchSettingsResponse", () => {
+  it("preserves an unknown cache value when the nested response contract is invalid", () => {
+    const current = { ok: true, settings: {}, effectiveSettings: {} };
+
+    expect(patchSettingsResponse(current, { dailyBudgetUsd: 12 })).toBe(current);
+  });
+
   it("merges one provider preference without replacing the other providers", () => {
     const current = {
       ...sampleSettingsResponse,

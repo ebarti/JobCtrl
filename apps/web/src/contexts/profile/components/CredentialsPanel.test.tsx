@@ -25,6 +25,8 @@ describe("<CredentialsPanel>", () => {
     expect(await screen.findByRole("heading", { name: "Codex" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Claude" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Google" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Apply CAPTCHA solver" })).toBeInTheDocument();
+    expect(screen.getByLabelText("CapSolver API key")).toBeEnabled();
     expect(screen.getByText(CODEX_LOGIN_COMMANDS.subscription)).toBeInTheDocument();
     expect(screen.getByText(CODEX_LOGIN_COMMANDS.apiKey)).toBeInTheDocument();
     expect(screen.queryByLabelText(/OpenAI API key/i)).not.toBeInTheDocument();
@@ -67,6 +69,7 @@ describe("<CredentialsPanel>", () => {
         credentials: sampleCredentialsResponse.credentials.map((credential) => ({
           ...credential,
           configured: false,
+          effectiveSource: "absent" as const,
         })),
       })),
       providerStatus: vi.fn(async () => ({
@@ -95,6 +98,10 @@ describe("<CredentialsPanel>", () => {
             "CLAUDE_CODE_USE_VERTEX",
             "GOOGLE_GENAI_USE_VERTEXAI",
           ].includes(credential.key),
+          effectiveSource: [
+            "CLAUDE_CODE_USE_VERTEX",
+            "GOOGLE_GENAI_USE_VERTEXAI",
+          ].includes(credential.key) ? "keychain" as const : "absent" as const,
         })),
       })),
       providerStatus: vi.fn(async () => ({
@@ -189,6 +196,64 @@ describe("<CredentialsPanel>", () => {
     expect(screen.queryByRole("dialog", { name: "Remove Claude provider setup?" })).not.toBeInTheDocument();
   });
 
+  it("keeps an environment-owned provider visibly read-only and never reports removal", async () => {
+    const updateCredentialsBatch = vi.fn(async () => sampleCredentialsResponse);
+    renderPanel({
+      credentials: vi.fn(async () => ({
+        ...sampleCredentialsResponse,
+        credentials: sampleCredentialsResponse.credentials.map((credential) =>
+          credential.key === "GOOGLE_GENAI_USE_VERTEXAI"
+            ? {
+                ...credential,
+                configured: false,
+                effectiveSource: "environment" as const,
+                editable: false,
+              }
+            : credential,
+        ),
+      })),
+      providerStatus: vi.fn(async () => ({
+        ok: true as const,
+        providers: [
+          { provider: "google" as const, configured: true, ready: true, mode: "vertex" },
+        ],
+      })),
+      updateCredentialsBatch,
+    });
+
+    const card = await providerCard("Google");
+    expect(within(card).getByText(/effective mode is owned by the launch environment/i)).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Save Google setup" })).toBeDisabled();
+    expect(within(card).queryByRole("button", { name: "Remove Google setup" })).not.toBeInTheDocument();
+    expect(within(card).getAllByRole("radio").every((radio) => radio.hasAttribute("disabled"))).toBe(true);
+    expect(updateCredentialsBatch).not.toHaveBeenCalled();
+    expect(card).not.toHaveTextContent(/provider settings removed/i);
+  });
+
+  it("keeps an environment-owned CapSolver key visibly read-only", async () => {
+    renderPanel({
+      credentials: vi.fn(async () => ({
+        ...sampleCredentialsResponse,
+        credentials: sampleCredentialsResponse.credentials.map((credential) =>
+          credential.key === "CAPSOLVER_API_KEY"
+            ? {
+                ...credential,
+                configured: true,
+                effectiveSource: "environment" as const,
+                editable: false,
+              }
+            : credential,
+        ),
+      })),
+    });
+
+    const solver = await screen.findByRole("heading", { name: "Apply CAPTCHA solver" });
+    const panel = solver.closest("section");
+    expect(panel).not.toBeNull();
+    expect(within(panel!).getByLabelText("CapSolver API key")).toBeDisabled();
+    expect(within(panel!).getByText("managed by environment")).toBeInTheDocument();
+  });
+
   it("keeps a sanitized Google removal error inside the confirmation dialog", async () => {
     const user = userEvent.setup();
     const privateFailure = "private-keychain-detail-must-not-render";
@@ -247,7 +312,9 @@ describe("<CredentialsPanel>", () => {
     });
 
     expect(await screen.findByText(notice)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/API key/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Anthropic API key \(required\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Gemini API key \(required\)/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("CapSolver API key")).toBeDisabled();
     expect(screen.getByText(/Set GEMINI_API_KEY/i)).toBeInTheDocument();
     const codex = await providerCard("Codex");
     await userEvent.setup().click(
@@ -341,6 +408,12 @@ function configuredProvidersResponse() {
         "GEMINI_API_KEY",
         "GOOGLE_GENAI_USE_VERTEXAI",
       ].includes(credential.key),
+      effectiveSource: [
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_USE_VERTEX",
+        "GEMINI_API_KEY",
+        "GOOGLE_GENAI_USE_VERTEXAI",
+      ].includes(credential.key) ? "keychain" as const : credential.effectiveSource,
     })),
   };
 }

@@ -12,10 +12,11 @@ cost). A single ready Codex, Claude, or Google provider is sufficient for every
 core AI stage, including employer-analysis synthesis. A second provider can add
 ensemble diversity, but it is not mandatory.
 
-JobCtrl configuration is intentionally local. Some settings live in the local
-SQLite database, set through the web app; working runtime credentials and
-runtime switches are read from environment variables. Everything here is
-optional unless a feature you want depends on it.
+JobCtrl configuration is intentionally local. Profile and discovery settings
+live in SQLite; non-secret runtime settings live in `dashboard.json`; working
+credentials and advanced runtime switches come from local credential stores or
+environment variables. Everything here is optional unless a feature you want
+depends on it.
 
 ::: info Command spelling
 Command blocks on this page use the canonical installed spelling,
@@ -29,20 +30,42 @@ Contributors running from source can use the checkout-prefixed commands in
 
 | You want to change… | Use |
 | --- | --- |
-| Candidate facts, target role, location, work model, or writing preferences | Profile / Preferences in the web app |
-| Discovery sources, schedules, quarantine, or manual capture | Discovery in the web app |
-| Approval, spend, worker, or provider behavior | Settings in the web app |
-| Provider secret used by the Python runtime | `~/.jobctrl/.env`, shell environment, or the macOS credential panel |
+| Candidate facts and resume evidence | **Profile** (`/profile`) |
+| Work model, application, or writing preferences | **Preferences** (`/preferences`) |
+| Target roles/locations, runtime, automation, sources, schedules, quarantine, or manual capture | **Discovery** (`/discovery`) |
+| Spend/capacity, scoring guidance, apply runtime, or compensation source policy | **Settings → General** (`/settings`) |
+| Provider secret or cloud mode | **Settings → Credentials** (`/settings/credentials`) on macOS, or `~/.jobctrl/.env` / the shell |
+| Preferred provider model, analysis legs, or tailoring generator/judge policy | **Settings → Model selection** (`/settings/models`) |
+| System-browser capabilities or extension pairing | **Settings → Browser & extension** (`/settings/browser`) |
 
 The rest of this page is a lookup table. [Data, Privacy & Safety](data-and-safety.md)
 explains what is stored or sent; [Security](security.md) explains the controls
 around risky actions.
+
+### How a setting becomes effective
+
+The UI shows both the saved value and its effective source where an environment
+override exists. Resolution is **explicit per-run value (when supported) →
+environment compatibility override → saved UI value → built-in default**.
+Environment-owned controls are read-only in the UI. Hard deny switches such as
+`LANGFUSE_DISABLE=1` and `JOBCTRL_LINKEDIN_APPLY_RESOLVER=0` still win and can
+disable, but never enable, the corresponding feature.
+
+| Surface | Storage/API | When a saved change applies |
+| --- | --- | --- |
+| Discovery target search and automation | Candidate profile plus `dashboard.json`; `/v1/profile` and `/v1/settings` | Next run or standing-loop poll, as labeled |
+| Discovery runtime and schedule | SQLite; `/v1/discovery/settings` | Next run/source family; schedule changes require a worker restart |
+| Settings → General | `dashboard.json`; `/v1/settings` | Live, next poll/run/workflow, or restart, as labeled; worker activity slots show desired versus active values |
+| Settings → Credentials | Keychain metadata/API on macOS; environment elsewhere | Claude, Google, and CapSolver Keychain edits require the relevant Python process to restart; Codex verification is immediate |
+| Settings → Model selection | `dashboard.json`; `/v1/settings` | Newly started work; no worker restart |
+| Settings → Browser & extension | `browser-capabilities.json` and the local pairing-token file | Enable, disable, profile-copy, and token rotation are live |
 
 ## Configuration Sources
 
 | Source | Purpose |
 | --- | --- |
 | `~/.jobctrl/jobctrl.db` | Candidate profile, discovery settings, preferences, tailoring controls, jobs, events, projections, and artifact metadata. |
+| `~/.jobctrl/dashboard.json` | Non-secret runtime settings such as the daily budget, apply controls, preferred model IDs, and compensation source policy. |
 | `~/.jobctrl/.env` | Personal provider keys and runtime environment. |
 | repo `.env` | Development-only overrides for the current checkout. |
 | shell environment | One-off overrides for commands and CI. |
@@ -52,7 +75,7 @@ The development launcher loads `~/.jobctrl/.env`, repo `.env`, and the optional
 `JOBCTRL_USER_ENV_PATH` file before starting local services.
 
 On macOS, **Settings → Credentials** is the preferred guided provider setup. It
-stores Anthropic or Gemini API keys and the selected provider-mode settings in
+stores Anthropic, Gemini, or CapSolver API keys and selected provider-mode settings in
 macOS Keychain. Codex uses an authenticated Codex CLI, and AWS, Google, and
 Azure credentials stay in their native CLI-managed stores; JobCtrl records only
 the activation flags and non-secret identifiers needed to select those routes.
@@ -60,7 +83,9 @@ the activation flags and non-secret identifiers needed to select those routes.
 At Python process startup, after env-file loading, JobCtrl uses a Keychain value
 only when the corresponding environment value is missing or empty; any
 non-empty environment value wins. Saving or removing a value is therefore
-**restart-to-activate**: restart JobCtrl before provider work. Native Windows
+**restart-to-activate** for Python consumers: restart the relevant worker or
+provider process before Claude, Google, or CapSolver work. Preferred-model
+changes and browser capability changes do not require that restart. Native Windows
 and Linux credential-store adapters are planned; use `.env` or the shell on
 those platforms today. `jobctrl doctor` reports the effective source without
 printing secrets. **Status unknown** (`inspection_failed`) is distinct from
@@ -102,8 +127,8 @@ settings, API/Vite proxy targets, or isolated stacks should use
 
 ## LLM Providers
 
-Choose one provider in **Settings → Credentials**, then restart JobCtrl and use
-`jobctrl doctor`. The pipeline model spec defaults to `default`, which resolves
+Choose one provider in **Settings → Credentials**, restart the relevant Python
+process after a Keychain edit, and use `jobctrl doctor`. The pipeline model spec defaults to `default`, which resolves
 through a ready provider. Explicit model specs use `codex:`, `claude:`, or
 `google:`; `gemini:` remains an alias for the Google SDK route.
 
@@ -135,9 +160,9 @@ restart requirement (or require an explicit adapter reset).
 
 ### Codex
 
-JobCtrl requires an authenticated Codex CLI and reuses that authentication.
-API-key users may authenticate through Codex's `codex login --with-api-key`
-flow.
+JobCtrl requires an already authenticated Codex CLI and reuses that
+authentication. Install Codex CLI and complete its supported sign-in flow
+before verifying it in JobCtrl.
 
 ### Claude
 
@@ -167,9 +192,9 @@ Choose one:
 
 Vertex project and location values select the target; they are not credentials.
 If `GOOGLE_APPLICATION_CREDENTIALS` is set, it must name an existing regular,
-loadable service-account JSON file. Otherwise JobCtrl checks the standard local
-gcloud ADC location, whose officially loadable ADC types (including
-`authorized_user`) remain supported.
+loadable service-account JSON file. The path is write-only and is not shown again.
+Otherwise JobCtrl checks the standard local gcloud ADC location, whose
+officially loadable ADC types (including `authorized_user`) remain supported.
 
 `LLM_MODEL` optionally overrides both the saved preference and the selected
 provider's default model.
@@ -197,24 +222,33 @@ stale `JOBCTRL_ANALYSIS_LEGS` value omitted it.
 
 ## LLM Spend Budget
 
-The daily LLM budget is a preference stored in SQLite (`dailyBudgetUsd`,
-default `25`; `0` means unlimited). Workflows that spend LLM tokens run a
+The daily LLM budget is stored in `dashboard.json` and edited in **Settings →
+General** (`dailyBudgetUsd`, default `25`; `0` means unlimited). Workflows that spend LLM tokens run a
 budget preflight before their heavy activities and stop with a non-retryable
 budget error once the estimated daily spend reaches the ceiling.
 `GET /v1/health` reports today's estimated spend against the configured
-budget, and the Preferences form edits the value.
+budget.
 
 ## Discovery
 
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `JOBCTRL_DISCOVERY_LLM_ROLE_FILTER` | `auto` | Uses an LLM to adjudicate loose role-title matches when an LLM provider is configured. Set `0` to force deterministic matching only. |
-| `JOBCTRL_DISCOVERY_ROLE_FILTER_MODEL` | configured LLM model | Optional model spec for discovery role adjudication. |
-| `JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES` | `1` | How many discovery source families (`jobspy`, `ats_api`, `workday`, `smartextract`) crawl at once. `1` (default) keeps families sequential — the safe, isolated behavior. Values `> 1` run that many source crawls concurrently to cut total discovery wall-clock; enrichment still runs once per batch (never concurrently). Read at run start and applied for the whole run; change it in the worker environment and restart the worker. **Tune conservatively:** each concurrent family may launch its own headless browser, so keep this ≤ `JOBCTRL_MAX_CONCURRENT_ACTIVITIES` and mind memory (~roughly 300–600 MB per Chromium). Uncontrolled browser concurrency has historically destabilized long runs — see [Concurrency & Fan-out](../architecture/pipeline/concurrency.md) for the worker-capacity analysis before raising it. |
+Use **Discovery → Runtime settings** for boards, results per site, posting age,
+schedule, role-filter mode/model, bounded source-family parallelism, and the
+outbound user-agent identity. The form shows `saved`, `environment`, or
+`default` ownership and disables environment-owned controls. Schedule changes
+need a worker restart; boards, limits, and parallelism apply on the next run;
+role-filter and user-agent changes apply to the next source family.
 
-Discovery target roles, locations, seniority, work models, source controls, and
-automation preferences are normally edited in the Discovery page and stored in
-SQLite. A scraping proxy, when needed, is part of those SQLite discovery
+Advanced operators can retain compatibility overrides with
+`JOBCTRL_DISCOVERY_LLM_ROLE_FILTER`, `JOBCTRL_DISCOVERY_ROLE_FILTER_MODEL`,
+`JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES`, `JOBCTRL_CRAWL_UA_PRODUCT`, and
+`JOBCTRL_CRAWL_UA_CONTACT`. Parallel families are capped at four and should not
+exceed the worker's active activity slots. See
+[Concurrency & Fan-out](../architecture/pipeline/concurrency.md).
+
+Discovery target roles and locations come from the canonical Candidate Profile;
+legacy dashboard target fields are fallback-only for older workspaces. Discovery
+automation and target controls are composed on the Discovery page. A scraping
+proxy, when needed, is part of the SQLite discovery
 settings (`host:port:user:pass` form); there is no `PROXY` environment
 variable.
 
@@ -296,6 +330,12 @@ has no send capability. Their posture:
 
 ## Materials And Resume Rendering
 
+Use **Settings → Model selection → AI execution policy** for analysis legs,
+primary/fallback tailoring generators, the tailoring judge model, and its
+minimum score. Saved values apply to newly started workflows. The environment
+variables below are compatibility/operator overrides and make the corresponding
+controls read-only.
+
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `TAILORING_GENERATOR_MODELS` | provider default | Comma-separated generator model specs for resume tailoring. |
@@ -312,11 +352,21 @@ tied to the same material generation.
 
 ## Browser Apply Automation
 
+Use **Settings → Browser & extension** to inspect the managed core browser,
+enable or disable auto-apply and authenticated LinkedIn capabilities, copy a
+LinkedIn profile with explicit consent, and pair or rotate the extension token.
+System browsers are never auto-detected: enabling either optional capability
+requires an explicit Chrome/Chromium executable path. The path is write-only
+and is not shown again. A source profile path is cleared after the copy request
+and is never returned, logged, or persisted. Rotating the pairing token takes effect immediately.
+Existing extensions are disconnected; the UI never exposes the token's file
+path. The CLI commands below remain an equivalent operator surface.
+
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `JOBCTRL_CLAUDE_BIN` | unset | Explicit apply-agent Claude runtime override. By default apply uses a system `claude` when present, then the pinned Claude Agent SDK bundled binary. |
 | `JOBCTRL_APPLY_TIMEOUT_SECONDS` | `900` | Per-job autonomous apply timeout. |
-| `CAPSOLVER_API_KEY` | unset | Optional key used only by the owned local `solve_captcha` apply tool for supported widgets. Provider keys and solver tokens are not sent through the model prompt; unsupported or unconfigured CAPTCHA flows fail closed. |
+| `CAPSOLVER_API_KEY` | unset | Configure from **Settings → Credentials** on macOS or the environment elsewhere. It explicitly opts a started apply run into sending a supported widget's site key and page URL to CapSolver. Restart the relevant Python worker after a Keychain edit. The owned solver keeps keys and tokens out of the model prompt; unsupported, unconfigured, or failed solves stop the apply path. |
 | `JOBCTRL_LINKEDIN_APPLY_RESOLVER` | capability-controlled | Set to `0` to disable authenticated LinkedIn outbound apply URL resolution after it has been explicitly enabled. It cannot enable the feature by itself. |
 | `JOBCTRL_LINKEDIN_APPLY_CHROME_PROFILE` | browser default | Chrome profile name inside the resolver user-data directory. |
 | `JOBCTRL_LINKEDIN_APPLY_HEADLESS` | visible Chrome | Set to `1` to run the resolver headless. |
@@ -383,25 +433,33 @@ jobctrl gmail-auth
 jobctrl doctor
 ```
 
-The first runs the Gmail sign-in and writes your local token; the second
-re-checks that the connector is now available.
+Before running the first command, enable the Gmail API in a Google Cloud
+project, create an OAuth **Desktop app** client, and save its downloaded JSON as
+`$JOBCTRL_GMAIL_OAUTH_CLIENT_PATH`. The command opens Google's consent flow and
+writes a private local token to `$JOBCTRL_GMAIL_TOKEN_PATH`; `jobctrl doctor`
+then re-checks readiness.
 
-The connector requests Gmail read-only and send scopes. Read scope is used for
-bounded verification-code and outcome lookups. Send scope is used only for the
-owned email-application path after a dry-run records the recipient and
-attachment candidate and Apply Review approves that exact binding. Raw Gmail
-bodies stay local and are not copied into events, telemetry, broad projections,
-or logs.
+The connector requests `gmail.readonly` and `gmail.send`. Read-only access is
+used for bounded verification-code and outcome lookups. Send access is used
+only for the owned email-application path after a dry-run records the recipient
+and attachment candidate and Apply Review approves that exact binding. Raw
+Gmail bodies stay local and are not copied into events, telemetry, broad
+projections, or logs.
+
+To disconnect, delete the local token and revoke the OAuth client's access in
+your Google Account's third-party access controls. Re-run `jobctrl gmail-auth`
+to grant access again. Removing only the local token prevents JobCtrl reuse but
+does not revoke Google's server-side grant.
 
 ## Compensation Sources
 
-Settings > General > Compensation sources lets you opt into Levels.fyi and
-Glassdoor at your discretion. Choose the access basis you actually have,
-confirm Europe coverage for Levels.fyi, and then enable the source. The choice
-is stored locally in `dashboard.json` and is consumed by both the TypeScript API
-and the Python compensation refresh worker. Once you save a source preference,
-it overrides the compatibility environment-variable gate for that source;
-before that, the environment variables below remain the fallback.
+**Settings → General → Compensation sources** records local access policy for
+Levels.fyi and Glassdoor; it is not a provider connection and does not fetch or
+store a feed. Choose only the access basis you actually have and confirm Europe
+coverage for Levels.fyi when applicable. The policy is stored in
+`dashboard.json` and gates the TypeScript API and Python refresh worker. Once
+saved, it overrides the compatibility environment-variable gate; before that,
+the variables below remain the fallback.
 
 Enabling a source does not obtain a license, create permission, bypass provider
 controls, or scrape a provider website. You must still supply an authorized
@@ -428,9 +486,10 @@ Provider payloads and restricted datasets should never be committed.
 | `LANGFUSE_OTEL_TIMEOUT_SECONDS` | OTLP/HTTP export timeout, default `5.0`. |
 | `JOBCTRL_ENV` | Environment attribute stamped on exported traces, default `local`. |
 
-When Langfuse export is enabled, LLM prompts and completions are exported to the
-configured Langfuse instance. Do not enable it for private runs unless that is
-intentional.
+When enabled, export is metadata-only: provider/model identifiers, operation or
+stage, success/failure, token counts, and safe size metrics. Raw prompts,
+messages, job text, profiles, generated materials, completions, credentials,
+local paths, logs, and database content are not span attributes.
 
 ## Test And Documentation Workspaces
 

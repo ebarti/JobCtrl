@@ -13,7 +13,7 @@ import { buildTestPorts } from "../../../test/testPorts.js";
 import { CredentialsPanel } from "./CredentialsPanel.js";
 
 function responseFor(
-  state: "absent" | "inspection_failed" | "present" | "unsupported",
+  state: "absent" | "environment" | "inspection_failed" | "present" | "unsupported",
 ): CredentialsResponse {
   const unavailableReason =
     state === "unsupported"
@@ -21,7 +21,11 @@ function responseFor(
       : state === "inspection_failed"
         ? "inspection_failed"
         : null;
-  const configured = state === "present" ? true : state === "absent" ? false : null;
+  const configured = state === "present" || state === "environment"
+    ? true
+    : state === "absent"
+      ? false
+      : null;
   return {
     ...sampleCredentialsResponse,
     store: {
@@ -32,12 +36,21 @@ function responseFor(
     credentials: sampleCredentialsResponse.credentials.map((credential) => ({
       ...credential,
       configured,
+      effectiveSource:
+        state === "present"
+          ? "keychain"
+          : state === "environment"
+            ? "environment"
+            : state === "absent"
+              ? "absent"
+              : "inspection_unknown",
+      editable: unavailableReason === null && state !== "environment",
     })),
   };
 }
 
 describe("<CredentialsPanel> a11y", () => {
-  it.each(["present", "absent", "unsupported", "inspection_failed"] as const)(
+  it.each(["present", "absent", "environment", "unsupported", "inspection_failed"] as const)(
     "has no axe violations in the %s state",
     async (state) => {
       const view = renderWithProviders(<CredentialsPanel />, {

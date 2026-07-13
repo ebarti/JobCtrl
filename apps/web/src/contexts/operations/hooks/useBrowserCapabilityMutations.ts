@@ -4,6 +4,7 @@ import type {
   BrowserCapabilityId,
   BrowserProfileCopyRequest,
 } from "@jobctrl/contracts";
+import { BrowserCapabilitiesResponseSchema } from "@jobctrl/contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
@@ -61,14 +62,23 @@ export function useCopyLinkedInBrowserProfileMutation() {
 }
 
 function patchCapability(
-  current: BrowserCapabilitiesResponse,
+  current: unknown,
   capabilityId: BrowserCapabilityId,
   patch: Partial<BrowserCapabilitiesResponse["capabilities"][number]>,
-): BrowserCapabilitiesResponse {
+): unknown {
+  if (!isBrowserCapabilitiesResponse(current)) {
+    return current;
+  }
   return {
     ...current,
     capabilities: current.capabilities.map((capability) =>
       capability.id === capabilityId ? { ...capability, ...patch } : capability,
     ),
   };
+}
+
+function isBrowserCapabilitiesResponse(
+  value: unknown,
+): value is BrowserCapabilitiesResponse {
+  return BrowserCapabilitiesResponseSchema.safeParse(value).success;
 }

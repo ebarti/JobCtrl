@@ -61,8 +61,9 @@ def init_otel(*, service_name: str = "jobctrl", environment: str | None = None) 
         return
 
     log.warning(
-        "Langfuse OTel export ENABLED — every LLM prompt + completion will be "
-        "shipped to %s. Set LANGFUSE_DISABLE=1 to opt out.",
+        "Langfuse OTel export ENABLED — metadata-only LLM, workflow, and JSON-RPC "
+        "spans will be sent to %s; model inputs and outputs are excluded. "
+        "Set LANGFUSE_DISABLE=1 to opt out.",
         base_url,
     )
 

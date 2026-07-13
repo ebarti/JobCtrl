@@ -329,6 +329,7 @@ class DiscoverWorkflow:
                     start_count=plan.start_count,
                     progress_completed=index,
                     progress_total=plan.progress_total,
+                    next_run_settings=plan.next_run_settings,
                 ),
                 start_to_close_timeout=_DISCOVERY_TIMEOUT,
                 heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

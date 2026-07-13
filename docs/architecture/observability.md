@@ -45,7 +45,10 @@ Langfuse instance for LLM tracing. The wiring lives under
   `langfuse.observation.type=generation` span around each LLM call. It also
   sets the GenAI semantic-conventions attributes (`gen_ai.request.model`,
   `gen_ai.response.model`, `gen_ai.usage.input_tokens`,
-  `gen_ai.usage.output_tokens`) so OTel-native dashboards work too.
+  `gen_ai.usage.output_tokens`) so OTel-native dashboards work too. Exported
+  LLM attributes are metadata-only: provider/model, operation/scope, outcome,
+  token counts, and safe request/response sizes. Raw messages, parameters,
+  completions, and exception messages are omitted.
 
 ## Span Sources
 
@@ -93,8 +96,9 @@ persisted `EmployerAnalyzed` `job_events` record and the read-model
 `ensemble_completeness` field. Each parallel draft, the provider-neutral
 synthesizer, and the optional post-selection resume voice pass wrap
 their SDK model call in the same `llm_generation_span` the `LLMClient` uses, so
-every frontier-model call reports its model, prompt/completion, latency, and —
-when the SDK surfaces usage — input/output token counts to Langfuse. Distinct
+every frontier-model call reports its provider/model, stage, outcome, safe
+content sizes, latency, and — when the SDK surfaces usage — input/output token
+counts to Langfuse. Prompts and completions are not exported. Distinct
 instrumentation scopes keep the drafts, synthesizer, and voice pass separable
 even though they share the `llm.<model>` span name. Because the legs run inside
 the enclosing pipeline-stage / JSON-RPC span (OTel context propagates through the

@@ -1764,7 +1764,7 @@ export const sampleDiscoverySettingsResponse: DiscoverySettingsResponse = {
     roleFilterModel: null,
     maxParallelFamilies: 1,
     crawlUserAgentProduct: "JobCtrl",
-    crawlUserAgentContact: "https://github.com/ebarti/JobCtrl",
+    crawlUserAgentContact: "demo-contact",
     source: "database",
   },
   effectiveSettings: {
@@ -1777,7 +1777,7 @@ export const sampleDiscoverySettingsResponse: DiscoverySettingsResponse = {
     roleFilterModel: { value: null, source: "default" as const, activation: "next_source_family" as const, editable: true as const },
     maxParallelFamilies: { value: 1, source: "default" as const, activation: "next_run" as const, editable: true as const },
     crawlUserAgentProduct: { value: "JobCtrl", source: "default" as const, activation: "next_source_family" as const, editable: true as const },
-    crawlUserAgentContact: { value: "https://github.com/ebarti/JobCtrl", source: "default" as const, activation: "next_source_family" as const, editable: true as const },
+    crawlUserAgentContact: { value: "demo-contact", source: "default" as const, activation: "next_source_family" as const, editable: true as const },
   },
 };
 

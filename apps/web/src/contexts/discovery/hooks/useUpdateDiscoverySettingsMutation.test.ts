@@ -15,10 +15,13 @@ describe("useUpdateDiscoverySettingsMutation", () => {
     server.use(http.patch("*/v1/discovery/settings", () =>
       new HttpResponse(JSON.stringify({ ok: false }), { status: 500 }),
     ));
+    const baseline = deepFreeze(structuredClone(sampleDiscoverySettingsResponse));
+    const metadataBefore = structuredClone(baseline.effectiveSettings.maxParallelFamilies);
     const { result, queryClient } = renderHookWithProviders(
       () => useUpdateDiscoverySettingsMutation(),
     );
-    queryClient.setQueryData(discoveryKeys.settings(LOCAL_TENANT), sampleDiscoverySettingsResponse);
+    queryClient.setQueryData(discoveryKeys.settings(LOCAL_TENANT), baseline);
+    expect(baseline.effectiveSettings.maxParallelFamilies).toEqual(metadataBefore);
 
     await act(async () => {
       result.current.mutate({ maxParallelFamilies: 3 });
@@ -26,7 +29,20 @@ describe("useUpdateDiscoverySettingsMutation", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
 
     expect(queryClient.getQueryData(discoveryKeys.settings(LOCAL_TENANT))).toEqual(
-      sampleDiscoverySettingsResponse,
+      baseline,
     );
+    expect(baseline.effectiveSettings.maxParallelFamilies).toEqual(metadataBefore);
+    expect(
+      (queryClient.getQueryData(discoveryKeys.settings(LOCAL_TENANT)) as typeof baseline)
+        .effectiveSettings.maxParallelFamilies,
+    ).toEqual(metadataBefore);
   });
 });
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object") {
+    Object.freeze(value);
+    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
+  }
+  return value;
+}

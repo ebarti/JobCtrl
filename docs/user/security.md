@@ -57,17 +57,24 @@ deferred from this MVP, so the notice relies on the documented cookie and
 | Job/ATS/public pages | Discovery, enrichment, supervised contact research | Search terms and network/page requests. |
 | Gmail | Authenticated verification/outcome flows or approved email applications | Bounded queries/evidence, or the exact reviewed send. |
 | Google Maps | Configured profile autocomplete | Address text typed in the field. |
-| CAPTCHA provider | Configured supported widget | Site key and page URL through the local solver tool. |
-| Langfuse/OpenTelemetry | Explicit telemetry configuration | Prompts/completions and workflow/JSON-RPC spans. |
+| CAPTCHA provider | Supported widget during an apply run you explicitly start or a standing loop you enable, with a configured solver | Site key and page URL through the local solver tool. |
+| Langfuse/OpenTelemetry | Explicit telemetry configuration | Metadata-only provider/model, operation/stage, outcome, token-count, and safe-size span attributes. |
 
 The apply prompt is the largest single transfer of personal data. Review a
 dry-run and keep targets narrow before live submission.
 
 ## What Stays On Your Machine
 
-The SQLite database, generated files, browser/apply state, raw Gmail bodies,
-logs, and local traces stay on disk. Their *text* may still be sent when a model
-generates or applies with that content, or when configured telemetry exports it.
+The local authorities are `jobctrl.db` (profile, jobs, discovery, events and
+projections), bundled `temporal.db`, `dashboard.json` (non-secret runtime
+settings), `.env` and `gmail/` (credentials), `codex_home/` and provider-runtime
+directories, generated material/log directories, browser capability/profile/
+worker state, `backups/`, and legacy resume inputs. Their text may still be sent
+when an explicitly used model or external integration needs that content;
+configured telemetry remains metadata-only.
+
+Browser authority is stored specifically in `browser-capabilities.json`,
+`browser-profiles/`, and `extension-capability-token`.
 
 ::: warning Local does not mean encrypted
 JobCtrl does not encrypt `jobctrl.db`, `.env`, or generated artifacts. Protect
@@ -146,7 +153,10 @@ JobCtrl does not bypass login, paywall, rate-limit, bot-control, identity,
 biometric, payment, or bank-detail gates. The apply agent declines browser
 permission prompts and stops on SSO/OAuth or unsupported CAPTCHA. Supported
 CAPTCHA solving uses only the owned local tool; provider keys/tokens never enter
-the model prompt.
+the model prompt. Setting `CAPSOLVER_API_KEY` is explicit authority to send the
+supported widget's site key and page URL during apply work you start or a
+standing loop you enable. Without that authority, or for unsupported/failed
+challenges, the apply path stops.
 
 ### Crawl Politeness
 
@@ -169,16 +179,22 @@ browser session but remains rate/budget limited. See
 
 ## Credentials
 
+Codex-backed work requires an authenticated Codex CLI before JobCtrl can reuse
+or verify that login.
+
 | Secret | Boundary |
 | --- | --- |
 | Provider/runtime keys | Shell, plaintext `~/.jobctrl/.env`, or the guided macOS Keychain boundary; never SQLite. |
-| Codex login | JobCtrl requires an authenticated Codex CLI. Reused authentication stays in sensitive local provider state outside SQLite and the prompt-readable workspace. |
+| Codex login | Stable `$JOBCTRL_DIR/codex_home/auth.json`, separate from SQLite and the normal Codex home. Valid normal CLI auth may be reused once only when this file is absent; existing isolated auth is never overwritten, and prompt-driven reads are limited to `codex_home/workspace/`. |
 | Claude/Google web entries | Keychain for API keys plus cloud activation flags/non-secret identifiers; AWS, Google, and Azure credential files remain in their vendor stores. Status only is returned. |
-| CAPTCHA key | `CAPSOLVER_API_KEY` read by the owned local solver, not the model. |
+| CAPTCHA key | `CAPSOLVER_API_KEY` saved from Settings to Keychain on macOS, or supplied by the environment elsewhere; read by the owned local solver, not the model. |
 | Job-site passwords | Optional local profile value typed through a focused-field credential tool, never returned to the model. |
 
-Environment values win over Keychain. Keychain is loaded only for missing/empty
-values at process startup, so restart JobCtrl after changes. Provider
+Environment values win over Keychain and make the matching Settings control
+read-only. Keychain is loaded only for missing/empty values at process startup,
+so restart the relevant Python process after Claude, Google, or CapSolver
+changes. Codex verification, model preference, browser capability, and
+extension-pairing changes do not require that restart. Provider
 replacement is atomic from the web contract; stored secrets are used internally
 only to restore a failed batch and never cross the HTTP boundary. Windows and
 Linux use environment configuration today.

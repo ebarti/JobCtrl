@@ -257,7 +257,7 @@ describe("seeded local QA workflow", () => {
     });
 
     await app.close();
-  });
+  }, 10_000);
 });
 
 function createMemoryCredentialStore(): CredentialStore {

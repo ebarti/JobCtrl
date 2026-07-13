@@ -673,7 +673,7 @@ export const DEMO_READ_MODEL = {
         roleFilterModel: null,
         maxParallelFamilies: 1,
         crawlUserAgentProduct: "JobCtrl",
-        crawlUserAgentContact: "https://github.com/ebarti/JobCtrl",
+        crawlUserAgentContact: "demo-contact",
         source: "database",
       },
       effectiveSettings: {
@@ -686,7 +686,7 @@ export const DEMO_READ_MODEL = {
         roleFilterModel: { value: null, source: "default", activation: "next_source_family", editable: true },
         maxParallelFamilies: { value: 1, source: "default", activation: "next_run", editable: true },
         crawlUserAgentProduct: { value: "JobCtrl", source: "default", activation: "next_source_family", editable: true },
-        crawlUserAgentContact: { value: "https://github.com/ebarti/JobCtrl", source: "default", activation: "next_source_family", editable: true },
+        crawlUserAgentContact: { value: "demo-contact", source: "default", activation: "next_source_family", editable: true },
       },
     },
     sources: {

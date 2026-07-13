@@ -23,7 +23,7 @@ export const CODEX_LOGIN_COMMANDS = {
     'printenv OPENAI_API_KEY | CODEX_HOME="${JOBCTRL_DIR:-$HOME/.jobctrl}/codex_home" codex login --with-api-key',
 } as const;
 
-const CLAUDE_MANAGED_KEYS = [
+export const CLAUDE_PROVIDER_CREDENTIAL_KEYS = [
   "ANTHROPIC_API_KEY",
   "CLAUDE_CODE_USE_VERTEX",
   "ANTHROPIC_VERTEX_PROJECT_ID",
@@ -35,15 +35,13 @@ const CLAUDE_MANAGED_KEYS = [
   "ANTHROPIC_FOUNDRY_RESOURCE",
   "AWS_REGION",
   "AWS_PROFILE",
-  "GOOGLE_APPLICATION_CREDENTIALS",
 ] as const satisfies readonly CredentialKey[];
 
-const GOOGLE_MANAGED_KEYS = [
+export const GOOGLE_PROVIDER_CREDENTIAL_KEYS = [
   "GEMINI_API_KEY",
   "GOOGLE_GENAI_USE_VERTEXAI",
   "GOOGLE_CLOUD_PROJECT",
   "GOOGLE_CLOUD_LOCATION",
-  "GOOGLE_APPLICATION_CREDENTIALS",
 ] as const satisfies readonly CredentialKey[];
 
 export interface ClaudeProviderValues {
@@ -90,28 +88,34 @@ export function buildClaudeCredentialBatch(
     selected.CLAUDE_CODE_USE_FOUNDRY = "1";
     selected.ANTHROPIC_FOUNDRY_RESOURCE = values.foundryResource;
   }
-  return makeBatch(CLAUDE_MANAGED_KEYS, selected);
+  return withSharedAdcWrite(
+    makeBatch(CLAUDE_PROVIDER_CREDENTIAL_KEYS, selected),
+    values.mode === "vertex" ? values.googleApplicationCredentials : "",
+  );
 }
 
 export function buildGoogleCredentialBatch(
   values: GoogleProviderValues,
 ): CredentialBatchUpdateRequest {
-  return values.mode === "gemini_api_key"
-    ? makeBatch(GOOGLE_MANAGED_KEYS, { GEMINI_API_KEY: values.apiKey })
-    : makeBatch(GOOGLE_MANAGED_KEYS, {
+  const providerBatch = values.mode === "gemini_api_key"
+    ? makeBatch(GOOGLE_PROVIDER_CREDENTIAL_KEYS, { GEMINI_API_KEY: values.apiKey })
+    : makeBatch(GOOGLE_PROVIDER_CREDENTIAL_KEYS, {
         GOOGLE_GENAI_USE_VERTEXAI: "true",
         GOOGLE_CLOUD_PROJECT: values.projectId,
         GOOGLE_CLOUD_LOCATION: values.location,
-        GOOGLE_APPLICATION_CREDENTIALS: values.googleApplicationCredentials,
       });
+  return withSharedAdcWrite(
+    providerBatch,
+    values.mode === "vertex" ? values.googleApplicationCredentials : "",
+  );
 }
 
 export function removeClaudeProviderBatch(): CredentialBatchUpdateRequest {
-  return makeBatch(CLAUDE_MANAGED_KEYS, {});
+  return makeBatch(CLAUDE_PROVIDER_CREDENTIAL_KEYS, {});
 }
 
 export function removeGoogleProviderBatch(): CredentialBatchUpdateRequest {
-  return makeBatch(GOOGLE_MANAGED_KEYS, {});
+  return makeBatch(GOOGLE_PROVIDER_CREDENTIAL_KEYS, {});
 }
 
 export function removeLegacyOpenAiKeyBatch(): CredentialBatchUpdateRequest {
@@ -131,6 +135,20 @@ function makeBatch(
       ...values.flatMap(([key, value]) =>
         value ? [] : [{ operation: "delete" as const, key }],
       ),
+    ],
+  });
+}
+
+function withSharedAdcWrite(
+  request: CredentialBatchUpdateRequest,
+  value: string,
+): CredentialBatchUpdateRequest {
+  const normalized = value.trim();
+  if (!normalized) return request;
+  return CredentialBatchUpdateRequestSchema.parse({
+    operations: [
+      { operation: "set", key: "GOOGLE_APPLICATION_CREDENTIALS", value: normalized },
+      ...request.operations,
     ],
   });
 }

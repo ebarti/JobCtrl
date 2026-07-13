@@ -110,18 +110,20 @@ def test_init_otel_disabled_when_disable_env_set(monkeypatch, caplog):
     assert otel_mod._provider is None
 
 
-def test_init_otel_warns_about_payload_export(monkeypatch, caplog):
+def test_init_otel_reports_metadata_only_export_without_raw_content_claims(monkeypatch, caplog):
     _set_creds(monkeypatch)
     from jobctrl.infrastructure.observability import otel as otel_mod
 
     with caplog.at_level("WARNING"):
         otel_mod.init_otel()
 
-    # The user should know LLM prompts + completions are leaving the host.
-    assert any(
-        "prompts" in rec.message.lower() or "completion" in rec.message.lower()
-        for rec in caplog.records
-    )
+    startup_text = " ".join(rec.getMessage() for rec in caplog.records).lower()
+    assert "metadata-only" in startup_text
+    assert "model inputs and outputs are excluded" in startup_text
+    assert "prompt" not in startup_text
+    assert "completion" not in startup_text
+    assert "pk-test" not in startup_text
+    assert "sk-test" not in startup_text
 
 
 def test_shutdown_otel_resets_state(monkeypatch):
