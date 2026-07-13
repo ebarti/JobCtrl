@@ -274,12 +274,14 @@ lane.
 
 **Current hosted-release status.** The `jobctrl-releases` R2 bucket,
 `https://releases.jobctrl.dev` custom domain, and repository immutable Releases
-are provisioned. The protected `release-publication` environment still needs
-bucket-scoped R2 credentials and `JOBCTRL_RELEASE_ADMIN_READ_TOKEN`, followed
-by the first live signed-release verification. GitHub Actions jobs are also
-currently zero-step blocked by the repository account billing/spending state.
-No user-facing curl or Homebrew stable-install claim may be made until those
-hosted gates have completed.
+are provisioned. The `release-publication` R2 credentials, administration-read
+token, Homebrew deploy key, account ID, and bucket are configured. GitHub
+currently rejects required-reviewer and tag-policy protection for this private
+repository under its billing/plan state, and Actions jobs are zero-step blocked
+by the same account state. Restore billing/plan access, configure the required
+owner approval plus `v*`-tag-only deployment policy, and complete the first
+live signed-release verification. No user-facing curl or Homebrew
+stable-install claim may be made until those hosted gates have completed.
 
 ### 9.5 — Homebrew tap publication (signed-release-gated)
 
