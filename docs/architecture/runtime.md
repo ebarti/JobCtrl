@@ -59,9 +59,11 @@ bundled mode Claude accepts API/cloud authentication only, launches with
 credentials. Codex uses persisted CLI authentication in the stable
 `$JOBCTRL_DIR/codex_home`; raw OpenAI keys are accepted only as stdin enrollment
 input to `codex login --with-api-key`, never as a direct runtime credential.
-When isolated auth is absent, setup may copy a regular Codex CLI `auth.json`
-once without overwriting later JobCtrl-owned state. Structured Claude
-analysis/voice calls expose no built-in tools.
+When isolated auth is absent, setup and generation retain one-time reuse
+of a regular Codex CLI `auth.json`; the explicit Codex provider verify action
+uses the same copy-once behavior before checking the isolated login. Existing
+JobCtrl-owned auth is not overwritten, and the normal Codex home is unchanged.
+Structured Claude analysis/voice calls expose no built-in tools.
 Codex analysis disables its shell, denies approvals, and gives any command
 child an empty inherited environment, so provider API keys authenticate the SDK
 transport without becoming model-readable tool input.
@@ -374,15 +376,18 @@ is not a runtime secret read performed by the API:
   credential_store_unavailable`. Secret values used internally for rollback are
   never returned, logged, persisted in SQLite, or passed to Python by the API.
 - `GET /v1/providers/status` asks the long-lived JSON-RPC process for sanitized
-  Codex/Claude/Google configuration and readiness. `POST
-  /v1/providers/codex/verify` runs `codex login status` against the isolated
-  home without generating model output. Because Python environment/Keychain
-  loading is process-start scoped, Settings combines fresh presence with the
-  last runtime status and requires a JobCtrl restart before new values become
-  ready.
-- `GET /v1/providers/models` uses the same JSON-RPC boundary. Ready Codex uses
-  the isolated JobCtrl-owned Codex App Server SDK's live `model/list` without
-  shelling out, copying ambient auth, or returning account data. Ready Google
+  Codex/Claude/Google configuration and readiness. It is read-only and never
+  copies ambient Codex auth. `POST /v1/providers/codex/verify` is the explicit
+  Settings action that invokes the same copy-once behavior used by setup
+  and generation, then runs `codex login status` without generating model
+  output. It never overwrites isolated auth or changes the normal Codex home.
+  Because Python environment/Keychain loading is process-start scoped, Settings
+  combines fresh presence with the last runtime status and requires a JobCtrl
+  restart before new values become ready.
+- `GET /v1/providers/models` uses the same JSON-RPC boundary. It is read-only
+  and never copies ambient Codex auth. Ready Codex uses the isolated
+  JobCtrl-owned Codex App Server SDK's live `model/list` without shelling out
+  or returning account data. Ready Google
   uses the authenticated `google-genai` live model list for Gemini-key or
   Vertex/ADC configuration. Claude returns the SDK's provider-safe `sonnet`,
   `opus`, and `haiku` aliases with `source=provider_aliases`; it does not claim

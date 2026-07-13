@@ -107,9 +107,13 @@ not recorded there.
 
 Open **Settings → Credentials** and configure one provider:
 
-- **Codex:** authenticate JobCtrl's isolated Codex CLI with a ChatGPT
-  subscription or enroll an OpenAI API key through `codex login`. A raw
-  `OPENAI_API_KEY` is not used directly by JobCtrl.
+- **Codex:** setup and first generation copy a valid normal Codex CLI
+  login once, and **Reuse existing login or verify** invokes the same path from
+  Settings before checking the isolated login. Existing isolated auth is not
+  overwritten, and the normal home is unchanged. If there is no login to reuse,
+  authenticate the isolated home with a ChatGPT subscription or enroll an
+  OpenAI API key through `codex login`. A raw `OPENAI_API_KEY` is not used
+  directly by JobCtrl.
 - **Claude:** use an Anthropic API key or one of the guided Google Vertex,
   Amazon Bedrock, Claude Platform on AWS, or Microsoft Foundry routes.
 - **Google:** use a Gemini API key or Vertex AI Application Default

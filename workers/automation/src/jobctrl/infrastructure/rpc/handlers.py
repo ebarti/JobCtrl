@@ -281,14 +281,14 @@ def provider_models(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def provider_verify(params: dict[str, Any]) -> dict[str, Any]:
-    """Verify persisted Codex CLI auth without making a model-generation call."""
+    """Reuse and verify Codex CLI auth without making a model-generation call."""
 
     provider = str(_require(params, "provider")).strip().lower()
     if provider != "codex":
         raise invalid_params("provider_verify currently supports only codex")
-    from jobctrl.infrastructure.setup_probes import verify_codex_connection
+    from jobctrl.infrastructure.setup_probes import reuse_and_verify_codex_connection
 
-    ok, status, message = verify_codex_connection()
+    ok, status, message = reuse_and_verify_codex_connection()
     return {
         "provider": "codex",
         "ok": ok,

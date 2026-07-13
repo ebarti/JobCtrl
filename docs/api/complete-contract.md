@@ -1147,10 +1147,15 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   the change.
 - `GET /v1/providers/status` returns sanitized status for exactly Codex,
   Claude, and Google: `configured`, `ready`, detected `mode`, and a bounded
-  secret-free message. `POST /v1/providers/codex/verify` runs the isolated
-  Codex CLI's `login status` command without making a generation request and
-  returns `connected`, `not_configured`, or `failed`. RPC errors and malformed
-  provider responses become sanitized `502`/`503` provider-operation errors.
+  secret-free message. It is read-only and never copies ambient Codex auth.
+  `POST /v1/providers/codex/verify` is the explicit mutation that may validate
+  and copy a reusable normal Codex CLI `auth.json` once when isolated auth is
+  absent, then runs the isolated Codex CLI's `login status` command without
+  making a generation request. This is the same copy-once behavior retained by
+  setup and generation: existing isolated auth is not overwritten, and the
+  normal Codex home is unchanged. The response contains only secret-free `connected`,
+  `not_configured`, or `failed` results. RPC errors and malformed provider
+  responses become sanitized `502`/`503` provider-operation errors.
 - `GET /v1/providers/models` returns `{ok: true, providers}` in stable Codex,
   Claude, Google order. Each item includes `provider`, `configured`, `ready`,
   `source`, `models`, and an optional bounded status message. Unready providers
@@ -1158,9 +1163,10 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   (`source: "live"`); ready Claude returns `sonnet`, `opus`, and `haiku` with
   `source: "provider_aliases"`. Model entries expose only `id`, `displayName`,
   and optional `isDefault`; account, auth, path, and secret metadata never
-  cross the JSON-RPC/API boundary. A preferred-model patch returns `409` when
-  its provider is not ready, `400` when the ID is not offered, and sanitized
-  `503` when validation cannot obtain a live catalog.
+  cross the JSON-RPC/API boundary. It is read-only and never copies ambient
+  Codex auth. A preferred-model patch returns `409` when its provider is not
+  ready, `400` when the ID is not offered, and sanitized `503` when validation
+  cannot obtain a live catalog.
 - `GET /v1/extension/pairing-token` returns the local browser-extension
   capability token for the Settings pairing surface; `POST
   /v1/extension/pairing-token/rotate` replaces it. The token is generated under

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -170,6 +173,84 @@ def test_setup_human_output_has_no_stale_warning_after_copying_codex_auth(
     assert "core LLM provider" in result.output
     assert "WARN" not in result.output
     assert "Core AI provider ready." in result.output
+
+
+def test_setup_fallback_prepares_private_owned_codex_home_before_login(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    source_home = tmp_path / "source-codex"
+    source_home.mkdir()
+    (source_home / "auth.json").write_text("{}", encoding="utf-8")
+    _prepare_codex_setup_test(monkeypatch, app_dir=app_dir, source_home=source_home)
+    ambient_auth = {
+        key: f"ambient-{key.lower()}"
+        for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV
+    }
+    for key, value in ambient_auth.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(
+        cli_module,
+        "_confirm_setup_action",
+        lambda prompt, **_kwargs: "Enroll the current OpenAI key" in prompt,
+    )
+    calls = 0
+
+    def login_runner(_command, **kwargs):
+        nonlocal calls
+        calls += 1
+        target_home = Path(kwargs["env"]["CODEX_HOME"])
+        assert all(
+            key not in kwargs["env"]
+            for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV
+        )
+        assert kwargs["input"] == ambient_auth["OPENAI_API_KEY"] + "\n"
+        assert target_home == app_dir / "codex_home"
+        assert target_home.is_dir() and not target_home.is_symlink()
+        if os.name != "nt":
+            assert stat.S_IMODE(target_home.stat().st_mode) == 0o700
+        target_auth = target_home / "auth.json"
+        _write_codex_auth(target_auth)
+        target_auth.chmod(0o600)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", login_runner)
+
+    result = CliRunner().invoke(app, [*_MUTATING_SETUP_ARGS, "--launch-logins"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == 1
+    assert (source_home / "auth.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_setup_fallback_rejects_non_directory_owned_codex_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    source_home = tmp_path / "source-codex"
+    source_home.mkdir()
+    (source_home / "auth.json").write_text("{}", encoding="utf-8")
+    _prepare_codex_setup_test(monkeypatch, app_dir=app_dir, source_home=source_home)
+    app_dir.mkdir()
+    target_home = app_dir / "codex_home"
+    target_home.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(jobctrl.config, "ensure_dirs", lambda: None)
+    monkeypatch.setattr(
+        cli_module,
+        "_confirm_setup_action",
+        lambda prompt, **_kwargs: "Authenticate JobCtrl's Codex CLI" in prompt,
+    )
+    def unexpected_login(*_args, **_kwargs):
+        raise AssertionError("unsafe Codex home reached the login subprocess")
+
+    monkeypatch.setattr(subprocess, "run", unexpected_login)
+
+    result = CliRunner().invoke(app, [*_MUTATING_SETUP_ARGS, "--launch-logins"])
+
+    assert result.exit_code == 1
+    assert "Unsafe JobCtrl Codex home" in result.output
 
 
 @pytest.mark.parametrize("source_kind", ["invalid", "symlink"])

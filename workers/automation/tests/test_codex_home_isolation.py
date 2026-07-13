@@ -10,6 +10,7 @@ These tests pin both invariants for the Codex analysis leg:
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from typing import Any
 import pytest
 
 import jobctrl.config
+from jobctrl.infrastructure import setup_probes
 from jobctrl.infrastructure.analysis import codex_analysis_adapter as adapter
 
 
@@ -33,6 +35,11 @@ def _isolate_homes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Pat
 
 def _mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
+
+
+def _assert_private_mode(path: Path, expected: int) -> None:
+    if os.name != "nt":
+        assert _mode(path) == expected
 
 
 def test_config_overrides_select_workspace_only_permission_profile() -> None:
@@ -65,14 +72,14 @@ def test_prepare_isolated_codex_home_copies_auth_outside_workspace(
     assert dirs.codex_home == app_dir / "codex_home"
     assert dirs.workdir == dirs.codex_home / "workspace"
     assert dirs.process_home == dirs.codex_home / "home"
-    assert _mode(dirs.codex_home) == 0o700
-    assert _mode(dirs.workdir) == 0o700
-    assert _mode(dirs.process_home) == 0o700
+    _assert_private_mode(dirs.codex_home, 0o700)
+    _assert_private_mode(dirs.workdir, 0o700)
+    _assert_private_mode(dirs.process_home, 0o700)
 
     copied_auth = dirs.codex_home / "auth.json"
     assert copied_auth.is_file()
     assert copied_auth.read_bytes() == payload
-    assert _mode(copied_auth) == 0o600
+    _assert_private_mode(copied_auth, 0o600)
     assert not (dirs.workdir / "auth.json").exists()
 
 
@@ -100,7 +107,7 @@ def test_isolated_codex_env_is_minimal_for_jobctrl_home(tmp_path: Path) -> None:
 
     assert env["CODEX_HOME"] == str(codex_home)
     assert env["HOME"] == str(process_home)
-    assert all(env[key] == "" for key in adapter._CODEX_BUNDLED_NEUTRALIZED_AUTH_ENV)
+    assert all(env[key] == "" for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV)
 
 
 def test_bundled_codex_uses_persisted_auth_and_neutralizes_raw_keys(
@@ -167,7 +174,7 @@ def test_bundled_codex_factory_uses_persisted_credentials(
     assert codex.config.env["OPENAI_API_KEY"] == ""
     assert all(
         codex.config.env[key] == ""
-        for key in adapter._CODEX_BUNDLED_NEUTRALIZED_AUTH_ENV
+        for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV
     )
 
 

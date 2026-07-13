@@ -42,6 +42,7 @@ export function CredentialsPanel() {
     keys.some((key) => credentials.find((entry) => entry.key === key)?.configured === true);
   const claudeConfigured = configured(CLAUDE_KEYS);
   const googleConfigured = configured(GOOGLE_KEYS);
+  const codexStatus = findStatus(statuses, "codex");
   const claudeStatus = findStatus(statuses, "claude");
   const googleStatus = findStatus(statuses, "google");
   const claudeCurrentMode = inferConfiguredMode(
@@ -73,46 +74,56 @@ export function CredentialsPanel() {
         />
         {!store ? (
           <div className="empty" role="status">Checking provider setup.</div>
-        ) : store.available ? (
+        ) : (
           <div className="provider-card-list">
             <ProviderCard
-              description="Uses the authenticated Codex CLI in JobCtrl's isolated Codex home. JobCtrl does not accept a raw OpenAI key."
+              description="Reuses an already authenticated normal Codex CLI first, then verifies it in JobCtrl's isolated Codex home. JobCtrl does not accept a raw OpenAI key."
               provider="codex"
-              status={findStatus(statuses, "codex")}
+              status={codexStatus}
               title="Codex"
             >
               <CodexProviderSetup
-                legacyOpenAiKeyConfigured={configured(["OPENAI_API_KEY"])}
+                isolatedAuthDetected={codexStatus?.mode === "cli_auth"}
+                legacyOpenAiKeyConfigured={
+                  store.available && configured(["OPENAI_API_KEY"])
+                }
               />
             </ProviderCard>
-            <ProviderCard
-              description="Choose one direct or third-party Claude Agent SDK authentication route."
-              provider="claude"
-              status={mergeConfiguredStatus("claude", claudeStatus, claudeConfigured)}
-              title="Claude"
-            >
-              <ClaudeProviderForm
-                configured={claudeConfigured}
-                currentMode={claudeCurrentMode}
+            {store.available ? (
+              <>
+                <ProviderCard
+                  description="Choose one direct or third-party Claude Agent SDK authentication route."
+                  provider="claude"
+                  status={mergeConfiguredStatus("claude", claudeStatus, claudeConfigured)}
+                  title="Claude"
+                >
+                  <ClaudeProviderForm
+                    configured={claudeConfigured}
+                    currentMode={claudeCurrentMode}
+                  />
+                </ProviderCard>
+                <ProviderCard
+                  description="Use a Gemini API key or Google Vertex AI with Application Default Credentials."
+                  provider="google"
+                  status={mergeConfiguredStatus("google", googleStatus, googleConfigured)}
+                  title="Google"
+                >
+                  <GoogleProviderForm
+                    configured={googleConfigured}
+                    currentMode={googleCurrentMode}
+                  />
+                </ProviderCard>
+              </>
+            ) : (
+              <ReadOnlyProviderGuidance
+                includeCodex={false}
+                reason={store.unavailableReason}
               />
-            </ProviderCard>
-            <ProviderCard
-              description="Use a Gemini API key or Google Vertex AI with Application Default Credentials."
-              provider="google"
-              status={mergeConfiguredStatus("google", googleStatus, googleConfigured)}
-              title="Google"
-            >
-              <GoogleProviderForm
-                configured={googleConfigured}
-                currentMode={googleCurrentMode}
-              />
-            </ProviderCard>
+            )}
           </div>
-        ) : (
-          <ReadOnlyProviderGuidance reason={store.unavailableReason} />
         )}
       </section>
-      <CredentialPrivacyNotice />
+      <CredentialPrivacyNotice store={store} />
     </>
   );
 }
@@ -142,14 +153,14 @@ function ProviderSetupNotice({
   if (store.unavailableReason === "inspection_failed") {
     return (
       <div className="banner credential-store-notice credential-store-notice--failure" role="alert">
-        JobCtrl could not safely inspect Keychain. Unlock Keychain Access, then reload this page before changing provider setup.
+        JobCtrl could not safely inspect Keychain. Unlock Keychain Access, then reload before changing Claude or Google setup. Codex verification remains available.
       </div>
     );
   }
   return (
     <div className="banner credential-store-notice credential-store-notice--guidance">
       <span>
-        Provider settings saved here stay in macOS Keychain. Restart JobCtrl after a change so its API provider process and worker reload Keychain values.
+        Claude and Google settings saved here stay in macOS Keychain. Restart JobCtrl after a change so its API provider process and worker reload Keychain values.
       </span>
       {providerStatusError ? (
         <span className="provider-status-warning" role="status">
@@ -175,9 +186,11 @@ function ProviderCard({
 }) {
   const statusLabel = status?.ready
     ? "Ready"
-    : status?.configured
-      ? "Configured · restart or verify"
-      : "Not configured";
+    : provider === "codex" && status?.mode === "cli_auth"
+      ? "Authenticated · runtime unavailable"
+      : status?.configured
+        ? "Configured · restart or verify"
+        : "Not configured";
   return (
     <article className="provider-card" data-provider={provider}>
       <header className="provider-card-header">
@@ -194,7 +207,13 @@ function ProviderCard({
   );
 }
 
-function CodexProviderSetup({ legacyOpenAiKeyConfigured }: { legacyOpenAiKeyConfigured: boolean }) {
+function CodexProviderSetup({
+  isolatedAuthDetected,
+  legacyOpenAiKeyConfigured,
+}: {
+  isolatedAuthDetected: boolean;
+  legacyOpenAiKeyConfigured: boolean;
+}) {
   const verify = useVerifyCodexProviderMutation();
   const removeLegacyKey = useUpdateCredentialsBatchMutation();
   const [legacyMessage, setLegacyMessage] = useState("");
@@ -217,13 +236,27 @@ function CodexProviderSetup({ legacyOpenAiKeyConfigured }: { legacyOpenAiKeyConf
     <div className="provider-form codex-provider-setup">
       <div className="codex-auth-options">
         <section>
-          <h4>ChatGPT subscription or device login</h4>
-          <p>Authenticate the Codex CLI into JobCtrl's stable, isolated Codex home.</p>
+          <h4>Use an existing Codex CLI login first</h4>
+          <p>
+            Click the action below to validate an already authenticated normal
+            Codex CLI login and import it once into JobCtrl's stable, isolated
+            home. It does not change your normal Codex home.
+          </p>
+        </section>
+        <section>
+          <h4>Fallback: ChatGPT subscription or device login</h4>
+          <p>
+            If there is no existing login to reuse, authenticate the Codex CLI
+            into JobCtrl's stable, isolated Codex home.
+          </p>
           <code>{CODEX_LOGIN_COMMANDS.subscription}</code>
         </section>
         <section>
-          <h4>OpenAI API key enrollment</h4>
-          <p>Pipe your existing shell key directly into Codex. JobCtrl never receives or stores the raw key.</p>
+          <h4>Fallback: OpenAI API key enrollment</h4>
+          <p>
+            If there is no existing login to reuse, pipe your existing shell key
+            directly into Codex. JobCtrl never receives or stores the raw key.
+          </p>
           <code>{CODEX_LOGIN_COMMANDS.apiKey}</code>
         </section>
       </div>
@@ -252,7 +285,11 @@ function CodexProviderSetup({ legacyOpenAiKeyConfigured }: { legacyOpenAiKeyConf
           type="button"
           onClick={() => verify.mutate()}
         >
-          {verify.isPending ? "Verifying…" : "Verify connection"}
+          {verify.isPending
+            ? "Verifying…"
+            : isolatedAuthDetected
+              ? "Verify isolated login"
+              : "Reuse existing login or verify"}
         </button>
         <div
           aria-live="polite"
@@ -267,23 +304,30 @@ function CodexProviderSetup({ legacyOpenAiKeyConfigured }: { legacyOpenAiKeyConf
   );
 }
 
-function ReadOnlyProviderGuidance({ reason }: { reason: "inspection_failed" | "unsupported_platform" | null }) {
+function ReadOnlyProviderGuidance({
+  includeCodex = true,
+  reason,
+}: {
+  includeCodex?: boolean;
+  reason: "inspection_failed" | "unsupported_platform" | null;
+}) {
+  const providers = [
+    ["Codex", "Authenticate the isolated Codex CLI home from a terminal, then verify it with jobctrl doctor or the Codex CLI status command."],
+    ["Claude", "Set one supported Claude SDK authentication route in the worker environment."],
+    ["Google", "Set GEMINI_API_KEY or configure Vertex AI Application Default Credentials in the worker environment."],
+  ].filter(([title]) => includeCodex || title !== "Codex");
   return (
-    <div className="provider-card-list">
-      {[
-        ["Codex", "Authenticate the isolated Codex CLI home from a terminal, then verify it with jobctrl doctor or the Codex CLI status command."],
-        ["Claude", "Set one supported Claude SDK authentication route in the worker environment."],
-        ["Google", "Set GEMINI_API_KEY or configure Vertex AI Application Default Credentials in the worker environment."],
-      ].map(([title, copy]) => (
+    <>
+      {providers.map(([title, copy]) => (
         <article className="provider-card provider-card--readonly" key={title}>
           <h3>{title}</h3>
           <p>{copy}</p>
         </article>
       ))}
       {reason === "inspection_failed" ? (
-        <p className="provider-readonly-summary" role="alert">Keychain inspection must succeed before guided editing is restored.</p>
+        <p className="provider-readonly-summary" role="alert">Keychain inspection must succeed before guided Claude and Google editing is restored.</p>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -294,21 +338,41 @@ function DemoProviderSetup() {
       <div className="banner credential-store-notice credential-store-notice--guidance">
         The public demo never accepts, checks, or stores provider secrets. Configure providers only in a local JobCtrl installation.
       </div>
-      <ReadOnlyProviderGuidance reason={null} />
+      <div className="provider-card-list">
+        <ReadOnlyProviderGuidance reason={null} />
+      </div>
     </section>
   );
 }
 
-function CredentialPrivacyNotice() {
+function CredentialPrivacyNotice({
+  store,
+}: {
+  store?: CredentialsResponse["store"] | undefined;
+}) {
+  const boundaryCopy = store?.available
+    ? "Claude and Google values saved here stay on this Mac in Keychain."
+    : store?.unavailableReason === "unsupported_platform"
+      ? "Claude and Google credentials are configured through the worker environment on this platform."
+      : store?.unavailableReason === "inspection_failed"
+        ? "Claude and Google Keychain state is unavailable until inspection succeeds."
+        : "Provider credential storage status is loading.";
+  const boundaryBadge = store?.available
+    ? "macOS Keychain"
+    : store?.unavailableReason === "unsupported_platform"
+      ? "Process environment"
+      : store?.unavailableReason === "inspection_failed"
+        ? "Keychain status unavailable"
+        : "Storage status loading";
   return (
     <section aria-label="Credential privacy" className="privacy-box">
       <h2>Your provider data stays private</h2>
       <p className="privacy-box-copy">
-        Values saved here stay on this Mac in Keychain. They are never returned by the API, stored in SQLite, placed in URLs, or written to logs, traces, and generated artifacts. Cloud credential files remain managed by their vendor CLIs.
+        {boundaryCopy} Codex authentication stays in JobCtrl's isolated filesystem home. Credentials are never returned by the API, stored in SQLite, placed in URLs, or written to logs, traces, and generated artifacts. Cloud credential files remain managed by their vendor CLIs.
       </p>
       <div className="privacy-box-tags">
         <Badge>Local only</Badge>
-        <Badge>macOS Keychain</Badge>
+        <Badge>{boundaryBadge}</Badge>
         <Badge>Never in logs</Badge>
         <Badge>Worker restart required</Badge>
       </div>

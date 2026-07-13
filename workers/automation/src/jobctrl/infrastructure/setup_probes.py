@@ -31,6 +31,15 @@ ANALYSIS_LEGS_ENV = "JOBCTRL_ANALYSIS_LEGS"
 CODEX_BIN_ENV = "JOBCTRL_CODEX_BIN"
 CLAUDE_BIN_ENV = "JOBCTRL_CLAUDE_BIN"
 
+CODEX_NEUTRALIZED_AUTH_ENV = (
+    "OPENAI_API_KEY",
+    "CODEX_ACCESS_TOKEN",
+    "CODEX_AGENT_IDENTITY_AUTH",
+    "CODEX_API_KEY",
+    "CODEX_REFRESH_TOKEN_URL_OVERRIDE",
+    "CODEX_REVOKE_TOKEN_URL_OVERRIDE",
+)
+
 ANALYSIS_LEG_ORDER = ("claude", "codex", "antigravity")
 _LEG_ALIASES = {
     "claude-code": "claude",
@@ -353,6 +362,25 @@ def _codex_auth_file_signature(path: Path) -> tuple[object, ...]:
     return (str(path), stat.st_mode, stat.st_ino, stat.st_size, stat.st_mtime_ns)
 
 
+def ensure_private_directory(path: Path, *, parent: Path | None = None) -> Path:
+    """Create one JobCtrl-owned directory with best-effort private permissions."""
+
+    if parent is not None and not parent.is_dir():
+        raise RuntimeError(f"Codex parent directory is unavailable or unsafe: {parent}")
+    try:
+        path.mkdir(mode=0o700, parents=parent is None, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(f"Codex path is unavailable or unsafe: {path}") from exc
+    if not path.is_dir():
+        raise RuntimeError(f"Codex path must be a directory: {path}")
+    try:
+        path.chmod(0o700)
+    except OSError:
+        if os.name != "nt":
+            raise
+    return path
+
+
 def _validate_codex_auth_file(path: Path) -> None:
     """Reject non-regular, malformed, or empty persisted Codex auth state."""
 
@@ -374,6 +402,34 @@ def _validate_codex_auth_file(path: Path) -> None:
     ) and bool(tokens["access_token"].strip())
     if not has_api_key and not has_access_token:
         raise RuntimeError("Codex auth cache does not contain persisted CLI credentials")
+
+
+def prepare_jobctrl_codex_home(env: Mapping[str, str] | None = None) -> Path:
+    """Create or validate the stable JobCtrl-owned Codex home before login."""
+
+    target_home = jobctrl_codex_home(env)
+    ensure_private_directory(target_home.parent)
+    return ensure_private_directory(target_home, parent=target_home.parent)
+
+
+def _run_codex_login_status(
+    values: Mapping[str, str],
+    *,
+    codex_home: Path,
+    runner: Callable[..., Any],
+) -> Any:
+    child_env = dict(values)
+    child_env["CODEX_HOME"] = str(codex_home)
+    for key in CODEX_NEUTRALIZED_AUTH_ENV:
+        child_env.pop(key, None)
+    return runner(
+        [str(resolve_codex_binary(values)), "login", "status"],
+        env=child_env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+        check=False,
+    )
 
 
 def _cached_verify_codex_connection(values: Mapping[str, str]) -> tuple[bool, str, str]:
@@ -415,7 +471,7 @@ def probe_codex_auth(env: Mapping[str, str] | None = None) -> ProbeResult:
 
 
 def ensure_jobctrl_codex_auth(env: Mapping[str, str] | None = None) -> Path:
-    """Ensure source CLI auth is copied once into the stable isolated home."""
+    """Copy valid ambient CLI auth once into the stable isolated home."""
 
     values = _env(env)
     target = codex_auth_path(values)
@@ -427,12 +483,33 @@ def ensure_jobctrl_codex_auth(env: Mapping[str, str] | None = None) -> Path:
             raise RuntimeError(f"Codex auth cache must not be a symlink: {source}")
         if source.is_file() and source != target:
             _validate_codex_auth_file(source)
-            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            target.parent.chmod(0o700)
+            ensure_private_directory(target.parent)
             shutil.copy2(source, target)
     _validate_codex_auth_file(target)
-    target.chmod(0o600)
+    try:
+        target.chmod(0o600)
+    except OSError:
+        if os.name != "nt":
+            raise
     return target
+
+
+def reuse_and_verify_codex_connection(
+    env: Mapping[str, str] | None = None,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+) -> tuple[bool, str, str]:
+    """Explicitly reuse valid ambient Codex auth once, then verify the isolated home."""
+
+    values = dict(_env(env))
+    try:
+        ensure_jobctrl_codex_auth(values)
+    except RuntimeError:
+        # A missing or invalid reusable source is not an error for this explicit
+        # action. The isolated verification below returns the stable, secret-free
+        # not-configured result without disclosing source-auth details.
+        pass
+    return verify_codex_connection(values, runner=runner)
 
 
 def provider_status_snapshot(
@@ -532,18 +609,10 @@ def verify_codex_connection(
     except RuntimeError:
         return False, "not_configured", "Codex CLI is not authenticated"
     try:
-        binary = resolve_codex_binary(values)
-        child_env = dict(values)
-        child_env["CODEX_HOME"] = str(jobctrl_codex_home(values))
-        for key in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"):
-            child_env.pop(key, None)
-        completed = runner(
-            [str(binary), "login", "status"],
-            env=child_env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=10,
-            check=False,
+        completed = _run_codex_login_status(
+            values,
+            codex_home=jobctrl_codex_home(values),
+            runner=runner,
         )
     except Exception:  # noqa: BLE001 - return a secret-free verification result
         return False, "failed", "Codex authentication verification failed"
@@ -846,6 +915,7 @@ __all__ = [
     "ANALYSIS_LEG_ORDER",
     "CLAUDE_BIN_ENV",
     "CODEX_BIN_ENV",
+    "CODEX_NEUTRALIZED_AUTH_ENV",
     "ProbeResult",
     "analysis_sdk_set_version",
     "antigravity_auth_kwargs",
@@ -856,6 +926,7 @@ __all__ = [
     "effective_codex_home",
     "enabled_analysis_legs",
     "ensure_jobctrl_codex_auth",
+    "ensure_private_directory",
     "parse_enabled_analysis_legs",
     "probe_analysis_setup",
     "probe_antigravity_auth",
@@ -865,8 +936,10 @@ __all__ = [
     "probe_claude_synthesis_auth",
     "probe_codex_auth",
     "probe_codex_sdk",
+    "prepare_jobctrl_codex_home",
     "provider_status_snapshot",
     "ready_llm_providers",
+    "reuse_and_verify_codex_connection",
     "resolve_bundled_claude_path",
     "resolve_bundled_codex_path",
     "resolve_claude_apply_binary",

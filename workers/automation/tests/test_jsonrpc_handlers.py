@@ -6,6 +6,7 @@ import json
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from temporalio.common import WorkflowIDConflictPolicy
@@ -139,16 +140,16 @@ def test_provider_status_and_verify_are_secret_free(monkeypatch) -> None:
             "message": "ready" if provider == "codex" else "not configured",
         },
     )
-    monkeypatch.setattr(
-        setup_probes,
-        "verify_codex_connection",
-        lambda: (True, "connected", "Codex CLI authentication verified"),
+    reuse_and_verify = Mock(
+        return_value=(True, "connected", "Codex CLI authentication verified")
     )
+    monkeypatch.setattr(setup_probes, "reuse_and_verify_codex_connection", reuse_and_verify)
     server = _server()
 
     status = server.dispatch(
         JsonRpcRequest(method="provider_status", params={"provider": "codex"}, id=1)
     )
+    reuse_and_verify.assert_not_called()
     verify = server.dispatch(
         JsonRpcRequest(method="provider_verify", params={"provider": "codex"}, id=2)
     )
@@ -172,6 +173,8 @@ def test_provider_status_and_verify_are_secret_free(monkeypatch) -> None:
         "status": "connected",
         "message": "Codex CLI authentication verified",
     }
+    reuse_and_verify.assert_called_once_with()
+    assert "private-token" not in str(verify.to_dict())
 
 
 def test_provider_verify_rejects_non_codex() -> None:
@@ -184,6 +187,7 @@ def test_provider_verify_rejects_non_codex() -> None:
 
 
 def test_provider_models_dispatches_sanitized_catalog(monkeypatch) -> None:
+    from jobctrl.infrastructure import setup_probes
     from jobctrl.infrastructure.llm import model_catalog
 
     catalog = {
@@ -207,12 +211,18 @@ def test_provider_models_dispatches_sanitized_catalog(monkeypatch) -> None:
         ]
     }
     monkeypatch.setattr(model_catalog, "provider_model_catalog", lambda: catalog)
+    import_auth = Mock()
+    verify_auth = Mock()
+    monkeypatch.setattr(setup_probes, "ensure_jobctrl_codex_auth", import_auth)
+    monkeypatch.setattr(setup_probes, "reuse_and_verify_codex_connection", verify_auth)
     server = _server()
 
     response = server.dispatch(JsonRpcRequest(method="provider_models", params={}, id=3))
 
     assert response is not None
     assert response.to_dict()["result"] == catalog
+    import_auth.assert_not_called()
+    verify_auth.assert_not_called()
 
 
 def test_generate_interview_prep_starts_user_triggered_workflow() -> None:

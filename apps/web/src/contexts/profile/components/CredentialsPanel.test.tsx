@@ -3,6 +3,7 @@ import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ApiClientPort } from "../../../shared/ports/ApiClientPort.js";
+import type { FeatureFlagPort } from "../../../shared/ports/index.js";
 
 import {
   sampleCredentialsResponse,
@@ -147,7 +148,7 @@ describe("<CredentialsPanel>", () => {
       .mockRejectedValueOnce(new Error("private-token-must-not-render"));
     renderPanel({ verifyCodexProvider });
     const card = await providerCard("Codex");
-    const button = within(card).getByRole("button", { name: "Verify connection" });
+    const button = within(card).getByRole("button", { name: "Reuse existing login or verify" });
 
     await user.click(button);
     expect(await within(card).findByText("Codex CLI authentication is ready.")).toBeInTheDocument();
@@ -216,44 +217,116 @@ describe("<CredentialsPanel>", () => {
     expect(updateCredentialsBatch).toHaveBeenCalledWith(removeGoogleProviderBatch());
   });
 
-  it("renders guidance without secret inputs when Keychain is unavailable", async () => {
+  it.each([
+    ["unsupported_platform", /available only with macOS Keychain/i],
+    ["inspection_failed", /could not safely inspect Keychain/i],
+  ] as const)("keeps Codex actionable when Keychain reports %s", async (reason, notice) => {
+    const verifyCodexProvider = vi.fn(async () => ({
+      ok: true as const,
+      verification: {
+        provider: "codex" as const,
+        ok: false,
+        status: "not_configured" as const,
+        message: "Codex CLI is not authenticated.",
+      },
+    }));
     renderPanel({
       credentials: vi.fn(async () => ({
         ...sampleCredentialsResponse,
         store: {
           ...sampleCredentialsResponse.store,
           available: false,
-          unavailableReason: "unsupported_platform" as const,
+          unavailableReason: reason,
         },
+        credentials: sampleCredentialsResponse.credentials.map((credential) => ({
+          ...credential,
+          configured: null,
+        })),
+      })),
+      verifyCodexProvider,
+    });
+
+    expect(await screen.findByText(notice)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/API key/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Set GEMINI_API_KEY/i)).toBeInTheDocument();
+    const codex = await providerCard("Codex");
+    await userEvent.setup().click(
+      within(codex).getByRole("button", { name: "Reuse existing login or verify" }),
+    );
+    expect(verifyCodexProvider).toHaveBeenCalledOnce();
+    const privacy = within(screen.getByRole("region", { name: "Credential privacy" }));
+    if (reason === "inspection_failed") {
+      expect(screen.getByText(/guided Claude and Google editing/i)).toBeInTheDocument();
+      expect(screen.getByText(/Codex verification remains available/i)).toBeInTheDocument();
+      expect(privacy.getByText("Keychain status unavailable")).toBeInTheDocument();
+    } else {
+      expect(privacy.getByText("Process environment")).toBeInTheDocument();
+      expect(privacy.queryByText(/macOS Keychain/i)).not.toBeInTheDocument();
+    }
+  });
+
+  it("labels isolated auth accurately when the managed SDK is unavailable", async () => {
+    renderPanel({
+      providerStatus: vi.fn(async () => ({
+        ok: true as const,
+        providers: [
+          {
+            provider: "codex" as const,
+            configured: true,
+            ready: false,
+            mode: "cli_auth",
+            message: "Codex CLI auth is configured but the managed SDK runtime is unavailable",
+          },
+        ],
       })),
     });
 
-    expect(await screen.findByText(/available only with macOS Keychain/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/API key/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/Set GEMINI_API_KEY/i)).toBeInTheDocument();
-    expect(screen.getByText(/jobctrl doctor/i)).toBeInTheDocument();
+    const codex = await providerCard("Codex");
+    expect(within(codex).getByText("Authenticated · runtime unavailable")).toBeInTheDocument();
+    expect(within(codex).getByRole("button", { name: "Verify isolated login" })).toBeEnabled();
+    expect(within(codex).queryByRole("button", { name: /Use existing login/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps the public demo read-only with no host verification action", async () => {
+    renderPanel({}, { demo: true });
+
+    expect(await screen.findByText(/public demo never accepts/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Codex" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /login|verify/i })).not.toBeInTheDocument();
   });
 });
 
-function renderPanel(api: Partial<ApiClientPort> = {}) {
+class DemoFeatureFlags implements FeatureFlagPort {
+  get<T extends boolean | number | string>(key: string, defaultValue: T): T {
+    return (key === "demoMode" ? true : defaultValue) as T;
+  }
+}
+
+function renderPanel(
+  api: Partial<ApiClientPort> = {},
+  options: { demo?: boolean } = {},
+) {
+  const ports = buildTestPorts({
+    api: {
+      credentials: vi.fn(async () => sampleCredentialsResponse),
+      providerStatus: vi.fn(async () => sampleProviderStatusResponse),
+      updateCredentialsBatch: vi.fn(async () => sampleCredentialsResponse),
+      verifyCodexProvider: vi.fn(async () => ({
+        ok: true as const,
+        verification: {
+          provider: "codex" as const,
+          ok: true,
+          status: "connected" as const,
+          message: "Codex CLI authentication is ready.",
+        },
+      })),
+      ...api,
+    },
+  });
   return renderWithProviders(<CredentialsPanel />, {
-    ports: buildTestPorts({
-      api: {
-        credentials: vi.fn(async () => sampleCredentialsResponse),
-        providerStatus: vi.fn(async () => sampleProviderStatusResponse),
-        updateCredentialsBatch: vi.fn(async () => sampleCredentialsResponse),
-        verifyCodexProvider: vi.fn(async () => ({
-          ok: true as const,
-          verification: {
-            provider: "codex" as const,
-            ok: true,
-            status: "connected" as const,
-            message: "Codex CLI authentication is ready.",
-          },
-        })),
-        ...api,
-      },
-    }),
+    ports: options.demo
+      ? { ...ports, featureFlags: new DemoFeatureFlags() }
+      : ports,
   });
 }
 

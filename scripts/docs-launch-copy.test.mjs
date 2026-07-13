@@ -74,6 +74,8 @@ test("launch provider guidance requires one of Codex, Claude, or Google", async 
   assert.match(configuration, /^### Codex$/m);
   assert.match(configuration, /^### Claude$/m);
   assert.match(configuration, /^### Google$/m);
+  assert.match(gettingStarted, /Reuse existing login or verify/);
+  assert.match(configuration, /validates the regular CLI `auth\.json` before copying it/);
   assert.match(configuration, /codex login --with-api-key/);
   assert.match(configuration, /CLAUDE_CODE_USE_BEDROCK/);
   assert.match(configuration, /CLAUDE_CODE_USE_ANTHROPIC_AWS/);

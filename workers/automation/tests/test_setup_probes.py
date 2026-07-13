@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -69,13 +71,13 @@ def _write_service_account_adc(path: Path) -> None:
     )
 
 
-def _write_codex_auth(path: Path) -> None:
+def _write_codex_auth(path: Path, *, access_token: str = "test-access-token") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
             {
                 "tokens": {
-                    "access_token": "test-access-token",
+                    "access_token": access_token,
                     "refresh_token": "test-refresh-token",
                 }
             }
@@ -103,6 +105,7 @@ def test_codex_requires_persisted_cli_auth_and_uses_stable_jobctrl_home(
     app_dir = tmp_path / "jobctrl"
     source_home = tmp_path / "source-codex"
     monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
     env = {"CODEX_HOME": str(source_home), "OPENAI_API_KEY": "sk-test"}
 
     raw_only = setup_probes.probe_codex_auth(env)
@@ -381,15 +384,171 @@ def test_verify_codex_uses_persisted_home_and_strips_raw_keys(
         seen.update(command=command, **kwargs)
         return SimpleNamespace(returncode=0)
 
-    result = setup_probes.verify_codex_connection(
-        {"OPENAI_API_KEY": "raw", "CODEX_API_KEY": "raw-alias"}, runner=runner
-    )
+    ambient_auth = {
+        key: f"ambient-{key.lower()}"
+        for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV
+    }
+    result = setup_probes.verify_codex_connection(ambient_auth, runner=runner)
     assert result == (True, "connected", "Codex CLI authentication verified")
     assert seen["command"][-2:] == ["login", "status"]
     child_env = seen["env"]
-    assert "OPENAI_API_KEY" not in child_env
-    assert "CODEX_API_KEY" not in child_env
+    assert all(key not in child_env for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV)
     assert child_env["CODEX_HOME"] == str(app_dir / "codex_home")
+
+
+def test_reuse_and_verify_codex_connection_copies_ambient_auth_once_and_strips_raw_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    source_home = tmp_path / "regular-codex"
+    source_auth = source_home / "auth.json"
+    _write_codex_auth(source_auth)
+    source_contents = source_auth.read_text(encoding="utf-8")
+    source_mode = stat.S_IMODE(source_auth.stat().st_mode)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+    calls: list[dict[str, object]] = []
+
+    def runner(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+        return SimpleNamespace(returncode=0)
+
+    ambient_auth = {
+        key: f"ambient-{key.lower()}"
+        for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV
+    }
+    result = setup_probes.reuse_and_verify_codex_connection(
+        {
+            "CODEX_HOME": str(source_home),
+            **ambient_auth,
+        },
+        runner=runner,
+    )
+
+    target = app_dir / "codex_home/auth.json"
+    assert result == (True, "connected", "Codex CLI authentication verified")
+    assert target.read_text(encoding="utf-8") == source_contents
+    assert source_auth.read_text(encoding="utf-8") == source_contents
+    if os.name != "nt":
+        assert stat.S_IMODE(source_auth.stat().st_mode) == source_mode
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert len(calls) == 1
+    stable_env = calls[0]["env"]
+    assert calls[0]["command"][-2:] == ["login", "status"]
+    assert stable_env["CODEX_HOME"] == str(app_dir / "codex_home")
+    assert all(
+        key not in stable_env
+        for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV
+    )
+
+
+def test_reuse_and_verify_codex_connection_does_not_overwrite_isolated_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    target = app_dir / "codex_home/auth.json"
+    source = tmp_path / "regular-codex/auth.json"
+    _write_codex_auth(target, access_token="isolated-token")
+    _write_codex_auth(source, access_token="ambient-token")
+    target.chmod(0o644)
+    target_contents = target.read_bytes()
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+
+    result = setup_probes.reuse_and_verify_codex_connection(
+        {"CODEX_HOME": str(source.parent)},
+        runner=lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
+    )
+
+    assert result == (True, "connected", "Codex CLI authentication verified")
+    assert target.read_bytes() == target_contents
+    if os.name != "nt":
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert "ambient-token" in source.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("runner_outcome", "expected_message"),
+    [
+        ("nonzero", "Codex CLI authentication could not be verified"),
+        ("exception", "Codex authentication verification failed"),
+    ],
+)
+def test_reuse_valid_ambient_auth_reports_verification_failure_without_secrets(
+    runner_outcome: str,
+    expected_message: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    source = tmp_path / "regular-codex/auth.json"
+    _write_codex_auth(source)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+
+    def runner(*_args, **_kwargs):
+        if runner_outcome == "exception":
+            raise RuntimeError("private-token-must-not-escape")
+        return SimpleNamespace(returncode=1)
+
+    result = setup_probes.reuse_and_verify_codex_connection(
+        {"CODEX_HOME": str(source.parent)},
+        runner=runner,
+    )
+
+    assert result == (False, "failed", expected_message)
+    assert "private-token-must-not-escape" not in repr(result)
+    assert (app_dir / "codex_home/auth.json").is_file()
+
+
+@pytest.mark.parametrize("source_kind", ["missing", "invalid", "symlink"])
+def test_reuse_invalid_or_missing_ambient_auth_returns_secret_free_not_configured(
+    source_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    source = tmp_path / "regular-codex/auth.json"
+    if source_kind == "invalid":
+        source.parent.mkdir(parents=True)
+        source.write_text("{}", encoding="utf-8")
+    elif source_kind == "symlink":
+        external = tmp_path / "external-auth.json"
+        _write_codex_auth(external)
+        source.parent.mkdir(parents=True)
+        source.symlink_to(external)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+
+    result = setup_probes.reuse_and_verify_codex_connection(
+        {"CODEX_HOME": str(source.parent)},
+        runner=lambda *_args, **_kwargs: pytest.fail("verification should not run"),
+    )
+
+    target = app_dir / "codex_home/auth.json"
+    assert result == (False, "not_configured", "Codex CLI is not authenticated")
+    assert target.exists() is False
+
+
+def test_codex_import_rejects_symlinked_target_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "jobctrl"
+    app_dir.mkdir()
+    source = tmp_path / "regular-codex/auth.json"
+    _write_codex_auth(source)
+    target_home = app_dir / "codex_home"
+    target_home.mkdir()
+    external_auth = tmp_path / "external-auth.json"
+    _write_codex_auth(external_auth)
+    (target_home / "auth.json").symlink_to(external_auth)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+
+    with pytest.raises(RuntimeError, match="symlink"):
+        setup_probes.ensure_jobctrl_codex_auth({"CODEX_HOME": str(source.parent)})
 
 
 @pytest.mark.parametrize(
