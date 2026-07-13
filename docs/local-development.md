@@ -170,7 +170,7 @@ Run the complete local public demo—synthetic browser-local workspace plus the
 real local consent and telemetry Worker—with:
 
 ```bash
-pnpm demo:dev
+corepack pnpm demo:dev
 ```
 
 This is the foreground form: keep the terminal open and press Ctrl-C to stop
@@ -178,19 +178,19 @@ both tracked processes. For a detached demo that returns control to the shell,
 use the complete lifecycle:
 
 ```bash
-pnpm demo:start
-pnpm demo:status
-pnpm demo:stop
+corepack pnpm demo:start
+corepack pnpm demo:status
+corepack pnpm demo:stop
 ```
 
-`pnpm demo:start` applies pending migrations to the local D1 store, starts the
+`corepack pnpm demo:start` applies pending migrations to the local D1 store, starts the
 Wrangler API on port `8787`, starts the demo-mode Vite app on requested port
 `5174`, prints both observed bindings, and returns. Vite proxies `/api/*` to
 Wrangler without changing the browser-facing origin, preserving the same-origin
 consent and secure-cookie boundary used in production. Local D1 state persists
 under `.dev/demo/wrangler/`; override the three `JOBCTRL_DEMO_*` variables in
 the table above for isolated multi-worktree sessions. Inspect process logs with
-`pnpm dev:logs demo-api` or `pnpm dev:logs demo-web`.
+`corepack pnpm dev:logs demo-api` or `corepack pnpm dev:logs demo-web`.
 
 The local demo does not start the JobCtrl API, Temporal, Python worker, SSE, or
 host-OS integrations. Only the exact value `demo` selects this frontend
@@ -474,27 +474,27 @@ map stay repository-only, and links that point at unpublished or repo-root
 files are rewritten to GitHub URLs at build time.
 
 ```bash
-pnpm docs:dev
-pnpm docs:build
-pnpm docs:check:runtime
-pnpm docs:preview
+corepack pnpm docs:dev
+corepack pnpm docs:build
+corepack pnpm docs:check:runtime
+corepack pnpm docs:preview
 ```
 
-`pnpm docs:dev` is the foreground server and stops with Ctrl-C. For a tracked
+`corepack pnpm docs:dev` is the foreground server and stops with Ctrl-C. For a tracked
 background server that returns control to the shell, use:
 
 ```bash
-pnpm docs:start
-pnpm docs:status
-pnpm docs:stop
+corepack pnpm docs:start
+corepack pnpm docs:status
+corepack pnpm docs:stop
 ```
 
-`pnpm docs:start` prints the observed VitePress URL (requested port `4174`) and
+`corepack pnpm docs:start` prints the observed VitePress URL (requested port `4174`) and
 returns. Use that URL because VitePress may select a higher port when the
 requested one is occupied. Its PID and log use the shared `.dev/` launcher
-state; inspect the log with `pnpm dev:logs docs`.
+state; inspect the log with `corepack pnpm dev:logs docs`.
 
-`pnpm docs:build` fails on dead internal links, then runs
+`corepack pnpm docs:build` fails on dead internal links, then runs
 `scripts/check-docs-site-links.mjs`, which fails if any href/src emitted into
 the built site does not resolve to a built page or asset (this catches links
 to pages relocated by `rewrites`, which VitePress's source-level dead-link
@@ -503,12 +503,12 @@ them on pushes to `main`, and maintainers can run the docs workflow manually for
 pull requests after review.
 (`.github/workflows/docs-site.yml`). Mermaid diagrams render client-side in
 the browser, so a build that passes can still contain a diagram that fails to
-parse. `pnpm docs:check:runtime` starts a fresh preview and checks hydration,
+parse. `corepack pnpm docs:check:runtime` starts a fresh preview and checks hydration,
 images, navigation, responsive diagrams, search, the comparison screenshot-carousel
 interaction, and the desktop/mobile comparison layout (including keyboard access to
 its wide table) in Chromium;
-run it after `pnpm docs:build` for public-doc changes. Note that
-`pnpm docs:preview` snapshots the built file list at startup: after any
+run it after `corepack pnpm docs:build` for public-doc changes. Note that
+`corepack pnpm docs:preview` snapshots the built file list at startup: after any
 rebuild, restart the preview server or hashed assets will 404. Deploys to
 Cloudflare Pages run from `main` once the `DOCS_DEPLOY_ENABLED` repository
 variable and the Cloudflare credentials are configured.

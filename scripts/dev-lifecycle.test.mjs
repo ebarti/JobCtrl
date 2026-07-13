@@ -119,6 +119,28 @@ test("package scripts expose foreground and detached docs/demo lifecycle command
       "demo:stop": "scripts/dev stop demo-api demo-web",
     },
   );
+
+  const localDevelopment = await readFile(path.join(root, "docs/local-development.md"), "utf8");
+  const documentedCommandLines = localDevelopment.split(/\r?\n/).map((line) => line.trim());
+  for (const name of [
+    "docs:dev",
+    "docs:start",
+    "docs:status",
+    "docs:stop",
+    "demo:dev",
+    "demo:start",
+    "demo:status",
+    "demo:stop",
+  ]) {
+    assert.ok(
+      documentedCommandLines.includes(`corepack pnpm ${name}`),
+      `expected docs to invoke ${name} through the repository-pinned Corepack pnpm`,
+    );
+    assert.ok(
+      !documentedCommandLines.includes(`pnpm ${name}`),
+      `expected docs not to invoke ${name} through an unpinned global pnpm`,
+    );
+  }
 });
 
 test("detached docs lifecycle starts, reports, and stops the tracked server", async () => {
