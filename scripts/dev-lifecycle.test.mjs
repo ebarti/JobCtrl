@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -70,8 +70,18 @@ exec sleep 300
       timeout: 10_000,
     });
 
+  const runForegroundUntilReady = (...args) =>
+    spawnSync(launcher, args, {
+      cwd: root,
+      env,
+      encoding: "utf8",
+      timeout: 1_500,
+      killSignal: "SIGINT",
+    });
+
   return {
     run,
+    runForegroundUntilReady,
     async cleanup() {
       try {
         run("stop", "docs", "demo-api", "demo-web");
@@ -155,6 +165,18 @@ test("demo detached lifecycle owns both API and web processes", { timeout: 30_00
     const finalStatus = harness.run("status", "demo-api", "demo-web");
     assert.match(finalStatus, /^demo-api\s+down\s+-/m);
     assert.match(finalStatus, /^demo-web\s+down\s+-/m);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("foreground demo API advances from migrations to the long-lived server", async () => {
+  const harness = await createHarness();
+  try {
+    const result = harness.runForegroundUntilReady("run", "demo-api");
+    assert.equal(result.error?.code, "ETIMEDOUT");
+    assert.match(result.stdout, /\[demo-api\] Ready on http:\/\/127\.0\.0\.1:48787\//);
+    assert.match(harness.run("status", "demo-api"), /^demo-api\s+down\s+-/m);
   } finally {
     await harness.cleanup();
   }

@@ -48,6 +48,19 @@ process_command() {
 
 is_known() { process_command "$1" >/dev/null 2>&1; }
 
+# Most registry entries are one long-lived command and can replace the launcher
+# shell immediately. Demo API startup must first run a migration, and demo web
+# starts with environment assignments, so those entries own their final `exec`
+# inside the registered shell command instead.
+process_shell_command() {
+  local name="$1" cmd
+  cmd=$(process_command "$name") || return 1
+  case "$name" in
+    demo-api|demo-web) echo "$cmd" ;;
+    *)                 echo "exec $cmd" ;;
+  esac
+}
+
 pid_file()  { echo "$PID_DIR/$1.pid"; }
 log_file()  { echo "$LOG_DIR/$1.log"; }
 
@@ -226,7 +239,7 @@ try:
         os.close(stdin_fd)
     if log_fd > 2:
         os.close(log_fd)
-    os.execvp("bash", ["bash", "-c", f"exec {command}"])
+    os.execvp("bash", ["bash", "-c", command])
 except Exception:
     os._exit(127)
 PY
@@ -235,7 +248,7 @@ PY
 
   # Fallback for minimal shells. Python-backed starts detach the child from the
   # launching process tree; plain nohup is retained when Python is unavailable.
-  ( cd "$ROOT" && exec nohup bash -c "exec $cmd" ) </dev/null >>"$log" 2>&1 &
+  ( cd "$ROOT" && exec nohup bash -c "$cmd" ) </dev/null >>"$log" 2>&1 &
   echo "$!"
 }
 
@@ -247,7 +260,7 @@ start_one() {
   fi
   ensure_not_running "$name"
   local cmd log
-  cmd=$(process_command "$name")
+  cmd=$(process_shell_command "$name")
   log=$(log_file "$name")
   rotate_log "$log"
   local pid
@@ -379,13 +392,13 @@ start_run_one() {
   fi
   ensure_not_running "$name"
   local cmd log
-  cmd=$(process_command "$name")
+  cmd=$(process_shell_command "$name")
   log=$(log_file "$name")
   rotate_log "$log"
   (
     set -o pipefail
     cd "$ROOT"
-    bash -c "exec $cmd" 2>&1 \
+    bash -c "$cmd" 2>&1 \
       | tee -a "$log" \
       | awk -v name="$name" '{ print "[" name "] " $0; fflush(); }'
   ) &
