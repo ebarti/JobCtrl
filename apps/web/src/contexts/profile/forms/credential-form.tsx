@@ -18,6 +18,8 @@ export interface CredentialFormProps {
   available?: boolean;
   unavailableReason?: "inspection_failed" | "unsupported_platform";
   unavailableDescriptionId?: string;
+  effectiveSource?: CredentialsResponse["credentials"][number]["effectiveSource"];
+  editable?: boolean;
 }
 
 const EMPTY_VALUE: CredentialUpdateRequest["value"] = "";
@@ -29,6 +31,8 @@ export function CredentialForm({
   available = true,
   unavailableReason,
   unavailableDescriptionId,
+  effectiveSource,
+  editable,
 }: CredentialFormProps) {
   const updateCredential = useUpdateCredentialMutation();
   const deleteCredential = useDeleteCredentialMutation();
@@ -95,7 +99,8 @@ export function CredentialForm({
     unavailableReason === "inspection_failed" ||
     (configured === null && unavailableReason !== "unsupported_platform");
   const unsupportedPlatform = unavailableReason === "unsupported_platform";
-  const canEditKeychain = available && !inspectionUnknown;
+  const environmentManaged = effectiveSource === "environment";
+  const canEditKeychain = editable ?? (available && !inspectionUnknown && !environmentManaged);
   const mutationError = updateCredential.error ?? deleteCredential.error;
   const mutationErrorMessage = credentialMutationErrorMessage(mutationError);
   const inputId = `credential-${credentialKey.toLowerCase()}`;
@@ -109,7 +114,9 @@ export function CredentialForm({
       }}
     >
       <span className={`tag ${configured === true ? "ok" : "muted"}`}>
-        {unsupportedPlatform
+        {environmentManaged
+          ? "managed by environment"
+          : unsupportedPlatform
           ? "environment only"
           : inspectionUnknown
             ? "unable to check"
@@ -131,7 +138,9 @@ export function CredentialForm({
             }
             disabled={!canEditKeychain}
             placeholder={
-              unsupportedPlatform
+              environmentManaged
+                ? "Managed by launch environment"
+                : unsupportedPlatform
                 ? "Use environment configuration on this platform"
                 : inspectionUnknown
                   ? "Keychain inspection unavailable"

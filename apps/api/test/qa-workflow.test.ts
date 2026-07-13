@@ -275,6 +275,8 @@ function createMemoryCredentialStore(): CredentialStore {
       label: key,
       configured: values.has(key),
       storage: "keychain" as const,
+      effectiveSource: values.has(key) ? "keychain" as const : "absent" as const,
+      editable: true,
     })),
   });
   return {

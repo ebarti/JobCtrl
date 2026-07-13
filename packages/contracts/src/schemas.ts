@@ -1794,6 +1794,8 @@ export const CredentialKeys = [
   "GOOGLE_GENAI_USE_VERTEXAI",
   "GOOGLE_CLOUD_PROJECT",
   "GOOGLE_CLOUD_LOCATION",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "CAPSOLVER_API_KEY",
 ] as const;
 export type CredentialKey = (typeof CredentialKeys)[number];
 
@@ -2872,12 +2874,6 @@ export interface DailyDigestBudget {
   status: "ok" | "over_budget";
   estimatedUsd: number;
   dailyBudgetUsd: number;
-  analysisLegs: ProviderId[];
-  tailoringGeneratorModels: string[] | null;
-  tailoringJudgeModel: string | null;
-  tailoringJudgeMinScore: number;
-  applyMaxBudgetUsd: number;
-  applyTimeoutSeconds: number;
   remainingUsd: number | null;
   unlimited: boolean;
 }
@@ -3517,6 +3513,12 @@ export interface DashboardSettings {
   applyConcurrency: number;
   workerActivitySlots: number;
   dailyBudgetUsd: number;
+  analysisLegs: ProviderId[];
+  tailoringGeneratorModels: string[] | null;
+  tailoringJudgeModel: string | null;
+  tailoringJudgeMinScore: number;
+  applyMaxBudgetUsd: number;
+  applyTimeoutSeconds: number;
   scoreCriteria: string;
   targetCriteria: string;
   preferredModels: Partial<Record<ProviderId, string>>;
@@ -3549,6 +3551,7 @@ export type EffectiveSetting<T> =
     };
 
 export interface EffectiveDashboardSettings {
+  llmModelOverride: EffectiveSetting<string | null>;
   dailyBudgetUsd: EffectiveSetting<number>;
   applyConcurrency: EffectiveSetting<number>;
   workerActivitySlots: EffectiveSetting<number>;
@@ -3851,15 +3854,82 @@ export interface CredentialsResponse {
   credentials: Array<{
     key: CredentialKey;
     label: string;
+    /** Keychain inspection is reported separately from the effective owner. */
     configured: boolean | null;
     storage: "keychain";
+    effectiveSource: "environment" | "keychain" | "absent" | "inspection_unknown";
+    editable: boolean;
   }>;
+}
+
+export interface CredentialManagedByEnvironmentResponse {
+  ok: false;
+  error: "credential_managed_by_environment";
+  key: CredentialKey;
+  source: "environment";
+  message: string;
 }
 
 export interface CredentialStoreErrorResponse {
   ok: false;
   error: "credential_store_unavailable";
   reason: "operational_failure" | "partial_failure" | "unsupported_platform";
+  message: string;
+}
+
+export const BrowserCapabilityIds = [
+  "core-browser",
+  "auto-apply-browser",
+  "authenticated-linkedin-browser",
+] as const;
+export type BrowserCapabilityId = (typeof BrowserCapabilityIds)[number];
+
+export const BrowserCapabilityStatusSchema = z.enum([
+  "ready",
+  "disabled",
+  "missing",
+  "failed",
+  "unavailable",
+]);
+
+export const BrowserCapabilityItemSchema = z
+  .object({
+    id: z.enum(BrowserCapabilityIds),
+    status: BrowserCapabilityStatusSchema,
+    detail: z.string().trim().min(1).max(400),
+    mutable: z.boolean(),
+    enabled: z.boolean(),
+    profileCopyReady: z.boolean(),
+  })
+  .strict();
+export type BrowserCapabilityItem = z.infer<typeof BrowserCapabilityItemSchema>;
+
+export const BrowserCapabilitiesResultSchema = z
+  .object({ capabilities: z.array(BrowserCapabilityItemSchema).length(BrowserCapabilityIds.length) })
+  .strict();
+
+export interface BrowserCapabilitiesResponse {
+  ok: true;
+  capabilities: BrowserCapabilityItem[];
+}
+
+export const BrowserCapabilityEnableRequestSchema = z
+  .object({ executablePath: z.string().trim().min(1).max(4096) })
+  .strict();
+export type BrowserCapabilityEnableRequest = z.infer<typeof BrowserCapabilityEnableRequestSchema>;
+
+export const BrowserProfileCopyRequestSchema = z
+  .object({
+    sourceProfilePath: z.string().trim().min(1).max(4096),
+    consent: z.literal(true),
+    consentMethod: z.literal("explicit-ui-v1"),
+  })
+  .strict();
+export type BrowserProfileCopyRequest = z.infer<typeof BrowserProfileCopyRequestSchema>;
+
+export interface BrowserCapabilityErrorResponse {
+  ok: false;
+  error: "browser_capability_failed";
   message: string;
 }
 

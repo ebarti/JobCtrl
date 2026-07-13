@@ -34,6 +34,7 @@ export function ModelSelectionPanel() {
   const settingsQuery = useSettingsQuery();
   const catalogQuery = useProviderModelsQuery();
   const settings = settingsQuery.data?.settings;
+  const modelOverride = settingsQuery.data?.effectiveSettings.llmModelOverride;
   const providers = new Map(
     (catalogQuery.data?.providers ?? []).map((provider) => [provider.provider, provider]),
   );
@@ -51,6 +52,12 @@ export function ModelSelectionPanel() {
           <code> LLM_MODEL</code>, takes precedence over these preferences.
         </p>
       </div>
+
+      {modelOverride?.source === "environment" ? (
+        <div className="banner credential-store-notice credential-store-notice--guidance" role="status">
+          <code>LLM_MODEL={modelOverride.value}</code> is managed by the launch environment. Saved provider selections remain fallback preferences until this override is removed.
+        </div>
+      ) : null}
 
       {isDemo ? (
         <div className="banner credential-store-notice credential-store-notice--guidance" role="status">

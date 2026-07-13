@@ -297,6 +297,84 @@ def provider_verify(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _browser_status_payload(status: Any) -> dict[str, object]:
+    """Serialize capability state without returning executable or profile paths."""
+
+    return {
+        "id": status.id,
+        "status": status.status,
+        "detail": status.detail,
+        "mutable": status.id != "core-browser",
+        "enabled": status.id == "core-browser" or status.status != "disabled",
+        "profileCopyReady": status.id == "authenticated-linkedin-browser"
+        and status.status == "ready",
+    }
+
+
+def browser_capabilities_list(params: dict[str, Any]) -> dict[str, object]:
+    """List safe capability status without probing for or adopting host browsers."""
+
+    if params:
+        raise invalid_params("browser_capabilities_list does not accept parameters")
+    from jobctrl.browser_capabilities import list_browser_capabilities
+
+    return {"capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()]}
+
+
+def browser_capability_enable(params: dict[str, Any]) -> dict[str, object]:
+    """Adopt only the executable explicitly supplied for one optional capability."""
+
+    capability_id = str(_require(params, "capabilityId"))
+    executable_path = str(_require(params, "executablePath"))
+    from jobctrl.browser_capabilities import BrowserCapabilityError, enable_system_browser_capability
+
+    try:
+        enable_system_browser_capability(capability_id, executable_path)
+    except BrowserCapabilityError as exc:
+        raise invalid_params("The selected browser capability could not be enabled.") from exc
+    from jobctrl.browser_capabilities import list_browser_capabilities
+
+    return {"capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()]}
+
+
+def browser_capability_disable(params: dict[str, Any]) -> dict[str, object]:
+    """Hot-revoke one optional capability without touching an owned profile copy."""
+
+    capability_id = str(_require(params, "capabilityId"))
+    from jobctrl.browser_capabilities import BrowserCapabilityError, disable_browser_capability
+
+    try:
+        disable_browser_capability(capability_id)
+    except BrowserCapabilityError as exc:
+        raise invalid_params("The selected browser capability could not be disabled.") from exc
+    from jobctrl.browser_capabilities import list_browser_capabilities
+
+    return {"capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()]}
+
+
+def browser_profile_copy(params: dict[str, Any]) -> dict[str, object]:
+    """Copy a caller-selected profile only through the versioned explicit UI consent arm."""
+
+    source_profile_path = str(_require(params, "sourceProfilePath"))
+    consent = params.get("consent")
+    consent_method = params.get("consentMethod")
+    if consent is not True or consent_method != "explicit-ui-v1":
+        raise invalid_params("A separate explicit profile-copy consent is required.")
+    from jobctrl.browser_capabilities import BrowserCapabilityError, copy_authenticated_linkedin_profile
+
+    try:
+        copy_authenticated_linkedin_profile(
+            source_profile_path,
+            consent=True,
+            consent_method="explicit-ui-v1",
+        )
+    except BrowserCapabilityError as exc:
+        raise invalid_params("The selected browser profile could not be copied.") from exc
+    from jobctrl.browser_capabilities import list_browser_capabilities
+
+    return {"capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()]}
+
+
 def refresh_compensation(params: dict[str, Any]) -> WorkflowStartSpec:
     """Build a workflow spec for compensation refresh."""
     try:
@@ -553,6 +631,10 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("provider_status", provider_status, mode="sync")
     server.register("provider_models", provider_models, mode="sync")
     server.register("provider_verify", provider_verify, mode="sync")
+    server.register("browser_capabilities_list", browser_capabilities_list, mode="sync")
+    server.register("browser_capability_enable", browser_capability_enable, mode="sync")
+    server.register("browser_capability_disable", browser_capability_disable, mode="sync")
+    server.register("browser_profile_copy", browser_profile_copy, mode="sync")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("generate_interview_prep", generate_interview_prep, mode="workflow")
     server.register("run_contact_research", run_contact_research, mode="workflow")

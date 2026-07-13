@@ -1,6 +1,7 @@
 import { useForm } from "@tanstack/react-form";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { z } from "zod";
+import type { CredentialBatchUpdateRequest, CredentialKey } from "@jobctrl/contracts";
 
 import { Button } from "../../../shared/ui/button.js";
 import {
@@ -39,6 +40,7 @@ const claudeValuesSchema = z
     awsProfile: z.string(),
     awsWorkspaceId: z.string(),
     foundryResource: z.string(),
+    googleApplicationCredentials: z.string(),
   })
   .superRefine((values, context) => {
     const requireValue = (value: string, path: string, message: string) => {
@@ -64,6 +66,7 @@ const googleValuesSchema = z
     apiKey: z.string(),
     projectId: z.string(),
     location: z.string(),
+    googleApplicationCredentials: z.string(),
   })
   .superRefine((values, context) => {
     if (values.mode === "gemini_api_key" && !values.apiKey.trim()) {
@@ -92,9 +95,10 @@ const googleValuesSchema = z
 interface ProviderFormProps {
   configured: boolean;
   currentMode?: string | null | undefined;
+  environmentManagedKeys?: readonly CredentialKey[];
 }
 
-export function ClaudeProviderForm({ configured, currentMode }: ProviderFormProps) {
+export function ClaudeProviderForm({ configured, currentMode, environmentManagedKeys = [] }: ProviderFormProps) {
   const update = useUpdateCredentialsBatchMutation();
   const [message, setMessage] = useState("");
   const [removalOpen, setRemovalOpen] = useState(false);
@@ -109,6 +113,7 @@ export function ClaudeProviderForm({ configured, currentMode }: ProviderFormProp
       awsProfile: "",
       awsWorkspaceId: "",
       foundryResource: "",
+      googleApplicationCredentials: "",
     },
     onSubmit: async ({ value, formApi }) => {
       setMessage("");
@@ -118,7 +123,13 @@ export function ClaudeProviderForm({ configured, currentMode }: ProviderFormProp
         return;
       }
       try {
-        await update.mutateAsync(buildClaudeCredentialBatch(parsed.data));
+        const request = withoutEnvironmentManaged(buildClaudeCredentialBatch(parsed.data), environmentManagedKeys);
+        formApi.setFieldValue("googleApplicationCredentials", "");
+        if (request.operations.length === 0) {
+          setMessage("Claude setup is managed by the launch environment and is read-only here.");
+          return;
+        }
+        await update.mutateAsync(request);
         formApi.setFieldValue("apiKey", "");
         setMessage("Claude provider settings saved. Restart JobCtrl to load them.");
       } catch (error) {
@@ -137,7 +148,12 @@ export function ClaudeProviderForm({ configured, currentMode }: ProviderFormProp
     setMessage("");
     setRemovalError("");
     try {
-      await update.mutateAsync(removeClaudeProviderBatch());
+      const request = withoutEnvironmentManaged(removeClaudeProviderBatch(), environmentManagedKeys);
+      if (request.operations.length === 0) {
+        setRemovalError("Claude setup is managed by the launch environment and cannot be removed here.");
+        return;
+      }
+      await update.mutateAsync(request);
       form.setFieldValue("apiKey", "");
       setRemovalOpen(false);
       setMessage("Claude provider settings removed. Restart JobCtrl to stop using this provider.");
@@ -195,6 +211,19 @@ export function ClaudeProviderForm({ configured, currentMode }: ProviderFormProp
                       help="Use global when your enabled models support it."
                       required
                       field={field}
+                    />
+                  )}
+                </form.Field>
+                <form.Field name="googleApplicationCredentials">
+                  {(field) => (
+                    <SecretField
+                      id="claude-google-application-credentials"
+                      name={field.name}
+                      label="Existing service-account JSON path (optional)"
+                      help="Write-only. Leave blank to use normal gcloud Application Default Credentials. JobCtrl never uploads or copies the file."
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={field.handleChange}
                     />
                   )}
                 </form.Field>
@@ -275,7 +304,7 @@ export function ClaudeProviderForm({ configured, currentMode }: ProviderFormProp
   );
 }
 
-export function GoogleProviderForm({ configured, currentMode }: ProviderFormProps) {
+export function GoogleProviderForm({ configured, currentMode, environmentManagedKeys = [] }: ProviderFormProps) {
   const update = useUpdateCredentialsBatchMutation();
   const [message, setMessage] = useState("");
   const [removalOpen, setRemovalOpen] = useState(false);
@@ -286,6 +315,7 @@ export function GoogleProviderForm({ configured, currentMode }: ProviderFormProp
       apiKey: "",
       projectId: "",
       location: "us-central1",
+      googleApplicationCredentials: "",
     },
     onSubmit: async ({ value, formApi }) => {
       setMessage("");
@@ -295,7 +325,13 @@ export function GoogleProviderForm({ configured, currentMode }: ProviderFormProp
         return;
       }
       try {
-        await update.mutateAsync(buildGoogleCredentialBatch(parsed.data));
+        const request = withoutEnvironmentManaged(buildGoogleCredentialBatch(parsed.data), environmentManagedKeys);
+        formApi.setFieldValue("googleApplicationCredentials", "");
+        if (request.operations.length === 0) {
+          setMessage("Google setup is managed by the launch environment and is read-only here.");
+          return;
+        }
+        await update.mutateAsync(request);
         formApi.setFieldValue("apiKey", "");
         setMessage("Google provider settings saved. Restart JobCtrl to load them.");
       } catch (error) {
@@ -314,7 +350,12 @@ export function GoogleProviderForm({ configured, currentMode }: ProviderFormProp
     setMessage("");
     setRemovalError("");
     try {
-      await update.mutateAsync(removeGoogleProviderBatch());
+      const request = withoutEnvironmentManaged(removeGoogleProviderBatch(), environmentManagedKeys);
+      if (request.operations.length === 0) {
+        setRemovalError("Google setup is managed by the launch environment and cannot be removed here.");
+        return;
+      }
+      await update.mutateAsync(request);
       form.setFieldValue("apiKey", "");
       setRemovalOpen(false);
       setMessage("Google provider settings removed. Restart JobCtrl to stop using this provider.");
@@ -364,6 +405,19 @@ export function GoogleProviderForm({ configured, currentMode }: ProviderFormProp
                 </form.Field>
                 <form.Field name="location">
                   {(field) => <TextField id="google-vertex-location" label="Vertex location" required field={field} />}
+                </form.Field>
+                <form.Field name="googleApplicationCredentials">
+                  {(field) => (
+                    <SecretField
+                      id="google-application-credentials"
+                      name={field.name}
+                      label="Existing service-account JSON path (optional)"
+                      help="Write-only. Leave blank to use normal gcloud Application Default Credentials. JobCtrl never uploads or copies the file."
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={field.handleChange}
+                    />
+                  )}
                 </form.Field>
               </>
             )}
@@ -657,6 +711,14 @@ function providerMutationMessage(error: unknown): string {
 
 function providerRemovalMessage(provider: "Claude" | "Google"): string {
   return `Could not remove ${provider} provider settings. No successful removal was confirmed. Unlock Keychain Access and retry.`;
+}
+
+function withoutEnvironmentManaged(
+  request: CredentialBatchUpdateRequest,
+  environmentManagedKeys: readonly CredentialKey[],
+): CredentialBatchUpdateRequest {
+  const managed = new Set(environmentManagedKeys);
+  return { operations: request.operations.filter((operation) => !managed.has(operation.key)) };
 }
 
 const CLAUDE_OPTIONS: readonly ChoiceOption<ClaudeMode>[] = [

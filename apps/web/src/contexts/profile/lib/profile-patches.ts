@@ -80,7 +80,13 @@ export function patchCredentialConfigured(
   return {
     ...current,
     credentials: current.credentials.map((entry) =>
-      entry.key === key ? { ...entry, configured } : entry,
+      entry.key === key
+        ? {
+            ...entry,
+            configured,
+            effectiveSource: configured ? "keychain" as const : "absent" as const,
+          }
+        : entry,
     ),
   };
 }

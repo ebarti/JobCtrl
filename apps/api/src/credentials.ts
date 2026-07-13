@@ -41,6 +41,8 @@ const LABELS: Record<CredentialKey, string> = {
   GOOGLE_GENAI_USE_VERTEXAI: "Google Vertex AI mode",
   GOOGLE_CLOUD_PROJECT: "Google Cloud project",
   GOOGLE_CLOUD_LOCATION: "Google Cloud location",
+  GOOGLE_APPLICATION_CREDENTIALS: "Google service-account JSON path",
+  CAPSOLVER_API_KEY: "CapSolver API key",
 };
 
 export interface CredentialStore {
@@ -118,6 +120,16 @@ export class CredentialStoreUnavailableError extends Error {
   }
 }
 
+export class CredentialManagedByEnvironmentError extends Error {
+  readonly key: CredentialKey;
+
+  constructor(key: CredentialKey) {
+    super("This credential is managed by the launch environment and cannot be changed here.");
+    this.name = "CredentialManagedByEnvironmentError";
+    this.key = key;
+  }
+}
+
 class SecurityCommandRunnerError extends Error {
   constructor(message: string) {
     super(message);
@@ -129,6 +141,7 @@ export interface KeychainCredentialStoreOptions {
   platform?: NodeJS.Platform;
   runSecurity?: SecurityCommandRunner;
   commandTimeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
 }
 
 type KeychainSnapshot =
@@ -139,6 +152,7 @@ export class KeychainCredentialStore implements CredentialStore {
   private readonly platform: NodeJS.Platform;
   private readonly runSecurity: SecurityCommandRunner;
   private readonly commandTimeoutMs: number;
+  private readonly env: NodeJS.ProcessEnv;
 
   constructor(options: KeychainCredentialStoreOptions = {}) {
     this.platform = options.platform ?? process.platform;
@@ -146,6 +160,7 @@ export class KeychainCredentialStore implements CredentialStore {
     this.commandTimeoutMs = normalizeTimeout(
       options.commandTimeoutMs ?? KEYCHAIN_COMMAND_TIMEOUT_MS,
     );
+    this.env = options.env ?? process.env;
   }
 
   async list(): Promise<CredentialsResponse> {
@@ -166,12 +181,14 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   async set(key: CredentialKey, value: string): Promise<CredentialsResponse> {
+    this.ensureNotEnvironmentManaged(key);
     this.ensureSupported();
     await this.setWithoutInspection(key, value);
     return this.list();
   }
 
   async delete(key: CredentialKey): Promise<CredentialsResponse> {
+    this.ensureNotEnvironmentManaged(key);
     this.ensureSupported();
     await this.deleteWithoutInspection(key);
     return this.list();
@@ -180,6 +197,9 @@ export class KeychainCredentialStore implements CredentialStore {
   async applyBatch(
     operations: readonly CredentialBatchOperation[],
   ): Promise<CredentialsResponse> {
+    for (const operation of operations) {
+      this.ensureNotEnvironmentManaged(operation.key);
+    }
     this.ensureSupported();
     const snapshots = new Map<CredentialKey, KeychainSnapshot>();
     for (const operation of operations) {
@@ -346,8 +366,30 @@ export class KeychainCredentialStore implements CredentialStore {
         label: LABELS[key],
         configured: configured[index] ?? null,
         storage: "keychain" as const,
+        effectiveSource: this.effectiveSource(key, configured[index] ?? null),
+        editable: !this.environmentOwned(key) && configured[index] !== null && this.supported,
       })),
     };
+  }
+
+  private effectiveSource(
+    key: CredentialKey,
+    configured: boolean | null,
+  ): CredentialsResponse["credentials"][number]["effectiveSource"] {
+    if (this.environmentOwned(key)) return "environment";
+    if (configured === true) return "keychain";
+    if (configured === false) return "absent";
+    return "inspection_unknown";
+  }
+
+  private environmentOwned(key: CredentialKey): boolean {
+    return Boolean(this.env[key]?.trim());
+  }
+
+  private ensureNotEnvironmentManaged(key: CredentialKey): void {
+    if (this.environmentOwned(key)) {
+      throw new CredentialManagedByEnvironmentError(key);
+    }
   }
 
   private ensureSupported(): void {

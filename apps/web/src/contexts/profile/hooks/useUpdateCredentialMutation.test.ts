@@ -18,8 +18,8 @@ const initialCredentials = {
     requiresWorkerRestart: true as const,
   },
   credentials: [
-    { key: "OPENAI_API_KEY" as const, label: "OpenAI", configured: false, storage: "keychain" as const },
-    { key: "GEMINI_API_KEY" as const, label: "Gemini", configured: false, storage: "keychain" as const },
+    { key: "OPENAI_API_KEY" as const, label: "OpenAI", configured: false, storage: "keychain" as const, effectiveSource: "absent" as const, editable: true },
+    { key: "GEMINI_API_KEY" as const, label: "Gemini", configured: false, storage: "keychain" as const, effectiveSource: "absent" as const, editable: true },
   ],
 };
 

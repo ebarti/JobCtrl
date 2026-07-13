@@ -435,6 +435,38 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return this.read((model) => model.profile.credentials);
   }
 
+  async browserCapabilities(): Promise<ApiClientResponse<"browserCapabilities">> {
+    return {
+      ok: true,
+      capabilities: [
+        {
+          id: "core-browser",
+          status: "ready",
+          detail: "Synthetic demo status; no host browser is inspected.",
+          mutable: false,
+          enabled: true,
+          profileCopyReady: false,
+        },
+        {
+          id: "auto-apply-browser",
+          status: "disabled",
+          detail: "Browser adoption is unavailable in the public demo.",
+          mutable: true,
+          enabled: false,
+          profileCopyReady: false,
+        },
+        {
+          id: "authenticated-linkedin-browser",
+          status: "disabled",
+          detail: "Profile copy is unavailable in the public demo.",
+          mutable: true,
+          enabled: false,
+          profileCopyReady: false,
+        },
+      ],
+    };
+  }
+
   async providerModels(): Promise<ApiClientResponse<"providerModels">> {
     return {
       ok: true,
@@ -644,6 +676,9 @@ export class DemoApiClientAdapter implements ApiClientPort {
   updateCredential = this.unsupported("updateCredential");
   deleteCredential = this.unsupported("deleteCredential");
   updateCredentialsBatch = this.unsupported("updateCredentialsBatch");
+  enableBrowserCapability = this.unsupported("enableBrowserCapability");
+  disableBrowserCapability = this.unsupported("disableBrowserCapability");
+  copyLinkedInBrowserProfile = this.unsupported("copyLinkedInBrowserProfile");
   verifyCodexProvider = this.unsupported("verifyCodexProvider");
   createContact = this.local("createContact");
   updateContact = this.local("updateContact");

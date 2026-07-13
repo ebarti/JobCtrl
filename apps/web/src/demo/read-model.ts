@@ -1480,8 +1480,8 @@ export const DEMO_READ_MODEL = {
         requiresWorkerRestart: true,
       },
       credentials: [
-        { key: "OPENAI_API_KEY", label: "OpenAI API Key", configured: null, storage: "keychain" },
-        { key: "GEMINI_API_KEY", label: "Gemini API Key", configured: null, storage: "keychain" },
+        { key: "OPENAI_API_KEY", label: "OpenAI API Key", configured: null, storage: "keychain", effectiveSource: "inspection_unknown", editable: false },
+        { key: "GEMINI_API_KEY", label: "Gemini API Key", configured: null, storage: "keychain", effectiveSource: "inspection_unknown", editable: false },
       ],
     },
   },
@@ -1507,6 +1507,7 @@ export const DEMO_READ_MODEL = {
       preferredModels: { claude: "sonnet" },
     },
     effectiveSettings: {
+      llmModelOverride: { value: null, source: "default", activation: "next_workflow", editable: true },
       dailyBudgetUsd: { value: 20, source: "persisted", activation: "live", editable: true },
       applyConcurrency: { value: 1, source: "persisted", activation: "next_poll", editable: true },
       workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },

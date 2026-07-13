@@ -35,6 +35,7 @@ const CLAUDE_MANAGED_KEYS = [
   "ANTHROPIC_FOUNDRY_RESOURCE",
   "AWS_REGION",
   "AWS_PROFILE",
+  "GOOGLE_APPLICATION_CREDENTIALS",
 ] as const satisfies readonly CredentialKey[];
 
 const GOOGLE_MANAGED_KEYS = [
@@ -42,6 +43,7 @@ const GOOGLE_MANAGED_KEYS = [
   "GOOGLE_GENAI_USE_VERTEXAI",
   "GOOGLE_CLOUD_PROJECT",
   "GOOGLE_CLOUD_LOCATION",
+  "GOOGLE_APPLICATION_CREDENTIALS",
 ] as const satisfies readonly CredentialKey[];
 
 export interface ClaudeProviderValues {
@@ -53,6 +55,7 @@ export interface ClaudeProviderValues {
   awsProfile: string;
   awsWorkspaceId: string;
   foundryResource: string;
+  googleApplicationCredentials: string;
 }
 
 export interface GoogleProviderValues {
@@ -60,6 +63,7 @@ export interface GoogleProviderValues {
   apiKey: string;
   projectId: string;
   location: string;
+  googleApplicationCredentials: string;
 }
 
 export function buildClaudeCredentialBatch(
@@ -72,6 +76,7 @@ export function buildClaudeCredentialBatch(
     selected.CLAUDE_CODE_USE_VERTEX = "1";
     selected.ANTHROPIC_VERTEX_PROJECT_ID = values.vertexProjectId;
     selected.CLOUD_ML_REGION = values.vertexRegion;
+    selected.GOOGLE_APPLICATION_CREDENTIALS = values.googleApplicationCredentials;
   } else if (values.mode === "bedrock") {
     selected.CLAUDE_CODE_USE_BEDROCK = "1";
     selected.AWS_REGION = values.awsRegion;
@@ -97,6 +102,7 @@ export function buildGoogleCredentialBatch(
         GOOGLE_GENAI_USE_VERTEXAI: "true",
         GOOGLE_CLOUD_PROJECT: values.projectId,
         GOOGLE_CLOUD_LOCATION: values.location,
+        GOOGLE_APPLICATION_CREDENTIALS: values.googleApplicationCredentials,
       });
 }
 

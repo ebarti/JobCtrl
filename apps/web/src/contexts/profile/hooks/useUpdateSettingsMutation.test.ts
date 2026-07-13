@@ -31,6 +31,7 @@ const initialSettings = {
     preferredModels: { claude: "sonnet" },
   },
   effectiveSettings: {
+    llmModelOverride: { value: null, source: "default", activation: "next_workflow", editable: true },
     dailyBudgetUsd: { value: 25, source: "persisted", activation: "live", editable: true },
     applyConcurrency: { value: 2, source: "persisted", activation: "next_poll", editable: true },
     workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
