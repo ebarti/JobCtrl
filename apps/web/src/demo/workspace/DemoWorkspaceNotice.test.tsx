@@ -47,7 +47,7 @@ class QuotaStore implements DemoWorkspaceStore {
 }
 
 describe("<DemoWorkspaceNotice>", () => {
-  it("always explains browser-profile sharing and personal-data boundaries in demo mode", async () => {
+  it("explains browser-profile isolation, tab sharing, and personal-data boundaries in demo mode", async () => {
     const workspace = new DemoWorkspaceRepository({
       store: new QuotaStore(),
       createWorkspaceId: () => "notice-workspace",
@@ -60,16 +60,17 @@ describe("<DemoWorkspaceNotice>", () => {
       </DemoWorkspaceProvider>,
     );
 
-    expect(
-      screen.getByRole("status", { name: "Public demo data boundary" }),
-    ).toHaveTextContent(
-      "shared with other tabs and people using this browser profile",
+    const notice = screen.getByRole("status", {
+      name: "Public demo data boundary",
+    });
+    expect(notice).toHaveTextContent("not shared across browser profiles");
+    expect(notice).toHaveTextContent("common demo environment");
+    expect(notice).toHaveTextContent(
+      "Other tabs and anyone using this profile can see the same data",
     );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Do not enter personal data or secrets",
-    );
+    expect(notice).toHaveTextContent("Do not enter personal data or secrets");
     expect(
-      screen.getByText("Demo mode — shared browser profile"),
+      screen.getByText("Demo mode — browser-local workspace"),
     ).toBeInTheDocument();
     expect(await axe(view.container)).toHaveNoViolations();
   });

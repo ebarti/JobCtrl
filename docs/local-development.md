@@ -154,8 +154,9 @@ workspace does not initialize. The dedicated Playwright lane stubs the exact
 Worker contract for browser-local development; use a Cloudflare preview when
 manually testing real cookie persistence across reloads.
 
-The demo workspace persists in IndexedDB and is shared by tabs and people using
-the same browser profile. Separate browser profiles and private/incognito
+Each browser/storage profile has its own IndexedDB demo workspace. It is not
+shared across browser profiles or through a common demo environment, but tabs
+and anyone using the same profile can see the same data. Private/incognito
 contexts are isolated. Reset rotates the workspace identity, clears pending
 demo actions, and deletes generated demo blobs in the same transaction. If
 IndexedDB is unavailable or full, the page warns that it has switched to
