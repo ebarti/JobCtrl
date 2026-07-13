@@ -8,10 +8,16 @@ at the top of `docs/`.
   that has landed, been superseded by canonical docs, or been closed with a
   recorded outcome.
 
-As of 2026-07-11, the bundled distribution and public live-demo plans below are
-the active dated plans at the top level. Earlier dated plans have landed or
-been closed with a recorded outcome and live under `implemented/`. Add new
-accepted-but-not-yet-delivered plans at the top level.
+As of 2026-07-12, the bundled distribution and public live-demo plans below are
+the active dated plans at the top level. Their implementation stacks have
+landed, but their publication/cutover definitions of done remain open. Earlier
+dated plans have landed or been closed with a recorded outcome and live under
+`implemented/`. Add new accepted-but-not-yet-delivered plans at the top level.
+
+The former top-level `openspec/` corpus was consolidated here on 2026-07-12.
+Each delivered change now has one implemented-plan record containing its
+outcome, decisions, requirements, delivery evidence, deviations, and deferred
+boundaries instead of separate proposal/design/spec/task copies.
 
 When a plan is fully implemented, move it into `implemented/` with a status
 banner recording the delivery PRs and any deviations, and update the canonical
@@ -23,16 +29,15 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 
 | Date | Plan | Status |
 | --- | --- | --- |
-| 2026-07-10 | [Bundled JobCtrl Distribution](2026-07-10-bundled-jobctrl-distribution-plan.md) | Active — P0–P6 implementation stack prepared; signed publication and P7 published-artifact QA remain external gates |
-| 2026-07-11 | [Public JobCtrl Live Demo](2026-07-11-public-live-demo-plan.md) | Accepted / not yet delivered — isolated browser-local synthetic workspaces, consent-aware telemetry, and `demo.jobctrl.dev` delivered as stacked PRs |
+| 2026-07-10 | [Bundled JobCtrl Distribution](2026-07-10-bundled-jobctrl-distribution-plan.md) | Active — P0–P7 code/docs landed in #396 and #399–#405; signed/notarized publication and published-artifact product QA remain open |
+| 2026-07-11 | [Public JobCtrl Live Demo](2026-07-11-public-live-demo-plan.md) | Active — P0–P7 landed in #408–#417 and a private candidate is deployed; public cutover, hosted reruns, and privacy approval remain open |
 
 ## Historical Spec Ledger
 
-The full inventory of every plan or spec that has shaped JobCtrl — both the
-plans tracked in this repository and the private planning corpus that was
-untracked before the open-source release. Dates are each plan's authored/landed
-date (the filename convention). Delivery detail also lives in each plan's status
-banner, the git log, and the matching entry in `../decisions.md`.
+This is the inventory of plans and specs tracked in this repository. Dates are
+each plan's authored or landed date (the filename convention). Delivery detail
+also lives in each plan's status banner, the git log, and the matching entry in
+`../decisions.md`.
 
 ### Tracked plans
 
@@ -62,6 +67,9 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-06-03 | [Resume Tailoring Quality](implemented/2026-06-03-resume-tailoring-quality.md) | Implemented — #123 (plan), #124–#128; ADR 2026-06-03 |
 | 2026-06-15 | [Requirement Fit Ledger](implemented/2026-06-15-requirement-fit-ledger.md) | Implemented — #162–#177, #189; ADR 2026-06-15 |
 | 2026-06-22 | [Swap LaTeX For HTML/CSS Resume Rendering](implemented/2026-06-22-swap-latex-for-html-css.md) | Implemented — #188, #210, #211, #220; ADR 2026-06-24 |
+| 2026-06-25 | [Live Resume Editor, Review Comments, And Feedback Capture](implemented/2026-06-25-live-resume-editor-feedback.md) | Implemented — #190–#192 |
+| 2026-06-26 | [Resume Template Editing And Lazy Material Refresh](implemented/2026-06-26-resume-template-editing.md) | Implemented — #193 |
+| 2026-06-30 | [Requirement-Led Resume Tailoring](implemented/2026-06-30-requirement-led-resume-tailoring.md) | Implemented — #201–#203; hardened by #216, #224, #228, #229; ADR 2026-06-30 |
 | 2026-07-03 | [Temporal-Native Rearchitecture](implemented/2026-07-03-temporal-native-rearchitecture.md) | Implemented — #230 (plan), #233, #231, #235, #238, #237, #239, #240; ADRs 2026-07-03 |
 | 2026-07-03 | [Temporal Rearchitecture — Implementation Spec (P1b–P5)](implemented/2026-07-03-temporal-rearch-implementation-spec.md) | Implemented — spec #232 |
 | 2026-07-03 | [OSS Release Remediation — Implementation Spec for Codex](implemented/2026-07-03-oss-release-remediation-spec.md) | Closed by #274 inventory, then W1 restamped after #336, #337, #338, #340, #342, and #345 — W1.1-W1.7 complete; W1.8 dry-run-by-default was withdrawn by owner decision; overall release remains no-go pending non-W1 owner/release checkpoints |
@@ -78,59 +86,10 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-07-05 | [Product Rename to JobCtrl](implemented/2026-07-05-rename-jobctrl-plan.md) | Implemented — #261 (plan), #349; hardening #350; #351 closeout; R0.1 updates the final public spelling to JobCtrl |
 | 2026-07-05 | [Crawl Politeness Hardening](implemented/2026-07-05-crawl-politeness-plan.md) | Implemented — #272 (plan), #297-#316; pacing-test hardening #334; ADR 2026-07-06 |
 | 2026-07-08 | [Web UI/UX Revamp — Left-Rail Shell + JobCtrl Design System](implemented/2026-07-08-web-ui-revamp-plan.md) | Implemented — #356; design-system docs follow-up continues separately in #357 |
-| 2026-07-10 | [Bundled JobCtrl Distribution](2026-07-10-bundled-jobctrl-distribution-plan.md) | Active — P0–P6 implementation stack prepared; signed publication and P7 published-artifact QA pending; ADR 2026-07-10 |
+| 2026-07-10 | [Bundled JobCtrl Distribution](2026-07-10-bundled-jobctrl-distribution-plan.md) | Active — #394, #396, and #399–#405 landed; signed/notarized publication and published-artifact product QA pending; ADR 2026-07-10 |
+| 2026-07-11 | [Public JobCtrl Live Demo](2026-07-11-public-live-demo-plan.md) | Active — #407–#417 landed; private candidate deployed; public cutover, hosted reruns, and privacy approval pending |
 
 Two 2026-05-17 backlog specs (`…-add-react`, `…-add-brows`) were drafted on
 `origin/mestre/develop-*` branches and never merged to `main`; only `…-add-root`
 (#70) landed. The other two survive only on those branch tips, not in `main`
 history.
-
-### Private planning corpus (`.planning/`, untracked)
-
-`.planning/` held the milestone planning corpus — project research, milestone
-roadmaps, per-phase plans/summaries/verification records, codebase analysis
-maps, and UI sketches. It was untracked at commit `9bc9edc2`
-("chore(release): untrack private planning corpus and strip private banners",
-PR #242) as part of the OSS release (W0.1) because it can contain private data.
-Content remains in git history before `9bc9edc2` and locally in the gitignored
-`.planning/` directory. **143 files** at the time of untracking. The topics below
-are derived from directory and slug names only; file contents — especially the
-root project charter and retrospective and the compensation milestone — are
-private and withheld here.
-
-| Group | Files | Topics (from slugs) |
-| --- | --- | --- |
-| `.planning/` (root) | 7 | project charter, milestones index, milestone-acceptance, roadmap, retrospective, session state, config (contents withheld) |
-| `.planning/codebase/` | 7 | codebase analysis maps: architecture, concerns, conventions, integrations, stack, structure, testing |
-| `.planning/research/` | 5 | project research: architecture, features, pitfalls, stack, summary |
-| `.planning/milestones/` (milestone-level) | 6 | per-milestone audit / requirements / roadmap for v1.2 and v1.3 |
-| `.planning/milestones/v1.2-phases/` | 41 | v1.2 "audit UX" phases 12–16 (below) |
-| `.planning/milestones/v1.3-phases/` | 71 | v1.3 "compensation / jobs-triage" phases 17–22 (below) |
-| `.planning/sketches/` | 6 | apply-review audit UI HTML/CSS prototypes (two sketches, manifest, theme; HTML files may embed sample data) |
-
-Each phase folder holds generic working-doc types (PLAN, SUMMARY, CONTEXT,
-RESEARCH, PATTERNS, VERIFICATION, VALIDATION, UI-SPEC, PLAN-CHECK, REVIEW,
-DISCUSSION-LOG). The phase slugs map to features now recorded as ADRs in
-`../decisions.md` (audit-from-canonical-rows, requirement-fit ledger,
-compensation).
-
-**v1.2 phases (audit UX), 41 files**
-
-| Phase | Files |
-| --- | --- |
-| 12 folded-cleanup-verification-baseline | 8 |
-| 13 shared-apply-audit-contract | 9 |
-| 14 jobs-drawer-audit-triage | 9 |
-| 15 apply-review-resume-pins | 8 |
-| 16 product-path-qa-documentation | 7 |
-
-**v1.3 phases (compensation + jobs triage), 71 files**
-
-| Phase | Files |
-| --- | --- |
-| 17 source-registry-access-policy | 9 |
-| 18 posted-compensation-facts | 9 |
-| 19 europe-public-market-estimates | 9 |
-| 20 canonical-read-model-realtime-api | 9 |
-| 21 jobs-triage-ux-warning-only-floor | 19 |
-| 22 product-path-qa-safety-release | 16 |

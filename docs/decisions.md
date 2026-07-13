@@ -1030,8 +1030,10 @@ Status: accepted
 Decision: resume tailoring is driven by the job's extracted requirements. The
 pipeline derives a requirement-fit view and grounds keyword coverage in the
 shipped resume text, surfacing a requirement-fit report in job detail and Apply
-Review. The change was designed and archived through the OpenSpec
-propose/implement/archive workflow.
+Review. The original OpenSpec proposal, design, requirements, and task archive
+were consolidated into
+[`docs/plans/implemented/2026-06-30-requirement-led-resume-tailoring.md`](plans/implemented/2026-06-30-requirement-led-resume-tailoring.md)
+on 2026-07-12.
 
 Rationale:
 
@@ -1040,8 +1042,9 @@ Rationale:
 - coverage claims are only meaningful when computed over the actual generated
   resume text, not inferred from job keywords (per the auditability discipline in
   `CLAUDE.md`)
-- OpenSpec keeps the spec, tasks, and archive of a non-trivial materials change
-  reviewable
+- one implemented-plan record keeps the decisions, acceptance contract,
+  delivery evidence, and deviations of a non-trivial materials change
+  reviewable without a duplicate planning tree
 
 Consequences:
 
@@ -1807,7 +1810,8 @@ Consequences until the owner fills the verdict:
 
 ## 2026-07-10: Bundled JobCtrl Distribution With One Public Command
 
-Status: accepted; P0–P6 implemented locally, signed publication pending
+Status: accepted; P0–P7 landed, signed/notarized publication and
+published-artifact product QA pending
 
 Decision: proceed with the bundled distribution (the “Go” verdict named in the
 2026-07-06 ADR). Curl and Homebrew will acquire the same signed platform

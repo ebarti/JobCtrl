@@ -72,12 +72,11 @@ The web app mirrors those contexts under `apps/web/src/contexts/`. Views under
   implemented local architecture.
 - `docs/architecture/domain-model/` and `docs/architecture/frontend/` are canonical architecture
   references plus hosted-future seams.
-- `docs/plans/implemented/` contains plan records and QA notes. Treat those as
-  project history; current product behavior belongs in the canonical docs and
-  live code.
-- `openspec/` contains current and archived OpenSpec-style requirements. When a
-  feature ships, sync the public docs so the archive is not the only
-  discoverable source.
+- `docs/plans/implemented/` contains plan records and QA notes, including the
+  three historical OpenSpec changes consolidated on 2026-07-12. Treat those as
+  project history; their records preserve delivered decisions, requirements,
+  and evidence, while current product behavior belongs in the canonical docs
+  and live code.
 
 ## Validation
 
@@ -221,8 +220,9 @@ form when the tier calls for it.
 - **§-numbered headings stay** in `architecture/domain-model/**` (§1–§11) and
   `architecture/frontend/**` (§1–§15): `packages/domain-types` comments and
   AGENTS.md cite them.
-- Historical records (`docs/plans/implemented/**`, `docs/incidents/**`,
-  `openspec/**`) keep their original wording, including stale link titles.
+- Historical records (`docs/plans/implemented/**`, `docs/incidents/**`) keep
+  their original wording unless a closeout explicitly consolidates superseded
+  planning artifacts or annotates a later implementation deviation.
 
 ### Verification
 

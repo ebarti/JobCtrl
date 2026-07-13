@@ -1,7 +1,17 @@
 # Public JobCtrl Live Demo Plan
 
 - **Date:** 2026-07-11
-- **Status:** Accepted, amended by the owner on 2026-07-11 / not yet delivered.
+- **Status (2026-07-12):** Active / implementation landed, public cutover not
+  complete. The plan (#407) and P0–P7 stack (#408–#417) are merged to `main`.
+  A private candidate is deployed at `demo.jobctrl.dev` behind a Cloudflare
+  Access IP restriction, with Pages, Workers, EU D1, migrations, retention,
+  consent, synthetic workspace, guided experience, and local production smoke
+  verified. Public launch still requires the owner-approved repository-public
+  sequence, real hosted workflow passes on the exact `main` SHA, approved
+  controller/privacy notice and lawful-basis copy, removal of the IP
+  restriction, public CTA publication, and final production smoke/rollback
+  evidence. Current private-repository Actions runs stop before checkout on the
+  account billing gate; they are neither product failures nor passing evidence.
 - **Anchors:** Current behavior and file ownership verified against
   `main @ b513b356`. Re-verify all cited paths and contracts against the base of
   each implementation PR before coding.
