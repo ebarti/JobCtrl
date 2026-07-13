@@ -8305,6 +8305,71 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("persists typed discovery runtime settings with truthful activation metadata", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/discovery/settings",
+      payload: {
+        roleFilterMode: "llm",
+        roleFilterModel: "claude:sonnet",
+        maxParallelFamilies: 3,
+        crawlUserAgentProduct: "JobCtrlResearch",
+        crawlUserAgentContact: "ops@example.test",
+        schedulingEnabled: true,
+        scheduleCron: "0 8 * * 1-5",
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      settings: {
+        roleFilterMode: "llm",
+        roleFilterModel: "claude:sonnet",
+        maxParallelFamilies: 3,
+        crawlUserAgentProduct: "JobCtrlResearch",
+        crawlUserAgentContact: "ops@example.test",
+        schedulingEnabled: true,
+        scheduleCron: "0 8 * * 1-5",
+      },
+      effectiveSettings: {
+        roleFilterMode: { source: "persisted", activation: "next_source_family", editable: true },
+        maxParallelFamilies: { source: "persisted", activation: "next_run", editable: true },
+        schedulingEnabled: { source: "persisted", activation: "restart", editable: true },
+      },
+    });
+    await app.close();
+  });
+
+  it("rejects writes to environment-managed discovery settings", async () => {
+    const app = buildApp({
+      ...options,
+      settingsEnvironment: { JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES: "4" },
+    });
+    const read = await app.inject({ method: "GET", url: "/v1/discovery/settings" });
+    expect(read.json()).toMatchObject({
+      settings: { maxParallelFamilies: 4 },
+      effectiveSettings: {
+        maxParallelFamilies: { source: "environment", editable: false, activation: "next_run" },
+      },
+    });
+
+    const write = await app.inject({
+      method: "PATCH",
+      url: "/v1/discovery/settings",
+      payload: { maxParallelFamilies: 2 },
+    });
+    expect(write.statusCode, write.body).toBe(409);
+    expect(write.json()).toEqual({
+      ok: false,
+      error: "setting_managed_by_environment",
+      field: "maxParallelFamilies",
+      source: "environment",
+      message: "maxParallelFamilies is managed by the launch environment and cannot be changed here.",
+    });
+    await app.close();
+  });
+
   it("falls back to defaults when settings are missing", async () => {
     fs.rmSync(options.settingsPath);
     const app = buildApp(options);

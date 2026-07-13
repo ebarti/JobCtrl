@@ -149,6 +149,7 @@ import { databaseExists, openDatabase } from "./db.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
 import {
+  DiscoverySettingManagedByEnvironmentError,
   decideQuarantineEntry,
   dismissManualCapture,
   decideRoleMatchFeedbackSuggestion,
@@ -573,7 +574,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   );
 
   app.get("/v1/discovery/settings", async (_request, reply) =>
-    withDb(reply, options.dbPath, (db) => readDiscoverySettings(db)),
+    withDb(reply, options.dbPath, (db) =>
+      readDiscoverySettings(db, options.settingsEnvironment),
+    ),
   );
 
   app.get("/v1/compensation/sources", async () =>
@@ -616,7 +619,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
-    return withWritableDb(reply, options.dbPath, (db) => writeDiscoverySettings(db, body));
+    return withWritableDb(reply, options.dbPath, (db) =>
+      writeDiscoverySettings(db, body, options.settingsEnvironment),
+    );
   });
 
   app.post("/v1/discovery/sources", async (request, reply) => {
@@ -3694,7 +3699,13 @@ async function withWritableDb<T>(
   reply: { code: (statusCode: number) => unknown },
   dbPath: string,
   write: (db: ReturnType<typeof openDatabase>) => T | Promise<T>,
-): Promise<T | { ok: false; error: string; message: string }> {
+): Promise<T | {
+  ok: false;
+  error: string;
+  message: string;
+  field?: string;
+  source?: string;
+}> {
   if (!databaseExists(dbPath)) {
     void reply.code(503);
     return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${dbPath}` };
@@ -3705,6 +3716,16 @@ async function withWritableDb<T>(
     db = openDatabase(dbPath);
     return await write(db);
   } catch (error) {
+    if (error instanceof DiscoverySettingManagedByEnvironmentError) {
+      void reply.code(409);
+      return {
+        ok: false,
+        error: "setting_managed_by_environment",
+        field: error.field,
+        source: error.source,
+        message: error.message,
+      };
+    }
     if (error instanceof ResumeTemplateInputError) {
       void reply.code(400);
       return { ok: false, error: "invalid_resume_template", message: error.message };

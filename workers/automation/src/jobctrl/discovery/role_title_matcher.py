@@ -158,7 +158,7 @@ class RoleTitleMatcher:
             return _extract_json_object(raw)
 
 
-_DEFAULT_MATCHER: RoleTitleMatcher | None = None
+_DEFAULT_MATCHER: tuple[tuple[str, str | None], RoleTitleMatcher] | None = None
 
 
 def _messages_for_role_match(
@@ -211,13 +211,25 @@ def _extract_json_object(raw: str) -> dict:
 
 def default_role_title_matcher(search_cfg: Mapping[str, object] | None = None) -> RoleTitleMatcher | None:
     """Return the process-default matcher when LLM role filtering is enabled."""
+    from jobctrl import config
 
-    if not _role_filter_enabled(search_cfg):
+    effective = (
+        config.effective_discovery_search_config(search_cfg)
+        if search_cfg is not None
+        else config.load_search_config()
+    )
+    if not _role_filter_enabled(effective):
         return None
+    role_filter = effective.get("role_filter")
+    role_filter = role_filter if isinstance(role_filter, Mapping) else {}
+    mode = str(role_filter.get("mode") or "auto").strip().casefold()
+    raw_model = role_filter.get("model")
+    model = str(raw_model).strip() if raw_model is not None and str(raw_model).strip() else None
+    key = (mode, model)
     global _DEFAULT_MATCHER
-    if _DEFAULT_MATCHER is None:
-        _DEFAULT_MATCHER = RoleTitleMatcher(model=os.environ.get("JOBCTRL_DISCOVERY_ROLE_FILTER_MODEL"))
-    return _DEFAULT_MATCHER
+    if _DEFAULT_MATCHER is None or _DEFAULT_MATCHER[0] != key:
+        _DEFAULT_MATCHER = (key, RoleTitleMatcher(model=model))
+    return _DEFAULT_MATCHER[1]
 
 
 def reset_default_role_title_matcher() -> None:
@@ -228,8 +240,8 @@ def reset_default_role_title_matcher() -> None:
 
 
 def _role_filter_enabled(search_cfg: Mapping[str, object] | None = None) -> bool:
-    raw = os.environ.get("JOBCTRL_DISCOVERY_LLM_ROLE_FILTER")
-    if raw is None and search_cfg:
+    raw: object = "auto"
+    if search_cfg:
         role_filter = search_cfg.get("role_filter") or search_cfg.get("title_filter")
         if isinstance(role_filter, Mapping):
             raw_value = (
@@ -237,7 +249,7 @@ def _role_filter_enabled(search_cfg: Mapping[str, object] | None = None) -> bool
                 if "llm" in role_filter
                 else role_filter.get("mode", "auto")
             )
-            raw = str(raw_value)
+            raw = raw_value
     setting = str(raw or "auto").strip().casefold()
     if setting in {"0", "false", "no", "off", "disabled", "deterministic"}:
         return False

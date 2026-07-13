@@ -323,6 +323,7 @@ export const handlers = [
     return HttpResponse.json({
       ok: true,
       settings: { ...sampleDiscoverySettingsResponse.settings, ...body },
+      effectiveSettings: sampleDiscoverySettingsResponse.effectiveSettings,
     });
   }),
   http.post("*/v1/discovery/sources", async ({ request }) => {

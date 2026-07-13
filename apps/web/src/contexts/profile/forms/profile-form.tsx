@@ -1,6 +1,5 @@
 import {
   ProfileSchema,
-  SettingsUpdateRequestSchema,
   type ProfileShape,
   type ProfileUpdateRequest,
 } from "@jobctrl/contracts";
@@ -8,11 +7,10 @@ import { useForm } from "@tanstack/react-form";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
-import type { DashboardSettings, ProfileConfigResponse } from "../../operations/types.js";
+import type { ProfileConfigResponse } from "../../operations/types.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
-import { useUpdateSettingsMutation } from "../hooks/useUpdateSettingsMutation.js";
 import { AutosaveUndoController } from "./autosave-undo-controller.js";
 import {
   isProfileDateRangeChronological,
@@ -22,7 +20,6 @@ import {
 export type ProfileSection = "profile" | "preferences" | "target-search";
 
 export interface ProfileFormValues {
-  locationFilter: string;
   profileText: string;
   styleText: string;
   templateText: string;
@@ -31,12 +28,10 @@ export interface ProfileFormValues {
 export interface ProfileFormProps {
   initial: ProfileConfigResponse;
   section?: ProfileSection;
-  settings?: DashboardSettings;
 }
 
-export function toProfileFormValues(profile: ProfileConfigResponse, settings?: DashboardSettings): ProfileFormValues {
+export function toProfileFormValues(profile: ProfileConfigResponse): ProfileFormValues {
   return {
-    locationFilter: settings?.locationFilter ?? "",
     profileText: JSON.stringify(profile.profile, null, 2),
     styleText: JSON.stringify(profile.style, null, 2),
     templateText: profile.templateText,
@@ -71,10 +66,6 @@ function validateProfileForm(values: ProfileFormValues): string | undefined {
   if (!parsedStyle.ok) {
     return `Resume style settings: ${parsedStyle.error}`;
   }
-  const settingsResult = SettingsUpdateRequestSchema.safeParse({ locationFilter: values.locationFilter });
-  if (!settingsResult.success) {
-    return `Location filter: ${settingsResult.error.issues[0]?.message ?? "invalid value"}`;
-  }
   return undefined;
 }
 
@@ -101,9 +92,8 @@ function serializeProfileValues(values: ProfileFormValues): string {
   return JSON.stringify(values);
 }
 
-export function ProfileForm({ initial, section = "profile", settings }: ProfileFormProps) {
+export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) {
   const updateProfile = useUpdateProfileMutation();
-  const updateSettings = useUpdateSettingsMutation();
   const [statusMessage, setStatusMessage] = useState("");
   const [resetToken, setResetToken] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
@@ -114,7 +104,7 @@ export function ProfileForm({ initial, section = "profile", settings }: ProfileF
     section === "profile" ? "profile saved" : section === "target-search" ? "discovery settings saved" : "preferences saved";
 
   const form = useForm({
-    defaultValues: toProfileFormValues(initial, settings),
+    defaultValues: toProfileFormValues(initial),
     validators: {
       onBlur: ({ value }) => validateProfileForm(value),
       onSubmit: ({ value }) => validateProfileForm(value),
@@ -122,21 +112,16 @@ export function ProfileForm({ initial, section = "profile", settings }: ProfileF
     onSubmit: async ({ value, formApi }) => {
       setStatusMessage("");
       const submittedValues = serializeProfileValues(value);
-      const initialValues = toProfileFormValues(initial, settings);
+      const initialValues = toProfileFormValues(initial);
       const shouldUpdateProfile =
         value.profileText !== initialValues.profileText ||
         value.styleText !== initialValues.styleText ||
         value.templateText !== initialValues.templateText;
-      const shouldUpdateSettings =
-        section === "preferences" && settings !== undefined && value.locationFilter !== settings.locationFilter;
-      const [profileResponse, settingsResponse] = await Promise.all([
-        shouldUpdateProfile ? updateProfile.mutateAsync(toUpdateRequest(value)) : Promise.resolve(initial),
-        shouldUpdateSettings
-          ? updateSettings.mutateAsync({ locationFilter: value.locationFilter })
-          : Promise.resolve(undefined),
-      ]);
+      const profileResponse = shouldUpdateProfile
+        ? await updateProfile.mutateAsync(toUpdateRequest(value))
+        : initial;
       if (serializeProfileValues(formApi.state.values) === submittedValues) {
-        formApi.reset(toProfileFormValues(profileResponse, settingsResponse?.settings ?? settings));
+        formApi.reset(toProfileFormValues(profileResponse));
         setStatusMessage(savedMessage);
       } else {
         setStatusMessage("saved; newer changes pending");
@@ -148,9 +133,9 @@ export function ProfileForm({ initial, section = "profile", settings }: ProfileF
     if (form.state.isDirty || form.state.isSubmitting) {
       return;
     }
-    form.reset(toProfileFormValues(initial, settings));
+    form.reset(toProfileFormValues(initial));
     setResetToken((token) => token + 1);
-  }, [form, initial, settings]);
+  }, [form, initial]);
 
   return (
     <form
@@ -162,7 +147,7 @@ export function ProfileForm({ initial, section = "profile", settings }: ProfileF
       }}
       onReset={(event) => {
         event.preventDefault();
-        form.reset(toProfileFormValues(initial, settings));
+        form.reset(toProfileFormValues(initial));
         setResetToken((token) => token + 1);
         setStatusMessage("");
       }}
@@ -217,29 +202,13 @@ export function ProfileForm({ initial, section = "profile", settings }: ProfileF
         {(profileField) => (
           <form.Field name="styleText">
             {(styleField) => (
-              <form.Field name="locationFilter">
-                {(locationFilterField) => (
-                  <StructuredProfileEditor
-                    applicationConfigurationFields={
-                      section === "preferences" && settings ? (
-                        <label className="field">
-                          <span>Location filter</span>
-                          <input
-                            value={locationFilterField.state.value}
-                            onBlur={locationFilterField.handleBlur}
-                            onChange={(event) => locationFilterField.handleChange(event.target.value)}
-                          />
-                        </label>
-                      ) : null
-                    }
-                    mode={section}
-                    profileText={profileField.state.value}
-                    styleText={styleField.state.value}
-                    onProfileTextChange={(value) => profileField.handleChange(value)}
-                    onStyleTextChange={(value) => styleField.handleChange(value)}
-                  />
-                )}
-              </form.Field>
+              <StructuredProfileEditor
+                mode={section}
+                profileText={profileField.state.value}
+                styleText={styleField.state.value}
+                onProfileTextChange={(value) => profileField.handleChange(value)}
+                onStyleTextChange={(value) => styleField.handleChange(value)}
+              />
             )}
           </form.Field>
         )}
@@ -253,8 +222,8 @@ export function ProfileForm({ initial, section = "profile", settings }: ProfileF
           return message ? <div className="banner inline">{message}</div> : null;
         }}
       </form.Subscribe>
-      {updateProfile.error || updateSettings.error ? (
-        <div className="banner inline">{(updateProfile.error ?? updateSettings.error)?.message}</div>
+      {updateProfile.error ? (
+        <div className="banner inline">{updateProfile.error.message}</div>
       ) : null}
       {!form.state.values.profileText && !form.state.values.styleText ? (
         <Empty title="Loading profile." />

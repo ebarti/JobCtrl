@@ -8,7 +8,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -313,6 +313,12 @@ DEFAULT_DISCOVERY_SEARCH_CONFIG: dict = {
     "location": {"accept_patterns": ["Remote"], "reject_patterns": []},
     "scheduling_enabled": False,
     "schedule_cron": "0 7 * * *",
+    "role_filter": {"mode": "auto", "model": None},
+    "max_parallel_families": 1,
+    "crawl_user_agent": {
+        "product": "JobCtrl",
+        "contact": "https://github.com/ebarti/JobCtrl",
+    },
 }
 
 # Contact & Outreach follow-up reminders (R6 Phase 4). Default-OFF, mirroring
@@ -499,7 +505,51 @@ def load_search_config() -> dict:
     search_cfg = _load_discovery_search_config_from_db()
     if search_cfg is None:
         search_cfg = _default_discovery_search_config()
-    return _apply_profile_target_search(search_cfg)
+    return effective_discovery_search_config(_apply_profile_target_search(search_cfg))
+
+
+def effective_discovery_search_config(
+    search_cfg: Mapping[str, object] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> dict:
+    """Apply launch-environment precedence to persisted discovery settings."""
+    source = env if env is not None else os.environ
+    effective = json.loads(json.dumps(dict(search_cfg or _default_discovery_search_config())))
+
+    role_filter = dict(effective.get("role_filter") or {})
+    if "JOBCTRL_DISCOVERY_LLM_ROLE_FILTER" in source:
+        role_filter["mode"] = _role_filter_mode(source.get("JOBCTRL_DISCOVERY_LLM_ROLE_FILTER"))
+    else:
+        role_filter["mode"] = _role_filter_mode(role_filter.get("mode"))
+    if "JOBCTRL_DISCOVERY_ROLE_FILTER_MODEL" in source:
+        role_filter["model"] = source.get("JOBCTRL_DISCOVERY_ROLE_FILTER_MODEL", "").strip() or None
+    effective["role_filter"] = role_filter
+
+    raw_parallel = source.get("JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES", "").strip()
+    if raw_parallel:
+        effective["max_parallel_families"] = min(4, max(1, _positive_int(raw_parallel) or 1))
+    else:
+        effective["max_parallel_families"] = min(
+            4,
+            max(1, _positive_int(effective.get("max_parallel_families")) or 1),
+        )
+
+    crawl_user_agent = dict(effective.get("crawl_user_agent") or {})
+    if "JOBCTRL_CRAWL_UA_PRODUCT" in source:
+        crawl_user_agent["product"] = source.get("JOBCTRL_CRAWL_UA_PRODUCT", "").strip() or "JobCtrl"
+    if "JOBCTRL_CRAWL_UA_CONTACT" in source:
+        crawl_user_agent["contact"] = source.get("JOBCTRL_CRAWL_UA_CONTACT", "").strip()
+    effective["crawl_user_agent"] = crawl_user_agent
+    return effective
+
+
+def _role_filter_mode(value: object) -> str:
+    normalized = str(value or "auto").strip().lower()
+    if normalized in {"deterministic", "0", "false", "no", "off", "disabled"}:
+        return "deterministic"
+    if normalized in {"llm", "1", "true", "yes", "on", "enabled"}:
+        return "llm"
+    return "auto"
 
 
 def load_discovery_schedule_settings() -> tuple[bool, str]:
@@ -800,7 +850,7 @@ def _country_location_accepts(country_key: str, fallback: str) -> list[str]:
 
 def _load_profile_target_search() -> dict[str, list[str]]:
     if not DB_PATH.exists():
-        return _empty_target_search()
+        return _target_search_with_legacy_dashboard()
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -809,7 +859,7 @@ def _load_profile_target_search() -> dict[str, list[str]]:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'candidate_profiles'"
         ).fetchone()
         if table is None:
-            return _empty_target_search()
+            return _target_search_with_legacy_dashboard()
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()}
         row = conn.execute(
             f"""
@@ -827,20 +877,22 @@ def _load_profile_target_search() -> dict[str, list[str]]:
             (str(LOCAL_TENANT), "default"),
         ).fetchone()
         if row is None:
-            return _empty_target_search()
+            return _target_search_with_legacy_dashboard()
+        legacy = _load_legacy_dashboard_target_search()
+        roles = _split_target_text(row["experience_target_role"]) or legacy["roles"]
         locations = _split_target_text(row["experience_target_locations"])
         return {
-            "roles": _split_target_text(row["experience_target_role"]),
+            "roles": roles,
             "tracks": _split_target_text(row["experience_target_track"]),
             "seniority": _split_target_text(row["experience_target_seniority_floor"]),
             "functions": _split_target_text(row["experience_target_functions"]),
             "specializations": _split_target_text(row["experience_target_specializations"]),
-            "locations": locations or _profile_home_location(row),
+            "locations": locations or legacy["locations"] or _profile_home_location(row),
             "work_models": _split_target_text(row["experience_target_work_models"]),
         }
     except Exception:
         log.debug("Failed to load profile target-search preferences", exc_info=True)
-        return _empty_target_search()
+        return _target_search_with_legacy_dashboard()
     finally:
         if conn is not None:
             conn.close()
@@ -855,6 +907,29 @@ def _empty_target_search() -> dict[str, list[str]]:
         "specializations": [],
         "locations": [],
         "work_models": [],
+    }
+
+
+def _target_search_with_legacy_dashboard() -> dict[str, list[str]]:
+    target = _empty_target_search()
+    target.update(_load_legacy_dashboard_target_search())
+    return target
+
+
+def _load_legacy_dashboard_target_search() -> dict[str, list[str]]:
+    configured = os.environ.get("JOBCTRL_DASHBOARD_CONFIG_PATH", "").strip()
+    path = Path(configured).expanduser() if configured else APP_DIR / "dashboard.json"
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    return {
+        "roles": _split_target_text(parsed.get("target_role") or parsed.get("targetRole")),
+        "locations": _split_target_text(
+            parsed.get("location_filter") or parsed.get("locationFilter")
+        ),
     }
 
 

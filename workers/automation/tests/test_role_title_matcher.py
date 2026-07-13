@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from jobctrl.discovery import role_title_matcher
 from jobctrl.discovery.role_title_matcher import RoleTitleMatcher
 from jobctrl.domain.ports.llm import LlmMessage
 
@@ -94,3 +95,22 @@ def test_role_title_matcher_fails_closed_when_provider_returns_invalid_json() ->
         query="Engineering Manager",
         match_mode="recall",
     )
+
+
+def test_default_matcher_rebuilds_when_effective_mode_or_model_changes(monkeypatch) -> None:
+    llm = _FakeLlm({"is_match": True, "confidence": "high"})
+    monkeypatch.setattr(role_title_matcher, "get_llm_adapter", lambda: llm)
+    role_title_matcher.reset_default_role_title_matcher()
+
+    first = role_title_matcher.default_role_title_matcher({
+        "role_filter": {"mode": "llm", "model": "provider:first"}
+    })
+    second = role_title_matcher.default_role_title_matcher({
+        "role_filter": {"mode": "llm", "model": "provider:second"}
+    })
+
+    assert first is not None
+    assert second is not None
+    assert first is not second
+    assert first._model == "provider:first"
+    assert second._model == "provider:second"

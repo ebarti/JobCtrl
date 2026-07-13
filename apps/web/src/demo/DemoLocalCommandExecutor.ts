@@ -196,7 +196,14 @@ export class DemoLocalCommandExecutor {
         return { ok: true, state: digest.state };
       }
       case "updateDiscoverySettings": {
-        Object.assign(draft.state.readModel.discovery.settings.settings, record(args[0]));
+        const body = record(args[0]);
+        Object.assign(draft.state.readModel.discovery.settings.settings, body);
+        for (const [field, value] of Object.entries(body)) {
+          const metadata = draft.state.readModel.discovery.settings.effectiveSettings[
+            field as keyof typeof draft.state.readModel.discovery.settings.effectiveSettings
+          ];
+          if (metadata?.editable) Object.assign(metadata, { value, source: "persisted" });
+        }
         return draft.state.readModel.discovery.settings;
       }
       case "upsertDiscoverySource": {
