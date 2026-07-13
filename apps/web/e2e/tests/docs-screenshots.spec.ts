@@ -109,6 +109,11 @@ async function verifyProfileFraming(page: Page): Promise<void> {
   const preview = page.locator(".resume-editor-preview");
   const resumePage = page.locator('[aria-label="Editable baseline resume page"]');
   const scrollPane = page.locator(".profile-resume-plate-editor .resume-plate-scroll");
+  await expect(page.getByLabel("Full name", { exact: true })).toHaveValue("John Doe");
+  await expect(page.getByLabel("Preferred name", { exact: true })).toHaveValue("John");
+  await expect(page.getByLabel("Email", { exact: true })).toHaveValue("john.doe@example.com");
+  await expect(resumePage).toContainText("John Doe");
+  await expect(resumePage).toContainText("john.doe@example.com");
   const [previewBox, resumePageBox, scrollMetrics] = await Promise.all([
     preview.boundingBox(),
     resumePage.boundingBox(),
