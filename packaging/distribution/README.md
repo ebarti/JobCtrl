@@ -120,8 +120,8 @@ SHA equal to that audited tag's current-main commit; every release environment
 admits protected `v*` tags and no branches. The path separates
 `release-signing` (the Ed25519 private key, Developer
 ID certificate, and notary credentials) from `release-publication`
-(release-origin upload and GitHub/tap side effects). It builds the full release
-ID from the exact 40-character audited commit,
+(bucket-scoped Cloudflare R2 upload and GitHub/tap side effects). It builds the
+full release ID from the exact 40-character audited commit,
 uploads ZIP, native installer, pinned `install.sh`, signed descriptor, and
 signature under `v1/artifacts/<build-id>/`, then runs the native lifecycle and
 Homebrew audit/install/test from those immutable URLs. A formula therefore pins
@@ -133,8 +133,9 @@ the paired immutable descriptor and signature URLs/digests plus the signed
 descriptor's channel, platform, source commit, build ID, and sequence. The
 native installer must fetch the pair, verify both digests, then verify the
 descriptor with its compiled Ed25519 key; it must reject a pointer whose fields
-do not exactly match the fetched signed descriptor. The release origin must
-honour HTTP `If-Match` and `If-None-Match: *` on this pointer path. A rerun
+do not exactly match the fetched signed descriptor. The publication jobs write
+through the R2 S3 API with `If-Match` and `If-None-Match: *`, while public
+readback and checksum verification use `https://releases.jobctrl.dev`. A rerun
 accepts an exact pointer already present, otherwise rejects a changed pointer
 instead of overwriting it. Rollback is a new explicitly revoking release, not
 an untracked pointer overwrite. Release runs are serialized per

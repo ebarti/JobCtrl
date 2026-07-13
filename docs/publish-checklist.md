@@ -229,14 +229,18 @@ exactly matches the independently protected verification value.
   dependencies and both unsigned comparison builds have passed; it performs no
   package installation and runs only the sealed finalizer plus system signing
   and notarization tools.
-- `release-publication`: `JOBCTRL_RELEASE_UPLOAD_BASE_URL`,
-  `JOBCTRL_RELEASE_ADMIN_READ_TOKEN` (a fine-grained token with repository
-  Administration read access), and `HOMEBREW_TAP_DEPLOY_KEY`. Keep all three
-  as environment secrets; the reusable Homebrew workflow resolves the tap key
-  only inside its `publish` job after the environment approval, rather than
-  accepting it through `workflow_call`. Require a separate owner approval. Its release origin
-  must support TLS, read-after-write verification, and conditional `PUT`
-  (`If-Match` / `If-None-Match: *`) for the one channel-pointer object.
+- `release-publication`: environment secrets `JOBCTRL_R2_ACCESS_KEY_ID`,
+  `JOBCTRL_R2_SECRET_ACCESS_KEY`, `JOBCTRL_RELEASE_ADMIN_READ_TOKEN` (a
+  fine-grained token with repository Administration read access), and
+  `HOMEBREW_TAP_DEPLOY_KEY`; plus protected environment variables
+  `JOBCTRL_R2_ACCOUNT_ID` and `JOBCTRL_R2_BUCKET`. The R2 access key must have
+  Object Read & Write permission scoped only to the release bucket. Keep the
+  credentials as environment secrets; the reusable Homebrew workflow resolves
+  the tap key only inside its `publish` job after the environment approval,
+  rather than accepting it through `workflow_call`. Require a separate owner
+  approval. Publication writes directly to the configured R2 S3 endpoint with
+  conditional `PutObject` (`If-Match` / `If-None-Match: *`), then verifies the
+  resulting bytes through `https://releases.jobctrl.dev`.
 - `release-verification`: protected environment variables
   `JOBCTRL_RELEASE_PUBLIC_KEY` and `JOBCTRL_RELEASE_KEY_ID`, the non-secret but
   integrity-sensitive release trust anchor. Require an owner approval. The
@@ -268,16 +272,16 @@ post-lock verifies the immutable GitHub Release after pointer and tap
 publication; only the stable channel can then enter the clean two-builder PyPI
 lane.
 
-**Current external blockers.** No protected Apple signing/notarization
-credentials or release-publication origin are configured, and the canonical
-origin currently fails its TLS handshake. The repository immutable-Releases
-API currently reports `enabled=false`; the owner must enable immutable
-Releases and provision `JOBCTRL_RELEASE_ADMIN_READ_TOKEN` before the workflow
-can create or publish a draft. GitHub Actions jobs are also zero-step blocked
-by the repository account billing/spending state. Therefore this workflow is
-prepared but cannot produce a signed, notarized, published candidate yet; no
-user-facing curl or Homebrew stable-install claim may be made until the hosted
-path has completed.
+**Current hosted-release status.** The `jobctrl-releases` R2 bucket,
+`https://releases.jobctrl.dev` custom domain, and repository immutable Releases
+are provisioned. The `release-publication` R2 credentials, administration-read
+token, Homebrew deploy key, account ID, and bucket are configured. GitHub
+currently rejects required-reviewer and tag-policy protection for this private
+repository under its billing/plan state, and Actions jobs are zero-step blocked
+by the same account state. Restore billing/plan access, configure the required
+owner approval plus `v*`-tag-only deployment policy, and complete the first
+live signed-release verification. No user-facing curl or Homebrew
+stable-install claim may be made until those hosted gates have completed.
 
 ### 9.5 — Homebrew tap publication (signed-release-gated)
 
