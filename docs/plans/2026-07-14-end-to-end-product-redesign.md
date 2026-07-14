@@ -366,8 +366,10 @@ while the final QA gate runs only on the assembled stack tip.
 - Rebase/merge the stack into one integration tip.
 - Remove superseded CSS and unreachable compatibility markup only after parity
   proves it dead.
-- Update user screenshots and the product tour.
-- Run the complete gate in §11, fix findings, and publish final evidence.
+- Complete the product documentation, user screenshots, and product tour on
+  the assembled implementation.
+- Only after the documentation pass is complete, run the complete gate in
+  §12, fix findings, and publish final evidence.
 
 Implementation branches should be based on the preceding stack branch until
 lower PRs merge. Each PR body must name its base and successor.
@@ -385,14 +387,32 @@ lower PRs merge. Each PR body must name its base and successor.
 6. Add the post-redesign manifest assertion and state stories.
 7. Do not run route-by-route browser QA yet; assemble the full redesign first.
 
-## 11. Final QA and review gate
+## 11. Documentation changes at cutover
 
-Per the owner's instruction, full browser QA begins only after PRs 1–4 are
-assembled on the integration tip. Unit/component/type tests may be authored
-during implementation, but the complete gate is intentionally deferred until
-the whole redesign can be evaluated as one system.
+This is the final implementation pass on the integrated stack tip. Product
+documentation is not updated piecemeal on lower implementation branches.
 
-### 11.1 Static and component gates
+- Regenerate the synthetic product screenshots and update
+  `docs/user/screenshots.md`.
+- Update `README.md` only if the visible product tour or behavior wording is no
+  longer accurate.
+- Update `docs/user/candidate-profile.md`,
+  `docs/user/materials-and-tailoring.md`, and `docs/user/configuration.md` for
+  relocated settings/help links, without duplicating concept ownership.
+- Update `docs/local-reliability-qa.md` and the browser/frontend QA guides with
+  the semantic parity manifest and complete-route sweep.
+- Move this plan to `docs/plans/implemented/` only after the implementation
+  stack and final QA gate are complete.
+
+## 12. Final QA and review gate
+
+Per the owner's instruction, full QA begins only after PRs 1–4 are assembled
+on the integration tip **and** the final documentation and screenshot pass in
+§11 is complete. Unit/component/type tests may be authored during
+implementation, but the complete gate is intentionally deferred until the
+whole redesign and its documentation can be evaluated as one system.
+
+### 12.1 Static and component gates
 
 ```bash
 corepack pnpm check
@@ -405,7 +425,7 @@ corepack pnpm web:storybook:test
 git diff --check
 ```
 
-### 11.2 Browser and product-path gate
+### 12.2 Browser and product-path gate
 
 - Run every existing web E2E spec, including token foundation, route visual QA,
   settings, profile edit/import, jobs drawer, Apply Review, materials, artifact
@@ -422,25 +442,11 @@ git diff --check
 - Verify the semantic parity manifest for every surface in §7.
 - Confirm browser console errors/warnings are empty for the route sweep.
 
-### 11.3 Human-gate loops
+### 12.3 Human-gate loops
 
 - `pr-reviewer` must return `Gate: PASS` with no Blocker or High findings.
 - `qa` must return `Gate: PASS` with no Blocker or High findings.
 - Medium/Low findings are fixed or listed explicitly in the final PR body.
-
-## 12. Documentation changes at cutover
-
-- Regenerate the synthetic product screenshots and update
-  `docs/user/screenshots.md`.
-- Update `README.md` only if the visible product tour or behavior wording is no
-  longer accurate.
-- Update `docs/user/candidate-profile.md`,
-  `docs/user/materials-and-tailoring.md`, and `docs/user/configuration.md` for
-  relocated settings/help links, without duplicating concept ownership.
-- Update `docs/local-reliability-qa.md` and the browser/frontend QA guides with
-  the semantic parity manifest and complete-route sweep.
-- Move this plan to `docs/plans/implemented/` only after the implementation
-  stack and final QA gate are complete.
 
 ## 13. Risks and mitigations
 
