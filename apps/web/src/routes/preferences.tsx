@@ -21,13 +21,13 @@ export const Route = createFileRoute("/preferences")({
 
 function PreferencesEditor() {
   return (
-    <>
+    <div className="route-page route-page--preferences">
       <PageHead
         eyebrow="Setup"
         title="Preferences"
         subtitle="Search targets, tailoring, and apply configuration"
       />
       <ProfileEditor section="preferences" />
-    </>
+    </div>
   );
 }

@@ -9,9 +9,9 @@ export const Route = createFileRoute("/settings/browser")({
 
 function BrowserSettingsRoute() {
   return (
-    <>
+    <div className="settings-browser-sections">
       <BrowserCapabilitiesPanel />
       <ExtensionPairingPanel />
-    </>
+    </div>
   );
 }

@@ -163,6 +163,48 @@ describe("<StructuredProfileEditor>", () => {
 
     expect(screen.queryByLabelText("AI may reframe experience titles")).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Change experience titles" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Change experience titles" })).toHaveAccessibleDescription(
+      "Experience titles stay grounded in profile evidence.",
+    );
+  });
+
+  it("uses disclosure sections and keeps tailoring controls mounted across tab changes", () => {
+    let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
+    render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
+
+    expect(screen.getByRole("heading", { name: "Application configurations", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Tailoring controls", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Resume style", level: 2 })).toBeInTheDocument();
+
+    const tabs = screen.getByRole("tablist", { name: "Tailoring control sections" });
+    expect(tabs).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Content rules" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Writing style" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Quality gates" })).toBeInTheDocument();
+
+    const guidance = screen.getByLabelText("Additional guidance");
+    expect(guidance.closest('[role="tabpanel"]')).toHaveAttribute("data-state", "inactive");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Writing style" }));
+    expect(screen.getByLabelText("Additional guidance")).toBe(guidance);
+    fireEvent.change(guidance, { target: { value: "Keep outcomes specific." } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Quality gates" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Writing style" }));
+
+    expect(screen.getByLabelText("Additional guidance")).toBe(guidance);
+    expect(screen.getByLabelText("Additional guidance")).toHaveValue("Keep outcomes specific.");
+    expect(JSON.parse(latestProfile).resume.tailoring_rules.custom_tailoring_prompt).toBe(
+      "Keep outcomes specific.",
+    );
+    expect(screen.getByText("Tailoring inputs").closest("a")).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/architecture/tailoring#inputs-to-tailoring",
+    );
+    expect(screen.getByText("Post-generation fit gate").closest("a")).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/architecture/tailoring#6-post-generation-fit-gate",
+    );
   });
 
   it("labels keyword density as advisory emphasis and edits revision gates", () => {
@@ -198,11 +240,78 @@ describe("<StructuredProfileEditor>", () => {
   });
 
   it("keeps required content pins configurable from the Profile editor", () => {
-    render(<StatefulEditor />);
+    let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
+    render(<StatefulEditor onLatestProfile={(value) => { latestProfile = value; }} />);
 
     expect(screen.getByRole("heading", { name: "Experience entries" })).toBeInTheDocument();
     expect(screen.getAllByText("must appear in final resume").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Required").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "must appear in final resume" }));
+    expect(
+      JSON.parse(latestProfile).resume.tailoring_rules.required_experience_entry_ids,
+    ).toEqual(["exp-1"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "add bullet" }));
+    expect(screen.getByLabelText("Bullet 3")).toBeInTheDocument();
+    expect(JSON.parse(latestProfile).resume.experience_entries[0].bullets).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove bullet 3" }));
+    expect(screen.queryByLabelText("Bullet 3")).not.toBeInTheDocument();
+    expect(JSON.parse(latestProfile).resume.experience_entries[0].bullets).toHaveLength(2);
+  });
+
+  it("groups Profile fields in keyboard-operable disclosures without unmounting collapsed editors", () => {
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.resume.education_entries = [
+      {
+        id: "education-1",
+        date: "2020-06",
+        degree: "BSc Computer Science",
+        institution: "Example University",
+        location: "Barcelona",
+      },
+    ];
+    initialProfile.resume.skill_categories = [
+      {
+        id: "skills-1",
+        label: "Platform engineering",
+        items: ["TypeScript"],
+      },
+    ];
+    initialProfile.eeo_voluntary = {
+      gender: "Prefer not to say",
+      race_ethnicity: "Prefer not to say",
+      veteran_status: "Prefer not to say",
+      disability_status: "Prefer not to say",
+    };
+
+    render(<StatefulEditor initialProfile={initialProfile} />);
+
+    const personalTrigger = screen.getByRole("button", { name: /^Personal information/ });
+    const baselineTrigger = screen.getByRole("button", { name: /^Resume baseline/ });
+    const experienceTrigger = screen.getByRole("button", { name: /^Experience entries/ });
+    const educationTrigger = screen.getByRole("button", { name: /^Education/ });
+    const skillsTrigger = screen.getByRole("button", { name: /^Skill categories/ });
+    const eeoTrigger = screen.getByRole("button", { name: /^Voluntary EEO/ });
+
+    expect(personalTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(baselineTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(experienceTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(educationTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(skillsTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(eeoTrigger).toHaveAttribute("aria-expanded", "false");
+
+    const degreeField = screen.getByLabelText("Degree");
+    expect(degreeField.closest("[hidden]")).toBeInTheDocument();
+
+    educationTrigger.focus();
+    expect(educationTrigger).toHaveFocus();
+    fireEvent.click(educationTrigger);
+
+    expect(educationTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Degree")).toBe(degreeField);
+    expect(degreeField.closest("[hidden]")).not.toBeInTheDocument();
   });
 
   it("renders bullet standards as a combined fixed set", () => {
@@ -213,6 +322,13 @@ describe("<StructuredProfileEditor>", () => {
     expect(screen.getByRole("checkbox", { name: "Impact" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Technical depth" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Leadership" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Impact" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Technical depth" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Leadership" })).toBeDisabled();
+    expect(screen.getByText("What these mean").closest("a")).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/architecture/tailoring#inputs-to-tailoring",
+    );
   });
 
   it("preserves extracted achievement evidence without exposing it as profile input", () => {

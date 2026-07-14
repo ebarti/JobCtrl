@@ -8,6 +8,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import type { ProfileConfigResponse } from "../../operations/types.js";
+import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
@@ -98,8 +99,8 @@ export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) 
   const [resetToken, setResetToken] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
   const isProfileSection = section === "profile";
-  const saveLabel = section === "target-search" ? "save discovery settings" : "save all";
-  const discardLabel = section === "target-search" ? "discard changes" : "discard all";
+  const saveLabel = section === "target-search" ? "Save discovery settings" : "Save all";
+  const discardLabel = section === "target-search" ? "Discard changes" : "Discard all";
   const savedMessage =
     section === "profile" ? "profile saved" : section === "target-search" ? "discovery settings saved" : "preferences saved";
 
@@ -177,24 +178,25 @@ export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) 
         {({ isDirty, isSubmitting }) => (
           <div className="editor-bulk-actions">
             {isProfileSection ? (
-              <Link className="tab on" to="/profile/import/upload">
-                import resume
-              </Link>
+              <Button asChild size="sm" variant="outline">
+                <Link to="/profile/import/upload">Import resume</Link>
+              </Button>
             ) : null}
-            <button
-              className="tab on"
+            <Button
+              size="sm"
               type="submit"
               disabled={!isDirty || isSubmitting}
             >
-              {isSubmitting ? "saving" : saveLabel}
-            </button>
-            <button
-              className="tab"
+              {isSubmitting ? "Saving…" : saveLabel}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
               type="reset"
               disabled={!isDirty || isSubmitting}
             >
               {discardLabel}
-            </button>
+            </Button>
           </div>
         )}
       </form.Subscribe>

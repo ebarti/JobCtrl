@@ -8,6 +8,17 @@ import { JobCtrlApiError } from "@jobctrl/api-client";
 import { useForm } from "@tanstack/react-form";
 import { useEffect, useState } from "react";
 
+import {
+  AdaptiveFieldGrid,
+  AdaptiveFieldSpan,
+} from "../../../shared/ui/adaptive-field-grid.js";
+import { Button } from "../../../shared/ui/button.js";
+import {
+  Field,
+  FieldDescription,
+  FieldLabel,
+} from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import { useDeleteCredentialMutation } from "../hooks/useDeleteCredentialMutation.js";
 import { useUpdateCredentialMutation } from "../hooks/useUpdateCredentialMutation.js";
 
@@ -109,108 +120,133 @@ export function CredentialForm({
   const mutationErrorMessage = credentialMutationErrorMessage(mutationError);
   const inputId = `credential-${credentialKey.toLowerCase()}`;
   const credentialDescriptionId = `${inputId}-description`;
+  const credentialStatus = environmentManaged
+    ? "Managed by environment"
+    : unsupportedPlatform
+      ? "Environment only"
+      : inspectionUnknown
+        ? "Unable to check"
+        : configured === true
+          ? "Stored in Keychain"
+          : "Not in Keychain";
+  const disabledReason = environmentManaged
+    ? "Managed by the launch environment."
+    : unsupportedPlatform
+      ? "Use environment configuration on this platform."
+      : inspectionUnknown
+        ? "Keychain inspection is unavailable."
+        : !available
+          ? "Keychain edits are paused until inspection succeeds."
+          : editable === false
+            ? "This credential is read-only."
+            : null;
   const describedBy = [
     credentialDescriptionId,
     !canEditKeychain ? unavailableDescriptionId : undefined,
   ].filter((value): value is string => value !== undefined).join(" ");
   return (
     <form
-      className="credential-row-form"
+      className="credential-form"
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
         void form.handleSubmit();
       }}
     >
-      <span className={`tag ${configured === true ? "ok" : "muted"}`}>
-        {environmentManaged
-          ? "managed by environment"
-          : unsupportedPlatform
-          ? "environment only"
-          : inspectionUnknown
-            ? "unable to check"
-            : configured === true
-              ? "stored in Keychain"
-              : "not in Keychain"}
-      </span>
-      <label className="title-stack" htmlFor={inputId}>
-        <b>{label}</b>
-      </label>
-      <span id={credentialDescriptionId}>{credentialKey}</span>
-      <form.Field name="value">
-        {(field) => (
-          <input
-            id={inputId}
-            name={credentialKey}
-            aria-describedby={describedBy}
-            disabled={!canEditKeychain}
-            placeholder={
-              environmentManaged
-                ? "Managed by launch environment"
-                : unsupportedPlatform
-                ? "Use environment configuration on this platform"
-                : inspectionUnknown
-                  ? "Keychain inspection unavailable"
-                  : !available
-                    ? "Keychain edits paused until inspection succeeds"
-                    : configured === true
-                      ? "Stored in Keychain"
-                      : "Paste value to store in Keychain"
-            }
-            type="password"
-            value={field.state.value}
-            onBlur={field.handleBlur}
-            onChange={(event) => field.handleChange(event.target.value)}
-          />
-        )}
-      </form.Field>
-      <span className="row-actions">
-        <form.Subscribe
-          selector={(state) => ({
-            canSubmit: state.canSubmit,
-            isSubmitting: state.isSubmitting,
-            isDirty: state.isDirty,
-          })}
-        >
-          {({ canSubmit, isSubmitting, isDirty }) => (
-            <button
-              className="tab on"
-              type="submit"
-              disabled={
-                !canEditKeychain ||
-                !canSubmit ||
-                !isDirty ||
-                isSubmitting ||
-                removing
-              }
-            >
-              {isSubmitting ? "saving" : "save"}
-            </button>
+      <AdaptiveFieldGrid
+        className="credential-form__grid"
+        columns={2}
+        density="compact"
+        minColumnWidth={240}
+      >
+        <form.Field name="value">
+          {(field) => (
+            <Field className="credential-form__field" data-disabled={!canEditKeychain || undefined}>
+              <FieldLabel htmlFor={inputId}>{label}</FieldLabel>
+              <Input
+                id={inputId}
+                name={credentialKey}
+                aria-describedby={describedBy}
+                disabled={!canEditKeychain}
+                placeholder={
+                  environmentManaged
+                    ? "Managed by launch environment"
+                    : unsupportedPlatform
+                      ? "Use environment configuration on this platform"
+                      : inspectionUnknown
+                        ? "Keychain inspection unavailable"
+                        : !available
+                          ? "Keychain edits paused until inspection succeeds"
+                          : configured === true
+                            ? "Stored in Keychain"
+                            : "Paste value to store in Keychain"
+                }
+                type="password"
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(event) => field.handleChange(event.target.value)}
+              />
+              <FieldDescription id={credentialDescriptionId}>
+                <span className="credential-form__key">{credentialKey}</span>
+                <span className="credential-form__status">{credentialStatus}</span>
+                {disabledReason ? (
+                  <span className="credential-form__disabled-reason">{disabledReason}</span>
+                ) : null}
+              </FieldDescription>
+            </Field>
           )}
-        </form.Subscribe>
-        <button
-          className="tab"
-          type="button"
-          disabled={!canEditKeychain || configured !== true || removing}
-          onClick={removeCredential}
-        >
-          {removing ? "removing" : "remove"}
-        </button>
-      </span>
-      {statusMessage ? (
-        <span className="status-line" role="status">
-          {statusMessage}
-        </span>
-      ) : null}
-      {mutationErrorMessage ? (
-        <span
-          aria-label="Keychain update failed"
-          className="status-line warning"
-          role="alert"
-        >
-          {mutationErrorMessage}
-        </span>
-      ) : null}
+        </form.Field>
+        <AdaptiveFieldSpan className="credential-form__footer" span="full">
+          <div className="credential-form__actions">
+            <form.Subscribe
+              selector={(state) => ({
+                canSubmit: state.canSubmit,
+                isSubmitting: state.isSubmitting,
+                isDirty: state.isDirty,
+              })}
+            >
+              {({ canSubmit, isSubmitting, isDirty }) => (
+                <Button
+                  disabled={
+                    !canEditKeychain ||
+                    !canSubmit ||
+                    !isDirty ||
+                    isSubmitting ||
+                    removing
+                  }
+                  size="sm"
+                  type="submit"
+                >
+                  {isSubmitting ? "Saving…" : "Save"}
+                </Button>
+              )}
+            </form.Subscribe>
+            <Button
+              disabled={!canEditKeychain || configured !== true || removing}
+              size="sm"
+              type="button"
+              variant="outline"
+              onClick={removeCredential}
+            >
+              {removing ? "Removing…" : "Remove"}
+            </Button>
+          </div>
+          {statusMessage ? (
+            <span className="status-line" role="status">
+              {statusMessage}
+            </span>
+          ) : null}
+          {mutationErrorMessage ? (
+            <span
+              aria-label="Keychain update failed"
+              className="status-line warning"
+              role="alert"
+            >
+              {mutationErrorMessage}
+            </span>
+          ) : null}
+        </AdaptiveFieldSpan>
+      </AdaptiveFieldGrid>
     </form>
   );
 }

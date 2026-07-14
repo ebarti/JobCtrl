@@ -11,11 +11,11 @@ export const Route = createFileRoute("/settings/")({
 
 function SettingsIndexRoute() {
   return (
-    <>
+    <div className="settings-general-sections grid gap-4">
       <SettingsPanel />
       <ApplyRuntimeSettingsPanel />
       <ScoringGuidancePanel />
       <CompensationSourcePolicyPanel />
-    </>
+    </div>
   );
 }

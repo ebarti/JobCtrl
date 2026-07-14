@@ -1,9 +1,12 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useForm } from "@tanstack/react-form";
+import { IconFileTypePdf } from "@tabler/icons-react";
 import { useState } from "react";
 import { z } from "zod";
 
 import { fileToBase64 } from "../../../shared/lib/file.js";
+import { Button } from "../../../shared/ui/button.js";
+import { Input } from "../../../shared/ui/input.js";
 import { useProfileImportStore } from "../stores/profile-import-store.js";
 
 interface UploadFormValues {
@@ -63,32 +66,46 @@ export function ImportUploadForm() {
 
   return (
     <form
-      className="wizard-step"
+      className="wizard-step resume-import-step resume-import-upload grid gap-4"
+      aria-busy={reading}
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
         void form.handleSubmit();
       }}
     >
-      {readError ? <div className="banner inline">{readError}</div> : null}
+      {readError ? <div className="banner inline" role="alert">{readError}</div> : null}
       <form.Field name="filename">
         {(field) => (
-          <label className="import-target">
-            <span className="import-icon">PDF</span>
-            <span>
-              <b>Resume PDF</b>
-              <small>{field.state.value || "No file selected"}</small>
+          <label className="import-target resume-import-upload__target">
+            <span className="import-icon" aria-hidden="true">
+              <IconFileTypePdf size={24} stroke={1.7} />
             </span>
-            <input
+            <span className="min-w-0">
+              <b>Resume PDF</b>
+              <small className="break-all">{field.state.value || "No file selected"}</small>
+            </span>
+            <Input
+              className="resume-import-upload__input"
               aria-label="Resume PDF"
+              name="resumePdf"
               type="file"
               accept="application/pdf"
               onChange={(event) => void handleFile(event.target.files?.[0] ?? null)}
             />
-            <em>{reading ? "reading..." : "choose file"}</em>
+            <em>{reading ? "Reading…" : "Choose file"}</em>
           </label>
         )}
       </form.Field>
+      <form.Subscribe selector={(state) => state.errors}>
+        {(errors) => {
+          const message = errors
+            .flat()
+            .filter((entry): entry is string => typeof entry === "string")
+            .at(0);
+          return message ? <div className="banner inline" role="alert">{message}</div> : null;
+        }}
+      </form.Subscribe>
       <form.Subscribe
         selector={(state) => ({
           canSubmit: state.canSubmit,
@@ -96,17 +113,16 @@ export function ImportUploadForm() {
         })}
       >
         {({ canSubmit, isSubmitting }) => (
-          <div className="form-actions">
-            <button
+          <div className="form-actions resume-import-actions justify-end">
+            <Button asChild variant="outline">
+              <Link to="/profile">Cancel</Link>
+            </Button>
+            <Button
               type="submit"
-              className="tab on"
               disabled={!canSubmit || isSubmitting || reading}
             >
-              next
-            </button>
-            <Link className="tab" to="/profile">
-              cancel
-            </Link>
+              Next
+            </Button>
           </div>
         )}
       </form.Subscribe>

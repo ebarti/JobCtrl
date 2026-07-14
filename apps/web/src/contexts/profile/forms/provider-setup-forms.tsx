@@ -7,7 +7,12 @@ import {
   type CredentialKey,
 } from "@jobctrl/contracts";
 
+import {
+  AdaptiveFieldGrid,
+  AdaptiveFieldSpan,
+} from "../../../shared/ui/adaptive-field-grid.js";
 import { Button } from "../../../shared/ui/button.js";
+import { ChoiceControl } from "../../../shared/ui/choice-control.js";
 import {
   Dialog,
   DialogClose,
@@ -18,6 +23,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../../../shared/ui/dialog.js";
+import {
+  Field,
+  FieldDescription,
+  FieldLabel,
+} from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
+import { SelectField } from "../../../shared/ui/select-field.js";
 import { useUpdateCredentialsBatchMutation } from "../hooks/useUpdateCredentialsBatchMutation.js";
 import {
   buildClaudeCredentialBatch,
@@ -195,10 +207,10 @@ export function ClaudeProviderForm({
   }
 
   return (
-    <form className="provider-form" onSubmit={(event) => submitForm(event, form.handleSubmit)}>
+    <form className="provider-setup-form" onSubmit={(event) => submitForm(event, form.handleSubmit)}>
       <form.Field name="mode">
         {(field) => (
-          <ProviderChoices
+          <ProviderModeSelect
             legend="Choose how Claude authenticates"
             name="claude-auth-mode"
             value={field.state.value}
@@ -211,7 +223,13 @@ export function ClaudeProviderForm({
       </form.Field>
       <form.Subscribe selector={(state) => state.values.mode}>
         {(mode) => (
-          <div className="provider-mode-fields" aria-live="polite">
+          <AdaptiveFieldGrid
+            aria-live="polite"
+            className="provider-field-grid"
+            columns={2}
+            density="compact"
+            minColumnWidth={240}
+          >
             {mode === "anthropic_api_key" ? (
               <form.Field name="apiKey">
                 {(field) => (
@@ -222,6 +240,11 @@ export function ClaudeProviderForm({
                     help="Stored only in macOS Keychain. JobCtrl never returns the value after saving."
                     required
                     disabled={!secretStorageAvailable}
+                    disabledReason={
+                      !secretStorageAvailable
+                        ? "Secure secret storage is unavailable on this platform."
+                        : undefined
+                    }
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={field.handleChange}
@@ -257,6 +280,11 @@ export function ClaudeProviderForm({
                       label="Existing service-account JSON path (optional)"
                       help="Write-only. Leave blank to use normal gcloud Application Default Credentials. JobCtrl never uploads or copies the file."
                       disabled={sharedAdcEnvironmentManaged}
+                      disabledReason={
+                        sharedAdcEnvironmentManaged
+                          ? "GOOGLE_APPLICATION_CREDENTIALS is owned by the launch environment."
+                          : undefined
+                      }
                       value={field.state.value}
                       onBlur={field.handleBlur}
                       onChange={field.handleChange}
@@ -312,11 +340,10 @@ export function ClaudeProviderForm({
                 </form.Field>
               </>
             )}
-          </div>
+          </AdaptiveFieldGrid>
         )}
       </form.Subscribe>
       <ProviderFormActions
-        configured={configured}
         pending={update.isPending}
         message={message}
         saveLabel="Save Claude setup"
@@ -338,7 +365,7 @@ export function ClaudeProviderForm({
         }
       />
       {environmentManaged ? (
-        <p className="provider-form-message" role="status">Claude's effective mode is owned by the launch environment; save and removal controls are read-only.</p>
+        <p className="provider-setup-form__message" role="status">Claude's effective mode is owned by the launch environment; save and removal controls are read-only.</p>
       ) : null}
     </form>
   );
@@ -432,10 +459,10 @@ export function GoogleProviderForm({
   }
 
   return (
-    <form className="provider-form" onSubmit={(event) => submitForm(event, form.handleSubmit)}>
+    <form className="provider-setup-form" onSubmit={(event) => submitForm(event, form.handleSubmit)}>
       <form.Field name="mode">
         {(field) => (
-          <ProviderChoices
+          <ProviderModeSelect
             legend="Choose how Google authenticates"
             name="google-auth-mode"
             value={field.state.value}
@@ -448,7 +475,13 @@ export function GoogleProviderForm({
       </form.Field>
       <form.Subscribe selector={(state) => state.values.mode}>
         {(mode) => (
-          <div className="provider-mode-fields" aria-live="polite">
+          <AdaptiveFieldGrid
+            aria-live="polite"
+            className="provider-field-grid"
+            columns={2}
+            density="compact"
+            minColumnWidth={240}
+          >
             {mode === "gemini_api_key" ? (
               <form.Field name="apiKey">
                 {(field) => (
@@ -459,6 +492,11 @@ export function GoogleProviderForm({
                     help="Stored only in macOS Keychain and never returned by the API."
                     required
                     disabled={!secretStorageAvailable}
+                    disabledReason={
+                      !secretStorageAvailable
+                        ? "Secure secret storage is unavailable on this platform."
+                        : undefined
+                    }
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={field.handleChange}
@@ -484,6 +522,11 @@ export function GoogleProviderForm({
                       label="Existing service-account JSON path (optional)"
                       help="Write-only. Leave blank to use normal gcloud Application Default Credentials. JobCtrl never uploads or copies the file."
                       disabled={sharedAdcEnvironmentManaged}
+                      disabledReason={
+                        sharedAdcEnvironmentManaged
+                          ? "GOOGLE_APPLICATION_CREDENTIALS is owned by the launch environment."
+                          : undefined
+                      }
                       value={field.state.value}
                       onBlur={field.handleBlur}
                       onChange={field.handleChange}
@@ -492,11 +535,10 @@ export function GoogleProviderForm({
                 </form.Field>
               </>
             )}
-          </div>
+          </AdaptiveFieldGrid>
         )}
       </form.Subscribe>
       <ProviderFormActions
-        configured={configured}
         pending={update.isPending}
         message={message}
         saveLabel="Save Google setup"
@@ -518,19 +560,19 @@ export function GoogleProviderForm({
         }
       />
       {environmentManaged ? (
-        <p className="provider-form-message" role="status">Google's effective mode is owned by the launch environment; save and removal controls are read-only.</p>
+        <p className="provider-setup-form__message" role="status">Google's effective mode is owned by the launch environment; save and removal controls are read-only.</p>
       ) : null}
     </form>
   );
 }
 
-interface ChoiceOption<T extends string> {
+interface ProviderModeOption<T extends string> {
   value: T;
   label: string;
   description: string;
 }
 
-function ProviderChoices<T extends string>({
+function ProviderModeSelect<T extends string>({
   legend,
   name,
   value,
@@ -543,36 +585,36 @@ function ProviderChoices<T extends string>({
   name: string;
   value: T;
   onChange: (value: T) => void;
-  options: readonly ChoiceOption<T>[];
+  options: readonly ProviderModeOption<T>[];
   disabled?: boolean;
   disabledValues?: readonly T[];
 }) {
+  const selected = options.find((option) => option.value === value);
+  const description = [
+    selected?.description,
+    disabled ? "The active mode is owned by the launch environment and is read-only here." : null,
+    disabledValues.length > 0
+      ? "Direct API-key modes require a supported secure-storage adapter."
+      : null,
+  ].filter(Boolean).join(" ");
+
   return (
-    <fieldset className="provider-choice-fieldset">
-      <legend>{legend}</legend>
-      <div className="provider-choice-list">
-        {options.map((option) => {
-          const id = `${name}-${option.value}`;
-          return (
-            <label className="provider-choice" htmlFor={id} key={option.value}>
-              <input
-                checked={value === option.value}
-                id={id}
-                name={name}
-                type="radio"
-                value={option.value}
-                disabled={disabled || disabledValues.includes(option.value)}
-                onChange={() => onChange(option.value)}
-              />
-              <span>
-                <b>{option.label}</b>
-                <small>{option.description}</small>
-              </span>
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
+    <SelectField
+      className="provider-mode-select"
+      description={description}
+      disabled={disabled}
+      id={name}
+      label={legend}
+      name={name}
+      options={options.map((option) => ({
+        disabled: disabledValues.includes(option.value),
+        label: option.label,
+        value: option.value,
+      }))}
+      required
+      value={value}
+      onValueChange={(nextValue) => onChange(nextValue as T)}
+    />
   );
 }
 
@@ -586,6 +628,7 @@ function SecretField({
   onBlur,
   onChange,
   disabled = false,
+  disabledReason,
 }: {
   id: string;
   name: string;
@@ -596,37 +639,40 @@ function SecretField({
   onBlur: () => void;
   onChange: (value: string) => void;
   disabled?: boolean;
+  disabledReason?: string | undefined;
 }) {
   const [revealed, setRevealed] = useState(false);
   const helpId = `${id}-help`;
+  const disabledReasonId = disabled && disabledReason ? `${id}-disabled-reason` : undefined;
+  const describedBy = [helpId, disabledReasonId].filter(Boolean).join(" ");
   return (
-    <div className="field provider-field">
-      <label htmlFor={id}>{label}{required ? " (required)" : ""}</label>
-      <div className="secret-input-row">
-        <input
-          aria-describedby={helpId}
-          autoComplete="off"
-          id={id}
-          name={name}
-          disabled={disabled}
-          required={required}
-          type={revealed ? "text" : "password"}
-          value={value}
-          onBlur={onBlur}
-          onChange={(event) => onChange(event.target.value)}
-        />
-        <button
-          aria-pressed={revealed}
-          className="tab secret-reveal"
-          type="button"
-          disabled={disabled}
-          onClick={() => setRevealed((current) => !current)}
-        >
-          {revealed ? "Hide" : "Show"}
-        </button>
-      </div>
-      <small className="field-hint" id={helpId}>{help}</small>
-    </div>
+    <Field className="provider-setup-field provider-secret-field" data-disabled={disabled || undefined}>
+      <FieldLabel htmlFor={id}>{label}{required ? " (required)" : ""}</FieldLabel>
+      <Input
+        aria-describedby={describedBy}
+        autoComplete="off"
+        id={id}
+        name={name}
+        disabled={disabled}
+        required={required}
+        type={revealed ? "text" : "password"}
+        value={value}
+        onBlur={onBlur}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <FieldDescription id={helpId}>{help}</FieldDescription>
+      {disabledReasonId ? (
+        <FieldDescription id={disabledReasonId}>{disabledReason}</FieldDescription>
+      ) : null}
+      <ChoiceControl
+        checked={revealed}
+        className="provider-secret-visibility"
+        disabled={disabled}
+        description="Only changes how this unsaved value appears in the current field."
+        label={`Show ${label.toLowerCase()}`}
+        onCheckedChange={(checked) => setRevealed(checked === true)}
+      />
+    </Field>
   );
 }
 
@@ -650,9 +696,9 @@ function TextField({
 }) {
   const helpId = help ? `${id}-help` : undefined;
   return (
-    <div className="field provider-field">
-      <label htmlFor={id}>{label}{required ? " (required)" : ""}</label>
-      <input
+    <Field className="provider-setup-field">
+      <FieldLabel htmlFor={id}>{label}{required ? " (required)" : ""}</FieldLabel>
+      <Input
         aria-describedby={helpId}
         id={id}
         name={field.name}
@@ -662,29 +708,27 @@ function TextField({
         onBlur={field.handleBlur}
         onChange={(event) => field.handleChange(event.target.value)}
       />
-      {help ? <small className="field-hint" id={helpId}>{help}</small> : null}
-    </div>
+      {help ? <FieldDescription id={helpId}>{help}</FieldDescription> : null}
+    </Field>
   );
 }
 
 function CloudGuidance({ command, children }: { command: string; children: ReactNode }) {
   return (
-    <div className="provider-cloud-guidance">
+    <AdaptiveFieldSpan className="provider-setup-guidance" span="full">
       <p>{children}</p>
       <code>{command}</code>
-    </div>
+    </AdaptiveFieldSpan>
   );
 }
 
 function ProviderFormActions({
-  configured,
   pending,
   message,
   saveLabel,
   removeAction,
   readOnly = false,
 }: {
-  configured: boolean;
   pending: boolean;
   message: string;
   saveLabel: string;
@@ -692,15 +736,12 @@ function ProviderFormActions({
   readOnly?: boolean;
 }) {
   return (
-    <div className="provider-form-footer">
-      <button className="tab on" disabled={pending || readOnly} type="submit">
+    <div className="provider-setup-form__footer">
+      <Button disabled={pending || readOnly} size="sm" type="submit">
         {pending ? "Saving…" : saveLabel}
-      </button>
+      </Button>
       {removeAction}
-      <span className={`tag ${configured ? "ok" : "muted"}`}>
-        {configured ? "Configured" : "Not configured"}
-      </span>
-      <div aria-live="polite" className="provider-form-message" role="status">
+      <div aria-live="polite" className="provider-setup-form__message" role="status">
         {message}
       </div>
     </div>
@@ -725,7 +766,7 @@ function ProviderRemovalDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button disabled={pending} type="button" variant="outline">
+        <Button disabled={pending} size="sm" type="button" variant="outline">
           Remove {provider} setup
         </Button>
       </DialogTrigger>
@@ -745,12 +786,13 @@ function ProviderRemovalDialog({
         ) : null}
         <DialogFooter>
           <DialogClose asChild>
-            <Button disabled={pending} type="button" variant="ghost">
+            <Button disabled={pending} size="sm" type="button" variant="ghost">
               Cancel
             </Button>
           </DialogClose>
           <Button
             disabled={pending}
+            size="sm"
             type="button"
             variant="destructive"
             onClick={onConfirm}
@@ -846,7 +888,7 @@ const GOOGLE_MODE_CREDENTIAL_KEYS: Readonly<Record<GoogleMode, readonly Credenti
   vertex: ["GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"],
 };
 
-const CLAUDE_OPTIONS: readonly ChoiceOption<ClaudeMode>[] = [
+const CLAUDE_OPTIONS: readonly ProviderModeOption<ClaudeMode>[] = [
   {
     value: "anthropic_api_key",
     label: "Anthropic API key",
@@ -874,7 +916,7 @@ const CLAUDE_OPTIONS: readonly ChoiceOption<ClaudeMode>[] = [
   },
 ];
 
-const GOOGLE_OPTIONS: readonly ChoiceOption<GoogleMode>[] = [
+const GOOGLE_OPTIONS: readonly ProviderModeOption<GoogleMode>[] = [
   {
     value: "gemini_api_key",
     label: "Gemini API key",

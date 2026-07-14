@@ -7,8 +7,12 @@ import type {
 import { useState, type ReactNode } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { Badge } from "../../../shared/ui/badge.js";
-import { CardHeader } from "../../../shared/ui/card-header.js";
+import { Button } from "../../../shared/ui/button.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
+import {
+  InspectorLedger,
+  InspectorLedgerItem,
+} from "../../../shared/ui/inspector-ledger.js";
 import {
   ClaudeProviderForm,
   GoogleProviderForm,
@@ -68,11 +72,13 @@ export function CredentialsPanel() {
 
   return (
     <>
-      <section className="card full provider-setup-shell">
-        <CardHeader
-          title="LLM providers"
-          meta={store?.available ? "macOS Keychain" : "setup"}
-        />
+      <DisclosureSection
+        className="provider-setup-disclosure"
+        collapsedSummary={providerSetupSummary(store, statuses)}
+        defaultOpen
+        description="Provider authentication, ownership, and runtime readiness"
+        title="LLM providers"
+      >
         <ProviderSetupNotice
           credentialsError={credentialsQuery.error?.message}
           providerStatusError={providerStatusQuery.error?.message}
@@ -81,8 +87,8 @@ export function CredentialsPanel() {
         {!store ? (
           <div className="empty" role="status">Checking provider setup.</div>
         ) : (
-          <div className="provider-card-list">
-            <ProviderCard
+          <div className="provider-disclosure-list">
+            <ProviderDisclosure
               description="Reuses an already authenticated normal Codex CLI first, then verifies it in JobCtrl's isolated Codex home. JobCtrl does not accept a raw OpenAI key."
               provider="codex"
               status={codexStatus}
@@ -95,10 +101,10 @@ export function CredentialsPanel() {
                   store.available && configured(["OPENAI_API_KEY"])
                 }
               />
-            </ProviderCard>
+            </ProviderDisclosure>
             {store.available || store.unavailableReason === "unsupported_platform" ? (
               <>
-                <ProviderCard
+                <ProviderDisclosure
                   description="Choose one direct or third-party Claude Agent SDK authentication route."
                   provider="claude"
                   status={mergeConfiguredStatus("claude", claudeStatus, claudeConfigured)}
@@ -111,8 +117,8 @@ export function CredentialsPanel() {
                     environmentManagedKeys={environmentManagedKeys}
                     secretStorageAvailable={store.available}
                   />
-                </ProviderCard>
-                <ProviderCard
+                </ProviderDisclosure>
+                <ProviderDisclosure
                   description="Use a Gemini API key or Google Vertex AI with Application Default Credentials."
                   provider="google"
                   status={mergeConfiguredStatus("google", googleStatus, googleConfigured)}
@@ -125,7 +131,7 @@ export function CredentialsPanel() {
                     environmentManagedKeys={environmentManagedKeys}
                     secretStorageAvailable={store.available}
                   />
-                </ProviderCard>
+                </ProviderDisclosure>
               </>
             ) : (
               <ReadOnlyProviderGuidance
@@ -135,24 +141,28 @@ export function CredentialsPanel() {
             )}
           </div>
         )}
-      </section>
-      {store && capSolver ? (
-        <section className="card full provider-setup-shell">
-          <CardHeader title="Apply CAPTCHA solver" meta="optional · restart required" />
-          <p className="provider-copy">A CapSolver key only enables JobCtrl's owned solver tool during a user-started Apply. Unsupported or unconfigured CAPTCHA always fails closed.</p>
-          <CredentialForm
-            credentialKey="CAPSOLVER_API_KEY"
-            label="CapSolver API key"
-            configured={capSolver.configured}
-            effectiveSource={capSolver.effectiveSource}
-            editable={capSolver.editable}
-            available={store.available}
-            {...(store.unavailableReason !== null
-              ? { unavailableReason: store.unavailableReason }
-              : {})}
-          />
-        </section>
-      ) : null}
+        {store && capSolver ? (
+          <DisclosureSection
+            className="provider-disclosure provider-disclosure--capsolver"
+            collapsedSummary={`${credentialStatusLabel(capSolver)} · Optional · restart required`}
+            defaultOpen={false}
+            description="A CapSolver key only enables JobCtrl's owned solver tool during a user-started Apply. Unsupported or unconfigured CAPTCHA always fails closed."
+            title="Apply CAPTCHA solver"
+          >
+            <CredentialForm
+              credentialKey="CAPSOLVER_API_KEY"
+              label="CapSolver API key"
+              configured={capSolver.configured}
+              effectiveSource={capSolver.effectiveSource}
+              editable={capSolver.editable}
+              available={store.available}
+              {...(store.unavailableReason !== null
+                ? { unavailableReason: store.unavailableReason }
+                : {})}
+            />
+          </DisclosureSection>
+        ) : null}
+      </DisclosureSection>
       <CredentialPrivacyNotice store={store} />
     </>
   );
@@ -168,27 +178,27 @@ function ProviderSetupNotice({
   store?: CredentialsResponse["store"] | undefined;
 }) {
   if (credentialsError) {
-    return <div className="banner credential-store-notice credential-store-notice--failure" role="alert">{credentialsError}</div>;
+    return <div className="banner credential-store-notice credential-store-notice--failure provider-setup-notice" role="alert">{credentialsError}</div>;
   }
   if (!store) {
     return null;
   }
   if (store.unavailableReason === "unsupported_platform") {
     return (
-      <div className="banner credential-store-notice credential-store-notice--guidance">
+      <div className="banner credential-store-notice credential-store-notice--guidance provider-setup-notice">
         Non-secret provider settings remain editable in config.json. API-key entry is unavailable until this platform has a supported secure-storage adapter; externally authenticated cloud routes remain available.
       </div>
     );
   }
   if (store.unavailableReason === "inspection_failed") {
     return (
-      <div className="banner credential-store-notice credential-store-notice--failure" role="alert">
+      <div className="banner credential-store-notice credential-store-notice--failure provider-setup-notice" role="alert">
         JobCtrl could not safely inspect Keychain. Unlock Keychain Access, then reload before changing Claude or Google setup. Codex verification remains available.
       </div>
     );
   }
   return (
-    <div className="banner credential-store-notice credential-store-notice--guidance">
+    <div className="banner credential-store-notice credential-store-notice--guidance provider-setup-notice">
       <span>
         Provider modes and non-secret connection fields are saved in config.json. API keys stay in macOS Keychain. Restart JobCtrl after a change so provider processes reload both sources.
       </span>
@@ -201,7 +211,7 @@ function ProviderSetupNotice({
   );
 }
 
-function ProviderCard({
+function ProviderDisclosure({
   provider,
   title,
   description,
@@ -224,19 +234,31 @@ function ProviderCard({
         ? "Configured · restart or verify"
         : "Not configured";
   return (
-    <article className="provider-card" data-provider={provider}>
-      <header className="provider-card-header">
-        <div>
-          <h3>{title}</h3>
-          <p>{description}</p>
-        </div>
-        <span className={`tag ${status?.ready ? "ok" : "muted"}`}>{statusLabel}</span>
-      </header>
-      {status?.mode ? <p className="provider-current-mode">Detected mode: {status.mode}</p> : null}
-      <p className="provider-current-mode">Effective ownership: {ownership}</p>
-      {status?.message ? <p className="provider-status-message">{status.message}</p> : null}
+    <DisclosureSection
+      className="provider-disclosure"
+      collapsedSummary={(
+        <span className="provider-disclosure__summary">
+          <span>{statusLabel}</span>
+          <span>Ownership: {ownership}</span>
+        </span>
+      )}
+      defaultOpen={false}
+      data-provider={provider}
+      description={description}
+      title={title}
+    >
+      <InspectorLedger className="provider-status-ledger">
+        <InspectorLedgerItem label="Status" value={statusLabel} />
+        <InspectorLedgerItem label="Effective ownership" value={ownership} />
+        {status?.mode ? (
+          <InspectorLedgerItem label="Detected mode" value={status.mode} />
+        ) : null}
+        {status?.message ? (
+          <InspectorLedgerItem label="Provider report" value={status.message} />
+        ) : null}
+      </InspectorLedger>
       {children}
-    </article>
+    </DisclosureSection>
   );
 }
 
@@ -266,55 +288,56 @@ function CodexProviderSetup({
   }
 
   return (
-    <div className="provider-form codex-provider-setup">
-      <div className="codex-auth-options">
-        <section>
+    <div className="provider-setup-form codex-provider-setup">
+      <ol className="codex-auth-methods">
+        <li className="codex-auth-method">
           <h4>Use an existing Codex CLI login first</h4>
           <p>
             Click the action below to validate an already authenticated normal
             Codex CLI login and import it once into JobCtrl's stable, isolated
             home. It does not change your normal Codex home.
           </p>
-        </section>
-        <section>
+        </li>
+        <li className="codex-auth-method">
           <h4>Fallback: ChatGPT subscription or device login</h4>
           <p>
             If there is no existing login to reuse, authenticate the Codex CLI
             into JobCtrl's stable, isolated Codex home.
           </p>
           <code>{CODEX_LOGIN_COMMANDS.subscription}</code>
-        </section>
-        <section>
+        </li>
+        <li className="codex-auth-method">
           <h4>Fallback: OpenAI API key enrollment</h4>
           <p>
             If there is no existing login to reuse, pipe your existing shell key
             directly into Codex. JobCtrl never receives or stores the raw key.
           </p>
           <code>{CODEX_LOGIN_COMMANDS.apiKey}</code>
-        </section>
-      </div>
-      <p className="provider-copy">
+        </li>
+      </ol>
+      <p className="provider-setup-boundary-copy">
         Authentication is stored outside JobCtrl's prompt-readable <code>codex_home/workspace</code> boundary.
       </p>
       {legacyOpenAiKeyConfigured ? (
-        <div className="provider-legacy-warning">
+        <div className="provider-setup-warning">
           <p>
             A legacy <code>OPENAI_API_KEY</code> exists in JobCtrl Keychain. The Codex runtime does not use it directly; enroll it with the command above, then remove this unused copy.
           </p>
-          <button
-            className="tab"
+          <Button
             disabled={removeLegacyKey.isPending}
+            size="sm"
             type="button"
+            variant="outline"
             onClick={() => void removeLegacy()}
           >
             {removeLegacyKey.isPending ? "Removing…" : "Remove legacy key"}
-          </button>
+          </Button>
         </div>
       ) : null}
-      <div className="provider-form-footer">
-        <button
-          className="tab on"
+      <div className="provider-setup-form__footer">
+        <Button
           disabled={verify.isPending}
+          size="sm"
           type="button"
           onClick={() => verify.mutate()}
         >
@@ -323,15 +346,15 @@ function CodexProviderSetup({
             : isolatedAuthDetected
               ? "Verify isolated login"
               : "Reuse existing login or verify"}
-        </button>
+        </Button>
         <div
           aria-live="polite"
-          className={verification?.ok === false || verify.error ? "provider-form-message warning" : "provider-form-message"}
+          className={verification?.ok === false || verify.error ? "provider-setup-form__message provider-setup-form__message--warning" : "provider-setup-form__message"}
           role="status"
         >
           {verificationMessage}
         </div>
-        {legacyMessage ? <div aria-live="polite" className="provider-form-message" role="status">{legacyMessage}</div> : null}
+        {legacyMessage ? <div aria-live="polite" className="provider-setup-form__message" role="status">{legacyMessage}</div> : null}
       </div>
     </div>
   );
@@ -352,10 +375,24 @@ function ReadOnlyProviderGuidance({
   return (
     <>
       {providers.map(([title, copy]) => (
-        <article className="provider-card provider-card--readonly" key={title}>
-          <h3>{title}</h3>
-          <p>{copy}</p>
-        </article>
+        <DisclosureSection
+          className="provider-disclosure provider-disclosure--readonly"
+          collapsedSummary={(
+            <span className="provider-disclosure__summary">
+              <span>Read only</span>
+              <span>Ownership: external provider environment</span>
+            </span>
+          )}
+          defaultOpen={false}
+          description={copy}
+          key={title}
+          title={title}
+        >
+          <InspectorLedger className="provider-status-ledger">
+            <InspectorLedgerItem label="Status" value="Guided editing unavailable" />
+            <InspectorLedgerItem label="Effective ownership" value="External provider environment" />
+          </InspectorLedger>
+        </DisclosureSection>
       ))}
       {reason === "inspection_failed" ? (
         <p className="provider-readonly-summary" role="alert">Keychain inspection must succeed before guided Claude and Google editing is restored.</p>
@@ -366,15 +403,20 @@ function ReadOnlyProviderGuidance({
 
 function DemoProviderSetup() {
   return (
-    <section className="card full provider-setup-shell">
-      <CardHeader title="LLM providers" meta="public demo · read only" />
-      <div className="banner credential-store-notice credential-store-notice--guidance">
+    <DisclosureSection
+      className="provider-setup-disclosure"
+      collapsedSummary="Public demo · read only"
+      defaultOpen
+      description="Provider authentication, ownership, and runtime readiness"
+      title="LLM providers"
+    >
+      <div className="banner credential-store-notice credential-store-notice--guidance provider-setup-notice">
         The public demo never accepts, checks, or stores provider secrets. Configure providers only in a local JobCtrl installation.
       </div>
-      <div className="provider-card-list">
+      <div className="provider-disclosure-list">
         <ReadOnlyProviderGuidance reason={null} />
       </div>
-    </section>
+    </DisclosureSection>
   );
 }
 
@@ -398,19 +440,70 @@ function CredentialPrivacyNotice({
         ? "Keychain status unavailable"
         : "Storage status loading";
   return (
-    <section aria-label="Credential privacy" className="privacy-box">
-      <h2>Your provider data stays private</h2>
-      <p className="privacy-box-copy">
+    <DisclosureSection
+      aria-label="Credential privacy"
+      className="credential-privacy-disclosure"
+      collapsedSummary={boundaryBadge}
+      defaultOpen={false}
+      description="Storage boundaries and data-handling guarantees"
+      title="Your provider data stays private"
+    >
+      <p className="credential-privacy-disclosure__copy">
         {boundaryCopy} Codex authentication stays in JobCtrl's isolated filesystem home. Credentials are never returned by the API, stored in SQLite, placed in URLs, or written to logs, traces, and generated artifacts. Cloud credential files remain managed by their vendor CLIs.
       </p>
-      <div className="privacy-box-tags">
-        <Badge>Local only</Badge>
-        <Badge>{boundaryBadge}</Badge>
-        <Badge>Never in logs</Badge>
-        <Badge>Worker restart required</Badge>
-      </div>
-    </section>
+      <InspectorLedger className="credential-privacy-ledger">
+        <InspectorLedgerItem
+          label="Data boundary"
+          value="Local only"
+        />
+        <InspectorLedgerItem
+          label="Claude and Google storage"
+          source={boundaryCopy}
+          value={boundaryBadge}
+        />
+        <InspectorLedgerItem
+          label="Codex authentication"
+          source="Outside the prompt-readable codex_home/workspace boundary"
+          value="Isolated filesystem home"
+        />
+        <InspectorLedgerItem
+          label="API and persistence"
+          source="Credentials are never returned by the API or stored in SQLite"
+          value="Secret values excluded"
+        />
+        <InspectorLedgerItem
+          label="URLs, logs, traces, and artifacts"
+          value="Never in logs, traces, URLs, or generated artifacts"
+        />
+        <InspectorLedgerItem
+          label="Provider reload"
+          value="Worker restart required"
+        />
+      </InspectorLedger>
+    </DisclosureSection>
   );
+}
+
+function providerSetupSummary(
+  store: CredentialsResponse["store"] | undefined,
+  statuses: readonly ProviderStatusItem[],
+): string {
+  if (!store) return "Checking provider setup";
+  const readyCount = statuses.filter((status) => status.ready).length;
+  const storage = store.available
+    ? "macOS Keychain"
+    : store.unavailableReason === "unsupported_platform"
+      ? "Environment-managed secrets"
+      : "Storage inspection unavailable";
+  return `${readyCount} of 3 providers ready · ${storage}`;
+}
+
+function credentialStatusLabel(
+  credential: CredentialsResponse["credentials"][number],
+): string {
+  if (credential.effectiveSource === "environment") return "Environment-managed";
+  if (credential.effectiveSource === "inspection_unknown") return "Status unavailable";
+  return credential.configured ? "Configured" : "Not configured";
 }
 
 function findStatus(

@@ -1,5 +1,5 @@
 import type { CredentialsResponse } from "@jobctrl/contracts";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { axe } from "jest-axe";
 import { describe, expect, it, vi } from "vitest";
@@ -78,8 +78,14 @@ describe("<CredentialsPanel> a11y", () => {
           },
         }),
       });
+      const heading = await screen.findByRole("heading", { name: provider });
+      const disclosure = heading.closest("section");
+      if (!disclosure) throw new Error(`Missing ${provider} disclosure`);
+      await user.click(within(disclosure).getByRole("button", {
+        name: new RegExp(provider, "i"),
+      }));
       await user.click(
-        await screen.findByRole("button", { name: `Remove ${provider} setup` }),
+        await within(disclosure).findByRole("button", { name: `Remove ${provider} setup` }),
       );
       await screen.findByRole("dialog", { name: `Remove ${provider} provider setup?` });
 

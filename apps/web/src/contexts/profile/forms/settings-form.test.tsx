@@ -149,7 +149,7 @@ describe("<SettingsForm>", () => {
     expect(screen.getByText(/Saved in config.json; requires a worker restart/)).toBeInTheDocument();
     expect(screen.getByText(/Restart pending/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Daily LLM budget (USD)"), { target: { value: "30" } });
-    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
     expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({ workerActivitySlots: 9 }));

@@ -4,7 +4,14 @@ import { useState } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
-import { CardHeader } from "../../../shared/ui/card-header.js";
+import { Button } from "../../../shared/ui/button.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
+import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
+import {
+  InspectorLedger,
+  InspectorLedgerItem,
+} from "../../../shared/ui/inspector-ledger.js";
 import { browserCapabilityKeys } from "../browserCapabilityKeys.js";
 
 export function ExtensionPairingPanel() {
@@ -53,22 +60,58 @@ export function ExtensionPairingPanel() {
   }
 
   return (
-    <section className="card full">
-      <CardHeader title="Browser extension" meta="pairing" />
-      <div className="runtime-summary extension-pairing" aria-label="Browser extension pairing">
-        <div><h3>Browser extension pairing</h3><p>Local capability token for extension API requests.</p></div>
+    <DisclosureSection
+      className="extension-pairing-settings"
+      title="Browser extension pairing"
+      description="Local capability token for extension API requests"
+      collapsedSummary="Capture and autofill-read pairing"
+    >
+      <section className="extension-pairing" aria-label="Browser extension pairing controls">
         <div className="extension-pairing-controls">
-          {tokenQuery.error ? <div className="banner inline">Pairing token is unavailable.</div> : null}
-          <label className="field extension-token-field"><span>Capability token</span><input readOnly type="password" value={token} aria-label="Extension capability token" placeholder={tokenQuery.isPending ? "loading" : "unavailable"} /></label>
-          <dl><div><dt>Capabilities</dt><dd>capture, autofill read</dd></div></dl>
+          {tokenQuery.error ? (
+            <div className="banner inline" role="alert">
+              Pairing token is unavailable.
+            </div>
+          ) : null}
+          <Field className="extension-token-field">
+            <FieldLabel htmlFor="extension-capability-token">Capability token</FieldLabel>
+            <Input
+              id="extension-capability-token"
+              readOnly
+              type="password"
+              value={token}
+              aria-label="Extension capability token"
+              placeholder={tokenQuery.isPending ? "loading" : "unavailable"}
+            />
+          </Field>
+          <InspectorLedger>
+            <InspectorLedgerItem
+              label="Capabilities"
+              value="capture, autofill read"
+              source="Local extension API"
+            />
+          </InspectorLedger>
           <div className="form-actions extension-pairing-actions">
-            <button className="tab on" type="button" disabled={!token} onClick={() => void copyToken()}>copy token</button>
-            <button className="tab" type="button" disabled={rotateToken.isPending} onClick={() => void rotate()}>{rotateToken.isPending ? "rotating" : confirmRotation ? "confirm rotate and disconnect" : "rotate token"}</button>
+            <Button type="button" disabled={!token} onClick={() => void copyToken()}>
+              Copy token
+            </Button>
+            <Button
+              variant="outline"
+              type="button"
+              disabled={rotateToken.isPending}
+              onClick={() => void rotate()}
+            >
+              {rotateToken.isPending
+                ? "Rotating…"
+                : confirmRotation
+                  ? "Confirm rotate and disconnect"
+                  : "Rotate token"}
+            </Button>
           </div>
           {message ? <div className="status-line" role="status">{message}</div> : null}
           {copyWarning ? <div className="banner inline" role="alert">{copyWarning}</div> : null}
         </div>
-      </div>
-    </section>
+      </section>
+    </DisclosureSection>
   );
 }

@@ -1,8 +1,10 @@
 import { ProfileImportRequestSchema, type ProfileImportRequest } from "@jobctrl/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useForm } from "@tanstack/react-form";
+import { IconFileTypePdf } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { useImportResumeMutation } from "../hooks/useImportResumeMutation.js";
 import { useProfileImportStore } from "../stores/profile-import-store.js";
@@ -46,12 +48,12 @@ export function ImportConfirmForm() {
 
   if (!filename || !pdfBase64) {
     return (
-      <div className="wizard-step">
+      <div className="wizard-step resume-import-step grid gap-4">
         <Empty title="No upload found. Start at step 1." />
-        <div className="form-actions">
-          <Link className="tab" to="/profile/import/upload">
-            back to upload
-          </Link>
+        <div className="form-actions resume-import-actions justify-end">
+          <Button asChild variant="outline">
+            <Link to="/profile/import/upload">Back to upload</Link>
+          </Button>
         </div>
       </div>
     );
@@ -69,33 +71,51 @@ export function ImportConfirmForm() {
 
   return (
     <form
-      className="wizard-step"
+      className="wizard-step resume-import-step resume-import-confirm grid gap-4"
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
         void form.handleSubmit();
       }}
     >
-      {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
-      {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
-      <p>
-        Importing <b>{filename}</b> with {summary}.
-      </p>
+      {errorMessage ? <div className="banner inline" role="alert">{errorMessage}</div> : null}
+      {statusMessage ? <div className="status-line" role="status">{statusMessage}</div> : null}
+      <div
+        className="resume-import-confirmation flex items-center gap-3 border-y border-border py-3"
+      >
+        <IconFileTypePdf
+          className="shrink-0 text-muted-foreground"
+          aria-hidden="true"
+          size={24}
+          stroke={1.7}
+        />
+        <p className="m-0 min-w-0 break-words text-[12px] leading-relaxed">
+          Importing <b className="break-all">{filename}</b> with {summary}.
+        </p>
+      </div>
+      <form.Subscribe selector={(state) => state.errors}>
+        {(errors) => {
+          const message = errors
+            .flat()
+            .filter((entry): entry is string => typeof entry === "string")
+            .at(0);
+          return message ? <div className="banner inline" role="alert">{message}</div> : null;
+        }}
+      </form.Subscribe>
       <form.Subscribe
         selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}
       >
         {({ canSubmit, isSubmitting }) => (
-          <div className="form-actions">
-            <button
+          <div className="form-actions resume-import-actions justify-end">
+            <Button asChild variant="outline">
+              <Link to="/profile/import/preview">Back</Link>
+            </Button>
+            <Button
               type="submit"
-              className="tab on"
               disabled={!canSubmit || isSubmitting}
             >
-              {isSubmitting ? "importing..." : "confirm import"}
-            </button>
-            <Link className="tab" to="/profile/import/preview">
-              back
-            </Link>
+              {isSubmitting ? "Importing…" : "Confirm import"}
+            </Button>
           </div>
         )}
       </form.Subscribe>

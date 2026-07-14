@@ -8,7 +8,7 @@ import { useState } from "react";
 import type { CompensationSourcePolicySummary } from "../../operations/types.js";
 import { useCompensationSourcePolicyQuery } from "../../operations/hooks/useCompensationSourcePolicyQuery.js";
 import { useUpdateCompensationSourcePolicyMutation } from "../hooks/useUpdateCompensationSourcePolicyMutation.js";
-import { CardHeader } from "../../../shared/ui/card-header.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import {
   Field,
@@ -19,14 +19,7 @@ import {
   FieldLegend,
   FieldSet,
 } from "../../../shared/ui/field.js";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../../shared/ui/select.js";
+import { SelectField } from "../../../shared/ui/select-field.js";
 import { Switch } from "../../../shared/ui/switch.js";
 
 const NOT_CONFIGURED = "not_configured";
@@ -58,9 +51,13 @@ export function CompensationSourcePolicyPanel() {
   };
 
   return (
-    <section className="card full compensation-source-policy-panel">
-      <CardHeader title="Compensation sources" meta="editable source policy" />
-      {query.error ? <div className="banner inline">{query.error.message}</div> : null}
+    <DisclosureSection
+      className="compensation-source-policy-panel"
+      title="Compensation sources"
+      description="Editable source policy, access status, and attribution requirements"
+      collapsedSummary={`${sources.length} configured source policies`}
+    >
+      {query.error ? <div className="banner inline" role="alert">{query.error.message}</div> : null}
       {statusMessage ? (
         <div className="status-line" aria-live="polite">
           {statusMessage}
@@ -97,7 +94,7 @@ export function CompensationSourcePolicyPanel() {
           </table>
         </div>
       ) : null}
-    </section>
+    </DisclosureSection>
   );
 }
 
@@ -139,16 +136,26 @@ function CompensationSourcePolicyRow({
       </td>
       <td>
         <div>{formatLabel(source.sourceType)}</div>
-        <span className="tag muted">{formatLabel(source.accessMode)}</span>
+        <span className="source-policy-fact">{formatLabel(source.accessMode)}</span>
       </td>
       <td>
         <div>
-          <span className={availabilityClass(source.availability)}>
+          <span
+            className="source-policy-status"
+            data-tone={source.availability === "available" ? "positive" : "warning"}
+          >
             {formatLabel(source.availability)}
           </span>
         </div>
         <div>
-          <span className={licenseClass(source.licenseStatus)}>
+          <span
+            className="source-policy-status"
+            data-tone={
+              source.licenseStatus === "permitted" || source.licenseStatus === "not_required"
+                ? "positive"
+                : "warning"
+            }
+          >
             {formatLabel(source.licenseStatus)}
           </span>
         </div>
@@ -184,12 +191,11 @@ function CompensationSourceControls({
   source: CompensationSourcePolicySummary;
 }) {
   if (source.control.kind === "fixed") {
-    return <span className="tag muted">always enabled</span>;
+    return <span className="source-policy-fact">always enabled</span>;
   }
 
   const control = source.control;
   const accessModeId = `${source.sourceId}-access-mode`;
-  const accessModeLabelId = `${accessModeId}-label`;
   const coverageId = `${source.sourceId}-europe-coverage`;
   const coverageLabelId = `${coverageId}-label`;
   const enabledId = `${source.sourceId}-enabled`;
@@ -242,45 +248,33 @@ function CompensationSourceControls({
         {source.displayName} source settings
       </FieldLegend>
       <FieldGroup className="min-w-64 gap-3">
-        <Field data-disabled={busy}>
-          <FieldLabel id={accessModeLabelId} htmlFor={accessModeId}>
-            {source.displayName} access mode
-          </FieldLabel>
-          <Select
-            disabled={busy}
-            value={control.accessMode ?? NOT_CONFIGURED}
-            onValueChange={(value) =>
-              update({
-                accessMode:
-                  value === NOT_CONFIGURED
-                    ? null
-                    : (value as UserCompensationSourceControl["accessMode"]),
-              })
-            }
-          >
-            <SelectTrigger
-              id={accessModeId}
-              aria-labelledby={accessModeLabelId}
-            >
-              <SelectValue placeholder="Choose access basis" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem
-                  disabled={control.enabled}
-                  value={NOT_CONFIGURED}
-                >
-                  Not configured
-                </SelectItem>
-                {control.allowedAccessModes.map((mode) => (
-                  <SelectItem key={mode} value={mode}>
-                    {formatLabel(mode)}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
+        <SelectField
+          id={accessModeId}
+          name={`${source.sourceId}-access-mode`}
+          label={`${source.displayName} access mode`}
+          disabled={busy}
+          value={control.accessMode ?? NOT_CONFIGURED}
+          placeholder="Choose access basis"
+          options={[
+            {
+              value: NOT_CONFIGURED,
+              label: "Not configured",
+              disabled: control.enabled,
+            },
+            ...control.allowedAccessModes.map((mode) => ({
+              value: mode,
+              label: formatLabel(mode),
+            })),
+          ]}
+          onValueChange={(value) =>
+            update({
+              accessMode:
+                value === NOT_CONFIGURED
+                  ? null
+                  : (value as UserCompensationSourceControl["accessMode"]),
+            })
+          }
+        />
         {control.europeCoverageRequired ? (
           <Field orientation="horizontal" data-disabled={busy}>
             <FieldContent>
@@ -337,12 +331,12 @@ function CompensationSourceControls({
 
 function renderSupportedFields(source: CompensationSourcePolicySummary) {
   if (source.supportedFields.length === 0) {
-    return <span className="tag muted">none until permitted</span>;
+    return <span className="source-policy-fact">none until permitted</span>;
   }
   return (
-    <div className="job-audit-tag-group" aria-label={`${source.displayName} supported fields`}>
+    <div className="source-policy-field-list" aria-label={`${source.displayName} supported fields`}>
       {source.supportedFields.map((field) => (
-        <span key={field} className="tag info">
+        <span key={field}>
           {formatLabel(field)}
         </span>
       ))}
@@ -352,15 +346,4 @@ function renderSupportedFields(source: CompensationSourcePolicySummary) {
 
 function formatLabel(value: string): string {
   return value.replaceAll("_", " ");
-}
-
-function availabilityClass(availability: CompensationSourcePolicySummary["availability"]): string {
-  return availability === "available" ? "tag ok" : "tag warn";
-}
-
-function licenseClass(status: CompensationSourcePolicySummary["licenseStatus"]): string {
-  if (status === "permitted" || status === "not_required") {
-    return "tag ok";
-  }
-  return "tag warn";
 }

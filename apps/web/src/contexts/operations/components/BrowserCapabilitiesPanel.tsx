@@ -2,7 +2,16 @@ import type { BrowserCapabilityId, BrowserCapabilityItem } from "@jobctrl/contra
 import { useState } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { CardHeader } from "../../../shared/ui/card-header.js";
+import { AdaptiveFieldGrid } from "../../../shared/ui/adaptive-field-grid.js";
+import { Button } from "../../../shared/ui/button.js";
+import { ChoiceControl } from "../../../shared/ui/choice-control.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
+import {
+  Field,
+  FieldDescription,
+  FieldLabel,
+} from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import {
   useCopyLinkedInBrowserProfileMutation,
   useDisableBrowserCapabilityMutation,
@@ -60,29 +69,87 @@ export function BrowserCapabilitiesPanel() {
 
     const capabilityId = capability.id;
     return (
-      <div className="provider-form">
-        <label className="field" htmlFor={`browser-executable-${capabilityId}`}>
-          <span>Chrome or Chromium executable path</span>
-          <input id={`browser-executable-${capabilityId}`} name={`browser-executable-${capabilityId}`} type="text" autoComplete="off" disabled={demo || capability.enabled} value={executablePaths[capabilityId] ?? ""} onChange={(event) => setExecutablePaths((current) => ({ ...current, [capabilityId]: event.target.value }))} />
-          <small>Saved as non-secret browser configuration in config.json. The status API does not echo local paths.</small>
-        </label>
-        <div className="form-actions">
-          <button className="tab on" type="button" disabled={demo || capability.enabled || enable.isPending} onClick={() => void enableCapability(capabilityId)}>enable selected browser</button>
-          <button className="tab" type="button" disabled={demo || !capability.enabled || disable.isPending} onClick={() => void disable.mutateAsync(capabilityId).then(() => setMessage(`${LABELS[capabilityId]} disabled immediately.`)).catch(() => setMessage("Capability disable failed."))}>disable now</button>
+      <div className="browser-capability-controls">
+        <AdaptiveFieldGrid columns={2} minColumnWidth={280} density="compact">
+          <Field data-disabled={demo || capability.enabled || undefined}>
+            <FieldLabel htmlFor={`browser-executable-${capabilityId}`}>
+              Chrome or Chromium executable path
+            </FieldLabel>
+            <Input
+              id={`browser-executable-${capabilityId}`}
+              name={`browser-executable-${capabilityId}`}
+              type="text"
+              autoComplete="off"
+              disabled={demo || capability.enabled}
+              value={executablePaths[capabilityId] ?? ""}
+              onChange={(event) =>
+                setExecutablePaths((current) => ({
+                  ...current,
+                  [capabilityId]: event.target.value,
+                }))
+              }
+            />
+            <FieldDescription>
+              Saved as non-secret browser configuration in config.json. The status API does not
+              echo local paths.
+            </FieldDescription>
+          </Field>
+        </AdaptiveFieldGrid>
+        <div className="form-actions browser-capability-actions">
+          <Button
+            type="button"
+            disabled={demo || capability.enabled || enable.isPending}
+            onClick={() => void enableCapability(capabilityId)}
+          >
+            Enable selected browser
+          </Button>
+          <Button
+            variant="outline"
+            type="button"
+            disabled={demo || !capability.enabled || disable.isPending}
+            onClick={() =>
+              void disable
+                .mutateAsync(capabilityId)
+                .then(() => setMessage(`${LABELS[capabilityId]} disabled immediately.`))
+                .catch(() => setMessage("Capability disable failed."))
+            }
+          >
+            Disable now
+          </Button>
         </div>
         {capabilityId === "authenticated-linkedin-browser" && capability.enabled ? (
-          <fieldset className="provider-choice-fieldset">
+          <fieldset className="provider-choice-fieldset browser-profile-copy">
             <legend>Separate authenticated profile copy</legend>
-            <label className="field" htmlFor="linkedin-profile-source">
-              <span>Existing browser profile directory</span>
-              <input id="linkedin-profile-source" name="linkedin-profile-source" type="password" autoComplete="off" value={sourceProfilePath} onChange={(event) => setSourceProfilePath(event.target.value)} />
-              <small>Request-only. Cleared after submission and never returned or logged.</small>
-            </label>
-            <label className="provider-choice-option" htmlFor="linkedin-profile-consent">
-              <input id="linkedin-profile-consent" name="linkedin-profile-consent" type="checkbox" checked={profileConsent} onChange={(event) => setProfileConsent(event.target.checked)} />
-              <span>I explicitly consent to copy this profile into JobCtrl-owned storage.</span>
-            </label>
-            <button className="tab on" type="button" disabled={copyProfile.isPending || !profileConsent || !sourceProfilePath.trim()} onClick={() => void copyLinkedInProfile()}>copy selected profile</button>
+            <Field>
+              <FieldLabel htmlFor="linkedin-profile-source">
+                Existing browser profile directory
+              </FieldLabel>
+              <Input
+                id="linkedin-profile-source"
+                name="linkedin-profile-source"
+                type="password"
+                autoComplete="off"
+                value={sourceProfilePath}
+                onChange={(event) => setSourceProfilePath(event.target.value)}
+              />
+              <FieldDescription>
+                Request-only. Cleared after submission and never returned or logged.
+              </FieldDescription>
+            </Field>
+            <ChoiceControl
+              id="linkedin-profile-consent"
+              name="linkedin-profile-consent"
+              label="I explicitly consent to copy this profile into JobCtrl-owned storage."
+              checked={profileConsent}
+              onCheckedChange={(checked) => setProfileConsent(checked === true)}
+            />
+            <Button
+              type="button"
+              disabled={copyProfile.isPending || !profileConsent || !sourceProfilePath.trim()}
+              onClick={() => void copyLinkedInProfile()}
+            >
+              Copy selected profile
+            </Button>
           </fieldset>
         ) : null}
       </div>
@@ -90,24 +157,36 @@ export function BrowserCapabilitiesPanel() {
   }
 
   return (
-    <section className="card full provider-setup-shell">
-      <CardHeader title="Browser capabilities" meta={demo ? "demo · read only" : "explicit adoption"} />
+    <DisclosureSection
+      className="browser-capabilities-settings"
+      title="Browser capabilities"
+      description={
+        demo
+          ? "Demo · read only"
+          : "Explicit adoption · revocable managed browser capabilities"
+      }
+      collapsedSummary={demo ? "Demo · read only" : "Core and optional browser access"}
+    >
       <div className="banner credential-store-notice credential-store-notice--guidance">
         JobCtrl never auto-detects or adopts Chrome. Optional access is fail-closed and can be revoked immediately. Optional managed downloads are unavailable until a signed supply chain exists.
       </div>
       {query.error ? <div className="banner inline" role="alert">Browser capability status is unavailable.</div> : null}
-      <div className="provider-card-list" aria-busy={query.isPending}>
+      <div className="browser-capability-list" aria-busy={query.isPending}>
         {(query.data?.capabilities ?? []).map((capability) => (
-          <article className="provider-card" key={capability.id}>
-            <header className="provider-card-header">
-              <div><h3>{LABELS[capability.id]}</h3><p>{capability.detail}</p></div>
-              <span className={`tag ${capability.status === "ready" ? "ok" : "muted"}`}>{capability.status}</span>
-            </header>
+          <DisclosureSection
+            className="browser-capability-section"
+            key={capability.id}
+            title={LABELS[capability.id]}
+            description={capability.detail}
+            collapsedSummary={`Status: ${capability.status}`}
+            defaultOpen={false}
+          >
+            <p className="browser-capability-status">Current status: {capability.status}</p>
             {renderCapabilityControls(capability)}
-          </article>
+          </DisclosureSection>
         ))}
       </div>
       {message ? <div className="status-line" role="status">{message}</div> : null}
-    </section>
+    </DisclosureSection>
   );
 }

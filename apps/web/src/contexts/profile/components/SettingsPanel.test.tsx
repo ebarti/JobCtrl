@@ -62,12 +62,12 @@ describe("<SettingsPanel>", () => {
     renderWithProviders(<ExtensionPairingPanel />, { ports });
 
     expect(await screen.findByText("Browser extension pairing")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "copy token" }));
+    await user.click(screen.getByRole("button", { name: "Copy token" }));
     expect(ports.clipboard.write).toHaveBeenCalledWith(sampleExtensionCapabilityTokenResponse.token);
 
-    await user.click(screen.getByRole("button", { name: "rotate token" }));
+    await user.click(screen.getByRole("button", { name: "Rotate token" }));
     expect(rotateExtensionCapabilityToken).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "confirm rotate and disconnect" }));
+    await user.click(screen.getByRole("button", { name: "Confirm rotate and disconnect" }));
     expect(rotateExtensionCapabilityToken).toHaveBeenCalledTimes(1);
     expect(ports.clipboard.write).toHaveBeenLastCalledWith(
       "jh_ext_rotated_token_123456789012345678901234567",
@@ -101,9 +101,9 @@ describe("<SettingsPanel>", () => {
     renderWithProviders(<ExtensionPairingPanel />, { ports });
 
     await user.click(
-      await screen.findByRole("button", { name: "rotate token" }),
+      await screen.findByRole("button", { name: "Rotate token" }),
     );
-    await user.click(screen.getByRole("button", { name: "confirm rotate and disconnect" }));
+    await user.click(screen.getByRole("button", { name: "Confirm rotate and disconnect" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent("token rotated");
     expect(screen.getByRole("alert")).toHaveTextContent(

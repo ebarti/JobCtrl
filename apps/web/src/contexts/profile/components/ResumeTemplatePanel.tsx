@@ -4,9 +4,23 @@ import type {
   ResumeTemplateTheme,
 } from "@jobctrl/contracts";
 import { IconDeviceFloppy, IconStar } from "@tabler/icons-react";
-import { useEffect, useMemo, useState, type CSSProperties, type JSX } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type JSX,
+} from "react";
 
 import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAuditPins.js";
+import { AdaptiveFieldGrid } from "../../../shared/ui/adaptive-field-grid.js";
+import { Button } from "../../../shared/ui/button.js";
+import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
+import { PreviewWorkbench } from "../../../shared/ui/preview-workbench.js";
+import { SegmentedField } from "../../../shared/ui/segmented-field.js";
+import { SelectField } from "../../../shared/ui/select-field.js";
 import {
   useSaveResumeTemplateMutation,
   useSetDefaultResumeTemplateMutation,
@@ -55,7 +69,40 @@ const FONT_LABELS: Record<ResumeTemplateTheme["fontFamily"], string> = {
   cambria: "Cambria",
 };
 
-const FONT_OPTIONS = Object.entries(FONT_LABELS) as Array<[ResumeTemplateTheme["fontFamily"], string]>;
+const FONT_OPTIONS = Object.entries(FONT_LABELS) as Array<
+  [ResumeTemplateTheme["fontFamily"], string]
+>;
+
+const FONT_SELECT_OPTIONS = FONT_OPTIONS.map(([value, label]) => ({ value, label }));
+
+const DENSITY_OPTIONS = [
+  { value: "compact", label: "Compact" },
+  { value: "balanced", label: "Balanced" },
+  { value: "spacious", label: "Spacious" },
+] as const;
+
+const HEADER_LAYOUT_OPTIONS = [
+  { value: "centered", label: "Centered" },
+  { value: "left", label: "Left" },
+  { value: "split", label: "Split" },
+] as const;
+
+const HEADING_STYLE_OPTIONS = [
+  { value: "rule", label: "Rule" },
+  { value: "plain", label: "Plain" },
+  { value: "boxed", label: "Boxed" },
+] as const;
+
+const ALIGNMENT_OPTIONS = [
+  { value: "justified", label: "Justified" },
+  { value: "left", label: "Left" },
+] as const;
+
+const BULLET_SPACING_OPTIONS = [
+  { value: "tight", label: "Tight" },
+  { value: "normal", label: "Normal" },
+  { value: "loose", label: "Loose" },
+] as const;
 
 const DENSITY_TOKENS: Record<
   ResumeTemplateTheme["density"],
@@ -91,6 +138,7 @@ const DENSITY_TOKENS: Record<
 };
 
 export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePanelProps): JSX.Element {
+  const fieldIdPrefix = useId();
   const templatesQuery = useResumeTemplatesQuery();
   const saveTemplate = useSaveResumeTemplateMutation();
   const setDefaultTemplate = useSetDefaultResumeTemplateMutation();
@@ -171,115 +219,112 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
   };
 
   return (
-    <section className="form-section resume-template-panel" aria-label="Resume templates">
-      <h3>Resume templates</h3>
-      <div className="resume-template-shell">
-        <div className="resume-template-controls">
-          <div className="field-grid">
-            <label className="field">
-              <span>Template</span>
-              <select
-                disabled={!templates.length || isSaving}
-                value={activeTemplate?.templateId ?? ""}
-                onChange={(event) => setActiveTemplateId(event.target.value)}
-              >
-                {templates.map((template) => (
-                  <option key={template.templateId} value={template.templateId}>
-                    {template.displayName}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>Name</span>
-              <input
-                disabled={!theme || isSaving}
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Font</span>
-              <select
-                disabled={!theme || isSaving}
-                value={theme?.fontFamily ?? "sans"}
-                onChange={(event) => updateTheme("fontFamily", event.target.value as ResumeTemplateTheme["fontFamily"])}
-              >
-                {FONT_OPTIONS.map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>Density</span>
-              <select
-                disabled={!theme || isSaving}
-                value={theme?.density ?? "balanced"}
-                onChange={(event) => updateTheme("density", event.target.value as ResumeTemplateTheme["density"])}
-              >
-                <option value="compact">Compact</option>
-                <option value="balanced">Balanced</option>
-                <option value="spacious">Spacious</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Header</span>
-              <select
-                disabled={!theme || isSaving}
-                value={theme?.headerLayout ?? "centered"}
-                onChange={(event) =>
-                  updateTheme("headerLayout", event.target.value as ResumeTemplateTheme["headerLayout"])
-                }
-              >
-                <option value="centered">Centered</option>
-                <option value="left">Left</option>
-                <option value="split">Split</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Headings</span>
-              <select
-                disabled={!theme || isSaving}
-                value={theme?.sectionHeadingStyle ?? "rule"}
-                onChange={(event) =>
-                  updateTheme("sectionHeadingStyle", event.target.value as ResumeTemplateTheme["sectionHeadingStyle"])
-                }
-              >
-                <option value="rule">Rule</option>
-                <option value="plain">Plain</option>
-                <option value="boxed">Boxed</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Alignment</span>
-              <select
-                disabled={!theme || isSaving}
-                value={theme?.alignment ?? "justified"}
-                onChange={(event) => updateTheme("alignment", event.target.value as ResumeTemplateTheme["alignment"])}
-              >
-                <option value="justified">Justified</option>
-                <option value="left">Left</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Bullets</span>
-              <select
-                disabled={!theme || isSaving}
-                value={theme?.bulletSpacing ?? "normal"}
-                onChange={(event) =>
-                  updateTheme("bulletSpacing", event.target.value as ResumeTemplateTheme["bulletSpacing"])
-                }
-              >
-                <option value="tight">Tight</option>
-                <option value="normal">Normal</option>
-                <option value="loose">Loose</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Font scale</span>
-              <input
+    <PreviewWorkbench
+      className="resume-template-panel"
+      aria-label="Resume templates"
+      title="Resume templates"
+      status={
+        selectedTemplateIsDefault ? (
+          <span className="resume-template-default-state">Default template</span>
+        ) : undefined
+      }
+      primaryControls={
+        <AdaptiveFieldGrid
+          className="resume-template-primary-controls"
+          columns={3}
+          density="compact"
+          minColumnWidth={168}
+        >
+          <SelectField
+            label="Template"
+            disabled={!templates.length || isSaving}
+            options={templates.map((template) => ({
+              value: template.templateId,
+              label: template.displayName,
+            }))}
+            value={activeTemplate?.templateId ?? ""}
+            onValueChange={setActiveTemplateId}
+          />
+          <Field data-disabled={!theme || isSaving}>
+            <FieldLabel htmlFor={`${fieldIdPrefix}-name`}>Name</FieldLabel>
+            <Input
+              id={`${fieldIdPrefix}-name`}
+              disabled={!theme || isSaving}
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+          </Field>
+          <SelectField
+            label="Font"
+            disabled={!theme || isSaving}
+            options={FONT_SELECT_OPTIONS}
+            value={theme?.fontFamily ?? "sans"}
+            onValueChange={(value) =>
+              updateTheme("fontFamily", value as ResumeTemplateTheme["fontFamily"])
+            }
+          />
+        </AdaptiveFieldGrid>
+      }
+      secondaryControls={
+        <div className="resume-template-secondary-controls">
+          <AdaptiveFieldGrid
+            className="resume-template-style-controls"
+            columns={3}
+            density="compact"
+            minColumnWidth={238}
+          >
+            <SegmentedField
+              label="Density"
+              disabled={!theme || isSaving}
+              options={DENSITY_OPTIONS}
+              value={theme?.density ?? "balanced"}
+              onValueChange={(value) =>
+                updateTheme("density", value as ResumeTemplateTheme["density"])
+              }
+            />
+            <SegmentedField
+              label="Header"
+              disabled={!theme || isSaving}
+              options={HEADER_LAYOUT_OPTIONS}
+              value={theme?.headerLayout ?? "centered"}
+              onValueChange={(value) =>
+                updateTheme("headerLayout", value as ResumeTemplateTheme["headerLayout"])
+              }
+            />
+            <SegmentedField
+              label="Headings"
+              disabled={!theme || isSaving}
+              options={HEADING_STYLE_OPTIONS}
+              value={theme?.sectionHeadingStyle ?? "rule"}
+              onValueChange={(value) =>
+                updateTheme(
+                  "sectionHeadingStyle",
+                  value as ResumeTemplateTheme["sectionHeadingStyle"],
+                )
+              }
+            />
+            <SegmentedField
+              label="Alignment"
+              disabled={!theme || isSaving}
+              options={ALIGNMENT_OPTIONS}
+              value={theme?.alignment ?? "justified"}
+              onValueChange={(value) =>
+                updateTheme("alignment", value as ResumeTemplateTheme["alignment"])
+              }
+            />
+            <SegmentedField
+              label="Bullets"
+              disabled={!theme || isSaving}
+              options={BULLET_SPACING_OPTIONS}
+              value={theme?.bulletSpacing ?? "normal"}
+              onValueChange={(value) =>
+                updateTheme("bulletSpacing", value as ResumeTemplateTheme["bulletSpacing"])
+              }
+            />
+            <Field data-disabled={!theme || isSaving}>
+              <FieldLabel htmlFor={`${fieldIdPrefix}-font-scale`}>Font scale</FieldLabel>
+              <Input
+                id={`${fieldIdPrefix}-font-scale`}
                 disabled={!theme || isSaving}
                 max={1.2}
                 min={0.85}
@@ -288,19 +333,22 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
                 value={theme?.fontScale ?? 1}
                 onChange={(event) => updateTheme("fontScale", Number(event.target.value))}
               />
-            </label>
-            <label className="field">
-              <span>Accent</span>
-              <input
+            </Field>
+            <Field data-disabled={!theme || isSaving}>
+              <FieldLabel htmlFor={`${fieldIdPrefix}-accent`}>Accent</FieldLabel>
+              <Input
+                id={`${fieldIdPrefix}-accent`}
+                className="resume-template-accent-input"
                 disabled={!theme || isSaving}
                 type="color"
                 value={theme?.accentColor ?? "#111111"}
                 onChange={(event) => updateTheme("accentColor", event.target.value)}
               />
-            </label>
-            <label className="field">
-              <span>Top margin</span>
-              <input
+            </Field>
+            <Field data-disabled={!theme || isSaving}>
+              <FieldLabel htmlFor={`${fieldIdPrefix}-top-margin`}>Top margin</FieldLabel>
+              <Input
+                id={`${fieldIdPrefix}-top-margin`}
                 disabled={!theme || isSaving}
                 max={28}
                 min={8}
@@ -309,10 +357,11 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
                 value={theme?.marginMm.top ?? 16.5}
                 onChange={(event) => updateMargin("top", Number(event.target.value))}
               />
-            </label>
-            <label className="field">
-              <span>Side margin</span>
-              <input
+            </Field>
+            <Field data-disabled={!theme || isSaving}>
+              <FieldLabel htmlFor={`${fieldIdPrefix}-side-margin`}>Side margin</FieldLabel>
+              <Input
+                id={`${fieldIdPrefix}-side-margin`}
                 disabled={!theme || isSaving}
                 max={28}
                 min={8}
@@ -325,48 +374,69 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
                   updateMargin("right", value);
                 }}
               />
-            </label>
-          </div>
-          <div className="resume-template-actions">
-            <button className="tab on" disabled={!theme || isSaving || !displayName.trim()} type="button" onClick={() => saveCurrent(false)}>
-              <IconDeviceFloppy size={14} aria-hidden="true" />
-              {saveTemplate.isPending ? "saving" : "save version"}
-            </button>
-            <button className="tab" disabled={!theme || isSaving || !displayName.trim()} type="button" onClick={() => saveCurrent(true)}>
-              <IconStar size={14} aria-hidden="true" />
-              save default
-            </button>
-            <button
-              className="tab"
-              disabled={!selectedTemplateCanBeDefault || Boolean(selectedTemplateIsDefault) || isSaving}
-              type="button"
-              onClick={() => {
-                if (!activeTemplate) return;
-                setDefaultTemplate.mutate({
-                  templateId: activeTemplate.templateId,
-                  versionId: activeTemplate.activeVersion.versionId,
-                });
-              }}
-            >
-              <IconStar size={14} aria-hidden="true" />
-              {setDefaultTemplate.isPending ? "setting" : "set default"}
-            </button>
-            {selectedTemplateIsDefault ? <span className="tag ok">default</span> : null}
-          </div>
-          {templatesQuery.isLoading ? <div className="banner inline">Loading resume templates.</div> : null}
-          {saveError || defaultError ? <div className="banner inline">{saveError ?? defaultError}</div> : null}
+            </Field>
+          </AdaptiveFieldGrid>
+          {templatesQuery.isLoading ? (
+            <div className="banner inline">Loading resume templates.</div>
+          ) : null}
+          {saveError || defaultError ? (
+            <div className="banner inline" role="alert">
+              {saveError ?? defaultError}
+            </div>
+          ) : null}
         </div>
-        <div className="resume-template-preview">
-          <ResumeStandalonePlateEditor
-            className="resume-template-plate-editor"
-            htmlUrl={profileHtmlPreviewUrl}
-            previewStyle={previewStyle}
-            title="Resume template preview"
-            transformKey={theme ? JSON.stringify(theme) : "loading"}
-          />
-        </div>
-      </div>
-    </section>
+      }
+      actions={
+        <>
+          <Button
+            disabled={!theme || isSaving || !displayName.trim()}
+            size="sm"
+            type="button"
+            onClick={() => saveCurrent(false)}
+          >
+            <IconDeviceFloppy aria-hidden="true" data-icon="inline-start" />
+            {saveTemplate.isPending ? "Saving…" : "Save version"}
+          </Button>
+          <Button
+            disabled={!theme || isSaving || !displayName.trim()}
+            size="sm"
+            type="button"
+            variant="outline"
+            onClick={() => saveCurrent(true)}
+          >
+            <IconStar aria-hidden="true" data-icon="inline-start" />
+            Save default
+          </Button>
+          <Button
+            disabled={
+              !selectedTemplateCanBeDefault || Boolean(selectedTemplateIsDefault) || isSaving
+            }
+            size="sm"
+            type="button"
+            variant="outline"
+            onClick={() => {
+              if (!activeTemplate) return;
+              setDefaultTemplate.mutate({
+                templateId: activeTemplate.templateId,
+                versionId: activeTemplate.activeVersion.versionId,
+              });
+            }}
+          >
+            <IconStar aria-hidden="true" data-icon="inline-start" />
+            {setDefaultTemplate.isPending ? "Setting…" : "Set default"}
+          </Button>
+        </>
+      }
+      previewLabel="Resume template preview"
+    >
+      <ResumeStandalonePlateEditor
+        className="resume-template-plate-editor"
+        htmlUrl={profileHtmlPreviewUrl}
+        previewStyle={previewStyle}
+        title="Resume template preview"
+        transformKey={theme ? JSON.stringify(theme) : "loading"}
+      />
+    </PreviewWorkbench>
   );
 }
 

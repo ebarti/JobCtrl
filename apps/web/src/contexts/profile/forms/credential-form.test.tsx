@@ -28,7 +28,7 @@ describe("<CredentialForm>", () => {
       screen.getByLabelText(/OpenAI API key/i),
       "synthetic-secret",
     );
-    await user.click(screen.getByRole("button", { name: "save" }));
+    await user.click(screen.getByRole("button", { name: /save/i }));
 
     expect(
       await screen.findByRole("alert", { name: /Keychain update failed/i }),

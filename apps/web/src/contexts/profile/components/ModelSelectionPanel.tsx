@@ -8,10 +8,15 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { CardHeader } from "../../../shared/ui/card-header.js";
+import { AdaptiveFieldGrid } from "../../../shared/ui/adaptive-field-grid.js";
+import { Button } from "../../../shared/ui/button.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
+import { SelectField } from "../../../shared/ui/select-field.js";
 import { useProviderModelsQuery } from "../hooks/useProviderModelsQuery.js";
 import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
 import { useUpdateSettingsMutation } from "../hooks/useUpdateSettingsMutation.js";
+
+const PROVIDER_DEFAULT_OPTION = "__jobctrl_provider_default__";
 
 const PROVIDER_COPY: Readonly<Record<ProviderId, { title: string; description: string }>> = {
   codex: {
@@ -37,67 +42,97 @@ export function ModelSelectionPanel() {
   const providers = new Map(
     (catalogQuery.data?.providers ?? []).map((provider) => [provider.provider, provider]),
   );
+  const readyProviderCount = ProviderIds.filter((providerId) => {
+    const provider = providers.get(providerId);
+    return provider?.ready && provider.models.length > 0;
+  }).length;
+  const savedPreferenceCount = ProviderIds.filter(
+    (providerId) => settings?.preferredModels[providerId],
+  ).length;
+  const collapsedSummary = isDemo
+    ? `Preview only · ${savedChoiceCount(savedPreferenceCount)}`
+    : catalogQuery.error
+      ? `Catalog unavailable · ${savedChoiceCount(savedPreferenceCount)}`
+      : catalogQuery.isPending
+        ? `Checking provider catalog · ${savedChoiceCount(savedPreferenceCount)}`
+        : `${readyProviderCount} of ${ProviderIds.length} providers ready · ${savedChoiceCount(savedPreferenceCount)}`;
 
   return (
-    <section className="card full model-selection-shell">
-      <CardHeader title="Model selection" meta="new work" />
-      <div className="model-selection-intro">
-        <p>
-          Configure at least one provider before choosing its preferred model. One provider is enough;
-          a second is recommended for resilience, not required.
-        </p>
-        <p>
-          Saved choices in <code>config.json</code> apply to newly started work. An explicit
-          per-workflow model takes precedence when that workflow supports one.
-        </p>
+    <DisclosureSection
+      className="model-selection-settings"
+      title="Model selection"
+      description="Preferred provider models for newly started work"
+      collapsedSummary={collapsedSummary}
+    >
+      <div className="model-selection-settings__content grid gap-4">
+        <div className="model-selection-guidance grid max-w-[76ch] gap-1.5 text-[12px] leading-5 text-muted-foreground">
+          <p className="m-0">
+            Configure at least one provider before choosing its preferred model. One provider is
+            enough; a second is recommended for resilience, not required.
+          </p>
+          <p className="m-0">
+            Saved choices in <code className="font-mono text-foreground">config.json</code> apply
+            to newly started work. An explicit per-workflow model takes precedence when that
+            workflow supports one.
+          </p>
+        </div>
+
+        {isDemo ? (
+          <p className="model-selection-demo-status m-0 text-[12px] leading-5 text-muted-foreground" role="status">
+            This browser-local demo shows a synthetic model catalog for preview only. Provider
+            connections and model changes are unavailable here.
+          </p>
+        ) : null}
+
+        {settingsQuery.error ? (
+          <p className="model-selection-error m-0 text-[12px] leading-5 text-destructive" role="alert">
+            Current model preferences are unavailable. Reload this page before making a change.
+          </p>
+        ) : null}
+        {catalogQuery.error ? (
+          <div className="model-catalog-error flex flex-wrap items-center justify-between gap-3">
+            <p className="m-0 text-[12px] leading-5 text-destructive" role="alert">
+              Available models could not be loaded. Provider credentials were not changed.
+            </p>
+            <Button
+              size="sm"
+              type="button"
+              variant="outline"
+              onClick={() => void catalogQuery.refetch()}
+            >
+              Retry catalog
+            </Button>
+          </div>
+        ) : null}
+
+        <div
+          className="model-provider-preferences grid gap-3"
+          aria-busy={settingsQuery.isPending || catalogQuery.isPending}
+        >
+          {ProviderIds.map((providerId) => (
+            <ProviderModelPreference
+              key={providerId}
+              catalog={providers.get(providerId)}
+              catalogPending={catalogQuery.isPending}
+              isDemo={isDemo}
+              provider={providerId}
+              savedModel={settings?.preferredModels[providerId]}
+              settingsPending={settingsQuery.isPending}
+              settingsReady={Boolean(settings)}
+            />
+          ))}
+        </div>
       </div>
-
-      {isDemo ? (
-        <div className="banner credential-store-notice credential-store-notice--guidance" role="status">
-          This browser-local demo shows a synthetic model catalog for preview only. Provider
-          connections and model changes are unavailable here.
-        </div>
-      ) : null}
-
-      {settingsQuery.error ? (
-        <div className="banner inline" role="alert">
-          Current model preferences are unavailable. Reload this page before making a change.
-        </div>
-      ) : null}
-      {catalogQuery.error ? (
-        <div className="banner inline model-catalog-error" role="alert">
-          <span>Available models could not be loaded. Provider credentials were not changed.</span>
-          <button className="tab" type="button" onClick={() => void catalogQuery.refetch()}>
-            retry catalog
-          </button>
-        </div>
-      ) : null}
-
-      <div
-        className="provider-card-list model-selection-list"
-        aria-busy={settingsQuery.isPending || catalogQuery.isPending}
-      >
-        {ProviderIds.map((providerId) => (
-          <ProviderModelCard
-            key={providerId}
-            catalog={providers.get(providerId)}
-            catalogPending={catalogQuery.isPending}
-            isDemo={isDemo}
-            provider={providerId}
-            savedModel={settings?.preferredModels[providerId]}
-            settingsReady={Boolean(settings)}
-          />
-        ))}
-      </div>
-    </section>
+    </DisclosureSection>
   );
 }
 
-function ProviderModelCard({
+function ProviderModelPreference({
   provider,
   catalog,
   savedModel,
   settingsReady,
+  settingsPending,
   catalogPending,
   isDemo,
 }: {
@@ -105,6 +140,7 @@ function ProviderModelCard({
   catalog: ProviderModelCatalogItem | undefined;
   savedModel: string | undefined;
   settingsReady: boolean;
+  settingsPending: boolean;
   catalogPending: boolean;
   isDemo: boolean;
 }) {
@@ -116,7 +152,6 @@ function ProviderModelCard({
   }));
   const [statusMessage, setStatusMessage] = useState("");
   const providerCopy = PROVIDER_COPY[provider];
-  const modelHintId = `preferred-model-${provider}-hint`;
   const models = catalog?.models ?? [];
   const knownModelIds = new Set(models.map((model) => model.id));
   const draftModel =
@@ -142,6 +177,21 @@ function ProviderModelCard({
         : catalog?.configured
           ? "Needs attention"
           : "Configure first";
+  const savedChoiceLabel = settingsReady
+    ? savedModel || "Provider default"
+    : settingsPending
+      ? "Checking saved choice"
+      : "Saved choice unavailable";
+  const modelOptions = [
+    { value: PROVIDER_DEFAULT_OPTION, label: "Provider default" },
+    ...(savedModelUnavailable && savedModel
+      ? [{ value: savedModel, label: `${savedModel} (no longer available)`, disabled: true }]
+      : []),
+    ...models.map((model) => ({
+      value: model.id,
+      label: `${modelOptionLabel(model.displayName, model.id)}${model.isDefault ? " · provider default" : ""}`,
+    })),
+  ];
 
   async function persistPreference(nextModel: string | null) {
     setStatusMessage("");
@@ -174,88 +224,99 @@ function ProviderModelCard({
   }
 
   return (
-    <article className="provider-card model-selection-card" data-provider={provider}>
-      <header className="provider-card-header">
-        <div>
-          <h3>{providerCopy.title}</h3>
-          <p>{providerCopy.description}</p>
-        </div>
-        <span className={`tag ${catalogReady && !isDemo ? "ok" : "muted"}`}>{statusLabel}</span>
-      </header>
+    <article className="provider-model-preference" data-provider={provider}>
+      <DisclosureSection
+        className="provider-preference-disclosure"
+        title={providerCopy.title}
+        description={providerCopy.description}
+        collapsedSummary={`Status: ${statusLabel} · Saved: ${savedChoiceLabel}`}
+      >
+        <div className="provider-preference-content grid gap-4">
+          <div className="provider-preference-status grid gap-1 text-[12px] leading-5 text-muted-foreground">
+            <p className="m-0">Status: {statusLabel}</p>
+            <p className="m-0">Saved choice: {savedChoiceLabel}</p>
+            <p className="m-0">Live availability from the authenticated provider runtime.</p>
+            {catalog?.message ? <p className="m-0">{catalog.message}</p> : null}
+          </div>
 
-      <p className="provider-model-source">
-        Live availability from the authenticated provider runtime.
-      </p>
-      {catalog?.message ? <p className="provider-status-message">{catalog.message}</p> : null}
+          {!catalogPending && !catalog?.ready && !isDemo ? (
+            <div className="provider-preference-empty grid justify-items-start gap-3">
+              <p className="m-0 text-[12px] leading-5 text-muted-foreground">
+                Finish and verify this provider before selecting a model.
+              </p>
+              <Button asChild size="sm" variant="outline">
+                <Link to="/settings/credentials">Configure {providerCopy.title}</Link>
+              </Button>
+            </div>
+          ) : (
+            <AdaptiveFieldGrid columns="auto" minColumnWidth={280} density="compact">
+              <SelectField
+                id={`preferred-model-${provider}`}
+                name={`preferred-model-${provider}`}
+                className="provider-preference-field"
+                label="Preferred model"
+                description={
+                  savedModelUnavailable
+                    ? `Saved: ${savedModel}. This model is no longer available in the provider catalog.`
+                    : savedModel
+                      ? `Saved: ${savedModel}`
+                      : "No saved preference; the provider chooses its default."
+                }
+                disabled={!canEdit}
+                options={modelOptions}
+                value={draftModel || PROVIDER_DEFAULT_OPTION}
+                onValueChange={(value) => {
+                  setDraftState({
+                    base: currentSavedModel,
+                    value: value === PROVIDER_DEFAULT_OPTION ? "" : value,
+                  });
+                  setStatusMessage("");
+                  updateSettings.reset();
+                }}
+              />
+              <div className="provider-preference-save-action flex items-end">
+                <Button
+                  size="sm"
+                  type="button"
+                  disabled={!canSave}
+                  onClick={() => void savePreference()}
+                >
+                  {updateSettings.isPending ? "Saving…" : "Save model"}
+                </Button>
+              </div>
+            </AdaptiveFieldGrid>
+          )}
 
-      {!catalogPending && !catalog?.ready && !isDemo ? (
-        <div className="provider-model-empty">
-          <p>Finish and verify this provider before selecting a model.</p>
-          <Link className="tab" to="/settings/credentials">
-            configure {providerCopy.title}
-          </Link>
-        </div>
-      ) : (
-        <div className="provider-model-form">
-          <label className="field" htmlFor={`preferred-model-${provider}`}>
-            <span>Preferred model</span>
-            <select
-              id={`preferred-model-${provider}`}
-              name={`preferred-model-${provider}`}
-              aria-describedby={modelHintId}
-              value={draftModel}
-              disabled={!canEdit}
-              onChange={(event) => {
-                setDraftState({ base: currentSavedModel, value: event.target.value });
-                setStatusMessage("");
-                updateSettings.reset();
-              }}
+          {savedModel && !isDemo ? (
+            <div className="provider-preference-clear-action">
+              <Button
+                size="sm"
+                type="button"
+                variant="ghost"
+                disabled={!settingsReady || updateSettings.isPending}
+                onClick={() => void clearPreference()}
+              >
+                Clear saved model
+              </Button>
+            </div>
+          ) : null}
+
+          {statusMessage ? (
+            <p
+              className="provider-preference-save-status m-0 text-[12px] leading-5 text-muted-foreground"
+              role={updateSettings.isError ? "alert" : "status"}
             >
-              <option value="">Provider default</option>
-              {savedModelUnavailable ? (
-                <option value={savedModel} disabled>{savedModel} (no longer available)</option>
-              ) : null}
-              {models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {modelOptionLabel(model.displayName, model.id)}{model.isDefault ? " · provider default" : ""}
-                </option>
-              ))}
-            </select>
-            <small className="field-hint" id={modelHintId}>
-              {savedModel
-                ? `Saved: ${savedModel}`
-                : "No saved preference; the provider chooses its default."}
-            </small>
-          </label>
-          <button
-            className="tab on"
-            type="button"
-            disabled={!canSave}
-            onClick={() => void savePreference()}
-          >
-            {updateSettings.isPending ? "saving" : "save model"}
-          </button>
+              {statusMessage}
+            </p>
+          ) : null}
         </div>
-      )}
-
-      {savedModel && !isDemo ? (
-        <button
-          className="tab provider-model-clear"
-          type="button"
-          disabled={!settingsReady || updateSettings.isPending}
-          onClick={() => void clearPreference()}
-        >
-          clear saved model
-        </button>
-      ) : null}
-
-      {statusMessage ? (
-        <p className="provider-model-save-status" role={updateSettings.isError ? "alert" : "status"}>
-          {statusMessage}
-        </p>
-      ) : null}
+      </DisclosureSection>
     </article>
   );
+}
+
+function savedChoiceCount(count: number): string {
+  return `${count} saved ${count === 1 ? "choice" : "choices"}`;
 }
 
 function modelOptionLabel(displayName: string, modelId: string): string {

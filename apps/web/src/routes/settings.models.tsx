@@ -8,5 +8,10 @@ export const Route = createFileRoute("/settings/models")({
 });
 
 function ModelsSettingsRoute() {
-  return <><ModelSelectionPanel /><AiExecutionPolicyPanel /></>;
+  return (
+    <div className="models-settings-sections grid gap-[18px]">
+      <ModelSelectionPanel />
+      <AiExecutionPolicyPanel />
+    </div>
+  );
 }

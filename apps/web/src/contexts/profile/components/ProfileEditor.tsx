@@ -1,8 +1,7 @@
 import { useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { Link } from "@tanstack/react-router";
 
-import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import { PreviewWorkbench } from "../../../shared/ui/preview-workbench.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAuditPins.js";
 import { ProfileForm } from "../forms/profile-form.js";
@@ -33,8 +32,6 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
   const layoutStyle = {
     "--profile-editor-width": `${editorWidth}%`,
   } as CSSProperties;
-  const cardTitle =
-    section === "preferences" ? "Configuration & templates" : "Resume data";
 
   const setWidthFromClientX = (clientX: number, persist = false) => {
     const rect = layoutRef.current?.getBoundingClientRect();
@@ -74,18 +71,16 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
       ref={layoutRef}
       style={layoutStyle}
     >
-      <section className="card">
-        <CardHeader
-          title={cardTitle}
-          meta={profileQuery.data ? undefined : "loading"}
-        />
+      <section className="profile-editor-panel">
         {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
         {section === "profile" ? (
-          <div className="toolbar profile-evidence-toolbar">
-            <Link className="tab" to="/evidence-map">
-              Open evidence map
-            </Link>
-          </div>
+          <header className="profile-editor-panel__header">
+            <div>
+              <span className="eyebrow">Canonical source</span>
+              <h2>Resume data</h2>
+              <p>Maintain the evidence-backed baseline used for every tailored resume.</p>
+            </div>
+          </header>
         ) : null}
         {profileQuery.data ? (
           section === "preferences" ? (
@@ -121,12 +116,19 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
           >
             <span aria-hidden="true" />
           </button>
-          <aside className="preview resume-editor-preview">
-            <ResumeStandalonePlateEditor
-              className="profile-resume-plate-editor"
-              htmlUrl={profileHtmlPreviewUrl}
-              title="Baseline resume editor"
-            />
+          <aside className="profile-preview-pane">
+            <PreviewWorkbench
+              className="profile-preview-workbench"
+              title="Resume preview"
+              description="The live baseline generated from the profile data."
+              previewLabel="Baseline resume preview"
+            >
+              <ResumeStandalonePlateEditor
+                className="profile-resume-plate-editor"
+                htmlUrl={profileHtmlPreviewUrl}
+                title="Baseline resume editor"
+              />
+            </PreviewWorkbench>
           </aside>
         </>
       ) : null}
