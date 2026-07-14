@@ -85,16 +85,35 @@ if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
   });
 }
 
-if (typeof window !== "undefined" && typeof window.ResizeObserver === "undefined") {
+if (
+  typeof window !== "undefined" &&
+  typeof window.ResizeObserver === "undefined"
+) {
   class MockResizeObserver {
     observe() {}
     unobserve() {}
     disconnect() {}
   }
-  (window as unknown as { ResizeObserver: typeof MockResizeObserver }).ResizeObserver =
-    MockResizeObserver;
+  (
+    window as unknown as { ResizeObserver: typeof MockResizeObserver }
+  ).ResizeObserver = MockResizeObserver;
 }
 
 if (typeof window !== "undefined") {
-  Object.defineProperty(window, "scrollTo", { writable: true, value: () => {} });
+  Object.defineProperty(window, "scrollTo", {
+    writable: true,
+    value: () => {},
+  });
+}
+
+if (
+  typeof window !== "undefined" &&
+  typeof window.PointerEvent === "undefined"
+) {
+  // Base UI controls dispatch PointerEvent; JSDOM only provides MouseEvent.
+  Object.defineProperty(window, "PointerEvent", {
+    configurable: true,
+    value: window.MouseEvent,
+    writable: true,
+  });
 }

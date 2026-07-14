@@ -73,12 +73,11 @@ export const ValueTone: Story = {
 
 export const AsLink: Story = {
   args: {
-    asChild: true,
     label: "Ready",
     value: "12",
     valueTone: "up",
     delta: "ready queue",
     className: "w-[240px]",
-    children: <a href="#ready" />,
+    render: <a href="#ready" />,
   },
 };

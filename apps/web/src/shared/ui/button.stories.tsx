@@ -73,3 +73,12 @@ export const FocusVisible: Story = {
     children: "Save changes",
   },
 };
+
+export const AsLink: Story = {
+  args: {
+    children: "Open jobs",
+    nativeButton: false,
+    render: <a href="#jobs" role="link" />,
+    variant: "outline",
+  },
+};

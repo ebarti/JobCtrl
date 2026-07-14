@@ -10,18 +10,12 @@ const sourceExtensions = new Set([".ts", ".tsx"]);
 
 // Remove entries from this list as their wrappers migrate to Base UI.
 const radixWrapperAllowlist = new Set([
-  "shared/ui/button.tsx",
-  "shared/ui/checkbox.tsx",
   "shared/ui/dialog.tsx",
   "shared/ui/dropdown-menu.tsx",
-  "shared/ui/label.tsx",
   "shared/ui/popover.tsx",
   "shared/ui/scroll-area.tsx",
   "shared/ui/select.tsx",
-  "shared/ui/separator.tsx",
   "shared/ui/sheet.tsx",
-  "shared/ui/stat-card.tsx",
-  "shared/ui/switch.tsx",
   "shared/ui/tabs.tsx",
   "shared/ui/toast.tsx",
   "shared/ui/toggle-group.tsx",

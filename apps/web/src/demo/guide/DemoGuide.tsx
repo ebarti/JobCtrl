@@ -156,69 +156,77 @@ export function DemoGuide() {
         <ul className="grid gap-1">
           <li>
             <Button
-              asChild
               variant="ghost"
               size="sm"
               className="h-auto w-full justify-between px-2 py-2 text-left"
+              nativeButton={false}
+              render={
+                <Link
+                  to="/jobs/$jobId"
+                  params={{ jobId: DEMO_JOB_ID }}
+                  onClick={() => recordFeatureShortcut("scoring")}
+                  role="link"
+                />
+              }
             >
-              <Link
-                to="/jobs/$jobId"
-                params={{ jobId: DEMO_JOB_ID }}
-                onClick={() => recordFeatureShortcut("scoring")}
-              >
-                <span>Inspect synthetic scoring evidence</span>
-                <IconArrowRight aria-hidden="true" size={15} />
-              </Link>
+              <span>Inspect synthetic scoring evidence</span>
+              <IconArrowRight aria-hidden="true" size={15} />
             </Button>
           </li>
           <li>
             <Button
-              asChild
               variant="ghost"
               size="sm"
               className="h-auto w-full justify-between px-2 py-2 text-left"
+              nativeButton={false}
+              render={
+                <Link
+                  to="/artifacts/$artifactId"
+                  params={{ artifactId: DEMO_ARTIFACT_ID }}
+                  onClick={() => recordFeatureShortcut("materials")}
+                  role="link"
+                />
+              }
             >
-              <Link
-                to="/artifacts/$artifactId"
-                params={{ artifactId: DEMO_ARTIFACT_ID }}
-                onClick={() => recordFeatureShortcut("materials")}
-              >
-                <span>Review synthetic tailored materials</span>
-                <IconArrowRight aria-hidden="true" size={15} />
-              </Link>
+              <span>Review synthetic tailored materials</span>
+              <IconArrowRight aria-hidden="true" size={15} />
             </Button>
           </li>
           <li>
             <Button
-              asChild
               variant="ghost"
               size="sm"
               className="h-auto w-full justify-between px-2 py-2 text-left"
+              nativeButton={false}
+              render={
+                <Link
+                  to="/apply-review"
+                  search={{ jobKey: DEMO_JOB_ID }}
+                  onClick={() => recordFeatureShortcut("apply_review")}
+                  role="link"
+                />
+              }
             >
-              <Link
-                to="/apply-review"
-                search={{ jobKey: DEMO_JOB_ID }}
-                onClick={() => recordFeatureShortcut("apply_review")}
-              >
-                <span>Open simulated Apply Review and dry run</span>
-                <IconArrowRight aria-hidden="true" size={15} />
-              </Link>
+              <span>Open simulated Apply Review and dry run</span>
+              <IconArrowRight aria-hidden="true" size={15} />
             </Button>
           </li>
           <li>
             <Button
-              asChild
               variant="ghost"
               size="sm"
               className="h-auto w-full justify-between px-2 py-2 text-left"
+              nativeButton={false}
+              render={
+                <Link
+                  to="/runs"
+                  onClick={() => recordFeatureShortcut("pipeline")}
+                  role="link"
+                />
+              }
             >
-              <Link
-                to="/runs"
-                onClick={() => recordFeatureShortcut("pipeline")}
-              >
-                <span>See simulated run history</span>
-                <IconArrowRight aria-hidden="true" size={15} />
-              </Link>
+              <span>See simulated run history</span>
+              <IconArrowRight aria-hidden="true" size={15} />
             </Button>
           </li>
         </ul>

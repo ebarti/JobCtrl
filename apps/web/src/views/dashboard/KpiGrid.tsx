@@ -123,31 +123,31 @@ export function KpiGrid({ summary }: KpiGridProps) {
         return (
           <StatCard
             key={label}
-            asChild
             className={KPI_HOVER}
             label={label}
             value={summary.totals[key]}
             valueTone={tone ? VALUE_TONE[tone] : undefined}
             delta={caption(summary)}
-          >
-            <a
-              href={kpiHrefFor(target)}
-              onClick={(event) => {
-                if (
-                  event.defaultPrevented
-                  || event.button !== 0
-                  || event.metaKey
-                  || event.altKey
-                  || event.ctrlKey
-                  || event.shiftKey
-                ) {
-                  return;
-                }
-                event.preventDefault();
-                void navigate({ to: "/jobs", search });
-              }}
-            />
-          </StatCard>
+            render={
+              <a
+                href={kpiHrefFor(target)}
+                onClick={(event) => {
+                  if (
+                    event.defaultPrevented ||
+                    event.button !== 0 ||
+                    event.metaKey ||
+                    event.altKey ||
+                    event.ctrlKey ||
+                    event.shiftKey
+                  ) {
+                    return;
+                  }
+                  event.preventDefault();
+                  void navigate({ to: "/jobs", search });
+                }}
+              />
+            }
+          />
         );
       })}
     </section>

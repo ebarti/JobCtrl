@@ -1,6 +1,6 @@
-import { Slot } from "@radix-ui/react-slot";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { cva, type VariantProps } from "class-variance-authority";
-import { forwardRef, type ButtonHTMLAttributes } from "react";
+import { forwardRef } from "react";
 
 import { cn } from "../lib/cn.js";
 
@@ -12,10 +12,12 @@ const buttonVariants = cva(
         default:
           "bg-primary text-primary-foreground shadow-[0_10px_20px_color-mix(in_oklab,var(--primary)_22%,transparent)] hover:bg-primary/90",
         destructive: "bg-destructive text-white hover:bg-destructive/90",
-        outline: "border border-border bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+        outline:
+          "border border-border bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground",
         secondary:
           "border border-[color-mix(in_oklab,var(--primary)_40%,var(--border))] bg-card text-primary hover:bg-accent hover:text-accent-foreground",
-        ghost: "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+        ghost:
+          "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
@@ -33,18 +35,20 @@ const buttonVariants = cva(
 );
 
 export interface ButtonProps
-  extends ButtonHTMLAttributes<HTMLButtonElement>,
+  extends
+    Omit<ButtonPrimitive.Props, "className">,
     VariantProps<typeof buttonVariants> {
-  asChild?: boolean;
+  className?: string;
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? Slot : "button";
-    return (
-      <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />
-    );
-  },
+  ({ className, variant, size, ...props }, ref) => (
+    <ButtonPrimitive
+      className={cn(buttonVariants({ variant, size, className }))}
+      ref={ref}
+      {...props}
+    />
+  ),
 );
 Button.displayName = "Button";
 

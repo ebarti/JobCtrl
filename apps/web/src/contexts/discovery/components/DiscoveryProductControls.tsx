@@ -976,17 +976,19 @@ function SourceLocatorPanel({
               <Button
                 size="icon"
                 variant="ghost"
-                asChild
+                nativeButton={false}
+                render={
+                  <a
+                    aria-label={`Open ${candidate.candidateUrl}`}
+                    href={candidate.candidateUrl}
+                    role="link"
+                    target="_blank"
+                    rel="noreferrer"
+                  />
+                }
                 title="Open candidate"
               >
-                <a
-                  aria-label={`Open ${candidate.candidateUrl}`}
-                  href={candidate.candidateUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <IconExternalLink size={14} aria-hidden="true" />
-                </a>
+                <IconExternalLink size={14} aria-hidden="true" />
               </Button>
               <Button
                 type="button"
@@ -1422,15 +1424,22 @@ function ManualCaptureRow({
         </form>
       </span>
       <div className="row-actions">
-        <Button size="icon" variant="ghost" asChild title="Open page">
-          <a
-            aria-label={`Open ${item.originatingUrl}`}
-            href={item.originatingUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <IconExternalLink size={14} aria-hidden="true" />
-          </a>
+        <Button
+          size="icon"
+          variant="ghost"
+          nativeButton={false}
+          render={
+            <a
+              aria-label={`Open ${item.originatingUrl}`}
+              href={item.originatingUrl}
+              role="link"
+              target="_blank"
+              rel="noreferrer"
+            />
+          }
+          title="Open page"
+        >
+          <IconExternalLink size={14} aria-hidden="true" />
         </Button>
         <Button
           type="button"

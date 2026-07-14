@@ -1,5 +1,6 @@
-import { Slot, Slottable } from "@radix-ui/react-slot";
-import { forwardRef, type HTMLAttributes, type ReactNode } from "react";
+import { mergeProps } from "@base-ui/react/merge-props";
+import { useRender } from "@base-ui/react/use-render";
+import { forwardRef, type ReactNode } from "react";
 
 import { cn } from "../lib/cn.js";
 import { cardClassName } from "./card.js";
@@ -12,65 +13,75 @@ const toneClass: Record<StatTone, string> = {
   down: "text-destructive",
 };
 
-export interface StatCardProps extends HTMLAttributes<HTMLDivElement> {
+export interface StatCardProps extends Omit<
+  useRender.ComponentProps<"div">,
+  "children" | "className"
+> {
   label: string;
   value: ReactNode;
   tag?: ReactNode;
   delta?: ReactNode;
   deltaTone?: StatTone | undefined;
   valueTone?: StatTone | undefined;
-  /**
-   * Render the card as the single child element (e.g. an anchor) so the whole
-   * surface becomes interactive while keeping the stat layout. Uses the Radix
-   * Slot pattern; the child's own props (href, onClick) are preserved.
-   */
-  asChild?: boolean;
+  className?: string;
 }
 
 export const StatCard = forwardRef<HTMLDivElement, StatCardProps>(
   (
-    { label, value, tag, delta, deltaTone, valueTone, asChild = false, className, children, ...props },
+    {
+      label,
+      value,
+      tag,
+      delta,
+      deltaTone,
+      valueTone,
+      className,
+      render,
+      ...props
+    },
     ref,
   ) => {
-    const Comp = asChild ? Slot : "div";
-    return (
-      <Comp
-        ref={ref}
-        className={cn(cardClassName, "flex flex-col gap-2 p-4", className)}
-        {...props}
-      >
-        <div className="flex items-start justify-between gap-2">
-          <span
-            data-slot="stat-label"
-            className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-muted-foreground"
-          >
-            {label}
-          </span>
-          {tag ? <span className="shrink-0">{tag}</span> : null}
-        </div>
-        <span
-          data-slot="stat-value"
-          className={cn(
-            "text-[28px] font-[900] leading-none tracking-[-0.02em]",
-            valueTone ? toneClass[valueTone] : "text-foreground",
-          )}
-        >
-          {value}
-        </span>
-        {delta ? (
-          <span
-            data-slot="stat-delta"
-            className={cn(
-              "text-[12px] font-semibold",
-              deltaTone ? toneClass[deltaTone] : "text-muted-foreground",
-            )}
-          >
-            {delta}
-          </span>
-        ) : null}
-        {asChild ? <Slottable>{children}</Slottable> : null}
-      </Comp>
-    );
+    return useRender({
+      defaultTagName: "div",
+      ref,
+      render,
+      props: mergeProps(props, {
+        className: cn(cardClassName, "flex flex-col gap-2 p-4", className),
+        children: (
+          <>
+            <div className="flex items-start justify-between gap-2">
+              <span
+                data-slot="stat-label"
+                className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-muted-foreground"
+              >
+                {label}
+              </span>
+              {tag ? <span className="shrink-0">{tag}</span> : null}
+            </div>
+            <span
+              data-slot="stat-value"
+              className={cn(
+                "text-[28px] font-[900] leading-none tracking-[-0.02em]",
+                valueTone ? toneClass[valueTone] : "text-foreground",
+              )}
+            >
+              {value}
+            </span>
+            {delta ? (
+              <span
+                data-slot="stat-delta"
+                className={cn(
+                  "text-[12px] font-semibold",
+                  deltaTone ? toneClass[deltaTone] : "text-muted-foreground",
+                )}
+              >
+                {delta}
+              </span>
+            ) : null}
+          </>
+        ),
+      }),
+    });
   },
 );
 StatCard.displayName = "StatCard";
