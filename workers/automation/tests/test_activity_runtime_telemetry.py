@@ -153,11 +153,12 @@ def test_inventory_returns_exact_total_with_bounded_longest_running_safe_details
     )
 
 
-def test_inventory_ignores_non_allowlisted_activities_without_reading_payloads():
+def test_inventory_counts_non_allowlisted_slot_without_exposing_metadata():
     inventory = ActiveActivityInventory()
+    canary = "private-provider-activity-type-secret"
 
     token = inventory.start(
-        activity_type="apply",
+        activity_type=canary,
         activity_id="https://jobs.example/private",
         workflow_id="secret-workflow",
         workflow_run_id="secret-run",
@@ -165,7 +166,64 @@ def test_inventory_ignores_non_allowlisted_activities_without_reading_payloads()
         started_at=datetime(2026, 7, 14, 9, 0, tzinfo=UTC),
     )
 
-    assert token is None
+    snapshot = inventory.snapshot()
+    serialized = json.dumps(
+        {
+            "counts": snapshot.counts_json_dict(),
+            "details": snapshot.details_json_list(),
+            "durations": snapshot.durations_json_dict(),
+        },
+        sort_keys=True,
+    )
+    assert token is not None
+    assert snapshot.active_activity_count == 1
+    assert snapshot.active_details_total == 0
+    assert snapshot.counts_by_type == {}
+    assert snapshot.active_details == ()
+    assert snapshot.active_details_truncated is False
+    assert canary not in serialized
+
+    inventory.finish(token)
+
+    terminal = inventory.snapshot()
+    assert terminal.active_activity_count == 0
+    assert terminal.durations_by_type == {}
+
+
+@pytest.mark.asyncio
+async def test_interceptor_tracks_non_allowlisted_activity_until_terminal(monkeypatch):
+    inventory = ActiveActivityInventory()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    canary = "private-unallowlisted-activity-type"
+    info = SimpleNamespace(
+        activity_type=canary,
+        activity_id="private-activity-id",
+        workflow_id="private-workflow-id",
+        workflow_run_id="private-run-id",
+        attempt=1,
+        started_time=datetime(2026, 7, 14, 9, 0, tzinfo=UTC),
+    )
+
+    class Next:
+        async def execute_activity(self, _input):
+            entered.set()
+            await release.wait()
+            return "done"
+
+    inbound = ActivityRuntimeTelemetryInterceptor(inventory).intercept_activity(Next())
+    monkeypatch.setattr(activity_runtime_telemetry.activity, "info", lambda: info)
+
+    task = asyncio.create_task(inbound.execute_activity(object()))
+    await entered.wait()
+    active = inventory.snapshot()
+    assert active.active_activity_count == 1
+    assert active.active_details_total == 0
+    assert active.counts_by_type == {}
+    assert active.active_details == ()
+
+    release.set()
+    assert await task == "done"
     assert inventory.snapshot().active_activity_count == 0
 
 
