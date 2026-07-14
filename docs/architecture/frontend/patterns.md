@@ -113,11 +113,14 @@ Operations (`jobsKeys`, `artifactsKeys`, `dashboardKeys`, `applyRunsKeys`,
 full hierarchical scopes (`all` / `lists` / `list` / `details` / `detail`,
 or context-specific subsets such as `profileKeys.resumeTemplates` and
 `discoveryKeys.sourceRegistry`). The remaining aggregate factories —
-`applyKeys`, `pipelineKeys`, `scoringKeys`, `enrichmentKeys`,
+`applyKeys`, `scoringKeys`, `enrichmentKeys`,
 `materialsKeys` — are today `all(tenantId)`-only stubs: those contexts own
 mutations and components but no cached reads of their own yet, so the
 factory exists for registry symmetry and grows scopes when a context gains
-its first query. One nuance: `compensationKeys` nests under an extra
+its first query. `pipelineKeys` now has
+`operations(tenantId) = ["tenant", tenantId, "pipeline", "operations"]`;
+Operations owns the read hook while Pipeline owns and exports the key factory.
+One nuance: `compensationKeys` nests under an extra
 `"operations"` segment (`["tenant", tenantId, "operations", "compensation",
 …]`) because compensation reads are an Operations concern.
 
@@ -181,15 +184,16 @@ flowchart TD
 ```
 
 Each family expands into the flat-file routes named in the surrounding text and
-in `apps/web/src/routes/`. Nested files preserve list state while opening
-drawers, detail panels, run timelines, or import-wizard steps.
+in `apps/web/src/routes/`. Nested files preserve URL-owned list state while
+opening full detail workspaces, run timelines, activity inspectors, or
+import-wizard steps.
 
 **Search-param conventions per route** (typed via Zod, resolves §6 question
 13):
 
 ```ts
 // routes/jobs.tsx (layout) declares the shape consumed by both the
-// index (table) and the $jobId (drawer) child routes — the layout owns
+// index (table) and the $jobId (detail-workspace) child routes — the layout owns
 // the *list* search params, the child owns the *detail* path param.
 const jobsSearchSchema = z.object({
   q: z.string().default(""),
@@ -203,10 +207,10 @@ const jobsSearchSchema = z.object({
 });
 ```
 
-The drawer is a **route child**, not a `useState` toggle: navigating to
-`/jobs/$jobId?q=foo&stage=apply` opens the drawer with the table
-preserved underneath. Closing the drawer navigates back to `/jobs`.
-Refresh restores both the filter and the open drawer.
+The detail workspace is a **route child**, not a `useState` toggle: navigating
+to `/jobs/$jobId?q=foo&stage=apply` opens the full route workspace while the
+list's URL-owned filter state remains preserved. Its back action navigates to
+`/jobs`; refresh restores both the filter and selected detail route.
 
 ## 4.4 Per-Context Tactical Spec
 
@@ -283,7 +287,7 @@ View composition (Dashboard, Jobs, Artifacts) is treated separately in §4.5.
 
 | Aspect | Pattern |
 |---|---|
-| Routes | `routes/apply-review.tsx` (`/apply-review`) mounts `views/apply-review/`; a sub-route under jobs (`routes/jobs.$jobId.run.$runId.tsx`) renders the apply-run timeline drawer. |
+| Routes | `routes/apply-review.tsx` (`/apply-review`) mounts `views/apply-review/`; a sub-route under jobs (`routes/jobs.$jobId.run.$runId.tsx`) renders the full apply-run timeline workspace. |
 | Queries | None directly — apply-run reads are owned by Operations (`useApplyRunsListQuery`, derived from the dashboard summary; there is no `useApplyRunQuery`). Apply Review reads (`useApplyReviewQueueQuery`, `useResumeReviewDraftQuery`, `useApplicationOutcomesQuery`) are also Operations hooks. |
 | Mutations | `useApplyJobMutation({ jobId })` (returns `runId`, 202), `useDryRunApplyMutation({ jobId })`, `useCancelApplyMutation({ jobId, runId })`, plus Apply Review mutations for `useCreateResumeReviewDraftMutation`, `useSaveResumeReviewDraftRevisionMutation`, `useSeedResumeReviewCommentThreadsMutation`, `useReplyToResumeReviewCommentMutation`, and `useRenderResumeReviewDraftMutation`. Draft save/reply/render mutations invalidate the Apply Review queue, draft, feedback, job detail, and outcome surfaces; render promotion also allows the queue to refresh to the replacement artifacts. |
 | SSE keys consumed | `ApplyRunStarted`, `ApplySubmitIntended`, `ApplyRunEventRecorded`, `ApplicationEmailFeedbackIngested`, `ApplicationSubmitted`, `ApplicationFailed`. |
@@ -295,18 +299,18 @@ View composition (Dashboard, Jobs, Artifacts) is treated separately in §4.5.
 | Aspect | Pattern |
 |---|---|
 | Routes | None (component + mutation context). |
-| Queries | None — stage data is in `JobDetailProjection.stages` (Operations). |
+| Queries | `usePipelineOperationsQuery()` is owned by Operations and keyed by Pipeline's `pipelineKeys.operations(tenantId)`. It reads the current `PipelineOperationsSnapshot`; per-job stage data remains in `JobDetailProjection.stages`. The query has a 10-second stale time, polls every 15 seconds while phase is `discovering`/`draining` and every 60 seconds otherwise, and never polls in the background. |
 | Mutations | `useRunPipelineStagesMutation({ stages, limit, workers, minScore, validationMode, dryRun, ... })` for global/batch stage starts, `useRetryStageMutation({ jobId, stage, resetAttempts?, runAfter? })`, `useCancelStageMutation({ jobId, stage })`, `useMarkAppliedMutation({ jobId })` (`MarkAppliedUseCase` per backend §5.7), `useMarkSkippedMutation({ jobId })` (`SkipJobUseCase` per backend §5.7). Per-job stage mutations optimistically patch the `JobDetailProjection.stages` array; SSE event reconciles. `useRetryStageMutation` with `runAfter: true` follows the async (202) pattern; the job-detail action toolbar uses it for failed preparation stages so a retry resumes the selected job through the remaining preparation pipeline. Global/batch stage starts are hybrid: non-apply-only requests return synchronously with worker action results, while requests that queue apply return 202 and finish through SSE-driven invalidation. |
-| SSE keys consumed | All `Stage*` events (`StageStarted`, `StageCompleted`, `StageFailed`, `StageBlocked`, `StageSkipped`, `StageReset`, `StageCanceled`, `StageExhausted`). |
-| Components | `<StageTriggerPanel />` for dashboard-composed global starts with per-stage persisted tab config, stage-specific controls, and immediate start feedback (`starting`, `queued`, `succeeded`, `dry_run`, `failed`; run/action id when returned), `<StageBadge state={...} />` (exhaustive `switch` on `state.kind` per §2.4 data-orientation; covered by the `STAGE_STATE_KINDS` parity test in §10.2), `<StageTimeline stages={...} />`, `<RetryStageButton jobId={...} stage={...} />`, `<CancelStageButton jobId={...} stage={...} />`, `<MarkAppliedButton jobId={...} />`, `<MarkSkippedButton jobId={...} />`, `<JobActions jobId={...} />` (toolbar composer). |
+| SSE keys consumed | All `Stage*`, `PreparationWorkItem*`, `PipelineStep*`, and `Workflow*` lifecycle events invalidate `pipelineKeys.operations`; the owning handlers also retain their existing jobs/dashboard/workflow-run targets. Runtime heartbeat and task-queue changes have no domain event, so polling is the correctness complement. |
+| Components | `<StageTriggerPanel />` for global starts with per-stage persisted tab config, stage-specific controls, the user-facing **Internal concurrency** label, and immediate start feedback (`starting`, `queued`, `succeeded`, `dry_run`, `failed`; run/action id when returned), `<StageBadge state={...} />` (exhaustive `switch` on `state.kind` per §2.4 data-orientation; covered by the `STAGE_STATE_KINDS` parity test in §10.2), `<StageTimeline stages={...} />`, `<RetryStageButton jobId={...} stage={...} />`, `<CancelStageButton jobId={...} stage={...} />`, `<MarkAppliedButton jobId={...} />`, `<MarkSkippedButton jobId={...} />`, `<JobActions jobId={...} />` (toolbar composer). `PipelinesView` itself renders the operations ledger because it composes an Operations read hook with Pipeline's control component. |
 
 ## 4.5 View Composition
 
 Views compose hooks and components from the contexts above. They
 do not own queries, mutations, or persistent stores. They own:
 
-- **Layout** — table-and-drawer arrangement, card grids, filter-bar
-  positioning.
+- **Layout** — list/detail route-workspace composition, ruled rows, continuous
+  panels, inspectors, disclosures, and filter-bar positioning.
 - **URL binding** — the route's typed search-param schema (`zod`-validated
   `useSearch`); each view's filter bar reads/writes this surface.
 - **Ephemeral view-local state** — bulk-selection sets, "show advanced
@@ -329,9 +333,19 @@ lives under `shared/ui/` but is imported by no view.
 | `views/artifacts/` | `ArtifactsView.tsx`, `ArtifactsTable.tsx`, `ArtifactFilterBar.tsx`, `ArtifactDetailPanel.tsx`, `columns.tsx` | operations (`useArtifactsListQuery`, `useArtifactDetailQuery`); materials (`<OpenArtifactButton>`, artifact badges, `<TailoringExplanationSection>`) |
 | `views/apply-review/` | `ApplyReviewView.tsx` | operations (`useApplyReviewQueueQuery`, `useResumeReviewDraftQuery`); apply (review mutations, `<ApplyReviewDecisionControls>`, `<CancelApplyButton>`); materials (`<ResumePlateEditor>`, `<ArtifactGroundingRiskPanel>`, `<JobResumeTemplateSelect>`); enrichment (`<CompensationSummaryStrip>`); profile (`useResumeTemplatesQuery`) |
 | `views/runs/` | `RunsView.tsx`, `RunsTable.tsx`, `RunsFilterBar.tsx`, `WorkflowRunDrawer.tsx`, `columns.tsx`, `temporal-web-ui.ts` | operations (`useWorkflowRunsListQuery`, `useWorkflowRunDetailQuery`); apply (`<RunStatusBadge>`); pipeline (`<CancelWorkflowRunButton>`) |
-| `views/pipelines/` | `PipelinesView.tsx` | pipeline (`<StageTriggerPanel>`) |
+| `views/pipelines/` | `PipelinesView.tsx`, fixtures, stories, and tests | operations (`usePipelineOperationsQuery`); pipeline (`<StageTriggerPanel>`); shared redesign primitives (`<RouteWorkspace>`, `<PageHead>`, `<DisclosureSection>`, `<InspectorLedger>`, `<Empty>`, `<ToolRow>`) |
 | `views/discovery/` | `DiscoveryView.tsx` | discovery (`<DiscoveryProductControls>`, `<DiscoveryRuntimeSettingsPanel>`); profile (`<TargetSearchSettingsPanel>`, `<DiscoveryAutomationSettingsPanel>`) |
 | `views/debug/` | `DebugView.tsx`, `DebugActivityTable.tsx`, `DebugFilterBar.tsx`, `ActivityDetailDrawer.tsx`, `activity-columns.tsx`, `activity-tone.ts` | operations (`useActivityListQuery`, `useActivityEventQuery`); URL-bound event search, sorting, pagination |
+
+The Pipelines composer renders three separately labeled, keyboard-focusable
+scope tables; source-family planning and reconciliation live in their own
+disclosure rather than being folded into downstream completion. Its compact
+phase/cohort/source/ETA/snapshot header is the single `aria-live="polite"`
+region, so polling does not cause every detail cell to re-announce. The
+execution/capacity/active-work inspector is ordinary inspectable content. The
+Pipeline-owned `StageTriggerPanel` remains available in the shared `ToolRow`
+while the snapshot is loading or unavailable, and a fetch failure is surfaced
+as an alert rather than silently replacing the controls.
 
 ## 4.6 Forms Convention (TanStack Form)
 
@@ -401,6 +415,21 @@ Tailwind utility classes, copy-paste model) for the primitive layer.
 Select, Combobox, Command, Tabs, Toast, Toaster, Tooltip, Skeleton,
 Button, Input, Textarea, Checkbox, Switch, Badge, Card, Form (TanStack
 Form bindings), Table primitives.
+
+**Shared product-layout primitives.** The redesign also owns thin semantic
+primitives in `shared/ui/`: `RouteWorkspace` for content/inspector composition,
+`PageHead` for route identity, `DisclosureSection` for progressive detail,
+`InspectorLedger` / `InspectorLedgerItem` for label-value audit facts, `Empty`
+for explicit empty/loading absence, and `ToolRow` for actions. They are shared
+layout vocabulary, not bounded-context components. `PipelinesView` composes
+these directly around Operations data and the Pipeline-owned
+`StageTriggerPanel`.
+
+**Visual grammar.** Status components — including legacy-named `*Badge` and
+`ConnectionStatusPill` identifiers — render a small dot or glyph plus text, not
+rounded colored pills. Section tabs use a neutral active underline. Dense facts
+live in ruled rows, ledgers, disclosures, and inspectors rather than one card
+per datum or nested card grids.
 
 **Icons:** `components.json` targets Tabler for newly copied shadcn output.
 Visible product icons use `@tabler/icons-react`; do not add new

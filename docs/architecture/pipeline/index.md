@@ -214,7 +214,7 @@ Primary implementation files (repo-relative):
 - `apps/api/src/local-actions.ts` — maps UI commands to JSON-RPC methods.
 - `apps/api/src/json-rpc-adapter.ts` — long-lived subprocess JSON-RPC adapter.
 - `apps/api/src/projections.ts` — TS projection builder (`refreshProjections`).
-- `packages/domain-types/src/events/` — the 68-type `DomainEventType` union.
+- `packages/domain-types/src/events/` — the 99-type `DomainEventType` union.
 - `workers/automation/src/jobctrl/infrastructure/rpc/handlers.py` — JSON-RPC
   method registry (workflow vs sync modes).
 - `workers/automation/src/jobctrl/workflow_specs.py` — `run_stage` / `apply`

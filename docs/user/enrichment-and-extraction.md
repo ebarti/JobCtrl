@@ -13,9 +13,9 @@ separate primary page or pipeline stage. Its results remain inspectable:
 
 - `/jobs` shows source provenance, durable stage state, and whether a posting is
   active, closed, failed, or awaiting further work.
-- `/jobs/:jobId` opens the job drawer with the full posting, source and
-  enrichment evidence, snapshot confidence or quarantine state, application
-  URL, and allow-listed audit history.
+- `/jobs/:jobId` opens the Job Detail route workspace with the full posting,
+  source and enrichment evidence, snapshot confidence or quarantine state,
+  application URL, and allow-listed audit history.
 - `/discovery` owns source review, quarantined leads, locator candidates, and
   manual-capture decisions.
 - `/runs` shows the durable Discover and preparation workflows. A failed

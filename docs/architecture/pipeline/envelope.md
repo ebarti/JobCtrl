@@ -3,7 +3,7 @@
 The **envelope** is the contract every workflow obeys: one shared
 start / heartbeat / completion shape, the same activity conventions, and a single
 error taxonomy mapped onto Temporal (the workflow engine) retry policies. This
-page covers that envelope, the nineteen activities the workflows call, and how
+page covers that envelope, the registered activities the workflows call, and how
 the error taxonomy drives retries.
 
 **Read this if** you need to know how a workflow starts, heartbeats, and
@@ -94,7 +94,43 @@ tenant, job id, work-item kind, **target version**, and **source event id**:
 - `source_event_id` is the latest of `JobDiscovered`, `JobUpdated`,
   `JobEnriched`, `PostingContentSnapshotCaptured`, or `StageCompleted` for that
   job. A new source fact yields a new key, so genuinely new work gets a new
-  workflow while reruns of unchanged work dedupe onto the existing one.
+workflow while reruns of unchanged work dedupe onto the existing one.
+
+### Discover Execution Identity And Membership
+
+Workflow IDs provide idempotent starts, but they are not sufficient lineage:
+the deterministic `discover-local` ID can name more than one Temporal run over
+time. `DiscoverWorkflow.run()` therefore reads `workflow.info()` once and
+creates an immutable `DiscoveryExecutionRef` containing tenant, workflow ID,
+and Temporal run ID. Source-run IDs are deliberately excluded.
+
+That exact reference is carried through planning, source families,
+reconciliation, preparation fan-out, child `JobPreparationWorkflow` input, and
+PDF rendering. `discovery_execution_jobs` stores one membership per execution
+and canonical job URL. Its cohort is `observed_this_run` or
+`existing_backlog`; a later source observation may promote a swept membership
+to current, but cannot duplicate or demote it. A work plan remains explicitly
+`pending` until it becomes `planned`, `not_eligible`, or `failed`; a missing
+required-step list is never interpreted as proof of no work.
+
+### Pipeline-Step Lifecycle Envelope
+
+Execution-owned orchestration uses a narrower lifecycle envelope alongside the
+universal workflow envelope:
+
+1. `PipelineStepQueued` establishes the step and attempt.
+2. `PipelineStepStarted` records the actual start.
+3. `PipelineStepCompleted` records bounded detail code/count and duration, or
+   `PipelineStepFailed` records bounded error code and retryability.
+
+The allowed step kinds are `source_planning`, `source_family`,
+`enrichment_pass`, `preparation_fanout`, `existing_backlog_sweep`, and
+`pdf_render`. Item keys use a bounded grammar. Payloads never carry raw
+activity arguments, URLs, provider output, or exception text. The projection
+fold is attempt-aware: a higher attempt replaces an older attempt, late lower
+attempts are ignored, and the first terminal result wins within one attempt.
+This lifecycle fills orchestration gaps; canonical per-job stage state remains
+authoritative for `enrich`, `score`, `tailor`, and `cover`.
 
 ### Finalize + The Describe-Based Reconciler
 
@@ -183,6 +219,25 @@ every activity that writes calls `assert_activity_runtime`
 path carried in its input. A mismatch raises a **non-retryable**
 `ApplicationError(type="RuntimeIdentityMismatch")`, so an activity that landed on
 the wrong worker fails fast instead of writing to the wrong database.
+
+### Runtime Telemetry Boundary
+
+Every Temporal activity also passes through a worker interceptor that records
+an exact active-slot count without changing activity behavior. The interceptor
+does not read activity arguments. Only allowlisted activity kinds can appear in
+detail, and unsafe identifiers are replaced by non-reversible local `op_...`
+hashes; only grammar-validated safe workflow/run references remain readable.
+The heartbeat retains at most 20 oldest active details plus an exact allowlisted
+total and truncation flag. URLs, job descriptions, profiles, prompts, provider
+responses, artifact paths, payloads, credentials, and exception text are outside
+the telemetry contract.
+
+Heartbeat or task-queue sampling failure is observational only: the interceptor
+catches it and continues the business activity. The operations API derives the
+expected app directory from its configured database path, filters rows to that
+resolved database/app-dir identity, selects the queue named by the newest
+matching heartbeat, validates heartbeat schema/capacity invariants, and
+aggregates fresh valid rows from that queue.
 
 ## Error Taxonomy → Temporal Retry
 

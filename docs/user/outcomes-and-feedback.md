@@ -9,8 +9,8 @@ changing scoring, ranking, thresholds, or Apply eligibility.
 ## What You Can See And Control
 
 - Open `/jobs/:jobId` and use **Application outcomes** to record an outcome,
-  occurrence time, and optional local note. The same drawer shows the ordered
-  outcome timeline and any pending suggestion for that job.
+  occurrence time, and optional local note. The same Job Detail workspace shows
+  the ordered outcome timeline and any pending suggestion for that job.
 - After using stored interview prep, record a reflection in the prep panel. The
   resulting interview outcome can link to the prep generation that preceded it.
 - `/dashboard` surfaces pending outcome suggestions and the high-level

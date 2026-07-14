@@ -77,7 +77,7 @@ These tests do not mount React components.
   this layer by asserting URL-owned deep links and the explicit
   "mark reviewed" acknowledge action.
 - **Playwright E2E:** **smoke flows only** — navigate the dashboard,
-  filter a jobs list, open a drawer, trigger a dry-run apply. Run against
+  filter a jobs list, open a detail workspace, trigger a dry-run apply. Run against
   a real `apps/api` + a seeded SQLite DB.
 
 **Why both:** hook tests with MSW are fast (sub-second) and run on every
@@ -106,8 +106,8 @@ critical flows:
 
 1. **Dashboard load** → KPIs render → click a KPI → navigate to filtered
    jobs view → row count matches.
-2. **Job detail drawer** → click a row → drawer opens with score, stages,
-   artifacts → close → drawer closes; URL preserves the filter.
+2. **Job Detail workspace** → click a row → the full route workspace opens with
+   score, stages, artifacts, and a back action; returning preserves the URL filter.
 3. **Soft-delete + restore** → bulk-select 3 jobs → delete → confirm
    removal from active list → switch to "deleted" tab → restore → confirm
    re-appearance.
@@ -116,10 +116,10 @@ critical flows:
    rendered in the Profile Plate editor.
 5. **Resume import wizard** → upload a PDF → preview parsed draft → confirm
    → wizard exits to profile editor; profile reflects imported sections.
-6. **Generate materials** → click "Generate" on a job → drawer shows
-   "queued" → simulate `ResumeApproved` event in the seed → drawer shows
-   approved status.
-7. **Dry-run apply** → click "Dry run" → apply-run drawer opens with live
+6. **Generate materials** → click "Generate" on a job → its detail workspace
+   shows "queued" → simulate `ResumeApproved` event in the seed → the workspace
+   shows approved status.
+7. **Dry-run apply** → click "Dry run" → the apply-run route workspace opens with live
    timeline → simulated `DryRunComplete` event closes the run.
 8. **Settings update** → change a setting → confirm persistence.
 

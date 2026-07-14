@@ -43,7 +43,7 @@ Parallel families are capped at four and should not exceed the worker's active
 activity slots. See
 [Concurrency & Fan-out](../architecture/pipeline/concurrency.md).
 
-The Discovery page also hosts the **Automation settings** card. Its minimum-fit,
+The Discovery page also hosts the **Automation settings** disclosure. Its minimum-fit,
 auto-apply, and approval controls affect Apply eligibility and submission, so
 their behavior is documented in
 [Apply → Approval And Automation Modes](apply.md#approval-and-automation-modes).

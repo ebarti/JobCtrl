@@ -14,6 +14,7 @@ changed, then add a browser/product-path check for user-visible behavior.
 | Cross-stack behavior | `corepack pnpm check` and `corepack pnpm test` |
 | TypeScript API | `corepack pnpm api:check` and `corepack pnpm api:test` |
 | Web UI | `corepack pnpm web:check`, `corepack pnpm --filter @jobctrl/web test`, and `corepack pnpm web:build` |
+| Integrated web redesign | [Integrated Redesign Final Gate](#integrated-redesign-final-gate) |
 | Frontend types | `corepack pnpm --filter @jobctrl/web test-d` |
 | Browser flow | `corepack pnpm --filter @jobctrl/web e2e -- tests/<flow>.spec.ts` |
 | Public demo browser workspace | `corepack pnpm --filter @jobctrl/web e2e:demo-workspace` |
@@ -30,7 +31,7 @@ healthy worker before starting worker-backed stages.
 | You changed… | Use |
 | --- | --- |
 | Workflow durability, apply safety, storage, or another known high-risk invariant | [Regression Catalog](developer/qa/regression-catalog.md) |
-| A page, drawer, review flow, artifact, or browser extension | [Browser Smoke](developer/qa/browser-smoke.md) |
+| A page, detail workspace, review flow, artifact, or browser extension | [Browser Smoke](developer/qa/browser-smoke.md) |
 | Tokens, shared primitives, routes, state, realtime, Storybook, or accessibility | [Frontend QA](developer/qa/frontend.md) |
 | A surface with a specific historical risk or exact test mapping | [Complete Checklist](developer/qa/complete-checklist.md) |
 
@@ -76,7 +77,7 @@ regular `GOOGLE_APPLICATION_CREDENTIALS` service-account file. Project metadata,
 missing credential files, consumer Claude OAuth, raw OpenAI keys, and deferred
 local/custom endpoints must not unlock readiness. Inject a failure at every
 Keychain batch boundary and prove exact rollback, then exercise provider-level
-revocation, the three-card Settings route at desktop/mobile width, the demo
+revocation, the three-section Settings route at desktop/mobile width, the demo
 read-only boundary, and a sole-provider draft plus synthesis path without making
 a live model call. For model selection, use deterministic SDK fakes to prove
 catalog order, ready-only listing, Codex hidden/invalid filtering, Google
@@ -132,6 +133,69 @@ product telemetry before a confirmed grant; anonymous decline redirects even
 when measurement fails; and a denied revisit renders the acceptance-required
 gate again. Existing product journeys use a granted same-origin API stub, so
 the full suite also proves the gate does not regress admitted sessions.
+
+## Integrated Redesign Final Gate
+
+A cross-route redesign is not covered by sampling one component or one route.
+Run every static, component, Storybook, and browser layer on the assembled
+integration tip:
+
+```bash
+corepack pnpm check
+corepack pnpm test
+corepack pnpm qa:test
+corepack pnpm --filter @jobctrl/web test
+corepack pnpm --filter @jobctrl/web test-d
+corepack pnpm web:build
+corepack pnpm web:storybook:build
+corepack pnpm web:storybook:test
+corepack pnpm --filter @jobctrl/web e2e
+git diff --check
+```
+
+After the automated gate, use the in-app browser against the disposable seeded
+stack from [Safe QA Data](#safe-qa-data) and walk every production route and
+detail route. Playwright screenshots do not replace this sweep. Record evidence
+for all of the following:
+
+- light and dark themes plus compact, regular, and comfortable density at
+  1440px, 1280px, collapsed-rail width, and 390×844; adaptive grids and tool
+  rows must reflow with deliberate spacing and no document-level horizontal
+  overflow;
+- every pre-redesign label/role, data value, field, control, action, status
+  discriminant, warning, audit fact, and unavailable/loading/empty/error state
+  remains visible or keyboard-reachable from the same production-shaped
+  fixture; the baseline may not be weakened after migration;
+- dense operational surfaces do not turn statuses or pipeline diagnostics into
+  rounded colored capsules or one rounded card per datum: job **Preparation diagnostics**
+  diagnostics remain compact ruled rows; ledgers, disclosures, and inspectors
+  stay neutral; statuses use a small dot/glyph plus text; and the active tab is
+  identified by an underline rather than a filled capsule;
+- `ChoiceControl` uses a real checkbox and announces any disabled reason,
+  `SelectField` has an associated label and supports full keyboard selection,
+  and collapsed `DisclosureSection` content remains mounted while hidden;
+- `PreviewWorkbench` keeps compact controls above the named, real, full-width
+  `ResumeStandalonePlateEditor` and its production toolbar rather than a
+  placeholder, split thumbnail, or name-only template swap;
+- `/pipelines` keeps three source families under one source-family plan and
+  separately renders exactly two reconciliation steps (Enrichment pass and
+  Preparation fanout), without blending them into a stage count or completion
+  percentage; it omits raw/private workflow inputs and masks URL-shaped job
+  identifiers; lifecycle SSE events invalidate the operations query while
+  active/idle 15s/60s polling remains a no-background fallback; and ETA,
+  freshness, capacity, and task-queue facts preserve their explicit states and
+  reasons (ETA available/calibrating/paused/stale/unavailable; freshness
+  fresh/stale/unsupported/unavailable; capacity available/stale/unavailable;
+  task queue available/stale/unsupported/unavailable) without inventing an ETA,
+  inventory total, or worker capacity.
+
+The redesign gate is incomplete until the semantic pre/post parity record and
+the in-app route-sweep evidence are attached to the review handoff. See the
+[Frontend QA guide](developer/qa/frontend.md#integrated-redesign-contracts) and
+[Browser Smoke guide](developer/qa/browser-smoke.md#integrated-redesign-route-sweep)
+for the detailed assertions, and the
+[Complete Checklist](developer/qa/complete-checklist.md#integrated-redesign-final-gate)
+for the exhaustive evidence record.
 
 <a id="token-foundation-qa-gate"></a>
 <a id="shared-primitive-qa-gate"></a>

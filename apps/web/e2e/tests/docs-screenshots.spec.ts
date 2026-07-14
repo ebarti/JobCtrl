@@ -17,12 +17,30 @@ const publicHeroScreenshotsDir = path.join(
 const heroScreenshotName = "dashboard.png";
 const platformJobUrl =
   "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
+const platformJobId = encodeURIComponent(platformJobUrl);
+const qaRunId = "qa-run-1";
+const qaArtifactId = "qa-platform-resume-pdf";
+const qaContactId = "qa-contact-hiring-manager";
+const qaProfileImportFilename = "synthetic-platform-resume.pdf";
+const qaProfileImportState = {
+  state: {
+    filename: qaProfileImportFilename,
+    // A synthetic PDF header/footer is sufficient for these non-submitting
+    // route captures; the workflow never sends it to the import endpoint.
+    pdfBase64: "JVBERi0xLjQKJUVPRgo=",
+    importProfile: true,
+    importStyle: true,
+  },
+  version: 1,
+};
 const jobsFilterParams =
   "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
+const jobDetailPath = `/jobs/${platformJobId}?${jobsFilterParams}`;
+const jobRunTimelinePath = `/jobs/${platformJobId}/run/${qaRunId}?${jobsFilterParams}`;
 
 interface ScreenshotSurface {
   readonly name: string;
-  readonly path: string;
+  readonly path: string | ((page: Page) => Promise<string>);
   readonly proof: (page: Page) => Locator;
   readonly verify?: (page: Page) => Promise<void>;
   readonly viewport?: { readonly width: number; readonly height: number };
@@ -30,13 +48,19 @@ interface ScreenshotSurface {
 
 const defaultCaptureViewport = { width: 1440, height: 1000 } as const;
 const profileCaptureViewport = { width: 1800, height: 1400 } as const;
-const profileEditorWidth = 38;
+const mobileCaptureViewport = { width: 390, height: 844 } as const;
+const profileEditorWidth = 48;
 
-const surfaces: readonly ScreenshotSurface[] = [
+const desktopSurfaces: readonly ScreenshotSurface[] = [
   {
     name: "dashboard.png",
     path: "/dashboard",
-    proof: (page) => page.getByRole("heading", { name: "Source health" }),
+    proof: (page) => page.getByRole("heading", { name: "Dashboard" }),
+  },
+  {
+    name: "analytics.png",
+    path: "/analytics",
+    proof: (page) => page.getByRole("heading", { name: "Outcome analytics" }),
   },
   {
     name: "jobs.png",
@@ -44,33 +68,164 @@ const surfaces: readonly ScreenshotSurface[] = [
     proof: (page) => page.locator("table.jobs-data-grid-table"),
   },
   {
+    name: "job-detail.png",
+    path: jobDetailPath,
+    proof: (page) => page.locator(".job-detail-workspace"),
+  },
+  {
+    name: "job-run-timeline.png",
+    path: jobRunTimelinePath,
+    proof: (page) => page.locator(".job-run-workspace"),
+  },
+  {
     name: "apply-review.png",
-    path: "/apply-review",
+    path: `/apply-review?jobKey=${platformJobId}`,
     proof: (page) =>
       page.getByRole("complementary", { name: "Application review queue" }),
   },
   {
-    name: "profile.png",
-    path: "/profile",
-    proof: (page) =>
-      page.locator('[aria-label="Editable baseline resume page"]'),
-    verify: verifyProfileFraming,
-    viewport: profileCaptureViewport,
+    name: "pipelines.png",
+    path: "/pipelines",
+    proof: (page) => page.locator(".pipelines-workspace"),
   },
   {
     name: "discovery.png",
     path: "/discovery",
-    proof: (page) => page.getByRole("heading", { name: "Discovery controls" }),
+    proof: (page) => page.getByRole("heading", { name: "Discovery" }),
   },
   {
-    name: "pipelines.png",
-    path: "/pipelines",
-    proof: (page) => page.getByRole("heading", { name: "Pipeline actions" }),
+    name: "artifacts.png",
+    path: "/artifacts",
+    proof: (page) => page.locator("table.artifacts-data-grid-table"),
+  },
+  {
+    name: "artifact-detail.png",
+    path: `/artifacts/${qaArtifactId}`,
+    proof: (page) => page.locator(".artifact-detail-workspace"),
+  },
+  {
+    name: "evidence-map.png",
+    path: `/evidence-map?entry=ev-platform&job=${platformJobId}`,
+    proof: (page) => page.locator(".evidence-map-workspace"),
+  },
+  {
+    name: "contacts.png",
+    path: "/outreach",
+    proof: (page) => page.locator("table.contacts-data-grid-table"),
+  },
+  {
+    name: "contact-detail.png",
+    path: `/outreach/${qaContactId}`,
+    proof: (page) => page.locator(".contact-detail-workspace"),
   },
   {
     name: "runs.png",
     path: "/runs",
     proof: (page) => page.locator("table.runs-data-grid-table"),
+  },
+  {
+    name: "run-detail.png",
+    path: `/runs/${qaRunId}`,
+    proof: (page) => page.locator(".workflow-run-workspace"),
+  },
+  {
+    name: "debug.png",
+    path: "/debug",
+    proof: (page) => page.getByRole("heading", { name: "Debug" }),
+  },
+  {
+    name: "activity-detail.png",
+    path: nonJobActivityDetailPath,
+    proof: (page) => page.locator(".activity-detail-workspace"),
+  },
+  {
+    name: "profile.png",
+    path: "/profile",
+    proof: (page) => page.locator('[aria-label="Editable baseline resume page"]'),
+    verify: verifyProfileFraming,
+    viewport: profileCaptureViewport,
+  },
+  {
+    name: "profile-import-upload.png",
+    path: "/profile/import/upload",
+    proof: (page) => page.getByText(qaProfileImportFilename, { exact: true }),
+  },
+  {
+    name: "profile-import-preview.png",
+    path: "/profile/import/preview",
+    proof: (page) => page.getByText(qaProfileImportFilename, { exact: true }),
+    verify: verifyProfileImportPreview,
+  },
+  {
+    name: "profile-import-confirm.png",
+    path: "/profile/import/confirm",
+    proof: (page) => page.getByText(qaProfileImportFilename, { exact: true }),
+    verify: verifyProfileImportConfirm,
+  },
+  {
+    name: "preferences.png",
+    path: "/preferences",
+    proof: (page) => page.getByRole("heading", { name: "Preferences" }),
+  },
+  {
+    name: "settings-general.png",
+    path: "/settings",
+    proof: (page) => page.getByRole("heading", { name: "Settings" }),
+  },
+  {
+    name: "settings-credentials.png",
+    path: "/settings/credentials",
+    proof: (page) => page.getByRole("tab", { name: "Credentials", selected: true }),
+  },
+  {
+    name: "settings-models.png",
+    path: "/settings/models",
+    proof: (page) => page.getByRole("tab", { name: "Model selection", selected: true }),
+  },
+  {
+    name: "settings-browser.png",
+    path: "/settings/browser",
+    proof: (page) => page.locator(".settings-browser-sections"),
+  },
+];
+
+const mobileSurfaces: readonly ScreenshotSurface[] = [
+  {
+    name: "dashboard-mobile.png",
+    path: "/dashboard",
+    proof: (page) => page.getByRole("heading", { name: "Dashboard" }),
+    viewport: mobileCaptureViewport,
+  },
+  {
+    name: "pipelines-mobile.png",
+    path: "/pipelines",
+    proof: (page) => page.locator(".pipelines-workspace"),
+    viewport: mobileCaptureViewport,
+  },
+  {
+    name: "job-detail-mobile.png",
+    path: jobDetailPath,
+    proof: (page) => page.locator(".job-detail-workspace"),
+    viewport: mobileCaptureViewport,
+  },
+  {
+    name: "apply-review-mobile.png",
+    path: `/apply-review?jobKey=${platformJobId}`,
+    proof: (page) =>
+      page.getByRole("complementary", { name: "Application review queue" }),
+    viewport: mobileCaptureViewport,
+  },
+  {
+    name: "profile-mobile.png",
+    path: "/profile",
+    proof: (page) => page.locator('[aria-label="Editable baseline resume page"]'),
+    viewport: mobileCaptureViewport,
+  },
+  {
+    name: "settings-browser-mobile.png",
+    path: "/settings/browser",
+    proof: (page) => page.locator(".settings-browser-sections"),
+    viewport: mobileCaptureViewport,
   },
 ];
 
@@ -103,6 +258,27 @@ async function capture(page: Page, name: string): Promise<void> {
       path.join(publicHeroScreenshotsDir, heroScreenshotName),
     );
   }
+}
+
+async function nonJobActivityDetailPath(page: Page): Promise<string> {
+  const response = await page.request.get(
+    "/v1/debug/activity?page=1&pageSize=200&sort=occurred_at&dir=desc",
+  );
+  if (!response.ok()) {
+    throw new Error(`Unable to load synthetic activity events (${response.status()}).`);
+  }
+  const payload = (await response.json()) as {
+    items?: Array<{ eventId?: string; jobKey?: string | null }>;
+  };
+  const event = payload.items?.find((candidate) => !candidate.jobKey && candidate.eventId);
+  if (!event?.eventId) {
+    throw new Error("Synthetic screenshot seed must expose a non-job activity event.");
+  }
+
+  // Local routes redirect job-linked events back to their owning job. Capture a
+  // workflow event instead so this is a genuine direct Activity Detail route;
+  // the demo-only direct-load feature flag is not enabled in the local E2E app.
+  return `/activity/${encodeURIComponent(event.eventId)}`;
 }
 
 async function verifyProfileFraming(page: Page): Promise<void> {
@@ -141,6 +317,15 @@ async function verifyProfileFraming(page: Page): Promise<void> {
   expect(scrollMetrics.scrollHeight).toBe(scrollMetrics.clientHeight);
 }
 
+async function verifyProfileImportPreview(page: Page): Promise<void> {
+  await expect(page.getByRole("checkbox", { name: "Profile data" })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Style data" })).toBeChecked();
+}
+
+async function verifyProfileImportConfirm(page: Page): Promise<void> {
+  await expect(page.getByText("profile + style", { exact: true })).toBeVisible();
+}
+
 test("capture public documentation screenshots from synthetic seed data", async ({
   page,
 }) => {
@@ -152,18 +337,19 @@ test("capture public documentation screenshots from synthetic seed data", async 
     ({ key, value }) => window.localStorage.setItem(key, JSON.stringify(value)),
     { key: "jh:profile-preview-split-width", value: profileEditorWidth },
   );
-  for (const surface of surfaces) {
+  await page.addInitScript(
+    ({ key, value }) => window.localStorage.setItem(key, JSON.stringify(value)),
+    { key: "jh:profile-import", value: qaProfileImportState },
+  );
+  expect(desktopSurfaces, "The Product Tour requires 26 desktop capture surfaces.").toHaveLength(26);
+  expect(mobileSurfaces, "The Product Tour requires 6 mobile capture surfaces.").toHaveLength(6);
+  for (const surface of [...desktopSurfaces, ...mobileSurfaces]) {
     await page.setViewportSize(surface.viewport ?? defaultCaptureViewport);
-    await page.goto(surface.path);
+    const route =
+      typeof surface.path === "function" ? await surface.path(page) : surface.path;
+    await page.goto(route);
     await waitForRoute(page, surface.proof(page));
     await surface.verify?.(page);
     await capture(page, surface.name);
   }
-
-  await page.setViewportSize(defaultCaptureViewport);
-  await page.goto(`/jobs/${encodeURIComponent(platformJobUrl)}?${jobsFilterParams}`);
-  const jobDialog = page.getByRole("dialog", { name: "Job details" });
-  await waitForRoute(page, jobDialog);
-  await expect(jobDialog).toContainText("Director of Platform Engineering");
-  await capture(page, "job-detail.png");
 });

@@ -30,6 +30,7 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Loopback API Binding By Default](#_2026-05-02-loopback-api-binding-by-default) · 2026-05-02
 - [Stage State Is The Operational Source Of Truth](#_2026-05-02-stage-state-is-the-operational-source-of-truth) · 2026-05-02
 - [Copyable Commands Stay, Buttons Use Structured Actions](#_2026-05-03-copyable-commands-stay-buttons-use-structured-actions) · 2026-05-03
+- [Pipeline Operations Use Immutable Execution Lineage And Privacy-Safe Runtime Telemetry](#_2026-07-14-pipeline-operations-use-immutable-execution-lineage-and-privacy-safe-runtime-telemetry) · 2026-07-14
 
 **Backend domain model (DDD + hexagonal)**
 
@@ -596,13 +597,21 @@ Consequences:
 
 Amended (2026-07-04): the `DomainEvent` type is a **plain TypeScript
 discriminated union**, not a Zod schema. It lives in
-`packages/domain-types/src/events/index.ts` (`DomainEventUnion`, 68 event types
+`packages/domain-types/src/events/index.ts` (`DomainEventUnion`, 99 event types
 in `DOMAIN_EVENT_TYPES`), mirrored by the Python registry — it is not in
 `packages/contracts`. The SSE adapter validates each frame by set-membership on
 the known event types plus `JSON.parse`
 (`apps/web/src/shared/ports/lib/parseDomainEvent.ts`), not by Zod parsing. The
 `Record<DomainEvent["eventType"], InvalidationHandler>` typing and the
 `every-event-has-handler.test.ts` parity test still hold.
+
+Amended (2026-07-14): the current runtime registry contains **99 event
+types**, including the four execution-scoped `PipelineStep*` lifecycle events.
+The Python parity test requires its registry to match the same ordered 99-type
+tuple. Durable `Stage*`, `PreparationWorkItem*`, `PipelineStep*`, and
+`Workflow*` changes invalidate `pipelineKeys.operations`; narrow polling of the
+operations snapshot remains necessary for worker-heartbeat and task-queue facts
+that do not emit domain events.
 
 ## 2026-05-06: View-vs-Context Dichotomy + 1:1 Backend Bounded-Context Mirror
 
@@ -1851,3 +1860,81 @@ that initial artifact.
 Cites: active plan
 `docs/plans/2026-07-10-bundled-jobctrl-distribution-plan.md`; the superseded
 pending-decision record immediately above; `docs/developer/first-run-ttfv.md`.
+
+## 2026-07-14: Pipeline Operations Use Immutable Execution Lineage And Privacy-Safe Runtime Telemetry
+
+Status: accepted
+
+Decision: pipeline operations are reported from one current snapshot that
+joins immutable Discover execution lineage, durable projection-backed progress,
+and fresh privacy-safe worker/runtime observations. It does not infer a run from
+mutable source observations, flatten unlike queues into one denominator, or
+offer historical point-in-time reconstruction.
+
+The execution identity is `(tenant, Discover workflow ID, Temporal run ID)`.
+`discovery_execution_jobs` owns one membership per job and exact run, split into
+`observed_this_run` and `existing_backlog`; an observed swept job is promoted,
+never duplicated. Explicit plan states distinguish unresolved work from planned
+or not-eligible work. Both cohorts participate in the delivered
+`discovering`/`draining`/terminal phase calculation.
+
+Progress has two durable authorities:
+
+- canonical `job_stage_states` remains authoritative for per-job
+  enrich/score/tailor/cover lifecycle;
+- the four `PipelineStep*` events fold attempt-aware execution-owned source
+  planning/family, reconciliation, preparation fan-out, backlog-sweep, and PDF
+  lifecycle into `pipeline_step_projections`.
+
+`GET /v1/pipeline/operations` keeps `current_execution`, `execution_sweep`, and
+`global_outside_execution` scopes distinct. It reports source-family progress
+separately from reconciliation and downstream stages. The API selects an active
+or draining execution, otherwise the latest terminal execution. At request
+time, it derives the app directory from the configured database path, selects
+the task queue named by the newest heartbeat for that database/app-dir identity,
+and overlays fresh schema-valid rows from that queue plus its freshest typed
+Temporal task-queue observation.
+
+Runtime telemetry counts every active activity slot but exposes only a bounded
+allowlisted active-item inventory. The interceptor never reads activity
+arguments. Unsafe identifiers become non-reversible local opaque references;
+raw URLs, descriptions, profile data, prompts, provider output, artifact paths,
+payloads, credentials, and exception text are excluded. Unsupported,
+unavailable, stale, and invalid runtime observations remain explicit states.
+
+The `pipeline-eta-v1` overall estimator returns a low/high range only when
+execution membership is closed, fresh usable capacity exists, every remaining
+stage has enough recent successful duration evidence, and shared contention can
+be bounded. Per-stage and source-family estimates can price their already-known
+scoped backlog before membership closes, subject to the same capacity, evidence,
+and contention gates. Otherwise the relevant estimate returns a typed
+calibrating, paused, stale, or unavailable state. A numeric range is an
+operational estimate, not a completion promise.
+
+Rationale:
+
+- deterministic workflow IDs can be reused, while source observations and job
+  stage rows alone cannot prove which Temporal run owns work;
+- source-family completion is not whole-pipeline completion, and task-queue
+  backlog is an infrastructure unit rather than a job count;
+- durable events cannot reconstruct current worker slots or queue pressure;
+- operational visibility must not create a new path for private job/profile or
+  provider content to enter broad read models or telemetry.
+
+Consequences:
+
+- the current snapshot intentionally mixes rebuildable durable projections with
+  freshness-labeled runtime observations; it cannot answer historical capacity
+  questions;
+- SSE invalidates durable lifecycle changes, while 15-second active / 60-second
+  idle foreground polling refreshes heartbeat and task-queue state;
+- numeric ETA may remain unavailable under shared-queue contention or sparse
+  samples; the UI must render the typed reason rather than invent a countdown;
+- `PipelinesView` is a view composer over the Operations-owned read hook and
+  Pipeline-owned controls, using the shared redesign layout primitives.
+
+Cites: `docs/api/operations-and-events.md`;
+`docs/architecture/pipeline/operations.md`;
+`docs/architecture/read-model.md`;
+`docs/architecture/observability.md`;
+`docs/architecture/frontend/integration.md`.

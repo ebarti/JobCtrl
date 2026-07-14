@@ -153,7 +153,7 @@ a view component into a context (or to share helpers between two views
   from other `views/*`.
 - The CODEOWNERS file routes `contexts/` and `views/` to the same
   reviewer, ensuring boundary-crossing PRs get explicit attention.
-- The `JobDetailDrawer` example (§8.5) is the canonical reference for
+- The legacy-named `JobDetailDrawer` route-workspace example (§8.5) is the canonical reference for
   composition; new cross-context UI surfaces follow the same pattern.
 
 ### R9. Aggressive `staleTime` defaults masking SSE-router bugs
@@ -164,7 +164,7 @@ sees stale data for up to `staleTime` even with the
 `refetchOnWindowFocus: true` backstop.
 
 **Mitigations:**
-- The SSE connection-status pill (§7.7) makes degraded state visible.
+- The SSE connection-status dot/glyph plus text (§7.7) makes degraded state visible.
 - The dashboard's `staleTime: 0` ensures the most-watched surface is
   always fresh on remount.
 - The router's parity test (R1 mitigations) prevents the silent-failure
@@ -258,9 +258,9 @@ first's reconciliation.
 | **ACL (Frontend)** | Architecture | The thin Anti-Corruption Layer in `contexts/operations/types.ts` that re-exports backend projection types into frontend code. Provides a single point to refine or override types as the frontend evolves. |
 | **ApiClientPort** | Frontend (Hexagonal) | The interface through which feature code reaches the backend HTTP API. Local adapter wraps `@jobctrl/api-client`; hosted adapter adds JWT injection. |
 | **AppliedAction** | Frontend (Apply context) | UI affordance to manually mark a job as applied without running the apply automation. Surfaces `MarkAppliedUseCase`. |
-| **ApplyRunBadge** | Frontend (Apply context) | Status pill rendered in the dashboard / drawer that summarizes an `ApplyRun`'s current `SubmissionResult`. |
+| **ApplyRunBadge** | Frontend (Apply context) | Legacy-named status component that renders a compact dot/glyph plus text in dashboard ledgers and run detail workspaces to summarize an `ApplyRun`'s current `SubmissionResult`. |
 | **ApplyRunTimeline** | Frontend (Apply context) | Live-updating timeline of `ApplyRunEvent` rows; updates via SSE `setQueryData` (not `invalidate`) for high-frequency events. |
-| **AppShell** | Frontend (Layout) | The persistent chrome around the route content: a grouped left rail (14 destinations in 5 groups via `SideRail`, collapsing to icons at ≤1180px and into a hamburger sheet at ≤820px) plus a slim topbar (global job search that navigates to `/jobs?q=…`, density and theme toggles, connection-status pill). Lives in `shared/layout/AppShell.tsx`. |
+| **AppShell** | Frontend (Layout) | The persistent chrome around the route content: a grouped left rail (14 destinations in 5 groups via `SideRail`, collapsing to icons at ≤1180px and into a hamburger sheet at ≤820px) plus a slim topbar (global job search that navigates to `/jobs?q=…`, density and theme toggles, inline connection-status dot/glyph plus text). Lives in `shared/layout/AppShell.tsx`. |
 | **Bounded Context (Frontend)** | Architecture | A folder under `contexts/` mirroring a backend bounded context (one of the nine: Discovery, Enrichment, Profile, Scoring, Materials, Apply, Pipeline, Operations, Contact & Outreach). Owns its query keys (where applicable), hooks, components, forms, selectors, and event handlers. Imports from `shared/` and from other contexts' *components* only. |
 | **CacheKey (Profile HTML)** | Frontend (Profile) | A monotonically increasing token derived from the profile mutation count, appended as `?v=...` to the Profile baseline resume HTML preview URL to refresh the Plate editor after each profile mutation. |
 | **ClipboardPort** | Frontend (Hexagonal) | Port abstracting `navigator.clipboard`, exposed so feature code does not depend on `window`. |
@@ -270,8 +270,8 @@ first's reconciliation.
 | **DashboardProjection** | Operations (Frontend mirror) | The shape of the dashboard summary returned by `apiClient.dashboardSummary()`; defined in `@jobctrl/domain-types` (`operations/`) and re-exported through `@jobctrl/contracts`. |
 | **Density** | Frontend (UI Preferences) | Row-spacing preference: `compact | regular | comfy`. Persisted to `localStorage` via Zustand. |
 | **Discovery (Frontend)** | Frontend (Bounded Context) | The frontend folder mirroring backend Job Discovery. Owns job-lifecycle mutations (delete / hide / restore / permanent-delete + `useImportJobMutation`), discovery-source administration (settings, source registry, quarantine, manual capture, feedback), the `<DiscoveryProductControls>` UI, and 17 discovery-event invalidation handlers. |
-| **DomainEvent (Frontend mirror)** | Operations | The event taxonomy streamed via SSE. In `@jobctrl/domain-types` this is a **plain TypeScript** discriminated union `DomainEventUnion` (68 arms today; `DomainEvent<T, P>` is the generic base, `DomainEventType` the discriminant union, `DOMAIN_EVENT_TYPES` the runtime array). No Zod. |
-| **Drawer Route** | Frontend (Routing) | A child route (e.g., `routes/jobs.$jobId.tsx`) that opens a side panel layered over its parent's content. The URL preserves the underlying view. |
+| **DomainEvent (Frontend mirror)** | Operations | The event taxonomy streamed via SSE. In `@jobctrl/domain-types` this is a **plain TypeScript** discriminated union `DomainEventUnion` (99 arms today; `DomainEvent<T, P>` is the generic base, `DomainEventType` the discriminant union, `DOMAIN_EVENT_TYPES` the runtime array). No Zod. |
+| **Detail Route** | Frontend (Routing) | A child route (e.g., `routes/jobs.$jobId.tsx`) that renders a full `RouteWorkspace` with a back action. URL-owned list state survives so returning restores the underlying list. |
 | **Enrichment (Frontend)** | Frontend (Bounded Context) | The frontend folder mirroring backend Job Enrichment. Owns `useEnrichmentRetryMutation`, the compensation-refresh mutations, the compensation-evidence components, and the enrichment/compensation invalidation handlers. |
 | **Event-Handler Parity Test** | Frontend (Testing) | The local Vitest parity test that iterates the `DomainEventType` union and asserts a handler is registered for every variant in `contexts/operations/invalidation-router.ts`. Backstops the compile-time `Record<DomainEventType, InvalidationHandler>` typing (the CI-enforced half, via `pnpm -r check`); web Vitest is not yet CI-gated (CI gating tracked in `docs/backlog.md`). Mirrors backend `scripts/check-domain-type-parity.py`. |
 | **EventStreamPort** | Frontend (Hexagonal) | Port abstracting the SSE connection. Local adapter is `SseEventStreamAdapter`; hosted alternative is `WebSocketEventStreamAdapter`. |
@@ -280,10 +280,10 @@ first's reconciliation.
 | **Frontend Bounded Context** | Architecture | See "Bounded Context (Frontend)." |
 | **InvalidationRouter** | Frontend (Operations) | Pure function mapping `DomainEvent` to a list of cache operations (`invalidateQueries` / `setQueryData`). The single contract surface between the backend's event taxonomy and the frontend's query cache. |
 | **JobActions** | Frontend (Pipeline composer) | Toolbar component composing per-stage / per-action buttons (`<RetryStageButton />`, `<GenerateMaterialsButton />`, `<ApplyButton />`, `<MarkAppliedButton />`, etc.). |
-| **JobDetailDrawer** | Frontend (Jobs view) | The right-side sheet (in `views/jobs/`) that opens when a job is selected. Composes overview, score, stages, artifacts, apply history, and actions from the contexts that own each. |
+| **JobDetailDrawer** | Frontend (Jobs view) | Legacy filename/component name for the full `RouteWorkspace` in `views/jobs/` that opens when a job is selected. It composes the header ledger, ruled evidence sections, inspector, score, stages, artifacts, apply history, and actions from the contexts that own each. It is not a detached drawer or side sheet. |
 | **JobId** | Domain (shared) | The system-generated stable identifier for a job per backend domain model [§3.1](../domain-model/strategic.md) / [§4.1](../domain-model/tactical.md). Branded type (`string & { __brand: "JobId" }`) constructed via `createJobId(...)` from `@jobctrl/domain-types`. The frontend uses `JobId` as its domain term throughout; the API client's currently-named `jobKey: string` parameter is a transport detail mapped at the ACL boundary ([§6.5](../domain-model/integration.md)). |
 | **JobsTable** | Frontend (Jobs view) | The shared data-grid instance in `views/jobs/JobsTable.tsx` rendering the jobs list; receives data from `useJobsListQuery` (Operations) and column cell components from `contexts/scoring/`, `contexts/pipeline/`, etc. |
-| **KPI** | Frontend (Dashboard) | A top-line metric tile on the dashboard. |
+| **KPI** | Frontend (Dashboard) | A top-line metric in the dashboard's continuous ruled ledger. |
 | **LayerSeparation** | Frontend (Modeling) | The architectural rule that every datum lives in exactly one of three layers: server (Query), URL (Router), or client (Zustand/Context). See §2.1. |
 | **Loader (Route)** | Frontend (Routing) | A function on a TanStack Router route that prefetches data via `queryClient.ensureQueryData(...)` before the component renders. |
 | **LOCAL_TENANT** | Domain (shared) | The singleton `TenantId` used in local mode. Threaded through every query key and SSE subscription. |
@@ -302,7 +302,7 @@ first's reconciliation.
 | **SessionPort** | Frontend (Hexagonal) | Port resolving `TenantId` and `UserId`. Local adapter returns `LOCAL_TENANT`; hosted adapter parses JWT. |
 | **Shared Data Grid (`FilterableDataGrid`)** | Frontend (UI Primitive) | The custom table primitive in `shared/ui/filterable-data-grid.tsx`, used by the jobs, artifacts, runs, and debug/activity tables via per-view `DataGridColumn<T>[]` column models. Provides sort, per-column filter, pagination, row selection, and row activation. `@tanstack/react-table` is a types-only dependency (`RowSelectionState` / `SortingState`); the shadcn `data-table.tsx` wrapper is unused. |
 | **SseEventStreamAdapter** | Frontend (Adapter) | Concrete `EventStreamPort` implementation using the browser's `EventSource` API against `GET /v1/events/stream`. |
-| **StageBadge** | Frontend (Pipeline context) | Status pill rendering a `StageState` variant via exhaustive `switch` on `state.kind`. Located in `contexts/pipeline/components/StageBadge.tsx`. |
+| **StageBadge** | Frontend (Pipeline context) | Legacy-named status component rendering a `StageState` as a compact dot/glyph plus text via exhaustive `switch` on `state.kind`. Located in `contexts/pipeline/components/StageBadge.tsx`; it is not a colored pill. |
 | **Stage-State Parity Test** | Frontend (Testing) | The local Vitest parity test that iterates `STAGE_STATE_KINDS` and asserts `<StageBadge>` renders a non-default arm for every kind. Backstops the exhaustive `switch` on `state.kind`. (Web Vitest is not yet CI-gated; CI gating tracked in `docs/backlog.md`.) |
 | **StageTimeline** | Frontend (Pipeline context) | Vertical list of stages for a job, rendered from `JobDetailProjection.stages`. |
 | **StoragePort** | Frontend (Hexagonal) | Port abstracting persistent client-side storage. Local adapter is `localStorage`; hosted alternative is IndexedDB. |
@@ -316,7 +316,7 @@ first's reconciliation.
 | **ThemeProvider** | Frontend (Provider) | Context exposing `useTheme()`; reads from the `ui-preferences` Zustand store and writes `data-theme="..."` on `<html>`. |
 | **ToastQueue** | Frontend (Shared) | The Zustand store driving the shadcn `<Toaster />`. Mutations call `toast({ ... })` from `onError`. |
 | **Typed Search Params** | Frontend (Routing) | URL search params declared by a Zod schema on a route, inferred-typed for `useSearch()`. The replacement for component-local filter `useState`. |
-| **URL State** | Frontend (Modeling) | Filter, sort, pagination, drawer-open state stored in the URL via typed search params. One of the three layers (§2.1). |
+| **URL State** | Frontend (Modeling) | Filter, sort, pagination, and selected-detail state stored in the URL via typed search params. One of the three layers (§2.1). |
 | **View** | Frontend (Composition) | A composer under `views/` (today: `dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `runs/`, `pipelines/`, `discovery/`, `debug/`). Owns layout, URL binding, and ephemeral view-local state; consumes hooks from `contexts/operations/` and components / mutations from aggregate contexts. **Not** a bounded context. |
 | **View Composition Layer** | Frontend (Architecture) | The `views/` folder; sibling of `contexts/`. Holds the view composers (Dashboard, Jobs, Artifacts, Apply Review, Runs, Pipelines, Discovery, Contacts, Debug, and others) and is the only layer permitted to import from multiple contexts in one file. |
 | **Zustand** | Frontend (Library) | Lightweight client-state store. Five today: `ui-preferences`, `toasts`, `command-palette`, the resume-import wizard draft (`profile-import`), and the pipeline `stage-trigger-config`; three persist (`jh:ui-preferences`, `jh:profile-import`, `jh:stage-trigger-config`). |

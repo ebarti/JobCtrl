@@ -79,8 +79,39 @@ lifecycle records are persisted to `job_events`, which makes long-running or
 stuck stages visible through SSE/recent activity even before the synchronous
 JSON-RPC request returns. The stage runner forwards the caller's `limit` to
 every stage. Discovery sources use that limit as a bounded debug crawl cap,
-switch to sequential source execution when a cap is present, and skip remaining
-sources after the cap is reached.
+and skip remaining work after the cap is reached. Source families execute in
+deterministic batches bounded by the planned `max_parallel_families` value
+(default `1`, capped by policy and observed activity slots); the limit does not
+create a separate concurrency model.
+
+## Local Operations Telemetry
+
+The Pipelines operations surface uses a second observability boundary that is
+local SQLite state, not OpenTelemetry export:
+
+- `PipelineStepQueued`, `PipelineStepStarted`, `PipelineStepCompleted`, and
+  `PipelineStepFailed` are durable, privacy-bounded domain events projected into
+  `pipeline_step_projections`. They carry the exact Discover workflow/run
+  identity, bounded step/item codes, attempt, timing, counts, and retryability;
+  they do not carry raw activity inputs or exception text.
+- `worker_runtime_heartbeats` carries current capacity, exact active-slot count,
+  bounded allowlisted active-work detail, completed-activity duration summaries,
+  and a typed Temporal task-queue observation. This information feeds
+  `GET /v1/pipeline/operations`; it is not sent to Langfuse by that path.
+
+The Temporal activity interceptor never reads activity arguments. It retains
+only allowlisted activity kinds, grammar-validated safe workflow/run references,
+and non-reversible local opaque identifiers. URLs, job descriptions, candidate
+profile data, prompts, provider responses, artifact paths, payloads,
+credentials, and exception text are excluded. The oldest 20 allowlisted active
+items are retained alongside an exact allowlisted total/truncation flag, while
+the separate active-slot count includes every activity.
+
+Heartbeat and task-queue sampling are best-effort observations. A telemetry
+write or DescribeTaskQueue failure cannot fail the business activity. The API
+keeps stale, unsupported, unavailable, and invalid states explicit rather than
+turning missing data into zero. Approximate queue backlog/poller/rate units are
+infrastructure observations and are never relabeled as domain jobs.
 
 ## Employer-Analysis Ensemble Spans
 

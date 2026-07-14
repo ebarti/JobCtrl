@@ -39,10 +39,10 @@ apps/web/
 │   │   ├── __root.tsx                    # <AppShell>, devtools, notFoundComponent (providers live in main.tsx; RouterProvider in App.tsx)
 │   │   ├── index.tsx                     # / → redirect to /dashboard
 │   │   ├── dashboard.tsx                 # mounts <DashboardView />
-│   │   ├── jobs.tsx                      # layout: search-param schema + <JobsView /> + Outlet (drawer)
+│   │   ├── jobs.tsx                      # layout: search-param schema + <JobsView /> + detail Outlet
 │   │   ├── jobs.index.tsx
-│   │   ├── jobs.$jobId.tsx               # drawer route — mounts <JobDetailDrawer />
-│   │   ├── jobs.$jobId.run.$runId.tsx    # apply-run timeline drawer (nested under jobs)
+│   │   ├── jobs.$jobId.tsx               # full detail route — mounts legacy-named <JobDetailDrawer /> workspace
+│   │   ├── jobs.$jobId.run.$runId.tsx    # full apply-run timeline workspace (nested under jobs)
 │   │   ├── artifacts.tsx                 # mounts <ArtifactsView />
 │   │   ├── artifacts.index.tsx
 │   │   ├── artifacts.$artifactId.tsx
@@ -56,23 +56,23 @@ apps/web/
 │   │   ├── settings.tsx                  # layout
 │   │   ├── settings.index.tsx
 │   │   ├── settings.credentials.tsx
-│   │   ├── runs.tsx                      # layout: workflow-runs table + Outlet (drawer)
+│   │   ├── runs.tsx                      # layout: workflow-runs table + detail Outlet
 │   │   ├── runs.index.tsx
-│   │   ├── runs.$runId.tsx               # workflow-run drawer
+│   │   ├── runs.$runId.tsx               # full workflow-run detail workspace
 │   │   ├── apply-review.tsx              # mounts <ApplyReviewView />
-│   │   ├── pipelines.tsx                 # mounts <PipelinesView /> (StageTriggerPanel)
+│   │   ├── pipelines.tsx                 # mounts <PipelinesView /> (operations ledger + StageTriggerPanel)
 │   │   ├── discovery.tsx                 # mounts <DiscoveryView />
-│   │   ├── outreach.tsx                  # layout: search-param schema + <OutreachView /> + Outlet (drawer)
+│   │   ├── outreach.tsx                  # layout: search-param schema + <OutreachView /> + detail Outlet
 │   │   ├── outreach.index.tsx
-│   │   ├── outreach.$contactId.tsx       # contact detail drawer
-│   │   ├── debug.tsx                     # mounts <DebugView /> + Outlet (activity drawer)
-│   │   ├── activity.$eventId.tsx         # activity-detail drawer
+│   │   ├── outreach.$contactId.tsx       # full contact detail workspace
+│   │   ├── debug.tsx                     # mounts <DebugView /> + activity-detail Outlet
+│   │   ├── activity.$eventId.tsx         # full activity-detail workspace
 │   │   ├── spikes.table-filters.tsx      # dev spike
 │   │   └── -*.search.ts                  # per-route Zod search schemas (excluded from generation)
 │   │   # not-found is a notFoundComponent on __root.tsx — there is no 404.tsx
 │   ├── contexts/                         # 1:1 with backend bounded contexts
 │   │   ├── operations/                   # Operations / Read-Side
-│   │   │   ├── queryKeys.ts              # registry: re-exports the local + per-context read-key factories (incl. outreachKeys)
+│   │   │   ├── queryKeys.ts              # registry: re-exports local + per-context factories, including pipelineKeys.operations
 │   │   │   ├── jobsKeys.ts / artifactsKeys.ts / dashboardKeys.ts / digestKeys.ts / applyRunsKeys.ts / applyReviewKeys.ts / activityKeys.ts / outcomesKeys.ts / workflowRunsKeys.ts / healthKeys.ts / compensationKeys.ts
 │   │   │   ├── invalidation-router.ts    # event → invalidations (invalidate, patchApplyRunEvent, useInvalidationRouter)
 │   │   │   ├── types.ts                  # ACL re-exports (domain-types projections via @jobctrl/contracts)
@@ -81,7 +81,7 @@ apps/web/
 │   │   │   ├── hooks/                    # ~19 read hooks: dashboard, digest, jobs (list/detail), artifacts (list/detail),
 │   │   │   │                            #   applyRuns (derived), activity (list/event), workflowRuns (list/detail),
 │   │   │   │                            #   applyReviewQueue, resumeReviewDraft, application outcomes, health,
-│   │   │   │                            #   discovery product controls, useInvalidationRouter
+│   │   │   │                            #   discovery product controls, pipeline operations, useInvalidationRouter
 │   │   │   └── index.ts
 │   │   ├── discovery/                    # Job Discovery
 │   │   │   ├── queryKeys.ts              # discoveryKeys (settings, source registry, locator, quarantine, …)
@@ -152,12 +152,12 @@ apps/web/
 │   │   │   ├── handlers.ts               # contact/outreach event handlers (registered via operations/invalidation-router.ts)
 │   │   │   └── index.ts
 │   │   └── pipeline/                     # Pipeline Orchestration
-│   │       ├── queryKeys.ts              # pipelineKeys
+│   │       ├── queryKeys.ts              # pipelineKeys.all + pipelineKeys.operations
 │   │       ├── hooks/                    # useRunPipelineStagesMutation, useRunJobStageMutation, useRunPendingPreparationMutation, useRetryStageMutation, useRetryFailedJobsMutation, useCancelStageMutation, useCancelWorkflowRunMutation, useMarkAppliedMutation, useMarkSkippedMutation
 │   │       ├── components/               # StageBadge (exhaustive switch), UserFacingStageBadge, StageTimeline, StageTriggerPanel, RetryStageButton, CancelStageButton, CancelWorkflowRunButton, MarkAppliedButton, MarkSkippedButton, JobActions
 │   │       ├── stores/stage-trigger-store.ts   # Zustand+persist (jh:stage-trigger-config)
 │   │       ├── lib/                      # jobDetailPatches, stage/state tones
-│   │       ├── handlers.ts               # Stage* + PreparationWorkItem* + Workflow* handlers
+│   │       ├── handlers.ts               # Stage* + PreparationWorkItem* + PipelineStep* + Workflow* handlers
 │   │       └── index.ts
 │   ├── views/                            # NOT bounded contexts — composers only
 │   │   ├── dashboard/                    # DashboardView, KpiGrid, DigestPanel, ConversionPanel, Funnel, SourceHealthCard, ApplyRunsCard, apply-run-dot-state
@@ -165,12 +165,12 @@ apps/web/
 │   │   ├── artifacts/                    # ArtifactsView, ArtifactsTable, ArtifactFilterBar, ArtifactDetailPanel, columns
 │   │   ├── apply-review/                 # ApplyReviewView (queue + Plate resume editor + decision controls)
 │   │   ├── runs/                         # RunsView, RunsTable, RunsFilterBar, WorkflowRunDrawer, columns, temporal-web-ui
-│   │   ├── pipelines/                    # PipelinesView (StageTriggerPanel)
+│   │   ├── pipelines/                    # PipelinesView (Operations snapshot ledger/inspector + StageTriggerPanel)
 │   │   ├── discovery/                    # DiscoveryView (sources + schedule settings panels)
 │   │   ├── outreach/                     # OutreachView, OutreachTable, OutreachDetailDrawer, columns
 │   │   └── debug/                        # DebugView, DebugActivityTable, DebugFilterBar, ActivityDetailDrawer, activity-columns, activity-tone
 │   ├── shared/
-│   │   ├── ui/                             # shadcn/ui copies
+│   │   ├── ui/                             # owned shadcn copies + shared product-layout primitives
 │   │   │   ├── button.tsx
 │   │   │   ├── dialog.tsx
 │   │   │   ├── drawer.tsx
@@ -194,13 +194,19 @@ apps/web/
 │   │   │   ├── filterable-data-grid.tsx     # custom FilterableDataGrid — the table engine (DataGridColumn<T>)
 │   │   │   ├── saved-table-views-control.tsx # shared table-view switcher + save/rename/delete/columns UI
 │   │   │   ├── data-table.tsx               # shadcn wrapper over @tanstack/react-table — unused by any view
+│   │   │   ├── route-workspace.tsx          # shared content + optional inspector shell
+│   │   │   ├── page-head.tsx                # route eyebrow/title/action identity
+│   │   │   ├── disclosure-section.tsx       # progressive detail section
+│   │   │   ├── inspector-ledger.tsx         # audit-friendly label/value facts
+│   │   │   ├── empty.tsx                    # explicit empty/loading absence
+│   │   │   ├── tool-row.tsx                 # shared action/control row
 │   │   │   └── copyable-command.tsx        # `<CopyableCommand command={...} />` — preserves the "copyable CLI commands" affordance per docs/decisions.md (2026-05-03)
 │   │   ├── layout/
 │   │   │   ├── AppShell.tsx
-│   │   │   ├── Topbar.tsx                  # slim bar: global job search → /jobs?q, density/theme, connection pill
+│   │   │   ├── Topbar.tsx                  # slim bar: global job search → /jobs?q, density/theme, inline connection status
 │   │   │   ├── SideRail.tsx                 # 14 nav destinations in 5 rail groups (icons ≤1180px; sheet ≤820px)
 │   │   │   ├── BrandMark.tsx                # JobCtrl logo mark
-│   │   │   ├── ConnectionStatusPill.tsx     # SSE status + events-paused + LLM-spend line
+│   │   │   ├── ConnectionStatusPill.tsx     # legacy-named dot/glyph + text for SSE, pause state, and LLM spend
 │   │   │   └── ThemeToggle.tsx
 │   │   ├── providers/                      # EventStreamProvider is NOT here — it lives in contexts/operations/providers/
 │   │   │   ├── PortsProvider.tsx           # + usePorts()

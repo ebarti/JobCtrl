@@ -156,13 +156,13 @@ resume across a worker crash on a real dev server). Requires the `temporal` CLI,
 | API list filtering/sorting/pagination or shared data-grid filtering/sorting/pagination/column resizing regresses | `apps/api/test/server.test.ts`; `apps/web/src/shared/ui/filterable-data-grid.test.tsx`; `apps/web/src/views/debug/DebugActivityTable.test.tsx` |
 | Saved Jobs table views stop treating URL filters/sort as the active source of truth, lose migration safety for renamed/removed columns, or fail to restore column visibility/order/widths and table density after a reload | `apps/web/src/shared/stores/saved-table-views.test.ts`; `apps/web/src/shared/ui/filterable-data-grid.test.tsx`; `apps/web/src/views/jobs/JobsView.test.tsx`; browser smoke on `/jobs` |
 | Dashboard KPI drilldowns stop matching their Jobs list filters | `apps/api/test/server.test.ts`; `apps/web/src/views/dashboard/KpiGrid.test.tsx`; `apps/web/src/views/jobs/JobsView.test.tsx` |
-| Apply-run drawers show roadmap placeholder copy instead of persisted timeline events | `apps/api/test/server.test.ts`; `apps/web/src/contexts/apply/components/ApplyRunTimeline.test.tsx` |
+| Apply-run route workspaces show roadmap placeholder copy instead of persisted timeline events | `apps/api/test/server.test.ts`; `apps/web/src/contexts/apply/components/ApplyRunTimeline.test.tsx` |
 | Dashboard stops classifying canonical running-stage timestamps into active versus stuck work, hides stuck items or the liveness threshold, drops starting/in-progress workflow runs, loses recent activity, lets activity events overload the view, or makes events uninspectable from Debug | `apps/api/test/server.test.ts`; `apps/web/src/contexts/operations/hooks/useDashboardSummaryQuery.test.ts`; `apps/web/src/views/dashboard/active-runs.test.ts`; `apps/web/src/views/dashboard/DashboardView.test.tsx`; `apps/web/src/views/dashboard/DashboardOperations.a11y.test.tsx`; `apps/web/src/views/debug/DebugActivityTable.test.tsx`; `apps/web/src/views/debug/DebugView.test.tsx`; `apps/web/e2e/tests/dashboard.spec.ts` |
 | Outcome-conversion and outcome-analytics read models or views miscount applied/reply/interview/offer/rejection per source, score band, fit band, apply mode, accepted resume template, or tailoring policy; conflate score-band and fit-band vocabularies; include dry-runs in the applied denominator; divide by zero on zero-applied instead of null rates; report a statistically meaningless rate or median for a bucket below the minimum sample size (`MIN_CONVERSION_SAMPLE` in `apps/api/src/read-model.ts`, default 5 — e.g. a single applied job rendering a 100% response rate) instead of suppressing the rate while keeping the raw counts and `n`; miscount response-time samples or suggestion decisions; sort by rate by default instead of applied count; show suppressed rate rows ahead of rated rows during rate sorting; leak notes/body text through analytics; drift between the Python and TypeScript projection builders; or stop being read-only (feeds scoring/ranking/thresholds or apply eligibility) | `workers/automation/tests/test_dashboard_projection.py`; `apps/api/test/projections.test.ts`; `workers/automation/tests/test_audit_projection_parity.py`; `apps/api/test/audit-projection-parity.test.ts`; `apps/web/src/contexts/operations/hooks/useOutcomeAnalyticsQuery.test.ts`; `apps/web/src/contexts/operations/invalidation-router.test.ts`; `apps/web/src/views/analytics/AnalyticsView.test.tsx`; `apps/web/src/views/analytics/AnalyticsView.a11y.test.tsx`; `apps/web/src/views/analytics/OutcomeRateTable.test.tsx`; `apps/web/src/views/analytics/AnalyticsView.stories.tsx`; `apps/web/e2e/tests/analytics.spec.ts` |
 | Dashboard conversion panel stops rendering the applied→reply→interview→offer funnel with rates relative to applied, drops the per-source or per-score-band interview breakdown, fabricates a cost per interview instead of showing "not available" when null, fabricates a percentage for a below-minimum-sample bucket instead of showing the raw counts with "n/a" plus an insufficient-data note, or renders a broken chart instead of an empty state when no applications exist | `apps/web/src/views/dashboard/ConversionPanel.test.tsx`; `apps/web/src/views/dashboard/ConversionPanel.a11y.test.tsx`; `apps/web/src/views/dashboard/DashboardView.test.tsx` |
 | Job detail audit history misses user-relevant lifecycle entries, duplicates raw event payloads, or exposes debug messages, raw notes, email bodies, or local paths | `apps/api/test/server.test.ts`; `apps/web/src/views/jobs/JobDetailDrawer.test.tsx` |
-| Job detail drawer stops opening as an almost full-screen audit workspace, or stops showing top-level ranking rationale, apply readiness, blockers, eligibility concerns, or Apply Review handoff from the shared audit contract | `apps/web/src/views/jobs/JobDetailDrawer.test.tsx`; browser smoke on `/jobs` drawer |
-| Requirement-fit explanation regresses by deriving requirement matches from broad score-signal text, hiding the `not_assessed` state for scores without requirement-level evidence, omitting the current-policy re-score path, or letting Apply Review requirement coverage disagree with the projected requirement-fit report | `apps/web/src/contexts/materials/components/EmployerAnalysisPanel.test.tsx`; `apps/web/src/views/jobs/JobDetailDrawer.test.tsx`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; browser smoke on `/jobs` drawer and `/apply-review` |
+| The Job Detail route stops opening as a full audit workspace, or stops showing top-level ranking rationale, apply readiness, blockers, eligibility concerns, or Apply Review handoff from the shared audit contract | `apps/web/src/views/jobs/JobDetailDrawer.test.tsx`; browser smoke on `/jobs/$jobId` |
+| Requirement-fit explanation regresses by deriving requirement matches from broad score-signal text, hiding the `not_assessed` state for scores without requirement-level evidence, omitting the current-policy re-score path, or letting Apply Review requirement coverage disagree with the projected requirement-fit report | `apps/web/src/contexts/materials/components/EmployerAnalysisPanel.test.tsx`; `apps/web/src/views/jobs/JobDetailDrawer.test.tsx`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; browser smoke on `/jobs/$jobId` and `/apply-review` |
 | Jobs delete/hide lifecycle regresses, causing temporary deletes not to resurface, hidden jobs to leak into active/deleted views, permanent deletes to leave suppressing tombstones behind, or a rejected cross-source content-matched duplicate (distinct URL/source/location) to soft-delete the accepted owner it matched instead of dropping only the incoming duplicate | `apps/api/test/server.test.ts`; `workers/automation/tests/test_discovery_identity.py`; `apps/web/src/views/jobs/JobBulkActions.test.tsx`; `apps/web/src/views/jobs/JobsView.test.tsx` |
 | Cross-source content dedup regresses, letting the same posting create a second Job aggregate — via Smart Extract's direct-SQL insert bypassing the content-owner lookup, JobSpy rediscovery of an ATS-first owner whose `jobs.company` is NULL (employer only in `jobs.site`), or a fresh listing arriving after the owner is enriched (listing-vs-enriched similarity drops below threshold) — or the rejected-duplicate audit stops attributing to the surviving owner or appends a fresh event row on every re-observation of an already-rejected duplicate, or the accepted-merge `DuplicateJobLinked` event fails to attribute to the surviving owner (persisted with a NULL `job_url` and absent from the owner's audit history) | `workers/automation/tests/test_discovery_identity.py`; `workers/automation/tests/test_discovery_limits.py`; `workers/automation/tests/test_smartextract_discovery.py`; `apps/api/test/server.test.ts` |
 | Destructive UI workflows touch real user data | `apps/api/test/qa-workflow.test.ts` with `pnpm qa:seed` |
@@ -222,8 +222,10 @@ resume across a worker crash on a real dev server). Requires the `temporal` CLI,
 | Re-drafting or editing an outreach message destroys or hides the last approved draft before a replacement is approved — a new generation fails to supersede stale candidates, a re-draft overwrites the approved draft, an edit is applied in place instead of as a gated new generation, or the generation history drops prior drafts (INV-5) | `workers/automation/tests/test_outreach_thread_aggregate.py`; `workers/automation/tests/test_outreach_draft_gates.py`; `apps/api/test/outreach.test.ts`; `apps/web/src/contexts/outreach/components/OutreachThreadPanel.test.tsx`; `apps/web/src/contexts/outreach/hooks/useReviseDraftMutation.test.ts`; browser smoke on a contact's Outreach panel |
 | Outreach drafting/logging starts an automated send, exposes a send transport, or marks a thread sent without a user-attested send log (INV-1) — the four enforcement layers: (a) the `OutreachThread` aggregate lets a thread reach "sent" without a user-attested `OutreachSendLog` over an approved draft; (b) any send-transport symbol (`smtp`, `gmail.send`, `messages.send`, `sendMail`, `nodemailer`, `createTransport`, …) appears in outreach code on either runtime; (c) any transport-shaped seam is invoked on an outreach path; or (d) "approve draft" and "log send" collapse into one action (approving performs an outbound action or marks the thread sent) | (a) `workers/automation/tests/test_outreach_thread_aggregate.py`; (b) `workers/automation/tests/test_outreach_no_send_transport.py` (scans Python domain/infra + `apps/api/src/outreach.ts` + `apps/web/src/contexts/outreach/` + `views/outreach/`); (c) `workers/automation/tests/test_outreach_no_auto_send.py` (`test_no_transport_is_invoked_on_any_outreach_path`); (d) `workers/automation/tests/test_outreach_no_auto_send.py` (approve-records-a-fact / log-send-is-separate) + `apps/api/test/outreach.test.ts` (records-a-send / refuses-non-approved / no `/send` route) |
 | Outreach follow-ups auto-act or auto-send, or an optional recurring follow-up reminder defaults ON — a follow-up is sent or acted on without an explicit user action, the due-follow-ups read model triggers an outbound effect instead of only surfacing, the 7-day/14-day derivation is wrong, or `outreach_follow_up_reminders_enabled` defaults to `true` (§9; INV-1) | `workers/automation/tests/test_outreach_follow_up_derivation.py` (7d/14d derivation; default-off; even-when-enabled-only-surfaces); `workers/automation/tests/test_due_follow_up_projection_parity.py`; `apps/api/test/outreach.test.ts` (schedule/complete/dismiss + only-arrived-follow-ups-are-due); `apps/api/test/due-follow-up-projection-parity.test.ts`; `apps/web/src/contexts/outreach/hooks/useScheduleFollowUpMutation.test.ts`; browser smoke on the Follow-ups panel |
-| The full contact-and-outreach product path regresses even though isolated units pass — contacts cannot be reviewed from both the job drawer and Outreach route, candidate provenance is not visible before confirmation, the approved draft is hidden during revision, the send-log/follow-up surfaces imply automation, or due follow-ups do not surface as reminders only | `apps/web/e2e/tests/outreach.spec.ts`; existing focused rows above plus the seeded **Outreach Planner Product Smoke** below; keep it synthetic-only with no live fetch, no live LLM call, no browser submission, and no outbound transport |
+| The full contact-and-outreach product path regresses even though isolated units pass — contacts cannot be reviewed from both the Job Detail workspace and Outreach route, candidate provenance is not visible before confirmation, the approved draft is hidden during revision, the send-log/follow-up surfaces imply automation, or due follow-ups do not surface as reminders only | `apps/web/e2e/tests/outreach.spec.ts`; existing focused rows above plus the seeded **Outreach Planner Product Smoke** below; keep it synthetic-only with no live fetch, no live LLM call, no browser submission, and no outbound transport |
 | The left-rail shell (2026-07 UI revamp) regresses — a rail group or any of the 14 nav destinations disappears or loses its visible label (full rail, icon collapse at ≤1180px, or the hamburger sheet at ≤820px), the slim topbar drops the global job search / density / theme / connection-status affordances, or shell chrome renders unpainted in either theme | `apps/web/e2e/tests/token-foundation.spec.ts` (rail groups, labelled mobile sheet, painted topbar/shell chrome, density values); `apps/web/e2e/tests/route-visual-qa.spec.ts` (per-route active rail link + heading proofs, light/dark paint, density modes) |
+| The integrated product redesign loses semantic parity or responsive/accessibility behavior — a legacy value, control, action, warning, status discriminant, audit fact, or unavailable/loading/empty/error state disappears; an adaptive composition clips or creates document-level horizontal overflow at 1440px, 1280px, collapsed rail, or 390×844; a disabled `ChoiceControl` drops its announced reason; a `SelectField` loses its visible label or keyboard contract; a collapsed `DisclosureSection` unmounts form state; or `PreviewWorkbench` replaces the real full-width `ResumeStandalonePlateEditor` and production toolbar with a mock, thumbnail, or side preview | Same-fixture pre/post semantic parity manifest for every production route; `apps/web/src/shared/ui/redesign-compositions.test.tsx`; `apps/web/src/shared/ui/redesign-compositions.stories.tsx`; `apps/web/src/contexts/profile/components/ResumeTemplatePanel.test.tsx`; the complete Playwright suite; and the required in-app-browser route sweep in the [Integrated Redesign Final Gate](#integrated-redesign-final-gate) |
+| Pipeline operations becomes visually reassuring but operationally false — the three source families are blended with the two reconciliation steps, private workflow input or a URL-shaped job key reaches the API/DOM, pipeline lifecycle events stop invalidating `pipelineKeys.operations`, active/idle fallback polling drifts from 15s/60s, or ETA/freshness/capacity invents counts or certainty when scope, samples, contention, queue data, or worker telemetry is missing/stale | `apps/api/test/pipeline-operations.test.ts`; `apps/api/test/pipeline-eta.test.ts`; `apps/api/test/worker-runtime-telemetry.test.ts`; `apps/web/src/views/pipelines/PipelinesView.test.tsx`; `apps/web/src/contexts/operations/hooks/usePipelineOperationsQuery.test.ts`; `apps/web/src/contexts/operations/invalidation-router.test.ts`; plus the `/pipelines` portion of the required in-app-browser route sweep |
 
 ### Scoring Policy Eval Gate
 
@@ -384,49 +386,124 @@ against disposable seeded data. Keep this gate synthetic or seeded only; do not
 run auto-apply, browser submission, mailbox scanning, real material generation,
 destructive profile/database actions, or worker-backed jobs for visual QA.
 
+<a id="integrated-redesign-final-gate"></a>
+
+### Integrated Redesign Final Gate
+
+The representative route-visual spec is not the final gate for a product-wide
+redesign. On the assembled integration tip, run the complete static, component,
+type, Storybook, and Playwright layers with the canonical repository commands:
+
+```bash
+corepack pnpm check
+corepack pnpm test
+corepack pnpm qa:test
+corepack pnpm --filter @jobctrl/web test
+corepack pnpm --filter @jobctrl/web test-d
+corepack pnpm web:build
+corepack pnpm web:storybook:build
+corepack pnpm web:storybook:test
+corepack pnpm --filter @jobctrl/web e2e
+git diff --check
+```
+
+Then use the in-app browser against a disposable workspace seeded with
+`corepack pnpm qa:seed /tmp/jobctrl-qa` and walk every production route and
+seeded detail route in the
+[Browser Smoke route table](browser-smoke.md#route-checklist). Playwright,
+Storybook, and static screenshots do not replace this task-specific sweep.
+Capture the route/state, viewport, rail mode, theme, density, browser-console
+result, and overflow result for each observation.
+
+The browser evidence must prove all of these contracts:
+
+- At 1440px and 1280px with the desktop rail expanded, at a collapsed-rail
+  desktop width, and at 390×844 with the labelled mobile sheet, adaptive field
+  grids, tool rows, headers, inspectors, and actions retain deliberate spacing,
+  reflow in source order, and produce no clipped content, overlap, or
+  document-level horizontal overflow. Repeat light/dark and
+  compact/regular/comfortable density.
+- A same-fixture semantic pre/post parity manifest exists for every redesigned
+  route/surface. Every legacy accessible label/role, fixture value, data fact,
+  control, action, status discriminant, warning, audit fact, and
+  unavailable/loading/empty/error state remains present or is mapped to a
+  documented keyboard-reachable tab, disclosure, or detail route. Do not
+  weaken the baseline after migration to make the result pass.
+- Enabled `ChoiceControl` labels toggle their real checkbox. Disabled and locked
+  variants remain real disabled controls and expose the visible reason as their
+  accessible description. `SelectField` is named by its visible label and
+  supports Tab, Enter/Space, Arrow keys, Enter-to-commit, and Escape-to-close
+  with focus restored. `DisclosureSection` keeps its body mounted-but-hidden so
+  values and local form state survive close/reopen.
+- Profile/Preferences template editing composes `PreviewWorkbench` with compact
+  controls above the named, real, full-width
+  `ResumeStandalonePlateEditor`, including its production formatting toolbar.
+  A mock document, thumbnail, side preview, or name-only template swap fails.
+- The `/pipelines` fixture presents three source families under one
+  source-family plan and separately presents exactly two reconciliation steps:
+  Enrichment pass and Preparation fanout. It never blends those facts into one
+  stage count or whole-pipeline completion percentage.
+- Pipeline API responses omit raw/private workflow inputs, and URL-shaped job
+  keys render as `Sensitive identifier withheld`. A pipeline lifecycle SSE
+  event invalidates `pipelineKeys.operations`; with events quiet, the query
+  polls active executions every 15 seconds and idle/terminal state every 60
+  seconds, without background polling.
+- Pipeline fixtures cover ETA `available`, `calibrating`, `paused`, `stale`,
+  and `unavailable`; freshness `fresh`, `stale`, `unsupported`, and
+  `unavailable`; capacity `available`, `stale`, and `unavailable`; and nested
+  task-queue `available`, `stale`, `unsupported`, and `unavailable`. Counts,
+  observation times, estimator basis/sample support, worker/slot capacity, and
+  explicit reasons remain inspectable; the UI must not synthesize an ETA,
+  inventory total, or capacity value.
+
+Keep the entire gate synthetic/disposable. Do not submit an application, use
+real credentials or profile data, scan a real mailbox, spend against a live
+model, or run destructive profile/database actions.
+
 ### Coverage layout
 
 | Layer | Files | Purpose |
 | --- | --- | --- |
-| Unit / hook / component (Vitest + RTL + MSW) | `*.test.ts(x)` files under `apps/web/src/` | Pure selectors, query-key factories, the invalidation router (one registered handler per `DomainEvent` variant in `DOMAIN_EVENT_TYPES`), every Operations read hook, every per-aggregate mutation hook (success path + rollback path), forms, drawers, filter bars. |
+| Unit / hook / component (Vitest + RTL + MSW) | `*.test.ts(x)` files under `apps/web/src/` | Pure selectors, query-key factories, the invalidation router (one registered handler per `DomainEvent` variant in `DOMAIN_EVENT_TYPES`), every Operations read hook, every per-aggregate mutation hook (success path + rollback path), forms, detail workspaces, filter bars. |
 | Type-level tests (Vitest `typecheck` mode via `vitest.types.config.ts`) | 11 `*.test-d.ts` files under `apps/web/test/types/` | Inferred shapes of the Operations read hooks plus `useActivityEventQuery`, `useWorkflowRunsListQuery`, and `useEvidenceMapQuery`, using typed test files in Vitest's typecheck runner (cf. target §10.6). |
-| End-to-end (Playwright headless) | 18 specs in `apps/web/e2e/tests/` — 17 flow/regression specs (`analytics`, `artifact-comparison`, `dashboard`, `dry-run`, `evidence-map`, `interview-prep`, `jobs-bulk`, `jobs-drawer`, `materials`, `mobile-connection-banner`, `outreach`, `profile-edit`, `route-visual-qa`, `runs`, `settings`, `token-foundation`, `wizard`) plus the `docs-screenshots` documentation utility spec | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `analytics.spec.ts` checks the Analytics route with a canonical-shaped read-model response and verifies a below-minimum-sample group stays count-only. `evidence-map.spec.ts` asserts the Evidence route reads the projection-backed evidence usage index, filters from a job-detail handoff, and navigates usage links back to the owning artifact/job. `interview-prep.spec.ts` asserts the explicit generate-interview-prep action queues through the REST route, then injects an accepted prep generation and `InterviewPrepGenerated` event to prove the drawer renders a STAR draft, records a linked reflection through the existing outcome endpoint, and follows an evidence-map provenance link through the SSE realtime loop. `outreach.spec.ts` asserts the seeded contact-and-outreach planner path across the job drawer, supervised candidate review, `/outreach` contact detail, approved/blocked draft review, user-attested send logging, due follow-up reminders, and the event/projection no-value-leak boundary. `mobile-connection-banner.spec.ts` holds the 390×844 stale-worker banner clear of the Dashboard heading and guards against horizontal overflow. `token-foundation.spec.ts` checks light/dark shadcn tokens, root `color-scheme`, app-shell density values, focus indicators, native select styling, and dense-route rendering without user-affecting automation. `route-visual-qa.spec.ts` checks representative routes, overlays, density modes, focus indicators, forms, filters, destructive-control visibility, and targeted visual snapshots for the requirement-fit job drawer card plus Apply Review requirement card after visual-system changes. `materials.spec.ts` asserts the per-job generate-materials button is enabled, the route returns 202 (not 400), and the worker-confirmed `ResumeApproved` surfaces in the job audit history via the SSE realtime loop. The harness runs the real route + worker-readiness gate (seeded worker heartbeat) but routes dispatch through a deterministic stub (`JOBCTRL_E2E_STUB_DISPATCH`) so no worker subprocess or LLM is required. E2E ports are overridable via `JOBCTRL_E2E_API_PORT` / `JOBCTRL_E2E_WEB_PORT` for parallel worktrees. |
+| End-to-end (Playwright headless) | 18 specs in `apps/web/e2e/tests/` — 17 flow/regression specs (`analytics`, `artifact-comparison`, `dashboard`, `dry-run`, `evidence-map`, `interview-prep`, `jobs-bulk`, `jobs-drawer`, `materials`, `mobile-connection-banner`, `outreach`, `profile-edit`, `route-visual-qa`, `runs`, `settings`, `token-foundation`, `wizard`) plus the `docs-screenshots` documentation utility spec | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `analytics.spec.ts` checks the Analytics route with a canonical-shaped read-model response and verifies a below-minimum-sample group stays count-only. `evidence-map.spec.ts` asserts the Evidence route reads the projection-backed evidence usage index, filters from a job-detail handoff, and navigates usage links back to the owning artifact/job. `interview-prep.spec.ts` asserts the explicit generate-interview-prep action queues through the REST route, then injects an accepted prep generation and `InterviewPrepGenerated` event to prove the job detail workspace renders a STAR draft, records a linked reflection through the existing outcome endpoint, and follows an evidence-map provenance link through the SSE realtime loop. `outreach.spec.ts` asserts the seeded contact-and-outreach planner path across the job detail workspace, supervised candidate review, `/outreach` contact detail, approved/blocked draft review, user-attested send logging, due follow-up reminders, and the event/projection no-value-leak boundary. `mobile-connection-banner.spec.ts` holds the 390×844 stale-worker banner clear of the Dashboard heading and guards against horizontal overflow. `token-foundation.spec.ts` checks light/dark shadcn tokens, root `color-scheme`, app-shell density values, focus indicators, native select styling, and dense-route rendering without user-affecting automation. `route-visual-qa.spec.ts` checks representative routes, overlays, density modes, focus indicators, forms, filters, destructive-control visibility, and targeted visual snapshots for the ruled requirement-fit section plus Apply Review requirement section after visual-system changes. `materials.spec.ts` asserts the per-job generate-materials button is enabled, the route returns 202 (not 400), and the worker-confirmed `ResumeApproved` surfaces in the job audit history via the SSE realtime loop. The harness runs the real route + worker-readiness gate (seeded worker heartbeat) but routes dispatch through a deterministic stub (`JOBCTRL_E2E_STUB_DISPATCH`) so no worker subprocess or LLM is required. E2E ports are overridable via `JOBCTRL_E2E_API_PORT` / `JOBCTRL_E2E_WEB_PORT` for parallel worktrees. |
 | A11y suites (Vitest + `axe-core` + `jest-axe`) | 29 `*.a11y.test.tsx` files under `apps/web/src/` | Input-bearing forms, overlays, dashboard and analytics surfaces, material inspectors, evidence, discovery, outreach, and provenance components — fails on critical/serious violations (target §10.7). The inventory is every file matching `*.a11y.test.ts` or `*.a11y.test.tsx` under `apps/web/src/`. |
 
 ### Scoring Policy Feedback Smoke
 
 For UI changes around score correction learning, verify the jobs table shows
-the compact stale-score badge on unresolved stale scores, the job drawer shows
+the compact stale-score status on unresolved stale scores, the job detail workspace shows
 the policy update state, and the reset control posts to
 `/v1/scoring/stale-scores/actions/reset-for-rescore` before running
 `jobctrl score --rescore` or the score stage with `rescore: true`.
 
-### Jobs Drawer Audit Smoke
+### Job Detail Workspace Audit Smoke
 
 For UI changes around job ranking or readiness, open `/jobs`, click a job row,
-and verify the drawer top section shows why the job ranked where it did
+and verify the full detail workspace header and inspector show why the job ranked where it did
 (score, band/confidence, reasoning, signals, keywords), whether it is ready for
 apply review, any missing prerequisites, hard blockers, eligibility concerns,
 and an Apply Review handoff. The readiness and blocker copy must come from the
-shared `applyAudit` contract. The drawer should use almost the full viewport on
-desktop and arrange detailed sections in a wide audit workspace rather than a
-narrow side panel. When touching score visuals, sort by fit score and verify
-score badges use the numeric color contract: 10 green, 5 gray, and 0 red.
+shared `applyAudit` contract. The route should use the full available viewport on
+desktop, with ruled sections and a persistent inspector rather than a detached
+drawer or narrow side panel. When touching score visuals, sort by fit score and verify
+compact score statuses use the numeric color contract: 10 green, 5 gray, and 0 red,
+without a colored capsule.
 When touching requirement-fit explanation, verify scored jobs show requirement
 fit as the explanation of the numeric score and jobs without
 `requirementFitReport` show "not assessed" plus a current-policy re-score action;
-the drawer must not derive requirement matches from broad matched/missing signal
+the detail workspace must not derive requirement matches from broad matched/missing signal
 text.
 When touching compensation rendering, verify the Jobs table shows separate
 Salary min, Salary max, Market, Confidence, and Warnings columns, that salary
 min/max/market values are normalized to EUR/year with the unit carried by the
 headers, that every data column can request a sort, and that
-the drawer Compensation section separates posted salary from
+the detail workspace Compensation section separates posted salary from
 reported company-role market evidence, source trail, source/sample counts,
 source-conflict warning code/message, warnings, confidence factors, collapsed
 selected evidence rows, evidence source links when available, and the market
 confidence interval. The
-drawer refresh control must re-run only the selected job's compensation
+detail-workspace refresh control must re-run only the selected job's compensation
 analysis, the Jobs toolbar `refresh compensation` action must re-run
 compensation analysis for all jobs, and both refresh paths must honor configured
 reported-source loading plus the optional reported-observations JSON path
@@ -442,7 +519,7 @@ jobs for this smoke.
 For UI/API changes around the Evidence map, open `/evidence-map` against the
 synthetic QA workspace and verify profile achievements and declared skills are
 listed with their resume-bullet usage, requirement-fit usage, coverage history,
-and gaps. From a job detail drawer, use the Evidence map handoff and verify the
+and gaps. From a job detail workspace, use the Evidence map handoff and verify the
 route opens with a job filter, the clear-filter link restores the full map, and
 usage links navigate to the owning `/artifacts/$artifactId` or `/jobs/$jobId`
 detail route. This smoke is read-only; do not run discovery, scoring, tailoring,
@@ -456,7 +533,7 @@ For UI/API changes around application review or outcome tracking, open
 derives the visible status tag/counts from `applyAudit`, offers submit approval
 as the primary live-gate action, records `approve_submit`, dry-run approval,
 defer, decline, and reset decisions without starting apply/browser automation,
-and refreshes the queue after each decision. Open a job detail drawer and
+and refreshes the queue after each decision. Open a job detail workspace and
 verify its `applyAudit` readiness/blocker facts agree with the selected Apply
 Review job. Verify the selected review also shows compensation range and
 statistical confidence from `compensationSummary` without changing readiness,
@@ -504,7 +581,7 @@ bodies, snippets, attachments, or unrelated mailbox content.
 ### Materials Generation + Inspector Smoke
 
 For UI/API changes around per-job material generation or the tailoring inspector,
-open a job detail drawer and verify the "generate materials"
+open a job detail workspace and verify the "generate materials"
 control is enabled, confirms before dispatching, and reports a queued/in-flight
 state; the route is `POST /v1/jobs/:jobKey/actions/generate-materials` and returns
 202 once the worker is ready (503 when the worker heartbeat is missing/stale). Do
@@ -553,7 +630,7 @@ follow-up schedules.
 
 Verify the product path end to end:
 
-- The job drawer's **Contacts** panel and `/outreach` route both show the same
+- The job detail workspace's **Contacts** panel and `/outreach` route both show the same
   contact without duplicating server state, and every displayed fact has visible
   provenance (source kind, source reference, capture method, confidence, and
   user-confirmed state where applicable).
@@ -580,7 +657,7 @@ Verify the product path end to end:
 
 ### Interview Prep Smoke
 
-For UI/API changes around interview preparation, open a job detail drawer and
+For UI/API changes around interview preparation, open a job detail workspace and
 verify the "generate interview prep" control is enabled, confirms before
 dispatching, and posts to
 `POST /v1/jobs/:jobKey/actions/generate-interview-prep`. The route must return
@@ -590,7 +667,7 @@ and must dispatch `generate_interview_prep`, not `run_stage`.
 Use the E2E stub dispatcher for automation. To verify the read path, inject
 accepted `job_interview_prep` / `job_interview_prep_items` rows plus an
 `InterviewPrepGenerated` event into the seeded SQLite DB; then confirm the job
-drawer renders STAR drafts, gap drills labelled as gaps, evidence-map links,
+detail workspace renders STAR drafts, gap drills labelled as gaps, evidence-map links,
 requirement IDs, source snippets, gate/judge status, and accepted-residual
 warnings. Confirm a failed injected generation does not hide the last accepted
 prep. Record a post-interview reflection from the prep panel and confirm it posts

@@ -272,10 +272,10 @@ production-shaped fixtures.
 | **Profile** | Every personal/contact/address field; work authorization and attestations owned there; executive baseline; experience, dates, bullets, education, skills, verified metrics, search targets, EEO data, evidence/source pins, add/remove/reorder controls, save/discard/import actions, real editable resume preview | Structured editor + full-height preview workbench; adaptive sections and resizer |
 | **Resume import** | Upload source, include/exclude choices, parse/preview diagnostics, conflicts, backup/version facts, confirm/cancel/back actions, progress/error/success | Three-step route-backed wizard using existing store and mutations |
 | **Preferences** | Exact field inventory in §6 plus autosave/undo/save/discard and template version/default actions | Disclosures + semantic tabs + adaptive property grids + full-width preview |
-| **Settings — General** | Current settings fields, apply runtime controls, scoring guidance, compensation source policy, effective/default/override/source facts, validation, autosave/undo/reset | Settings tabs + context-owned disclosure panels |
+| **Settings — General** | Current settings fields, spend/capacity controls, apply runtime controls, scoring guidance, compensation source policy, effective/default/override/source facts, validation, autosave/undo/reset | Settings tabs + context-owned disclosure panels |
 | **Settings — Credentials** | Provider states, supported auth modes, secret-presence metadata, add/update/delete/verify actions, readiness/errors, local secret-boundary copy | Provider ledger and focused setup forms; no secret values displayed |
-| **Settings — Models** | Provider/model catalogs, generator/judge selections, analysis legs, ready/unready/invalid states, execution policy and cost/concurrency controls | Model matrix + policy inspector |
-| **Settings — Browser** | Browser capabilities, paired/unpaired/expired states, create/revoke/rotate actions, extension pairing instructions/token metadata, capability restrictions and reasons | Capability ledger + pairing workbench |
+| **Settings — Models** | Provider/model catalogs, generator/judge selections, analysis legs, ready/unready/invalid states, and model execution policy | Model matrix + policy inspector |
+| **Settings — Browser** | Browser capabilities, extension pairing instructions/token metadata, token retrieval/copy and confirmed rotation, capability restrictions and reasons | Capability ledger + pairing workbench |
 
 ### 7.1 Parity enforcement
 

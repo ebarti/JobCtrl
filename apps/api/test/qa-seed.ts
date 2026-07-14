@@ -4,7 +4,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 
+import { ensureApplicationFeedbackTables } from "../src/application-feedback.js";
+import { ensureDiscoveryControlTables } from "../src/discovery-controls.js";
+import { ensureOutreachTables } from "../src/outreach.js";
 import { writeProfileConfig } from "../src/profile-store.js";
+import { ensureProjectionTables } from "../src/projections.js";
+import { ensureResumeReviewTables } from "../src/resume-review-drafts.js";
 
 export interface QaWorkspace {
   appDir: string;
@@ -323,7 +328,113 @@ export function seedQaDatabase(dbPath: string): void {
       started_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
       max_concurrent_activities INTEGER,
-      activity_executor_max_workers INTEGER
+      activity_executor_max_workers INTEGER,
+      active_activity_count INTEGER NOT NULL DEFAULT 0,
+      active_activity_counts_json TEXT NOT NULL DEFAULT '{}',
+      active_activity_details_json TEXT NOT NULL DEFAULT '[]',
+      active_activity_details_total INTEGER NOT NULL DEFAULT 0,
+      active_activity_details_truncated INTEGER NOT NULL DEFAULT 0,
+      activity_duration_summary_json TEXT NOT NULL DEFAULT '{}',
+      task_queue_observation_json TEXT,
+      heartbeat_schema_version INTEGER NOT NULL DEFAULT 2
+    );
+    CREATE TABLE discovery_execution_jobs (
+      tenant_id                TEXT NOT NULL,
+      discover_workflow_id     TEXT NOT NULL,
+      discover_run_id          TEXT NOT NULL,
+      job_url                  TEXT NOT NULL,
+      cohort_kind              TEXT NOT NULL
+          CHECK (cohort_kind IN ('observed_this_run', 'existing_backlog')),
+      source_family            TEXT,
+      source_run_id            TEXT,
+      preparation_workflow_id  TEXT,
+      work_plan_state          TEXT NOT NULL DEFAULT 'pending'
+          CHECK (work_plan_state IN ('pending', 'planned', 'not_eligible', 'failed')),
+      required_steps_json      TEXT,
+      work_plan_reason         TEXT,
+      linked_at                TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, discover_workflow_id, discover_run_id, job_url),
+      FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+    );
+    CREATE TABLE pipeline_step_projections (
+      tenant_id              TEXT NOT NULL,
+      discover_workflow_id   TEXT NOT NULL,
+      discover_run_id        TEXT NOT NULL,
+      step_kind              TEXT NOT NULL CHECK (step_kind IN (
+        'source_planning', 'source_family', 'enrichment_pass',
+        'preparation_fanout', 'existing_backlog_sweep', 'pdf_render'
+      )),
+      item_key               TEXT NOT NULL,
+      state                  TEXT NOT NULL CHECK (state IN (
+        'queued', 'running', 'succeeded', 'failed'
+      )),
+      attempt                INTEGER NOT NULL CHECK (attempt >= 1),
+      queued_at              TEXT,
+      started_at             TEXT,
+      finished_at            TEXT,
+      duration_ms            INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+      error_code             TEXT,
+      retryable              INTEGER NOT NULL DEFAULT 0 CHECK (retryable IN (0, 1)),
+      detail_code            TEXT,
+      detail_count           INTEGER CHECK (detail_count IS NULL OR detail_count >= 0),
+      last_event_id          INTEGER NOT NULL,
+      last_updated_at        TEXT NOT NULL,
+      PRIMARY KEY (
+        tenant_id, discover_workflow_id, discover_run_id, step_kind, item_key
+      )
+    );
+    CREATE TABLE operational_attempt_metrics (
+      metric_id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      tenant_id               TEXT NOT NULL DEFAULT 'local',
+      occurred_at             TEXT NOT NULL,
+      stage                   TEXT NOT NULL,
+      source_id               TEXT,
+      source_kind             TEXT,
+      source_priority         TEXT,
+      source_role             TEXT,
+      adapter                 TEXT,
+      attempt_kind            TEXT NOT NULL,
+      outcome                 TEXT NOT NULL,
+      failure_category        TEXT,
+      is_operational_failure  INTEGER NOT NULL DEFAULT 0,
+      is_scrape_failure       INTEGER NOT NULL DEFAULT 0,
+      is_retryable            INTEGER NOT NULL DEFAULT 1,
+      run_id                  TEXT,
+      job_url                 TEXT,
+      duration_ms             INTEGER,
+      total_count             INTEGER,
+      new_count               INTEGER,
+      existing_count          INTEGER,
+      observed_count          INTEGER,
+      duplicate_count         INTEGER,
+      error_class             TEXT,
+      error_message           TEXT,
+      metadata_json           TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE contacts (
+      tenant_id   TEXT NOT NULL DEFAULT 'local',
+      contact_id  TEXT NOT NULL,
+      employer    TEXT,
+      job_url     TEXT,
+      role        TEXT NOT NULL DEFAULT 'other',
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL,
+      deleted_at  TEXT,
+      PRIMARY KEY (tenant_id, contact_id)
+    );
+    CREATE TABLE contact_attributes (
+      tenant_id      TEXT NOT NULL DEFAULT 'local',
+      attribute_id   TEXT NOT NULL,
+      contact_id     TEXT NOT NULL,
+      attribute_kind TEXT NOT NULL,
+      value_json     TEXT,
+      source_kind    TEXT NOT NULL,
+      source_ref     TEXT NOT NULL,
+      capture_method TEXT NOT NULL,
+      confidence     REAL NOT NULL DEFAULT 0,
+      user_confirmed INTEGER NOT NULL DEFAULT 0,
+      recorded_at    TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, attribute_id)
     );
     CREATE TABLE job_scores (
       job_url TEXT,
@@ -536,6 +647,12 @@ export function seedQaDatabase(dbPath: string): void {
   insertStage(db, "https://motorolasolutions.com/careers/qa-command-center", "score", "succeeded");
   insertStage(db, "https://motorolasolutions.com/careers/qa-command-center", "tailor", "blocked", "MIN_SCORE");
 
+  seedPipelineOperations(db, dbPath);
+  seedContacts(db);
+  seedOutcomeAnalytics(db);
+  seedDiscoverySources(db);
+  seedOutreachThread(db);
+
   insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "tailored_resume_txt", resumeTxt);
   insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "tailored_resume_pdf", resumePdf);
   insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "cover_letter_txt", coverTxt);
@@ -548,6 +665,7 @@ export function seedQaDatabase(dbPath: string): void {
     resumePdf,
     resumeTxt,
   });
+  seedResumeReviewDraft(db);
 
   insertEvent(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "apply", "info", "QA apply run queued");
   insertEvent(db, "https://linkedin.com/jobs/view/qa-risk-manager", "score", "error", "QA score action failed");
@@ -1099,6 +1217,723 @@ function insertScore(db: Database.Database, jobUrl: string, fitScore: number): v
       resolution_reason: "requirement_fit_report",
       parser_warnings: [],
     }),
+  );
+}
+
+function seedPipelineOperations(db: Database.Database, dbPath: string): void {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  // Keep the synthetic worker inside the 45-second clock-skew allowance while
+  // the documentation capture walks the full route matrix.
+  const telemetrySeenAt = new Date(now.getTime() + 30_000).toISOString();
+  const startedAt = new Date(now.getTime() - 5 * 60_000).toISOString();
+  const discoverWorkflowId = "discover-local";
+  const discoverRunId = "00000000-0000-4000-8000-000000000101";
+  const platformPreparationWorkflowId = `prep-preparation:${"a".repeat(64)}`;
+  const marketingPreparationWorkflowId = `prep-preparation:${"b".repeat(64)}`;
+  const riskPreparationWorkflowId = `prep-preparation:${"c".repeat(64)}`;
+
+  db.prepare(
+    `INSERT INTO workflow_run_projections (
+      workflow_id, tenant_id, workflow_type, status, input_summary_json,
+      retryable, started_at, temporal_run_id, events_json
+    ) VALUES (?, 'local', 'DiscoverWorkflow', 'in_progress', ?, 0, ?, ?, ?)`,
+  ).run(
+    discoverWorkflowId,
+    JSON.stringify({ limit: 50, workers: 4, source: "all", dryRun: true }),
+    startedAt,
+    discoverRunId,
+    JSON.stringify([
+      {
+        eventType: "WorkflowStarted",
+        occurredAt: startedAt,
+        status: "in_progress",
+        message: "Synthetic Discover workflow started",
+      },
+    ]),
+  );
+
+  const insertMember = db.prepare(
+    `INSERT INTO discovery_execution_jobs (
+      tenant_id, discover_workflow_id, discover_run_id, job_url, cohort_kind,
+      source_family, source_run_id, preparation_workflow_id, work_plan_state,
+      required_steps_json, work_plan_reason, linked_at
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  insertMember.run(
+    discoverWorkflowId,
+    discoverRunId,
+    QA_PLATFORM_JOB_URL,
+    "observed_this_run",
+    "greenhouse",
+    "qa-greenhouse-run",
+    platformPreparationWorkflowId,
+    "planned",
+    JSON.stringify(["score", "tailor", "cover"]),
+    "Strong match selected for preparation",
+    nowIso,
+  );
+  insertMember.run(
+    discoverWorkflowId,
+    discoverRunId,
+    "https://talent.com/view?id=qa-marketing-director",
+    "observed_this_run",
+    "talent",
+    "qa-talent-run",
+    marketingPreparationWorkflowId,
+    "planned",
+    JSON.stringify(["score", "tailor"]),
+    "Queued for scoring after enrichment",
+    nowIso,
+  );
+  insertMember.run(
+    discoverWorkflowId,
+    discoverRunId,
+    "https://linkedin.com/jobs/view/qa-risk-manager",
+    "existing_backlog",
+    "linkedin",
+    "qa-linkedin-run",
+    riskPreparationWorkflowId,
+    "planned",
+    JSON.stringify(["score", "tailor"]),
+    "Existing backlog item included in this sweep",
+    nowIso,
+  );
+  insertMember.run(
+    discoverWorkflowId,
+    discoverRunId,
+    "https://motorolasolutions.com/careers/qa-command-center",
+    "observed_this_run",
+    "greenhouse",
+    "qa-greenhouse-run",
+    null,
+    "not_eligible",
+    JSON.stringify([]),
+    "Below the configured fit threshold",
+    nowIso,
+  );
+
+  const insertStep = db.prepare(
+    `INSERT INTO pipeline_step_projections (
+      tenant_id, discover_workflow_id, discover_run_id, step_kind, item_key,
+      state, attempt, queued_at, started_at, finished_at, duration_ms,
+      retryable, detail_count, last_event_id, last_updated_at
+    ) VALUES ('local', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 0, ?, ?, ?)`,
+  );
+  const completedAt = new Date(now.getTime() - 2 * 60_000).toISOString();
+  insertStep.run(
+    discoverWorkflowId,
+    discoverRunId,
+    "source_planning",
+    "plan",
+    "succeeded",
+    startedAt,
+    startedAt,
+    completedAt,
+    30_000,
+    3,
+    101,
+    completedAt,
+  );
+  insertStep.run(
+    discoverWorkflowId,
+    discoverRunId,
+    "source_family",
+    "greenhouse",
+    "succeeded",
+    startedAt,
+    startedAt,
+    completedAt,
+    75_000,
+    2,
+    102,
+    completedAt,
+  );
+  insertStep.run(
+    discoverWorkflowId,
+    discoverRunId,
+    "source_family",
+    "linkedin",
+    "running",
+    startedAt,
+    new Date(now.getTime() - 90_000).toISOString(),
+    null,
+    null,
+    null,
+    103,
+    nowIso,
+  );
+  insertStep.run(
+    discoverWorkflowId,
+    discoverRunId,
+    "source_family",
+    "talent",
+    "queued",
+    nowIso,
+    null,
+    null,
+    null,
+    null,
+    104,
+    nowIso,
+  );
+  insertStep.run(
+    discoverWorkflowId,
+    discoverRunId,
+    "enrichment_pass",
+    "observed-jobs",
+    "succeeded",
+    startedAt,
+    startedAt,
+    completedAt,
+    60_000,
+    4,
+    105,
+    completedAt,
+  );
+  insertStep.run(
+    discoverWorkflowId,
+    discoverRunId,
+    "existing_backlog_sweep",
+    "existing-backlog",
+    "running",
+    startedAt,
+    new Date(now.getTime() - 60_000).toISOString(),
+    null,
+    null,
+    1,
+    106,
+    nowIso,
+  );
+  insertStep.run(
+    discoverWorkflowId,
+    discoverRunId,
+    "preparation_fanout",
+    "selected-jobs",
+    "running",
+    startedAt,
+    new Date(now.getTime() - 45_000).toISOString(),
+    null,
+    null,
+    3,
+    107,
+    nowIso,
+  );
+
+  const insertMetric = db.prepare(
+    `INSERT INTO operational_attempt_metrics (
+      tenant_id, occurred_at, stage, attempt_kind, outcome, is_retryable,
+      run_id, duration_ms, metadata_json
+    ) VALUES ('local', ?, ?, 'worker', 'succeeded', 0, ?, ?, '{}')`,
+  );
+  for (const [stage, durationMs] of [
+    ["discover", 75_000],
+    ["score", 55_000],
+    ["tailor", 80_000],
+    ["cover", 45_000],
+  ] as const) {
+    for (let sample = 0; sample < 5; sample += 1) {
+      insertMetric.run(
+        new Date(now.getTime() - (sample + 1) * 60_000).toISOString(),
+        stage,
+        discoverRunId,
+        durationMs + sample * 1_000,
+      );
+    }
+  }
+
+  const queueStats = {
+    pollerCount: 2,
+    approximateBacklogCount: 0,
+    approximateBacklogAgeSeconds: 0,
+    tasksAddRate: 1.4,
+    tasksDispatchRate: 1.3,
+  };
+  const activeDetails = [
+    {
+      activityType: "discovery_source_family",
+      operationalRef: { kind: "discovery-source-family", opaqueId: "op_000000000000000000000101" },
+      workflowRef: discoverWorkflowId,
+      executionRef: discoverRunId,
+      attempt: 1,
+      startedAt: new Date(now.getTime() - 90_000).toISOString(),
+    },
+    {
+      activityType: "score_job",
+      operationalRef: { kind: "job-scoring", opaqueId: "op_000000000000000000000102" },
+      workflowRef: marketingPreparationWorkflowId,
+      executionRef: discoverRunId,
+      attempt: 1,
+      startedAt: new Date(now.getTime() - 45_000).toISOString(),
+    },
+  ];
+  db.prepare(
+    `UPDATE worker_runtime_heartbeats SET
+      app_dir = ?, db_path = ?, last_seen_at = ?, active_activity_count = 2,
+      active_activity_counts_json = ?, active_activity_details_json = ?,
+      active_activity_details_total = 2, active_activity_details_truncated = 0,
+      activity_duration_summary_json = ?, task_queue_observation_json = ?,
+      heartbeat_schema_version = 2
+    WHERE worker_id = 'qa-worker-1'`,
+  ).run(
+    path.resolve(path.dirname(dbPath)),
+    path.resolve(dbPath),
+    telemetrySeenAt,
+    JSON.stringify({ discovery_source_family: 1, score_job: 1 }),
+    JSON.stringify(activeDetails),
+    JSON.stringify({
+      discovery_source_family: { completedCount: 6, totalDurationMs: 450_000, maxDurationMs: 90_000 },
+      score_job: { completedCount: 8, totalDurationMs: 440_000, maxDurationMs: 70_000 },
+    }),
+    JSON.stringify({
+      status: "available",
+      observedAt: telemetrySeenAt,
+      workflow: queueStats,
+      activity: queueStats,
+    }),
+  );
+}
+
+function seedResumeReviewDraft(db: Database.Database): void {
+  ensureResumeReviewTables(db);
+  db.prepare(
+    `INSERT INTO resume_review_drafts (
+      tenant_id, draft_id, job_key, base_generation,
+      base_resume_text_artifact_id, base_resume_pdf_artifact_id,
+      renderer_format, state, current_revision_id, latest_revision_number,
+      created_at, updated_at
+    ) VALUES ('local', ?, ?, 1, ?, ?, 'html_pdf', 'active', NULL, 0, ?, ?)`,
+  ).run(
+    "qa-platform-resume-draft",
+    QA_PLATFORM_JOB_URL,
+    "qa-platform-resume-text",
+    "qa-platform-resume-pdf",
+    QA_NOW,
+    QA_NOW,
+  );
+}
+
+function seedContacts(db: Database.Database): void {
+  const insertContact = db.prepare(
+    `INSERT INTO contacts (
+      tenant_id, contact_id, employer, job_url, role, created_at, updated_at
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?)`,
+  );
+  insertContact.run(
+    "qa-contact-hiring-manager",
+    "GitLab",
+    QA_PLATFORM_JOB_URL,
+    "hiring_manager",
+    QA_NOW,
+    QA_NOW,
+  );
+  insertContact.run(
+    "qa-contact-recruiter",
+    "GitLab",
+    QA_PLATFORM_JOB_URL,
+    "recruiter",
+    QA_NOW,
+    QA_NOW,
+  );
+
+  const insertAttribute = db.prepare(
+    `INSERT INTO contact_attributes (
+      tenant_id, attribute_id, contact_id, attribute_kind, value_json,
+      source_kind, source_ref, capture_method, confidence, user_confirmed, recorded_at
+    ) VALUES ('local', ?, ?, ?, ?, 'user_entered', 'synthetic_qa_fixture', 'manual', 1, 1, ?)`,
+  );
+  for (const [attributeId, contactId, kind, value] of [
+    ["qa-contact-hm-name", "qa-contact-hiring-manager", "name", "Morgan Lee"],
+    ["qa-contact-hm-title", "qa-contact-hiring-manager", "title", "VP, Platform Engineering"],
+    ["qa-contact-hm-note", "qa-contact-hiring-manager", "note", "Synthetic hiring-manager contact for route QA."],
+    ["qa-contact-rec-name", "qa-contact-recruiter", "name", "Taylor Chen"],
+    ["qa-contact-rec-title", "qa-contact-recruiter", "title", "Senior Technical Recruiter"],
+    ["qa-contact-rec-email", "qa-contact-recruiter", "email", "taylor.chen@example.invalid"],
+  ] as const) {
+    insertAttribute.run(attributeId, contactId, kind, JSON.stringify(value), QA_NOW);
+  }
+}
+
+function seedOutcomeAnalytics(db: Database.Database): void {
+  ensureApplicationFeedbackTables(db);
+  const applications = [
+    {
+      url: "https://boards.greenhouse.io/northstarlabs/jobs/qa-analytics-platform-manager",
+      title: "Platform Engineering Manager",
+      site: "greenhouse",
+      location: "Remote, United States",
+      fitScore: 8,
+      appliedAt: "2026-04-01T09:00:00+00:00",
+      outcomeId: "qa-outcome-greenhouse-1",
+      outcomeKind: "recruiter_reply",
+      outcomeAt: "2026-04-03T15:30:00+00:00",
+      suggestion: {
+        id: "qa-suggestion-greenhouse-1",
+        suggestedKind: "recruiter_reply",
+        status: "accepted",
+        decision: "accept",
+      },
+    },
+    {
+      url: "https://boards.greenhouse.io/northstarlabs/jobs/qa-analytics-sre-director",
+      title: "Director, Site Reliability Engineering",
+      site: "greenhouse",
+      location: "Remote, Canada",
+      fitScore: 8,
+      appliedAt: "2026-04-02T09:00:00+00:00",
+      outcomeId: "qa-outcome-greenhouse-2",
+      outcomeKind: "interview",
+      outcomeAt: "2026-04-07T13:00:00+00:00",
+      suggestion: {
+        id: "qa-suggestion-greenhouse-2",
+        suggestedKind: "interview",
+        status: "accepted",
+        decision: "accept",
+      },
+    },
+    {
+      url: "https://boards.greenhouse.io/northstarlabs/jobs/qa-analytics-devex-manager",
+      title: "Engineering Manager, Developer Experience",
+      site: "greenhouse",
+      location: "Remote, Europe",
+      fitScore: 8,
+      appliedAt: "2026-04-03T09:00:00+00:00",
+      outcomeId: "qa-outcome-greenhouse-3",
+      outcomeKind: "offer",
+      outcomeAt: "2026-04-15T10:00:00+00:00",
+      suggestion: {
+        id: "qa-suggestion-greenhouse-3",
+        suggestedKind: "offer",
+        status: "accepted",
+        decision: "accept",
+      },
+    },
+    {
+      url: "https://boards.greenhouse.io/northstarlabs/jobs/qa-analytics-cloud-manager",
+      title: "Senior Manager, Cloud Platform",
+      site: "greenhouse",
+      location: "Remote, United Kingdom",
+      fitScore: 8,
+      appliedAt: "2026-04-04T09:00:00+00:00",
+      outcomeId: "qa-outcome-greenhouse-4",
+      outcomeKind: "rejection",
+      outcomeAt: "2026-04-10T11:45:00+00:00",
+      suggestion: {
+        id: "qa-suggestion-greenhouse-4",
+        suggestedKind: "recruiter_reply",
+        status: "corrected",
+        decision: "correct",
+      },
+    },
+    {
+      url: "https://boards.greenhouse.io/northstarlabs/jobs/qa-analytics-security-director",
+      title: "Director, Infrastructure Security",
+      site: "greenhouse",
+      location: "Remote, United States",
+      fitScore: 8,
+      appliedAt: "2026-04-05T09:00:00+00:00",
+      outcomeId: "qa-outcome-greenhouse-5",
+      outcomeKind: "no_response",
+      outcomeAt: "2026-05-05T09:00:00+00:00",
+      suggestion: {
+        id: "qa-suggestion-greenhouse-5",
+        suggestedKind: "recruiter_reply",
+        status: "ignored",
+        decision: "ignore",
+      },
+    },
+    {
+      url: "https://www.linkedin.com/jobs/view/qa-analytics-platform-operations",
+      title: "Head of Platform Operations",
+      site: "linkedin",
+      location: "Remote, Spain",
+      fitScore: 6,
+      appliedAt: "2026-04-06T09:00:00+00:00",
+      outcomeId: "qa-outcome-linkedin-1",
+      outcomeKind: "interview",
+      outcomeAt: "2026-04-09T16:00:00+00:00",
+      suggestion: null,
+    },
+    {
+      url: "https://www.linkedin.com/jobs/view/qa-analytics-reliability-manager",
+      title: "Engineering Manager, Reliability",
+      site: "linkedin",
+      location: "Remote, Germany",
+      fitScore: 6,
+      appliedAt: "2026-04-07T09:00:00+00:00",
+      outcomeId: "qa-outcome-linkedin-2",
+      outcomeKind: "recruiter_reply",
+      outcomeAt: "2026-04-09T12:00:00+00:00",
+      suggestion: null,
+    },
+    {
+      url: "https://www.linkedin.com/jobs/view/qa-analytics-infrastructure-programs",
+      title: "Director, Infrastructure Programs",
+      site: "linkedin",
+      location: "Remote, France",
+      fitScore: 6,
+      appliedAt: "2026-04-08T09:00:00+00:00",
+      outcomeId: "qa-outcome-linkedin-3",
+      outcomeKind: "no_response",
+      outcomeAt: "2026-05-08T09:00:00+00:00",
+      suggestion: null,
+    },
+  ] as const;
+  const markApplied = db.prepare(
+    "UPDATE jobs SET apply_status = 'applied', applied_at = ? WHERE url = ?",
+  );
+  const insertOutcome = db.prepare(
+    `INSERT INTO application_outcomes (
+      tenant_id, outcome_id, job_key, kind, source, note, occurred_at,
+      recorded_at, suggestion_id, evidence_id, interview_prep_generation
+    ) VALUES ('local', ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL)`,
+  );
+  const insertSuggestion = db.prepare(
+    `INSERT INTO application_outcome_suggestions (
+      tenant_id, suggestion_id, job_key, evidence_id, suggested_kind,
+      confidence, rationale, status, created_at, decided_at, decision,
+      decision_reason, decided_outcome_id
+    ) VALUES ('local', ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  for (const application of applications) {
+    insertJob(db, {
+      url: application.url,
+      title: application.title,
+      site: application.site,
+      location: application.location,
+      fitScore: application.fitScore,
+      description: "Lead reliable platform systems and cross-functional engineering programs.",
+    });
+    for (const stage of ["discover", "enrich", "score", "tailor", "cover", "apply"]) {
+      insertStage(db, application.url, stage, "succeeded");
+    }
+    markApplied.run(application.appliedAt, application.url);
+    const suggestionId =
+      application.suggestion?.status === "ignored" ? null : application.suggestion?.id ?? null;
+    insertOutcome.run(
+      application.outcomeId,
+      application.url,
+      application.outcomeKind,
+      suggestionId ? "email_suggestion" : "manual",
+      application.outcomeAt,
+      application.outcomeAt,
+      suggestionId,
+    );
+    if (application.suggestion) {
+      const createdAt = new Date(Date.parse(application.outcomeAt) - 30 * 60_000).toISOString();
+      insertSuggestion.run(
+        application.suggestion.id,
+        application.url,
+        application.suggestion.suggestedKind,
+        0.9,
+        "Synthetic email signal matched to this application for documentation QA.",
+        application.suggestion.status,
+        createdAt,
+        application.outcomeAt,
+        application.suggestion.decision,
+        "Reviewed against the synthetic application timeline.",
+        application.suggestion.status === "ignored" ? null : application.outcomeId,
+      );
+    }
+  }
+}
+
+function seedDiscoverySources(db: Database.Database): void {
+  ensureDiscoveryControlTables(db);
+  ensureProjectionTables(db);
+  const insertSource = db.prepare(
+    `INSERT INTO source_registry_entries (
+      tenant_id, source_id, kind, display_name, owner, priority, state,
+      policy_id, seed_url, created_at, updated_at
+    ) VALUES ('local', ?, ?, ?, 'system', ?, 'active', ?, ?, ?, ?)`,
+  );
+  insertSource.run(
+    "greenhouse:northstar-labs",
+    "ats_api",
+    "Northstar Labs",
+    "canonical",
+    "local:greenhouse:northstar-labs",
+    "https://boards.greenhouse.io/northstarlabs",
+    "2026-06-12T09:00:00+00:00",
+    "2026-07-12T09:00:00+00:00",
+  );
+  insertSource.run(
+    "lever:orbit-systems",
+    "ats_api",
+    "Orbit Systems",
+    "preferred",
+    "local:lever:orbit-systems",
+    "https://jobs.lever.co/orbit-systems",
+    "2026-06-12T09:00:00+00:00",
+    "2026-07-12T09:05:00+00:00",
+  );
+
+  const insertQuality = db.prepare(
+    `INSERT INTO source_quality_stats (
+      tenant_id, source_id, window_start, window_end, run_count,
+      failed_run_count, consecutive_failures, observed_jobs, new_jobs,
+      existing_jobs, duplicate_jobs, active_jobs, stale_jobs,
+      detail_success_count, detail_failure_count, active_verification_rate,
+      duplicate_rate, full_description_success_rate, apply_url_success_rate,
+      last_run_id, last_error_class, recommended_state, updated_at
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  insertQuality.run(
+    "greenhouse:northstar-labs",
+    "2026-06-12T09:00:00+00:00",
+    "2026-07-12T09:00:00+00:00",
+    12,
+    1,
+    0,
+    48,
+    17,
+    31,
+    2,
+    42,
+    6,
+    44,
+    4,
+    0.875,
+    0.0417,
+    0.9167,
+    0.9375,
+    "discover-local",
+    null,
+    "normal",
+    "2026-07-12T09:00:00+00:00",
+  );
+  insertQuality.run(
+    "lever:orbit-systems",
+    "2026-06-12T09:00:00+00:00",
+    "2026-07-12T09:05:00+00:00",
+    9,
+    4,
+    3,
+    20,
+    6,
+    14,
+    7,
+    8,
+    12,
+    9,
+    11,
+    0.4,
+    0.35,
+    0.45,
+    0.55,
+    "discover-local",
+    "HTTP_429",
+    "quarantined",
+    "2026-07-12T09:05:00+00:00",
+  );
+  db.prepare(
+    `INSERT INTO operational_attempt_metrics (
+      tenant_id, occurred_at, stage, source_id, source_kind, source_priority,
+      adapter, attempt_kind, outcome, failure_category, is_operational_failure,
+      is_scrape_failure, is_retryable, run_id, duration_ms, metadata_json
+    ) VALUES (
+      'local', ?, 'discover', ?, 'ats_api', 'preferred', 'lever_api',
+      'politeness_gate', 'blocked', 'rate_limited', 0, 0, 1, ?, 0, '{}'
+    )`,
+  ).run(
+    "2026-07-12T09:04:00+00:00",
+    "lever:orbit-systems",
+    "discover-local",
+  );
+}
+
+function seedOutreachThread(db: Database.Database): void {
+  ensureOutreachTables(db);
+  const threadId = "qa-outreach-hiring-manager";
+  const approvedDraftId = "qa-outreach-approved-intro";
+  const gateResults = JSON.stringify({
+    passed: true,
+    computedAgainst: "rendered_draft_text",
+    fabrications: [],
+    validation: {
+      passed: true,
+      errors: [],
+      warnings: ["Keep the final recipient and send timing user-controlled."],
+    },
+    judge: {
+      approved: true,
+      score: 0.94,
+      criterionScores: { truthfulness: 0.98, relevance: 0.93, tone: 0.91 },
+      issues: [],
+      notes: "Every claim is grounded in confirmed contact facts or synthetic profile evidence.",
+    },
+  });
+  const provenance = JSON.stringify([
+    {
+      claimId: "qa-outreach-claim-contact",
+      section: "opening",
+      generatedText: "I noticed you lead Platform Engineering at GitLab.",
+      contactFactIds: ["qa-contact-hm-name", "qa-contact-hm-title"],
+      profileGrounded: false,
+      rationale: "Uses the confirmed synthetic contact name and title facts.",
+    },
+    {
+      claimId: "qa-outreach-claim-profile",
+      section: "body",
+      generatedText: "My background includes leading platform reliability and incident-response programs.",
+      contactFactIds: [],
+      profileGrounded: true,
+      rationale: "Grounded in the synthetic candidate profile evidence ev-platform and ev-incident.",
+    },
+  ]);
+
+  db.prepare(
+    `INSERT INTO outreach_threads (
+      tenant_id, thread_id, contact_id, job_url, created_at, updated_at,
+      follow_up_due_at, follow_up_basis, follow_up_state
+    ) VALUES ('local', ?, 'qa-contact-hiring-manager', NULL, ?, ?, ?, 'manual', 'scheduled')`,
+  ).run(
+    threadId,
+    "2026-07-08T09:00:00+00:00",
+    "2026-07-10T14:00:00+00:00",
+    "2026-07-17T09:00:00+00:00",
+  );
+  const insertDraft = db.prepare(
+    `INSERT INTO outreach_drafts (
+      tenant_id, draft_id, thread_id, generation, kind, status, body_text,
+      gate_results_json, provenance_json, created_at, approved_at, rejected_at, reason
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '')`,
+  );
+  insertDraft.run(
+    approvedDraftId,
+    threadId,
+    1,
+    "intro_request",
+    "approved",
+    "Hi Morgan,\n\nI am exploring the Director of Platform Engineering role at GitLab. My background leading platform reliability and incident-response programs seems closely aligned with the team. Would you be open to a brief conversation about the role's priorities?\n\nThank you,\nJohn",
+    gateResults,
+    provenance,
+    "2026-07-08T09:00:00+00:00",
+    "2026-07-08T09:20:00+00:00",
+  );
+  insertDraft.run(
+    "qa-outreach-follow-up-candidate",
+    threadId,
+    2,
+    "follow_up",
+    "candidate",
+    "Hi Morgan,\n\nI wanted to follow up on my note about the Director of Platform Engineering role. I would value your perspective on the team's reliability and developer-experience priorities.\n\nThank you,\nJohn",
+    gateResults,
+    provenance,
+    "2026-07-10T14:00:00+00:00",
+    null,
+  );
+  db.prepare(
+    `INSERT INTO outreach_send_logs (
+      tenant_id, send_log_id, thread_id, draft_id, channel, sent_at, logged_at
+    ) VALUES ('local', ?, ?, ?, 'linkedin_message', ?, ?)`,
+  ).run(
+    "qa-outreach-send-log",
+    threadId,
+    approvedDraftId,
+    "2026-07-09T10:00:00+00:00",
+    "2026-07-09T10:05:00+00:00",
   );
 }
 

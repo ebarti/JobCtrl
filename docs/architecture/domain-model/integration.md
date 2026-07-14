@@ -273,7 +273,7 @@ orchestration (see Section 9.4).
 
 **Shared contract:** Both sides import the same domain event definitions. The
 authority is a **plain TypeScript discriminated union** in
-`packages/domain-types/src/events/index.ts` (`DomainEventUnion`, currently 68
+`packages/domain-types/src/events/index.ts` (`DomainEventUnion`, currently 99
 event types enumerated in `DOMAIN_EVENT_TYPES`, guarded by a compile-time
 exhaustiveness check), mirrored byte-for-byte by the Python registry in
 `workers/automation/src/jobctrl/domain/events/__init__.py`. This is **not**

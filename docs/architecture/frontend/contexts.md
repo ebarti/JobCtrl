@@ -130,7 +130,7 @@ compensation-refresh actions.
   `NotImplementedError`) pending its backend endpoint.
 - Own the compensation-evidence UI: `<CompensationSummaryCell>`,
   `<CompensationSummaryStrip>`, `<CompensationAuditSection>`, and
-  `<RefreshAllCompensationButton>` (composed by the Jobs drawer and the
+  `<RefreshAllCompensationButton>` (composed by the Jobs detail workspace and the
   Apply Review view).
 
 **What it does NOT own:**
@@ -211,9 +211,9 @@ staleness, score correction, and rescore actions.
 
 **Responsibilities:**
 - Provide the scoring render components — `<ScoreBadge>` (jobs table cell
-  + drawer), `<ScoreReasoning>`, and `<ScoreStalenessBadge>`. `<ScoreBreakdown>`
+  + detail workspace), `<ScoreReasoning>`, and `<ScoreStalenessBadge>`. `<ScoreBreakdown>`
   is built, tested, and storied but is **not yet composed by any view** (the
-  Jobs drawer surfaces scoring through `<JobAuditTriage>` →
+  Jobs detail workspace surfaces scoring through `<JobAuditTriage>` →
   `<ScoreCorrectionControl>`); it stays available for wiring.
 - Own score-correction and rescore mutations: `useCorrectScoreMutation`
   (shipped) plus `useRescoreJobMutation`, `useRescoreCurrentPolicyMutation`,
@@ -417,17 +417,17 @@ another view (cross-view navigation goes through the URL).
 | View | Composition |
 |---|---|
 | `views/dashboard/` | `<KpiGrid>`, `<ConversionPanel>`, `<Funnel>`, `<SourceHealthCard>`, `<ApplyRunsCard>` (operations: `useDashboardSummaryQuery`), plus an outcome-suggestions section (operations: `useApplicationOutcomesQuery`; apply: `<OutcomeSuggestionsPanel>`). Funnel/ApplyRunsCard compose pipeline `<StageBadge>` and apply `<ApplyRunBadge>`. |
-| `views/jobs/` | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`; product filters bind to URL state), `<JobBulkActions>` (discovery: delete / hide / restore / permanent-delete bulk mutations), `<JobDetailDrawer>` (composes `<JobOverview>` + `<JobActions>` + `<StageTimeline>` + artifact badges + `<EmployerAnalysisPanel>` + `<ApplyHistory>` + `<JobOutcomePanel>` + `<JobAuditHistory>`). |
+| `views/jobs/` | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`; product filters bind to URL state), `<JobBulkActions>` (discovery: delete / hide / restore / permanent-delete bulk mutations), legacy-named `<JobDetailDrawer>` rendered as a full `RouteWorkspace` (composes `<JobOverview>` + `<JobActions>` + `<StageTimeline>` + artifact status rows + `<EmployerAnalysisPanel>` + `<ApplyHistory>` + `<JobOutcomePanel>` + `<JobAuditHistory>`). |
 | `views/artifacts/` | `<ArtifactsTable>` (operations: `useArtifactsListQuery`), `<ArtifactFilterBar>` (URL-bound), `<ArtifactDetailPanel>` (operations: `useArtifactDetailQuery`; materials: `useOpenArtifactMutation`, `<TailoringExplanationSection>`). |
 | `views/apply-review/` | `<ApplyReviewView>` — the human apply-approval workstation. Left pane is the review queue (operations: `useApplyReviewQueueQuery`); right pane composes the live Plate resume editor (`<ResumePlateEditor>` from materials, wired to the apply-context draft/comment/reply/render mutations via `useResumeReviewDraftQuery`), grounding-risk + requirement audit panels, `<ApplyReviewDecisionControls>`, and `<CancelApplyButton>`. |
-| `views/runs/` | `<RunsView>` — unified workflow-runs browser. `<RunsTable>` (operations: `useWorkflowRunsListQuery`), `<RunsFilterBar>` (URL-bound), per-row `<CancelWorkflowRunButton>` ("Stop") and a Temporal Web-UI deep link; `<WorkflowRunDrawer>` (operations: `useWorkflowRunDetailQuery`) at `/runs/$runId`. |
+| `views/runs/` | `<RunsView>` — unified workflow-runs browser. `<RunsTable>` (operations: `useWorkflowRunsListQuery`), `<RunsFilterBar>` (URL-bound), per-row `<CancelWorkflowRunButton>` ("Stop") and a Temporal Web-UI deep link; legacy-named `<WorkflowRunDrawer>` renders a full detail workspace at `/runs/$runId`. |
 | `views/pipelines/` | `<PipelinesView>` — renders the pipeline context's `<StageTriggerPanel>` (global/batch stage triggers + `<CancelWorkflowRunButton>`). |
 | `views/discovery/` | `<DiscoveryView>` — stacks `<TargetSearchSettingsPanel>` + `<DiscoveryAutomationSettingsPanel>` (profile), `<DiscoveryRuntimeSettingsPanel>` + `<DiscoveryProductControls>` (discovery). |
-| `views/debug/` | `<DebugActivityTable>` (operations: `useActivityListQuery`), `<DebugFilterBar>` (URL-bound), `<ActivityDetailDrawer>` (operations: `useActivityEventQuery`) at `/activity/$eventId`. |
-| `views/outreach/` | `<OutreachView>` — the Contacts page. `<OutreachTable>` (outreach reads; provenance-summary + role-badge cells), `<OutreachDetailDrawer>` (outreach: contact detail; renders provenance for every fact and composes the outreach context's `<OutreachThreadPanel>` for draft review) at `/outreach/$contactId`. The outreach context's `<JobContactsPanel>` also composes into the Jobs drawer. |
+| `views/debug/` | `<DebugActivityTable>` (operations: `useActivityListQuery`), `<DebugFilterBar>` (URL-bound), legacy-named `<ActivityDetailDrawer>` rendered as a full detail workspace at `/activity/$eventId`. |
+| `views/outreach/` | `<OutreachView>` — the Contacts page. `<OutreachTable>` (outreach reads; provenance-summary + role-status cells), legacy-named `<OutreachDetailDrawer>` rendered as a full detail workspace (renders provenance for every fact and composes the outreach context's `<OutreachThreadPanel>` for draft review) at `/outreach/$contactId`. The outreach context's `<JobContactsPanel>` also composes into the Jobs detail workspace. |
 
 **The view's only owned components are layout and view-local affordances**
-(filter bar, bulk-action toolbar). All cell renderers, badges, drawers,
+(filter bar, bulk-action toolbar). All cell renderers, status components, detail workspaces,
 forms, and timelines are imported from the contexts that own them.
 
 ## 3.11 Contact & Outreach (Frontend)
@@ -453,7 +453,7 @@ the product never sends.
 - Query keys: `outreachKeys` (hierarchical, tenant-first), re-exported through `contexts/operations/queryKeys.ts`.
 - Handlers: `contexts/outreach/handlers.ts`, registered in the invalidation router.
 - Forms & store: TanStack Form + Zod `safeParse` (`contact-form`, `contact-import-wizard`); a Zustand `persist` store (`outreach-import-store`, key `jh:outreach-import`) for the multi-step CSV-import wizard.
-- Components: `<ContactRoleBadge>`, `<ContactProvenanceList>` / `<ContactProvenanceSummary>` (render provenance for every fact — INV-2), the create / edit / delete / import buttons, and `<JobContactsPanel>` (composed into the Jobs drawer).
+- Components: `<ContactRoleBadge>` (legacy-named compact role status), `<ContactProvenanceList>` / `<ContactProvenanceSummary>` (render provenance for every fact — INV-2), the create / edit / delete / import buttons, and `<JobContactsPanel>` (composed into the Jobs detail workspace).
 - Outreach draft read + mutation hooks (Phase 3): `useOutreachThreadQuery`; `useGenerateDraftMutation`, `useReviseDraftMutation`, `useApproveDraftMutation`, `useRejectDraftMutation` (via `createOptimisticMutation` with real patchers + settle sets).
 - Draft review components (Phase 3): `<OutreachThreadPanel>` (the review surface), `<DraftGateResultsPanel>`, `<DraftClaimProvenanceList>`, `<DraftStatusBadge>`, the `<GenerateDraftButton>` / `<ApproveDraftButton>` / `<RejectDraftButton>` / `<CopyDraftButton>` actions, and the `revise-draft-form`.
 - Send-log + follow-up hooks (Phase 4): `useDueFollowUpsQuery`; `useLogSendMutation`, `useScheduleFollowUpMutation`, `useCompleteFollowUpMutation`, `useDismissFollowUpMutation` (via `createOptimisticMutation` with real patchers — `markThreadSentInThread` / `setThreadFollowUpInThread` — + settle sets that include `dueFollowUps`).
@@ -468,7 +468,7 @@ stored fact (INV-2); attribute values reach the UI only through the read DTOs an
 never leave the local machine.
 
 **Outreach draft review (Phase 3):** `<OutreachThreadPanel>` (composed into the
-contact detail drawer, `views/outreach/OutreachDetailDrawer.tsx`) is the draft
+full contact detail workspace by legacy-named `views/outreach/OutreachDetailDrawer.tsx`) is the draft
 review surface. It shows the current **approved** draft prominently, the latest
 **candidate** under review with its `<DraftGateResultsPanel>` (the persisted
 truthfulness-gate outcome) and `<DraftClaimProvenanceList>` (claim → fact

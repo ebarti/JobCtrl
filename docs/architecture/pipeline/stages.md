@@ -18,6 +18,11 @@ scheduling, source-quality feedback, canonical identity, dedupe, protected-sourc
 manual-capture queue entries, and posting hygiene. Scoring and Materials still
 own their own writes.
 
+At workflow start, Discover creates one immutable execution reference from its
+tenant, deterministic workflow ID, and Temporal run ID. That exact identity is
+threaded through every stage below. Source-run IDs describe observations; they
+do not identify the Discover execution.
+
 `DiscoverWorkflow` decomposes into **four activities**, not one monolithic run:
 
 ```mermaid
@@ -27,10 +32,11 @@ sequenceDiagram
     participant Sources as Plan + source-family activities
     participant Enrich as Detail enrichment
     participant Prep as Preparation fan-out
-    participant Store as SQLite + root workflows
+    participant Store as SQLite lineage + projections + root workflows
 
-    WF->>Sources: plan and run each source family
-    Sources->>Store: jobs observations and progress
+    WF->>Store: establish exact workflow/run execution identity
+    WF->>Sources: plan and run source families in bounded batches
+    Sources->>Store: jobs observations membership and step lifecycle
     WF->>Enrich: drain eligible detail work
     Enrich->>Store: descriptions URLs snapshots and events
     WF->>Prep: derive sorted preparation targets
@@ -93,6 +99,19 @@ Key facts about the four activities:
   `ParentClosePolicy.TERMINATE`, which would kill preparation the instant
   discovery finished. Before fan-out, the same activity suppresses now-ineligible
   active artifacts via `SuppressTailoredArtifactsUseCase`.
+
+Every linked job has one `discovery_execution_jobs` membership in either
+`observed_this_run` or `existing_backlog`. A swept job later observed by a
+source is promoted to the current cohort without double-counting. Planning
+records `pending`, `planned`, `not_eligible`, or `failed`; a pending/failed plan
+with no required-step list is unresolved work, not an empty plan.
+
+The orchestration steps also emit `PipelineStepQueued`,
+`PipelineStepStarted`, `PipelineStepCompleted`, or `PipelineStepFailed` for
+source planning, each source family, enrichment passes, preparation fan-out,
+the pre-existing-backlog sweep, and PDF rendering. Their attempt-aware
+projection is the Operations authority for execution-owned work. It complements
+rather than replaces canonical per-job stage state.
 
 Source steps additionally emit `DiscoveryRunStarted` / `DiscoveryRunCompleted` /
 `DiscoveryRunFailed` for source-quality aggregation, and heartbeat a
@@ -168,6 +187,13 @@ from Discover into the Scoring and Materials contexts. Discovery derives a deter
 enrichment, then starts one preparation workflow per job with ID
 `prep-{idempotency_key}` and `USE_EXISTING`. Temporal — not a local claim loop —
 owns retry, recovery, and duplicate suppression.
+
+Each current-path preparation workflow also receives its Discover execution
+reference and membership cohort. Once fan-out has made the immutable planning
+decision, the membership stores the required steps and preparation workflow ID;
+the terminal fan-out step closes execution membership for phase and overall ETA
+calculation. Existing-backlog work remains visibly separate from jobs observed
+by this run even though both use the same preparation workflow implementation.
 
 Targets are derived in `pipeline/preparation.py` from stage state:
 
@@ -307,7 +333,9 @@ remaining pending cover letters.
 
 `render_pdf` renders missing PDFs for the current approved materials. It is the
 deterministic tail of preparation (no LLM, no spend preflight) and emits
-`PdfRendered`. As a prep step it retries under the Cover retry policy.
+`PdfRendered`. When it belongs to a Discover execution it also emits the
+attempt-aware `PipelineStep*` lifecycle under `pdf_render`, keyed to that exact
+workflow/run identity. As a prep step it retries under the Cover retry policy.
 
 ## Apply
 

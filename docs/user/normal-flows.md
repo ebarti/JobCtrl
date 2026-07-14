@@ -33,11 +33,15 @@ profile version, application URL, and dry-run evidence.
 
 <WorkflowSurfacePanel surface="web">
 
-Use the Profile page or the resume import flow to create structured profile data.
-The profile includes personal details, work authorization, experience,
-education, skills, target search preferences, writing style, resume rendering
-settings, and tailoring controls. It is the source of truth every later stage
-scores and tailors against.
+Use the Profile page or the resume import flow to create structured profile
+data. Profile owns personal details, experience, education, skills, evidence,
+the baseline resume, and optional EEO fields. It is the source of truth every
+later stage scores and tailors against.
+
+Use Preferences for application defaults, tailoring and writing rules, resume
+style, and template versions. Use Settings for shared runtime policy,
+credentials, model selection, and browser capabilities. Those policy surfaces
+can constrain work, but they do not create candidate evidence.
 
 Profile and settings forms autosave after a short delay. The explicit Save
 buttons use the same save path.
@@ -62,8 +66,8 @@ for structured profile fields and resume review.
 
 <WorkflowSurfacePanel surface="web">
 
-![JobCtrl Profile page with personal information, resume baseline, experience, and skills](../assets/screenshots/profile.png)
-*The Profile page collects personal information, resume baseline, experience, skills, and voluntary equal-opportunity (EEO) fields alongside the baseline resume editor.*
+![JobCtrl Profile workspace with personal information, resume evidence, and the baseline resume editor](../assets/screenshots/profile.png)
+*The Profile route workspace keeps canonical fields beside the real editable baseline resume.*
 
 </WorkflowSurfacePanel>
 
@@ -121,8 +125,8 @@ model policy, and the shared spend ceiling remain in
 
 <WorkflowSurfacePanel surface="web">
 
-Open the Pipelines page, choose the `Discover` tab, set the run limit, worker
-count, source, and dry-run mode, then start the run.
+Open Pipelines, choose the `Discover` tab, set the run limit, internal
+concurrency, source, and dry-run mode, then start the run.
 
 </WorkflowSurfacePanel>
 
@@ -142,8 +146,8 @@ workflows when you want a narrower run.
 
 <WorkflowSurfacePanel surface="web">
 
-![JobCtrl Pipelines page configuring a Discover run with dry-run enabled](../assets/screenshots/pipelines.png)
-*The Pipelines page starts a Discover run with limit, worker count, and a dry-run toggle.*
+![JobCtrl Pipelines workspace with Discover controls and the operational stage ledger](../assets/screenshots/pipelines.png)
+*Pipelines starts bounded work and keeps its execution scope, stage outcomes, backlog, capacity, ETA, freshness, and active work visible.*
 
 </WorkflowSurfacePanel>
 
@@ -154,6 +158,24 @@ Discover owns the preparation path:
 - scoring;
 - tailoring eligibility;
 - material generation, or suppression, for eligible jobs.
+
+Keep Pipelines open while the run works. Read its scopes separately:
+
+- **Current execution** is work admitted to the selected Discover execution.
+- **Execution sweep** is eligible pre-existing backlog adopted by that
+  execution.
+- **Global outside execution** is unrelated backlog and is not included in the
+  selected execution's completion claim.
+
+The source-family plan reports intake separately from the two reconciliation
+steps: the enrichment pass and preparation fanout. Each stage row then reports
+scoped outcomes, existing backlog, worker capacity, ETA, and observation time.
+Capacity details include configured and active slots, internal parallelism when
+applicable, and approximate task-queue pollers, backlog, age, add rate, and
+dispatch rate. The execution inspector shows cohort membership and remaining
+work, read-model freshness, and the active-work inventory. Treat ETA as an
+observed range: calibrating, paused, stale, unavailable, and no-work states are
+deliberately explicit rather than replaced by a guessed finish time.
 
 Internal stages such as Enrich and Score, and material generation (the `tailor`
 and `cover` commands), stay visible in job detail and diagnostics, but the
@@ -168,7 +190,7 @@ postings become normalized, provenance-bearing job records before scoring.
 
 The Jobs view supports filters, sorting, pagination, deep links, deleted and
 hidden views, fit-score ranges, stage state, source provenance, compensation
-evidence, and job detail drawers.
+evidence, and route-level job workspaces.
 
 </WorkflowSurfacePanel>
 
@@ -182,8 +204,8 @@ jobctrl pipeline-status
 jobctrl runs --failed-only
 ```
 
-The Jobs table and job detail drawer are the review surfaces for score evidence,
-source provenance, artifacts, readiness, and per-job actions.
+The Jobs table and Job Detail workspace are the review surfaces for score
+evidence, source provenance, artifacts, readiness, and per-job actions.
 
 </WorkflowSurfacePanel>
 
@@ -194,7 +216,7 @@ source provenance, artifacts, readiness, and per-job actions.
 
 </WorkflowSurfacePanel>
 
-Use the job detail drawer to inspect:
+Open the Job Detail route workspace to inspect:
 
 - score, confidence, blockers, gaps, and score policy metadata;
 - the requirement-fit report when present;
@@ -205,8 +227,8 @@ Use the job detail drawer to inspect:
 
 <WorkflowSurfacePanel surface="web">
 
-![JobCtrl job detail drawer showing score, requirement fit, keywords, and compensation](../assets/screenshots/job-detail.png)
-*The job detail drawer shows the audit triage: ranking, requirement fit, matched and transferable requirements, keywords, and compensation evidence.*
+![JobCtrl Job Detail route workspace showing score, requirement fit, keywords, and compensation](../assets/screenshots/job-detail.png)
+*Job Detail keeps audit triage, requirement evidence, compensation, materials, actions, progress, contacts, outcomes, and history on one bookmarkable route.*
 
 </WorkflowSurfacePanel>
 
@@ -221,8 +243,8 @@ salary evidence shown alongside it.
 
 <WorkflowSurfacePanel surface="web">
 
-Open Evidence from the main navigation, the Profile page, or a job detail
-drawer. The Evidence map shows the canonical profile achievements and declared
+Open Evidence from the main navigation, the Profile page, or a Job Detail
+workspace. The Evidence map shows the canonical profile achievements and declared
 skills currently reused by generated resume bullets, requirement-fit decisions,
 keyword coverage, and recorded gaps. Links in the usage lists return to the
 owning artifact or job detail so you can audit the source before editing profile
@@ -241,8 +263,8 @@ then inspect evidence usage and gaps in the Evidence view.
 
 <WorkflowSurfacePanel surface="web">
 
-Eligible jobs receive tailored resumes and cover letters during Discover. You can
-also generate materials for a single job from the job detail drawer.
+Eligible jobs receive tailored resumes and cover letters during Discover. You
+can also generate materials for a single job from the Job Detail workspace.
 
 </WorkflowSurfacePanel>
 
@@ -279,7 +301,7 @@ against its linked evidence before relying on it.
 
 <WorkflowSurfacePanel surface="web">
 
-From a job detail drawer, use "generate interview prep" when you want stored
+From a Job Detail workspace, use "generate interview prep" when you want stored
 pre-interview notes for that job. Prep is generated only after you ask for it and
 uses JobCtrl's grounded data: profile evidence, requirement fit, accepted
 materials, employer analysis, and evidence-map usage.
@@ -288,13 +310,13 @@ materials, employer analysis, and evidence-map usage.
 
 <WorkflowSurfacePanel surface="cli">
 
-Interview prep is initiated from the job detail drawer so the generated notes
+Interview prep is initiated from Job Detail so the generated notes
 stay tied to the selected job, accepted materials, and visible evidence links.
 Use the CLI only for workflow status checks around the run.
 
 </WorkflowSurfacePanel>
 
-The drawer shows the latest accepted prep as themes, STAR-story drafts, gap
+The workspace shows the latest accepted prep as themes, STAR-story drafts, gap
 drills, and company notes. Each item keeps its evidence IDs, requirement IDs, and
 profile source snippets visible, with evidence links back into the Evidence map.
 Regeneration keeps the last accepted prep visible until a replacement is
@@ -355,8 +377,8 @@ Apply automation can submit real applications, so start with dry runs:
 <WorkflowSurfacePanel surface="web">
 
 Use Apply Review to run and inspect a dry run before approving any live
-submission. The approval card shows whether the dry run was complete, partial,
-or blocked.
+submission. The approval ledger shows whether the dry run was complete,
+partial, or blocked.
 
 </WorkflowSurfacePanel>
 
@@ -401,16 +423,19 @@ Gmail setup. The full approval model is on the [Security](security.md) page.
 Useful web app views:
 
 - Dashboard for high-level counts and source health.
+- Pipelines for the selected execution, execution sweep, unrelated global
+  backlog, source-family intake, reconciliation, stage outcomes, capacity,
+  approximate task-queue pressure, ETA, freshness, and active work.
 - Analytics for recorded outcome counts and sample-gated rates by source, score
-  band, fit band, and apply mode. The page reads canonical application outcome
-  rows and projections only; groups below the minimum sample count stay
-  count-only.
-- Jobs for triage and per-job actions.
-- Runs for workflow history.
+  band, fit band, Apply mode, template, and policy. The page reads canonical
+  application outcome rows and projections only; groups below the minimum
+  sample count stay count-only.
+- Jobs for triage and the bookmarkable Job Detail workspace.
+- Runs for workflow history and route-level run timelines.
 - Evidence for profile-evidence reuse, generated-material usage, and gaps.
 - Artifacts for generated files and same-job artifact comparisons.
 - Apply Review for approval and resume edits.
-- Debug for event-level inspection.
+- Debug for event-level inspection and Activity Detail payloads.
 
 </WorkflowSurfacePanel>
 
@@ -447,7 +472,7 @@ Keep contact records for the people behind an application — a recruiter, hirin
 manager, or referrer — attached to a company or a specific job:
 
 - Open the **Contacts** page (the "Contacts" nav entry) or the **Contacts** panel
-  in a job's detail drawer, and add a contact with a role (recruiter, hiring
+  in a Job Detail workspace, and add a contact with a role (recruiter, hiring
   manager, referrer, warm intro, or other), a link to the employer and/or the
   application, and facts like name, title, email, phone, or a note.
 - Or import a list from a CSV file. Each imported fact is tagged as coming from
@@ -475,7 +500,7 @@ contacts:
 Once you have a contact, you can **draft an outreach message** to them — a
 truthful, reviewable message that you send yourself:
 
-- On the contact's detail (the **Outreach** panel), click **generate draft**.
+- In the Contact Detail workspace's **Outreach** thread, click **generate draft**.
   JobCtrl writes a short message grounded only in your profile and the confirmed
   contact facts, then runs it through the **same anti-fabrication gates as your
   resumes and cover letters**: a deterministic never-fabricate check, a content

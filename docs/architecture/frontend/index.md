@@ -135,7 +135,7 @@ current `App.tsx`. The target architecture enforces strict separation.
 | Layer | Owner | Lifetime | What lives here |
 |---|---|---|---|
 | **Server state** | TanStack Query cache | Until invalidated or GC'd | Anything fetched from `apps/api/` — projections, profile, settings, credentials, dashboard summary. |
-| **URL state** | TanStack Router (typed search params) | The current URL | Anything bookmarkable / shareable / restorable on refresh — current view, filters, sort order, page index, page size, selected job key, drawer open/close. |
+| **URL state** | TanStack Router (typed search params) | The current URL | Anything bookmarkable / shareable / restorable on refresh — current view, filters, sort order, page index, page size, and selected detail record. |
 | **Client state** | Zustand stores + React context | Process lifetime (with `localStorage` persist where appropriate) | Theme, density, tenant context, transient UI like toast queue, ephemeral form drafts that do not survive navigation. |
 
 ```mermaid
@@ -185,7 +185,7 @@ graph TB
 
 1. **No server data in `useState`.** If it came from the API, it lives in
    the Query cache. Period.
-2. **No filter / pagination / sort / drawer state in `useState`.** If
+2. **No filter / pagination / sort / detail-route state in `useState`.** If
    refreshing the page should preserve it, it lives in a typed search param.
 3. **No durable user preferences in component-local state.** Theme, density,
    and similar belong in Zustand with `persist` middleware.
@@ -213,19 +213,19 @@ substitutions, no inventions:
 | Job Discovery | `contexts/discovery/` | Job lifecycle mutations (delete / hide / unhide / restore / permanent-delete, bulk), `useImportJobMutation` (stub — throws `NotImplementedError` until the backend endpoint lands), discovery-settings + source-registry / quarantine / manual-capture / feedback mutations; `<DiscoveryProductControls>` | Jobs view (bulk controls), Discovery view (source + schedule admin) |
 | Job Enrichment | `contexts/enrichment/` | `useEnrichmentRetryMutation` (stub — throws `NotImplementedError` until the backend endpoint lands), `useRefreshCompensationMutation` / `useRefreshAllCompensationMutation`; compensation-evidence components; enrichment/compensation invalidation handlers | Jobs view + Apply Review (compensation audit) |
 | Candidate Profile | `contexts/profile/` | `useProfileQuery`, `useUpdateProfileMutation`, `useImportResumeMutation`, settings + credentials hooks, profile-import wizard store | `/profile`, `/settings` routes |
-| Scoring | `contexts/scoring/` | `<ScoreBadge>`, `<ScoreStalenessBadge>` (plus `<ScoreBreakdown>`, built/tested but not yet composed by a view); `useCorrectScoreMutation` (shipped), `useRescoreJobMutation` / `useRescoreCurrentPolicyMutation`, `useResetStaleScoresForRescoreMutation` | Jobs view (score column + audit-triage drawer + rescore/correct) |
+| Scoring | `contexts/scoring/` | `<ScoreBadge>`, `<ScoreStalenessBadge>` (plus `<ScoreBreakdown>`, built/tested but not yet composed by a view); `useCorrectScoreMutation` (shipped), `useRescoreJobMutation` / `useRescoreCurrentPolicyMutation`, `useResetStaleScoresForRescoreMutation` | Jobs view (score column + audit-triage detail workspace + rescore/correct) |
 | Materials Generation | `contexts/materials/` | `useGenerateMaterialsMutation`, `useOpenArtifactMutation` (artifacts are owned by `MaterialsSet`) | Jobs view (Generate button), Artifacts view (open in OS) |
-| Apply Automation | `contexts/apply/` | `useApplyJobMutation`, `useDryRunApplyMutation`, `useCancelApplyMutation`, `<ApplyRunTimeline>`, `<ApplyButton>`, `<ApplyHistory>` | Jobs view (per-row + drawer), Dashboard view (apply-runs card) |
+| Apply Automation | `contexts/apply/` | `useApplyJobMutation`, `useDryRunApplyMutation`, `useCancelApplyMutation`, `<ApplyRunTimeline>`, `<ApplyButton>`, `<ApplyHistory>` | Jobs view (per-row + run detail workspace), Dashboard view (continuous apply-runs section) |
 | Pipeline Orchestration | `contexts/pipeline/` | `useRetryStageMutation`, `useCancelStageMutation`, `useMarkAppliedMutation`, `useMarkSkippedMutation`; `<StageBadge>`, `<StageTimeline>`, `<JobActions>` | Jobs view, Dashboard view (funnel) |
 | Operations / Read-Side | `contexts/operations/` | All projection-typed read hooks (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useWorkflowRunsListQuery`, `useApplyReviewQueueQuery`, activity/outcomes/health reads, …); query-key registry; SSE subscription; invalidation router | Every view (provider of all read data) |
-| Contact & Outreach | `contexts/outreach/` | `useContactsListQuery`, `useContactDetailQuery`, create / update / delete / import-contact optimistic mutations, `outreachKeys`, contact provenance + role components, `<JobContactsPanel>`, contact event handlers | Contacts view (`/outreach`) + Jobs drawer contacts panel |
+| Contact & Outreach | `contexts/outreach/` | `useContactsListQuery`, `useContactDetailQuery`, create / update / delete / import-contact optimistic mutations, `outreachKeys`, contact provenance + role components, `<JobContactsPanel>`, contact event handlers | Contacts view (`/outreach`) + Job Detail workspace contacts section |
 
 **Views are NOT bounded contexts.** The user-facing surfaces are *view
 composers* under `views/` (sibling of `contexts/`, see §11), including
 `dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `runs/`, `pipelines/`,
 `discovery/`, `outreach/`, and `debug/`. Each consumes read hooks
 from `contexts/operations/` plus mutation hooks from the appropriate
-aggregate contexts. Naming the table-and-drawer
+aggregate contexts. Naming the list-and-route-workspace
 surface "Jobs" matches user vocabulary; the *bounded contexts* it spans
 are Discovery, Enrichment, Scoring, Materials, Apply, Pipeline, and
 Operations — every one of which already exists as its own folder. The

@@ -177,7 +177,7 @@ truth per fact; components consume state through hooks (never raw stores or the
 | `materials/` | `useGenerateMaterialsMutation`, `useOpenArtifactMutation`, generate / open buttons. | Materials Generation |
 | `apply/` | `useApplyJobMutation`, `useDryRunApplyMutation`, `useCancelApplyMutation`, `<ApplyButton>`, `<DryRunButton>`, `<ApplyRunBadge>`, `<ApplyRunTimeline>`, `<ApplyHistory>`. | Apply Automation |
 | `pipeline/` | `useRunPipelineStagesMutation`, `useRetryStageMutation`, `useCancelStageMutation`, `useMarkAppliedMutation`, `useMarkSkippedMutation`, `<StageTriggerPanel>`, `<StageBadge>`, `<StageTimeline>`, `<JobActions>`. | Pipeline Orchestration |
-| `operations/` | All projection-typed read hooks (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useApplyRunQuery`); query-key registry; SSE subscription; invalidation router. | Operations / Read-Side |
+| `operations/` | Projection/runtime read hooks (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useApplyRunQuery`, `usePipelineOperationsQuery`); query-key registry; SSE subscription; invalidation router. | Operations / Read-Side |
 | `outreach/` | Contact records with provenance: `useContactsListQuery` / `useContactDetailQuery`, create / update / delete / import-contact mutations, contact provenance + role components, the Contacts view + job-drawer panel, and contact event handlers. | Contact & Outreach |
 
 The view folders under `views/` (`views/dashboard/`, `views/jobs/`,
@@ -243,7 +243,7 @@ flowchart LR
   Endpoint@{ icon: "tabler:api", form: "rounded", label: "SSE endpoint<br/>GET /v1/events/stream", h: 64 }
   ES@{ icon: "tabler:browser", form: "rounded", label: "EventSource<br/>browser reconnect", h: 64 }
   Provider@{ icon: "tabler:antenna-bars-5", form: "rounded", label: "Event stream provider", h: 64 }
-  Parser@{ icon: "tabler:braces", form: "rounded", label: "Typed event parser<br/>Zod validation", h: 64 }
+  Parser@{ icon: "tabler:braces", form: "rounded", label: "Typed event parser<br/>registry + JSON-object check", h: 64 }
   Router@{ icon: "tabler:route", form: "rounded", label: "Invalidation router", h: 64 }
   Keys@{ icon: "tabler:key", form: "rounded", label: "Query-key registry", h: 64 }
   Cache@{ icon: "tabler:database-cog", form: "rounded", label: "TanStack Query cache", h: 64 }
@@ -310,6 +310,9 @@ Current responsibilities:
 - current-policy preparation maintenance endpoints for per-job/bulk rescore and
   per-job/bulk re-tailor
 - global/batch pipeline stage actions via `POST /v1/pipeline/actions/run-stage`
+- the current operations snapshot via `GET /v1/pipeline/operations`, combining
+  exact Discover execution lineage, durable stage/step projections, and fresh
+  privacy-safe runtime telemetry
 - pagination, filtering, and global sorting
 - read-model projection refresh on every request
 
@@ -339,6 +342,12 @@ reports the worker heartbeat (`healthy` / `missing` / `stale` after 45 s /
 `mismatched` app dir or database) plus LLM spend health (`ok` /
 `over_budget` against the configured `dailyBudgetUsd`), and mutation routes
 return `503 worker_runtime_unavailable` until a healthy heartbeat exists.
+The operations route applies a stricter capacity read: it derives the expected
+app directory from the configured database path, filters heartbeats to that
+resolved database/app-dir identity, selects the Temporal task queue named by
+the newest matching heartbeat, and aggregates fresh schema-valid workers from
+that queue. Unavailable/stale/invalid states remain explicit. Runtime inventory
+is diagnostic only and does not authorize a mutation.
 Request hardening beyond the loopback bind: a Host-header allowlist rejects
 non-loopback hosts with `403 forbidden_host` (DNS-rebinding defense), and
 mutating requests require a first-party local web `Origin`/`Referer` or a local
@@ -512,7 +521,9 @@ split lives under `workers/automation/src/jobctrl/infrastructure/temporal/`:
   `config.json` (default `4`) and a worker-owned
   `ThreadPoolExecutor(max_workers = slots + 2)`, so blocking stage work no
   longer spills into the process default executor. The worker heartbeat records
-  both values for `GET /v1/health` and Settings-page runtime visibility (see
+  both values, exact all-activity slot use, bounded allowlisted active detail,
+  completed-activity duration summaries, and an approximate task-queue
+  observation for `GET /v1/health` and `GET /v1/pipeline/operations` (see
   [Concurrency & Fan-out](pipeline/concurrency.md)).
 - `run_in_activity.py` — shared helper for running synchronous domain work from
   async Temporal activities while heartbeating. Cancellation sets a cooperative
@@ -535,6 +546,23 @@ owning bounded context's package — e.g. `jobctrl/scoring/activities.py`,
 `jobctrl/materials/activities.py`. Activities are thin adapters: they defer
 heavy imports inside the activity body and forward to the relevant domain
 function. The product-facing stage order is narrower: `discover -> apply`.
+
+`DiscoverWorkflow.run()` captures the immutable `(tenant, workflow ID,
+Temporal run ID)` execution identity before planning and carries it through
+source, reconciliation, preparation, and PDF work. The
+`discovery_execution_jobs` table owns the run's `observed_this_run` and
+`existing_backlog` memberships and explicit work-plan decisions. The four
+`PipelineStep*` events project attempt-aware orchestration lifecycle for source
+planning/families, reconciliation/fan-out, backlog sweep, and PDF. Per-job
+`job_stage_states` remains authoritative for enrich/score/tailor/cover.
+
+The activity telemetry interceptor never reads activity arguments. It counts
+every active slot, but retains details only for allowlisted activity kinds;
+unsafe identifiers become non-reversible local opaque hashes and only validated
+safe workflow/run references remain readable. URLs, job/profile content,
+prompts, provider output, artifact paths, payloads, credentials, and exception
+text are excluded. Telemetry failure is caught so it cannot change business
+activity execution.
 
 Pipeline activities translate Python exceptions into typed Temporal
 `ApplicationError`s via `domain/errors.py`. Retry policies use the `type` value
@@ -656,6 +684,11 @@ TypeScript Temporal SDK and without trigger-coupled reapers:
   TS event registries and the web invalidation router. Each carries
   `workflowId`, `workflowType`, an input summary, and a terminal status within
   the 12-state `WORKFLOW_RUN_STATUSES` contract.
+- **`PipelineStep*` event family (4 types)** — `PipelineStepQueued`,
+  `PipelineStepStarted`, `PipelineStepCompleted`, and `PipelineStepFailed`
+  identify one bounded orchestration step by exact Discover workflow/run pair,
+  step kind, item key, and attempt. They fold into
+  `pipeline_step_projections` under the same operations watermark.
 - **Finalize activities** (`infrastructure/temporal/finalize.py`) —
   each workflow emits a `WorkflowStarted` marker at the top of `run` and records
   exactly one terminal event on exit
@@ -693,3 +726,10 @@ The read side is `workflow_run_projections` (Python-sole-writer, folded from the
 read-only in `apps/api/src/projections.ts`) — the unified list source for all
 workflow types. See `docs/local-ts-api.md` for the `GET /v1/workflow-runs` and
 `GET /v1/workflow-runs/:runId` read model.
+
+The complementary current-operations read side selects a workflow projection,
+joins its exact run-scoped membership and pipeline-step rows, then overlays fresh
+worker/task-queue telemetry at request time. Because heartbeat state is
+ephemeral and no point-in-time lineage reconstruction is implemented,
+`GET /v1/pipeline/operations` is explicitly a current snapshot rather than a
+historical execution API.

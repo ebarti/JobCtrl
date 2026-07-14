@@ -28,12 +28,13 @@ Contributors running from source can use the checkout-prefixed commands in
 | You want to change… | Use |
 | --- | --- |
 | Candidate facts and resume evidence | **Profile** (`/profile`) |
-| Work model, application, or writing preferences | **Preferences** (`/preferences`) |
+| Application defaults, writing/tailoring policy, resume style, or template versions | **Preferences** (`/preferences`) |
 | Target roles/locations, runtime, sources, schedules, quarantine, manual capture, or crawl identity | [**Discovery**](discovery.md) (`/discovery`) |
 | Materials, application fields, approval modes, browser automation, or Gmail | [**Apply**](apply.md) |
 | Spend/capacity, scoring guidance, or compensation source policy | **Settings → General** (`/settings`) |
 | Provider secret or cloud mode | **Settings → Credentials** (`/settings/credentials`) on macOS, or `~/.jobctrl/.env` / the shell |
 | Preferred provider model or employer-analysis perspectives | **Settings → Model selection** (`/settings/models`); see [Employer Analysis Perspectives](discovery.md#employer-analysis-perspectives) for how the selection is used during Discover preparation |
+| Browser capability adoption or extension pairing | **Settings → Browser & extension** (`/settings/browser`) |
 
 The rest of this page is a shared-settings lookup. [Data, Privacy & Safety](data-and-safety.md)
 explains what is stored or sent; [Security](security.md) explains the controls

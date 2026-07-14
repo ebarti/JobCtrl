@@ -16,7 +16,7 @@ on your machine.
 ![Source Python 3.11+](https://img.shields.io/badge/source-Python%203.11%2B-3776AB)
 ![Source Node 20.19+](https://img.shields.io/badge/source-Node%2020.19%2B-339933)
 
-<img src="docs/assets/screenshots/dashboard.png" alt="JobCtrl dashboard with pipeline, spend, and review queues (synthetic data)" width="880" />
+<img src="docs/assets/screenshots/dashboard.png" alt="JobCtrl dashboard with pipeline health, active work, review queues, and recent activity (synthetic data)" width="880" />
 
 *Every screenshot in this repo is generated from synthetic sample data —
 no real people, resumes, or applications.*
@@ -119,15 +119,17 @@ Full first-run guide: [jobctrl.dev/user/getting-started](https://jobctrl.dev/use
 
 | | |
 | --- | --- |
-| [<img src="docs/assets/screenshots/jobs.png" alt="Jobs table with fit scores, stages, and filters (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) | [<img src="docs/assets/screenshots/apply-review.png" alt="Apply Review editing a tailored resume with audit evidence (synthetic data)" width="440" />](docs/assets/screenshots/apply-review.png) |
-| **Jobs** — scored, filterable, every score inspectable | **Apply Review** — rich-text edit and approve the exact resume that ships |
-| [<img src="docs/assets/screenshots/job-detail.png" alt="Job detail with requirement-level fit evidence (synthetic data)" width="440" />](docs/assets/screenshots/job-detail.png) | [<img src="docs/assets/screenshots/runs.png" alt="Runs page with durable workflow history (synthetic data)" width="440" />](docs/assets/screenshots/runs.png) |
-| **Job detail** — requirement-by-requirement fit evidence | **Runs** — durable workflows you can watch, retry, and audit |
+| [<img src="docs/assets/screenshots/pipelines.png" alt="Pipelines workspace with launch controls and an operational stage ledger (synthetic data)" width="440" />](docs/assets/screenshots/pipelines.png) | [<img src="docs/assets/screenshots/jobs.png" alt="Jobs table with fit scores, stages, and filters (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) |
+| **Pipelines** — launch bounded work and inspect cohorts, backlog, capacity, ETA, and active tasks | **Jobs** — scored, filterable, and ready for bulk or individual triage |
+| [<img src="docs/assets/screenshots/job-detail.png" alt="Route-level Job Detail workspace with requirement evidence and audit history (synthetic data)" width="440" />](docs/assets/screenshots/job-detail.png) | [<img src="docs/assets/screenshots/apply-review.png" alt="Application Review workspace editing a tailored resume with audit evidence (synthetic data)" width="440" />](docs/assets/screenshots/apply-review.png) |
+| **Job detail** — one bookmarkable workspace for fit, provenance, materials, progress, and history | **Apply Review** — edit and approve the exact resume and evidence binding that ships |
+| [<img src="docs/assets/screenshots/profile.png" alt="Profile workspace with canonical candidate data and a live resume preview (synthetic data)" width="440" />](docs/assets/screenshots/profile.png) | [<img src="docs/assets/screenshots/settings-general.png" alt="General Settings workspace with runtime, scoring, and compensation policy controls (synthetic data)" width="440" />](docs/assets/screenshots/settings-general.png) |
+| **Profile** — canonical facts beside the real editable resume preview | **Settings** — shared runtime policy organized by owning section and activation timing |
 
 Full tour with captions: [Product Tour](https://jobctrl.dev/user/screenshots).
 Documentation screenshots must be generated from synthetic data — refresh
 them with `pnpm docs:screenshots`
-([how it works](https://jobctrl.dev/local-development)).
+([how it works](https://jobctrl.dev/local-development#documentation-screenshots)).
 
 ## How It Compares
 
@@ -174,8 +176,13 @@ evidence, qualifications, and the complete capability matrix.
   been validated through real-user usage.
 - Edit resume PDF style templates in Preferences, choose a default template,
   and override the template per job without modifying candidate profile data.
-- Track pipeline state, failures, retries, workflow runs, artifacts, and apply
-  history in a local web UI.
+- Launch bounded Discover and Apply work from Pipelines, then inspect the same
+  workspace's operational ledger: current-execution and execution-sweep cohorts,
+  unrelated global backlog, source-family intake versus reconciliation,
+  per-stage outcomes, ETA, worker capacity, approximate task-queue pressure,
+  read-model freshness, and active work. Runs keeps the durable workflow
+  history; Jobs and route-level detail workspaces keep record-specific evidence
+  and actions adjacent.
 - Keep recruiter, hiring-manager, and referrer contact records per company or
   application, each fact carrying its provenance, with CSV import. Draft
   truthful, reviewable outreach messages under the same anti-fabrication gates
@@ -434,10 +441,12 @@ fixtures are never a production upgrade path.
    preferences. In Settings, opt into tokenless public Levels.fyi salary pages,
    a licensed Levels.fyi feed, or Glassdoor only when you have the matching
    permitted access.
-3. Run Discover from the UI or CLI, optionally targeting a single source from
-   the Pipelines tab when you want a lighter retry.
+3. Run Discover from Pipelines, optionally targeting one source for a lighter
+   run. Keep the same workspace open to distinguish the selected execution,
+   its execution sweep, and unrelated global backlog while watching capacity,
+   task-queue pressure, freshness, active work, and ETA.
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
-5. Open Evidence from the main nav, Profile, or a job detail drawer to
+5. Open Evidence from the main nav, Profile, or the Job Detail workspace to
    inspect which profile evidence backs generated materials and
    requirement-fit gaps.
 6. Generate or inspect materials and Beta stored interview prep for promising
@@ -451,8 +460,9 @@ fixtures are never a production upgrade path.
    the standing loop; with approval still required it parks unapproved jobs
    for review, and with approval disabled it may submit eligible jobs
    autonomously.
-9. Track progress in Dashboard, Analytics, Jobs, Runs, Artifacts, Evidence,
-   Apply Review, and Debug.
+9. Track progress in Dashboard, Pipelines, Analytics, Jobs, Runs, Artifacts,
+   Evidence, Apply Review, and Debug; open their route-level detail workspaces
+   when you need the complete timeline, payload, provenance, or comparison.
 
 Commands and expected state transitions:
 [Daily Workflow](https://jobctrl.dev/user/normal-flows).
