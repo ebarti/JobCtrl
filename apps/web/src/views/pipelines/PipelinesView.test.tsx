@@ -63,6 +63,27 @@ describe("PipelinesView", () => {
     expect(screen.getAllByRole("table")).toHaveLength(3);
   });
 
+  it("keeps table rows scannable while preserving the complete operational basis in disclosures", async () => {
+    await renderPipelineOperations(pipelinesDiscoveringSnapshot);
+
+    const currentExecution = screen.getByRole("heading", { name: "Current execution" }).closest("section");
+    if (!currentExecution) {
+      throw new Error("Expected current execution stage ledger.");
+    }
+
+    const planSources = within(currentExecution).getByRole("row", { name: /Plan sources/i });
+    const scopedSummary = within(planSources).getByLabelText("Plan sources scoped outcomes summary");
+
+    expect(scopedSummary).toHaveTextContent("Eligible");
+    expect(scopedSummary).toHaveTextContent("Succeeded");
+    expect(scopedSummary).not.toHaveTextContent("Blocked");
+    expect(within(planSources).getByText("All 12 outcomes")).toBeInTheDocument();
+    expect(within(planSources).getByText("Estimate basis")).toBeInTheDocument();
+    expect(within(planSources).getAllByText("Needs verification")).toHaveLength(2);
+    expect(within(planSources).getByText("Caveat")).toBeInTheDocument();
+    expect(within(planSources).getByText("Capacity details")).toBeInTheDocument();
+  });
+
   it("keeps the three source families separate from the two reconciliation steps", async () => {
     await renderPipelineOperations(pipelinesThreeSourceSixStepSnapshot);
 
@@ -104,7 +125,7 @@ describe("PipelinesView", () => {
   it("reports active inventory truth and multi-worker internal concurrency", async () => {
     await renderPipelineOperations(pipelinesMultiWorkerCapacitySnapshot);
 
-    const activeWork = screen.getByText("Active work").closest(".disclosure-section");
+    const activeWork = screen.getByText("Active work").closest<HTMLElement>(".disclosure-section");
     if (!activeWork) {
       throw new Error("Expected the active-work disclosure.");
     }
@@ -119,6 +140,8 @@ describe("PipelinesView", () => {
     }
     expect(within(capacity).getByText("Internal concurrency")).toBeInTheDocument();
     expect(capacity).toHaveTextContent("3");
+    expect(within(capacity).getByRole("heading", { name: "Worker capacity" })).toBeInTheDocument();
+    expect(within(capacity).getByRole("heading", { name: "Task queue telemetry" })).toBeInTheDocument();
   });
 
   it("withholds URL-shaped job keys from the operations inspector", async () => {

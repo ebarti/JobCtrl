@@ -387,7 +387,10 @@ export function OutcomeTimeline({ outcomes }: OutcomeTimelineProps) {
     return <Empty title="No reviewed outcomes yet." />;
   }
   return (
-    <ol className="outcome-timeline" aria-label="Application outcome timeline">
+    <ol
+      className="outcome-timeline timeline editorial-timeline"
+      aria-label="Application outcome timeline"
+    >
       {sorted.map((outcome) => (
         <li className="timeline-row" key={outcome.outcomeId}>
           <span className="timeline-row-head">

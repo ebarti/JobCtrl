@@ -3,7 +3,7 @@ import type {
   BrowserCapabilityId,
   BrowserCapabilityItem,
 } from "@jobctrl/contracts";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -57,7 +57,7 @@ function updateCapability(
 }
 
 describe("<BrowserCapabilitiesPanel>", () => {
-  it("keeps every capability, status, detail, and control reachable through disclosures", async () => {
+  it("keeps every capability, status, detail, and primary action visible in direct rows", async () => {
     const user = userEvent.setup();
     const ports = buildTestPorts({
       api: { browserCapabilities: vi.fn(async () => disabledCapabilities) },
@@ -70,34 +70,66 @@ describe("<BrowserCapabilitiesPanel>", () => {
     expect(panelTrigger).toHaveAccessibleName(/Explicit adoption/i);
     expect(screen.getByText(/never auto-detects or adopts Chrome/i)).toBeInTheDocument();
 
-    const coreTrigger = screen.getByRole("button", { name: /^Core managed browser/ });
-    const autoApplyTrigger = screen.getByRole("button", { name: /^Auto-apply browser/ });
-    const linkedInTrigger = screen.getByRole("button", {
-      name: /^Authenticated LinkedIn browser/,
+    const coreRow = (await screen.findByRole("heading", {
+      name: "Core managed browser",
+    })).closest("section");
+    const autoApplyRow = screen.getByRole("heading", { name: "Auto-apply browser" }).closest("section");
+    const linkedInRow = screen.getByRole("heading", {
+      name: "Authenticated LinkedIn browser",
+    }).closest("section");
+    if (!coreRow || !autoApplyRow || !linkedInRow) throw new Error("Missing capability row");
+
+    expect(within(coreRow).getByText("Current status: ready")).toBeInTheDocument();
+    expect(within(coreRow).getByText("Managed by JobCtrl and read-only.")).toBeInTheDocument();
+    expect(within(autoApplyRow).getByText("Current status: disabled")).toBeInTheDocument();
+    expect(within(linkedInRow).getByText("Current status: disabled")).toBeInTheDocument();
+    expect(within(autoApplyRow).getByRole("button", { name: "Enable browser" })).toBeDisabled();
+    expect(within(linkedInRow).getByRole("button", { name: "Enable browser" })).toBeDisabled();
+    expect(within(autoApplyRow).getByText("Configure executable path")).toBeVisible();
+    expect(within(linkedInRow).getByText("Configure executable path")).toBeVisible();
+
+    expect(within(autoApplyRow).getByRole("textbox", {
+      name: "Chrome or Chromium executable path",
+    }).closest("details")).not.toHaveAttribute("open");
+    await user.click(within(autoApplyRow).getByText("Configure executable path"));
+    expect(within(autoApplyRow).getByRole("textbox", {
+      name: "Chrome or Chromium executable path",
+    })).toBeInTheDocument();
+    expect(within(autoApplyRow).getByRole("button", { name: "Enable browser" })).toBeDisabled();
+    expect(within(autoApplyRow).queryByRole("button", { name: "Disable now" })).not.toBeInTheDocument();
+    expect(within(autoApplyRow).getByText(/status API does not echo local paths/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /download/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps profile-copy consent subordinate to its visible LinkedIn capability row", async () => {
+    const user = userEvent.setup();
+    const current = updateCapability(disabledCapabilities, "authenticated-linkedin-browser", {
+      enabled: true,
+      status: "ready",
+      detail: "Explicit LinkedIn browser ready.",
+    });
+    const ports = buildTestPorts({
+      api: { browserCapabilities: vi.fn(async () => current) },
     });
 
-    expect(coreTrigger).toHaveAccessibleName(/Managed browser ready.*Status: ready/i);
-    expect(autoApplyTrigger).toHaveAccessibleName(/Disabled.*Status: disabled/i);
-    expect(linkedInTrigger).toHaveAccessibleName(/Disabled.*Status: disabled/i);
-    expect(coreTrigger).toHaveAttribute("aria-expanded", "false");
-    expect(autoApplyTrigger).toHaveAttribute("aria-expanded", "false");
-    expect(linkedInTrigger).toHaveAttribute("aria-expanded", "false");
+    renderWithProviders(<BrowserCapabilitiesPanel />, { ports });
 
-    await user.click(coreTrigger);
-    expect(screen.getByText("Current status: ready")).toBeInTheDocument();
-    expect(screen.getByText("Managed by JobCtrl and read-only.")).toBeInTheDocument();
+    const linkedInRow = (await screen.findByRole("heading", {
+      name: "Authenticated LinkedIn browser",
+    })).closest("section");
+    if (!linkedInRow) throw new Error("Missing LinkedIn capability row");
 
+    expect(within(linkedInRow).getByText("Current status: ready")).toBeInTheDocument();
+    expect(within(linkedInRow).getByRole("button", { name: "Disable now" })).toBeEnabled();
+    expect(within(linkedInRow).getByText("Configure authenticated profile copy")).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: "Enable selected browser" }),
-    ).not.toBeInTheDocument();
-    await user.click(autoApplyTrigger);
-    expect(
-      screen.getByRole("textbox", { name: "Chrome or Chromium executable path" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Enable selected browser" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Disable now" })).toBeDisabled();
-    expect(screen.getAllByText(/status API does not echo local paths/i)).toHaveLength(2);
-    expect(screen.queryByRole("button", { name: /download/i })).not.toBeInTheDocument();
+      within(linkedInRow)
+        .getByLabelText("Existing browser profile directory")
+        .closest("details"),
+    ).not.toHaveAttribute("open");
+
+    await user.click(within(linkedInRow).getByText("Configure authenticated profile copy"));
+    expect(within(linkedInRow).getByLabelText("Existing browser profile directory")).toBeInTheDocument();
   });
 
   it("enables and hot-disables an optional browser from the explicit executable path", async () => {
@@ -132,14 +164,14 @@ describe("<BrowserCapabilitiesPanel>", () => {
 
     renderWithProviders(<BrowserCapabilitiesPanel />, { ports });
 
-    await user.click(
-      await screen.findByRole("button", { name: /^Auto-apply browser/ }),
-    );
-    const executablePath = screen.getByRole("textbox", {
+    const autoApplyRow = (await screen.findByRole("heading", { name: "Auto-apply browser" })).closest("section");
+    if (!autoApplyRow) throw new Error("Missing auto-apply capability row");
+    await user.click(within(autoApplyRow).getByText("Configure executable path"));
+    const executablePath = within(autoApplyRow).getByRole("textbox", {
       name: "Chrome or Chromium executable path",
     });
     await user.type(executablePath, "  /Applications/Chromium.app/Contents/MacOS/Chromium  ");
-    await user.click(screen.getByRole("button", { name: "Enable selected browser" }));
+    await user.click(within(autoApplyRow).getByRole("button", { name: "Enable browser" }));
 
     await waitFor(() =>
       expect(enableBrowserCapability).toHaveBeenCalledWith("auto-apply-browser", {
@@ -151,7 +183,7 @@ describe("<BrowserCapabilitiesPanel>", () => {
     );
     expect(executablePath).toHaveValue("");
 
-    const disableButton = screen.getByRole("button", { name: "Disable now" });
+    const disableButton = within(autoApplyRow).getByRole("button", { name: "Disable now" });
     await waitFor(() => expect(disableButton).toBeEnabled());
     await user.click(disableButton);
 
@@ -192,14 +224,16 @@ describe("<BrowserCapabilitiesPanel>", () => {
 
     renderWithProviders(<BrowserCapabilitiesPanel />, { ports });
 
-    await user.click(
-      await screen.findByRole("button", { name: /^Authenticated LinkedIn browser/ }),
-    );
-    const sourcePath = screen.getByLabelText("Existing browser profile directory");
-    const consent = screen.getByRole("checkbox", {
+    const linkedInRow = (await screen.findByRole("heading", {
+      name: "Authenticated LinkedIn browser",
+    })).closest("section");
+    if (!linkedInRow) throw new Error("Missing LinkedIn capability row");
+    await user.click(within(linkedInRow).getByText("Configure authenticated profile copy"));
+    const sourcePath = within(linkedInRow).getByLabelText("Existing browser profile directory");
+    const consent = within(linkedInRow).getByRole("checkbox", {
       name: "I explicitly consent to copy this profile into JobCtrl-owned storage.",
     });
-    const copyButton = screen.getByRole("button", { name: "Copy selected profile" });
+    const copyButton = within(linkedInRow).getByRole("button", { name: "Copy selected profile" });
 
     expect(sourcePath).toHaveAttribute("type", "password");
     expect(copyButton).toBeDisabled();

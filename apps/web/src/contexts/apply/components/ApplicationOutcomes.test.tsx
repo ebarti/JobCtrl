@@ -17,6 +17,7 @@ describe("application outcome components", () => {
     renderWithProviders(<JobOutcomePanel jobId="job-2" />);
 
     const timeline = await screen.findByLabelText("Application outcome timeline");
+    expect(timeline).toHaveClass("editorial-timeline");
     expect(within(timeline).getByText("Applied confirmation")).toBeInTheDocument();
     expect(screen.getByText("Confirmed in the ATS portal.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /record outcome/i })).toBeInTheDocument();

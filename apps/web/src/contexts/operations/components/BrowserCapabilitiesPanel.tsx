@@ -2,7 +2,6 @@ import type { BrowserCapabilityId, BrowserCapabilityItem } from "@jobctrl/contra
 import { useState } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { AdaptiveFieldGrid } from "../../../shared/ui/adaptive-field-grid.js";
 import { Button } from "../../../shared/ui/button.js";
 import { ChoiceControl } from "../../../shared/ui/choice-control.js";
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
@@ -76,95 +75,108 @@ export function BrowserCapabilitiesPanel() {
 
   function renderCapabilityControls(capability: BrowserCapabilityItem) {
     if (capability.id === "core-browser") {
-      return <p className="provider-copy">Managed by JobCtrl and read-only.</p>;
+      return <p className="browser-capability-row__managed">Managed by JobCtrl and read-only.</p>;
     }
 
     const capabilityId = capability.id;
     return (
-      <div className="browser-capability-controls">
-        <AdaptiveFieldGrid columns={2} minColumnWidth={280} density="compact">
-          <Field data-disabled={demo || capability.enabled || undefined}>
-            <FieldLabel htmlFor={`browser-executable-${capabilityId}`}>
-              Chrome or Chromium executable path
-            </FieldLabel>
-            <Input
-              id={`browser-executable-${capabilityId}`}
-              name={`browser-executable-${capabilityId}`}
-              type="text"
-              autoComplete="off"
-              disabled={demo || capability.enabled}
-              value={executablePaths[capabilityId] ?? ""}
-              onChange={(event) =>
-                setExecutablePaths((current) => ({
-                  ...current,
-                  [capabilityId]: event.target.value,
-                }))
-              }
-            />
-            <FieldDescription>
-              Saved as non-secret browser configuration in config.json. The status API does not
-              echo local paths.
-            </FieldDescription>
-          </Field>
-        </AdaptiveFieldGrid>
-        <div className="form-actions browser-capability-actions">
-          <Button
-            type="button"
-            disabled={demo || capability.enabled || enable.isPending}
-            onClick={() => void enableCapability(capabilityId)}
-          >
-            Enable selected browser
-          </Button>
-          <Button
-            variant="outline"
-            type="button"
-            disabled={demo || !capability.enabled || disable.isPending}
-            onClick={() =>
-              void disable
-                .mutateAsync(capabilityId)
-                .then(() => setMessage(`${LABELS[capabilityId]} disabled immediately.`))
-                .catch(() => setMessage("Capability disable failed."))
-            }
-          >
-            Disable now
-          </Button>
-        </div>
-        {capabilityId === "authenticated-linkedin-browser" && capability.enabled ? (
-          <fieldset className="provider-choice-fieldset browser-profile-copy">
-            <legend>Separate authenticated profile copy</legend>
-            <Field>
-              <FieldLabel htmlFor="linkedin-profile-source">
-                Existing browser profile directory
-              </FieldLabel>
-              <Input
-                id="linkedin-profile-source"
-                name="linkedin-profile-source"
-                type="password"
-                autoComplete="off"
-                value={sourceProfilePath}
-                onChange={(event) => setSourceProfilePath(event.target.value)}
-              />
-              <FieldDescription>
-                Request-only. Cleared after submission and never returned or logged.
-              </FieldDescription>
-            </Field>
-            <ChoiceControl
-              id="linkedin-profile-consent"
-              name="linkedin-profile-consent"
-              label="I explicitly consent to copy this profile into JobCtrl-owned storage."
-              checked={profileConsent}
-              onCheckedChange={(checked) => setProfileConsent(checked === true)}
-            />
+      <>
+        {capability.enabled ? (
+          <div className="browser-capability-row__actions">
             <Button
+              variant="outline"
               type="button"
-              disabled={copyProfile.isPending || !profileConsent || !sourceProfilePath.trim()}
-              onClick={() => void copyLinkedInProfile()}
+              disabled={demo || disable.isPending}
+              onClick={() =>
+                void disable
+                  .mutateAsync(capabilityId)
+                  .then(() => setMessage(`${LABELS[capabilityId]} disabled immediately.`))
+                  .catch(() => setMessage("Capability disable failed."))
+              }
             >
-              Copy selected profile
+              Disable now
             </Button>
-          </fieldset>
+          </div>
+        ) : (
+          <>
+            <div className="browser-capability-row__actions">
+              <Button
+                type="button"
+                disabled={demo || enable.isPending || !executablePaths[capabilityId]?.trim()}
+                onClick={() => void enableCapability(capabilityId)}
+              >
+                Enable browser
+              </Button>
+            </div>
+            <details className="browser-capability-configuration">
+              <summary>Configure executable path</summary>
+              <div className="browser-capability-configuration__body">
+                <Field data-disabled={demo || undefined}>
+                  <FieldLabel htmlFor={`browser-executable-${capabilityId}`}>
+                    Chrome or Chromium executable path
+                  </FieldLabel>
+                  <Input
+                    id={`browser-executable-${capabilityId}`}
+                    name={`browser-executable-${capabilityId}`}
+                    type="text"
+                    autoComplete="off"
+                    disabled={demo}
+                    value={executablePaths[capabilityId] ?? ""}
+                    onChange={(event) =>
+                      setExecutablePaths((current) => ({
+                        ...current,
+                        [capabilityId]: event.target.value,
+                      }))
+                    }
+                  />
+                  <FieldDescription>
+                    Saved as non-secret browser configuration in config.json. The status API does
+                    not echo local paths.
+                  </FieldDescription>
+                </Field>
+              </div>
+            </details>
+          </>
+        )}
+        {capabilityId === "authenticated-linkedin-browser" && capability.enabled ? (
+          <details className="browser-capability-profile-copy">
+            <summary>Configure authenticated profile copy</summary>
+            <fieldset className="provider-choice-fieldset browser-profile-copy">
+              <legend>Separate authenticated profile copy</legend>
+              <Field>
+                <FieldLabel htmlFor="linkedin-profile-source">
+                  Existing browser profile directory
+                </FieldLabel>
+                <Input
+                  id="linkedin-profile-source"
+                  name="linkedin-profile-source"
+                  type="password"
+                  autoComplete="off"
+                  value={sourceProfilePath}
+                  onChange={(event) => setSourceProfilePath(event.target.value)}
+                />
+                <FieldDescription>
+                  Request-only. Cleared after submission and never returned or logged.
+                </FieldDescription>
+              </Field>
+              <ChoiceControl
+                id="linkedin-profile-consent"
+                name="linkedin-profile-consent"
+                label="I explicitly consent to copy this profile into JobCtrl-owned storage."
+                checked={profileConsent}
+                onCheckedChange={(checked) => setProfileConsent(checked === true)}
+              />
+              <Button
+                type="button"
+                disabled={copyProfile.isPending || !profileConsent || !sourceProfilePath.trim()}
+                onClick={() => void copyLinkedInProfile()}
+              >
+                Copy selected profile
+              </Button>
+            </fieldset>
+          </details>
         ) : null}
-      </div>
+      </>
     );
   }
 
@@ -185,26 +197,22 @@ export function BrowserCapabilitiesPanel() {
       {query.error ? <div className="banner inline" role="alert">Browser capability status is unavailable.</div> : null}
       <div className="browser-capability-list" aria-busy={query.isPending}>
         {(query.data?.capabilities ?? []).map((capability) => (
-          <DisclosureSection
-            className="browser-capability-section"
+          <section
+            className="browser-capability-row"
             key={capability.id}
-            title={LABELS[capability.id]}
-            description={capability.detail}
-            collapsedSummary={(
-              <StatusLabel tone={browserCapabilityTone(capability.status)}>
-                Status: {capability.status}
-              </StatusLabel>
-            )}
-            defaultOpen={false}
+            aria-labelledby={`browser-capability-${capability.id}`}
           >
-            <StatusLabel
-              className="browser-capability-status"
-              tone={browserCapabilityTone(capability.status)}
-            >
-              Current status: {capability.status}
-            </StatusLabel>
+            <div className="browser-capability-row__overview">
+              <div>
+                <h3 id={`browser-capability-${capability.id}`}>{LABELS[capability.id]}</h3>
+                <p>{capability.detail}</p>
+              </div>
+              <StatusLabel tone={browserCapabilityTone(capability.status)}>
+                Current status: {capability.status}
+              </StatusLabel>
+            </div>
             {renderCapabilityControls(capability)}
-          </DisclosureSection>
+          </section>
         ))}
       </div>
       {message ? <div className="status-line" role="status">{message}</div> : null}

@@ -1158,7 +1158,7 @@ export function StructuredProfileEditor({
             collapsedSummary={`${experienceEntries.length} ${
               experienceEntries.length === 1 ? "entry" : "entries"
             }`}
-            defaultOpen
+            defaultOpen={false}
           >
             <div className="profile-repeat-editor profile-repeat-editor--experience">
               {experienceEntries.map((entry, index) => {
@@ -1514,6 +1514,7 @@ export function StructuredProfileEditor({
             title="Application configurations"
             description="Work authorization, availability, and compensation defaults"
             collapsedSummary="Authorization · availability · compensation"
+            defaultOpen={false}
           >
             <AdaptiveFieldGrid
               className="preferences-field-grid preferences-field-grid--application"
@@ -1557,6 +1558,7 @@ export function StructuredProfileEditor({
             title="Tailoring controls"
             description="Control what JobCtrl may change and how generated resumes are evaluated"
             collapsedSummary="Content rules · writing style · quality gates"
+            defaultOpen
             helpHref={TAILORING_INPUTS_DOCS_URL}
             helpLabel="Tailoring inputs"
           >
@@ -1583,6 +1585,7 @@ export function StructuredProfileEditor({
             title="Resume style"
             description="Profile-level typography, template, and page defaults"
             collapsedSummary="Typography · template · page layout"
+            defaultOpen={false}
           >
             <AdaptiveFieldGrid
               className="preferences-field-grid preferences-field-grid--resume-style"

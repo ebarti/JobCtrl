@@ -3066,11 +3066,13 @@ export function ResumePlateEditor({
         </div>
       ) : null}
       {renderResult?.validation.warnings.length ? (
-        <div className="resume-render-warnings" role="status">
+        <ul className="resume-render-warnings" role="status">
           {renderResult.validation.warnings.map((warning) => (
-            <span key={warning}>{warning}</span>
+            <li key={warning}>
+              <StatusLabel tone="warn">{warning}</StatusLabel>
+            </li>
           ))}
-        </div>
+        </ul>
       ) : null}
       <div className="resume-plate-scroll" tabIndex={0}>
         {htmlState.status === "ready" && initialPlateValue && currentPlateValue ? (

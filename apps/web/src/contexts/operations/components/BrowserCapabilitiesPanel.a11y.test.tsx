@@ -12,13 +12,8 @@ describe("Browser capabilities a11y", () => {
     const user = userEvent.setup();
     const view = renderWithProviders(<BrowserCapabilitiesPanel />);
 
-    await user.click(
-      await screen.findByRole("button", { name: /^Core managed browser/ }),
-    );
-    await user.click(screen.getByRole("button", { name: /^Auto-apply browser/ }));
-    await user.click(
-      screen.getByRole("button", { name: /^Authenticated LinkedIn browser/ }),
-    );
+    const configurations = await screen.findAllByText("Configure executable path");
+    await user.click(configurations[0]!);
 
     expect(await axe(view.container)).toHaveNoViolations();
   });

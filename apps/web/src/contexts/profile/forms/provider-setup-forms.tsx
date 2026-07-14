@@ -29,7 +29,6 @@ import {
   FieldLabel,
 } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
-import { SelectField } from "../../../shared/ui/select-field.js";
 import { useUpdateCredentialsBatchMutation } from "../hooks/useUpdateCredentialsBatchMutation.js";
 import {
   buildClaudeCredentialBatch,
@@ -589,32 +588,57 @@ function ProviderModeSelect<T extends string>({
   disabled?: boolean;
   disabledValues?: readonly T[];
 }) {
-  const selected = options.find((option) => option.value === value);
-  const description = [
-    selected?.description,
-    disabled ? "The active mode is owned by the launch environment and is read-only here." : null,
-    disabledValues.length > 0
-      ? "Direct API-key modes require a supported secure-storage adapter."
-      : null,
-  ].filter(Boolean).join(" ");
-
   return (
-    <SelectField
-      className="provider-mode-select"
-      description={description}
-      disabled={disabled}
-      id={name}
-      label={legend}
-      name={name}
-      options={options.map((option) => ({
-        disabled: disabledValues.includes(option.value),
-        label: option.label,
-        value: option.value,
-      }))}
-      required
-      value={value}
-      onValueChange={(nextValue) => onChange(nextValue as T)}
-    />
+    <fieldset className="provider-mode-choice-fieldset" disabled={disabled}>
+      <legend>{legend}</legend>
+      <div className="provider-mode-choice-list">
+        {options.map((option) => {
+          const optionId = `${name}-${option.value}`;
+          const optionDisabled = disabled || disabledValues.includes(option.value);
+          return (
+            <div
+              className="provider-mode-choice"
+              data-disabled={optionDisabled || undefined}
+              key={option.value}
+            >
+              <input
+                aria-describedby={`${optionId}-description`}
+                checked={value === option.value}
+                disabled={optionDisabled}
+                id={optionId}
+                name={name}
+                type="radio"
+                value={option.value}
+                onChange={(event) => {
+                  if (event.target.checked) onChange(option.value);
+                }}
+              />
+              <span className="provider-mode-choice__copy">
+                <label className="provider-mode-choice__label" htmlFor={optionId}>
+                  {option.label}
+                </label>
+                <span
+                  className="provider-mode-choice__description"
+                  id={`${optionId}-description`}
+                >
+                  {option.description}
+                </span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {disabled ? (
+        <p className="provider-mode-choice-fieldset__notice">
+          The active mode is owned by the launch environment and is read-only here.
+        </p>
+      ) : null}
+      {disabledValues.length > 0 ? (
+        <p className="provider-mode-choice-fieldset__notice">
+          Direct API-key modes require a supported secure-storage adapter.
+        </p>
+      ) : null}
+    </fieldset>
   );
 }
 

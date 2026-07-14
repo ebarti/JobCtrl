@@ -33,8 +33,8 @@ export function InspectorLedgerItem({
     <div className={cn("inspector-ledger__item", className)} {...props}>
       <dt>{label}</dt>
       <dd>{value ?? <span className="inspector-ledger__missing">Not available</span>}</dd>
-      {source ? <span className="inspector-ledger__source">{source}</span> : null}
-      {status ? <span className="inspector-ledger__status">{status}</span> : null}
+      {source ? <dd className="inspector-ledger__source">{source}</dd> : null}
+      {status ? <dd className="inspector-ledger__status">{status}</dd> : null}
     </div>
   );
 }

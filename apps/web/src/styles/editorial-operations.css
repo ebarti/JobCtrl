@@ -692,7 +692,9 @@
 }
 
 .pipeline-stage-ledger__table {
-  min-width: 62rem;
+  width: 100%;
+  min-width: 50rem;
+  table-layout: fixed;
 }
 
 .pipeline-stage-ledger__table :is(th, td) {
@@ -711,23 +713,30 @@
   margin-block-start: 0.2rem;
 }
 
+.pipeline-stage-ledger__table :is(td, th) {
+  overflow-wrap: anywhere;
+}
+
 .pipeline-stage-ledger__counts,
 .pipeline-stage-ledger__backlog,
 .pipeline-operations-eta,
-.pipeline-operations-capacity {
+.pipeline-stage-ledger__summary {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 5.5rem), 1fr));
   gap: 0.35rem 0.65rem;
 }
 
 .pipeline-stage-ledger__counts,
-.pipeline-stage-ledger__backlog {
+.pipeline-stage-ledger__backlog,
+.pipeline-stage-ledger__summary {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem 0.7rem;
+  margin: 0;
 }
 
 .pipeline-stage-ledger__counts > *,
-.pipeline-stage-ledger__backlog > * {
+.pipeline-stage-ledger__backlog > *,
+.pipeline-stage-ledger__summary > * {
   display: inline-flex;
   align-items: baseline;
   gap: 0.25rem;
@@ -735,6 +744,7 @@
 
 .pipeline-stage-ledger__counts dt,
 .pipeline-stage-ledger__backlog dt,
+.pipeline-stage-ledger__summary dt,
 .pipeline-operations-eta dt,
 .pipeline-operations-capacity dt {
   font-size: 0.625rem;
@@ -751,6 +761,11 @@
   cursor: pointer;
   font-size: 0.6875rem;
   font-weight: 700;
+}
+
+.pipeline-stage-ledger__empty-summary {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
 }
 
 .pipelines-workspace .disclosure-section {
@@ -790,8 +805,48 @@
   border-block-start: 1px solid var(--border);
 }
 
+.pipeline-operations-inspector {
+  container: pipeline-inspector / inline-size;
+}
+
 .pipeline-operations-inspector .inspector-ledger__item {
   border-radius: 0;
+}
+
+.pipeline-operations-capacity {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.pipeline-operations-capacity > section {
+  padding-block: 0.75rem;
+}
+
+.pipeline-operations-capacity > section + section {
+  border-block-start: 1px solid var(--border);
+}
+
+.pipeline-operations-capacity h3 {
+  margin: 0 0 0.45rem;
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@container pipeline-inspector (max-width: 28rem) {
+  .pipeline-operations-inspector .inspector-ledger__item {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 0.2rem;
+  }
+
+  .pipeline-operations-inspector .inspector-ledger__item :is(dd, .inspector-ledger__source, .inspector-ledger__status) {
+    grid-column: 1;
+    grid-row: auto;
+  }
 }
 
 .pipelines-workspace__controls.tool-row {

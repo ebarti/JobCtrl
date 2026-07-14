@@ -61,6 +61,7 @@ describe("<ProfileForm>", () => {
       withRouter: true,
     });
 
+    await user.click(await screen.findByRole("button", { name: /^Experience entries/ }));
     await user.click(await screen.findByRole("button", { name: /add bullet/i }));
 
     expect(screen.getByLabelText("Bullet 3")).toBeInTheDocument();
@@ -72,6 +73,7 @@ describe("<ProfileForm>", () => {
       withRouter: true,
     });
 
+    await user.click(await screen.findByRole("button", { name: /^Experience entries/ }));
     await user.click(await screen.findByLabelText("Present"));
 
     expect(screen.queryByLabelText("End month")).not.toBeInTheDocument();
@@ -86,6 +88,7 @@ describe("<ProfileForm>", () => {
       withRouter: true,
     });
 
+    await user.click(await screen.findByRole("button", { name: /^Experience entries/ }));
     await user.selectOptions(await screen.findByLabelText("End year"), "2021");
     await user.click(screen.getByRole("button", { name: /^save all$/i }));
 
@@ -124,7 +127,7 @@ describe("<ProfileForm>", () => {
   it("renders target search as a discovery settings section", async () => {
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />);
 
-    expect(screen.getByRole("heading", { name: "Target search" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Target search fields" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Target tracks" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Individual Contributor" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Management" })).toBeInTheDocument();

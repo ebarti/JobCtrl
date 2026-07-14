@@ -107,6 +107,30 @@ function CountsFacts({ counts, className = "pipeline-stage-ledger__counts" }: {
   );
 }
 
+function StageStateSummary({
+  counts,
+  label,
+  emptyLabel,
+}: {
+  readonly counts: PipelineStageCounts;
+  readonly label: string;
+  readonly emptyLabel: string;
+}) {
+  const nonZeroFields = COUNT_FIELDS.filter(([field]) => counts[field] > 0);
+  return nonZeroFields.length > 0 ? (
+    <dl aria-label={label} className="pipeline-stage-ledger__summary">
+      {nonZeroFields.map(([field, fieldLabel]) => (
+        <div key={field}>
+          <dt>{fieldLabel}</dt>
+          <dd>{counts[field]}</dd>
+        </div>
+      ))}
+    </dl>
+  ) : (
+    <span className="pipeline-stage-ledger__empty-summary">{emptyLabel}</span>
+  );
+}
+
 function CohortFacts({ cohort }: { readonly cohort: PipelineExecutionCohortSummary }) {
   return (
     <InspectorLedger>
@@ -183,34 +207,40 @@ function TaskQueueFacts({ queue }: { readonly queue: PipelineApproximateTaskQueu
 function CapacityFacts({ capacity }: { readonly capacity: PipelineCapacity }) {
   return (
     <div className="pipeline-operations-capacity">
-      <InspectorLedger>
-        <InspectorLedgerItem label="Status" value={sentenceCase(capacity.status)} />
-        <InspectorLedgerItem label="Observed" value={formatDateTime(capacity.asOf)} />
-        <InspectorLedgerItem label="Stale after" value={`${capacity.staleAfterSeconds} sec`} />
-        <InspectorLedgerItem label="Task queue" value={capacity.taskQueue ?? "Not reported"} />
-        {capacity.status === "available" ? (
-          <>
-            <InspectorLedgerItem label="Pool" value={sentenceCase(capacity.kind)} />
-            <InspectorLedgerItem label="Fresh workers" value={capacity.freshWorkerCount} />
-            <InspectorLedgerItem label="Stale workers" value={capacity.staleWorkerCount} />
-            <InspectorLedgerItem label="Invalid workers" value={capacity.invalidWorkerCount} />
-            <InspectorLedgerItem label="Configured slots" value={capacity.configuredSlots} />
-            <InspectorLedgerItem label="Active slots" value={capacity.activeSlots} />
-            <InspectorLedgerItem label="Available slots" value={capacity.availableSlots} />
-            <InspectorLedgerItem label="Executor threads" value={capacity.executorThreads} />
-            <InspectorLedgerItem
-              label="Slot saturation"
-              value={capacity.slotSaturation === null ? "Not available" : `${Math.round(capacity.slotSaturation * 100)}%`}
-            />
-            {capacity.kind === "shared_activity_pool_with_internal_parallelism" ? (
-              <InspectorLedgerItem label="Internal concurrency" value={capacity.internalParallelism} />
-            ) : null}
-          </>
-        ) : (
-          <InspectorLedgerItem label="Reason" value={capacity.reason} />
-        )}
-      </InspectorLedger>
-      <TaskQueueFacts queue={capacity.approximateTaskQueue} />
+      <section aria-label="Worker capacity">
+        <h3>Worker capacity</h3>
+        <InspectorLedger>
+          <InspectorLedgerItem label="Status" value={sentenceCase(capacity.status)} />
+          <InspectorLedgerItem label="Observed" value={formatDateTime(capacity.asOf)} />
+          <InspectorLedgerItem label="Stale after" value={`${capacity.staleAfterSeconds} sec`} />
+          <InspectorLedgerItem label="Task queue" value={capacity.taskQueue ?? "Not reported"} />
+          {capacity.status === "available" ? (
+            <>
+              <InspectorLedgerItem label="Pool" value={sentenceCase(capacity.kind)} />
+              <InspectorLedgerItem label="Fresh workers" value={capacity.freshWorkerCount} />
+              <InspectorLedgerItem label="Stale workers" value={capacity.staleWorkerCount} />
+              <InspectorLedgerItem label="Invalid workers" value={capacity.invalidWorkerCount} />
+              <InspectorLedgerItem label="Configured slots" value={capacity.configuredSlots} />
+              <InspectorLedgerItem label="Active slots" value={capacity.activeSlots} />
+              <InspectorLedgerItem label="Available slots" value={capacity.availableSlots} />
+              <InspectorLedgerItem label="Executor threads" value={capacity.executorThreads} />
+              <InspectorLedgerItem
+                label="Slot saturation"
+                value={capacity.slotSaturation === null ? "Not available" : `${Math.round(capacity.slotSaturation * 100)}%`}
+              />
+              {capacity.kind === "shared_activity_pool_with_internal_parallelism" ? (
+                <InspectorLedgerItem label="Internal concurrency" value={capacity.internalParallelism} />
+              ) : null}
+            </>
+          ) : (
+            <InspectorLedgerItem label="Reason" value={capacity.reason} />
+          )}
+        </InspectorLedger>
+      </section>
+      <section aria-label="Task queue telemetry">
+        <h3>Task queue telemetry</h3>
+        <TaskQueueFacts queue={capacity.approximateTaskQueue} />
+      </section>
     </div>
   );
 }
@@ -295,10 +325,33 @@ function PipelineStageLedger({ snapshot }: { readonly snapshot: PipelineOperatio
                       <strong>{stage.label}</strong>
                       <small>{stage.stage}</small>
                     </th>
-                    <td><CountsFacts counts={stage.currentExecution} /></td>
+                    <td>
+                      <StageStateSummary
+                        counts={stage.currentExecution}
+                        emptyLabel="No scoped outcomes"
+                        label={`${stage.label} scoped outcomes summary`}
+                      />
+                      <details>
+                        <summary>All 12 outcomes</summary>
+                        <CountsFacts counts={stage.currentExecution} />
+                      </details>
+                    </td>
                     <td>
                       {stage.existingBacklog.kind === "domain_jobs" ? (
-                        <CountsFacts counts={stage.existingBacklog.counts} className="pipeline-stage-ledger__backlog" />
+                        <>
+                          <StageStateSummary
+                            counts={stage.existingBacklog.counts}
+                            emptyLabel="No existing backlog"
+                            label={`${stage.label} existing backlog summary`}
+                          />
+                          <details>
+                            <summary>All backlog states</summary>
+                            <CountsFacts
+                              counts={stage.existingBacklog.counts}
+                              className="pipeline-stage-ledger__backlog"
+                            />
+                          </details>
+                        </>
                       ) : (
                         <span>{sentenceCase(stage.existingBacklog.reason)}</span>
                       )}
@@ -312,7 +365,10 @@ function PipelineStageLedger({ snapshot }: { readonly snapshot: PipelineOperatio
                     </td>
                     <td>
                       <strong>{etaLabel(stage.eta)}</strong>
-                      <EtaFacts eta={stage.eta} label={`${stage.label} ETA details`} />
+                      <details>
+                        <summary>Estimate basis</summary>
+                        <EtaFacts eta={stage.eta} label={`${stage.label} ETA details`} />
+                      </details>
                     </td>
                     <td>{formatDateTime(stage.asOf)}</td>
                   </tr>

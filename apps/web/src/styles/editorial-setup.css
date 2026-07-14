@@ -754,20 +754,158 @@
   border-top: 1px solid var(--setup-rule);
 }
 
-.route-page--settings .browser-capability-section {
+.route-page--settings .browser-capability-row {
+  display: grid;
+  gap: 0.75rem;
   border: 0;
   border-bottom: 1px solid var(--setup-rule);
   background: transparent;
+  padding: 1rem 0;
 }
 
-.route-page--settings .browser-capability-section > .disclosure-section__header {
-  min-height: 3.75rem;
-  padding-inline: 0;
-  background: transparent;
+.route-page--settings .browser-capability-row__overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.625rem 1rem;
+  align-items: start;
 }
 
-.route-page--settings .browser-capability-section > .disclosure-section__body {
-  padding: 0.875rem 0 1rem;
+.route-page--settings .browser-capability-row__overview h3,
+.route-page--settings .browser-capability-row__overview p {
+  margin: 0;
+}
+
+.route-page--settings .browser-capability-row__overview h3 {
+  font-size: 0.875rem;
+}
+
+.route-page--settings .browser-capability-row__overview p,
+.route-page--settings .browser-capability-row__managed {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.route-page--settings .browser-capability-row__managed {
+  margin: 0;
+}
+
+.route-page--settings .browser-capability-row__actions,
+.route-page--settings .browser-capability-configuration__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.route-page--settings .browser-capability-configuration,
+.route-page--settings .browser-capability-profile-copy {
+  border-top: 1px solid var(--setup-rule);
+}
+
+.route-page--settings .browser-capability-configuration > summary,
+.route-page--settings .browser-capability-profile-copy > summary {
+  cursor: pointer;
+  padding-block: 0.625rem;
+  color: var(--foreground);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.route-page--settings .browser-capability-configuration > summary::marker,
+.route-page--settings .browser-capability-profile-copy > summary::marker {
+  color: var(--muted-foreground);
+}
+
+.route-page--settings .browser-capability-configuration > summary:focus-visible,
+.route-page--settings .browser-capability-profile-copy > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.route-page--settings .browser-capability-configuration__body {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 46rem;
+  padding: 0.25rem 0 0.875rem;
+}
+
+.route-page--settings .browser-capability-profile-copy > .browser-profile-copy {
+  margin-top: 0;
+  padding-bottom: 0.875rem;
+}
+
+.route-page--settings .provider-mode-choice-fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.route-page--settings .provider-mode-choice-fieldset > legend {
+  margin-bottom: 0.5rem;
+  padding: 0;
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.route-page--settings .provider-mode-choice-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  border-block: 1px solid var(--setup-rule);
+}
+
+.route-page--settings .provider-mode-choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: start;
+  min-height: 4.5rem;
+  border: 0;
+  border-bottom: 1px solid var(--setup-rule);
+  padding: 0.75rem 0.875rem;
+  cursor: pointer;
+}
+
+.route-page--settings .provider-mode-choice:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.route-page--settings .provider-mode-choice:has(input:checked) {
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+.route-page--settings .provider-mode-choice[data-disabled] {
+  cursor: not-allowed;
+  color: var(--muted-foreground);
+}
+
+.route-page--settings .provider-mode-choice input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0.125rem 0 0;
+  accent-color: var(--primary);
+}
+
+.route-page--settings .provider-mode-choice__copy {
+  display: grid;
+  gap: 0.1875rem;
+}
+
+.route-page--settings .provider-mode-choice__label {
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.route-page--settings .provider-mode-choice__description,
+.route-page--settings .provider-mode-choice-fieldset__notice {
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  line-height: 1.45;
+}
+
+.route-page--settings .provider-mode-choice-fieldset__notice {
+  margin: 0.5rem 0 0;
 }
 
 .route-page--settings .extension-pairing-controls {
@@ -979,12 +1117,18 @@
   }
 
   .route-page--profile-import .resume-import-wizard__step {
-    justify-content: center;
-    padding-inline: 0.5rem;
+    min-height: 4.375rem;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 0.25rem;
+    padding: 0.5rem 0.375rem;
   }
 
-  .route-page--profile-import .resume-import-wizard__step > span:last-child {
-    display: none;
+  .route-page--profile-import .resume-import-wizard__step-label {
+    display: block;
+    overflow-wrap: anywhere;
+    font-size: 0.625rem;
+    line-height: 1.2;
   }
 
   .route-page--profile-import .resume-import-start,

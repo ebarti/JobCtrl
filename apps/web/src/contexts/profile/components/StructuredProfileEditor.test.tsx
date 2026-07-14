@@ -175,6 +175,18 @@ describe("<StructuredProfileEditor>", () => {
     expect(screen.getByRole("heading", { name: "Application configurations", level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Tailoring controls", level: 2 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Resume style", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Application configurations/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: /^Tailoring controls/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: /^Resume style/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
 
     const tabs = screen.getByRole("tablist", { name: "Tailoring control sections" });
     expect(tabs).toBeInTheDocument();
@@ -244,15 +256,16 @@ describe("<StructuredProfileEditor>", () => {
     render(<StatefulEditor onLatestProfile={(value) => { latestProfile = value; }} />);
 
     expect(screen.getByRole("heading", { name: "Experience entries" })).toBeInTheDocument();
-    expect(screen.getAllByText("must appear in final resume").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /^Experience entries/ }));
+    expect(screen.getAllByText(/must appear in final resume/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Required").length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "must appear in final resume" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /must appear in final resume/i }));
     expect(
       JSON.parse(latestProfile).resume.tailoring_rules.required_experience_entry_ids,
     ).toEqual(["exp-1"]);
 
-    fireEvent.click(screen.getByRole("button", { name: "add bullet" }));
+    fireEvent.click(screen.getByRole("button", { name: /add bullet/i }));
     expect(screen.getByLabelText("Bullet 3")).toBeInTheDocument();
     expect(JSON.parse(latestProfile).resume.experience_entries[0].bullets).toHaveLength(3);
 
@@ -297,7 +310,7 @@ describe("<StructuredProfileEditor>", () => {
 
     expect(personalTrigger).toHaveAttribute("aria-expanded", "true");
     expect(baselineTrigger).toHaveAttribute("aria-expanded", "true");
-    expect(experienceTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(experienceTrigger).toHaveAttribute("aria-expanded", "false");
     expect(educationTrigger).toHaveAttribute("aria-expanded", "false");
     expect(skillsTrigger).toHaveAttribute("aria-expanded", "false");
     expect(eeoTrigger).toHaveAttribute("aria-expanded", "false");

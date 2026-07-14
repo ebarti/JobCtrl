@@ -48,6 +48,29 @@ describe("<CredentialsPanel>", () => {
     expect(trigger).toHaveTextContent(/Ownership:/i);
   });
 
+  it("keeps every provider authentication route and description visible as semantic radios", async () => {
+    renderPanel();
+
+    const claude = await providerCard("Claude");
+    const google = await providerCard("Google");
+    const claudeModes = within(claude).getByRole("group", {
+      name: "Choose how Claude authenticates",
+    });
+    const googleModes = within(google).getByRole("group", {
+      name: "Choose how Google authenticates",
+    });
+
+    expect(within(claudeModes).getByRole("radio", { name: "Anthropic API key" })).toBeChecked();
+    expect(within(claudeModes).getByRole("radio", { name: "Google Cloud Agent Platform" })).toBeInTheDocument();
+    expect(within(claudeModes).getByRole("radio", { name: "Amazon Bedrock" })).toBeInTheDocument();
+    expect(within(claudeModes).getByRole("radio", { name: "Claude Platform on AWS" })).toBeInTheDocument();
+    expect(within(claudeModes).getByRole("radio", { name: "Microsoft Foundry" })).toBeInTheDocument();
+    expect(within(claudeModes).getByText("Claude through Azure default credentials.")).toBeVisible();
+    expect(within(googleModes).getByRole("radio", { name: "Gemini API key" })).toBeChecked();
+    expect(within(googleModes).getByRole("radio", { name: "Vertex AI" })).toBeInTheDocument();
+    expect(within(googleModes).getByText("Gemini through Google Application Default Credentials.")).toBeVisible();
+  });
+
   it("exposes provider privacy boundaries through the final disclosure ledger", async () => {
     const user = userEvent.setup();
     renderPanel();
@@ -76,7 +99,7 @@ describe("<CredentialsPanel>", () => {
     renderPanel();
     const card = await providerCard("Claude");
 
-    await selectProviderMode(user, card, "Choose how Claude authenticates", choice);
+    await selectProviderMode(user, card, choice);
 
     expect(within(card).getByLabelText(expectedField)).toBeInTheDocument();
   });
@@ -89,7 +112,7 @@ describe("<CredentialsPanel>", () => {
     renderPanel();
     const card = await providerCard("Google");
 
-    await selectProviderMode(user, card, "Choose how Google authenticates", choice);
+    await selectProviderMode(user, card, choice);
 
     expect(within(card).getByLabelText(expectedField)).toBeInTheDocument();
   });
@@ -115,12 +138,10 @@ describe("<CredentialsPanel>", () => {
 
     const claude = await providerCard("Claude");
     const google = await providerCard("Google");
-    await waitFor(() => expect(
-      within(claude).getByRole("combobox", { name: /Choose how Claude authenticates/i }),
-    ).toHaveTextContent("Amazon Bedrock"));
-    expect(
-      within(google).getByRole("combobox", { name: /Choose how Google authenticates/i }),
-    ).toHaveTextContent("Vertex AI");
+    await waitFor(() =>
+      expect(within(claude).getByRole("radio", { name: "Amazon Bedrock" })).toBeChecked(),
+    );
+    expect(within(google).getByRole("radio", { name: "Vertex AI" })).toBeChecked();
     expect(screen.queryByDisplayValue(/secret/i)).not.toBeInTheDocument();
   });
 
@@ -153,12 +174,10 @@ describe("<CredentialsPanel>", () => {
     const google = await providerCard("Google");
     await waitFor(() =>
       expect(
-        within(claude).getByRole("combobox", { name: /Choose how Claude authenticates/i }),
-      ).toHaveTextContent("Google Cloud Agent Platform"),
+        within(claude).getByRole("radio", { name: "Google Cloud Agent Platform" }),
+      ).toBeChecked(),
     );
-    expect(
-      within(google).getByRole("combobox", { name: /Choose how Google authenticates/i }),
-    ).toHaveTextContent("Vertex AI");
+    expect(within(google).getByRole("radio", { name: "Vertex AI" })).toBeChecked();
     expect(within(claude).getAllByText("Configured · restart or verify").length).toBeGreaterThan(0);
     expect(within(google).getAllByText("Configured · restart or verify").length).toBeGreaterThan(0);
     expect(within(claude).queryByText("Ready")).not.toBeInTheDocument();
@@ -266,9 +285,7 @@ describe("<CredentialsPanel>", () => {
     expect(within(card).getByText(/effective mode is owned by the launch environment/i)).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Save Google setup" })).toBeDisabled();
     expect(within(card).queryByRole("button", { name: "Remove Google setup" })).not.toBeInTheDocument();
-    expect(
-      within(card).getByRole("combobox", { name: /Choose how Google authenticates/i }),
-    ).toBeDisabled();
+    expect(within(card).getByRole("radio", { name: "Vertex AI" })).toBeDisabled();
     expect(updateCredentialsBatch).not.toHaveBeenCalled();
     expect(card).not.toHaveTextContent(/provider settings removed/i);
   });
@@ -352,22 +369,18 @@ describe("<CredentialsPanel>", () => {
     expect(await screen.findByText(/Non-secret provider settings remain editable in config\.json/i)).toBeInTheDocument();
     const claude = await providerCard("Claude");
     const google = await providerCard("Google");
-    const claudeMode = within(claude).getByRole("combobox", {
-      name: /Choose how Claude authenticates/i,
-    });
-    await user.click(claudeMode);
-    expect(screen.getByRole("option", { name: /Anthropic API key/i })).toHaveAttribute("data-disabled");
-    await user.keyboard("{Escape}");
-    const googleMode = within(google).getByRole("combobox", {
-      name: /Choose how Google authenticates/i,
-    });
-    await user.click(googleMode);
-    expect(screen.getByRole("option", { name: /Gemini API key/i })).toHaveAttribute("data-disabled");
-    expect(screen.getByRole("option", { name: /Vertex AI/i })).not.toHaveAttribute("data-disabled");
-    await user.click(screen.getByRole("option", { name: /Vertex AI/i }));
+    const claudeApiKey = within(claude).getByRole("radio", { name: "Anthropic API key" });
+    const claudeVertex = within(claude).getByRole("radio", { name: "Google Cloud Agent Platform" });
+    const googleApiKey = within(google).getByRole("radio", { name: "Gemini API key" });
+    const googleVertex = within(google).getByRole("radio", { name: "Vertex AI" });
+    expect(claudeApiKey).toBeDisabled();
+    expect(claudeVertex).toBeEnabled();
+    expect(googleApiKey).toBeDisabled();
+    expect(googleVertex).toBeEnabled();
+    await user.click(googleVertex);
     expect(within(claude).queryByLabelText(/Anthropic API key \(required\)/i)).not.toBeInTheDocument();
     expect(within(google).queryByLabelText(/Gemini API key \(required\)/i)).not.toBeInTheDocument();
-    expect(claudeMode).toHaveTextContent("Google Cloud Agent Platform");
+    expect(claudeVertex).toBeChecked();
 
     await user.type(within(google).getByLabelText(/Google Cloud project ID/i), "jobctrl-test-project");
     await user.click(within(google).getByRole("button", { name: "Save Google setup" }));
@@ -423,7 +436,7 @@ describe("<CredentialsPanel>", () => {
     const privacy = within(screen.getByRole("region", { name: "Credential privacy" }));
     expect(screen.getByText(/guided Claude and Google editing/i)).toBeInTheDocument();
     expect(screen.getByText(/Codex verification remains available/i)).toBeInTheDocument();
-    expect(privacy.getByText("Keychain status unavailable")).toBeInTheDocument();
+    expect(privacy.getAllByText("Keychain status unavailable").length).toBeGreaterThan(0);
   });
 
   it("labels isolated auth accurately when the managed SDK is unavailable", async () => {
@@ -530,13 +543,9 @@ async function providerCard(name: string): Promise<HTMLElement> {
 async function selectProviderMode(
   user: ReturnType<typeof userEvent.setup>,
   card: HTMLElement,
-  selectLabel: string,
   optionLabel: string,
 ) {
-  await user.click(within(card).getByRole("combobox", {
-    name: new RegExp(escapeRegExp(selectLabel), "i"),
-  }));
-  await user.click(screen.getByRole("option", {
+  await user.click(within(card).getByRole("radio", {
     name: new RegExp(`^${escapeRegExp(optionLabel)}$`, "i"),
   }));
 }

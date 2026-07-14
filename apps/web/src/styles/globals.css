@@ -3394,19 +3394,23 @@ input[type="radio"] {
 }
 
 .resume-render-warnings {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  display: grid;
+  gap: 4px;
+  margin: 0;
   padding: 8px 12px;
   background: #303030;
   color: #f5f5f5;
   font-size: 12px;
+  list-style: none;
 }
 
-.resume-render-warnings span {
-  border: 1px solid rgb(255 255 255 / 18%);
-  border-radius: var(--radius);
-  padding: 4px 6px;
+.resume-render-warnings li {
+  margin: 0;
+  padding: 0;
+}
+
+.resume-render-warnings .editorial-status.warn {
+  color: var(--warning);
 }
 
 .resume-comment-thread-panel {

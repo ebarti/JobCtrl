@@ -73,7 +73,7 @@ export function ResumeImportWizard() {
                           String(index + 1).padStart(2, "0")
                         )}
                       </span>
-                      <span>{step.label}</span>
+                      <span className="resume-import-wizard__step-label">{step.label}</span>
                     </Link>
                   </TabsTrigger>
                 );
