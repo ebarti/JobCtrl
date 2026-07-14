@@ -19,14 +19,14 @@ export const SelectTrigger = forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "flex h-[38px] w-full items-center justify-between whitespace-nowrap rounded-md border border-input bg-card px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
+      "flex h-[38px] w-full items-center justify-between gap-3 whitespace-nowrap rounded-[6px] border border-input bg-card px-3 py-2 text-left text-[13px] font-medium shadow-[0_1px_2px_rgb(15_23_42/0.04)] transition-[border-color,box-shadow,background-color] placeholder:text-muted-foreground hover:border-foreground/25 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 data-[placeholder]:text-muted-foreground disabled:cursor-not-allowed disabled:bg-muted disabled:opacity-55 [&>span]:line-clamp-1",
       className,
     )}
     {...props}
   >
     {children}
     <SelectPrimitive.Icon asChild>
-      <IconChevronDown className="h-4 w-4 opacity-50" />
+      <IconChevronDown className="size-4 shrink-0 text-muted-foreground" stroke={1.9} />
     </SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>
 ));
@@ -68,7 +68,7 @@ export const SelectContent = forwardRef<
     <SelectPrimitive.Content
       ref={ref}
       className={cn(
-        "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-[var(--shadow-panel)]",
+        "relative z-50 max-h-96 min-w-[10rem] origin-[var(--radix-select-content-transform-origin)] overflow-hidden rounded-[7px] border border-border bg-popover text-popover-foreground shadow-[0_18px_46px_rgb(15_23_42/0.16)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
         position === "popper" &&
           "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
         className,
@@ -98,7 +98,10 @@ export const SelectLabel = forwardRef<
 >(({ className, ...props }, ref) => (
   <SelectPrimitive.Label
     ref={ref}
-    className={cn("px-2 py-1.5 text-sm font-semibold", className)}
+    className={cn(
+      "px-2.5 py-2 text-[10px] font-extrabold uppercase tracking-[0.08em] text-muted-foreground",
+      className,
+    )}
     {...props}
   />
 ));
@@ -111,7 +114,7 @@ export const SelectItem = forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-2 pr-8 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex min-h-9 w-full cursor-default select-none items-center rounded-[4px] py-2 pl-2.5 pr-9 text-[13px] outline-none focus:bg-muted focus:text-foreground data-[state=checked]:font-semibold data-[disabled]:pointer-events-none data-[disabled]:opacity-45",
       className,
     )}
     {...props}

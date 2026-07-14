@@ -12,8 +12,8 @@ export function ThemeToggle() {
       aria-label={`Switch to ${next} theme`}
       onClick={() => setTheme(next)}
     >
-      {theme === "dark" ? <IconSun aria-hidden="true" size={14} /> : <IconMoon aria-hidden="true" size={14} />}
-      <span>theme</span>
+      {theme === "dark" ? <IconSun aria-hidden="true" size={15} /> : <IconMoon aria-hidden="true" size={15} />}
+      <span>{theme}</span>
     </button>
   );
 }

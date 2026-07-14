@@ -47,6 +47,13 @@
   --status-info-muted: color-mix(in oklch, var(--status-info) 14%, var(--card));
 
   --shadow-panel: 0 12px 34px rgb(31 41 55 / 0.08);
+  --shadow-control: 0 1px 2px rgb(15 23 42 / 0.05);
+  --shadow-float: 0 18px 46px rgb(15 23 42 / 0.16);
+  --surface-subtle: color-mix(in oklch, var(--muted) 72%, var(--card));
+  --surface-raised: color-mix(in oklch, var(--card) 96%, var(--background));
+  --content-gutter: clamp(16px, 2.1vw, 32px);
+  --section-gap: clamp(14px, 1.6vw, 20px);
+  --control-height: 38px;
   --rail-width: 236px;
   --rail-width-collapsed: 72px;
   --topbar-height: 60px;
@@ -108,6 +115,8 @@
   --status-info-muted: color-mix(in oklch, var(--status-info) 18%, var(--card));
 
   --shadow-panel: 0 12px 34px rgb(0 0 0 / 0.45);
+  --shadow-control: 0 1px 2px rgb(0 0 0 / 0.28);
+  --shadow-float: 0 20px 50px rgb(0 0 0 / 0.52);
 }
 
 :where(.app-shell) {

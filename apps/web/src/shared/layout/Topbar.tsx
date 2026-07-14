@@ -1,10 +1,17 @@
-import { IconMenu2 } from "@tabler/icons-react";
+import { IconMenu2, IconSearch } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { useDensity } from "../hooks/useDensity.js";
 import type { Density } from "../stores/ui-preferences.js";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "../ui/sheet.js";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select.js";
 import { BrandMark } from "./BrandMark.js";
 import { ConnectionStatusPill } from "./ConnectionStatusPill.js";
 import { LegalNotice } from "./LegalNotice.js";
@@ -36,30 +43,33 @@ export function Topbar() {
           <LegalNotice className="legal-notice legal-notice--sheet" />
         </SheetContent>
       </Sheet>
-      <input
-        aria-label="Global search"
-        className="global-search"
-        placeholder="Filter jobs, errors, companies..."
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && query.trim()) {
-            void navigate({ to: "/jobs", search: { q: query.trim(), page: 1 } });
-          }
-        }}
-      />
-      <select
-        aria-label="Row density"
-        className="select"
-        value={density}
-        onChange={(event) => setDensity(event.target.value as Density)}
-      >
-        {DENSITY_OPTIONS.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
+      <label className="topbar__search">
+        <IconSearch aria-hidden="true" size={17} stroke={1.8} />
+        <input
+          aria-label="Global search"
+          className="global-search"
+          placeholder="Filter jobs, errors, companies..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && query.trim()) {
+              void navigate({ to: "/jobs", search: { q: query.trim(), page: 1 } });
+            }
+          }}
+        />
+      </label>
+      <Select value={density} onValueChange={(value) => setDensity(value as Density)}>
+        <SelectTrigger className="topbar__density" aria-label="Row density">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="end">
+          {DENSITY_OPTIONS.map((option) => (
+            <SelectItem key={option} value={option}>
+              {option[0]?.toUpperCase()}{option.slice(1)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <ThemeToggle />
       <ConnectionStatusPill />
       <LegalNotice className="legal-notice legal-notice--topbar" />
