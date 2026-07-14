@@ -63,13 +63,13 @@ export function DebugView() {
   };
 
   return (
-    <>
+    <div className="route-page route-page--debug">
       <PageHead
         eyebrow="Activity"
         title="Debug"
         subtitle={data ? `${data.pagination.total} activity events` : "loading"}
       />
-      <section className="card full">
+      <section className="card full data-surface">
         {message ? <div className="banner inline">{message}</div> : null}
         <DebugFilterBar search={search} onChange={setSearch} />
         <DebugActivityTable
@@ -85,6 +85,6 @@ export function DebugView() {
         />
       </section>
       <Outlet />
-    </>
+    </div>
   );
 }

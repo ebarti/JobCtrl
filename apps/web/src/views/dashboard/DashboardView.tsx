@@ -37,7 +37,7 @@ export function DashboardView() {
     (suggestion) => suggestion.status === "pending",
   );
   return (
-    <>
+    <div className="route-page route-page--dashboard">
       <PageHead eyebrow="Overview" title="Dashboard" />
       {summary ? <KpiGrid summary={summary} /> : <KpiSkeleton />}
       {message ? <div className="banner">{message}</div> : null}
@@ -74,6 +74,6 @@ export function DashboardView() {
       ) : (
         <Empty title={isLoading ? "Loading dashboard." : "No dashboard data."} />
       )}
-    </>
+    </div>
   );
 }

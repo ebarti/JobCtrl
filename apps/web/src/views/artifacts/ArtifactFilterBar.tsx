@@ -1,6 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
 
 import { ARTIFACT_STATUSES, type ArtifactsSearch } from "../../routes/-artifacts.search.js";
+import { SelectField } from "../../shared/ui/select-field.js";
+import { ToolRow } from "../../shared/ui/tool-row.js";
 
 export interface ArtifactFilterBarProps {
   search: ArtifactsSearch;
@@ -14,20 +16,20 @@ export function ArtifactFilterBar({ search }: ArtifactFilterBarProps) {
     });
   };
   return (
-    <div className="toolbar">
-      <label className="field">
-        <span>Status</span>
-        <select
+    <ToolRow
+      className="data-surface__tools"
+      primary={
+        <SelectField
+          className="tool-row__field"
+          label="Status"
           value={search.status}
-          onChange={(event) => apply({ status: event.target.value as ArtifactsSearch["status"] })}
-        >
-          {ARTIFACT_STATUSES.map((item) => (
-            <option key={item} value={item}>
-              {item}
-            </option>
-          ))}
-        </select>
-      </label>
-    </div>
+          onValueChange={(value) => apply({ status: value as ArtifactsSearch["status"] })}
+          options={ARTIFACT_STATUSES.map((item) => ({
+            value: item,
+            label: item === "all" ? "All statuses" : item.replace(/_/g, " "),
+          }))}
+        />
+      }
+    />
   );
 }

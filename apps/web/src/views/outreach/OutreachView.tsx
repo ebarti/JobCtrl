@@ -9,7 +9,9 @@ import {
   type ContactsListFilters,
 } from "../../contexts/outreach/hooks/useContactsListQuery.js";
 import type { OutreachSearch } from "../../routes/-outreach.search.js";
+import { Input } from "../../shared/ui/input.js";
 import { PageHead } from "../../shared/ui/page-head.js";
+import { ToolRow } from "../../shared/ui/tool-row.js";
 import { OutreachTable } from "./OutreachTable.js";
 
 function listFilters(search: OutreachSearch): ContactsListFilters {
@@ -35,7 +37,7 @@ export function OutreachView() {
   };
 
   return (
-    <>
+    <div className="route-page route-page--outreach">
       <PageHead
         eyebrow="Library"
         title="Contacts"
@@ -43,26 +45,37 @@ export function OutreachView() {
         actions={<DueFollowUpsBadge />}
       />
       <DueFollowUpsPanel />
-      <section className="card full">
+      <section className="card full data-surface">
         {message ? <div className="banner inline">{message}</div> : null}
-        <div className="toolbar">
-          <label className="field compact">
-            <span>Employer</span>
-            <input
-              value={search.employer}
-              onChange={(event) => setSearch({ employer: event.target.value })}
-            />
-          </label>
-          <label className="field compact">
-            <span>Job</span>
-            <input
-              value={search.jobId}
-              onChange={(event) => setSearch({ jobId: event.target.value })}
-            />
-          </label>
-          <ContactCreateButton />
-          <ContactImportButton />
-        </div>
+        <ToolRow
+          className="data-surface__tools"
+          primary={
+            <>
+              <label className="field compact tool-row__field">
+                <span>Employer</span>
+                <Input
+                  value={search.employer}
+                  placeholder="Filter by employer"
+                  onChange={(event) => setSearch({ employer: event.target.value })}
+                />
+              </label>
+              <label className="field compact tool-row__field">
+                <span>Job</span>
+                <Input
+                  value={search.jobId}
+                  placeholder="Filter by job id"
+                  onChange={(event) => setSearch({ jobId: event.target.value })}
+                />
+              </label>
+            </>
+          }
+          secondary={
+            <>
+              <ContactCreateButton />
+              <ContactImportButton />
+            </>
+          }
+        />
         <OutreachTable
           data={data ?? null}
           loading={isFetching}
@@ -76,6 +89,6 @@ export function OutreachView() {
         />
       </section>
       <Outlet />
-    </>
+    </div>
   );
 }

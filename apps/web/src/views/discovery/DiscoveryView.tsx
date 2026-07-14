@@ -6,7 +6,7 @@ import { PageHead } from "../../shared/ui/page-head.js";
 
 export function DiscoveryView() {
   return (
-    <>
+    <div className="route-page route-page--discovery">
       <PageHead eyebrow="Pipeline" title="Discovery" />
       <div className="discovery-view-stack">
         <TargetSearchSettingsPanel />
@@ -14,6 +14,6 @@ export function DiscoveryView() {
         <DiscoveryRuntimeSettingsPanel />
         <DiscoveryProductControls layout="tabs" />
       </div>
-    </>
+    </div>
   );
 }

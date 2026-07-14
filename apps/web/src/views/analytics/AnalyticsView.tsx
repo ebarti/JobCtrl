@@ -7,6 +7,14 @@ import {
   type AnalyticsSearch,
 } from "../../routes/-analytics.search.js";
 import { PageHead } from "../../shared/ui/page-head.js";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../shared/ui/select.js";
+import { ToggleGroup, ToggleGroupItem } from "../../shared/ui/toggle-group.js";
 import { DimensionBreakdownPanel } from "./DimensionBreakdownPanel.js";
 import { SmallSampleNotice } from "./SmallSampleNotice.js";
 
@@ -55,7 +63,7 @@ export function AnalyticsView() {
   };
 
   return (
-    <>
+    <div className="route-page route-page--analytics">
       <PageHead
         eyebrow="Overview"
         title="Outcome analytics"
@@ -64,33 +72,40 @@ export function AnalyticsView() {
       <section className="card full analytics-view">
         {message ? <div className="banner inline">{message}</div> : null}
         <div className="analytics-toolbar" role="group" aria-label="Outcome analytics dimension">
-          {DIMENSION_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={option.value === dimension ? "segmented active" : "segmented"}
-              aria-pressed={option.value === dimension}
-              onClick={() => setDimension(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
+          <ToggleGroup
+            type="single"
+            value={dimension}
+            className="analytics-dimension-control"
+            aria-label="Outcome analytics dimension"
+            onValueChange={(value) => {
+              if (isAnalyticsDimension(value)) setDimension(value);
+            }}
+          >
+            {DIMENSION_OPTIONS.map((option) => (
+              <ToggleGroupItem key={option.value} value={option.value}>
+                {option.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
           <label className="analytics-select-label">
             <span>Dimension</span>
-            <select
-              className="select"
+            <Select
               value={dimension}
-              onChange={(event) => {
-                const next = event.target.value;
-                if (isAnalyticsDimension(next)) setDimension(next);
+              onValueChange={(value) => {
+                if (isAnalyticsDimension(value)) setDimension(value);
               }}
             >
-              {DIMENSION_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger aria-label="Outcome analytics dimension">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DIMENSION_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
         </div>
         <div className="analytics-summary-strip">
@@ -142,6 +157,6 @@ export function AnalyticsView() {
           loading={analyticsQuery.isFetching}
         />
       </section>
-    </>
+    </div>
   );
 }

@@ -1,5 +1,7 @@
 import { WORKFLOW_RUN_STATUS_FILTERS, type WorkflowRunStatusFilter } from "@jobctrl/contracts";
-import type { ChangeEvent } from "react";
+
+import { SelectField } from "../../shared/ui/select-field.js";
+import { ToolRow } from "../../shared/ui/tool-row.js";
 
 export interface RunsFilterBarProps {
   status: WorkflowRunStatusFilter;
@@ -12,27 +14,21 @@ function statusLabel(value: WorkflowRunStatusFilter): string {
 }
 
 export function RunsFilterBar({ status, onStatusChange }: RunsFilterBarProps) {
-  const handleChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const next = event.target.value as WorkflowRunStatusFilter;
-    onStatusChange(next);
-  };
   return (
-    <div className="filter-bar">
-      <label className="field">
-        <span>Status</span>
-        <select
-          aria-label="Filter workflow runs by status"
-          className="select"
+    <ToolRow
+      className="data-surface__tools"
+      primary={
+        <SelectField
+          className="tool-row__field"
+          label="Status"
           value={status}
-          onChange={handleChange}
-        >
-          {WORKFLOW_RUN_STATUS_FILTERS.map((value) => (
-            <option key={value} value={value}>
-              {statusLabel(value)}
-            </option>
-          ))}
-        </select>
-      </label>
-    </div>
+          onValueChange={(value) => onStatusChange(value as WorkflowRunStatusFilter)}
+          options={WORKFLOW_RUN_STATUS_FILTERS.map((value) => ({
+            value,
+            label: statusLabel(value),
+          }))}
+        />
+      }
+    />
   );
 }

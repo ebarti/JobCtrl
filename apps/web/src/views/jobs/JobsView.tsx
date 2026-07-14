@@ -666,13 +666,13 @@ export function JobsView() {
   };
 
   return (
-    <>
+    <div className="route-page route-page--jobs">
       <PageHead
         eyebrow="Pipeline"
         title="Jobs"
         subtitle={data ? `${data.pagination.total} total` : "loading"}
       />
-      <section className="card full">
+      <section className="card full data-surface">
         {message ? <div className="banner inline">{message}</div> : null}
         <JobBulkActions
           search={search}
@@ -726,6 +726,6 @@ export function JobsView() {
         />
       </section>
       <Outlet />
-    </>
+    </div>
   );
 }

@@ -64,7 +64,9 @@ export function DisclosureSection({
             stroke={1.9}
           />
           <span className="disclosure-section__heading">
-            <span className="disclosure-section__title">{title}</span>
+            <span className="disclosure-section__title" role="heading" aria-level={2}>
+              {title}
+            </span>
             {description ? (
               <span className="disclosure-section__description">{description}</span>
             ) : null}
