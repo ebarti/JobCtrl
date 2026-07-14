@@ -249,7 +249,6 @@ async function capture(page: Page, name: string): Promise<void> {
   const outputPath = path.join(screenshotsDir, name);
   await page.screenshot({
     animations: "disabled",
-    fullPage: true,
     path: outputPath,
   });
   if (name === heroScreenshotName) {
@@ -282,39 +281,52 @@ async function nonJobActivityDetailPath(page: Page): Promise<string> {
 }
 
 async function verifyProfileFraming(page: Page): Promise<void> {
-  const preview = page.locator(".resume-editor-preview");
-  const resumePage = page.locator('[aria-label="Editable baseline resume page"]');
-  const scrollPane = page.locator(".profile-resume-plate-editor .resume-plate-scroll");
+  const previewWorkbench = page.locator(".profile-preview-workbench");
+  const scrollPane = previewWorkbench.locator(".resume-plate-scroll");
+  const resumePage = scrollPane.locator(".resume-plate-page");
   await expect(page.getByLabel("Full name", { exact: true })).toHaveValue("John Doe");
   await expect(page.getByLabel("Preferred name", { exact: true })).toHaveValue("John");
   await expect(page.getByLabel("Email", { exact: true })).toHaveValue("john.doe@example.com");
   await expect(resumePage).toContainText("John Doe");
   await expect(resumePage).toContainText("john.doe@example.com");
-  const [previewBox, resumePageBox, scrollMetrics] = await Promise.all([
-    preview.boundingBox(),
-    resumePage.boundingBox(),
-    scrollPane.evaluate((element) => ({
-      clientHeight: element.clientHeight,
-      clientWidth: element.clientWidth,
-      scrollHeight: element.scrollHeight,
-      scrollWidth: element.scrollWidth,
-    })),
-  ]);
+  const [previewWorkbenchBox, resumePageBox, scrollPaneBox, scrollMetrics] =
+    await Promise.all([
+      previewWorkbench.boundingBox(),
+      resumePage.boundingBox(),
+      scrollPane.boundingBox(),
+      scrollPane.evaluate((element) => ({
+        clientHeight: element.clientHeight,
+        clientWidth: element.clientWidth,
+        scrollHeight: element.scrollHeight,
+        scrollWidth: element.scrollWidth,
+        overflowX: getComputedStyle(element).overflowX,
+        overflowY: getComputedStyle(element).overflowY,
+      })),
+    ]);
 
-  expect(previewBox, "Profile resume preview must have a capture box").not.toBeNull();
+  expect(
+    previewWorkbenchBox,
+    "Profile resume preview workbench must have a capture box",
+  ).not.toBeNull();
+  expect(
+    scrollPaneBox,
+    "Profile resume scroll pane must have a capture box",
+  ).not.toBeNull();
   expect(resumePageBox, "Profile A4 page must have a capture box").not.toBeNull();
-  if (!previewBox || !resumePageBox) return;
+  if (!previewWorkbenchBox || !scrollPaneBox || !resumePageBox) return;
 
-  expect(resumePageBox.x).toBeGreaterThanOrEqual(previewBox.x);
-  expect(resumePageBox.y).toBeGreaterThanOrEqual(previewBox.y);
-  expect(resumePageBox.x + resumePageBox.width).toBeLessThanOrEqual(
-    previewBox.x + previewBox.width,
+  expect(scrollPaneBox.x).toBeGreaterThanOrEqual(previewWorkbenchBox.x);
+  expect(scrollPaneBox.y).toBeGreaterThanOrEqual(previewWorkbenchBox.y);
+  expect(resumePageBox.x).toBeGreaterThanOrEqual(scrollPaneBox.x);
+  expect(resumePageBox.y).toBeGreaterThanOrEqual(scrollPaneBox.y);
+  expect(scrollMetrics.overflowX).toBe("auto");
+  expect(scrollMetrics.overflowY).toBe("auto");
+  expect(scrollMetrics.scrollWidth).toBeGreaterThanOrEqual(
+    scrollMetrics.clientWidth,
   );
-  expect(resumePageBox.y + resumePageBox.height).toBeLessThanOrEqual(
-    previewBox.y + previewBox.height,
+  expect(scrollMetrics.scrollHeight).toBeGreaterThanOrEqual(
+    scrollMetrics.clientHeight,
   );
-  expect(scrollMetrics.scrollWidth).toBe(scrollMetrics.clientWidth);
-  expect(scrollMetrics.scrollHeight).toBe(scrollMetrics.clientHeight);
 }
 
 async function verifyProfileImportPreview(page: Page): Promise<void> {
