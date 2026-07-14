@@ -14,7 +14,7 @@ function auditTone(state: JobDetail["applyAudit"]["state"]): "ok" | "info" | "wa
 export function JobOverview({ detail }: JobOverviewProps) {
   const { applyAudit, job } = detail;
   return (
-    <div className="drawer-head">
+    <div className="job-overview">
       <ScoreBadge score={job.fitScore} />
       <span>
         <small>
@@ -22,7 +22,7 @@ export function JobOverview({ detail }: JobOverviewProps) {
           {job.postingSource ? ` · posting: ${job.postingSource}` : ""}
           {job.discoverySource ? ` · discovered via: ${job.discoverySource}` : ""}
         </small>
-        <h2>{job.title}</h2>
+        <h1>{job.title}</h1>
         <p>
           {job.location || "-"} · {job.salary || "-"}
         </p>

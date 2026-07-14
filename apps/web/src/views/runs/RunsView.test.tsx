@@ -15,7 +15,10 @@ import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { RunsView } from "./RunsView.js";
 
-function buildRouter(harness: ReturnType<typeof buildProviderHarness>) {
+function buildRouter(
+  harness: ReturnType<typeof buildProviderHarness>,
+  initialEntries: readonly string[] = ["/runs"],
+) {
   const rootRoute = createRootRoute({ component: () => <Outlet /> });
   const runsRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -26,11 +29,11 @@ function buildRouter(harness: ReturnType<typeof buildProviderHarness>) {
   const detailRoute = createRoute({
     getParentRoute: () => runsRoute,
     path: "/$runId",
-    component: () => null,
+    component: () => <h1>Workflow run detail route</h1>,
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([runsRoute.addChildren([detailRoute])]),
-    history: createMemoryHistory({ initialEntries: ["/runs"] }),
+    history: createMemoryHistory({ initialEntries: [...initialEntries] }),
   });
   return { router, queryClient: harness.queryClient, Wrapper: harness.Wrapper };
 }
@@ -90,5 +93,24 @@ describe("<RunsView>", () => {
     await waitFor(() =>
       expect(screen.getByText(/JobCtrl API request failed: 500/i)).toBeInTheDocument(),
     );
+  });
+
+  it("hides the parent list while a route-level run workspace is open", async () => {
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness, [
+      "/runs/run-pipeline-1?status=failed&page=2",
+    ]);
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Workflow run detail route",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Workflow runs" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Runs table")).not.toBeInTheDocument();
   });
 });

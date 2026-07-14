@@ -9,7 +9,7 @@ import {
   type SavedTableView,
   STAGE_STATES,
 } from "@jobctrl/contracts";
-import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
+import { Outlet, useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
 import type { UseMutationResult } from "@tanstack/react-query";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -241,6 +241,9 @@ function sameKeys(
 export function JobsView() {
   const search = useSearch({ from: "/jobs" });
   const navigate = useNavigate({ from: "/jobs" });
+  const showingDetail = useRouterState({
+    select: (state) => state.location.pathname !== "/jobs" && state.location.pathname !== "/jobs/",
+  });
 
   const { data, isFetching, error } = useJobsListQuery(jobsListInput(search));
   const deleteJobs = useDeleteJobsBulkMutation();
@@ -667,64 +670,68 @@ export function JobsView() {
 
   return (
     <div className="route-page route-page--jobs">
-      <PageHead
-        eyebrow="Pipeline"
-        title="Jobs"
-        subtitle={data ? `${data.pagination.total} total` : "loading"}
-      />
-      <section className="card full data-surface">
-        {message ? <div className="banner inline">{message}</div> : null}
-        <JobBulkActions
-          search={search}
-          selectedCount={selectedCount}
-          selectedJobKeys={allMatchingSelected ? [] : selectedKeys}
-          staleCount={staleKeysOnPage.length}
-          selectedStaleKeys={selectedStaleKeys}
-          hasItems={visiblePageKeys.length > 0}
-          hasAnyMatching={Boolean(data?.pagination.total)}
-          hasLocalFilters={hasLocalFilters}
-          loading={selectionMutationBusy}
-          retryLoading={retryFailedJobs.isPending}
-          pendingPreparationLoading={runPendingPreparation.isPending}
-          onSetDeleted={(deleted) => setSearch({ deleted, page: 1 })}
-          onSelectPage={selectPage}
-          onSelectAllMatching={selectAllMatching}
-          onClearSelection={clearSelection}
-          onPrimaryAction={mutatePrimarySelected}
-          onHideSelected={hideSelected}
-          onPermanentlyDeleteSelected={permanentlyDeleteSelected}
-          onRetryFailedSelected={retryFailedSelected}
-          onRetryAllFailed={retryAllFailed}
-          onRunPendingPreparation={continuePendingPreparation}
-          onResetStaleSuccess={clearSelection}
-          onMaintenanceSuccess={clearSelection}
-        />
-        <JobsTable
-          data={data ?? null}
-          loading={isFetching}
-          sorting={sorting}
-          onSortingChange={handleSortingChange}
-          rowSelection={rowSelection}
-          onRowSelectionChange={handleRowSelectionChange}
-          allMatchingSelected={allMatchingSelected}
-          page={search.page}
-          pageSize={search.pageSize}
-          onPageChange={(page) => setSearch({ page })}
-          onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
-          onOpenJob={openJob}
-          filters={tableFilters}
-          onFiltersChange={handleTableFiltersChange}
-          onVisiblePageRowsChange={handleVisiblePageRowsChange}
-          columnOrder={savedPresentation.columns.order}
-          hiddenColumnIds={savedPresentation.columns.hidden}
-          columnWidths={savedPresentation.columns.widths}
-          onColumnWidthsChange={handleColumnWidthsChange}
-          density={savedPresentation.density}
-          grouping={savedPresentation.grouping}
-          colorRules={savedPresentation.colorRules}
-          toolbarActions={renderSavedTableActions}
-        />
-      </section>
+      {!showingDetail ? (
+        <>
+          <PageHead
+            eyebrow="Pipeline"
+            title="Jobs"
+            subtitle={data ? `${data.pagination.total} total` : "loading"}
+          />
+          <section className="card full data-surface">
+            {message ? <div className="banner inline">{message}</div> : null}
+            <JobBulkActions
+              search={search}
+              selectedCount={selectedCount}
+              selectedJobKeys={allMatchingSelected ? [] : selectedKeys}
+              staleCount={staleKeysOnPage.length}
+              selectedStaleKeys={selectedStaleKeys}
+              hasItems={visiblePageKeys.length > 0}
+              hasAnyMatching={Boolean(data?.pagination.total)}
+              hasLocalFilters={hasLocalFilters}
+              loading={selectionMutationBusy}
+              retryLoading={retryFailedJobs.isPending}
+              pendingPreparationLoading={runPendingPreparation.isPending}
+              onSetDeleted={(deleted) => setSearch({ deleted, page: 1 })}
+              onSelectPage={selectPage}
+              onSelectAllMatching={selectAllMatching}
+              onClearSelection={clearSelection}
+              onPrimaryAction={mutatePrimarySelected}
+              onHideSelected={hideSelected}
+              onPermanentlyDeleteSelected={permanentlyDeleteSelected}
+              onRetryFailedSelected={retryFailedSelected}
+              onRetryAllFailed={retryAllFailed}
+              onRunPendingPreparation={continuePendingPreparation}
+              onResetStaleSuccess={clearSelection}
+              onMaintenanceSuccess={clearSelection}
+            />
+            <JobsTable
+              data={data ?? null}
+              loading={isFetching}
+              sorting={sorting}
+              onSortingChange={handleSortingChange}
+              rowSelection={rowSelection}
+              onRowSelectionChange={handleRowSelectionChange}
+              allMatchingSelected={allMatchingSelected}
+              page={search.page}
+              pageSize={search.pageSize}
+              onPageChange={(page) => setSearch({ page })}
+              onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
+              onOpenJob={openJob}
+              filters={tableFilters}
+              onFiltersChange={handleTableFiltersChange}
+              onVisiblePageRowsChange={handleVisiblePageRowsChange}
+              columnOrder={savedPresentation.columns.order}
+              hiddenColumnIds={savedPresentation.columns.hidden}
+              columnWidths={savedPresentation.columns.widths}
+              onColumnWidthsChange={handleColumnWidthsChange}
+              density={savedPresentation.density}
+              grouping={savedPresentation.grouping}
+              colorRules={savedPresentation.colorRules}
+              toolbarActions={renderSavedTableActions}
+            />
+          </section>
+        </>
+      ) : null}
       <Outlet />
     </div>
   );

@@ -1,4 +1,4 @@
-import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
+import { Outlet, useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
 
 import { ContactCreateButton } from "../../contexts/outreach/components/ContactCreateButton.js";
 import { ContactImportButton } from "../../contexts/outreach/components/ContactImportButton.js";
@@ -28,6 +28,10 @@ function listFilters(search: OutreachSearch): ContactsListFilters {
 export function OutreachView() {
   const search = useSearch({ from: "/outreach" });
   const navigate = useNavigate({ from: "/outreach" });
+  const showingDetail = useRouterState({
+    select: (state) =>
+      state.location.pathname !== "/outreach" && state.location.pathname !== "/outreach/",
+  });
 
   const { data, isFetching, error } = useContactsListQuery(listFilters(search));
   const message = error instanceof Error ? error.message : null;
@@ -38,56 +42,60 @@ export function OutreachView() {
 
   return (
     <div className="route-page route-page--outreach">
-      <PageHead
-        eyebrow="Library"
-        title="Contacts"
-        subtitle={data ? `${data.items.length} shown` : "loading"}
-        actions={<DueFollowUpsBadge />}
-      />
-      <DueFollowUpsPanel />
-      <section className="card full data-surface">
-        {message ? <div className="banner inline">{message}</div> : null}
-        <ToolRow
-          className="data-surface__tools"
-          primary={
-            <>
-              <label className="field compact tool-row__field">
-                <span>Employer</span>
-                <Input
-                  value={search.employer}
-                  placeholder="Filter by employer"
-                  onChange={(event) => setSearch({ employer: event.target.value })}
-                />
-              </label>
-              <label className="field compact tool-row__field">
-                <span>Job</span>
-                <Input
-                  value={search.jobId}
-                  placeholder="Filter by job id"
-                  onChange={(event) => setSearch({ jobId: event.target.value })}
-                />
-              </label>
-            </>
-          }
-          secondary={
-            <>
-              <ContactCreateButton />
-              <ContactImportButton />
-            </>
-          }
-        />
-        <OutreachTable
-          data={data ?? null}
-          loading={isFetching}
-          onOpenContact={(contactId) =>
-            void navigate({
-              to: "/outreach/$contactId",
-              params: { contactId },
-              search: (prev: OutreachSearch) => prev,
-            })
-          }
-        />
-      </section>
+      {!showingDetail ? (
+        <>
+          <PageHead
+            eyebrow="Library"
+            title="Contacts"
+            subtitle={data ? `${data.items.length} shown` : "loading"}
+            actions={<DueFollowUpsBadge />}
+          />
+          <DueFollowUpsPanel />
+          <section className="card full data-surface">
+            {message ? <div className="banner inline">{message}</div> : null}
+            <ToolRow
+              className="data-surface__tools"
+              primary={
+                <>
+                  <label className="field compact tool-row__field">
+                    <span>Employer</span>
+                    <Input
+                      value={search.employer}
+                      placeholder="Filter by employer"
+                      onChange={(event) => setSearch({ employer: event.target.value })}
+                    />
+                  </label>
+                  <label className="field compact tool-row__field">
+                    <span>Job</span>
+                    <Input
+                      value={search.jobId}
+                      placeholder="Filter by job id"
+                      onChange={(event) => setSearch({ jobId: event.target.value })}
+                    />
+                  </label>
+                </>
+              }
+              secondary={
+                <>
+                  <ContactCreateButton />
+                  <ContactImportButton />
+                </>
+              }
+            />
+            <OutreachTable
+              data={data ?? null}
+              loading={isFetching}
+              onOpenContact={(contactId) =>
+                void navigate({
+                  to: "/outreach/$contactId",
+                  params: { contactId },
+                  search: (prev: OutreachSearch) => prev,
+                })
+              }
+            />
+          </section>
+        </>
+      ) : null}
       <Outlet />
     </div>
   );

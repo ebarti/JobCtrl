@@ -2,7 +2,12 @@ import {
   WORKFLOW_RUN_SORT_FIELDS,
   type WorkflowRunSortField,
 } from "@jobctrl/contracts";
-import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
+import {
+  Outlet,
+  useNavigate,
+  useRouterState,
+  useSearch,
+} from "@tanstack/react-router";
 import type { SortingState } from "@tanstack/react-table";
 import { useMemo } from "react";
 
@@ -38,6 +43,10 @@ function isWorkflowRunSortField(value: string): value is WorkflowRunSortField {
 export function RunsView() {
   const search = useSearch({ from: "/runs" });
   const navigate = useNavigate({ from: "/runs" });
+  const showingDetail = useRouterState({
+    select: (state) =>
+      state.location.pathname !== "/runs" && state.location.pathname !== "/runs/",
+  });
   const { data, isFetching, error } = useWorkflowRunsListQuery(
     workflowRunsInput(search),
   );
@@ -66,34 +75,42 @@ export function RunsView() {
   // there. The table's `onRowActivate` already supplies the workflow id
   // (which equals `runId` for apply runs).
   const openRun = (workflowId: string) => {
-    void navigate({ to: "/runs/$runId", params: { runId: workflowId } });
+    void navigate({
+      to: "/runs/$runId",
+      params: { runId: workflowId },
+      search: (prev: RunsSearch) => prev,
+    });
   };
 
   return (
     <div className="route-page route-page--runs">
-      <PageHead
-        eyebrow="Activity"
-        title="Workflow runs"
-        subtitle={data ? `${data.pagination.total} total` : "loading"}
-      />
-      <section className="card full data-surface">
-        {message ? <div className="banner inline">{message}</div> : null}
-        <RunsFilterBar
-          status={search.status}
-          onStatusChange={(status) => setSearch({ status, page: 1 })}
-        />
-        <RunsTable
-          data={data ?? null}
-          loading={isFetching}
-          sorting={sorting}
-          onSortingChange={handleSortingChange}
-          page={search.page}
-          pageSize={search.pageSize}
-          onPageChange={(page) => setSearch({ page })}
-          onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
-          onOpenRun={openRun}
-        />
-      </section>
+      {!showingDetail ? (
+        <>
+          <PageHead
+            eyebrow="Activity"
+            title="Workflow runs"
+            subtitle={data ? `${data.pagination.total} total` : "loading"}
+          />
+          <section className="card full data-surface">
+            {message ? <div className="banner inline">{message}</div> : null}
+            <RunsFilterBar
+              status={search.status}
+              onStatusChange={(status) => setSearch({ status, page: 1 })}
+            />
+            <RunsTable
+              data={data ?? null}
+              loading={isFetching}
+              sorting={sorting}
+              onSortingChange={handleSortingChange}
+              page={search.page}
+              pageSize={search.pageSize}
+              onPageChange={(page) => setSearch({ page })}
+              onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
+              onOpenRun={openRun}
+            />
+          </section>
+        </>
+      ) : null}
       <Outlet />
     </div>
   );

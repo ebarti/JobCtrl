@@ -10,7 +10,7 @@ describe("<ActivityDetailDrawer> a11y", () => {
     const view = renderWithProviders(<ActivityDetailDrawer eventId="evt-1" />, {
       withRouter: true,
     });
-    await waitFor(() => expect(view.container.querySelector("h2")).not.toBeNull());
+    await waitFor(() => expect(view.container.querySelector("h1")).not.toBeNull());
     const results = await axe(view.container);
     expect(results).toHaveNoViolations();
   });

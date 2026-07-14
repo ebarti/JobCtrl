@@ -13,6 +13,7 @@ import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { applyReviewKeys } from "../../contexts/operations/applyReviewKeys.js";
@@ -28,12 +29,21 @@ import {
   sampleDraftResumeArtifact,
   sampleResumeTemplateListResponse,
 } from "../../test/fixtures/projections.js";
-import { buildProviderHarness, createTestQueryClient, renderWithProviders } from "../../test/render.js";
+import {
+  buildProviderHarness,
+  createTestQueryClient,
+  renderWithProviders as renderWithProviderHarness,
+  type RenderWithProvidersOptions,
+} from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { ApplyReviewView } from "./ApplyReviewView.js";
 
 let htmlPreviewResumeText = sampleApplyReviewQueue.items[0]!.materialsPreview.resumeText;
 let htmlPreviewOverride: string | null = null;
+
+function renderWithProviders(ui: ReactElement, opts: RenderWithProvidersOptions = {}) {
+  return renderWithProviderHarness(ui, { ...opts, withRouter: true });
+}
 
 const TEST_RESUME_SECTION_HEADINGS = new Set([
   "core skills",
@@ -594,22 +604,6 @@ vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
   },
 }));
 
-vi.mock("../jobs/JobDetailDrawer.js", () => ({
-  JobDetailDrawer: ({
-    jobId,
-    onClose,
-  }: {
-    readonly jobId: string;
-    readonly onClose: () => void;
-  }) => (
-    <div aria-label={`Job details for ${jobId}`} role="dialog">
-      <button type="button" onClick={onClose}>
-        close details
-      </button>
-    </div>
-  ),
-}));
-
 const sampleTailoringExplanation: ArtifactTailoringExplanation = {
   targetSeniority: "principal",
   claimMode: "evidence_reframing",
@@ -852,6 +846,15 @@ describe("<ApplyReviewView>", () => {
     renderWithProviders(<ApplyReviewView />);
 
     expect(await screen.findByText("Principal Platform Engineer")).toBeInTheDocument();
+    const routeWorkspace = screen.getByRole("article", { name: "Application review workspace" });
+    expect(
+      within(routeWorkspace).getByRole("complementary", { name: "Application review queue" }),
+    ).toBeInTheDocument();
+    expect(
+      within(routeWorkspace).getByRole("region", {
+        name: "Selected application review for Principal Platform Engineer",
+      }),
+    ).toBeInTheDocument();
     const selectedHeader = document.querySelector(".apply-review-selected-head");
     expect(selectedHeader).toBeInstanceOf(HTMLElement);
     const header = within(selectedHeader as HTMLElement);
@@ -863,8 +866,12 @@ describe("<ApplyReviewView>", () => {
     expect(header.getByRole("region", { name: "Compensation" })).toBeInTheDocument();
     expect(header.getByLabelText("Resume template")).toBeInTheDocument();
     expect(header.queryByRole("button", { name: /Refresh resume materials/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Requirements and original post" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Tailored resume and cover" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("article", { name: "Requirements and original post" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("article", { name: "Tailored resume and cover" }),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("materials ready").length).toBeGreaterThan(0);
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
     expect(screen.getByText("public company scale")).toBeInTheDocument();
@@ -944,11 +951,13 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText(/7 samples/i)).toBeInTheDocument();
     expect(screen.queryByText(/dry_run/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Globex needs a principal engineer/i)).toBeInTheDocument();
-    const detailButton = screen.getByRole("button", {
+    const detailLink = screen.getByRole("link", {
       name: /Open job detail for Principal Platform Engineer/i,
     });
-    expect(detailButton).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Open job detail/i })).not.toBeInTheDocument();
+    expect(detailLink).toHaveAttribute(
+      "href",
+      `/jobs/${sampleApplyReviewQueue.items[0]!.jobKey}`,
+    );
     expect(screen.queryByRole("img", { name: "Tailored resume preview" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
@@ -2526,29 +2535,14 @@ describe("<ApplyReviewView>", () => {
     );
   });
 
-  it("opens job detail as an in-place overlay", async () => {
-    const user = userEvent.setup();
+  it("links to the route-level job detail workspace", async () => {
     renderWithProviders(<ApplyReviewView />);
 
-    await user.click(
-      await screen.findByRole("button", {
+    expect(
+      await screen.findByRole("link", {
         name: /Open job detail for Principal Platform Engineer/i,
       }),
-    );
-
-    expect(
-      screen.getByRole("dialog", {
-        name: `Job details for ${sampleApplyReviewQueue.items[0]!.jobKey}`,
-      }),
-    ).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "close details" }));
-
-    expect(
-      screen.queryByRole("dialog", {
-        name: `Job details for ${sampleApplyReviewQueue.items[0]!.jobKey}`,
-      }),
-    ).not.toBeInTheDocument();
+    ).toHaveAttribute("href", `/jobs/${sampleApplyReviewQueue.items[0]!.jobKey}`);
   });
 
   it("renders non-pending review decisions as user-facing copy", async () => {

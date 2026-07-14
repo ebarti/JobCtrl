@@ -8,6 +8,7 @@ import type {
   ResumeReviewDraftRenderResponse,
 } from "@jobctrl/contracts";
 import { IconExternalLink } from "@tabler/icons-react";
+import { Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
@@ -36,11 +37,13 @@ import { useResumeReviewDraftQuery } from "../../contexts/operations/hooks/useRe
 import { useResumeTemplatesQuery } from "../../contexts/profile/hooks/useResumeTemplatesQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
+import { Button } from "../../shared/ui/button.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../shared/ui/PdfPreviewViewer.js";
-import { JobDetailDrawer } from "../jobs/JobDetailDrawer.js";
+import { RouteWorkspace } from "../../shared/ui/route-workspace.js";
+import { ToolRow } from "../../shared/ui/tool-row.js";
 
 type MaterialStatus = {
   readonly kind: ApplyReviewQueueItem["applyAudit"]["state"];
@@ -417,35 +420,36 @@ function ApplyReviewQueue({
   readonly onSelect: (jobKey: string) => void;
 }) {
   return (
-    <aside className="apply-review-queue" aria-label="Application review queue">
-      <div className="apply-review-queue-head">
+    <div className="apply-review-queue">
+      <header className="apply-review-queue-head">
         <span className="eyebrow">Queue</span>
         <b>{items.length} human decision{items.length === 1 ? "" : "s"}</b>
-      </div>
-      <div className="apply-review-queue-list">
+      </header>
+      <ul className="apply-review-queue-list">
         {items.map((item) => {
           const status = materialStatus(item);
           return (
-            <button
-              key={item.jobKey}
-              type="button"
-              className={`apply-review-queue-item${item.jobKey === selected.jobKey ? " selected" : ""}`}
-              aria-pressed={item.jobKey === selected.jobKey}
-              onClick={() => onSelect(item.jobKey)}
-            >
-              <span className="apply-review-queue-title">
-                <span className="tag ok">{item.fitScore ?? "-"}</span>
-                <b>{item.title}</b>
-              </span>
-              <span className="meta">
-                {item.company} · {item.source}
-              </span>
-              <span className={`tag ${status.tone}`}>{status.label}</span>
-            </button>
+            <li key={item.jobKey}>
+              <button
+                type="button"
+                className={`apply-review-queue-item${item.jobKey === selected.jobKey ? " selected" : ""}`}
+                aria-pressed={item.jobKey === selected.jobKey}
+                onClick={() => onSelect(item.jobKey)}
+              >
+                <span className="apply-review-queue-title">
+                  <span className="apply-review-queue-score">{item.fitScore ?? "-"}</span>
+                  <b>{item.title}</b>
+                </span>
+                <span className="meta">
+                  {item.company} · {item.source}
+                </span>
+                <span className={`tag ${status.tone}`}>{status.label}</span>
+              </button>
+            </li>
           );
         })}
-      </div>
-    </aside>
+      </ul>
+    </div>
   );
 }
 
@@ -1106,7 +1110,6 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const setJobTemplate = useSetJobResumeTemplateMutation();
   const ensureCurrentMaterials = useEnsureCurrentResumeMaterialsMutation();
   const prepareApprovalRef = useRef<(() => Promise<boolean>) | null>(null);
-  const [detailJobKey, setDetailJobKey] = useState<string | null>(null);
   const [comparisonDraft, setComparisonDraft] = useState<ArtifactComparisonDraftTarget | null>(null);
   const [draftGate, setDraftGate] = useState<ResumeDraftGateState>({
     draftId: null,
@@ -1141,7 +1144,6 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
     );
   }, []);
   useEffect(() => {
-    setDetailJobKey(null);
     setComparisonDraft(null);
     setDraftGate({
       draftId: null,
@@ -1179,68 +1181,80 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   );
 
   return (
-    <main className="apply-review-selected">
-      <header className="apply-review-selected-head">
-        <div
-          className="apply-review-selected-context"
-          aria-label={`Review controls and material facts for ${item.title}`}
-        >
-          {reviewState ? <span className="tag muted">Current decision: {reviewState}.</span> : null}
-          <CompensationSummaryStrip
-            summary={item.compensationSummary}
-            label="Compensation"
-          />
-          <ApplyAuditFacts item={item} />
-          <JobResumeTemplateSelect
-            current={item.materialsPreview.resumeTemplate}
-            disabled={templatesQuery.isLoading || setJobTemplate.isPending || ensureCurrentMaterials.isPending}
-            onTemplateChange={handleTemplateChange}
-            refreshing={setJobTemplate.isPending || ensureCurrentMaterials.isPending}
-            templates={templatesQuery.data?.templates ?? []}
-          />
-          {templateMutationError ? <span className="tag warn">{templateMutationError}</span> : null}
-        </div>
-        <div className="apply-review-selected-actions">
-          <button
-            aria-label={`Open job detail for ${item.title}`}
-            className="tab"
-            type="button"
-            onClick={() => setDetailJobKey(item.jobKey)}
-          >
-            <IconExternalLink size={14} aria-hidden="true" />
-            open job detail
-          </button>
-          {activeRun ? (
-            <CancelApplyButton
-              jobId={item.jobKey}
-              runId={activeRun.runId}
-              className="tab danger-action"
-              label="stop apply"
-              ariaLabel={`Stop apply run for ${item.title}`}
-            />
-          ) : null}
-          <ApplyReviewDecisionControls
-            item={item}
-            approvalDisabledReason={draftGate.reason}
-            approvalNotice={draftGate.notice}
-            approvalPreparing={draftGate.preparing}
-            onPrepareApproval={draftGate.notice ? handlePrepareApproval : null}
-          />
-        </div>
+    <div className="apply-review-selected">
+      <header className="apply-review-selected-toolbar">
+        <ToolRow
+          className="apply-review-selected-head data-surface__tools"
+          primary={
+            <div
+              className="apply-review-selected-context"
+              aria-label={`Review controls and material facts for ${item.title}`}
+            >
+              {reviewState ? (
+                <span className="tag muted">Current decision: {reviewState}.</span>
+              ) : null}
+              <CompensationSummaryStrip
+                summary={item.compensationSummary}
+                label="Compensation"
+              />
+              <ApplyAuditFacts item={item} />
+              <JobResumeTemplateSelect
+                current={item.materialsPreview.resumeTemplate}
+                disabled={
+                  templatesQuery.isLoading ||
+                  setJobTemplate.isPending ||
+                  ensureCurrentMaterials.isPending
+                }
+                onTemplateChange={handleTemplateChange}
+                refreshing={setJobTemplate.isPending || ensureCurrentMaterials.isPending}
+                templates={templatesQuery.data?.templates ?? []}
+              />
+              {templateMutationError ? (
+                <span className="tag warn">{templateMutationError}</span>
+              ) : null}
+            </div>
+          }
+          secondary={
+            <div className="apply-review-selected-actions">
+              <Button asChild size="sm" variant="outline">
+                <Link
+                  aria-label={`Open job detail for ${item.title}`}
+                  params={{ jobId: item.jobKey }}
+                  to="/jobs/$jobId"
+                >
+                  <IconExternalLink size={14} aria-hidden="true" />
+                  open job detail
+                </Link>
+              </Button>
+              {activeRun ? (
+                <CancelApplyButton
+                  jobId={item.jobKey}
+                  runId={activeRun.runId}
+                  className="tab danger-action"
+                  label="stop apply"
+                  ariaLabel={`Stop apply run for ${item.title}`}
+                />
+              ) : null}
+              <ApplyReviewDecisionControls
+                item={item}
+                approvalDisabledReason={draftGate.reason}
+                approvalNotice={draftGate.notice}
+                approvalPreparing={draftGate.preparing}
+                onPrepareApproval={draftGate.notice ? handlePrepareApproval : null}
+              />
+            </div>
+          }
+        />
       </header>
 
-      {detailJobKey ? (
-        <JobDetailDrawer
-          jobId={detailJobKey}
-          onClose={() => setDetailJobKey(null)}
-        />
-      ) : null}
-
       <section className="apply-review-workspace" aria-label={`Review evidence for ${item.title}`}>
-        <article className="apply-review-pane">
+        <article
+          className="apply-review-pane apply-review-pane--evidence"
+          aria-labelledby="apply-review-evidence-heading"
+        >
           <header>
             <span className="eyebrow">Job Position</span>
-            <h2>Requirements and original post</h2>
+            <h2 id="apply-review-evidence-heading">Requirements and original post</h2>
           </header>
           <div className="apply-review-pane-scroll">
             <section className="apply-review-preview-block">
@@ -1263,10 +1277,13 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           </div>
         </article>
 
-        <article className="apply-review-pane">
+        <article
+          className="apply-review-pane apply-review-pane--materials"
+          aria-labelledby="apply-review-materials-heading"
+        >
           <header>
             <span className="eyebrow">Application Materials</span>
-            <h2>Tailored resume and cover</h2>
+            <h2 id="apply-review-materials-heading">Tailored resume and cover</h2>
           </header>
           <div className="apply-review-pane-scroll apply-review-materials-scroll">
             {resumeAuditArtifactId ? <ArtifactGroundingRiskPanel artifactId={resumeAuditArtifactId} /> : null}
@@ -1293,7 +1310,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           </div>
         </article>
       </section>
-    </main>
+    </div>
   );
 }
 
@@ -1338,26 +1355,33 @@ export function ApplyReviewView({
   const repairCount = statuses.filter((status) => status.kind === "repair" || status.kind === "blocked").length;
 
   return (
-    <div className="apply-review-layout">
+    <div className="route-page route-page--apply-review apply-review-layout">
       <PageHead
         eyebrow="Pipeline"
         title="Application review"
         subtitle={`${readyCount} ready · ${preparingCount} preparing · ${repairCount} need repair`}
       />
-      <section className="card full">
-        {queueError ? <div className="banner inline">{queueError}</div> : null}
-        {queue.isFetching && !queue.data ? <Empty title="Loading review queue." /> : null}
-        {queue.data && selected ? (
-          <div className="apply-review-shell">
+      {queueError ? <div className="banner inline">{queueError}</div> : null}
+      {queue.isFetching && !queue.data ? <Empty title="Loading review queue." /> : null}
+      {queue.data && selected ? (
+        <RouteWorkspace
+          aria-label="Application review workspace"
+          className="apply-review-workspace-shell"
+          contentLabel={`Selected application review for ${selected.title}`}
+          navigationLabel="Application review queue"
+          navigation={
             <ApplyReviewQueue items={items} selected={selected} onSelect={handleSelectJob} />
-            <SelectedReview item={selected} />
-          </div>
-        ) : null}
-        {queue.data && targetJobKey && !selected ? (
-          <Empty title="This job is not in the application review queue." />
-        ) : null}
-        {queue.data && !targetJobKey && !items.length ? <Empty title="No application review items." /> : null}
-      </section>
+          }
+        >
+          <SelectedReview item={selected} />
+        </RouteWorkspace>
+      ) : null}
+      {queue.data && targetJobKey && !selected ? (
+        <Empty title="This job is not in the application review queue." />
+      ) : null}
+      {queue.data && !targetJobKey && !items.length ? (
+        <Empty title="No application review items." />
+      ) : null}
     </div>
   );
 }

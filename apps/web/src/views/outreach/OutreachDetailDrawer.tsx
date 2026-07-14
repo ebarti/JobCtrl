@@ -1,4 +1,5 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
+import { IconArrowLeft } from "@tabler/icons-react";
 
 import { ContactDeleteButton } from "../../contexts/outreach/components/ContactDeleteButton.js";
 import { ContactEditButton } from "../../contexts/outreach/components/ContactEditButton.js";
@@ -6,10 +7,10 @@ import { ContactProvenanceList } from "../../contexts/outreach/components/Contac
 import { ContactRoleBadge } from "../../contexts/outreach/components/ContactRoleBadge.js";
 import { OutreachThreadPanel } from "../../contexts/outreach/components/OutreachThreadPanel.js";
 import { useContactDetailQuery } from "../../contexts/outreach/hooks/useContactDetailQuery.js";
-import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
-import { DetailDrawerBackdrop } from "../../shared/ui/detail-drawer-backdrop.js";
+import { Button, buttonVariants } from "../../shared/ui/button.js";
 import { Empty } from "../../shared/ui/empty.js";
+import { RouteWorkspace } from "../../shared/ui/route-workspace.js";
 import { Section } from "../../shared/ui/section.js";
 
 export interface OutreachDetailDrawerProps {
@@ -25,60 +26,67 @@ function detailErrorTitle(error: unknown): string {
 }
 
 export function OutreachDetailDrawer({ contactId, onClose }: OutreachDetailDrawerProps) {
-  useEscapeKey(true, onClose);
-
   const { data, error } = useContactDetailQuery(contactId);
   const errorMessage = detailErrorTitle(error);
   const contact = data?.contact;
 
   return (
-    <DetailDrawerBackdrop onDismiss={onClose}>
-      <div
-        className="drawer detail-drawer contact-detail-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Contact details"
-      >
-        <button
-          aria-label="Close contact details"
-          className="drawer-close"
-          type="button"
-          onClick={onClose}
-        >
-          x
-        </button>
-        {errorMessage && !contact ? <Empty title={errorMessage} /> : null}
-        {!contact && !errorMessage ? <Empty title="Loading contact." /> : null}
-        {contact ? (
-          <>
-            <div className="drawer-head">
+    <div className="route-page route-page--contact-detail" aria-label="Contact details">
+      {errorMessage && !contact ? <Empty title={errorMessage} /> : null}
+      {!contact && !errorMessage ? <Empty title="Loading contact." /> : null}
+      {contact ? (
+        <RouteWorkspace
+          aria-label="Contact details"
+          className="contact-detail-workspace"
+          contentLabel="Outreach thread"
+          inspectorLabel="Contact facts and provenance"
+          header={
+            <div className="contact-detail-workspace__header">
+              <Button
+                aria-label="Back to contacts"
+                className="workspace-back"
+                size="sm"
+                type="button"
+                variant="ghost"
+                onClick={onClose}
+              >
+                <IconArrowLeft aria-hidden="true" size={16} stroke={1.9} />
+                Contacts
+              </Button>
               <span>
                 <ContactRoleBadge role={contact.role} />
               </span>
-              <span>
+              <div className="contact-detail-workspace__title">
                 <small>{contact.employer ?? "No employer"}</small>
-                <h2>{contact.displayName}</h2>
+                <h1>{contact.displayName}</h1>
                 <p>
                   {contact.jobId ? `Linked job ${contact.jobId}` : "Not linked to a job"} · updated{" "}
                   {formatDateTime(contact.updatedAt)}
                 </p>
-              </span>
+              </div>
+              <div className="contact-detail-actions">
+                <ContactEditButton
+                  contact={contact}
+                  className={buttonVariants({ size: "sm", variant: "outline" })}
+                />
+                <ContactDeleteButton
+                  className={buttonVariants({ size: "sm", variant: "destructive" })}
+                  contactId={contact.contactId}
+                  displayName={contact.displayName}
+                  onDeleted={onClose}
+                />
+              </div>
             </div>
-            <div className="contact-detail-actions">
-              <ContactEditButton contact={contact} />
-              <ContactDeleteButton
-                contactId={contact.contactId}
-                displayName={contact.displayName}
-                onDeleted={onClose}
-              />
-            </div>
+          }
+          inspector={
             <Section title="Facts and provenance">
               <ContactProvenanceList attributes={contact.attributes} />
             </Section>
-            <OutreachThreadPanel contactId={contact.contactId} />
-          </>
-        ) : null}
-      </div>
-    </DetailDrawerBackdrop>
+          }
+        >
+          <OutreachThreadPanel contactId={contact.contactId} />
+        </RouteWorkspace>
+      ) : null}
+    </div>
   );
 }

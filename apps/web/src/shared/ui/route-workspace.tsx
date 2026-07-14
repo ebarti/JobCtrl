@@ -26,7 +26,11 @@ export function RouteWorkspace({
   return (
     <article className={cn("route-workspace", className)} {...props}>
       {header ? <header className="route-workspace__header">{header}</header> : null}
-      <div className="route-workspace__grid">
+      <div
+        className="route-workspace__grid"
+        data-has-inspector={Boolean(inspector)}
+        data-has-navigation={Boolean(navigation)}
+      >
         {navigation ? (
           <aside className="route-workspace__navigation" aria-label={navigationLabel}>
             {navigation}

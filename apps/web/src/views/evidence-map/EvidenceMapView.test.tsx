@@ -68,6 +68,18 @@ describe("<EvidenceMapView>", () => {
     expect(
       await screen.findByRole("heading", { name: "Career evidence map" }),
     ).toBeInTheDocument();
+    const workspace = screen.getByRole("article", { name: "Career evidence workspace" });
+    expect(
+      within(workspace).getByRole("complementary", { name: "Evidence library" }),
+    ).toBeInTheDocument();
+    expect(
+      within(workspace).getByRole("region", { name: "Selected evidence detail" }),
+    ).toBeInTheDocument();
+    expect(
+      within(workspace).getByRole("complementary", {
+        name: "Evidence gaps and reusable stories",
+      }),
+    ).toBeInTheDocument();
     expect(
       await screen.findAllByText("Reduced incident response time through platform automation"),
     ).not.toHaveLength(0);

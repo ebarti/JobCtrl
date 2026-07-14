@@ -12,6 +12,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -95,7 +96,7 @@ function renderArtifactRoute(
   });
 
   render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
-  return { artifactPreviewPdfUrl };
+  return { artifactPreviewPdfUrl, router };
 }
 
 describe("<ArtifactDetailPanel>", () => {
@@ -150,6 +151,22 @@ describe("<ArtifactDetailPanel>", () => {
       "artifact-preview",
       expect.stringContaining("1234"),
     );
+  });
+
+  it("renders as a route workspace and returns to the artifacts list", async () => {
+    const user = userEvent.setup();
+    const { router } = renderArtifactRoute(
+      <ArtifactDetailPanel artifactId="artifact-preview" />,
+    );
+
+    expect(
+      await screen.findByRole("article", { name: "Artifact details" }),
+    ).toHaveClass("route-workspace", "artifact-detail-workspace");
+    expect(screen.queryByRole("dialog", { name: "Artifact details" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Back to artifacts" }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/artifacts"));
   });
 
   it("marks suppressed artifacts as historical audit material", async () => {
@@ -457,6 +474,7 @@ describe("<ArtifactDetailPanel>", () => {
   });
 
   it("offers same-job same-type artifacts for comparison", async () => {
+    const user = userEvent.setup();
     renderArtifactRoute(
       <ArtifactDetailPanel artifactId="artifact-preview" />,
       "approved",
@@ -474,7 +492,9 @@ describe("<ArtifactDetailPanel>", () => {
     );
 
     expect(await screen.findByText("Artifact comparison")).toBeInTheDocument();
-    expect(await screen.findByLabelText("Compare with")).toHaveValue("artifact-template-b");
+    const comparisonPicker = await screen.findByRole("combobox", { name: "Compare with" });
+    expect(comparisonPicker).toHaveTextContent(/candidate/i);
+    await user.click(comparisonPicker);
     expect(screen.getByRole("option", { name: /candidate/ })).toBeInTheDocument();
   });
 });

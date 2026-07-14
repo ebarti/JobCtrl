@@ -46,7 +46,11 @@ describe("<JobDetailDrawer> a11y", () => {
       }),
     });
     const view = render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
-    await waitFor(() => expect(view.container.querySelector("[role='dialog'].drawer")).not.toBeNull());
+    await waitFor(() =>
+      expect(
+        view.container.querySelector("article.route-workspace[aria-label='Job details']"),
+      ).not.toBeNull(),
+    );
     const results = await axe(view.container);
     expect(results).toHaveNoViolations();
   });

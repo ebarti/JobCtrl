@@ -1,5 +1,5 @@
 import type { ArtifactSortField } from "@jobctrl/contracts";
-import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
+import { Outlet, useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
 
@@ -34,6 +34,10 @@ function artifactsListInput(search: ArtifactsSearch) {
 export function ArtifactsView() {
   const search = useSearch({ from: "/artifacts" });
   const navigate = useNavigate({ from: "/artifacts" });
+  const showingDetail = useRouterState({
+    select: (state) =>
+      state.location.pathname !== "/artifacts" && state.location.pathname !== "/artifacts/",
+  });
 
   const { data, isFetching, error } = useArtifactsListQuery(artifactsListInput(search));
   const message = error instanceof Error ? error.message : null;
@@ -67,30 +71,34 @@ export function ArtifactsView() {
 
   return (
     <div className="route-page route-page--artifacts">
-      <PageHead
-        eyebrow="Library"
-        title="Artifacts"
-        subtitle={data ? `${data.pagination.total} total` : "loading"}
-      />
-      <section className="card full data-surface">
-        {message ? <div className="banner inline">{message}</div> : null}
-        <ArtifactFilterBar search={search} />
-        <ArtifactsTable
-          data={data ?? null}
-          loading={isFetching}
-          sorting={sorting}
-          onSortingChange={handleSortingChange}
-          rowSelection={rowSelection}
-          onRowSelectionChange={setRowSelection}
-          page={search.page}
-          pageSize={search.pageSize}
-          onPageChange={(page) => setSearch({ page })}
-          onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
-          onOpenArtifact={(artifactId) =>
-            void navigate({ to: "/artifacts/$artifactId", params: { artifactId } })
-          }
-        />
-      </section>
+      {!showingDetail ? (
+        <>
+          <PageHead
+            eyebrow="Library"
+            title="Artifacts"
+            subtitle={data ? `${data.pagination.total} total` : "loading"}
+          />
+          <section className="card full data-surface">
+            {message ? <div className="banner inline">{message}</div> : null}
+            <ArtifactFilterBar search={search} />
+            <ArtifactsTable
+              data={data ?? null}
+              loading={isFetching}
+              sorting={sorting}
+              onSortingChange={handleSortingChange}
+              rowSelection={rowSelection}
+              onRowSelectionChange={setRowSelection}
+              page={search.page}
+              pageSize={search.pageSize}
+              onPageChange={(page) => setSearch({ page })}
+              onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
+              onOpenArtifact={(artifactId) =>
+                void navigate({ to: "/artifacts/$artifactId", params: { artifactId } })
+              }
+            />
+          </section>
+        </>
+      ) : null}
       <Outlet />
     </div>
   );
