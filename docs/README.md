@@ -139,7 +139,7 @@ These documents remain in the repository but are not separate site sections:
 - [`decisions.md`](decisions.md): accepted architecture decision records.
 - [`backlog.md`](backlog.md): detailed engineering backlog and deferred work.
 - [`claims-ledger.md`](claims-ledger.md): launch-claim evidence and status.
-- [`publish-checklist.md`](publish-checklist.md): owner-only launch mechanics,
-  current gate state, verification, and rollback.
+- [`publish-checklist.md`](publish-checklist.md): owner-only launch actions,
+  preconditions, verification, and rollback.
 - [`plans/`](plans/): active proposals and immutable implemented-plan history.
 - [`incidents/`](incidents/): incident records and corrective actions.
