@@ -15,6 +15,16 @@ from jobctrl.domain.discovery.identity import (
     JobSourceObservation,
     normalize_observed_url,
 )
+from jobctrl.domain.discovery.execution import (
+    DISCOVERY_EXECUTION_COHORT_KINDS,
+    DISCOVERY_EXECUTION_WORK_PLAN_STATES,
+    DISCOVERY_PREPARATION_STEPS,
+    DiscoveryExecutionCohortKind,
+    DiscoveryExecutionJob,
+    DiscoveryExecutionRef,
+    DiscoveryExecutionWorkPlanState,
+    DiscoveryPreparationStep,
+)
 from jobctrl.domain.discovery.value_objects import (
     Employer,
     JobMetadata,
@@ -64,6 +74,14 @@ __all__ = [
     "DuplicateJobLink",
     "JobSourceObservation",
     "normalize_observed_url",
+    "DISCOVERY_EXECUTION_COHORT_KINDS",
+    "DISCOVERY_EXECUTION_WORK_PLAN_STATES",
+    "DISCOVERY_PREPARATION_STEPS",
+    "DiscoveryExecutionCohortKind",
+    "DiscoveryExecutionJob",
+    "DiscoveryExecutionRef",
+    "DiscoveryExecutionWorkPlanState",
+    "DiscoveryPreparationStep",
     "Employer",
     "JobMetadata",
     "PostingUrl",

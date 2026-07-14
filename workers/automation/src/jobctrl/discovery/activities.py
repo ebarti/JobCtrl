@@ -10,6 +10,10 @@ from typing import Any
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from jobctrl.domain.discovery.execution import (
+    DiscoveryExecutionCohortKind,
+    DiscoveryExecutionRef,
+)
 from jobctrl.domain.errors import JobCtrlError, to_application_error
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
@@ -46,6 +50,7 @@ class DiscoverySourceActivityInput:
     progress_completed: int = 0
     progress_total: int = 0
     next_run_settings: dict[str, Any] = field(default_factory=dict)
+    discovery_execution: DiscoveryExecutionRef | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +83,7 @@ class DiscoveryEnrichmentActivityInput:
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
+    discovery_execution: DiscoveryExecutionRef | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +116,9 @@ class DiscoveryPreparationFanoutInput:
     # (R9 Phase 1) sweeps stragglers on the first fan-out only, then derives
     # score-only, so a fresh job never gets a duplicate TAILOR_RESUME workflow.
     include_pending_tailor: bool = True
+    discovery_execution: DiscoveryExecutionRef | None = None
+    cohort_kind: DiscoveryExecutionCohortKind = "observed_this_run"
+    finalize_observed_work_plans: bool = False
 
 
 @dataclass(frozen=True)
@@ -167,6 +176,7 @@ async def discovery_source_family_activity(
                 progress_total=payload.progress_total,
                 cancel_event=cancel_event,
                 next_run_settings=payload.next_run_settings,
+                discovery_execution=payload.discovery_execution,
             ),
             starting_message=f"discover {payload.family} starting",
             progress_message=f"discover {payload.family} still running",
@@ -277,6 +287,8 @@ def _build_per_job_handoff(
                 tailor_judge_model=payload.tailor_judge_model,
                 tailor_judge_min_score=payload.tailor_judge_min_score,
                 tenant_id=TenantId(payload.tenant_id),
+                discovery_execution=payload.discovery_execution,
+                discovery_cohort_kind="observed_this_run",
             )
 
     return _handoff
@@ -327,6 +339,9 @@ async def discovery_preparation_fanout_activity(
                 tailor_judge_min_score=payload.tailor_judge_min_score,
                 tenant_id=TenantId(payload.tenant_id),
                 include_pending_tailor=payload.include_pending_tailor,
+                discovery_execution=payload.discovery_execution,
+                discovery_cohort_kind=payload.cohort_kind,
+                finalize_observed_work_plans=payload.finalize_observed_work_plans,
             )
         except Exception as exc:
             _record_preparation_progress(

@@ -6,6 +6,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -33,6 +34,7 @@ from jobctrl.discovery.activities import (
 from jobctrl.discovery.workflow import (
     DiscoverWorkflow,
     DiscoverWorkflowInput,
+    DiscoverWorkflowResult,
     _activity_error_was_cancelled,
 )
 from jobctrl.infrastructure.temporal.finalize import WorkflowOutcomeInput, WorkflowStartedInput
@@ -93,7 +95,7 @@ async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.Mo
     async def fake_outcome(**kwargs) -> None:
         _EVENTS.append(("workflow_outcome", kwargs["status"]))
 
-    async def fake_execute(_payload) -> None:
+    async def fake_execute(_payload, _discovery_execution) -> None:
         raise CancelledError("canceled by test")
 
     async def fake_check_spend(_payload) -> None:
@@ -104,6 +106,10 @@ async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.Mo
     monkeypatch.setattr("jobctrl.discovery.workflow.emit_workflow_started", fake_started)
     monkeypatch.setattr("jobctrl.discovery.workflow.emit_workflow_outcome", fake_outcome)
     monkeypatch.setattr("jobctrl.discovery.workflow.workflow.now", lambda: "2026-01-01T00:00:00Z")
+    monkeypatch.setattr(
+        "jobctrl.discovery.workflow.workflow.info",
+        lambda: SimpleNamespace(workflow_id="discover-local", run_id="temporal-run-test"),
+    )
 
     with pytest.raises(CancelledError):
         await workflow_instance.run(DiscoverWorkflowInput(tenant_id="local"))
@@ -112,6 +118,46 @@ async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.Mo
         ("workflow_started", "DiscoverWorkflow"),
         ("workflow_outcome", "canceled"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_discover_workflow_captures_temporal_execution_identity_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow_instance = DiscoverWorkflow()
+    captured: dict[str, Any] = {"info_calls": 0}
+
+    def fake_info():
+        captured["info_calls"] = int(captured["info_calls"]) + 1
+        return SimpleNamespace(
+            workflow_id="discover-local",
+            run_id="temporal-run-stable",
+        )
+
+    async def fake_execute(_payload, discovery_execution) -> DiscoverWorkflowResult:
+        captured["execution"] = discovery_execution
+        return DiscoverWorkflowResult()
+
+    async def no_op(**_kwargs) -> None:
+        return None
+
+    async def no_spend(_payload) -> None:
+        return None
+
+    monkeypatch.setattr(workflow_instance, "_execute", fake_execute)
+    monkeypatch.setattr("jobctrl.discovery.workflow._check_spend", no_spend)
+    monkeypatch.setattr("jobctrl.discovery.workflow.emit_workflow_started", no_op)
+    monkeypatch.setattr("jobctrl.discovery.workflow.emit_workflow_outcome", no_op)
+    monkeypatch.setattr("jobctrl.discovery.workflow.workflow.info", fake_info)
+    monkeypatch.setattr("jobctrl.discovery.workflow.workflow.now", lambda: "2026-01-01T00:00:00Z")
+
+    result = await workflow_instance.run(DiscoverWorkflowInput(tenant_id="local"))
+
+    assert result == DiscoverWorkflowResult()
+    assert captured["info_calls"] == 1
+    assert captured["execution"].tenant_id == "local"
+    assert captured["execution"].workflow_id == "discover-local"
+    assert captured["execution"].temporal_run_id == "temporal-run-stable"
 
 
 def _discovery_activities():
@@ -270,6 +316,9 @@ async def test_discovery_preparation_fanout_activity_uses_root_workflow_fanout(
         # R9 Phase 1: the fan-out activity forwards the score-only vs
         # full-derive selector; default preserves the pre-streaming behavior.
         "include_pending_tailor": True,
+        "discovery_execution": None,
+        "discovery_cohort_kind": "observed_this_run",
+        "finalize_observed_work_plans": False,
     }
     assert result == DiscoveryPreparationFanoutOutput(started=2, queued=1, targets=3)
 

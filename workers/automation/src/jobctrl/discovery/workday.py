@@ -22,6 +22,7 @@ from jobctrl import config
 from jobctrl.config import CONFIG_DIR
 from jobctrl.database import get_connection, init_db
 from jobctrl.domain.discovery.identity import AtsKind
+from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.source_registry import WORKDAY_API_POLICY
 from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
 from jobctrl.domain.discovery.value_objects import JobMetadata, PostingUrl, SearchStrategy, Source
@@ -488,11 +489,16 @@ def store_results(
     employers: dict,
     limit: int = 0,
     run_id: str | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> tuple[int, int]:
     """Store corporate jobs through the Discovery write boundary."""
     now = datetime.now(timezone.utc).isoformat()
     use_case = DiscoverJobsUseCase(
-        repository=SqliteJobRepository(conn),
+        repository=SqliteJobRepository(
+            conn,
+            discovery_execution=discovery_execution,
+            source_family="workday" if discovery_execution is not None else None,
+        ),
         publisher=_DiscoveryEventPublisher(conn),
     )
     if limit > 0:
@@ -553,6 +559,7 @@ def _process_one(
     run_id: str | None = None,
     query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
     cancel_event: threading.Event | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict:
     """Search one employer, fetch details, store results."""
     result = _search_and_fetch_one(
@@ -572,7 +579,14 @@ def _process_one(
         return result
 
     conn = get_connection()
-    new, existing = store_results(conn, jobs, employers, limit=limit, run_id=run_id)
+    new, existing = store_results(
+        conn,
+        jobs,
+        employers,
+        limit=limit,
+        run_id=run_id,
+        discovery_execution=discovery_execution,
+    )
     log.info("%s: %d new, %d already in DB", result["employer"], new, existing)
 
     return {**result, "new": new, "existing": existing}
@@ -645,6 +659,7 @@ def scrape_employers(
     run_id: str | None = None,
     query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
     cancel_event: threading.Event | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict:
     """Run full scrape: search -> filter -> detail -> store.
 
@@ -706,6 +721,7 @@ def scrape_employers(
                         0,
                         max_pages_per_employer,
                         run_id,
+                        discovery_execution=discovery_execution,
                         **cancel_kwargs,
                         **query_kwargs,
                     ): key
@@ -729,6 +745,7 @@ def scrape_employers(
                             employers,
                             limit=remaining if limit > 0 else 0,
                             run_id=run_id,
+                            discovery_execution=discovery_execution,
                         )
                         result = {**result, "found": len(jobs), "new": new, "existing": existing}
                 total_new += result["new"]
@@ -773,6 +790,7 @@ def scrape_employers(
                 remaining if limit > 0 else 0,
                 max_pages_per_employer,
                 run_id,
+                discovery_execution=discovery_execution,
                 **cancel_kwargs,
                 **query_kwargs,
             )
@@ -813,6 +831,7 @@ def run_workday_discovery(
     limit: int = 0,
     run_id: str | None = None,
     cancel_event: threading.Event | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict:
     """Main entry point for Workday-based corporate job discovery.
 
@@ -877,6 +896,7 @@ def run_workday_discovery(
         limit=limit,
         max_pages_per_employer=max_pages_per_employer,
         run_id=run_id,
+        discovery_execution=discovery_execution,
         query_specs=query_specs,
         cancel_event=cancel_event,
     )

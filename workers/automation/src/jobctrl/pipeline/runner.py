@@ -28,6 +28,7 @@ from jobctrl.domain.discovery.scheduler import (
     ScheduledSource,
     SourceQualitySnapshot,
 )
+from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
 from jobctrl.domain.errors import LlmTransientError, SourceUnavailableError, TransientNetworkError
 from jobctrl.domain.tenant import LOCAL_TENANT
@@ -1384,6 +1385,7 @@ def run_discovery_source_family(
     progress_total: int = 0,
     cancel_event: threading.Event | None = None,
     next_run_settings: dict[str, Any] | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict[str, Any]:
     """Run one discovery source family and persist its lifecycle events."""
     selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
@@ -1448,6 +1450,8 @@ def run_discovery_source_family(
                 "cfg": jobspy_cfg,
                 "limit": _scheduled_limit(schedule, "jobspy", limit),
             }
+            if discovery_execution is not None:
+                run_kwargs["discovery_execution"] = discovery_execution
             _add_supported_discovery_kwargs(
                 run_discovery,
                 run_kwargs,
@@ -1486,6 +1490,11 @@ def run_discovery_source_family(
                 limit=_scheduled_limit_for_sources(
                     ats_sources,
                     _discover_remaining_limit(start_count, limit),
+                ),
+                **(
+                    {"discovery_execution": discovery_execution}
+                    if discovery_execution is not None
+                    else {}
                 ),
                 **({"cancel_event": cancel_event} if provided_cancel_event is not None else {}),
             )
@@ -1530,6 +1539,8 @@ def run_discovery_source_family(
                 ),
                 "run_id": run_id,
             }
+            if discovery_execution is not None:
+                workday_kwargs["discovery_execution"] = discovery_execution
             if provided_cancel_event is not None:
                 workday_kwargs["cancel_event"] = cancel_event
             return run_workday_discovery(**workday_kwargs)
@@ -1559,7 +1570,7 @@ def run_discovery_source_family(
         if source_filter_active and not smart_extract_sources:
             return {"family": family, "status": "skipped", "result": {}, "source_ids": []}
 
-        def run_smart_extract_source() -> dict:
+        def run_smart_extract_source(run_id: str | None = None) -> dict:
             console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
             enqueue_manual_action_for_sources(conn, smart_extract_sources)
             from jobctrl.discovery.smartextract import run_smart_extract
@@ -1571,15 +1582,18 @@ def run_discovery_source_family(
                     smart_extract_sources,
                     _discover_remaining_limit(start_count, limit),
                 ),
+                "run_id": run_id,
             }
+            if discovery_execution is not None:
+                smart_kwargs["discovery_execution"] = discovery_execution
             if provided_cancel_event is not None:
                 smart_kwargs["cancel_event"] = cancel_event
             return run_smart_extract(**smart_kwargs)
 
         result_holder: dict[str, Any] = {}
 
-        def capture_smart_extract() -> dict:
-            result_holder.update(run_smart_extract_source())
+        def capture_smart_extract(run_id: str | None = None) -> dict:
+            result_holder.update(run_smart_extract_source(run_id))
             return result_holder
 
         status = _run_discovery_source(

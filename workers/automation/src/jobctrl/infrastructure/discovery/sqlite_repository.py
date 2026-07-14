@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from jobctrl.domain.discovery.aggregate import Job
+from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.identity import (
     AtsKind,
     CanonicalJobIdentity,
@@ -86,9 +87,29 @@ class SqliteJobRepository:
     when the API hasn't run yet.
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        discovery_execution: DiscoveryExecutionRef | None = None,
+        source_family: str | None = None,
+    ) -> None:
         self._conn = conn
+        self._discovery_execution = discovery_execution
+        self._source_family = source_family.strip() if source_family else None
+        if discovery_execution is not None and self._source_family is None:
+            raise ValueError("source_family is required with discovery_execution")
         self._ensure_deleted_jobs_table()
+        if discovery_execution is not None:
+            # Imported lazily to keep the aggregate repository's ordinary path
+            # independent from the execution-lineage adapter.
+            from jobctrl.infrastructure.discovery.sqlite_execution_repository import (
+                SqliteDiscoveryExecutionRepository,
+            )
+
+            self._execution_repository = SqliteDiscoveryExecutionRepository(conn)
+        else:
+            self._execution_repository = None
 
     # ------------------------------------------------------------------
     # Schema bootstrapping
@@ -602,6 +623,21 @@ class SqliteJobRepository:
                     observation.run_id,
                     observation.observed_at,
                 ),
+            )
+        if self._execution_repository is not None:
+            assert self._discovery_execution is not None
+            if str(tenant_id) != self._discovery_execution.tenant_id:
+                raise ValueError("source observation tenant does not match discovery execution")
+            # The Temporal execution ref is the authority. ``observation.run_id``
+            # is retained only as first-observation source metadata and may be
+            # updated independently in ``job_source_observations`` on retries.
+            self._execution_repository.link_job(
+                self._discovery_execution,
+                str(job_id),
+                cohort_kind="observed_this_run",
+                source_family=self._source_family,
+                source_run_id=observation.run_id,
+                linked_at=observation.observed_at,
             )
         self._conn.commit()
 
