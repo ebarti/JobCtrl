@@ -231,7 +231,18 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
     if step == "pdf":
         return await workflow.execute_activity(
             render_pdf_activity,
-            RenderPdfActivityInput(tenant_id=payload.tenant_id, job_url=payload.job_url),
+            RenderPdfActivityInput(
+                tenant_id=payload.tenant_id,
+                job_url=payload.job_url,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
+                discovery_execution=payload.discovery_execution,
+                pipeline_step_idempotency_key=(
+                    payload.idempotency_key
+                    if payload.discovery_execution is not None
+                    else None
+                ),
+            ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_COVER_RETRY,

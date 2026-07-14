@@ -15,6 +15,11 @@ from jobctrl.domain.discovery.execution import (
     DiscoveryExecutionRef,
 )
 from jobctrl.domain.errors import JobCtrlError, to_application_error
+from jobctrl.domain.events.operations import PipelineStepDetailCode, PipelineStepKind
+from jobctrl.infrastructure.temporal.pipeline_step_lifecycle import (
+    PipelineStepScope,
+    begin_pipeline_step_attempt,
+)
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
@@ -23,6 +28,9 @@ class PlanDiscoverySourcesInput:
     tenant_id: str
     limit: int = 0
     source_ids: tuple[str, ...] = ()
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
+    discovery_execution: DiscoveryExecutionRef | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +92,8 @@ class DiscoveryEnrichmentActivityInput:
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
     discovery_execution: DiscoveryExecutionRef | None = None
+    pipeline_step_item_key: str = "terminal"
+    pipeline_step_detail_code: PipelineStepDetailCode = "terminal_reconciliation"
 
 
 @dataclass(frozen=True)
@@ -119,6 +129,9 @@ class DiscoveryPreparationFanoutInput:
     discovery_execution: DiscoveryExecutionRef | None = None
     cohort_kind: DiscoveryExecutionCohortKind = "observed_this_run"
     finalize_observed_work_plans: bool = False
+    pipeline_step_kind: PipelineStepKind = "preparation_fanout"
+    pipeline_step_item_key: str = "terminal"
+    pipeline_step_detail_code: PipelineStepDetailCode = "terminal_reconciliation"
 
 
 @dataclass(frozen=True)
@@ -133,17 +146,40 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
     """Plan the source-family activities for ``DiscoverWorkflow``."""
     from jobctrl.pipeline.runner import plan_discovery_source_families
 
-    plan = plan_discovery_source_families(
-        limit=payload.limit,
-        source_ids=payload.source_ids,
+    lifecycle = begin_pipeline_step_attempt(
+        _pipeline_step_scope(
+            payload.discovery_execution,
+            step_kind="source_planning",
+            item_key="plan",
+            detail_code="source_plan",
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        )
     )
-    return PlanDiscoverySourcesOutput(
-        families=list(plan.get("families") or []),
-        progress_total=int(plan.get("progress_total") or 0),
-        start_count=int(plan.get("start_count") or 0),
-        max_parallel_families=max(1, int(plan.get("max_parallel_families") or 1)),
-        next_run_settings=dict(plan.get("next_run_settings") or {}),
-    )
+    try:
+        plan = plan_discovery_source_families(
+            limit=payload.limit,
+            source_ids=payload.source_ids,
+        )
+        output = PlanDiscoverySourcesOutput(
+            families=list(plan.get("families") or []),
+            progress_total=int(plan.get("progress_total") or 0),
+            start_count=int(plan.get("start_count") or 0),
+            max_parallel_families=max(
+                1, int(plan.get("max_parallel_families") or 1)
+            ),
+            next_run_settings=dict(plan.get("next_run_settings") or {}),
+        )
+    except Exception as exc:
+        if lifecycle is not None:
+            lifecycle.failed_from_exception(
+                exc,
+                fallback_error_code="source_plan_failed",
+            )
+        raise
+    if lifecycle is not None:
+        lifecycle.completed(item_count=len(output.families))
+    return output
 
 
 @activity.defn(name="discovery_source_family")
@@ -160,6 +196,17 @@ async def discovery_source_family_activity(
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
+    )
+    lifecycle = begin_pipeline_step_attempt(
+        _pipeline_step_scope(
+            payload.discovery_execution,
+            step_kind="source_family",
+            item_key=f"family:{payload.family}",
+            detail_code="source_family",
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        ),
+        item_count=1,
     )
 
     cancel_event = threading.Event()
@@ -186,18 +233,41 @@ async def discovery_source_family_activity(
         status = str(result.get("status") or "ok")
         if not _is_success_status(status):
             raise _stage_failure_error(f"discover:{payload.family}", result)
-        return DiscoverySourceActivityOutput(
+        output = DiscoverySourceActivityOutput(
             family=str(result.get("family") or payload.family),
             status=status,
             result=dict(result.get("result") or {}),
             source_ids=[str(item) for item in (result.get("source_ids") or [])],
         )
-    except ApplicationError:
+    except ApplicationError as exc:
+        if lifecycle is not None:
+            lifecycle.failed_from_exception(
+                exc,
+                fallback_error_code="source_family_failed",
+                item_count=1,
+            )
         raise
     except JobCtrlError as exc:
-        raise to_application_error(exc) from exc
+        app_error = to_application_error(exc)
+        if lifecycle is not None:
+            lifecycle.failed_from_exception(
+                app_error,
+                fallback_error_code="source_family_failed",
+                item_count=1,
+            )
+        raise app_error from exc
     except Exception as exc:
-        raise to_application_error(exc) from exc
+        app_error = to_application_error(exc)
+        if lifecycle is not None:
+            lifecycle.failed_from_exception(
+                app_error,
+                fallback_error_code="source_family_failed",
+                item_count=1,
+            )
+        raise app_error from exc
+    if lifecycle is not None:
+        lifecycle.completed(item_count=1)
+    return output
 
 
 @activity.defn(name="discovery_enrichment")
@@ -214,6 +284,16 @@ async def discovery_enrichment_activity(
     assert_activity_runtime(
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
+    )
+    lifecycle = begin_pipeline_step_attempt(
+        _pipeline_step_scope(
+            payload.discovery_execution,
+            step_kind="enrichment_pass",
+            item_key=payload.pipeline_step_item_key,
+            detail_code=payload.pipeline_step_detail_code,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        )
     )
 
     cancel_event = threading.Event()
@@ -239,7 +319,7 @@ async def discovery_enrichment_activity(
         status = str(result.get("status") or "ok")
         if not _is_success_status(status):
             raise _stage_failure_error("discover:enrichment", result)
-        return DiscoveryEnrichmentActivityOutput(
+        output = DiscoveryEnrichmentActivityOutput(
             status=status,
             passes=int(result.get("passes") or 0),
             pending=int(result.get("pending") or 0),
@@ -247,12 +327,32 @@ async def discovery_enrichment_activity(
             error_message=result.get("error_message"),
             site_errors=dict(result.get("site_errors") or {}),
         )
-    except ApplicationError:
+    except ApplicationError as exc:
+        if lifecycle is not None:
+            lifecycle.failed_from_exception(
+                exc,
+                fallback_error_code="enrichment_pass_failed",
+            )
         raise
     except JobCtrlError as exc:
-        raise to_application_error(exc) from exc
+        app_error = to_application_error(exc)
+        if lifecycle is not None:
+            lifecycle.failed_from_exception(
+                app_error,
+                fallback_error_code="enrichment_pass_failed",
+            )
+        raise app_error from exc
     except Exception as exc:
-        raise to_application_error(exc) from exc
+        app_error = to_application_error(exc)
+        if lifecycle is not None:
+            lifecycle.failed_from_exception(
+                app_error,
+                fallback_error_code="enrichment_pass_failed",
+            )
+        raise app_error from exc
+    if lifecycle is not None:
+        lifecycle.completed(item_count=output.passes)
+    return output
 
 
 def _build_per_job_handoff(
@@ -317,6 +417,21 @@ async def discovery_preparation_fanout_activity(
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
+    lifecycle = begin_pipeline_step_attempt(
+        _pipeline_step_scope(
+            payload.discovery_execution,
+            step_kind=payload.pipeline_step_kind,
+            item_key=payload.pipeline_step_item_key,
+            detail_code=payload.pipeline_step_detail_code,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        )
+    )
+    failure_code = (
+        "existing_backlog_sweep_failed"
+        if payload.pipeline_step_kind == "existing_backlog_sweep"
+        else "preparation_fanout_failed"
+    )
 
     def _run_fanout() -> dict[str, Any]:
         _record_preparation_progress(
@@ -371,18 +486,40 @@ async def discovery_preparation_fanout_activity(
             progress_message="discovery preparation fan-out still running",
             activity_name="discover:preparation",
         )
+    except ApplicationError as exc:
+        if lifecycle is not None:
+            lifecycle.failed_from_exception(
+                exc,
+                fallback_error_code=failure_code,
+            )
+        raise
     except JobCtrlError as exc:
-        raise to_application_error(exc) from exc
+        app_error = to_application_error(exc)
+        if lifecycle is not None:
+            lifecycle.failed_from_exception(
+                app_error,
+                fallback_error_code=failure_code,
+            )
+        raise app_error from exc
     except Exception as exc:
-        raise to_application_error(exc) from exc
+        app_error = to_application_error(exc)
+        if lifecycle is not None:
+            lifecycle.failed_from_exception(
+                app_error,
+                fallback_error_code=failure_code,
+            )
+        raise app_error from exc
 
     started = int((stats.get("started") or {}).get("job_preparation") or 0)
     queued = int((stats.get("queued") or {}).get("job_preparation") or 0)
-    return DiscoveryPreparationFanoutOutput(
+    output = DiscoveryPreparationFanoutOutput(
         started=started,
         queued=queued,
         targets=int(stats.get("targets") or 0),
     )
+    if lifecycle is not None:
+        lifecycle.completed(item_count=output.targets)
+    return output
 
 
 def _record_preparation_progress(
@@ -421,6 +558,27 @@ def _record_preparation_progress(
             status=status,
             message=progress_message,
         ),
+    )
+
+
+def _pipeline_step_scope(
+    execution: DiscoveryExecutionRef | None,
+    *,
+    step_kind: PipelineStepKind,
+    item_key: str,
+    detail_code: PipelineStepDetailCode,
+    expected_app_dir: str | None,
+    expected_db_path: str | None,
+) -> PipelineStepScope | None:
+    if execution is None:
+        return None
+    return PipelineStepScope(
+        execution=execution,
+        step_kind=step_kind,
+        item_key=item_key,
+        detail_code=detail_code,
+        expected_app_dir=expected_app_dir,
+        expected_db_path=expected_db_path,
     )
 
 

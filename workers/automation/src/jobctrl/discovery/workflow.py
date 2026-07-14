@@ -16,6 +16,10 @@ with workflow.unsafe.imports_passed_through():
         DiscoveryExecutionCohortKind,
         DiscoveryExecutionRef,
     )
+    from jobctrl.domain.events.operations import (
+        PipelineStepDetailCode,
+        PipelineStepKind,
+    )
     from jobctrl.discovery.activities import (
         DiscoveryEnrichmentActivityInput,
         DiscoveryEnrichmentActivityOutput,
@@ -173,6 +177,9 @@ class DiscoverWorkflow:
                 tenant_id=payload.tenant_id,
                 limit=payload.limit,
                 source_ids=payload.source_ids,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
+                discovery_execution=discovery_execution,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -212,6 +219,7 @@ class DiscoverWorkflow:
         # cooperatively cancels the run.
         indexed_families = list(enumerate(plan.families))
         batch_size = max(1, plan.max_parallel_families)
+        streaming_pass_ordinal = 0
         for batch in _chunk(indexed_families, batch_size):
             results = await asyncio.gather(
                 *(
@@ -237,7 +245,12 @@ class DiscoverWorkflow:
                     if failure is not None:
                         failures.append(failure)
             if batch_completed:
-                await self._stream_family_preparation(payload, discovery_execution)
+                streaming_pass_ordinal += 1
+                await self._stream_family_preparation(
+                    payload,
+                    discovery_execution,
+                    pass_ordinal=streaming_pass_ordinal,
+                )
 
         # Legacy semantics: per-source failures are tolerated. The TERMINAL
         # reconcile enrichment + preparation below ALWAYS run so the healthy
@@ -256,6 +269,8 @@ class DiscoverWorkflow:
                 discovery_execution,
                 progress_completed=len(plan.families),
                 progress_total=plan.progress_total,
+                pipeline_step_item_key="terminal",
+                pipeline_step_detail_code="terminal_reconciliation",
             )
             enrichment_status = enrichment_result.status
             enrichment_site_errors = dict(enrichment_result.site_errors)
@@ -280,6 +295,9 @@ class DiscoverWorkflow:
                 finalize_observed_work_plans=True,
                 progress_completed=len(plan.families) + 1,
                 progress_total=plan.progress_total,
+                pipeline_step_kind="preparation_fanout",
+                pipeline_step_item_key="terminal",
+                pipeline_step_detail_code="terminal_reconciliation",
             )
         except ActivityError as exc:
             if _activity_error_was_cancelled(exc):
@@ -393,6 +411,9 @@ class DiscoverWorkflow:
                 cohort_kind="existing_backlog",
                 progress_completed=0,
                 progress_total=0,
+                pipeline_step_kind="existing_backlog_sweep",
+                pipeline_step_item_key="existing_backlog",
+                pipeline_step_detail_code="existing_backlog",
             )
         except ActivityError as exc:
             if _activity_error_was_cancelled(exc):
@@ -402,6 +423,8 @@ class DiscoverWorkflow:
         self,
         payload: DiscoverWorkflowInput,
         discovery_execution: DiscoveryExecutionRef,
+        *,
+        pass_ordinal: int,
     ) -> None:
         """Drain + fan out the just-completed family's jobs now (R9 Phase 1/2).
 
@@ -415,6 +438,7 @@ class DiscoverWorkflow:
         ``prep-{idempotency_key}`` id), so streaming never changes the run's
         terminal status or folding. Cancellation always propagates.
         """
+        item_key = f"streaming:pass-{pass_ordinal}"
         try:
             await _run_enrichment_activity(
                 payload,
@@ -422,6 +446,8 @@ class DiscoverWorkflow:
                 progress_completed=0,
                 progress_total=0,
                 per_job_handoff=True,
+                pipeline_step_item_key=item_key,
+                pipeline_step_detail_code="streaming_pass",
             )
         except ActivityError as exc:
             if _activity_error_was_cancelled(exc):
@@ -434,6 +460,9 @@ class DiscoverWorkflow:
                 include_pending_tailor=False,
                 progress_completed=0,
                 progress_total=0,
+                pipeline_step_kind="preparation_fanout",
+                pipeline_step_item_key=item_key,
+                pipeline_step_detail_code="streaming_pass",
             )
         except ActivityError as exc:
             if _activity_error_was_cancelled(exc):
@@ -447,6 +476,8 @@ async def _run_enrichment_activity(
     progress_completed: int,
     progress_total: int,
     per_job_handoff: bool = False,
+    pipeline_step_item_key: str = "terminal",
+    pipeline_step_detail_code: PipelineStepDetailCode = "terminal_reconciliation",
 ) -> DiscoveryEnrichmentActivityOutput:
     return await workflow.execute_activity(
         discovery_enrichment_activity,
@@ -466,6 +497,8 @@ async def _run_enrichment_activity(
             tailor_judge_model=payload.tailor_judge_model,
             tailor_judge_min_score=payload.tailor_judge_min_score,
             discovery_execution=discovery_execution,
+            pipeline_step_item_key=pipeline_step_item_key,
+            pipeline_step_detail_code=pipeline_step_detail_code,
         ),
         start_to_close_timeout=_DISCOVERY_TIMEOUT,
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -482,6 +515,9 @@ async def _start_preparation_workflows(
     finalize_observed_work_plans: bool = False,
     progress_completed: int = 0,
     progress_total: int = 0,
+    pipeline_step_kind: PipelineStepKind = "preparation_fanout",
+    pipeline_step_item_key: str = "terminal",
+    pipeline_step_detail_code: PipelineStepDetailCode = "terminal_reconciliation",
 ) -> int:
     result = await workflow.execute_activity(
         discovery_preparation_fanout_activity,
@@ -503,6 +539,9 @@ async def _start_preparation_workflows(
             discovery_execution=discovery_execution,
             cohort_kind=cohort_kind,
             finalize_observed_work_plans=finalize_observed_work_plans,
+            pipeline_step_kind=pipeline_step_kind,
+            pipeline_step_item_key=pipeline_step_item_key,
+            pipeline_step_detail_code=pipeline_step_detail_code,
         ),
         start_to_close_timeout=_DEFAULT_TIMEOUT,
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

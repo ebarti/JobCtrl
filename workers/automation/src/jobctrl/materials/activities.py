@@ -9,7 +9,13 @@ from typing import Any
 
 from temporalio import activity
 
+from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.errors import JobCtrlError, LlmTransientError, to_application_error
+from jobctrl.infrastructure.temporal.pipeline_step_lifecycle import (
+    PipelineStepScope,
+    begin_pipeline_step_attempt,
+    pdf_pipeline_step_item_key,
+)
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
@@ -397,6 +403,28 @@ class CoverLetterActivityOutput:
 class RenderPdfActivityInput:
     tenant_id: str
     job_url: str
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
+    discovery_execution: DiscoveryExecutionRef | None = None
+    pipeline_step_idempotency_key: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.discovery_execution is None) != (
+            self.pipeline_step_idempotency_key is None
+        ):
+            raise ValueError(
+                "discovery_execution and pipeline_step_idempotency_key must be supplied together"
+            )
+        if (
+            self.discovery_execution is not None
+            and self.discovery_execution.tenant_id != self.tenant_id
+        ):
+            raise ValueError("PDF tenant does not match discovery execution")
+        if (
+            self.pipeline_step_idempotency_key is not None
+            and not self.pipeline_step_idempotency_key.strip()
+        ):
+            raise ValueError("PDF pipeline-step idempotency key must be non-empty")
 
 
 @dataclass(frozen=True)
@@ -627,6 +655,21 @@ async def render_pdf_activity(payload: RenderPdfActivityInput) -> RenderPdfActiv
     """Render missing PDFs for one job's current approved materials."""
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
+    lifecycle = None
+    if payload.discovery_execution is not None:
+        idempotency_key = payload.pipeline_step_idempotency_key
+        if idempotency_key is None:
+            raise RuntimeError("PDF pipeline-step scope is incomplete")
+        lifecycle = begin_pipeline_step_attempt(
+            PipelineStepScope(
+                execution=payload.discovery_execution,
+                step_kind="pdf_render",
+                item_key=pdf_pipeline_step_item_key(idempotency_key),
+                detail_code="pdf_render",
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
+            )
+        )
     try:
         result = await run_blocking_with_heartbeat(
             lambda: _render_pdf_for_job(payload),
@@ -634,15 +677,37 @@ async def render_pdf_activity(payload: RenderPdfActivityInput) -> RenderPdfActiv
             progress_message="render-pdf still running",
             activity_name="render_pdf",
         )
-        return RenderPdfActivityOutput(
+        output = RenderPdfActivityOutput(
             status=str(result.get("status") or "ok"),
             rendered=tuple(str(item) for item in result.get("rendered", ())),
             error=str(result.get("error") or ""),
         )
     except JobCtrlError as exc:
-        raise to_application_error(exc) from exc
+        app_error = to_application_error(exc)
+        if lifecycle is not None:
+            lifecycle.failed_from_exception(
+                app_error,
+                fallback_error_code="pdf_render_failed",
+            )
+        raise app_error from exc
     except Exception as exc:
-        raise to_application_error(exc) from exc
+        app_error = to_application_error(exc)
+        if lifecycle is not None:
+            lifecycle.failed_from_exception(
+                app_error,
+                fallback_error_code="pdf_render_failed",
+            )
+        raise app_error from exc
+    if lifecycle is not None:
+        if output.status == "error":
+            lifecycle.failed(
+                error_code="pdf_render_failed",
+                retryable=False,
+                item_count=0,
+            )
+        else:
+            lifecycle.completed(item_count=len(output.rendered))
+    return output
 
 
 def _render_pdf_for_job(payload: RenderPdfActivityInput) -> dict[str, Any]:
