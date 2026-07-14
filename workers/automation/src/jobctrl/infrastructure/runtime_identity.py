@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import sqlite3
@@ -11,9 +12,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from jobctrl import config
+from jobctrl.infrastructure.temporal.activity_runtime_telemetry import (
+    ActivityInventorySnapshot,
+)
 from jobctrl.infrastructure.temporal.concurrency import (
     activity_executor_max_workers,
     resolve_max_concurrent_activities,
+)
+from jobctrl.infrastructure.temporal.task_queue_observation import (
+    TaskQueueObservation,
 )
 
 WORKER_HEARTBEAT_TABLE = "worker_runtime_heartbeats"
@@ -61,10 +68,18 @@ def write_worker_heartbeat(
     worker_id: str | None = None,
     now: datetime | None = None,
     max_concurrent_activities: int | None = None,
+    activity_snapshot: ActivityInventorySnapshot | None = None,
+    task_queue_observation: TaskQueueObservation | None = None,
 ) -> str:
     identity = current_runtime_identity()
     resolved_worker_id = worker_id or _default_worker_id()
-    timestamp = (now or datetime.now(UTC)).isoformat()
+    observed_now = now or datetime.now(UTC)
+    timestamp = observed_now.isoformat()
+    snapshot = activity_snapshot or ActivityInventorySnapshot.empty()
+    queue_observation = task_queue_observation or TaskQueueObservation.unavailable(
+        observed_at=observed_now,
+        reason_code="not_sampled",
+    )
     db_path = Path(identity.db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
@@ -83,7 +98,15 @@ def write_worker_heartbeat(
               started_at TEXT NOT NULL,
               last_seen_at TEXT NOT NULL,
               max_concurrent_activities INTEGER,
-              activity_executor_max_workers INTEGER
+              activity_executor_max_workers INTEGER,
+              active_activity_count INTEGER NOT NULL DEFAULT 0,
+              active_activity_counts_json TEXT NOT NULL DEFAULT '{}',
+              active_activity_details_json TEXT NOT NULL DEFAULT '[]',
+              active_activity_details_total INTEGER NOT NULL DEFAULT 0,
+              active_activity_details_truncated INTEGER NOT NULL DEFAULT 0,
+              activity_duration_summary_json TEXT NOT NULL DEFAULT '{}',
+              task_queue_observation_json TEXT,
+              heartbeat_schema_version INTEGER NOT NULL DEFAULT 2
             )
             """
         )
@@ -98,8 +121,11 @@ def write_worker_heartbeat(
             f"""
             INSERT INTO {WORKER_HEARTBEAT_TABLE}
               (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at,
-               max_concurrent_activities, activity_executor_max_workers)
-            VALUES (?, 'temporal-worker', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               max_concurrent_activities, activity_executor_max_workers, active_activity_count,
+               active_activity_counts_json, active_activity_details_json, active_activity_details_total,
+               active_activity_details_truncated, activity_duration_summary_json,
+               task_queue_observation_json, heartbeat_schema_version)
+            VALUES (?, 'temporal-worker', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2)
             ON CONFLICT(worker_id) DO UPDATE SET
               component = excluded.component,
               pid = excluded.pid,
@@ -109,7 +135,15 @@ def write_worker_heartbeat(
               task_queue = excluded.task_queue,
               last_seen_at = excluded.last_seen_at,
               max_concurrent_activities = excluded.max_concurrent_activities,
-              activity_executor_max_workers = excluded.activity_executor_max_workers
+              activity_executor_max_workers = excluded.activity_executor_max_workers,
+              active_activity_count = excluded.active_activity_count,
+              active_activity_counts_json = excluded.active_activity_counts_json,
+              active_activity_details_json = excluded.active_activity_details_json,
+              active_activity_details_total = excluded.active_activity_details_total,
+              active_activity_details_truncated = excluded.active_activity_details_truncated,
+              activity_duration_summary_json = excluded.activity_duration_summary_json,
+              task_queue_observation_json = excluded.task_queue_observation_json,
+              heartbeat_schema_version = excluded.heartbeat_schema_version
             """,
             (
                 resolved_worker_id,
@@ -122,6 +156,13 @@ def write_worker_heartbeat(
                 timestamp,
                 active_max_concurrent_activities,
                 executor_max_workers,
+                snapshot.active_activity_count,
+                _json_dumps(snapshot.counts_json_dict()),
+                _json_dumps(snapshot.details_json_list()),
+                snapshot.active_details_total,
+                int(snapshot.active_details_truncated),
+                _json_dumps(snapshot.durations_json_dict()),
+                _json_dumps(queue_observation.to_json_dict()),
             ),
         )
         conn.commit()
@@ -159,14 +200,27 @@ def _default_worker_id() -> str:
 
 def _ensure_heartbeat_runtime_columns(conn: sqlite3.Connection) -> None:
     columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({WORKER_HEARTBEAT_TABLE})")}
-    if "max_concurrent_activities" not in columns:
-        conn.execute(
-            f"ALTER TABLE {WORKER_HEARTBEAT_TABLE} ADD COLUMN max_concurrent_activities INTEGER"
-        )
-    if "activity_executor_max_workers" not in columns:
-        conn.execute(
-            f"ALTER TABLE {WORKER_HEARTBEAT_TABLE} ADD COLUMN activity_executor_max_workers INTEGER"
-        )
+    additions = {
+        "max_concurrent_activities": "INTEGER",
+        "activity_executor_max_workers": "INTEGER",
+        "active_activity_count": "INTEGER NOT NULL DEFAULT 0",
+        "active_activity_counts_json": "TEXT NOT NULL DEFAULT '{}'",
+        "active_activity_details_json": "TEXT NOT NULL DEFAULT '[]'",
+        "active_activity_details_total": "INTEGER NOT NULL DEFAULT 0",
+        "active_activity_details_truncated": "INTEGER NOT NULL DEFAULT 0",
+        "activity_duration_summary_json": "TEXT NOT NULL DEFAULT '{}'",
+        "task_queue_observation_json": "TEXT",
+        "heartbeat_schema_version": "INTEGER NOT NULL DEFAULT 1",
+    }
+    for column, declaration in additions.items():
+        if column not in columns:
+            conn.execute(
+                f"ALTER TABLE {WORKER_HEARTBEAT_TABLE} ADD COLUMN {column} {declaration}"
+            )
+
+
+def _json_dumps(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
 def _normalize(value: str | Path) -> str:

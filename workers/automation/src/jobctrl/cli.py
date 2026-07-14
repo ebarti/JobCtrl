@@ -2221,6 +2221,9 @@ def worker(
         build_worker,
         get_temporal_client,
     )
+    from jobctrl.infrastructure.temporal.activity_runtime_telemetry import (
+        ActiveActivityInventory,
+    )
     from jobctrl.infrastructure.temporal.concurrency import resolve_max_concurrent_activities
     from jobctrl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
     from jobctrl.infrastructure.runtime_identity import (
@@ -2242,17 +2245,22 @@ def worker(
             expected_db_path=str(identity.db_path),
         )
         startup_activity_concurrency = resolve_max_concurrent_activities()
+        activity_inventory = ActiveActivityInventory()
         worker = build_worker(
             client,
             workflows=WORKFLOWS,
             activities=ACTIVITIES,
             task_queue=queue,
             max_concurrent_activities=startup_activity_concurrency.value,
+            activity_inventory=activity_inventory,
         )
         worker_started_at = datetime.now(timezone.utc)
+        startup_queue_observation = await _safe_task_queue_observation(client, queue)
         heartbeat_worker_id = write_worker_heartbeat(
             task_queue=queue,
             max_concurrent_activities=startup_activity_concurrency.value,
+            activity_snapshot=activity_inventory.snapshot(),
+            task_queue_observation=startup_queue_observation,
         )
         heartbeat_task = asyncio.create_task(
             _worker_heartbeat_loop(
@@ -2261,6 +2269,7 @@ def worker(
                 worker_started_at=worker_started_at,
                 max_concurrent_activities=startup_activity_concurrency.value,
                 temporal_client=client,
+                activity_inventory=activity_inventory,
             )
         )
         console.print(
@@ -2299,15 +2308,25 @@ async def _worker_heartbeat_loop(
     max_concurrent_activities: int | None = None,
     interval_seconds: float = 15.0,
     temporal_client: Any = None,
+    activity_inventory: Any = None,
 ) -> None:
     while True:
         await asyncio.sleep(interval_seconds)
         try:
+            queue_observation = (
+                await _safe_task_queue_observation(temporal_client, task_queue)
+                if temporal_client is not None
+                else None
+            )
             _worker_heartbeat_iteration(
                 task_queue,
                 worker_id,
                 worker_started_at=worker_started_at,
                 max_concurrent_activities=max_concurrent_activities,
+                activity_snapshot=(
+                    activity_inventory.snapshot() if activity_inventory is not None else None
+                ),
+                task_queue_observation=queue_observation,
             )
         except Exception:
             log.warning("Worker heartbeat loop iteration failed; will retry", exc_info=True)
@@ -2353,6 +2372,8 @@ def _worker_heartbeat_iteration(
     *,
     worker_started_at: datetime | None = None,
     max_concurrent_activities: int | None = None,
+    activity_snapshot: Any = None,
+    task_queue_observation: Any = None,
 ) -> None:
     from jobctrl.infrastructure.runtime_identity import write_worker_heartbeat
 
@@ -2360,7 +2381,29 @@ def _worker_heartbeat_iteration(
         task_queue=task_queue,
         worker_id=worker_id,
         max_concurrent_activities=max_concurrent_activities,
+        activity_snapshot=activity_snapshot,
+        task_queue_observation=task_queue_observation,
     )
+
+
+async def _safe_task_queue_observation(temporal_client: Any, task_queue: str) -> Any:
+    """Return an explicit queue observation without risking worker liveness."""
+    from jobctrl.infrastructure.temporal.task_queue_observation import (
+        TaskQueueObservation,
+        sample_task_queue_observation,
+    )
+
+    try:
+        return await sample_task_queue_observation(temporal_client, task_queue)
+    except Exception:
+        # The sampler already converts expected RPC failures. This outer guard
+        # protects the worker from SDK/protobuf incompatibilities without
+        # logging transport text that could contain deployment details.
+        log.warning("Temporal task-queue telemetry sample failed; heartbeat will mark it unavailable")
+        return TaskQueueObservation.unavailable(
+            observed_at=datetime.now(timezone.utc),
+            reason_code="describe_task_queue_unavailable",
+        )
 
 
 # Temporal execution status -> the terminal workflow-run status the reconciler
