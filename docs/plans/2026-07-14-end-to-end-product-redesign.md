@@ -319,6 +319,47 @@ flowchart LR
 - **Ports** remain the only path to browser, clipboard, storage, event stream,
   and OS behavior.
 
+### 8.1 Pipeline operations visibility adaptation
+
+The redesign stack also absorbs the accepted semantic contract from
+[#439](https://github.com/ebarti/JobCtrl/pull/439) before documentation and
+final QA. Its domain invariant remains unchanged: Pipelines must distinguish
+source-family progress, the current execution's preparation drain, older
+backlog competing for capacity, shared Temporal activity capacity, telemetry
+freshness, and a calibrated ETA state. A source workflow that has finished
+while required job preparation is still active is **draining**, not complete.
+
+The implementation is adapted to this redesign rather than reproducing the
+plan's illustrative cards or table:
+
+- `PipelinesView` remains a route composer and uses the shared `RouteWorkspace`
+  composition instead of adding a page-specific dashboard shell.
+- The workspace header owns the concise execution phase, current cohort
+  counts, source progress, and overall ETA. It is the only polite live region.
+- The main workspace content owns the operational-step ledger. Every step keeps
+  separate current-execution and existing-backlog counts, processing state,
+  capacity semantics, and typed ETA; visual simplification may not merge those
+  facts.
+- The inspector uses `InspectorLedger` for shared worker capacity, task-queue
+  observations, freshness, and estimator basis. It uses neutral hierarchy and
+  typography rather than a grid of colored rounded cards.
+- `DisclosureSection` owns detailed active work and runtime diagnostics, so the
+  default surface is concise without making evidence unreachable.
+- Existing trigger controls remain in a compact `ToolRow`. **Workers** becomes
+  **Internal concurrency**, with helper copy separating in-activity parallelism
+  from Temporal worker slots.
+- Loading, unsupported, stale, calibrating, paused, unavailable, and
+  completed-with-issues remain explicit typed states. Unknown data is never
+  rendered as zero and an exact finish timestamp is never fabricated.
+
+The data path stays architectural: durable `DiscoveryExecutionRef` lineage and
+step lifecycle originate in the Python orchestration layer; worker heartbeats
+and Temporal task-queue sampling provide bounded privacy-safe runtime facts;
+the TypeScript Operations read model exposes
+`GET /v1/pipeline/operations`; an Operations hook and pipeline query key feed
+the view. The legacy `preparation_work_items` queue and mutable latest source
+observation remain non-authoritative for Temporal-native work.
+
 ## 9. Delivery stack
 
 The implementation is a stacked sequence so each review has a coherent owner,
@@ -361,15 +402,64 @@ while the final QA gate runs only on the assembled stack tip.
 - Add contextual documentation links.
 - Preserve settings autosave/undo and profile save/discard/import behavior.
 
-### PR 5 — integrated cutover, documentation, and final QA
+### PR 5 — pipeline lineage foundation
+
+- Add the typed `DiscoveryExecutionRef` and thread it through discovery,
+  enrichment, preparation fan-out, and per-job preparation inputs.
+- Persist current-execution versus existing-backlog membership in an additive,
+  indexed `discovery_execution_jobs` projection owned by Discovery.
+- Make observed-this-run promotion transactional and idempotent; workflow ID
+  reuse is disambiguated by the Temporal run ID.
+- Record work-plan state and required steps so a missing or failed plan cannot
+  be mistaken for no work.
+
+### PR 6 — pipeline lifecycle and runtime telemetry
+
+- Add typed queued/started/completed/failed events for orchestration substeps
+  without canonical job-stage rows and fold them identically in Python and
+  TypeScript projections.
+- Add a bounded, allowlisted active-activity inventory and fresh per-process
+  worker heartbeats.
+- Aggregate exact shared activity slots and active counts across fresh worker
+  processes; keep bounded display details separate from authoritative totals.
+- Sample Temporal task-queue statistics with explicit unsupported,
+  unavailable, and stale states. Never persist or export raw job URLs,
+  descriptions, profiles, prompts, provider output, artifact paths, or secrets.
+
+### PR 7 — pipeline operations read model and ETA
+
+- Add the shared `PipelineOperationsSnapshot` contract, API client/port method,
+  Operations read model, and `GET /v1/pipeline/operations`.
+- Keep current-execution domain backlog, existing backlog, and approximate
+  Temporal task counts separate in both type and unit.
+- Derive source progress from planned families and show terminal reconciliation
+  independently from the legacy crawl spine.
+- Implement an auditable ETA union: available range, calibrating, paused,
+  unavailable, or stale, always carrying basis, sample size, confidence, and
+  observation time when applicable.
+
+### PR 8 — redesigned pipeline operations workspace
+
+- Add the Operations query hook, hierarchical query key, SSE invalidation, and
+  polling freshness backstop.
+- Recompose Pipelines with the workspace mapping in §8.1 while preserving all
+  trigger actions, current error behavior, and operational facts.
+- Rename **Workers** to **Internal concurrency** without changing the request or
+  CLI contract.
+- Author the original 3/6 regression fixture and the loading, discovering,
+  draining, completed, issues, stale, calibrating, unavailable, and
+  multi-worker stories; defer the full QA run.
+
+### PR 9 — integrated cutover and documentation
 
 - Rebase/merge the stack into one integration tip.
 - Remove superseded CSS and unreachable compatibility markup only after parity
   proves it dead.
-- Complete the product documentation, user screenshots, and product tour on
-  the assembled implementation.
-- Only after the documentation pass is complete, run the complete gate in
-  §12, fix findings, and publish final evidence.
+- Complete all redesign and pipeline-operations documentation, user
+  screenshots, architecture/API references, product tour, and QA matrix on the
+  assembled implementation.
+- Only after this final documentation PR is complete, run the gate in §12 on
+  its stack tip, fix findings there, and publish final evidence.
 
 Implementation branches should be based on the preceding stack branch until
 lower PRs merge. Each PR body must name its base and successor.
@@ -389,8 +479,8 @@ lower PRs merge. Each PR body must name its base and successor.
 
 ## 11. Documentation changes at cutover
 
-This is the final implementation pass on the integrated stack tip. Product
-documentation is not updated piecemeal on lower implementation branches.
+This is the final PR in the stack. Product documentation is not updated
+piecemeal on lower implementation branches.
 
 - Regenerate the synthetic product screenshots and update
   `docs/user/screenshots.md`.
@@ -401,13 +491,17 @@ documentation is not updated piecemeal on lower implementation branches.
   relocated settings/help links, without duplicating concept ownership.
 - Update `docs/local-reliability-qa.md` and the browser/frontend QA guides with
   the semantic parity manifest and complete-route sweep.
+- Update `README.md`, `docs/user/normal-flows.md`, `docs/local-ts-api.md`,
+  `docs/api/operations-and-events.md`, the owning pipeline/read-model/
+  observability/frontend architecture pages, `docs/requirements.md`, and
+  `docs/decisions.md` for the delivered pipeline-operations contract.
 - Move this plan to `docs/plans/implemented/` only after the implementation
   stack and final QA gate are complete.
 
 ## 12. Final QA and review gate
 
-Per the owner's instruction, full QA begins only after PRs 1–4 are assembled
-on the integration tip **and** the final documentation and screenshot pass in
+Per the owner's instruction, full QA begins only after PRs 1–9 are assembled
+on the integration tip **and** the final documentation and screenshot PR in
 §11 is complete. Unit/component/type tests may be authored during
 implementation, but the complete gate is intentionally deferred until the
 whole redesign and its documentation can be evaluated as one system.
@@ -474,6 +568,8 @@ The redesign is done only when:
   decision;
 - all final static, component, E2E, visual, accessibility, reviewer, and QA
   gates pass;
+- Pipelines distinguishes source crawl, current preparation drain, existing
+  backlog, shared worker capacity, telemetry freshness, and honest ETA states;
 - screenshots and owning documentation are current;
 - plan and implementation PRs are published with exact validation evidence and
   no unresolved Blocker/High finding.
