@@ -42,8 +42,8 @@ JOBCTRL_DIR=/tmp/jobctrl-qa corepack pnpm dev
 - Use Conventional Commits for commit messages and PR titles.
 - External contributors should sign off every commit with the Developer
   Certificate of Origin trailer.
-- Update documentation when public behavior, commands, runtime requirements,
-  configuration, architecture, or QA expectations change.
+- For standalone changes, update docs with public behavior. For an approved
+  unreleased stack, update canonical docs in the final PR and run QA afterward.
 - Do not commit local user data, `.env` files, resumes, PDFs, logs, browser
   profiles, SQLite databases, or generated application materials.
 - Heavy CI workflows do not run automatically on public pull requests. Run the
@@ -73,17 +73,10 @@ git rebase --signoff origin/main
 
 ## Validation
 
-Run the narrowest useful checks while iterating and before opening a PR. Use the
-touched-surface commands in
-[Reliability & QA](docs/local-reliability-qa.md), then always run:
-
-```bash
-git diff --check
-```
-
-Add `corepack pnpm check` and `corepack pnpm test` for cross-stack changes,
-release/high-risk work, or when an active plan requires the aggregate. Build the
-Python package only when package or distribution behavior changes.
+Run the touched-surface commands in
+[Reliability & QA](docs/local-reliability-qa.md) plus `git diff --check`. Add the
+cross-stack aggregates only for cross-stack, release/high-risk, or plan-required
+work; build the Python package only when package/distribution behavior changes.
 
 For user-facing UI/API/product-flow changes, include a product-path QA step, not
 only unit tests. See [docs/local-reliability-qa.md](docs/local-reliability-qa.md)

@@ -316,10 +316,9 @@ and rollback. Cloudflare supports custom subdomains on Pages projects:
 ### D8. Stacked delivery
 
 **Decision:** This plan PR is the base. Implementation is delivered as the
-stack in §10, one coherent concern per PR, with the repository's tier-required
-independent gates at every layer. P0 defers product QA to P1 because P0 has no
-executable product path; P1–P6 require review and QA. User-facing claims remain
-“planned” until the production deployment and live QA PR lands.
+stack in §10, one coherent concern per PR. P0–P5 get focused checks and review;
+P6 completes canonical docs, then runs cumulative review and product QA before
+launch. User-facing claims remain “planned” until that final gate passes.
 
 ---
 
@@ -1101,13 +1100,12 @@ Rules:
 - Validate every cited path/symbol against that phase's base; update this plan
   PR rather than guessing when anchors drift.
 - Do not claim the demo is shipped before P6 production verification.
-- Apply the repository validation tiers to each stack PR. P0 requires one
-  independent review plus its focused contract/privacy checks. Because P0 has
-  no executable product path, product QA is explicitly deferred to P1, whose
-  browser-local boot and persistence coverage must exercise the P0 seed. P1–P6
-  are product/high-risk changes and require `pr-reviewer` and `qa` to return
-  `Gate: PASS`. Run the gates once on the final phase diff and rerun only after
-  changes that address a blocking finding or affect verified behavior.
+- P0–P5 run focused phase checks and `pr-reviewer`; canonical product docs and
+  product QA are deferred because the demo is not released between phases.
+- P6 updates canonical docs first, then runs the full cumulative matrix,
+  `pr-reviewer`, and `qa` across P0–P6. If any earlier phase is released or
+  changes an active high-risk path, it exits this deferral and uses its normal
+  repository tier immediately.
 
 ---
 
@@ -1254,5 +1252,5 @@ This plan is complete only when:
     preview, production smoke, and rollback all pass.
 11. The local JobCtrl application retains its current security and behavior.
 12. Canonical docs describe the shipped boundary and synthetic-data policy.
-13. Every stack PR has passed its tier-required checks and independent gates;
-    P1–P6 have no unresolved Blocker or High `pr-reviewer` or `qa` findings.
+13. P0–P5 passed focused checks and review; after canonical docs landed, P6
+    passed cumulative `pr-reviewer` and `qa` with no Blocker or High findings.

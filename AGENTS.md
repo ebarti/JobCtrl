@@ -40,23 +40,11 @@ Do not run auto-apply, browser submission, destructive profile/database actions,
 
 ## Build, Test, And Lint Commands
 
-Use the smallest command set that proves the touched behavior. Run the
-cross-stack aggregates only for cross-stack changes, release/high-risk work, or
-when an active plan explicitly requires them:
-
-- Cross-stack typecheck + lint aggregate: `pnpm check` (contracts, api-client, API, and web typechecks plus Python ruff).
-- Cross-stack test aggregate: `pnpm test` (API Vitest + web build + Python pytest). It does NOT run the web unit/hook/component suite, the type-level tests, or the Playwright e2e specs — run those explicitly for frontend changes.
-- TypeScript API typecheck: `pnpm api:check`.
-- TypeScript API tests: `pnpm api:test`.
-- Web typecheck: `pnpm web:check`.
-- Web build: `pnpm web:build`.
-- Web Vitest unit + hook + component tests: `pnpm --filter @jobctrl/web test` (watch: `:watch`; coverage: `:coverage`).
-- Web type-level tests: `pnpm --filter @jobctrl/web test-d`.
-- Web Playwright end-to-end specs: `pnpm --filter @jobctrl/web e2e` (headed: `e2e:headed`).
-- Web Storybook: `pnpm web:storybook` (build: `pnpm web:storybook:build`; test runner with a11y addon: `pnpm web:storybook:test`).
-- Python tests: `uv --project workers/automation run --extra dev pytest -q`.
-- Python lint: `uv --project workers/automation run --extra dev ruff check .`.
-- Python package build: `uv --project workers/automation run --extra dev python -m build workers/automation`.
+Choose the smallest command set from `docs/local-reliability-qa.md` that proves
+the touched behavior. Reserve `pnpm check` and `pnpm test` for cross-stack,
+release/high-risk, or explicitly plan-required work. Frontend changes must run
+their separate web unit/type/E2E/Storybook checks when the touched risk calls
+for them; the aggregate does not include those suites.
 
 When changing behavior, add or update unit tests for the changed logic. When changing user-facing behavior, local API behavior, browser flows, or UI/UX, include a QA stage that exercises the product path, not only unit tests.
 
@@ -64,7 +52,12 @@ Any major UI/UX regression found by the human must become a QA regression test o
 
 ## Documentation Requirements
 
-**PRs that add meaningful new capabilities MUST include documentation updates.** Do not add doc bloat: internal refactors, test-only changes, bug fixes that do not change public behavior, and renaming without functional change do NOT need doc updates.
+Standalone PRs that add meaningful capabilities must update their owning docs.
+For an approved feature stack that is not released between phases, defer
+canonical product docs to the final PR; intermediate PRs update only plan or
+contract material needed for review. Phases released independently or changing
+active high-risk paths document immediately. Internal refactors, tests, and
+behavior-neutral fixes do not need doc churn.
 
 When a doc update is warranted:
 
@@ -84,7 +77,8 @@ When a doc update is warranted:
 | Python package metadata, CLI entry point, Python version, optional dev dependencies, or Ruff config | `workers/automation/pyproject.toml` |
 | Agent workflow rules, PR expectations, repo-specific constraints, or automation guidance | `AGENTS.md` |
 
-If multiple surfaces changed, update every relevant document. If no documentation update is warranted for a meaningful-looking change, explain why in the PR description. Keep documentation edits narrow: update the existing owning document, remove stale instructions, and avoid creating new docs unless no listed document owns the behavior.
+If multiple surfaces changed, update every owning document. Keep edits narrow
+and explain any intentional stacked deferral in the PR body.
 
 ## Agent Behavior
 
@@ -149,7 +143,8 @@ When a new worktree is actually needed:
   verify the selected base first.
 - Never mark work complete while Blocker or High PR review findings remain.
 - Never mark work complete while Blocker or High QA findings remain.
-- Never skip the QA stage for user-facing UI/API/product-flow changes.
+- Never skip required QA. For an approved unreleased stack, run it once on the
+  cumulative final branch after canonical docs are complete.
 - Never broaden scope silently. If the correct fix exceeds the assigned scope, stop and raise the scope issue.
 - Never commit local secrets, generated user data, resumes, cover letters, PDFs, browser profiles, worker directories, logs, or SQLite databases.
 
@@ -172,6 +167,12 @@ If Tier 3 groundwork changes only contracts or fixtures and no executable
 product/operational path exists yet, do not fabricate product QA. Require one
 independent review plus the focused safety checks, record why QA is deferred,
 and make QA mandatory in the first phase that exposes the executable path.
+
+For an approved stack whose intermediate phases are not released independently,
+each intermediate PR runs focused checks and one review. The final PR updates
+canonical docs first, then runs cumulative product QA and any final high-risk
+gate across the whole stack. A phase that changes an active high-risk path or is
+released independently follows its normal tier immediately.
 
 Run independent gates once after implementation and focused verification. Rerun
 a failed gate after addressing its Blocker/High findings; do not repeat passing
