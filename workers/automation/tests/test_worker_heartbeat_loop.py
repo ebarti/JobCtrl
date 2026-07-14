@@ -21,7 +21,11 @@ def test_worker_heartbeat_loop_retries_after_iteration_failure(monkeypatch):
         *,
         worker_started_at: datetime | None = None,
         max_concurrent_activities: int | None = None,
+        activity_snapshot=None,
+        task_queue_observation=None,
     ) -> tuple[int, int]:
+        assert activity_snapshot is None
+        assert task_queue_observation is None
         calls.append((task_queue, worker_id, worker_started_at, max_concurrent_activities))
         if len(calls) == 1:
             raise sqlite3.OperationalError("database is locked")
