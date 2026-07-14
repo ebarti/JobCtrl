@@ -12,6 +12,10 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.domain.discovery.execution import (
+        DiscoveryExecutionCohortKind,
+        DiscoveryExecutionRef,
+    )
     from jobctrl.discovery.activities import (
         DiscoveryEnrichmentActivityInput,
         DiscoveryEnrichmentActivityOutput,
@@ -89,6 +93,12 @@ class DiscoverWorkflow:
 
     @workflow.run
     async def run(self, payload: DiscoverWorkflowInput) -> DiscoverWorkflowResult:
+        execution_info = workflow.info()
+        discovery_execution = DiscoveryExecutionRef(
+            tenant_id=payload.tenant_id,
+            workflow_id=execution_info.workflow_id,
+            temporal_run_id=execution_info.run_id,
+        )
         started_at = workflow.now()
         await emit_workflow_started(
             tenant_id=payload.tenant_id,
@@ -100,7 +110,7 @@ class DiscoverWorkflow:
         )
         try:
             await _check_spend(payload)
-            result = await self._execute(payload)
+            result = await self._execute(payload, discovery_execution)
         except CancelledError:
             await emit_workflow_outcome(
                 tenant_id=payload.tenant_id,
@@ -152,7 +162,11 @@ class DiscoverWorkflow:
         )
         return result
 
-    async def _execute(self, payload: DiscoverWorkflowInput) -> DiscoverWorkflowResult:
+    async def _execute(
+        self,
+        payload: DiscoverWorkflowInput,
+        discovery_execution: DiscoveryExecutionRef,
+    ) -> DiscoverWorkflowResult:
         plan = await workflow.execute_activity(
             plan_discovery_sources,
             PlanDiscoverySourcesInput(
@@ -185,7 +199,7 @@ class DiscoverWorkflow:
         # ``pending_tailor`` mid-tailor is never double-fanned (I1/I4). Doing the
         # sweep here also keeps it correct when families run concurrently
         # (Phase 3).
-        await self._sweep_preexisting_preparation(payload)
+        await self._sweep_preexisting_preparation(payload, discovery_execution)
         # R9 Phase 3 — optional parallel source families, GATED. Families are
         # processed in batches of ``plan.max_parallel_families`` (env
         # ``max_parallel_families`` in SQLite, default 1 = sequential =
@@ -200,7 +214,16 @@ class DiscoverWorkflow:
         batch_size = max(1, plan.max_parallel_families)
         for batch in _chunk(indexed_families, batch_size):
             results = await asyncio.gather(
-                *(self._run_family_source(payload, index, family, plan) for index, family in batch)
+                *(
+                    self._run_family_source(
+                        payload,
+                        index,
+                        family,
+                        plan,
+                        discovery_execution,
+                    )
+                    for index, family in batch
+                )
             )
             if any(status == "canceled" for _family, status, _failure in results):
                 raise CancelledError()
@@ -214,7 +237,7 @@ class DiscoverWorkflow:
                     if failure is not None:
                         failures.append(failure)
             if batch_completed:
-                await self._stream_family_preparation(payload)
+                await self._stream_family_preparation(payload, discovery_execution)
 
         # Legacy semantics: per-source failures are tolerated. The TERMINAL
         # reconcile enrichment + preparation below ALWAYS run so the healthy
@@ -230,6 +253,7 @@ class DiscoverWorkflow:
         try:
             enrichment_result = await _run_enrichment_activity(
                 payload,
+                discovery_execution,
                 progress_completed=len(plan.families),
                 progress_total=plan.progress_total,
             )
@@ -251,7 +275,9 @@ class DiscoverWorkflow:
             # mid-tailor right now.
             preparation_started = await _start_preparation_workflows(
                 payload,
+                discovery_execution,
                 include_pending_tailor=False,
+                finalize_observed_work_plans=True,
                 progress_completed=len(plan.families) + 1,
                 progress_total=plan.progress_total,
             )
@@ -305,6 +331,7 @@ class DiscoverWorkflow:
         index: int,
         family: str,
         plan: PlanDiscoverySourcesOutput,
+        discovery_execution: DiscoveryExecutionRef,
     ) -> tuple[str, str, str | None]:
         """Run one family's source crawl; return ``(family, status, failure)``.
 
@@ -330,6 +357,7 @@ class DiscoverWorkflow:
                     progress_completed=index,
                     progress_total=plan.progress_total,
                     next_run_settings=plan.next_run_settings,
+                    discovery_execution=discovery_execution,
                 ),
                 start_to_close_timeout=_DISCOVERY_TIMEOUT,
                 heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -341,7 +369,11 @@ class DiscoverWorkflow:
             return (family, "failed", f"{family}: {exc.cause if exc.cause else exc}")
         return (family, "ok", None)
 
-    async def _sweep_preexisting_preparation(self, payload: DiscoverWorkflowInput) -> None:
+    async def _sweep_preexisting_preparation(
+        self,
+        payload: DiscoverWorkflowInput,
+        discovery_execution: DiscoveryExecutionRef,
+    ) -> None:
         """One-time full-derive fan-out for work left over from a PRIOR run.
 
         Runs before the family loop, when nothing this run has been enriched, so
@@ -356,7 +388,9 @@ class DiscoverWorkflow:
         try:
             await _start_preparation_workflows(
                 payload,
+                discovery_execution,
                 include_pending_tailor=True,
+                cohort_kind="existing_backlog",
                 progress_completed=0,
                 progress_total=0,
             )
@@ -364,7 +398,11 @@ class DiscoverWorkflow:
             if _activity_error_was_cancelled(exc):
                 raise CancelledError() from exc
 
-    async def _stream_family_preparation(self, payload: DiscoverWorkflowInput) -> None:
+    async def _stream_family_preparation(
+        self,
+        payload: DiscoverWorkflowInput,
+        discovery_execution: DiscoveryExecutionRef,
+    ) -> None:
         """Drain + fan out the just-completed family's jobs now (R9 Phase 1/2).
 
         Progress-silent (``progress_total=0``) so the Runs bar stays monotonic
@@ -379,7 +417,11 @@ class DiscoverWorkflow:
         """
         try:
             await _run_enrichment_activity(
-                payload, progress_completed=0, progress_total=0, per_job_handoff=True
+                payload,
+                discovery_execution,
+                progress_completed=0,
+                progress_total=0,
+                per_job_handoff=True,
             )
         except ActivityError as exc:
             if _activity_error_was_cancelled(exc):
@@ -388,6 +430,7 @@ class DiscoverWorkflow:
         try:
             await _start_preparation_workflows(
                 payload,
+                discovery_execution,
                 include_pending_tailor=False,
                 progress_completed=0,
                 progress_total=0,
@@ -399,6 +442,7 @@ class DiscoverWorkflow:
 
 async def _run_enrichment_activity(
     payload: DiscoverWorkflowInput,
+    discovery_execution: DiscoveryExecutionRef,
     *,
     progress_completed: int,
     progress_total: int,
@@ -421,6 +465,7 @@ async def _run_enrichment_activity(
             tailor_models=payload.tailor_models,
             tailor_judge_model=payload.tailor_judge_model,
             tailor_judge_min_score=payload.tailor_judge_min_score,
+            discovery_execution=discovery_execution,
         ),
         start_to_close_timeout=_DISCOVERY_TIMEOUT,
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -430,8 +475,11 @@ async def _run_enrichment_activity(
 
 async def _start_preparation_workflows(
     payload: DiscoverWorkflowInput,
+    discovery_execution: DiscoveryExecutionRef,
     *,
     include_pending_tailor: bool = True,
+    cohort_kind: DiscoveryExecutionCohortKind = "observed_this_run",
+    finalize_observed_work_plans: bool = False,
     progress_completed: int = 0,
     progress_total: int = 0,
 ) -> int:
@@ -452,6 +500,9 @@ async def _start_preparation_workflows(
             progress_completed=progress_completed,
             progress_total=progress_total,
             include_pending_tailor=include_pending_tailor,
+            discovery_execution=discovery_execution,
+            cohort_kind=cohort_kind,
+            finalize_observed_work_plans=finalize_observed_work_plans,
         ),
         start_to_close_timeout=_DEFAULT_TIMEOUT,
         heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

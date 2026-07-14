@@ -26,7 +26,9 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # ``job_events`` so contact-only events carry honest identity without
 # overloading ``job_url`` (outreach planner plan §10.1, owner decision 2b), plus
 # the ninth-context canonical tables (``ensure_contact_tables``).
-SCHEMA_VERSION = 2
+# v3 (Discovery execution lineage): immutable Temporal execution/job membership
+# and the idempotently filled preparation work plan used by Operations.
+SCHEMA_VERSION = 3
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -284,6 +286,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_discovery_run_tables(conn)
     ensure_operational_metric_tables(conn)
     ensure_source_observation_tables(conn)
+    ensure_discovery_execution_tables(conn)
     ensure_discovery_control_tables(conn)
     ensure_discovery_settings_tables(conn)
     ensure_contact_tables(conn)
@@ -3014,6 +3017,66 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
         "job_duplicate_links",
         "job_rejected_duplicate_links",
     ]
+
+
+def ensure_discovery_execution_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create the immutable Discover execution/job membership table.
+
+    ``job_source_observations.run_id`` intentionally remains outside the key:
+    repeated observations update that mutable source metadata, whereas this
+    table preserves one row for every Temporal Discover execution that saw or
+    selected the job.
+    """
+
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_execution_jobs (
+            tenant_id                TEXT NOT NULL,
+            discover_workflow_id     TEXT NOT NULL,
+            discover_run_id          TEXT NOT NULL,
+            job_url                  TEXT NOT NULL,
+            cohort_kind              TEXT NOT NULL
+                CHECK (cohort_kind IN ('observed_this_run', 'existing_backlog')),
+            source_family            TEXT,
+            source_run_id            TEXT,
+            preparation_workflow_id  TEXT,
+            work_plan_state          TEXT NOT NULL DEFAULT 'pending'
+                CHECK (work_plan_state IN ('pending', 'planned', 'not_eligible', 'failed')),
+            required_steps_json      TEXT,
+            work_plan_reason         TEXT,
+            linked_at                TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, discover_workflow_id, discover_run_id, job_url),
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discovery_execution_jobs_cohort
+        ON discovery_execution_jobs(
+            tenant_id, discover_workflow_id, discover_run_id, cohort_kind
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discovery_execution_jobs_plan
+        ON discovery_execution_jobs(
+            tenant_id, discover_workflow_id, discover_run_id, work_plan_state
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discovery_execution_jobs_job
+        ON discovery_execution_jobs(tenant_id, job_url, linked_at)
+        """
+    )
+    conn.commit()
+    return ["discovery_execution_jobs"]
 
 
 def _backfill_one_observation_row(

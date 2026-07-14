@@ -17,9 +17,10 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from jobctrl import config
-from jobctrl.database import ensure_source_observation_tables, get_connection, init_db, resurface_deleted_job
+from jobctrl.database import get_connection, init_db, resurface_deleted_job
 from jobctrl.domain.discovery import JobMetadata, PostingUrl, SearchStrategy, Source
-from jobctrl.domain.discovery.identity import normalize_observed_url
+from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+from jobctrl.domain.discovery.identity import JobSourceObservation, normalize_observed_url
 from jobctrl.domain.discovery.source_registry import BROAD_BOARD_LEAD_POLICY
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.ports.politeness import PolitenessDecision, PolitenessOutcome
@@ -29,6 +30,7 @@ from jobctrl.domain.job_content_identity import (
     job_content_fingerprint,
     normalize_identity_text,
 )
+from jobctrl.domain.identifiers import JobId
 
 # Phase 7 (S-27 round-1 review M1): ``parse_proxy`` lives under
 # ``jobctrl.infrastructure.network`` so the Enrichment context's
@@ -194,6 +196,7 @@ def store_jobspy_results(
     limit: int = 0,
     run_id: str = "jobspy",
     search_cfg: dict | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> tuple[int, int]:
     """Store JobSpy DataFrame results into the DB. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
@@ -201,7 +204,11 @@ def store_jobspy_results(
     existing = 0
     active_search_cfg = search_cfg if search_cfg is not None else _fallback_store_search_cfg(df, source_label)
     acceptance_policy = _posting_acceptance_policy(active_search_cfg)
-    repository = SqliteJobRepository(conn)
+    repository = SqliteJobRepository(
+        conn,
+        discovery_execution=discovery_execution,
+        source_family="jobspy" if discovery_execution is not None else None,
+    )
     use_case = DiscoverJobsUseCase(
         repository=repository,
         publisher=DurableJobEventPublisher(conn, stage="discover"),
@@ -292,6 +299,7 @@ def store_jobspy_results(
                 source_id=source_id,
                 run_id=run_id,
                 observed_at=now,
+                discovery_execution=discovery_execution,
             )
             _learn_posting_source(
                 conn,
@@ -336,6 +344,7 @@ def store_jobspy_results(
                 source_id=source_id,
                 run_id=run_id,
                 observed_at=now,
+                discovery_execution=discovery_execution,
             )
             _learn_posting_source(
                 conn,
@@ -564,52 +573,29 @@ def _record_jobspy_source_observation(
     source_id: str,
     run_id: str,
     observed_at: str,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> None:
-    ensure_source_observation_tables(conn)
     normalized = normalize_observed_url(observed_url)
     source_native_id = normalized or observed_url
     observation_id = "jobspy:" + hashlib.sha256(
         f"{source_id}:{source_native_id}".encode("utf-8")
     ).hexdigest()[:24]
-    updated = conn.execute(
-        """
-        UPDATE job_source_observations SET
-            source_observation_id = ?,
-            job_url = ?,
-            observed_url = ?,
-            normalized_observed_url = ?,
-            run_id = ?,
-            observed_at = ?
-        WHERE tenant_id = 'local' AND source_id = ? AND source_native_id = ?
-        """,
-        (observation_id, job_url, observed_url, normalized, run_id, observed_at, source_id, source_native_id),
+    SqliteJobRepository(
+        conn,
+        discovery_execution=discovery_execution,
+        source_family="jobspy" if discovery_execution is not None else None,
+    ).attach_source_observation(
+        LOCAL_TENANT,
+        JobId(job_url),
+        JobSourceObservation(
+            source_observation_id=observation_id,
+            source_id=source_id,
+            source_native_id=source_native_id,
+            observed_url=observed_url,
+            run_id=run_id,
+            observed_at=observed_at,
+        ),
     )
-    if updated.rowcount == 0:
-        updated = conn.execute(
-            """
-            UPDATE job_source_observations SET
-                source_observation_id = ?,
-                job_url = ?,
-                source_id = ?,
-                source_native_id = ?,
-                observed_url = ?,
-                run_id = ?,
-                observed_at = ?
-            WHERE tenant_id = 'local' AND normalized_observed_url = ?
-            """,
-            (observation_id, job_url, source_id, source_native_id, observed_url, run_id, observed_at, normalized),
-        )
-    if updated.rowcount == 0:
-        conn.execute(
-            """
-            INSERT INTO job_source_observations (
-                tenant_id, source_observation_id, job_url, source_id,
-                source_native_id, observed_url, normalized_observed_url,
-                run_id, observed_at
-            ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (observation_id, job_url, source_id, source_native_id, observed_url, normalized, run_id, observed_at),
-        )
     from jobctrl.state import record_job_event
 
     record_job_event(
@@ -871,6 +857,7 @@ def _run_one_search(
     limit: int = 0,
     run_id: str = "jobspy",
     search_cfg: dict | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict:
     """Run a single search query and store results in DB."""
     s = search
@@ -986,6 +973,8 @@ def _run_one_search(
     store_kwargs: dict[str, object] = {"limit": limit, "run_id": run_id}
     if search_cfg is not None:
         store_kwargs["search_cfg"] = search_cfg
+    if discovery_execution is not None:
+        store_kwargs["discovery_execution"] = discovery_execution
     new, existing = store_jobspy_results(conn, df, s["query"], **store_kwargs)
 
     msg = f"[{label}] {before} results -> {new} new, {existing} dupes"
@@ -1090,6 +1079,7 @@ def _full_crawl(
     run_id: str = "jobspy",
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     cancel_event: threading.Event | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict:
     """Run all search queries from search config across all locations."""
     if sites is None:
@@ -1224,6 +1214,7 @@ def _full_crawl(
                 limit=remaining if limit > 0 else 0,
                 run_id=run_id,
                 search_cfg=search_cfg,
+                discovery_execution=discovery_execution,
             )
         completed += 1
         total_new += result["new"]
@@ -1280,6 +1271,7 @@ def run_discovery(
     run_id: str | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     cancel_event: threading.Event | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict:
     """Main entry point for JobSpy-based job discovery.
 
@@ -1320,4 +1312,5 @@ def run_discovery(
         run_id=run_id or "jobspy",
         progress_callback=progress_callback,
         cancel_event=cancel_event,
+        discovery_execution=discovery_execution,
     )

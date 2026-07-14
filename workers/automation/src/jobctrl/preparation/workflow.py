@@ -11,6 +11,10 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.domain.discovery.execution import (
+        DiscoveryExecutionCohortKind,
+        DiscoveryExecutionRef,
+    )
     from jobctrl.infrastructure.temporal.finalize import (
         emit_workflow_outcome,
         emit_workflow_started,
@@ -58,6 +62,19 @@ class JobPreparationInput:
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+    discovery_execution: DiscoveryExecutionRef | None = None
+    discovery_cohort_kind: DiscoveryExecutionCohortKind | None = None
+
+    def __post_init__(self) -> None:
+        if (self.discovery_execution is None) != (self.discovery_cohort_kind is None):
+            raise ValueError(
+                "discovery_execution and discovery_cohort_kind must be supplied together"
+            )
+        if (
+            self.discovery_execution is not None
+            and self.discovery_execution.tenant_id != self.tenant_id
+        ):
+            raise ValueError("preparation tenant does not match discovery execution")
 
 
 @dataclass(frozen=True)
@@ -247,12 +264,16 @@ def _ordered_steps(steps: list[str]) -> list[str]:
 
 
 def _input_summary(payload: JobPreparationInput) -> dict[str, Any]:
-    return {
+    summary: dict[str, Any] = {
         "jobUrl": payload.job_url,
         "steps": list(payload.steps),
         "targetVersion": payload.target_version,
         "idempotencyKey": payload.idempotency_key,
     }
+    if payload.discovery_execution is not None:
+        summary["discoveryExecution"] = payload.discovery_execution.safe_summary()
+        summary["discoveryCohortKind"] = payload.discovery_cohort_kind
+    return summary
 
 
 def _activity_error_code(exc: ActivityError) -> str | None:

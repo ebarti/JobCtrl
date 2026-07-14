@@ -24,6 +24,9 @@ from jobctrl.infrastructure.discovery.ats_adapters import (
 from jobctrl.infrastructure.discovery.sqlite_repository import (
     SqliteJobRepository,
 )
+from jobctrl.infrastructure.discovery.sqlite_execution_repository import (
+    SqliteDiscoveryExecutionRepository,
+)
 from jobctrl.infrastructure.discovery.sqlite_run_repository import (
     SqliteDiscoveryRunRepository,
 )
@@ -50,6 +53,7 @@ __all__ = [
     "ManualCaptureImportOutcome",
     "SourceControlSeedSummary",
     "SqliteDiscoveryRunRepository",
+    "SqliteDiscoveryExecutionRepository",
     "SqliteJobRepository",
     "WorkdayBoardAdapter",
     "WorkdayEmployer",
