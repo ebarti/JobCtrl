@@ -4,8 +4,10 @@ Use this page to choose the smallest QA surface that proves a change. The
 complete risk matrix still exists, but the common commands and browser paths
 come first.
 
-**No single aggregate covers every layer.** Match the commands to the code you
-changed, then add a browser/product-path check for user-visible behavior.
+**No single aggregate covers every layer.** Match commands to the changed
+contract; do not add cross-stack checks "just in case." For an approved
+unreleased stack, run focused checks per phase, finish canonical docs in the
+final PR, then run product QA on the cumulative stack.
 
 ## Required Commands
 

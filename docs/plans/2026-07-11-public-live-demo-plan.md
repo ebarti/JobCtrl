@@ -316,9 +316,9 @@ and rollback. Cloudflare supports custom subdomains on Pages projects:
 ### D8. Stacked delivery
 
 **Decision:** This plan PR is the base. Implementation is delivered as the
-stack in §10, one coherent concern per PR, with review and QA gates at every
-layer. User-facing claims remain “planned” until the production deployment and
-live QA PR lands.
+stack in §10, one coherent concern per PR. P0–P5 get focused checks and review;
+P6 completes canonical docs, then runs cumulative review and product QA before
+launch. User-facing claims remain “planned” until that final gate passes.
 
 ---
 
@@ -1100,8 +1100,12 @@ Rules:
 - Validate every cited path/symbol against that phase's base; update this plan
   PR rather than guessing when anchors drift.
 - Do not claim the demo is shipped before P6 production verification.
-- P0–P6 each require the repository's `pr-reviewer` and `qa` loops to
-  `Gate: PASS` before completion.
+- P0–P5 run focused phase checks and `pr-reviewer`; canonical product docs and
+  product QA are deferred because the demo is not released between phases.
+- P6 updates canonical docs first, then runs the full cumulative matrix,
+  `pr-reviewer`, and `qa` across P0–P6. If any earlier phase is released or
+  changes an active high-risk path, it exits this deferral and uses its normal
+  repository tier immediately.
 
 ---
 
@@ -1248,5 +1252,5 @@ This plan is complete only when:
     preview, production smoke, and rollback all pass.
 11. The local JobCtrl application retains its current security and behavior.
 12. Canonical docs describe the shipped boundary and synthetic-data policy.
-13. Every stack PR has passed its required checks, `pr-reviewer`, and `qa` gates,
-    with no Blocker or High findings left unresolved.
+13. P0–P5 passed focused checks and review; after canonical docs landed, P6
+    passed cumulative `pr-reviewer` and `qa` with no Blocker or High findings.
