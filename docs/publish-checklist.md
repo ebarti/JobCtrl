@@ -68,8 +68,7 @@ distribution and public-demo plans.
   deployed only while it remains access-restricted. The `deploy` job in
   `docs-site.yml` is gated only on `DOCS_DEPLOY_ENABLED` and `main` — **not**
   on `release-check` — so this checklist is the
-  only guard. Before setting `DOCS_DEPLOY_ENABLED` or configuring the Cloudflare
-  secrets:
+  only guard. Before setting `DOCS_DEPLOY_ENABLED`:
   - `python3 scripts/release_check.py` reports zero findings locally on the
     exact commit to be deployed, and `release-check`
     (`.github/workflows/release-check.yml`) is green on that `main` commit.
@@ -85,8 +84,7 @@ distribution and public-demo plans.
   - Complete the staged external demo verification in 9.7 while the docs site
     and its Live Demo CTA remain access-restricted. Removing the docs restriction
     is the CTA publication action and must not precede that verification.
-- **Action.** Set the repository variable `DOCS_DEPLOY_ENABLED=true` and the two
-  Cloudflare secrets (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) so the
+- **Action.** Set the repository variable `DOCS_DEPLOY_ENABLED=true` so the
   `deploy` job in `.github/workflows/docs-site.yml` can run. Manually dispatch
   `Docs Site` at the audited `main` ref; do not wait for an unrelated push.
   Keep the candidate access-restricted until every public-cutover precondition
@@ -145,137 +143,35 @@ distribution and public-demo plans.
   a bad PyPI file/version when necessary, then publish a new higher-sequence
   signed release that explicitly revokes or supersedes the affected build.
 
-### 9.4a — Signed distribution environments (owner-only)
+### 9.4a — Signed distribution environment protections (owner-only)
 
-Before dispatching `Release distribution`, configure the following protected
-GitHub environments. Keep private values in environment secrets; keep the
-public Ed25519 trust anchor in protected environment variables. Do not write
-either into the tracked signing policy. Configure **every** environment below
-with a deployment tag rule matching only protected `v*` tags; do not admit
-branches. Dispatch the workflow at `refs/tags/<release_tag>` so its own
-`GITHUB_REF` and `GITHUB_SHA` are the same audited tag/commit checked out by
-the resolver. These environment rules are the server-side defense against a
-modified branch workflow removing the in-workflow identity check:
+This step is protection-only. Do not generate, rotate, re-enter, or relocate
+release credentials during launch, and do not add a PyPI API token: the PyPI
+job publishes through OIDC.
 
-Generate the JobCtrl Ed25519 release key pair once, outside the repository. This
-key signs JobCtrl manifests and release descriptors; it is separate from the
-Apple Developer ID certificate used to sign macOS executables:
+- **Action.** After the visibility flip, require an owner approval on
+  `release-signing`, `release-publication`, `release-verification`, and `pypi`.
+  Add a deployment policy matching only protected `v*` tags to each of the
+  three `release-*` environments, and confirm that `pypi` remains tag-only.
+  Do not admit branches. Verify the external PyPI Trusted Publisher mapping
+  named in 9.4.
+- **Verification.** Read back every environment rule before dispatch: each
+  environment requires owner approval and admits only protected `v*` tags.
+  Dispatch at `refs/tags/<release_tag>` so `GITHUB_REF` and `GITHUB_SHA` identify
+  the same audited tag and commit checked by the resolver. Confirm the jobs
+  pause at their intended approvals and that the workflow's fail-closed input
+  and trust-anchor checks pass without printing protected values.
+- **Rollback.** Cancel the release run if an environment rule or protected
+  input check fails. Keep the repository and docs access-restricted, correct the
+  protection or external publisher mapping, and rerun from the same audited tag;
+  do not weaken an environment rule or move credentials to bypass the failure.
 
-```bash
-release_key_dir="$HOME/.jobctrl-release-secrets"
-(
-  set -euo pipefail
-  umask 077
-  mkdir -p "$release_key_dir"
-  chmod 700 "$release_key_dir"
-  private_der="$release_key_dir/jobctrl-release-v1.pk8"
-  if [[ -e "$private_der" ]]; then
-    echo "release key already exists; refusing to overwrite it" >&2
-    exit 1
-  fi
-  node --input-type=module - "$private_der" <<'NODE'
-import { writeFileSync } from "node:fs";
-import { generateKeyPairSync } from "node:crypto";
-
-const { privateKey } = generateKeyPairSync("ed25519");
-const privateDer = Buffer.from(privateKey.export({ format: "der", type: "pkcs8" }));
-writeFileSync(process.argv[2], privateDer, { flag: "wx", mode: 0o600 });
-NODE
-)
-```
-
-Back up the private-key file offline. Never commit it. Copy the canonical
-base64 PKCS#8 DER value for the `JOBCTRL_RELEASE_SIGNING_KEY` environment secret,
-then paste it into `release-signing` before running the next clipboard command:
-
-```bash
-base64 < "$release_key_dir/jobctrl-release-v1.pk8" | tr -d '\n' | pbcopy
-```
-
-Derive and copy the matching raw 32-byte public key for the
-`JOBCTRL_RELEASE_PUBLIC_KEY` environment variable in `release-verification`:
-
-```bash
-node --input-type=module - "$release_key_dir/jobctrl-release-v1.pk8" <<'NODE' | pbcopy
-import { readFileSync } from "node:fs";
-import { createPrivateKey, createPublicKey } from "node:crypto";
-
-const privateDer = readFileSync(process.argv[2]);
-const privateKey = createPrivateKey({ key: privateDer, format: "der", type: "pkcs8" });
-if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("release key is not Ed25519");
-const spki = Buffer.from(createPublicKey(privateKey).export({ format: "der", type: "spki" }));
-const prefix = Buffer.from("302a300506032b6570032100", "hex");
-if (spki.length !== 44 || !spki.subarray(0, prefix.length).equals(prefix)) {
-  throw new Error("unexpected Ed25519 public-key encoding");
-}
-process.stdout.write(spki.subarray(prefix.length).toString("base64"));
-NODE
-```
-
-Set `JOBCTRL_RELEASE_KEY_ID` to `jobctrl-release-v1`. The signing workflow
-derives the public key from the protected private key and fails unless it
-exactly matches the independently protected verification value.
-
-- `release-signing`: `JOBCTRL_RELEASE_SIGNING_KEY`,
-  `JOBCTRL_APPLE_DEVELOPER_ID_P12`,
-  `JOBCTRL_APPLE_DEVELOPER_ID_PASSWORD`, `JOBCTRL_APPLE_SIGNING_IDENTITY`,
-  `JOBCTRL_APPLE_NOTARY_PROFILE`, `JOBCTRL_APPLE_NOTARY_API_KEY`,
-  `JOBCTRL_APPLE_NOTARY_KEY_ID`, and `JOBCTRL_APPLE_NOTARY_ISSUER`. Require an
-  owner approval. The signing job starts on a fresh runner only after locked
-  dependencies and both unsigned comparison builds have passed; it performs no
-  package installation and runs only the sealed finalizer plus system signing
-  and notarization tools.
-- `release-publication`: environment secrets `JOBCTRL_R2_ACCESS_KEY_ID`,
-  `JOBCTRL_R2_SECRET_ACCESS_KEY`, `JOBCTRL_RELEASE_ADMIN_READ_TOKEN` (a
-  fine-grained token with repository Administration read access), and
-  `HOMEBREW_TAP_DEPLOY_KEY`; plus protected environment variables
-  `JOBCTRL_R2_ACCOUNT_ID` and `JOBCTRL_R2_BUCKET`. The R2 access key must have
-  Object Read & Write permission scoped only to the release bucket. Keep the
-  credentials as environment secrets; the reusable Homebrew workflow resolves
-  the tap key only inside its `publish` job after the environment approval,
-  rather than accepting it through `workflow_call`. Require a separate owner
-  approval. Publication writes directly to the configured R2 S3 endpoint with
-  conditional `PutObject` (`If-Match` / `If-None-Match: *`), then verifies the
-  resulting bytes through `https://releases.jobctrl.dev`.
-- `release-verification`: protected environment variables
-  `JOBCTRL_RELEASE_PUBLIC_KEY` and `JOBCTRL_RELEASE_KEY_ID`, the non-secret but
-  integrity-sensitive release trust anchor. Require an owner approval. The
-  credential-free distribution-prepare jobs embed this key. After immutable
-  GitHub publication, the clean PyPI resolution gate checks against the same
-  protected values before dependency execution; the two builders receive
-  neither value. None of those jobs receives an OIDC token or publication
-  authority.
-- `pypi`: configure only the PyPI Trusted Publisher. Require an owner approval
-  and the same protected `v*` tag-only deployment rule.
-  The OIDC-only publish job receives no checkout, build tooling, dependencies,
-  or release-key inputs; it receives only the compare-sealed package bytes and
-  checksum.
-
-Dispatch supplies the full expected SHA-256 of the currently served channel
-pointer (or `absent` only for the first one). Two fresh macOS runners build
-unsigned candidates independently; a third runner compares them before the
-credentialed signer receives either. Fresh runners then isolate signing,
-immutable draft publication, pointer CAS, tap publication, and final GitHub
-Release publication from dependency installation and repository execution. A
-separate credential-free runner smoke-tests the public build-scoped assets and
-runs Homebrew audit/install/test. Only then does the minimal CAS job promote
-the signer-authored channel pointer. The top-level concurrency key serializes
-each channel/platform, and the stable tap job cannot start until that pointer
-promotion succeeds or proves the exact pointer is already live. An exact
-existing pointer is a safe resume; a different or stale pointer is a deliberate
-conflict that fails before Homebrew can be changed. The workflow publishes and
-post-lock verifies the immutable GitHub Release after pointer and tap
-publication; only the stable channel can then enter the clean two-builder PyPI
-lane.
-
-**Pending hosted-release actions.** After the visibility flip, require every
-hosted gate to execute real steps on the exact audited SHA. If GitHub still
-cannot execute them, stop publication and resolve hosted Actions availability
-before proceeding. Configure the required owner approvals and `v*`-tag-only
-deployment policies for every release environment, verify all protected inputs
-without exposing their values, and complete the first live signed-release
-verification. Keep the repository and docs access-restricted, and do not
-advertise curl or Homebrew as stable install paths, until those gates complete.
+**Hosted-execution stop condition.** After the visibility flip, require every
+hosted gate to execute real steps on the exact audited SHA. If GitHub cannot
+execute them, stop publication and resolve hosted Actions availability before
+proceeding. Keep the repository and docs access-restricted, and do not advertise
+curl or Homebrew as stable install paths, until 9.4a and the first live signed
+release verification complete.
 
 ### 9.5 — Homebrew tap publication (signed-release-gated)
 
