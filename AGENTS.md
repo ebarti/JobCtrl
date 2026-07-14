@@ -1,25 +1,24 @@
-## Reference Index
+## Reference Routing
 
-Use these repository documents before making architectural, workflow, or QA decisions:
+Start with `docs/README.md`, the canonical documentation map, then read only the
+documents that own the behavior being changed. Do not scan the entire reference
+tree by default.
 
-- `docs/README.md`: canonical map of every public, user, and developer document (GitHub renders it when browsing `docs/`; unpublished on the docs site, whose homepage is the hero page `docs/index.md`).
-- `README.md`: user-facing product behavior, CLI commands, runtime requirements, generated local artifacts, and safety notes.
-- `docs/user/` (`getting-started.md`, `screenshots.md`, `normal-flows.md`, `configuration.md`, `data-and-safety.md`, `security.md`): end-user setup, the visual product tour (screenshots), expected product flows, the configuration/env-var reference, data and safety boundaries, and the user-facing security model.
-- `docs/developer/README.md`: contributor entry point and architecture/QA reading path.
-- `docs/local-development.md`: install, run, verify, and frontend development commands, plus the synthetic documentation-screenshot workflow.
-- `docs/local-reliability-qa.md`: local QA checklist, regression matrix, known high-risk workflows that need test coverage, and the frontend test pyramid + a11y bar.
-- `docs/local-ts-api.md`: local TypeScript API routes, JSON-RPC dispatch, web app development notes, and the `GET /v1/events/stream` SSE contract.
-- `docs/architecture/`: the System Architecture section — `index.md` (system shape, eight bounded contexts, core data flow, local commands), `runtime.md` (runtime boundaries of the TypeScript app/API plus Python worker, Temporal-native orchestration, JSON-RPC TS↔Python protocol, local-first boundaries), `observability.md` (OpenTelemetry → Langfuse export of LLM, workflow, and JSON-RPC spans), `storage.md` (SQLite and generated files), `scoring.md`, `materials.md`, and `read-model.md` (projection-backed read model).
-- `docs/architecture/pipeline/`: workflow-by-workflow pipeline execution on Temporal — `index.md` (execution surfaces, workflow catalog, source files), `envelope.md` (universal envelope, activities, error taxonomy), `concurrency.md` (worker capacity, fan-out topology, throughput bounds), `stages.md` (per-stage call paths and sequence diagrams), `operations.md` (spend ceiling, discovery schedule, persistence map, events, projection recovery, failure behavior).
-- `docs/architecture/tailoring.md`: resume tailoring prompt contract, generated JSON shape, validation/judge/fabrication gates, provenance, audit metadata, and safe change points.
-- `docs/requirements.md`: product and technical requirements that must stay true as implementation changes.
-- `docs/architecture/domain-model/`: canonical DDD + hexagonal target architecture (§1–§11 numbering preserved across subpages), including bounded-context language, aggregates, ports, domain events, projection strategy, and hosted-future seams. The implementation in this codebase realises this target — see `docs/plans/implemented/2026-05-06-ddd-migration.md`.
-- `docs/architecture/frontend/`: canonical frontend architecture (§1–§15 numbering preserved across subpages) — three-layer state (server / URL / client), eight bounded contexts mirrored 1:1 from the backend, view-vs-context dichotomy, hexagonal frontend ports, SSE realtime + invalidation router, testing pyramid. The implementation in this codebase realises this target — see `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`.
-- `docs/decisions.md`: architectural decision records — DDD adoption, per-aggregate repositories, in-process EventPublisher + projections, JSON-RPC for TS↔Python, TanStack family adopted for the frontend, frontend hexagonal ports with local + hosted adapters named, SSE realtime via `GET /v1/events/stream` + invalidation router, view-vs-context dichotomy, and the Temporal-native orchestration ADRs.
-- `ROADMAP.md`: public roadmap; `docs/backlog.md`: detailed engineering backlog, frontend a11y deferrals, and the known-failing web e2e baseline.
-- `docs/plans/`: active plans at the top level, historical records under `implemented/`; `docs/incidents/`: incident reports.
-- `package.json`: current TypeScript/API/web scripts.
-- `workers/automation/pyproject.toml`: Python package metadata, CLI entry point, Python version, optional dev dependencies, and Ruff config.
+- Product behavior, commands, runtime requirements, artifacts, or safety:
+  `README.md` and the relevant page under `docs/user/`.
+- Contributor workflow and validation: `docs/developer/README.md`,
+  `docs/local-development.md`, and `docs/local-reliability-qa.md`.
+- API routes, JSON-RPC, or SSE: `docs/local-ts-api.md`.
+- Architecture: the relevant page under `docs/architecture/`, plus
+  `docs/requirements.md` and `docs/decisions.md` when the contract or decision
+  itself changes.
+- Plans and status: the relevant active file under `docs/plans/`; use
+  `implemented/` only for historical context.
+- TypeScript scripts/dependencies: `package.json`; Python package metadata and
+  tooling: `workers/automation/pyproject.toml`.
+
+Follow links beyond the owning document only when they are needed to resolve a
+specific contract, dependency, or QA risk.
 
 ## How To Run The Project
 
@@ -41,7 +40,9 @@ Do not run auto-apply, browser submission, destructive profile/database actions,
 
 ## Build, Test, And Lint Commands
 
-The unit-test and QA command set must be made explicit as the project evolves. Until a stronger command matrix exists, use the following defaults and narrow them to the touched surface when appropriate:
+Use the smallest command set that proves the touched behavior. Run the
+cross-stack aggregates only for cross-stack changes, release/high-risk work, or
+when an active plan explicitly requires them:
 
 - Cross-stack typecheck + lint aggregate: `pnpm check` (contracts, api-client, API, and web typechecks plus Python ruff).
 - Cross-stack test aggregate: `pnpm test` (API Vitest + web build + Python pytest). It does NOT run the web unit/hook/component suite, the type-level tests, or the Playwright e2e specs — run those explicitly for frontend changes.
@@ -91,7 +92,9 @@ If multiple surfaces changed, update every relevant document. If no documentatio
 - If a reasonable assumption is low-risk and needed to make progress, state it explicitly before acting.
 - Treat payloads, local generated artifacts, and job/application data as sensitive. Do not expose secrets, profile data, API keys, resumes, cover letters, generated PDFs, browser profiles, SQLite databases, or application logs unless the user explicitly requests them.
 - Prefer repo-grounded answers and edits over generic advice. Check the referenced docs and current code before making architectural claims.
-- **Subagent spawning:** You may spawn as many subagents as you need for parallel or complex work. Do not artificially limit concurrency — if a task naturally decomposes into independent subtasks, run them in parallel.
+- **Subagent spawning:** Use subagents only for genuinely independent work or
+  for the review/QA gates required by the validation tiers below. Do not add
+  coordination overhead to work that is faster to complete directly.
 
 ### Root-Cause And Auditability Discipline
 
@@ -115,25 +118,35 @@ Before claiming "fixed" on these surfaces, add or update a regression fixture th
 - PR descriptions must clearly and unambiguously explain what changed, why it changed, and how it was validated.
 - Keep changes as small as possible while still fully satisfying the goal.
 - Use stacked PRs when functionality builds on prior functionality or when a large change should be broken into reviewable steps.
-- Every implementation task must be developed in its own worktree on the relevant branch.
+- Every implementation task must run off `main` in a dedicated worktree or
+  task branch. If the current task already has a dedicated worktree, use it;
+  do not create a nested/replacement worktree or refresh `main` solely for
+  compliance.
 - Never edit code on `main` or leave `main` dirty.
-- Always ensure `main` is fetched and pulled before creating a worktree.
-- Before coding, confirm the current branch/worktree. If you are on `main`, stop and create or switch to the correct worktree first.
+- Resolve the base before creating a worktree: use updated `main` for standalone
+  work, or the explicit parent branch/commit for an approved stacked change.
+  Fetch the relevant remote ref and verify that chosen base is current.
+- Before coding, confirm the current branch/worktree. If you are on `main`, stop
+  and create or switch to the correct worktree first.
 - Do not remove existing compatibility behavior unless the assigned goal explicitly authorizes that breaking change.
 
-Recommended worktree setup:
+When a new worktree is actually needed:
 
-1. From the main checkout, ensure no unrelated dirty changes block setup.
-2. Run `git fetch origin main`.
-3. Update main with `git switch main` and `git pull --ff-only origin main`.
-4. Create a task branch and worktree with `git worktree add <worktree-path> -b <branch-name> main`.
+1. Ensure no unrelated dirty changes block setup.
+2. Choose `<base-ref>`: updated `main` for standalone work, or the explicit
+   parent branch/commit for an approved stack.
+3. Fetch the relevant remote ref. If `<base-ref>` is `main`, fast-forward the
+   main checkout with `git pull --ff-only origin main`.
+4. Create the task worktree with
+   `git worktree add <worktree-path> -b <branch-name> <base-ref>`.
 5. Do all coding, testing, commits, and PR work from that task worktree.
 
 ## Constraints And Do-Not Rules
 
 - Never edit code in the main branch.
 - Never leave `main` dirty.
-- Never create a worktree from stale `main`; fetch and pull first.
+- Never create a worktree from stale `main` or a stale stack parent; fetch and
+  verify the selected base first.
 - Never mark work complete while Blocker or High PR review findings remain.
 - Never mark work complete while Blocker or High QA findings remain.
 - Never skip the QA stage for user-facing UI/API/product-flow changes.
@@ -142,84 +155,42 @@ Recommended worktree setup:
 
 ## What Done Means And How To Verify Work
 
-Done means the user's instruction or goal has been fully achieved, the changeset is as small as practical, and the work has passed the required implementation, review, and QA gates.
+Done means the user's instruction or goal has been fully achieved, the changeset
+is as small as practical, and verification is proportional to its actual risk.
+Use the lowest tier that fully covers the change; an active plan or explicit user
+instruction may raise the tier. Never lower the tier for security, privacy, data
+integrity, destructive actions, migrations, releases, or application submission.
+
+| Tier | Applies to | Minimum verification | Independent gates |
+| --- | --- | --- | --- |
+| 0 — Editorial | Prose/typo/comment/format-only changes with no workflow, contract, test, or runtime effect | `git diff --check`; build docs only when site content, links, navigation, or rendering changed | None unless explicitly requested |
+| 1 — Scoped | Internal refactors, tests, developer workflow/tooling, or contained behavior with no user-facing/high-risk boundary | Touched-surface lint/typecheck/unit tests plus `git diff --check` | One final `reviewer` pass; use `pr-reviewer` when a PR already exists |
+| 2 — Product | User-facing UI, CLI, API, browser flow, integration, or workflow behavior | Tier 1 plus the smallest product-path QA that proves the change | `reviewer`/`pr-reviewer` and `qa` must return `Gate: PASS` |
+| 3 — High risk | Security/privacy controls, credentials, user data, apply/submission, destructive actions, migrations, release/distribution, or cross-stack critical invariants | Relevant full matrix, regression fixture, and product/operational proof | `reviewer`/`pr-reviewer` and `qa` must return `Gate: PASS`; fix and rerun until no Blocker/High remains |
+
+If Tier 3 groundwork changes only contracts or fixtures and no executable
+product/operational path exists yet, do not fabricate product QA. Require one
+independent review plus the focused safety checks, record why QA is deferred,
+and make QA mandatory in the first phase that exposes the executable path.
+
+Run independent gates once after implementation and focused verification. Rerun
+a failed gate after addressing its Blocker/High findings; do not repeat passing
+gates for cosmetic edits or unresolved Medium/Low observations unless the edit
+could affect the verified behavior.
 
 Before calling work done:
 
 1. Confirm the work happened in a dedicated worktree and not on `main`.
 2. Confirm the goal and acceptance criteria are satisfied.
-3. Run the relevant build, lint, unit-test, and QA commands for the touched surfaces.
-4. Run the PR review/fix loop until `pr-reviewer` returns `Gate: PASS` or the workflow is explicitly blocked.
-5. Run the QA loop until `qa` returns `Gate: PASS` or the workflow is explicitly blocked.
-6. Report exact commands, exact results, PR number, unresolved Medium/Low risks, and any skipped verification with a concrete reason.
+3. Classify the validation tier and run its focused commands.
+4. Run only the independent gates required by that tier.
+5. Report exact commands and results, the tier, unresolved Medium/Low risks, any
+   skipped verification with a concrete reason, and the PR number when a PR
+   exists or was requested.
 
 If any required verification cannot be run, the final status is not done. Report it as blocked or partially verified and explain what remains.
 
-## Frontend Conventions
+## Scoped Instructions
 
-The `apps/web` frontend follows the architecture documented in `docs/architecture/frontend/` and the four ADRs landed on 2026-05-06 in `docs/decisions.md` (TanStack family adopted, frontend hexagonal ports, SSE realtime + invalidation router, view-vs-context dichotomy). Follow these conventions on every frontend change; they exist so the architecture stays the architecture.
-
-### Folder structure
-
-- **Bounded-context folders mirror the backend 1:1.** Eight folders under `apps/web/src/contexts/`: `discovery/`, `enrichment/`, `profile/`, `scoring/`, `materials/`, `apply/`, `pipeline/`, `operations/`. A context may own any of `components/`, `hooks/`, `handlers.ts` (invalidation handlers registered with `operations/`), `queryKeys.ts` (re-exported through `contexts/operations/queryKeys.ts`), `selectors/`, `lib/`, `forms/`, `stores/`, and `index.ts` — only as needed; thin contexts (Discovery, Enrichment) keep their folder so future hooks land without restructure. **`operations/` is the special case:** it has no `handlers.ts` of its own (it hosts `invalidation-router.ts` which loads the seven aggregate contexts' handlers) and it owns the read-side hooks the other contexts do not.
-- **Views are composers, not contexts.** `apps/web/src/views/dashboard/`, `views/jobs/`, `views/artifacts/` import components and hooks from contexts and assemble them into a layout. Views never own query keys, mutations, or persistent state stores; they only own layout and view-local ephemeral UI (e.g., bulk-selection sets).
-- **Dependency direction.** Views depend on contexts; contexts never depend on views. A view never depends on another view (cross-view navigation goes through the URL). A context never imports another context's hooks or stores; cross-context coordination happens in (a) the view that composes them or (b) the invalidation router for cache fan-out. The only exception is `operations/` — every other context depends on it for read access and for the query-key registry.
-
-### View composer rules
-
-- View files (`views/<view>/<View>.tsx`, `<View>Table.tsx`, `<View>FilterBar.tsx`, `<View>DetailDrawer.tsx`, …) compose context components.
-- Views never call `useQuery` / `useMutation` / `apiClient.*` / `queryClient.*` directly. Read data comes through Operations hooks (`useJobsListQuery`, `useJobDetailQuery`, …). Writes come through context-owned mutation hooks composed inside context-owned button components.
-
-### Query keys
-
-- Per-context factory living in `contexts/<context>/queryKeys.ts` (or for read keys, `contexts/operations/queryKeys.ts`); re-exported through `contexts/operations/queryKeys.ts` so the invalidation router has a single import surface.
-- Shape: `["tenant", tenantId, <context>, <subset>, ...args] as const`. `tenantId` is the first segment for every key, today resolving to `LOCAL_TENANT` and tomorrow to the JWT-derived tenant — the hook signature does not change.
-- Hierarchical scopes: `<context>Keys.all(tenantId)`, `.lists(tenantId)`, `.list(tenantId, filters)`, `.details(tenantId)`, `.detail(tenantId, id)` so invalidation can target the right scope.
-
-### Mutation invalidation
-
-- Per-aggregate `useMutation` hook in the owning context (e.g., `useApplyJobMutation` in `contexts/apply/hooks/`).
-- Each mutation declares its own `onSettled` `invalidateQueries` set per `docs/architecture/frontend/integration.md` §8.2. Default mutation options do **not** invalidate broadly.
-- Synchronous mutations: optimistic update + invalidate on settle. Async (202) mutations: small immediate "queued" invalidation; the real result arrives via the SSE invalidation router.
-
-### Optimistic mutations
-
-- Use `createOptimisticMutation` from `apps/web/src/shared/lib/createOptimisticMutation.ts` for any mutation that needs an optimistic patch.
-- **Always supply a real patcher.** The helper is dead code without one — calling it with an empty / no-op patcher is a Phase 3 reviewer Major; the QA gate fails any PR that wires `createOptimisticMutation` without a patch + rollback.
-
-### SSE + invalidation router
-
-- The real SSE adapter lives in `apps/web/src/shared/adapters/local/SseEventStreamAdapter.ts` and reads `EventStreamPort` from `apps/web/src/shared/ports/`. Feature code consumes events through the invalidation router, never by reading `EventSource` directly.
-- The invalidation router is `apps/web/src/contexts/operations/invalidation-router.ts`. It maps `DomainEvent.eventType` to the right query-key set via the per-context handlers (`contexts/<context>/handlers.ts`).
-- `Record<DomainEvent["eventType"], InvalidationHandler>` typing makes a missing handler a TypeScript compile error; the `every-event-has-handler.test.ts` parity test catches obvious empty-stub bodies at runtime.
-
-### Forms
-
-- TanStack Form + Zod `safeParse`. Do **not** use the deprecated `zod-form-adapter`; call `safeParse` in the field validators directly.
-- Multi-step or wizard state that needs to survive navigation lives in a Zustand store with `persist` middleware (e.g., `contexts/profile/stores/profile-import-store.ts`). Single-step transient form state stays inside TanStack Form.
-
-### Tables
-
-- Column models live in `views/<view>/columns.tsx` as `DataGridColumn<T>[]` for the shared grid (`apps/web/src/shared/ui/filterable-data-grid.tsx`); `@tanstack/react-table` supplies row-selection/sorting types only, not the table engine.
-- Cell renderers compose context-owned components (`<ScoreBadge>` from `contexts/scoring/`, `<StageBadge>` from `contexts/pipeline/`, `<ApplyRunBadge>` from `contexts/apply/`, …) — never inline JSX duplicating what a context already exports.
-
-### Anti-patterns (forbidden in feature code)
-
-- `useState<DataShape>` for server data — server data lives in TanStack Query.
-- `useEffect(() => fetch(...))` for data loading — use a `useQuery` hook from `contexts/operations/`.
-- `useRef(0)` for stale-response dedup — TanStack Query handles this via the cache key.
-- `window.dispatchEvent` / `addEventListener` for cross-component coordination — use the URL (`navigate`), Zustand stores, or the query cache + invalidation router.
-- Direct `apiClient.*`, `navigator.clipboard.*`, `localStorage.*`, `new EventSource(...)` calls — go through the corresponding port (`usePorts()`).
-
-### Tests
-
-- Colocated `*.test.ts(x)` next to source. Type-level tests live under `apps/web/test/types/<name>.test-d.ts` (separate config: `vitest.types.config.ts`, runs Vitest's `typecheck` mode — invoked via `pnpm --filter @jobctrl/web test-d`). Accessibility tests are colocated `*.a11y.test.tsx`. Storybook stories are colocated `*.stories.tsx`.
-- MSW handlers live in `apps/web/src/test/msw/handlers.ts` (REST) and `apps/web/src/test/msw/sse-handlers.ts` (SSE). Add to the existing handler file rather than creating new MSW setups.
-- One test per query hook and per mutation hook covering the success path AND the rollback path.
-- The two parity tests are non-negotiable: `every-event-has-handler.test.ts` (`apps/web/src/contexts/operations/`) for `DomainEventUnion`, `every-stage-state-has-badge.test.tsx` (`apps/web/src/contexts/pipeline/components/`) for `STAGE_STATE_KINDS`.
-- E2E specs live under `apps/web/e2e/tests/<flow>.spec.ts`.
-
-### Stories
-
-- Colocated `*.stories.tsx`. Per-state stories (loading / populated / empty / error) for view composers and forms via the MSW addon. Per-variant stories for primitives. Per-discriminant-arm stories for components rendering discriminated unions (`<StageBadge>` per `STAGE_STATE_KINDS`).
-- The a11y addon enforces zero **critical** and **serious** axe violations. If a story exercises a pre-existing production a11y defect, set `parameters.a11y.test = "off"` AND record the deferral in `docs/backlog.md` "Frontend Accessibility Backlog" with the production file and defect type. Never silence the bar without filing the backlog entry.
+Changes under `apps/web/` must also follow `apps/web/AGENTS.md`. Read those
+frontend-specific rules only for work that touches the web application.

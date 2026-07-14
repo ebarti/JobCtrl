@@ -6,6 +6,9 @@ come first.
 
 **No single aggregate covers every layer.** Match the commands to the code you
 changed, then add a browser/product-path check for user-visible behavior.
+Do not add cross-stack aggregates to a scoped change "just in case"; escalate
+only when the changed contract crosses boundaries, the risk tier requires it,
+or an active plan names the aggregate.
 
 ## Required Commands
 

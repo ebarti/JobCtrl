@@ -73,14 +73,17 @@ git rebase --signoff origin/main
 
 ## Validation
 
-Run the narrowest useful checks while iterating. Before opening a PR, prefer:
+Run the narrowest useful checks while iterating and before opening a PR. Use the
+touched-surface commands in
+[Reliability & QA](docs/local-reliability-qa.md), then always run:
 
 ```bash
-corepack pnpm check
-corepack pnpm test
-uv --project workers/automation run --extra dev python -m build workers/automation
 git diff --check
 ```
+
+Add `corepack pnpm check` and `corepack pnpm test` for cross-stack changes,
+release/high-risk work, or when an active plan requires the aggregate. Build the
+Python package only when package or distribution behavior changes.
 
 For user-facing UI/API/product-flow changes, include a product-path QA step, not
 only unit tests. See [docs/local-reliability-qa.md](docs/local-reliability-qa.md)
