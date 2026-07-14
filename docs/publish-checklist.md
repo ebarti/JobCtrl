@@ -29,10 +29,48 @@ and PyPI publication remain prohibited until every hosted gate is then green.
 
 ## Owner-only actions (do not execute here)
 
-Every step below is an **owner-only** action. Implementing agents prepare and
-verify; the repository owner executes. Steps 9.3 and 9.4 additionally depend on
-the pre-publication rename train and are **out of scope for R7a** — they belong
-to the rename train / post-rename launch assets (R7b).
+Every state-changing step below is an **owner-only** action. Implementing agents
+prepare and run read-only verification; the repository owner executes. The
+R7a/R7b split is historical now that the rename and launch-readiness artifacts
+have landed. The remaining gates are the release gate plus the active bundled
+distribution and public-demo plans.
+
+## Current launch snapshot (re-verified 2026-07-14)
+
+This is a dated observation, not permission to publish and not a substitute for
+rerunning the checks on the final release SHA.
+
+- `main` is `47cfba58`; `ebarti/JobCtrl` is still **private**. The repository
+  description and `https://jobctrl.dev` homepage metadata are set.
+- `python3 scripts/release_check.py --strict-prompt` and
+  `pnpm distribution:audit` pass locally on that tree. The tracked signing
+  policy remains fail-closed as `blocked-awaiting-credentials` by design; the
+  release workflow may derive a ready policy only after its protected inputs
+  resolve.
+- Release Privacy, Docs Site, Demo Site, Native Launcher CI, Python CI, and
+  TypeScript CI are all active, but their latest jobs on `47cfba58` failed with
+  zero executed steps under the current private-repository billing/plan state.
+  They are neither product failures nor passing evidence.
+- `jobctrl.dev` and `demo.jobctrl.dev` have deployed candidates, but an external
+  non-allowlisted request receives Cloudflare Access `403`. The docs deployment
+  variable is unset; `DEMO_DEPLOY_ENABLED=true` is set. Neither candidate has
+  completed public cutover.
+- The claims ledger is owner-signed, but GATE G1 is still open: its last anchor
+  is `15356b39`, not current `main`, and the final post-merge freeze SHA has not
+  been recorded.
+- The release signing, publication, verification, and PyPI environments exist;
+  the PyPI environment has a `v*` tag-only policy. Required reviewers and the
+  remaining tag-only environment policies are not configured under the current
+  repository plan. There is no `v2.0.0` tag, immutable GitHub Release, stable R2
+  channel pointer, or signed/notarized public artifact. PyPI contains only the
+  `0.0.1` name-holding marker release.
+- `ebarti/homebrew-tap` is public and still contains the legacy HEAD-only,
+  source-bootstrap `Formula/jobctrl.rb`; it has no stable spec and is not the
+  signed v2.0.0 distribution. Step 9.5 must replace it through the sealed
+  release workflow before Homebrew is advertised as a stable install path.
+- The owner explicitly deferred W2.4 per-lane spend attribution and token
+  ceilings for v2.0.0 on 2026-07-10. The shipped application-wide estimated
+  daily USD ceiling remains; W2.4 is backlog, not an unresolved launch choice.
 
 ## Steps
 
@@ -42,12 +80,14 @@ to the rename train / post-rename launch assets (R7b).
 - **Verification.**
   - Before the flip, run the complete local matrix on the exact `main` tree,
     including strict release/privacy scanning and built-distribution scanning.
-  - Immediately after the flip, rerun Release Privacy, Docs Site, Python CI,
-    Sync Homebrew Tap, and TypeScript CI on that exact `main` SHA. The current
-    private-repository runs are zero-step billing failures and are not passing
-    evidence. If Release Privacy fails after actually executing, return the
-    repository to private while investigating. Any other hosted failure blocks
-    docs deployment, tagging, and publication.
+  - Immediately after the flip, rerun Release Privacy, Docs Site, Demo Site,
+    Native Launcher CI, Python CI, and TypeScript CI on that exact `main` SHA.
+    `Sync Homebrew Tap` is reusable only from the later signed-release workflow;
+    it is not a standalone post-flip build gate. The current private-repository
+    runs are zero-step billing failures and are not passing evidence. If Release
+    Privacy fails after actually executing, return the repository to private
+    while investigating. Any other hosted failure blocks docs/demo cutover,
+    tagging, and publication.
   - `python3 scripts/release_check.py` reports zero findings locally on the
     exact commit to be published.
   - Every box in OSS spec §5 is checked, including the final human manual QA
@@ -61,6 +101,12 @@ to the rename train / post-rename launch assets (R7b).
   reachable.
 
 ### 9.2 — Docs-site deploy (owner-only)
+
+> **Current state 2026-07-14.** A candidate is deployed at `jobctrl.dev` behind
+> Cloudflare Access: the allowlisted local probe serves the site and an external
+> non-allowlisted probe receives `403`. `DOCS_DEPLOY_ENABLED` is unset, so the
+> hosted workflow cannot update the candidate. This is staged infrastructure,
+> not a completed public deploy.
 
 - **Preconditions (OSS spec §5 gate).** Deploying `docs/.vitepress/dist` to the
   public `jobctrl-docs` Cloudflare project is itself a going-public act, so it
@@ -85,11 +131,14 @@ to the rename train / post-rename launch assets (R7b).
   it deploys `docs/.vitepress/dist` to the Cloudflare Pages project
   `jobctrl-docs`).
 - **Verification.** On the next `main` push the `deploy` job runs (not skipped),
-  the site serves, and `pnpm docs:build` + `pnpm docs:check:runtime` are green on
-  the built artifact.
-- **Rollback.** Unset `DOCS_DEPLOY_ENABLED` → the `deploy` job skips cleanly and
-  the workflow stays green. If a bad build shipped, redeploy the previous
-  `docs-site-dist` artifact.
+  the site serves from an external non-allowlisted network without a Cloudflare
+  Access challenge, and `pnpm docs:build` + `pnpm docs:check:runtime` are green
+  on the built artifact.
+- **Rollback.** Re-enable the Cloudflare Access restriction (or otherwise
+  disable the public custom domain), then unset `DOCS_DEPLOY_ENABLED` so future
+  deploy jobs skip. If a bad build shipped, redeploy the previous
+  `docs-site-dist` artifact before reopening access. Unsetting the variable
+  alone does not withdraw an already deployed Pages site.
 
 ### 9.3 — Repository-rename redirect (owner-only; rename landed 2026-07-07)
 
@@ -124,6 +173,13 @@ to the rename train / post-rename launch assets (R7b).
 > The owner selected **v2.0.0** as the first public release version on
 > 2026-07-10. All shipped manifests are prepared at that version before the
 > tag; publishing the tag remains an owner-only action after hosted gates pass.
+
+> **Current state 2026-07-14.** The protected environment records and release
+> secret names are present, and the PyPI environment admits only `v*` tags, but
+> no required reviewer is configured and the other release environments have no
+> tag-only deployment policy under the current private-repository plan. No
+> `v2.0.0` tag, immutable GitHub Release, stable R2 pointer, or v2.0.0 PyPI file
+> exists.
 
 - **Action.** Re-check that the `jobctrl` PyPI name is still available and
   configure/verify its Trusted Publisher immediately before release. A pending
@@ -274,21 +330,25 @@ lane.
 
 **Current hosted-release status.** The `jobctrl-releases` R2 bucket,
 `https://releases.jobctrl.dev` custom domain, and repository immutable Releases
-are provisioned. The `release-publication` R2 credentials, administration-read
-token, Homebrew deploy key, account ID, and bucket are configured. GitHub
-currently rejects required-reviewer and tag-policy protection for this private
-repository under its billing/plan state, and Actions jobs are zero-step blocked
-by the same account state. Restore billing/plan access, configure the required
-owner approval plus `v*`-tag-only deployment policy, and complete the first
-live signed-release verification. No user-facing curl or Homebrew
-stable-install claim may be made until those hosted gates have completed.
+are provisioned. The release signing/notarization secret names, R2 credentials,
+administration-read token, Homebrew deploy key, account ID, bucket, and release
+verification variables are configured. GitHub currently rejects the remaining
+required-reviewer and tag-policy protection for this private repository under
+its billing/plan state, and Actions jobs are zero-step blocked by the same
+account state. Restore billing/plan access, configure the missing owner
+approvals plus `v*`-tag-only deployment policies, and complete the first live
+signed-release verification. The staged README/docs already contain curl and
+Homebrew commands, so keep the repository and docs candidate access-restricted
+until those hosted gates have completed.
 
 ### 9.5 — Homebrew tap publication (signed-release-gated)
 
 `packaging/homebrew/Formula/jobctrl.rb.tmpl` is the one canonical formula
-template. There is no checked-in rendered formula or public stable install
-claim. The implemented P6 signer job renders the formula once from the signed
-stable descriptor and exports its exact SHA-256. A credential-free job
+template in this repository. The public `ebarti/homebrew-tap` currently carries
+a legacy HEAD-only source-bootstrap formula with no stable spec; it is not a
+render of this template and is not release evidence. The implemented P6 signer
+job renders the replacement formula once from the signed stable descriptor and
+exports its exact SHA-256. A credential-free job
 smoke-tests that formula and published ZIP without re-rendering either. The reusable tap
 workflow receives the untouched signed candidate and separate smoke evidence,
 re-verifies the signer-rooted formula digest, and seals the exact formula
@@ -308,12 +368,42 @@ runtime payload from the Cellar during `brew install`.
 - **Rollback.** Revert `Formula/jobctrl.rb` in the tap after coordinating a
   signed release revocation; the source-development instructions are separate.
 
+### 9.6 — Public live-demo cutover (owner-only)
+
+The owning implementation and privacy contract is
+[`docs/plans/2026-07-11-public-live-demo-plan.md`](plans/2026-07-11-public-live-demo-plan.md).
+P0–P7 are merged and a production candidate is deployed, but the plan remains
+active until public cutover and its Definition of Done are complete.
+
+- **Preconditions.** The exact-tree local gate and all post-public hosted gates
+  in 9.1 pass. The owner approves the controller identity, privacy contact,
+  public privacy/cookie notice, Cloudflare processor/transfer posture, and the
+  lawful basis and copy for the acceptance-required consent gate and disclosed
+  non-linkable operational counters. The claims ledger is frozen at the release
+  SHA. No Blocker/High security, review, or QA finding remains.
+- **Action.** On the approved deployment, remove the Cloudflare Access IP
+  restriction from `demo.jobctrl.dev`, publish the docs-site Live Demo CTA, and
+  leave `DEMO_DEPLOY_ENABLED=true` only while production deployment from
+  audited `main` is intended.
+- **Verification.** From an external non-allowlisted network and a fresh browser
+  profile, direct routes load; only the static consent shell exists before a
+  decision; decline redirects to `jobctrl.dev`; confirmed consent initializes
+  only the isolated synthetic workspace; irreversible effects remain simulated;
+  product-state values never cross the telemetry boundary; D1 retention,
+  security headers, production smoke, and rollback rehearsal pass. Record the
+  exact deployment/SHA evidence required by the demo plan.
+- **Rollback.** Re-enable the Cloudflare Access restriction first, disable
+  `DEMO_DEPLOY_ENABLED`, restore the previous Pages/Worker deployment and D1
+  bindings if needed, and withdraw the public CTA. Preserve audit evidence for
+  the failed cutover.
+
 ## Status summary
 
 | Step | Owner-only | Rename-gated | Status |
 | --- | --- | --- | --- |
-| 9.1 Visibility flip | Yes | No | Prepared; owner flips after exact-tree local green, then immediately verifies hosted gates |
-| 9.2 Docs-site deploy | Yes | No | Blocked until the post-public hosted gates are green; owner executes |
+| 9.1 Visibility flip | Yes | No | Repo private; local privacy/distribution gates green at `47cfba58`; hosted jobs still fail before executing |
+| 9.2 Docs-site deploy | Yes | No | Candidate behind Cloudflare Access; deploy variable unset; public cutover waits for hosted gates |
 | 9.3 Rename redirect | Yes | Landed 2026-07-07 | Redirect verify at flip; owner executes |
-| 9.4 Release tagging | Yes | Landed 2026-07-07 | v2.0.0 selected and mechanics ready; blocked until post-public hosted gates pass |
-| 9.5 Homebrew tap | Signed artifact only | No | P0–P6 workflow, canonical template/generator, and fail-closed reusable sync are implemented; execution remains blocked on Apple signing/notarization, release-origin publication, immutable Releases, and hosted Actions availability |
+| 9.4 Release tagging | Yes | Landed 2026-07-07 | v2.0.0 selected; environment inputs mostly configured; blocked until protections and post-public hosted gates pass |
+| 9.5 Homebrew tap | Signed artifact only | No | Signed workflow is ready; legacy HEAD-only public formula must be replaced by the verified v2.0.0 render after release-origin and hosted gates pass |
+| 9.6 Public live demo | Yes | No | Private candidate behind Cloudflare Access; blocked on post-public hosted gates, owner privacy/legal approval, access removal, and external smoke/rollback evidence |
