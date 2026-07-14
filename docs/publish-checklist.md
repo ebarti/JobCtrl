@@ -60,11 +60,12 @@ distribution and public-demo plans.
   OSS spec §1 records the owner's acceptance of historical blobs remaining
   reachable.
 
-### 9.2 — Docs-site deploy (owner-only)
+### 9.2 — Docs-site deploy and public cutover (owner-only)
 
-- **Preconditions (OSS spec §5 gate).** Deploying `docs/.vitepress/dist` to the
-  public `jobctrl-docs` Cloudflare project is itself a going-public act, so it
-  carries the **same OSS spec §5 gate as 9.1**. The `deploy` job in
+- **Preconditions (OSS spec §5 gate).** Making `docs/.vitepress/dist` publicly
+  reachable through the `jobctrl-docs` Cloudflare project is a going-public
+  act, so it carries the **same OSS spec §5 gate as 9.1**. A candidate may be
+  deployed only while it remains access-restricted. The `deploy` job in
   `docs-site.yml` is gated only on `DOCS_DEPLOY_ENABLED` and `main` — **not**
   on `release-check` — so this checklist is the
   only guard. Before setting `DOCS_DEPLOY_ENABLED` or configuring the Cloudflare
@@ -78,16 +79,20 @@ distribution and public-demo plans.
   - The claims-ledger freeze (`docs/claims-ledger.md`, GATE G1) is re-stamped at
     the actual freeze `main` sha and owner-signed, so the public site cannot
     ship provisional or unsigned public claims.
+  - Before removing the access restriction, complete the published-artifact
+    acceptance and user-documentation cutover in 9.6 so stable install commands
+    cannot become public before their release evidence exists.
 - **Action.** Set the repository variable `DOCS_DEPLOY_ENABLED=true` and the two
   Cloudflare secrets (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) so the
-  `deploy` job in `.github/workflows/docs-site.yml` runs from `main` (it is
-  gated on `vars.DOCS_DEPLOY_ENABLED == 'true'` and `main`;
-  it deploys `docs/.vitepress/dist` to the Cloudflare Pages project
-  `jobctrl-docs`).
-- **Verification.** On the next `main` push the `deploy` job runs (not skipped),
-  the site serves from an external non-allowlisted network without a Cloudflare
-  Access challenge, and `pnpm docs:build` + `pnpm docs:check:runtime` are green
-  on the built artifact.
+  `deploy` job in `.github/workflows/docs-site.yml` can run. Manually dispatch
+  `Docs Site` at the audited `main` ref; do not wait for an unrelated push.
+  Keep the candidate access-restricted until every public-cutover precondition
+  above passes, then remove the restriction.
+- **Verification.** Confirm the dispatched run SHA equals the gated and frozen
+  `main` SHA, the `deploy` job runs rather than skips, and `pnpm docs:build` +
+  `pnpm docs:check:runtime` are green on that built artifact. After removing the
+  restriction, verify the site from an external non-allowlisted network and
+  confirm no Cloudflare Access challenge appears.
 - **Rollback.** Re-enable the Cloudflare Access restriction (or otherwise
   disable the public custom domain), then unset `DOCS_DEPLOY_ENABLED` so future
   deploy jobs skip. If a bad build shipped, redeploy the previous
@@ -105,19 +110,26 @@ distribution and public-demo plans.
 
 ### 9.4 — Release tagging and publication (owner-only)
 
-- **Action.** Re-check that the `jobctrl` PyPI name is still available and
-  configure/verify its Trusted Publisher immediately before release. A pending
-  publisher can create the project on first publish but does **not** reserve the
-  name ([PyPI documentation](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)).
-  Confirm the owner-approved first version (`v2.0.0`) and configure the Trusted
-  Publisher for workflow `release-distribution.yml` and environment `pypi`.
-  Dispatch the signed distribution workflow with that exact tag targeting
-  audited `main`. After immutable GitHub publication, its clean `pypi-resolve`
-  job checks out that exact ref without credentials, verifies the tracked
-  finalizer bundle and license notice, verifies the immutable Release
-  attestation, safely
-  extracts the audit evidence with system Python, and validates the signed P6
-  candidate against the protected public key and key ID before any project
+- **Preconditions.** Every exact-tree local and hosted gate in 9.1 passes, the
+  claims ledger is frozen at that audited `main` SHA, and every protected
+  release environment in 9.4a is configured.
+- **Action.** Fetch `origin/main` and tags, verify that the audited local commit
+  and `origin/main` resolve to the same SHA, then create and push the exact
+  `v2.0.0` tag on that commit. Verify the remote tag and `main` still resolve to
+  that SHA before dispatch. Re-check that the `jobctrl` PyPI name is still
+  available and configure/verify its Trusted Publisher immediately before
+  release. A pending publisher can create the project on first publish but does
+  **not** reserve the name
+  ([PyPI documentation](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)).
+  Configure the Trusted Publisher for workflow `release-distribution.yml` and
+  environment `pypi`. Dispatch that workflow at `refs/tags/v2.0.0` with
+  `release_tag=v2.0.0` and the remaining owner-approved release inputs. After
+  immutable GitHub publication, its clean `pypi-resolve` job checks out that
+  exact ref without credentials, verifies the tracked finalizer bundle and
+  license notice, verifies the immutable Release
+  attestation, safely extracts the audit evidence with system Python, and
+  validates the signed P6 candidate against the protected public key and key ID
+  before any project
   dependency runs. Two independent builders then install only the locked
   `release-build` group (`build` and Hatchling), create fixed-epoch wheel and
   source archives without isolation, and run the strict scanner. A fresh job
@@ -253,12 +265,14 @@ post-lock verifies the immutable GitHub Release after pointer and tap
 publication; only the stable channel can then enter the clean two-builder PyPI
 lane.
 
-**Pending hosted-release actions.** Restore billing/plan access, configure the
-required owner approvals and `v*`-tag-only deployment policies for every
-release environment, verify all protected inputs without exposing their
-values, and complete the first live signed-release verification. Keep the
-repository and docs access-restricted, and do not advertise curl or Homebrew as
-stable install paths, until those gates complete.
+**Pending hosted-release actions.** After the visibility flip, require every
+hosted gate to execute real steps on the exact audited SHA. If GitHub still
+cannot execute them, stop publication and resolve hosted Actions availability
+before proceeding. Configure the required owner approvals and `v*`-tag-only
+deployment policies for every release environment, verify all protected inputs
+without exposing their values, and complete the first live signed-release
+verification. Keep the repository and docs access-restricted, and do not
+advertise curl or Homebrew as stable install paths, until those gates complete.
 
 ### 9.5 — Homebrew tap publication (signed-release-gated)
 
@@ -287,14 +301,50 @@ runtime payload from the Cellar during `brew install`.
 - **Rollback.** Revert `Formula/jobctrl.rb` in the tap after coordinating a
   signed release revocation; the source-development instructions are separate.
 
-### 9.6 — Public live-demo cutover (owner-only)
+### 9.6 — Published-artifact acceptance and user-doc cutover (owner-only)
+
+The owning contract is
+[`docs/plans/2026-07-10-bundled-jobctrl-distribution-plan.md`](plans/2026-07-10-bundled-jobctrl-distribution-plan.md)
+Phase 7 and its Definition of Done.
+
+- **Preconditions.** Steps 9.4 and 9.5 publish the signed release, immutable
+  build assets, stable channel pointer, PyPI distributions, and verified tap
+  formula. Keep stable install claims access-restricted until this step passes.
+- **Action.** Run and record the plan's published-artifact acceptance matrix:
+  clean Apple-silicon macOS installs through both curl and Homebrew; no source
+  checkout or developer toolchain; fresh and existing JobCtrl state; warm and
+  cold provider authentication; core use without authenticated-browser
+  capabilities; explicit enable/disable and adoption of those capabilities;
+  update, forced failed update, rollback, migration, uninstall, and default data
+  preservation; and real-path TTFV evidence for the first scored job and first
+  reviewable tailored PDF. Confirm both acquisition paths report the same build
+  ID and manifest digest.
+- **Action — documentation cutover.** Only after the acceptance matrix passes,
+  verify every canonical user surface named by the plan presents the two stable
+  acquisition commands followed by one `jobctrl start` surface, removes
+  developer tools from user requirements, explains managed versus optional
+  browser capabilities, and preserves source-development commands for
+  contributors.
+- **Verification.** Every item in the plan's Definition of Done passes; release
+  evidence records the clean-machine, lifecycle, TTFV, SBOM, license, size,
+  signature, checksum, and provenance results; no Blocker/High review or QA
+  finding remains. Only then archive the plan and allow curl/Homebrew stable
+  advertising or the docs public cutover in 9.2.
+- **Rollback.** If any acceptance item fails, withdraw stable install claims,
+  keep the docs access-restricted, restore the prior signed channel pointer and
+  tap formula when one exists, and revert the user-doc cutover. Preserve the
+  immutable failed-release evidence and user data while preparing a new signed
+  release that supersedes or revokes it.
+
+### 9.7 — Public live-demo cutover (owner-only)
 
 The owning implementation and privacy contract is
 [`docs/plans/2026-07-11-public-live-demo-plan.md`](plans/2026-07-11-public-live-demo-plan.md).
 Public cutover must satisfy that plan's Definition of Done.
 
 - **Preconditions.** The exact-tree local gate and all post-public hosted gates
-  in 9.1 pass. The owner approves the controller identity, privacy contact,
+  in 9.1 pass, and the public docs cutover in 9.2 is complete. The owner
+  approves the controller identity, privacy contact,
   public privacy/cookie notice, Cloudflare processor/transfer posture, and the
   lawful basis and copy for the acceptance-required consent gate and disclosed
   non-linkable operational counters. The claims ledger is frozen at the release
@@ -320,8 +370,9 @@ Public cutover must satisfy that plan's Definition of Done.
 | Step | Executor | Pending action |
 | --- | --- | --- |
 | 9.1 Visibility flip | Owner | Run the exact-tree local gate, flip visibility, then rerun every hosted build gate on the same SHA. |
-| 9.2 Docs-site deploy | Owner | Enable deployment only after the gates pass, remove the access restriction, and verify the site externally. |
+| 9.2 Docs-site deploy | Owner | Dispatch deployment at the gated `main` SHA, then remove Access and verify externally only after 9.6 passes. |
 | 9.3 Rename redirect | Owner | Verify old-URL redirects after the flip and repair any stale repository links. |
-| 9.4 Release and PyPI | Owner | Configure the protected environments and Trusted Publisher, then dispatch and verify the signed `v2.0.0` release. |
+| 9.4 Release and PyPI | Owner | Create and push `v2.0.0` on audited `main`, verify remote SHA parity, then dispatch and verify the signed release. |
 | 9.5 Homebrew tap | Signed workflow | Replace the legacy formula only with the verified render after release-origin smoke passes. |
-| 9.6 Public live demo | Owner | Approve the privacy/legal boundary, remove Access, publish the CTA, then run external smoke and rollback verification. |
+| 9.6 Published-artifact acceptance | Owner | Run clean-machine, lifecycle, TTFV, and release-evidence gates, then complete the stable user-doc cutover. |
+| 9.7 Public live demo | Owner | Approve the privacy/legal boundary, remove Access, publish the CTA, then run external smoke and rollback verification. |
