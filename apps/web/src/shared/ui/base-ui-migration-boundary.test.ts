@@ -12,12 +12,9 @@ const sourceExtensions = new Set([".ts", ".tsx"]);
 const radixWrapperAllowlist = new Set([
   "shared/ui/dialog.tsx",
   "shared/ui/dropdown-menu.tsx",
-  "shared/ui/popover.tsx",
-  "shared/ui/select.tsx",
   "shared/ui/sheet.tsx",
   "shared/ui/toast.tsx",
   "shared/ui/toggle-group.tsx",
-  "shared/ui/tooltip.tsx",
 ]);
 
 const sourceFilesIn = (directory: string): string[] =>
