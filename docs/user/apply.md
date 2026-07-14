@@ -1,3 +1,7 @@
+<script setup lang="ts">
+import ApplySafetyFlow from "../.vitepress/theme/ApplySafetyFlow.vue";
+</script>
+
 # Apply
 
 Apply is JobCtrl's employer-facing boundary. Use this page to configure the
@@ -12,6 +16,8 @@ Command blocks on this page use the canonical installed spelling,
 `jobctrl <command>`. Contributors running from source can use the
 checkout-prefixed commands in [Local Development](../local-development.md).
 :::
+
+<ApplySafetyFlow />
 
 ## Candidate Profile Application Fields
 

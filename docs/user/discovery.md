@@ -1,3 +1,7 @@
+<script setup lang="ts">
+import DiscoveryPipeline from "../.vitepress/theme/DiscoveryPipeline.vue";
+</script>
+
 # Discovery & Sources
 
 Discovery turns your target search into source queries, checks returned jobs
@@ -6,6 +10,8 @@ page owns the target-search controls, source/runtime settings, scheduling, crawl
 policy, and supervised contact-research boundary. For the end-to-end loop, start
 with [Daily Workflow](normal-flows.md); for providers and the shared spend
 ceiling, use [Configuration](configuration.md).
+
+<DiscoveryPipeline />
 
 ::: info One persistence authority
 Every value editable anywhere on `/discovery` is stored in

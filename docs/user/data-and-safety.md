@@ -1,3 +1,7 @@
+<script setup lang="ts">
+import DataBoundaryMap from "../.vitepress/theme/DataBoundaryMap.vue";
+</script>
+
 # Data, Privacy & Safety
 
 JobCtrl stores your working data on your computer. Network access happens only
@@ -26,6 +30,8 @@ providers, precedence, and spend controls live in
 
 Local-first does not mean offline. Discovery fetches sources, generation calls
 models, and live apply contacts an employer only when you use those features.
+
+<DataBoundaryMap />
 
 ## Public Demo
 

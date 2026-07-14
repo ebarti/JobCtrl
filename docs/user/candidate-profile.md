@@ -1,3 +1,7 @@
+<script setup lang="ts">
+import CandidateProfileFlow from "../.vitepress/theme/CandidateProfileFlow.vue";
+</script>
+
 # Candidate Profile
 
 A Candidate Profile is JobCtrl's canonical, local record of facts about you:
@@ -5,6 +9,8 @@ your experience, education, skills, evidence, application answers, resume
 baseline, and the preferences that control how those facts may be used. Scoring,
 materials, and Apply consume versioned snapshots of this record; they do not
 rewrite it to suit a job.
+
+<CandidateProfileFlow />
 
 ## What You Can See And Control
 

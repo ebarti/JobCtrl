@@ -1,3 +1,7 @@
+<script setup lang="ts">
+import SecurityLayers from "../.vitepress/theme/SecurityLayers.vue";
+</script>
+
 # Security & Hardening
 
 JobCtrl is local-first software with one high-risk capability: it can drive a
@@ -18,6 +22,8 @@ JobCtrl uses defense in depth: the model prompt, UI, API, worker, browser, local
 tools, persistence layer, and release path each enforce a narrower part of the
 security contract. No single prompt or checkbox is treated as the security
 boundary.
+
+<SecurityLayers />
 
 | Boundary | Enforced protection |
 | --- | --- |
