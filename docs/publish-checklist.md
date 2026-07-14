@@ -82,6 +82,9 @@ distribution and public-demo plans.
   - Before removing the access restriction, complete the published-artifact
     acceptance and user-documentation cutover in 9.6 so stable install commands
     cannot become public before their release evidence exists.
+  - Complete the staged external demo verification in 9.7 while the docs site
+    and its Live Demo CTA remain access-restricted. Removing the docs restriction
+    is the CTA publication action and must not precede that verification.
 - **Action.** Set the repository variable `DOCS_DEPLOY_ENABLED=true` and the two
   Cloudflare secrets (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) so the
   `deploy` job in `.github/workflows/docs-site.yml` can run. Manually dispatch
@@ -329,7 +332,8 @@ Phase 7 and its Definition of Done.
   evidence records the clean-machine, lifecycle, TTFV, SBOM, license, size,
   signature, checksum, and provenance results; no Blocker/High review or QA
   finding remains. Only then archive the plan and allow curl/Homebrew stable
-  advertising or the docs public cutover in 9.2.
+  advertising; the docs public cutover in 9.2 additionally waits for the staged
+  demo verification in 9.7.
 - **Rollback.** If any acceptance item fails, withdraw stable install claims,
   keep the docs access-restricted, restore the prior signed channel pointer and
   tap formula when one exists, and revert the user-doc cutover. Preserve the
@@ -343,23 +347,26 @@ The owning implementation and privacy contract is
 Public cutover must satisfy that plan's Definition of Done.
 
 - **Preconditions.** The exact-tree local gate and all post-public hosted gates
-  in 9.1 pass, and the public docs cutover in 9.2 is complete. The owner
-  approves the controller identity, privacy contact,
+  in 9.1 and the published-artifact gate in 9.6 pass. The owner approves the
+  controller identity, privacy contact,
   public privacy/cookie notice, Cloudflare processor/transfer posture, and the
   lawful basis and copy for the acceptance-required consent gate and disclosed
   non-linkable operational counters. The claims ledger is frozen at the release
   SHA. No Blocker/High security, review, or QA finding remains.
 - **Action.** On the approved deployment, remove the Cloudflare Access IP
-  restriction from `demo.jobctrl.dev`, publish the docs-site Live Demo CTA, and
-  leave `DEMO_DEPLOY_ENABLED=true` only while production deployment from
-  audited `main` is intended.
-- **Verification.** From an external non-allowlisted network and a fresh browser
-  profile, direct routes load; only the static consent shell exists before a
-  decision; decline redirects to `jobctrl.dev`; confirmed consent initializes
-  only the isolated synthetic workspace; irreversible effects remain simulated;
-  product-state values never cross the telemetry boundary; D1 retention,
+  restriction from `demo.jobctrl.dev` while keeping the docs site and its Live
+  Demo CTA access-restricted. Leave `DEMO_DEPLOY_ENABLED=true` only while
+  production deployment from audited `main` is intended.
+- **Staged verification.** From an external non-allowlisted network and a fresh
+  browser profile, direct routes load; only the static consent shell exists
+  before a decision; decline redirects to `jobctrl.dev`; confirmed consent
+  initializes only the isolated synthetic workspace; irreversible effects
+  remain simulated; product-state values never cross the telemetry boundary;
+  D1 retention,
   security headers, production smoke, and rollback rehearsal pass. Record the
-  exact deployment/SHA evidence required by the demo plan.
+  exact deployment/SHA evidence required by the demo plan. Only after this
+  passes, complete 9.2 to expose the docs site and CTA, then verify the public
+  CTA resolves to the already-verified demo.
 - **Rollback.** Re-enable the Cloudflare Access restriction first, disable
   `DEMO_DEPLOY_ENABLED`, restore the previous Pages/Worker deployment and D1
   bindings if needed, and withdraw the public CTA. Preserve audit evidence for
@@ -370,9 +377,9 @@ Public cutover must satisfy that plan's Definition of Done.
 | Step | Executor | Pending action |
 | --- | --- | --- |
 | 9.1 Visibility flip | Owner | Run the exact-tree local gate, flip visibility, then rerun every hosted build gate on the same SHA. |
-| 9.2 Docs-site deploy | Owner | Dispatch deployment at the gated `main` SHA, then remove Access and verify externally only after 9.6 passes. |
+| 9.2 Docs-site deploy | Owner | Dispatch at the gated `main` SHA, then remove Access only after 9.6 and the staged 9.7 demo verification pass. |
 | 9.3 Rename redirect | Owner | Verify old-URL redirects after the flip and repair any stale repository links. |
 | 9.4 Release and PyPI | Owner | Create and push `v2.0.0` on audited `main`, verify remote SHA parity, then dispatch and verify the signed release. |
 | 9.5 Homebrew tap | Signed workflow | Replace the legacy formula only with the verified render after release-origin smoke passes. |
 | 9.6 Published-artifact acceptance | Owner | Run clean-machine, lifecycle, TTFV, and release-evidence gates, then complete the stable user-doc cutover. |
-| 9.7 Public live demo | Owner | Approve the privacy/legal boundary, remove Access, publish the CTA, then run external smoke and rollback verification. |
+| 9.7 Public live demo | Owner | Approve the privacy/legal boundary, remove demo Access, verify externally while the CTA stays restricted, then expose it through 9.2. |
