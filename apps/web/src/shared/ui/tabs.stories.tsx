@@ -52,3 +52,41 @@ export const FocusVisible: Story = {
     </Tabs>
   ),
 };
+
+export const ManualActivation: Story = {
+  render: () => (
+    <Tabs activationMode="manual" defaultValue="first" className="w-[360px]">
+      <TabsList aria-label="Manual activation example">
+        <TabsTrigger value="first">First</TabsTrigger>
+        <TabsTrigger value="second">Second</TabsTrigger>
+      </TabsList>
+      <TabsContent value="first" className="text-sm">
+        Arrow keys move focus; Enter or Space activates the focused tab.
+      </TabsContent>
+      <TabsContent value="second" className="text-sm">
+        The second manually activated panel.
+      </TabsContent>
+    </Tabs>
+  ),
+};
+
+export const RightToLeft: Story = {
+  render: () => (
+    <Tabs dir="rtl" defaultValue="first" className="w-[360px]">
+      <TabsList aria-label="Right-to-left example">
+        <TabsTrigger value="first">First</TabsTrigger>
+        <TabsTrigger value="second">Second</TabsTrigger>
+        <TabsTrigger value="third">Third</TabsTrigger>
+      </TabsList>
+      <TabsContent value="first" className="text-sm">
+        Arrow Left moves focus to the second tab in right-to-left order.
+      </TabsContent>
+      <TabsContent value="second" className="text-sm">
+        The second right-to-left panel.
+      </TabsContent>
+      <TabsContent value="third" className="text-sm">
+        The third right-to-left panel.
+      </TabsContent>
+    </Tabs>
+  ),
+};

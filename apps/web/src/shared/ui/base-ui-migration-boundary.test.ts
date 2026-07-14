@@ -13,13 +13,10 @@ const radixWrapperAllowlist = new Set([
   "shared/ui/dialog.tsx",
   "shared/ui/dropdown-menu.tsx",
   "shared/ui/popover.tsx",
-  "shared/ui/scroll-area.tsx",
   "shared/ui/select.tsx",
   "shared/ui/sheet.tsx",
-  "shared/ui/tabs.tsx",
   "shared/ui/toast.tsx",
   "shared/ui/toggle-group.tsx",
-  "shared/ui/toggle.tsx",
   "shared/ui/tooltip.tsx",
 ]);
 
