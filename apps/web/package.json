@@ -20,6 +20,7 @@
     "storybook:test": "start-server-and-test \"http-server ../../dist/web-storybook -p 6006 --silent\" http://127.0.0.1:6006 \"test-storybook --url http://127.0.0.1:6006\""
   },
   "dependencies": {
+    "@base-ui/react": "^1.6.0",
     "@fontsource-variable/jetbrains-mono": "5.2.8",
     "@fontsource-variable/plus-jakarta-sans": "5.2.8",
     "@jobctrl/api-client": "workspace:*",
