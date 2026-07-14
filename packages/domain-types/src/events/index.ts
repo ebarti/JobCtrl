@@ -260,6 +260,26 @@ export {
 } from "./compensation.js";
 
 export {
+  type DiscoveryExecutionRef,
+  PIPELINE_STEP_KINDS,
+  type PipelineStepKind,
+  PIPELINE_STEP_STATES,
+  type PipelineStepState,
+  PIPELINE_STEP_DETAIL_CODES,
+  type PipelineStepDetailCode,
+  type PipelineStepSafeDetail,
+  type PipelineStepQueuedPayload,
+  type PipelineStepQueued,
+  createPipelineStepQueued,
+  type PipelineStepStartedPayload,
+  type PipelineStepStarted,
+  createPipelineStepStarted,
+  type PipelineStepCompletedPayload,
+  type PipelineStepCompleted,
+  createPipelineStepCompleted,
+  type PipelineStepFailedPayload,
+  type PipelineStepFailed,
+  createPipelineStepFailed,
   type DigestReviewedPayload,
   type DigestReviewed,
   createDigestReviewed,
@@ -427,7 +447,13 @@ import type {
 } from "./orchestration.js";
 import type { ProfileImported, ProfileUpdated, TailoringPolicyUpdated } from "./profile.js";
 import type { CompensationFactsUpdated } from "./compensation.js";
-import type { DigestReviewed } from "./operations.js";
+import type {
+  DigestReviewed,
+  PipelineStepCompleted,
+  PipelineStepFailed,
+  PipelineStepQueued,
+  PipelineStepStarted,
+} from "./operations.js";
 import type {
   WorkflowStarted,
   WorkflowCompleted,
@@ -528,6 +554,10 @@ export type DomainEventUnion =
   | ProfileImported
   | TailoringPolicyUpdated
   | CompensationFactsUpdated
+  | PipelineStepQueued
+  | PipelineStepStarted
+  | PipelineStepCompleted
+  | PipelineStepFailed
   | DigestReviewed
   | WorkflowStarted
   | WorkflowCompleted
@@ -627,6 +657,10 @@ export const DOMAIN_EVENT_TYPES = [
   "ProfileImported",
   "TailoringPolicyUpdated",
   "CompensationFactsUpdated",
+  "PipelineStepQueued",
+  "PipelineStepStarted",
+  "PipelineStepCompleted",
+  "PipelineStepFailed",
   "DigestReviewed",
   "WorkflowStarted",
   "WorkflowCompleted",

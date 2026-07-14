@@ -67,6 +67,64 @@ const OUTREACH_EVENT_TYPES = new Set([
   "FollowUpCompleted",
   "FollowUpDismissed",
 ]);
+const PIPELINE_STEP_EVENT_TYPES = new Set([
+  "PipelineStepQueued",
+  "PipelineStepStarted",
+  "PipelineStepCompleted",
+  "PipelineStepFailed",
+]);
+const PIPELINE_STEP_EVENT_STATES = {
+  PipelineStepQueued: "queued",
+  PipelineStepStarted: "running",
+  PipelineStepCompleted: "succeeded",
+  PipelineStepFailed: "failed",
+} as const;
+const PIPELINE_STEP_KINDS = new Set([
+  "source_planning",
+  "source_family",
+  "enrichment_pass",
+  "preparation_fanout",
+  "existing_backlog_sweep",
+  "pdf_render",
+]);
+const PIPELINE_STEP_DETAIL_CODES = new Set([
+  "source_plan",
+  "source_family",
+  "streaming_pass",
+  "terminal_reconciliation",
+  "existing_backlog",
+  "pdf_render",
+]);
+const SAFE_PIPELINE_ITEM_KEY = /^[a-z0-9][a-z0-9_.:-]{0,159}$/;
+const SAFE_PIPELINE_ERROR_CODE = /^[a-z0-9][a-z0-9_.:-]{0,79}$/;
+
+type PipelineStepProjectionState = "queued" | "running" | "succeeded" | "failed";
+
+interface PipelineStepProjectionEvent {
+  eventId: number;
+  occurredAt: string;
+  tenantId: string;
+  workflowId: string;
+  temporalRunId: string;
+  stepKind: string;
+  itemKey: string;
+  state: PipelineStepProjectionState;
+  attempt: number;
+  lifecycleAt: string;
+  durationMs: number | null;
+  errorCode: string | null;
+  retryable: boolean;
+  detailCode: string | null;
+  detailCount: number | null;
+}
+
+interface PipelineStepProjectionFold extends PipelineStepProjectionEvent {
+  queuedAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  lastEventId: number;
+  lastUpdatedAt: string;
+}
 const COMPENSATION_PROJECTION_VERSION = 1;
 const WORKFLOW_RUN_PROJECTION_COLUMNS: ReadonlyArray<readonly [string, string]> = [
   ["input_summary_json", "TEXT NOT NULL DEFAULT '{}'"],
@@ -606,6 +664,39 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       temporal_run_id        TEXT,
       events_json            TEXT NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE IF NOT EXISTS pipeline_step_projections (
+      tenant_id              TEXT NOT NULL,
+      discover_workflow_id   TEXT NOT NULL,
+      discover_run_id        TEXT NOT NULL,
+      step_kind              TEXT NOT NULL CHECK (step_kind IN (
+        'source_planning', 'source_family', 'enrichment_pass',
+        'preparation_fanout', 'existing_backlog_sweep', 'pdf_render'
+      )),
+      item_key               TEXT NOT NULL,
+      state                  TEXT NOT NULL CHECK (state IN (
+        'queued', 'running', 'succeeded', 'failed'
+      )),
+      attempt                INTEGER NOT NULL CHECK (attempt >= 1),
+      queued_at              TEXT,
+      started_at             TEXT,
+      finished_at            TEXT,
+      duration_ms            INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+      error_code             TEXT,
+      retryable              INTEGER NOT NULL DEFAULT 0 CHECK (retryable IN (0, 1)),
+      detail_code            TEXT,
+      detail_count           INTEGER CHECK (detail_count IS NULL OR detail_count >= 0),
+      last_event_id          INTEGER NOT NULL,
+      last_updated_at        TEXT NOT NULL,
+      PRIMARY KEY (
+        tenant_id, discover_workflow_id, discover_run_id, step_kind, item_key
+      )
+    );
+    CREATE INDEX IF NOT EXISTS idx_pipeline_step_projections_execution
+      ON pipeline_step_projections(
+        tenant_id, discover_workflow_id, discover_run_id, step_kind, state
+      );
+    CREATE INDEX IF NOT EXISTS idx_pipeline_step_projections_updated
+      ON pipeline_step_projections(tenant_id, last_updated_at DESC, last_event_id DESC);
     CREATE TABLE IF NOT EXISTS source_quality_stats (
       tenant_id                         TEXT NOT NULL DEFAULT 'local',
       source_id                         TEXT NOT NULL,
@@ -867,6 +958,286 @@ export function refreshOutreachProjections(db: SqliteDatabase, tenantId = "local
   rebuildDueFollowUpProjections(db, tenantId);
 }
 
+function pipelineStepsBackfillPending(db: SqliteDatabase, tenantId: string): boolean {
+  if (!tableExists(db, "job_events") || !tableExists(db, "pipeline_step_projections")) {
+    return false;
+  }
+  const placeholders = [...PIPELINE_STEP_EVENT_TYPES].map(() => "?").join(", ");
+  const eventCount =
+    getRow<{ c: number }>(
+      db,
+      `SELECT COUNT(DISTINCT
+          JSON_EXTRACT(payload_json, '$.execution.workflowId') || char(31) ||
+          JSON_EXTRACT(payload_json, '$.execution.temporalRunId') || char(31) ||
+          JSON_EXTRACT(payload_json, '$.stepKind') || char(31) ||
+          JSON_EXTRACT(payload_json, '$.itemKey')
+        ) AS c
+         FROM job_events
+        WHERE event_type IN (${placeholders})
+          AND payload_json IS NOT NULL
+          AND json_valid(payload_json)
+          AND JSON_EXTRACT(payload_json, '$.execution.tenantId') = ?`,
+      [...PIPELINE_STEP_EVENT_TYPES].sort().concat(tenantId),
+    )?.c ?? 0;
+  const projectionCount =
+    getRow<{ c: number }>(
+      db,
+      "SELECT COUNT(*) AS c FROM pipeline_step_projections WHERE tenant_id = ?",
+      [tenantId],
+    )?.c ?? 0;
+  return Number(eventCount) > Number(projectionCount);
+}
+
+function parsePipelineStepProjectionEvent(
+  row: { event_id: number; event_type: string; occurred_at: string | null; payload_json: string | null },
+  tenantId: string,
+): PipelineStepProjectionEvent | null {
+  if (!PIPELINE_STEP_EVENT_TYPES.has(row.event_type)) return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(row.payload_json ?? "{}");
+  } catch {
+    return null;
+  }
+  if (!isRecord(payload) || !isRecord(payload.execution)) return null;
+  const execution = payload.execution;
+  if (
+    execution.tenantId !== tenantId ||
+    typeof execution.workflowId !== "string" ||
+    execution.workflowId.trim() === "" ||
+    typeof execution.temporalRunId !== "string" ||
+    execution.temporalRunId.trim() === ""
+  ) {
+    return null;
+  }
+  if (
+    typeof payload.stepKind !== "string" ||
+    !PIPELINE_STEP_KINDS.has(payload.stepKind) ||
+    typeof payload.itemKey !== "string" ||
+    !SAFE_PIPELINE_ITEM_KEY.test(payload.itemKey) ||
+    typeof payload.attempt !== "number" ||
+    !Number.isSafeInteger(payload.attempt) ||
+    payload.attempt < 1
+  ) {
+    return null;
+  }
+
+  let detailCode: string | null = null;
+  let detailCount: number | null = null;
+  if (payload.detail !== null && payload.detail !== undefined) {
+    if (
+      !isRecord(payload.detail) ||
+      typeof payload.detail.code !== "string" ||
+      !PIPELINE_STEP_DETAIL_CODES.has(payload.detail.code)
+    ) {
+      return null;
+    }
+    if (
+      payload.detail.itemCount !== null &&
+      payload.detail.itemCount !== undefined &&
+      (typeof payload.detail.itemCount !== "number" ||
+        !Number.isSafeInteger(payload.detail.itemCount) ||
+        payload.detail.itemCount < 0)
+    ) {
+      return null;
+    }
+    detailCode = payload.detail.code;
+    detailCount =
+      payload.detail.itemCount === null || payload.detail.itemCount === undefined
+        ? null
+        : Number(payload.detail.itemCount);
+  }
+
+  const eventType = row.event_type as keyof typeof PIPELINE_STEP_EVENT_STATES;
+  const state = PIPELINE_STEP_EVENT_STATES[eventType];
+  const timeField = {
+    queued: "queuedAt",
+    running: "startedAt",
+    succeeded: "completedAt",
+    failed: "failedAt",
+  }[state];
+  const lifecycleAt = payload[timeField];
+  if (typeof lifecycleAt !== "string" || lifecycleAt.trim() === "") return null;
+
+  let durationMs: number | null = null;
+  if (state === "succeeded" || state === "failed") {
+    if (
+      payload.durationMs !== null &&
+      payload.durationMs !== undefined &&
+      (typeof payload.durationMs !== "number" ||
+        !Number.isSafeInteger(payload.durationMs) ||
+        payload.durationMs < 0)
+    ) {
+      return null;
+    }
+    durationMs =
+      payload.durationMs === null || payload.durationMs === undefined
+        ? null
+        : Number(payload.durationMs);
+  }
+
+  let errorCode: string | null = null;
+  let retryable = false;
+  if (state === "failed") {
+    if (
+      typeof payload.errorCode !== "string" ||
+      !SAFE_PIPELINE_ERROR_CODE.test(payload.errorCode) ||
+      typeof payload.retryable !== "boolean"
+    ) {
+      return null;
+    }
+    errorCode = payload.errorCode;
+    retryable = payload.retryable;
+  }
+
+  const eventId = Number(row.event_id);
+  if (!Number.isSafeInteger(eventId) || eventId < 1) return null;
+  return {
+    eventId,
+    occurredAt: row.occurred_at || lifecycleAt,
+    tenantId,
+    workflowId: execution.workflowId,
+    temporalRunId: execution.temporalRunId,
+    stepKind: payload.stepKind,
+    itemKey: payload.itemKey,
+    state,
+    attempt: payload.attempt,
+    lifecycleAt,
+    durationMs,
+    errorCode,
+    retryable,
+    detailCode,
+    detailCount,
+  };
+}
+
+function newPipelineStepProjectionFold(
+  event: PipelineStepProjectionEvent,
+): PipelineStepProjectionFold {
+  return {
+    ...event,
+    queuedAt: event.state === "queued" ? event.lifecycleAt : null,
+    startedAt: event.state === "running" ? event.lifecycleAt : null,
+    finishedAt:
+      event.state === "succeeded" || event.state === "failed" ? event.lifecycleAt : null,
+    lastEventId: event.eventId,
+    lastUpdatedAt: event.occurredAt,
+  };
+}
+
+function rebuildPipelineStepProjections(db: SqliteDatabase, tenantId: string): void {
+  if (!tableExists(db, "job_events")) return;
+  const placeholders = [...PIPELINE_STEP_EVENT_TYPES].map(() => "?").join(", ");
+  const rows = allRows<{
+    event_id: number;
+    event_type: string;
+    occurred_at: string | null;
+    payload_json: string | null;
+  }>(
+    db,
+    `SELECT event_id, event_type, occurred_at, payload_json
+       FROM job_events
+      WHERE event_type IN (${placeholders})
+      ORDER BY event_id ASC`,
+    [...PIPELINE_STEP_EVENT_TYPES].sort(),
+  );
+  const folded = new Map<string, PipelineStepProjectionFold>();
+  for (const row of rows) {
+    const event = parsePipelineStepProjectionEvent(row, tenantId);
+    if (!event) continue;
+    const key = [event.workflowId, event.temporalRunId, event.stepKind, event.itemKey].join("\u001f");
+    const current = folded.get(key);
+    if (!current || event.attempt > current.attempt) {
+      folded.set(key, newPipelineStepProjectionFold(event));
+      continue;
+    }
+    if (event.attempt < current.attempt) continue;
+    if (current.state === "succeeded" || current.state === "failed") continue;
+    if (event.state === "queued") continue;
+    if (event.state === "running" && current.state === "running") continue;
+
+    const detailCode = event.detailCode ?? current.detailCode;
+    const detailCount = event.detailCode === null ? current.detailCount : event.detailCount;
+    if (event.state === "running") {
+      folded.set(key, {
+        ...current,
+        eventId: event.eventId,
+        occurredAt: event.occurredAt,
+        lifecycleAt: event.lifecycleAt,
+        state: "running",
+        startedAt: event.lifecycleAt,
+        finishedAt: null,
+        durationMs: null,
+        errorCode: null,
+        retryable: false,
+        detailCode,
+        detailCount,
+        lastEventId: event.eventId,
+        lastUpdatedAt: event.occurredAt,
+      });
+      continue;
+    }
+    folded.set(key, {
+      ...current,
+      eventId: event.eventId,
+      occurredAt: event.occurredAt,
+      lifecycleAt: event.lifecycleAt,
+      state: event.state,
+      finishedAt: event.lifecycleAt,
+      durationMs: event.durationMs,
+      errorCode: event.errorCode,
+      retryable: event.retryable,
+      detailCode,
+      detailCount,
+      lastEventId: event.eventId,
+      lastUpdatedAt: event.occurredAt,
+    });
+  }
+
+  const replace = db.transaction(() => {
+    db.prepare("DELETE FROM pipeline_step_projections WHERE tenant_id = ?").run(tenantId);
+    const insert = db.prepare(`
+      INSERT INTO pipeline_step_projections (
+        tenant_id, discover_workflow_id, discover_run_id, step_kind, item_key,
+        state, attempt, queued_at, started_at, finished_at, duration_ms,
+        error_code, retryable, detail_code, detail_count, last_event_id,
+        last_updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const projections = [...folded.values()].sort((left, right) =>
+      [left.workflowId, left.temporalRunId, left.stepKind, left.itemKey]
+        .join("\u001f")
+        .localeCompare(
+          [right.workflowId, right.temporalRunId, right.stepKind, right.itemKey].join(
+            "\u001f",
+          ),
+        ),
+    );
+    for (const projection of projections) {
+      insert.run(
+        projection.tenantId,
+        projection.workflowId,
+        projection.temporalRunId,
+        projection.stepKind,
+        projection.itemKey,
+        projection.state,
+        projection.attempt,
+        projection.queuedAt,
+        projection.startedAt,
+        projection.finishedAt,
+        projection.durationMs,
+        projection.errorCode,
+        projection.retryable ? 1 : 0,
+        projection.detailCode,
+        projection.detailCount,
+        projection.lastEventId,
+        projection.lastUpdatedAt,
+      );
+    }
+  });
+  replace();
+}
+
 export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void {
   const projectionSchemaChanged = ensureProjectionTables(db);
   backfillLegacyStageStates(db);
@@ -877,6 +1248,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
 
   let dirtyJobs = new Set<string>([...repairedDependencyJobs, ...repairedCoverConflictJobs]);
   let sourceQualityDirty = false;
+  let pipelineStepsDirty = false;
   let evidenceUsageDirty = projectionSchemaChanged;
   let contactsDirty = projectionSchemaChanged;
   let contactResearchDirty = projectionSchemaChanged;
@@ -894,6 +1266,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
       if (row.job_url) dirtyJobs.add(String(row.job_url));
       if (SOURCE_QUALITY_EVENT_TYPES.has(String(row.event_type))) {
         sourceQualityDirty = true;
+      }
+      if (PIPELINE_STEP_EVENT_TYPES.has(String(row.event_type))) {
+        pipelineStepsDirty = true;
       }
       if (CONTACT_EVENT_TYPES.has(String(row.event_type))) {
         contactsDirty = true;
@@ -917,6 +1292,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   }
   if (!outreachDirty && outreachBackfillPending(db, tenantId)) {
     outreachDirty = true;
+  }
+  if (!pipelineStepsDirty && pipelineStepsBackfillPending(db, tenantId)) {
+    pipelineStepsDirty = true;
   }
   const evidenceProjectionCount =
     getRow<{ c: number }>(db, "SELECT COUNT(*) AS c FROM evidence_usage_projections WHERE tenant_id = ?", [
@@ -982,6 +1360,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   if (
     dirtyJobs.size === 0 &&
     !sourceQualityDirty &&
+    !pipelineStepsDirty &&
     !evidenceUsageDirty &&
     !contactsDirty &&
     !contactResearchDirty &&
@@ -994,6 +1373,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
 
   if (sourceQualityDirty || (sourceQualityExists === 0 && sourceQualityHistory)) {
     rebuildSourceQualityProjections(db, tenantId);
+  }
+  if (pipelineStepsDirty) {
+    rebuildPipelineStepProjections(db, tenantId);
   }
   if (contactsDirty) {
     rebuildContactProjections(db, tenantId);

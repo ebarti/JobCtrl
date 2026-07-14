@@ -11,6 +11,10 @@ import type {
   PreparationWorkItemFailed,
   PreparationWorkItemQueued,
   PreparationWorkItemStarted,
+  PipelineStepCompleted,
+  PipelineStepFailed,
+  PipelineStepQueued,
+  PipelineStepStarted,
   WorkflowStarted,
   WorkflowCompleted,
   WorkflowFailed,
@@ -111,6 +115,29 @@ export const preparationWorkItemQueuedHandler = preparationWorkItemHandler;
 export const preparationWorkItemStartedHandler = preparationWorkItemHandler;
 export const preparationWorkItemCompletedHandler = preparationWorkItemHandler;
 export const preparationWorkItemFailedHandler = preparationWorkItemHandler;
+
+type PipelineStepLifecycleEvent =
+  | PipelineStepQueued
+  | PipelineStepStarted
+  | PipelineStepCompleted
+  | PipelineStepFailed;
+
+// The dedicated pipeline-operations query lands later. Until then, refresh the
+// narrowest existing execution-scoped read model that can expose lifecycle
+// diagnostics. The global activity list invalidation is appended by dispatch.
+const pipelineStepLifecycleHandler = (
+  event: PipelineStepLifecycleEvent,
+): readonly InvalidationItem[] => [
+  invalidate(workflowRunsKeys.lists(event.tenantId)),
+  invalidate(
+    workflowRunsKeys.detail(event.tenantId, event.payload.execution.workflowId),
+  ),
+];
+
+export const pipelineStepQueuedHandler = pipelineStepLifecycleHandler;
+export const pipelineStepStartedHandler = pipelineStepLifecycleHandler;
+export const pipelineStepCompletedHandler = pipelineStepLifecycleHandler;
+export const pipelineStepFailedHandler = pipelineStepLifecycleHandler;
 
 // Temporal workflow lifecycle (P0 loop closure). Every start marker and
 // terminal event refreshes the Workflow Runs list + the run's detail drawer
