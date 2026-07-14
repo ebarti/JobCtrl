@@ -131,6 +131,8 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return this.read((model) => model.dashboard.summary);
   }
 
+  pipelineOperations = this.unsupported("pipelineOperations");
+
   outcomeAnalytics() {
     return this.read((model) => model.analytics.summary);
   }

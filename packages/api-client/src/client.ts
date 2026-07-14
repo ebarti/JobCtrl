@@ -95,6 +95,7 @@ import type {
   OutcomeSuggestionDecisionResponse,
   OutcomeAnalyticsSummary,
   PaginatedResponse,
+  PipelineOperationsSnapshot,
   PostedCompensationFactResponse,
   ProfileConfigResponse,
   ProfileImportRequest,
@@ -220,6 +221,10 @@ export class JobCtrlApiClient {
 
   dashboardSummary(): Promise<DashboardSummary> {
     return this.get("/v1/dashboard/summary");
+  }
+
+  pipelineOperations(): Promise<PipelineOperationsSnapshot> {
+    return this.get("/v1/pipeline/operations");
   }
 
   outcomeAnalytics(): Promise<OutcomeAnalyticsSummary> {

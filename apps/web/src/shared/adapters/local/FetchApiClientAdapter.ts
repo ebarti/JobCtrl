@@ -24,6 +24,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   dashboardSummary() {
     return this.client.dashboardSummary();
   }
+  pipelineOperations() {
+    return this.client.pipelineOperations();
+  }
   outcomeAnalytics() {
     return this.client.outcomeAnalytics();
   }
