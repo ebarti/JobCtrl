@@ -1,6 +1,8 @@
 import type { OutreachDraftGateResults } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
+import { StatusLabel } from "../../../shared/ui/status-label.js";
+
 export interface DraftGateResultsPanelProps {
   gateResults: OutreachDraftGateResults;
 }
@@ -13,21 +15,36 @@ function formatScore(score: number): string {
 // is rendered and a failing field is NEVER hidden (CLAUDE.md auditability
 // discipline). Blocks are labelled by what they prove: deterministic
 // never-fabricate findings, validator errors/warnings, and the persona judge.
-export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProps): JSX.Element {
-  const { passed, computedAgainst, fabrications, validation, judge } = gateResults;
+export function DraftGateResultsPanel({
+  gateResults,
+}: DraftGateResultsPanelProps): JSX.Element {
+  const { passed, computedAgainst, fabrications, validation, judge } =
+    gateResults;
   return (
-    <div className="draft-gate-results" role="group" aria-label="Truthfulness gate results">
-      <p className={`tag ${passed ? "ok" : "danger"}`} role="status">
-        {passed ? "Truthfulness gates passed" : "Truthfulness gates blocked this draft"}
+    <div
+      className="draft-gate-results"
+      role="group"
+      aria-label="Truthfulness gate results"
+    >
+      <p className="draft-gate-overall-status" role="status">
+        <StatusLabel tone={passed ? "ok" : "danger"}>
+          {passed
+            ? "Truthfulness gates passed"
+            : "Truthfulness gates blocked this draft"}
+        </StatusLabel>
       </p>
       <p className="draft-gate-computed-against">
         Computed against <span className="mono">{computedAgainst}</span>
       </p>
 
       <div className="draft-gate-block">
-        <p className="draft-gate-block-title">Deterministic never-fabricate findings</p>
+        <p className="draft-gate-block-title">
+          Deterministic never-fabricate findings
+        </p>
         {fabrications.length === 0 ? (
-          <p className="muted">No fabricated claims detected in the generated text.</p>
+          <p className="muted">
+            No fabricated claims detected in the generated text.
+          </p>
         ) : (
           <ul className="draft-gate-fabrication-list">
             {fabrications.map((fabrication, index) => (
@@ -35,7 +52,10 @@ export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProp
                 key={`${fabrication.section}:${fabrication.token}:${index}`}
                 className="draft-gate-fabrication"
               >
-                <dl className="detail-list" aria-label={`Fabrication finding ${index + 1}`}>
+                <dl
+                  className="detail-list"
+                  aria-label={`Fabrication finding ${index + 1}`}
+                >
                   <div>
                     <dt>Kind</dt>
                     <dd>{fabrication.kind}</dd>
@@ -65,11 +85,9 @@ export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProp
 
       <div className="draft-gate-block">
         <p className="draft-gate-block-title">Validation</p>
-        <p>
-          <span className={`tag ${validation.passed ? "ok" : "danger"}`}>
-            {validation.passed ? "Passed" : "Failed"}
-          </span>
-        </p>
+        <StatusLabel tone={validation.passed ? "ok" : "danger"}>
+          {validation.passed ? "Passed" : "Failed"}
+        </StatusLabel>
         {validation.errors.length > 0 ? (
           <>
             <p className="draft-gate-list-label">Errors</p>
@@ -103,9 +121,9 @@ export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProp
               <div>
                 <dt>Verdict</dt>
                 <dd>
-                  <span className={`tag ${judge.approved ? "ok" : "danger"}`}>
+                  <StatusLabel tone={judge.approved ? "ok" : "danger"}>
                     {judge.approved ? "Approved" : "Blocked"}
-                  </span>
+                  </StatusLabel>
                 </dd>
               </div>
               <div>
@@ -117,12 +135,14 @@ export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProp
               <>
                 <p className="draft-gate-list-label">Criterion scores</p>
                 <dl className="detail-list" aria-label="Judge criterion scores">
-                  {Object.entries(judge.criterionScores).map(([criterion, score]) => (
-                    <div key={criterion}>
-                      <dt>{criterion}</dt>
-                      <dd>{formatScore(score)}</dd>
-                    </div>
-                  ))}
+                  {Object.entries(judge.criterionScores).map(
+                    ([criterion, score]) => (
+                      <div key={criterion}>
+                        <dt>{criterion}</dt>
+                        <dd>{formatScore(score)}</dd>
+                      </div>
+                    ),
+                  )}
                 </dl>
               </>
             ) : null}
@@ -136,7 +156,9 @@ export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProp
                 </ul>
               </>
             ) : null}
-            {judge.notes ? <p className="draft-gate-judge-notes">{judge.notes}</p> : null}
+            {judge.notes ? (
+              <p className="draft-gate-judge-notes">{judge.notes}</p>
+            ) : null}
           </>
         ) : (
           <p className="muted">No judge review was recorded for this draft.</p>

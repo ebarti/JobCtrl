@@ -4,7 +4,6 @@ import type { DashboardSummary } from "../../contexts/operations/types.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
-import { StatCard } from "../../shared/ui/stat-card.js";
 import { kpiSearchFor } from "./KpiGrid.js";
 
 function formatThreshold(seconds: number): string {
@@ -23,23 +22,26 @@ export function WorkStatusCard({ summary }: { summary: DashboardSummary }) {
         title="Work status"
         meta={`${work.active} active · ${work.stuck} stuck`}
       />
-      <div className="grid grid-cols-2 gap-3 p-4">
-        <StatCard
-          label="Active work"
-          value={work.active}
-          delta="queued or moving"
-        />
-        <StatCard
-          label="Stuck work"
-          value={work.stuck}
-          valueTone={work.stuck ? "down" : undefined}
-          delta={
-            work.stuck
-              ? `worker unavailable · stale over ${formatThreshold(work.stuckAfterSeconds)}`
-              : `no stuck work over ${formatThreshold(work.stuckAfterSeconds)}`
-          }
-        />
-      </div>
+      <dl className="work-status-ledger" aria-label="Work status summary">
+        <div className="work-status-ledger__cell">
+          <dt data-slot="stat-label">Active work</dt>
+          <dd>
+            <span data-slot="stat-value">{work.active}</span>
+            <span data-slot="stat-delta">queued or moving</span>
+          </dd>
+        </div>
+        <div className="work-status-ledger__cell">
+          <dt data-slot="stat-label">Stuck work</dt>
+          <dd>
+            <span data-slot="stat-value">{work.stuck}</span>
+            <span data-slot="stat-delta">
+              {work.stuck
+                ? `worker unavailable · stale over ${formatThreshold(work.stuckAfterSeconds)}`
+                : `no stuck work over ${formatThreshold(work.stuckAfterSeconds)}`}
+            </span>
+          </dd>
+        </div>
+      </dl>
       <div className="rows">
         {work.stuckItems.length ? (
           work.stuckItems.map((item) => (
@@ -55,7 +57,7 @@ export function WorkStatusCard({ summary }: { summary: DashboardSummary }) {
                 })
               }
             >
-              <span className="tag danger">stuck</span>
+              <span className="dashboard-signal dashboard-signal--danger">stuck</span>
               <span className="title-stack">
                 <b>{item.title}</b>
                 <span>

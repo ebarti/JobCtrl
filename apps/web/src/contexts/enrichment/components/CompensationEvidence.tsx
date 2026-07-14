@@ -17,6 +17,7 @@ import type {
 
 import { Empty } from "../../../shared/ui/empty.js";
 import { Input } from "../../../shared/ui/input.js";
+import { StatusLabel } from "../../../shared/ui/status-label.js";
 import { useRefreshCompensationMutation } from "../hooks/useRefreshCompensationMutation.js";
 
 type TagTone = "ok" | "info" | "warn" | "muted";
@@ -247,8 +248,10 @@ export function CompensationSummaryCell({
     >
       <b>{primary.range}</b>
       <span>{primary.source}</span>
-      <span className={`tag ${primary.tone}`}>{primary.confidence}</span>
-      {primary.warningCount ? <span className="tag warn">{plural(primary.warningCount, "warning")}</span> : null}
+      <StatusLabel tone={primary.tone}>{primary.confidence}</StatusLabel>
+      {primary.warningCount ? (
+        <StatusLabel tone="warn">{plural(primary.warningCount, "warning")}</StatusLabel>
+      ) : null}
     </div>
   );
 }
@@ -264,8 +267,10 @@ export function CompensationSummaryStrip({
       <span className="compensation-strip-label">{label}</span>
       <b>{primary.range}</b>
       <span>{primary.source}</span>
-      <span className={`tag ${primary.tone}`}>{primary.confidence}</span>
-      {primary.warningCount ? <span className="tag warn">{plural(primary.warningCount, "warning")}</span> : null}
+      <StatusLabel tone={primary.tone}>{primary.confidence}</StatusLabel>
+      {primary.warningCount ? (
+        <StatusLabel tone="warn">{plural(primary.warningCount, "warning")}</StatusLabel>
+      ) : null}
     </section>
   );
 }
@@ -407,9 +412,9 @@ function FactorList({ factors }: { readonly factors: readonly MarketCompensation
         {factors.map((factor) => (
           <li key={factor.name}>
             <span>{formatToken(factor.name)}</span>
-            <b className={`tag ${confidenceTone(factor.band)}`}>
+            <StatusLabel tone={confidenceTone(factor.band)}>
               {formatToken(factor.band)} {formatPercent(factor.score)}
-            </b>
+            </StatusLabel>
             <p>{factor.reason}</p>
           </li>
         ))}
@@ -471,7 +476,7 @@ function PostedPanel({
       <header>
         <span className="eyebrow">Posted Salary</span>
         <b>{posted.displayRange || formatToken(posted.parseState) || "not recorded"}</b>
-        <span className={`tag ${confidenceTone(posted.confidence)}`}>{postedConfidenceText(posted)}</span>
+        <StatusLabel tone={confidenceTone(posted.confidence)}>{postedConfidenceText(posted)}</StatusLabel>
       </header>
       <dl className="compensation-detail-grid">
         <DetailRow label="State" value={posted.recordStatus === "recorded" ? formatToken(posted.parseState) : "not recorded"} />
@@ -501,7 +506,9 @@ function MarketPanel({
       <header>
         <span className="eyebrow">Reported Company-Role Market</span>
         <b>{market.displayRange || formatToken(market.estimateState) || "not requested"}</b>
-        <span className={`tag ${confidenceTone(market.confidenceBand)}`}>{marketConfidenceText(market)}</span>
+        <StatusLabel tone={confidenceTone(market.confidenceBand)}>
+          {marketConfidenceText(market)}
+        </StatusLabel>
       </header>
       <dl className="compensation-detail-grid">
         <DetailRow label="State" value={formatToken(market.estimateState)} />

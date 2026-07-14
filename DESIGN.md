@@ -1,83 +1,62 @@
 ---
 version: alpha
 name: JobCtrl
-description: Local-first, AI-assisted job application pipeline with a calm operational UI.
+description: Local-first job operations with an editorial, evidence-led interface.
 
 colors:
-  background: "oklch(0.967 0.003 264.542)"
-  foreground: "oklch(0.145 0 0)"
-  card: "oklch(1 0 0)"
-  card-foreground: "oklch(0.145 0 0)"
-  popover: "oklch(1 0 0)"
-  popover-foreground: "oklch(0.145 0 0)"
-  primary: "oklch(0.541 0.281 293.009)"
-  primary-foreground: "oklch(0.985 0.006 293)"
-  secondary: "oklch(0.967 0.001 286.375)"
-  secondary-foreground: "oklch(0.21 0.006 285.885)"
-  muted: "oklch(0.97 0 0)"
-  muted-foreground: "oklch(0.535 0 0)"
-  accent: "oklch(0.943 0.029 294.588)"
-  accent-foreground: "oklch(0.541 0.281 293.009)"
-  destructive: "oklch(0.577 0.245 27.325)"
-  border: "oklch(0.928 0.006 264.531)"
-  input: "oklch(0.928 0.006 264.531)"
-  ring: "oklch(0.541 0.281 293.009 / 0.36)"
-  success: "oklch(0.54 0.13 145)"
-  success-foreground: "oklch(0.985 0 0)"
-  warning: "oklch(0.72 0.15 72)"
-  warning-foreground: "oklch(0.145 0 0)"
-  status-info: "oklch(0.56 0.11 242)"
-  status-info-foreground: "oklch(0.985 0 0)"
-  chart-1: "oklch(0.541 0.281 293.009)"
-  chart-2: "oklch(0.606 0.25 292.717)"
-  chart-3: "oklch(0.702 0.183 293.541)"
-  chart-4: "oklch(0.811 0.111 293.571)"
-  chart-5: "oklch(0.894 0.057 293.283)"
-  sidebar: "oklch(1 0 0 / 0.84)"
-  sidebar-foreground: "oklch(0.145 0 0)"
-  sidebar-primary: "oklch(0.541 0.281 293.009)"
-  sidebar-primary-foreground: "oklch(0.985 0.006 293)"
-  sidebar-accent: "oklch(0.943 0.029 294.588)"
-  sidebar-accent-foreground: "oklch(0.541 0.281 293.009)"
-  sidebar-border: "oklch(0.928 0.006 264.531)"
-  brand-navy: "#1F2937"
-  brand-violet: "#7C3AED"
-  brand-violet-start: "#8B5CF6"
-  brand-violet-end: "#6D28D9"
-  brand-violet-layer: "#DDD6FE"
-  brand-violet-layer-deep: "#C4B5FD"
-  brand-amber: "#F59E0B"
-  brand-green: "#10B981"
-  brand-surface: "#F3F4F6"
+  background: "#f5f5f3"
+  foreground: "#181817"
+  card: "#ffffff"
+  card-foreground: "#181817"
+  popover: "#ffffff"
+  popover-foreground: "#181817"
+  primary: "#6d28d9"
+  primary-foreground: "#ffffff"
+  secondary: "#fafaf8"
+  secondary-foreground: "#181817"
+  muted: "#fafaf8"
+  muted-foreground: "#686865"
+  accent: "#eee7ff"
+  accent-foreground: "#181817"
+  destructive: "#c9362b"
+  border: "#deded9"
+  input: "#c8c8c1"
+  ring: "#6d28d9"
+  success: "#2f7d44"
+  warning: "#8a4c00"
+  status-info: "#3269c8"
+  sidebar: "#ffffff"
+  sidebar-foreground: "#181817"
+  sidebar-primary: "#6d28d9"
+  sidebar-primary-foreground: "#ffffff"
+  sidebar-accent: "#fafaf8"
+  sidebar-accent-foreground: "#181817"
+  sidebar-border: "#deded9"
+  brand-navy: "#181817"
+  brand-violet: "#6d28d9"
 
 typography:
   display:
     fontFamily: "Plus Jakarta Sans Variable"
-    fontSize: 48px
-    fontWeight: 800
-    lineHeight: "1.05"
-    letterSpacing: "0em"
+    fontSize: 30px
+    fontWeight: 820
+    lineHeight: "1.08"
+    letterSpacing: "-0.045em"
   h1:
     fontFamily: "Plus Jakarta Sans Variable"
-    fontSize: 32px
-    fontWeight: 800
-    lineHeight: "1.15"
-    letterSpacing: "0em"
+    fontSize: 28px
+    fontWeight: 820
+    lineHeight: "1.08"
+    letterSpacing: "-0.045em"
   h2:
     fontFamily: "Plus Jakarta Sans Variable"
-    fontSize: 22px
-    fontWeight: 700
-    lineHeight: "1.2"
-    letterSpacing: "0em"
-  card-title:
-    fontFamily: "Plus Jakarta Sans Variable"
-    fontSize: 15px
-    fontWeight: 700
+    fontSize: 14px
+    fontWeight: 760
     lineHeight: "1.25"
-    letterSpacing: "0em"
+    letterSpacing: "-0.015em"
   body:
     fontFamily: "Plus Jakarta Sans Variable"
-    fontSize: 13px
+    fontSize: 14px
     fontWeight: 500
     lineHeight: "1.5"
     letterSpacing: "0em"
@@ -90,13 +69,13 @@ typography:
   label:
     fontFamily: "Plus Jakarta Sans Variable"
     fontSize: 11px
-    fontWeight: 800
-    lineHeight: "1"
-    letterSpacing: "0.01em"
+    fontWeight: 700
+    lineHeight: "1.2"
+    letterSpacing: "0em"
   button:
     fontFamily: "Plus Jakarta Sans Variable"
-    fontSize: 13px
-    fontWeight: 750
+    fontSize: 12px
+    fontWeight: 680
     lineHeight: "1"
     letterSpacing: "0em"
   mono:
@@ -107,11 +86,9 @@ typography:
     letterSpacing: "0em"
 
 rounded:
-  xs: 3px
-  sm: 5px
-  md: 6px
-  lg: 8px
-  xl: 11px
+  none: 0px
+  xs: 2px
+  sm: 3px
   full: 999px
 
 spacing:
@@ -130,318 +107,186 @@ components:
   side-rail:
     backgroundColor: "{colors.sidebar}"
     textColor: "{colors.sidebar-foreground}"
-    rounded: "{rounded.lg}"
+    rounded: "{rounded.none}"
     padding: 12px
   side-rail-active-item:
-    backgroundColor: "{colors.sidebar-accent}"
-    textColor: "{colors.sidebar-accent-foreground}"
-    rounded: "{rounded.md}"
-    padding: 8px
-  brand-lockup:
-    backgroundColor: "{colors.card}"
-    textColor: "{colors.brand-navy}"
-    typography: "{typography.h1}"
-  brand-glyph:
-    backgroundColor: "{colors.brand-violet-layer}"
-    textColor: "{colors.brand-violet-end}"
-    rounded: "{rounded.lg}"
-    size: 32px
-  card:
+    backgroundColor: transparent
+    textColor: "{colors.foreground}"
+    indicatorColor: "{colors.primary}"
+    rounded: "{rounded.none}"
+  rule-section:
     backgroundColor: "{colors.card}"
     textColor: "{colors.card-foreground}"
-    rounded: "{rounded.lg}"
-    padding: 16px
-  card-header:
-    backgroundColor: "{colors.muted}"
-    textColor: "{colors.foreground}"
-    typography: "{typography.card-title}"
-    padding: 16px
+    rounded: "{rounded.none}"
+    dividerColor: "{colors.border}"
   button-primary:
-    backgroundColor: "{colors.primary}"
-    textColor: "{colors.primary-foreground}"
+    backgroundColor: "{colors.foreground}"
+    textColor: "{colors.card}"
     typography: "{typography.button}"
-    rounded: "{rounded.md}"
-    padding: 10px
+    rounded: "{rounded.xs}"
     height: 36px
   button-secondary:
-    backgroundColor: "{colors.secondary}"
-    textColor: "{colors.secondary-foreground}"
+    backgroundColor: "{colors.card}"
+    textColor: "{colors.foreground}"
+    borderColor: "{colors.border}"
     typography: "{typography.button}"
-    rounded: "{rounded.md}"
-    padding: 10px
+    rounded: "{rounded.xs}"
     height: 36px
-  button-quiet:
-    backgroundColor: "{colors.accent}"
-    textColor: "{colors.accent-foreground}"
-    typography: "{typography.button}"
-    rounded: "{rounded.md}"
-    padding: 8px
-    height: 32px
   input:
     backgroundColor: "{colors.card}"
     textColor: "{colors.foreground}"
-    rounded: "{rounded.md}"
-    padding: 10px
-    height: 36px
-  focus-ring:
-    backgroundColor: "{colors.ring}"
-  badge-success:
-    backgroundColor: "{colors.success}"
-    textColor: "{colors.success-foreground}"
-    typography: "{typography.label}"
-    rounded: "{rounded.full}"
-    padding: 8px
-  badge-warning:
-    backgroundColor: "{colors.warning}"
-    textColor: "{colors.warning-foreground}"
-    typography: "{typography.label}"
-    rounded: "{rounded.full}"
-    padding: 8px
-  badge-info:
-    backgroundColor: "{colors.card}"
-    textColor: "{colors.status-info}"
-    typography: "{typography.label}"
-    rounded: "{rounded.full}"
-    padding: 8px
-  badge-danger:
-    backgroundColor: "{colors.destructive}"
-    textColor: "{colors.primary-foreground}"
-    typography: "{typography.label}"
-    rounded: "{rounded.full}"
-    padding: 8px
-  chart-series-1:
-    backgroundColor: "{colors.chart-1}"
-  chart-series-2:
-    backgroundColor: "{colors.chart-2}"
-  chart-series-3:
-    backgroundColor: "{colors.chart-3}"
-  chart-series-4:
-    backgroundColor: "{colors.chart-4}"
-  chart-series-5:
-    backgroundColor: "{colors.chart-5}"
-  popover:
-    backgroundColor: "{colors.popover}"
-    textColor: "{colors.popover-foreground}"
-    rounded: "{rounded.lg}"
-    padding: 8px
-  muted-copy:
+    borderColor: "{colors.input}"
+    rounded: "{rounded.xs}"
+    height: 38px
+  tab:
+    backgroundColor: transparent
     textColor: "{colors.muted-foreground}"
-    typography: "{typography.body-sm}"
+    activeTextColor: "{colors.foreground}"
+    activeRuleColor: "{colors.primary}"
+    rounded: "{rounded.none}"
+  status:
+    backgroundColor: transparent
+    textColor: "{colors.muted-foreground}"
+    rounded: "{rounded.none}"
   divider:
     backgroundColor: "{colors.border}"
     height: 1px
-  input-border:
-    backgroundColor: "{colors.input}"
-    height: 1px
-  side-rail-primary-action:
-    backgroundColor: "{colors.sidebar-primary}"
-    textColor: "{colors.sidebar-primary-foreground}"
-    rounded: "{rounded.md}"
-    padding: 8px
-  side-rail-divider:
-    backgroundColor: "{colors.sidebar-border}"
-    height: 1px
-  brand-violet-swatch:
-    backgroundColor: "{colors.brand-violet}"
-  brand-violet-gradient-start:
-    backgroundColor: "{colors.brand-violet-start}"
-  brand-violet-layer-deep:
-    backgroundColor: "{colors.brand-violet-layer-deep}"
-  brand-stage-amber:
-    backgroundColor: "{colors.brand-amber}"
-  brand-stage-green:
-    backgroundColor: "{colors.brand-green}"
-  brand-surface-panel:
-    backgroundColor: "{colors.brand-surface}"
-    textColor: "{colors.brand-navy}"
-    rounded: "{rounded.lg}"
-    padding: 16px
-  status-info-solid-swatch:
-    backgroundColor: "{colors.status-info-foreground}"
-  chart-label:
-    textColor: "{colors.foreground}"
-    typography: "{typography.label}"
+  overlay:
+    backgroundColor: "{colors.popover}"
+    textColor: "{colors.popover-foreground}"
+    rounded: "{rounded.xs}"
 ---
 
-## Overview
+# JobCtrl Interface Standard
 
-JobCtrl is a local-first operations console for finding jobs, judging fit,
-generating audited application materials, and applying only behind explicit
-approval gates. The design system should feel focused, private, reliable, and
-slightly optimistic. It is a productivity surface, not a marketing splash:
-prioritize scanability, evidence, workflow status, and controls that stay calm
-under dense data.
+The design system is the contract that makes every JobCtrl screen feel like one product. It is not a bag of components. Tokens own values, shared primitives own appearance and interaction, domain components own meaning, and route composers use a small set of recurring structures.
 
-The brand expression is a layered violet checkmark over stacked planes. The
-checkmark means progress and completion; the layers mean organized stages and
-traceable workflow. Use the tagline exactly as:
+## Product character
 
-Plan. Apply. Track. Succeed.
+JobCtrl is a local-first control plane for consequential work. Its interface is editorial, calm, dense without being cramped, and explicit about evidence and lifecycle.
 
-Brand assets in this repository:
+Non-negotiables:
 
-- `docs/assets/brand/lockup-primary.png` - full-color lockup with icon,
-  wordmark, and tagline for large brand moments.
-- `docs/assets/brand/lockup-horizontal.png` - wide horizontal lockup with
-  divider and tagline for broad headers, docs, and presentation contexts.
-- `docs/assets/brand/app-icon.png` - square app icon artwork for docs, launch
-  surfaces, social previews, and compact empty states.
-- `docs/assets/brand/lockup-mono.png` - single-color lockup for print,
-  embossing, reduced-color contexts, and high-contrast fallback.
-- `apps/web/public/favicon.svg` and `apps/web/public/apple-touch-icon.png` -
-  runtime browser icons derived from the brand mark. Keep runtime icons in the
-  web public directory rather than using documentation lockups directly.
+- Type before containers.
+- One-pixel rules before cards.
+- Large surfaces stay neutral.
+- Purple marks focus, selection, links, and the active rule; it is not a generic fill color.
+- Semantic color appears on small glyphs and text, never large status backgrounds.
+- Status is dot or icon + label + optional detail, never a colored capsule.
+- Structural radius is 0–3px. `rounded-full` is reserved for intrinsically round controls.
+- Shadows belong only to true overlays. Route-backed detail is a full workspace, not a floating card.
+- Missing, unknown, blocked, residual-warning, and failed-refresh states remain visible.
+- Retrying or re-tailoring never hides the last accepted artifact.
 
-## Colors
+## Foundations
 
-The implemented app uses semantic CSS tokens in `apps/web/src/styles/tokens.css`.
-The front matter above mirrors those values so generation tools can use the
-same decisions. Use semantic tokens first; use brand hex tokens only when
-creating brand artwork, illustrations, docs visuals, or marketing lockups.
+| Foundation | Contract |
+| --- | --- |
+| Base rhythm | 4px; primary steps 8, 12, 16, 24, 32 |
+| Product type | Plus Jakarta Sans Variable |
+| Technical type | JetBrains Mono Variable |
+| Page title | 25–30px, 800–820 weight, tight optical spacing |
+| Body | 14px / 21px |
+| Label/meta | 10–12px, stronger weight or mono where appropriate |
+| Table density | 32px compact, 40px regular, 48px comfy |
+| Canvas | warm neutral `#f5f5f3` |
+| Surface | white `#ffffff` |
+| Ink | near-black `#181817` |
+| Focus | purple `#6d28d9` |
+| Semantic signals | green `#2f7d44`, amber `#8a4c00`, red `#c9362b`, blue `#3269c8` on glyph/text only |
+| Icon family | Tabler, consistent 1.5–2px stroke |
+| Shape | square/2px structural corners; no capsule taxonomy |
 
-- `primary` / `brand-violet` drives key actions, active navigation, focus
-  affordances, and the accented `Ctrl` in the wordmark.
-- `brand-navy` is the wordmark and headline anchor. It should feel precise and
-  operational.
-- `background`, `card`, `muted`, `border`, and `input` create the light,
-  off-white product shell. Avoid pure gray slabs unless they are semantic
-  disabled states.
-- `success`, `warning`, `status-info`, and `destructive` communicate workflow
-  state. Do not reuse them as decorative accents.
-- `brand-amber` and `brand-green` come from the proposal board and may support
-  job-stage counters or diagrams, but production UI should prefer the semantic
-  status tokens.
+Dark mode remaps the same semantic tokens. It does not invent a second component language.
 
-Dark mode follows the same semantic names with darker values in
-`tokens.css`. Do not invent separate component behavior for dark mode; switch
-the token values and keep spacing, typography, and hierarchy stable.
+## Ownership layers
 
-## Typography
+1. **Tokens** — color, spacing, typography, rule, radius, elevation, density, and motion values.
+2. **Primitives** — button, icon button, field, checkbox, tabs, status, ledger, rule section, table, empty state, and detail workspace.
+3. **Domain components** — score, stage, run, source, evidence, artifact, apply decision, and lifecycle displays.
+4. **Page archetypes** — the six recurring compositions below.
+5. **Route composers** — real application pages combine domain components without redefining their appearance.
 
-Use Plus Jakarta Sans Variable for the entire product interface and brand
-wordmark. It gives JobCtrl a modern, technical, and approachable tone without
-looking like a consumer social app. Use JetBrains Mono Variable only for code,
-IDs, file paths, JSON, logs, and other developer-facing literals.
+## Page archetypes
 
-Headings should be confident but compact. Inside dashboards, cards, drawers,
-and tables, avoid oversized display type; reserve display scale for onboarding,
-docs hero graphics, or one-off brand surfaces. Letter spacing is `0em` for new
-UI unless matching the existing CSS wordmark or a tested component contract.
+| Archetype | Routes |
+| --- | --- |
+| Overview / insight | `/dashboard`, `/analytics` |
+| Data index | `/jobs`, `/artifacts`, `/outreach`, `/runs`, `/debug` |
+| Inspector / decision | `/apply-review`, `/evidence-map` |
+| Operations | `/pipelines`, `/discovery` |
+| Configuration / form | `/profile`, `/profile/import/*`, `/preferences`, `/settings/*` |
+| Route-backed detail workspace | `/jobs/$jobId`, `/jobs/$jobId/run/$runId`, `/artifacts/$artifactId`, `/outreach/$contactId`, `/runs/$runId`, `/activity/$eventId` |
 
-## Layout
+## Composition rules
 
-JobCtrl is a repeated-use work tool. Build layouts as dense, organized
-operational surfaces:
+- Overview pages use a ruled metric ledger followed by a small number of continuous insight bands.
+- Data indexes use one tool row and one dense table sheet. Saved views and filters are controls, not content cards.
+- Inspector pages use stable master-detail geometry with evidence and the decision action visible together.
+- Operations pages use ledgers, stage rows, timelines, and disclosures; each datum does not get its own tile.
+- Configuration pages use collapsible rule sections and adaptive field grids. The resume preview is a full-width workbench.
+- Detail routes use a full workspace with a clear return action, identity header, tab rule, and persistent audit inspector.
 
-- Keep the left rail persistent for primary navigation.
-- Use full-width work areas with constrained content only where readability
-  needs it.
-- Put evidence, audit trails, status, and next actions near the data they
-  explain.
-- Prefer tables, drawers, split panes, timelines, and compact panels over
-  oversized cards.
-- Use 8px as the default spacing rhythm, with 12px and 16px for card internals
-  and toolbars.
-- Keep row heights stable: regular 40px, compact 32px, comfy 48px.
-
-Never nest decorative cards inside other cards. A repeated item may be a card;
-a page section should be an unframed layout or a full-width band.
-
-## Elevation & Depth
-
-Depth is quiet and functional. Use one soft panel shadow for cards and floating
-surfaces:
-
-`0 12px 34px rgb(31 41 55 / 0.08)`
-
-Use borders more often than shadows. Shadows should indicate a real surface
-relationship: panels, drawers, menus, popovers, previews, and modal surfaces.
-Do not use glow effects or decorative gradient blobs.
-
-The brand glyph can retain its layered translucent violet planes in brand
-artwork. In the product UI, keep those layers small and symbolic rather than
-turning them into page backgrounds.
-
-## Shapes
-
-The base radius is 8px (`0.5rem`). Most product UI should use 5px, 6px, or 8px.
-Use full pills only for compact badges, status tags, and count chips. Large
-rounded rectangles should be rare; the app should feel precise, not bubbly.
-
-Icon buttons and compact controls should have stable square dimensions so hover
-states and label changes never shift layout. Inputs and buttons should align to
-the same height within a toolbar.
+Never nest decorative cards inside another card. A container exists only when it expresses structure, grouping, scroll ownership, selection, or an overlay relationship.
 
 ## Components
 
 Buttons:
 
-- Primary buttons use `primary` on `primary-foreground` and are reserved for
-  committing the main action in the current workflow.
-- Secondary buttons use `secondary` on `secondary-foreground`.
-- Quiet buttons use `accent` on `accent-foreground` for local controls,
-  filters, low-risk actions, and active affordances.
-- Dangerous actions use `destructive`; never make destructive actions visually
-  equivalent to primary actions.
+- One dominant action per page uses near-black on the neutral surface.
+- Secondary actions use neutral borders and surfaces.
+- Destructive actions use red text/glyph and a neutral surface until confirmation.
+- Purple belongs to focus and selection, not every primary button fill.
 
-Cards and panels:
+Tabs and selection:
 
-- Cards use `card`, `card-foreground`, `border`, `radius.lg`, and the panel
-  shadow.
-- Card headers may use `muted` to separate controls from content.
-- Drawers and detail panels should keep audit evidence visible with the action
-  that depends on it.
-
-Navigation:
-
-- The side rail uses `sidebar` tokens, compact Tabler icons, and a small
-  lockup.
-- Active navigation uses the violet `accent` family, not green or amber.
-- Keep labels short. Tooltips may clarify icon-only collapsed states.
+- Tabs are labels on a one-pixel rule; the active tab uses a 2px purple underline.
+- Row and navigation selection use a thin purple rule or an explicit checked state.
+- Segmented choices remain square and use a rule/underline; they do not become capsule groups.
 
 Status:
 
-- Success means completed, accepted, validated, or safe.
-- Warning means needs review, policy concern, budget risk, or residual issue.
-- Info means queued, running, neutral progress, or inspected evidence.
-- Destructive means failed, blocked, exhausted, deleted, or unsafe.
+- Render a small semantic dot or icon, a readable label, and optional muted detail.
+- Green means complete/accepted/validated; amber means review/risk/residual warning; blue means queued/running/inspected; red means failed/blocked/unsafe.
+- Never use background color alone, and never wrap status in a tinted rounded rectangle.
+
+Forms:
+
+- Inputs, selects, textareas, and checkboxes share 2px corners, a neutral one-pixel border, and no resting shadow.
+- Labels explain meaning; optional documentation links sit beside the label rather than inside helper-card chrome.
+- Adaptive grids use available width and collapse by their own container, not only the viewport.
 
 Data grids:
 
-- Keep columns scannable and avoid inline prose.
-- Use badges for stage/state/status, not color-only text.
-- Filters and saved views should look like controls, not content cards.
+- Keep columns scannable, ruled, and compact; allow horizontal scrolling only inside the table.
+- Filters and saved views live in the tool row or an overlay, never as a wall of mini-cards.
+- Semantic row/cell rules are thin markers. Do not flood a cell or row with status color.
 
-Brand:
+Elevation:
 
-- Use `docs/assets/brand/app-icon.png` for compact icon contexts outside the
-  running web app.
-- Use `apps/web/public/favicon.svg` and `apps/web/public/apple-touch-icon.png`
-  only for browser/runtime icon delivery.
-- Use the wordmark with `Job` in navy and `Ctrl` in violet.
-- Do not recolor the full-color brand mark outside the approved violet range.
-- Use the monochrome mark only when the medium cannot support color or contrast
-  requires it.
+- Normal route content has no shadow.
+- Menus, dialogs, popovers, and mobile sheets may use one quiet shadow because they truly overlay content.
+- Large previews may use a dark neutral stage only when it clarifies the physical page boundary.
 
-## Do's and Don'ts
+## State contract
 
-Do:
+Every asynchronous composite defines loading, empty, error, populated, refreshing, and disabled states. Loading preserves final geometry. Refreshing keeps reviewable truth in place. Disabled controls explain the missing prerequisite. Consequential states show their source, lifecycle, and timestamp when the data exists.
 
-- Use semantic tokens from `tokens.css` for implementation.
-- Keep pages quiet, dense, and built for repeated operational use.
-- Keep audit evidence, source context, and approval controls visible together.
-- Use Tabler icons for product UI controls.
-- Use violet for brand and primary workflow emphasis.
-- Use green, amber, blue, and red only for status semantics.
-- Preserve the local-first and safety-first tone in empty states and warnings.
+## Interaction and accessibility
 
-Don't:
+- URL state owns navigation and filters that users may revisit, share, or traverse with browser history.
+- Focus remains visible with the focus token.
+- Interactive targets are at least 24px, with 32–40px preferred for primary controls.
+- State never relies on color alone and remains legible in forced-colors mode.
+- Mobile reflow favors readable stacking over compressed desktop columns.
+- The page itself never overflows horizontally; only intrinsically wide tabs, tables, and editors may scroll.
 
-- Do not create marketing-style hero pages inside the app shell.
-- Do not use decorative violet gradients as page backgrounds.
-- Do not make broad beige, dark-slate, or one-note purple screens.
-- Do not hide failed, blocked, or residual-warning states behind neutral labels.
-- Do not use color alone to communicate status.
-- Do not stretch the icon, alter the checkmark angle, or rebuild the logo from
-  unrelated iconography.
-- Do not replace product evidence with generic motivational copy.
+## Acceptance bar
+
+- No unexplained one-off spacing, radius, color, or control treatment.
+- No rounded-rectangle proliferation and no capsule status taxonomy.
+- No P0/P1/P2 visual mismatch against the approved draft direction.
+- Zero page-level horizontal overflow at supported widths.
+- All original data, controls, audit fields, filters, and route transitions remain available.
+- All core actions work and all consequential claims expose source and lifecycle when data exists.
+- Zero critical or serious accessibility violations in supported stories.

@@ -10,6 +10,10 @@ export const Route = createFileRoute("/settings/models")({
 function ModelsSettingsRoute() {
   return (
     <div className="models-settings-sections grid gap-[18px]">
+      <header className="settings-subroute-head">
+        <h2>Models and execution policy</h2>
+        <p>Choose explicit providers for analysis, generation, fallback, and judging.</p>
+      </header>
       <ModelSelectionPanel />
       <AiExecutionPolicyPanel />
     </div>

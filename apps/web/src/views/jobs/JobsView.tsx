@@ -675,9 +675,17 @@ export function JobsView() {
           <PageHead
             eyebrow="Pipeline"
             title="Jobs"
-            subtitle={data ? `${data.pagination.total} total` : "loading"}
+            subtitle={
+              data
+                ? `${data.pagination.total} total · Triage the queue, then open a job for evidence-level review.`
+                : "Loading the current queue."
+            }
           />
-          <section className="card full data-surface">
+          <section
+            aria-busy={isFetching}
+            aria-label="Jobs data index"
+            className="card full data-surface jobs-index-sheet"
+          >
             {message ? <div className="banner inline">{message}</div> : null}
             <JobBulkActions
               search={search}

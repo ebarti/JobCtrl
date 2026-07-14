@@ -103,6 +103,12 @@ describe("<Topbar>", () => {
       "href",
       "https://github.com/ebarti/JobCtrl",
     );
+    expect(within(dialog).getByRole("combobox", { name: "Row density" })).toHaveTextContent(
+      "Regular",
+    );
+    expect(within(dialog).getByRole("button", { name: "Switch to dark theme" })).toBeInTheDocument();
+    expect(await within(dialog).findByText("LLM $0.12 / $25.00")).toBeInTheDocument();
+    expect(within(dialog).getByText("Local mode — all data stays on device")).toBeInTheDocument();
     expect(nav).toBeInTheDocument();
   });
 

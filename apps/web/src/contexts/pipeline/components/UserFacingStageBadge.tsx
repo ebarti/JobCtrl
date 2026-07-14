@@ -17,7 +17,7 @@ export function UserFacingStageBadge({ stage }: UserFacingStageBadgeProps): JSX.
   const visibleStage = userFacingStage(stage);
 
   return (
-    <span aria-label={visibleStage} className={`stage-pill ${stageTone(visibleStage)}`}>
+    <span aria-label={visibleStage} className={`stage-pill stage-label ${stageTone(visibleStage)}`}>
       {visibleStage}
     </span>
   );

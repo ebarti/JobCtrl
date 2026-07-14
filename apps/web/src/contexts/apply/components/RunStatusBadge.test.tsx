@@ -9,7 +9,7 @@ describe("<RunStatusBadge>", () => {
     it(`renders the ${status} workflow-run status with a non-default tone`, () => {
       const { container } = render(<RunStatusBadge status={status} />);
       const span = container.querySelector("span");
-      expect(span?.className).toMatch(/tag (ok|info|warn|danger|muted)/);
+      expect(span?.className).toMatch(/editorial-status (ok|info|warn|danger|muted)/);
       expect(span?.textContent ?? "").not.toBe("");
     });
   }

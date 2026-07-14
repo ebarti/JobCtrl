@@ -46,7 +46,7 @@ export function RecentActivityCard({ summary }: { summary: DashboardSummary }) {
                 })
               }
             >
-              <span className={`tag ${activityTone(entry)}`}>
+              <span className={`dashboard-signal dashboard-signal--${activityTone(entry)}`}>
                 {entry.level}
               </span>
               <span className="title-stack">

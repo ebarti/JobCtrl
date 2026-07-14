@@ -1,0 +1,475 @@
+/*
+ * Editorial product surface
+ *
+ * The approved redesign uses continuous workspaces, hairline rules, and
+ * typography for hierarchy. Radius remains available for controls and true
+ * circular indicators; it must not turn every data group into a card.
+ */
+
+:root {
+  --radius: 0.125rem;
+  --shadow-panel: none;
+  --shadow-control: none;
+  --surface-raised: var(--card);
+}
+
+:where(
+  .card,
+  .data-surface,
+  .route-workspace,
+  .disclosure-section,
+  .profile-editor-panel,
+  .tool-row,
+  .provider-card,
+  .action-panel,
+  .stage-trigger-panel,
+  .resume-template-panel,
+  .preview-workbench,
+  .editor-bulk-actions
+) {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+:where(button, input, select, textarea, [data-slot="select-trigger"]) {
+  border-radius: 0.125rem;
+}
+
+.side-rail__brand,
+.side-rail__link,
+.side-rail__footer {
+  border-radius: 0;
+}
+
+.side-rail__link.on {
+  background: transparent;
+}
+
+.side-rail__link:hover {
+  background: color-mix(in oklch, var(--foreground) 4%, transparent);
+}
+
+.side-rail__footer {
+  border-inline: 0;
+  border-bottom: 0;
+  padding-inline: 2px;
+}
+
+.page-head {
+  align-items: flex-start;
+  padding-block: 2px 4px;
+}
+
+.page-head h1 {
+  font-size: clamp(1.7rem, 2.25vw, 2rem);
+  line-height: 1.05;
+}
+
+.page-head-subtitle {
+  max-width: 78ch;
+}
+
+.route-page {
+  gap: clamp(0.875rem, 1.35vw, 1.125rem);
+}
+
+.route-workspace__header {
+  padding: 1rem 1.125rem;
+}
+
+.route-workspace__inspector {
+  background: color-mix(in oklch, var(--background) 58%, var(--card));
+}
+
+.disclosure-section__header {
+  min-height: 3.25rem;
+  background: transparent;
+}
+
+.disclosure-section__trigger {
+  border-radius: 0;
+}
+
+.tool-row {
+  border-inline: 0;
+  padding-inline: 0;
+}
+
+/* The dashboard is one operational sheet, not a collection of floating cards. */
+.route-page--dashboard .kpis {
+  gap: 0;
+  border-block: 1px solid var(--border);
+}
+
+.route-page--dashboard .kpis > * {
+  border-width: 0 1px 0 0;
+  padding: 0.875rem 1rem;
+}
+
+.route-page--dashboard .kpis > :last-child {
+  border-right: 0;
+}
+
+.route-page--dashboard [data-slot="stat-label"] {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.route-page--dashboard [data-slot="stat-value"] {
+  font-size: 1.375rem;
+}
+
+.route-page--dashboard .dashboard-ops,
+.route-page--dashboard .dashboard-tail {
+  gap: 0;
+  border: 1px solid var(--border);
+}
+
+.route-page--dashboard .dashboard-ops > .card,
+.route-page--dashboard .dashboard-tail > .card {
+  border-width: 0 1px 0 0;
+}
+
+.route-page--dashboard .dashboard-ops > .card:last-child,
+.route-page--dashboard .dashboard-tail > .card:last-child {
+  border-right: 0;
+}
+
+.route-page--dashboard .card-hd {
+  min-height: 3rem;
+  padding: 0.75rem 0.875rem;
+}
+
+.route-page--dashboard .card-hd h2 {
+  font-size: 0.875rem;
+}
+
+.card-hd {
+  background: transparent;
+}
+
+/* Tabs carry navigation through type and a rule, never through a capsule. */
+.tab {
+  position: relative;
+  min-height: 40px;
+  border-radius: 0;
+  padding: 8px 2px;
+}
+
+.tab:hover,
+.tab.on {
+  background: transparent;
+  color: var(--foreground);
+}
+
+.tab.on {
+  box-shadow: inset 0 -2px 0 var(--primary);
+}
+
+.topbar__hamburger.tab {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 0;
+}
+
+.section-tabs [role="tablist"] {
+  gap: 20px;
+  border-radius: 0;
+  background: transparent;
+}
+
+.route-workspace__tabs {
+  min-inline-size: 0;
+  padding-inline: clamp(1rem, 2.5vw, 1.5rem);
+  border-block-end: 1px solid var(--border);
+  background: var(--card);
+}
+
+.route-workspace__tabs .section-tabs__list {
+  inline-size: 100%;
+  border-block-end: 0;
+}
+
+/* Segmented choices use the same ruled grammar as tabs. */
+.segmented-field {
+  overflow: visible;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.segmented-field [data-slot="toggle-group-item"] {
+  position: relative;
+  min-height: 36px;
+  border-radius: 0;
+}
+
+.segmented-field [data-slot="toggle-group-item"][data-state="on"] {
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--primary);
+}
+
+.segmented {
+  border-radius: 0;
+}
+
+.segmented.active {
+  border-color: var(--foreground);
+  background: transparent;
+  color: var(--foreground);
+}
+
+/* The shared data index is a ruled sheet, not a toolbar card followed by rows. */
+.filterable-data-grid {
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.data-grid-toolbar {
+  min-height: 48px;
+  padding-inline: 10px;
+}
+
+.data-grid-tools :where(button, select),
+.saved-table-views-control button,
+.saved-table-view-form button,
+.saved-table-density,
+.saved-table-column-row button,
+.saved-table-views-select select,
+.saved-table-rule-field select,
+.saved-table-rule-editor select,
+.saved-table-rule-editor input {
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+.saved-table-rule-list,
+.saved-table-column-list {
+  gap: 0;
+}
+
+.saved-table-rule-list div,
+.saved-table-column-row {
+  border-width: 0 0 1px;
+  border-radius: 0;
+}
+
+.data-grid-filter-list {
+  gap: 0;
+}
+
+.data-grid-filter-condition {
+  gap: 10px;
+  border-width: 0 1px 0 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px 12px;
+}
+
+.data-grid-filter-condition:last-child {
+  border-right: 0;
+}
+
+.data-grid-filter-operator,
+.data-grid-value-list {
+  border-radius: 2px;
+}
+
+.data-grid-value-option {
+  border-radius: 0;
+}
+
+.data-grid-filter-chips {
+  gap: 12px;
+}
+
+.data-grid-filter-chips button {
+  border-width: 0 0 0 2px;
+  border-color: var(--primary);
+  border-radius: 0;
+  background: transparent;
+  padding: 3px 6px;
+}
+
+.filterable-data-grid-table thead th {
+  background: var(--card);
+  letter-spacing: 0.035em;
+}
+
+.filterable-data-grid-table .data-grid-cell-tone-success,
+.filterable-data-grid-table .data-grid-cell-tone-warning,
+.filterable-data-grid-table .data-grid-cell-tone-danger,
+.filterable-data-grid-table .data-grid-cell-tone-info {
+  background: transparent;
+}
+
+.filterable-data-grid-table .data-grid-cell-tone-success {
+  box-shadow: inset 2px 0 0 var(--success);
+}
+
+.filterable-data-grid-table .data-grid-cell-tone-warning {
+  box-shadow: inset 2px 0 0 var(--warning);
+}
+
+.filterable-data-grid-table .data-grid-cell-tone-danger {
+  box-shadow: inset 2px 0 0 var(--destructive);
+}
+
+.filterable-data-grid-table .data-grid-cell-tone-info {
+  box-shadow: inset 2px 0 0 var(--status-info);
+}
+
+.filterable-data-grid-table tbody tr[aria-selected="true"] {
+  background: color-mix(in oklch, var(--primary) 2%, var(--card));
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+.data-grid-column-filter-button,
+.data-grid-row-activation-button,
+.table-row-activation-button {
+  border-radius: 2px;
+}
+
+/* Fit is a value with semantic text, not a miniature colored card. */
+.fit,
+.fit.good,
+.fit.mid,
+.fit.none {
+  width: auto;
+  height: auto;
+  min-width: 1.5rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.fit[data-score-tone="positive"] {
+  color: var(--success);
+}
+
+.fit[data-score-tone="negative"] {
+  color: var(--destructive);
+}
+
+.connection-pill {
+  min-height: 24px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 2px 0;
+  font-weight: 650;
+}
+
+.connection-banner {
+  border-width: 1px 0 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-inline: 0;
+}
+
+/* Legacy metadata hooks remain for compatibility, but lose badge chrome. */
+.tag,
+.stage-pill,
+.tag.muted,
+.stage-pill.neutral,
+.stage-pill.info,
+.stage-pill.ok,
+.tag.ok,
+.tag.warn,
+.tag.danger,
+.tag.info {
+  min-height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.tag.muted,
+.stage-pill.neutral {
+  color: var(--muted-foreground);
+}
+
+.stage-pill.info,
+.tag.info {
+  color: var(--status-info);
+}
+
+.stage-pill.ok,
+.tag.ok {
+  color: var(--success);
+}
+
+.tag.warn {
+  color: var(--warning);
+}
+
+.tag.danger {
+  color: var(--destructive);
+}
+
+.compact-list li {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+
+.mini-row,
+.digest-row,
+.data-row,
+.conversion-row,
+.inspector-ledger__item {
+  border-radius: 0;
+}
+
+@media (max-width: 900px) {
+  .route-page--dashboard .kpis > *:nth-child(3n) {
+    border-right: 0;
+  }
+
+  .route-page--dashboard .dashboard-ops,
+  .route-page--dashboard .dashboard-tail {
+    border-bottom: 0;
+  }
+
+  .route-page--dashboard .dashboard-ops > .card,
+  .route-page--dashboard .dashboard-tail > .card {
+    border-width: 0 0 1px;
+  }
+}
+
+@media (max-width: 620px) {
+  .route-page--dashboard .kpis > * {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .route-page--dashboard .kpis > *:nth-child(3n) {
+    border-right: 1px solid var(--border);
+  }
+
+  .route-page--dashboard .kpis > *:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .route-page--dashboard .kpis > :nth-last-child(-n + 2) {
+    border-bottom: 0;
+  }
+}
+
+@media (forced-colors: active) {
+  .side-rail__link.on {
+    border-left: 3px solid Highlight;
+  }
+}

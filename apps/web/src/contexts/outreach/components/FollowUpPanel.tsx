@@ -2,6 +2,7 @@ import type { OutreachFollowUp } from "@jobctrl/contracts";
 import { useState, type JSX } from "react";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";
+import { StatusLabel } from "../../../shared/ui/status-label.js";
 import { useCompleteFollowUpMutation } from "../hooks/useCompleteFollowUpMutation.js";
 import { useDismissFollowUpMutation } from "../hooks/useDismissFollowUpMutation.js";
 import { useScheduleFollowUpMutation } from "../hooks/useScheduleFollowUpMutation.js";
@@ -39,14 +40,18 @@ export function FollowUpPanel({
     <div className="outreach-follow-up" aria-label="Follow-up">
       <h4>Follow-up</h4>
       <p className="muted">
-        A follow-up is a reminder surfaced for you. JobCtrl never sends it or acts on it.
+        A follow-up is a reminder surfaced for you. JobCtrl never sends it or
+        acts on it.
       </p>
       {error ? <div className="banner inline">{error}</div> : null}
       {isScheduled && followUp ? (
         <div className="outreach-follow-up-scheduled">
           <p>
-            <span className="tag">scheduled</span> due {formatDateTime(followUp.dueAt)}
-            {followUp.basis ? <span className="muted"> · {followUp.basis}</span> : null}
+            <StatusLabel tone="info">scheduled</StatusLabel> due{" "}
+            {formatDateTime(followUp.dueAt)}
+            {followUp.basis ? (
+              <span className="muted"> · {followUp.basis}</span>
+            ) : null}
           </p>
           <div className="form-actions">
             <button
@@ -70,7 +75,9 @@ export function FollowUpPanel({
       ) : (
         <div className="outreach-follow-up-schedule">
           {followUp && followUp.state !== "none" ? (
-            <p className="muted">Last follow-up {followUp.state}. Schedule a new reminder:</p>
+            <p className="muted">
+              Last follow-up {followUp.state}. Schedule a new reminder:
+            </p>
           ) : null}
           <label className="field compact">
             <span>Remind me on</span>

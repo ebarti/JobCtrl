@@ -21,17 +21,18 @@ export function ConnectionStatusPill() {
   const label = workerUnhealthy ? "worker" : lostForLong ? "offline" : STATUS_LABEL[status];
   const spend = health.data?.llmSpend;
   return (
-    <div className="connection-pill-group">
+    <div className="connection-status">
       <span
-        className="connection-pill"
+        className="connection-status__state"
         data-status={workerUnhealthy ? "lost" : lostForLong ? "lost" : status}
         aria-live="polite"
       >
+        <span className="connection-status__dot" aria-hidden="true" />
         {label}
       </span>
       {spend ? (
         <span
-          className="connection-spend"
+          className="connection-status__spend"
           data-status={spend.status}
           aria-live="polite"
         >
@@ -39,11 +40,11 @@ export function ConnectionStatusPill() {
         </span>
       ) : null}
       {workerUnhealthy ? (
-        <div className="connection-banner" role="alert" aria-live="assertive">
+        <div className="connection-status__banner" role="alert" aria-live="assertive">
           {health.data?.worker.message ?? "JobCtrl automation worker health is unavailable."}
         </div>
       ) : lostForLong ? (
-        <div className="connection-banner" role="status" aria-live="polite">
+        <div className="connection-status__banner" role="status" aria-live="polite">
           Connection lost — events paused; data will refresh when reconnected.
         </div>
       ) : null}

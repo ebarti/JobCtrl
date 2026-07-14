@@ -1,6 +1,8 @@
 import type { ScoreStaleness } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
+import { StatusLabel } from "../../../shared/ui/status-label.js";
+
 export interface ScoreStalenessBadgeProps {
   readonly staleness: ScoreStaleness;
 }
@@ -14,11 +16,12 @@ export function ScoreStalenessBadge({ staleness }: ScoreStalenessBadgeProps): JS
       ? `v${staleness.currentPolicyVersion} -> v${staleness.targetPolicyVersion}`
       : "policy updated";
   return (
-    <span
-      className="tag score-stale-tag"
+    <StatusLabel
+      className="score-stale-tag"
       title={staleness.staleReason ?? "Score stale after scoring policy update"}
+      tone="warn"
     >
       stale score {versionLabel}
-    </span>
+    </StatusLabel>
   );
 }

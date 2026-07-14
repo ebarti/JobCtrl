@@ -1,4 +1,9 @@
-import { Outlet, useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
+import {
+  Outlet,
+  useNavigate,
+  useRouterState,
+  useSearch,
+} from "@tanstack/react-router";
 
 import { ContactCreateButton } from "../../contexts/outreach/components/ContactCreateButton.js";
 import { ContactImportButton } from "../../contexts/outreach/components/ContactImportButton.js";
@@ -9,6 +14,7 @@ import {
   type ContactsListFilters,
 } from "../../contexts/outreach/hooks/useContactsListQuery.js";
 import type { OutreachSearch } from "../../routes/-outreach.search.js";
+import { buttonVariants } from "../../shared/ui/button.js";
 import { Input } from "../../shared/ui/input.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 import { ToolRow } from "../../shared/ui/tool-row.js";
@@ -30,7 +36,8 @@ export function OutreachView() {
   const navigate = useNavigate({ from: "/outreach" });
   const showingDetail = useRouterState({
     select: (state) =>
-      state.location.pathname !== "/outreach" && state.location.pathname !== "/outreach/",
+      state.location.pathname !== "/outreach" &&
+      state.location.pathname !== "/outreach/",
   });
 
   const { data, isFetching, error } = useContactsListQuery(listFilters(search));
@@ -41,17 +48,40 @@ export function OutreachView() {
   };
 
   return (
-    <div className="route-page route-page--outreach">
+    <div className="route-page route-page--outreach editorial-index-page">
       {!showingDetail ? (
         <>
           <PageHead
+            className="editorial-page-head"
             eyebrow="Library"
             title="Contacts"
-            subtitle={data ? `${data.items.length} shown` : "loading"}
-            actions={<DueFollowUpsBadge />}
+            subtitle={
+              <>
+                <span>
+                  Grounded relationship context and user-sent outreach—never an
+                  autonomous messaging queue.
+                </span>
+                <span className="page-head-count">
+                  {data ? `${data.items.length} shown` : "loading"}
+                </span>
+              </>
+            }
+            actions={
+              <>
+                <DueFollowUpsBadge />
+                <ContactImportButton
+                  className={buttonVariants({ size: "sm", variant: "outline" })}
+                  label="Import"
+                />
+                <ContactCreateButton
+                  className={buttonVariants({ size: "sm", variant: "default" })}
+                  label="New contact"
+                />
+              </>
+            }
           />
           <DueFollowUpsPanel />
-          <section className="card full data-surface">
+          <section className="card full data-surface editorial-data-surface">
             {message ? <div className="banner inline">{message}</div> : null}
             <ToolRow
               className="data-surface__tools"
@@ -62,7 +92,9 @@ export function OutreachView() {
                     <Input
                       value={search.employer}
                       placeholder="Filter by employer"
-                      onChange={(event) => setSearch({ employer: event.target.value })}
+                      onChange={(event) =>
+                        setSearch({ employer: event.target.value })
+                      }
                     />
                   </label>
                   <label className="field compact tool-row__field">
@@ -70,15 +102,11 @@ export function OutreachView() {
                     <Input
                       value={search.jobId}
                       placeholder="Filter by job id"
-                      onChange={(event) => setSearch({ jobId: event.target.value })}
+                      onChange={(event) =>
+                        setSearch({ jobId: event.target.value })
+                      }
                     />
                   </label>
-                </>
-              }
-              secondary={
-                <>
-                  <ContactCreateButton />
-                  <ContactImportButton />
                 </>
               }
             />

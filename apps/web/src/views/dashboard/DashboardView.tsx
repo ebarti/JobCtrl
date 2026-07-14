@@ -38,7 +38,14 @@ export function DashboardView() {
   );
   return (
     <div className="route-page route-page--dashboard">
-      <PageHead eyebrow="Overview" title="Dashboard" />
+      <PageHead
+        eyebrow="Overview"
+        title="Dashboard"
+        subtitle="What needs a decision, what is moving, and what is stuck."
+      />
+      {summary ? (
+        <p className="dashboard-generated-at">Generated {new Date(summary.generatedAt).toLocaleString()}</p>
+      ) : null}
       {summary ? <KpiGrid summary={summary} /> : <KpiSkeleton />}
       {message ? <div className="banner">{message}</div> : null}
       {outcomesError ? <div className="banner">{outcomesError}</div> : null}

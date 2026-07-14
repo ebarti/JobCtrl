@@ -138,6 +138,9 @@ describe("<JobsRoute> loader reliability", () => {
 
     expect(await screen.findByText("api offline")).toBeInTheDocument();
     expect(screen.getByText("Jobs table")).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Jobs data index" }),
+    ).toHaveClass("jobs-index-sheet");
     expect(screen.queryByText("Something went wrong!")).not.toBeInTheDocument();
   });
 });

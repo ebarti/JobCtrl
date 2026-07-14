@@ -62,7 +62,7 @@ describe("<JobBulkActions>", () => {
       />,
     );
 
-    const viewSwitcher = screen.getByRole("radiogroup", { name: "Job views" });
+    const viewSwitcher = screen.getByRole("radiogroup", { name: "Queue" });
     expect(viewSwitcher).toHaveClass("job-view-switcher");
     expect(viewSwitcher).toHaveAttribute("data-variant", "outline");
     expect(within(viewSwitcher).getByRole("radio", { name: "deleted" })).toHaveAttribute(
@@ -73,13 +73,36 @@ describe("<JobBulkActions>", () => {
       "aria-checked",
       "false",
     );
-    expect(screen.getByRole("button", { name: "hide selected" })).toHaveTextContent(/^hide$/);
+    const selectionControls = screen.getByRole("group", {
+      name: "Selection",
+    });
+    const preparationControls = screen.getByRole("group", {
+      name: "Preparation",
+    });
+    const selectedJobControls = screen.getByRole("group", {
+      name: "Selected jobs",
+    });
     expect(
-      screen.getByRole("button", { name: "permanently delete selected" }),
+      within(selectionControls).getByRole("button", { name: "select page" }),
+    ).toBeInTheDocument();
+    expect(
+      within(preparationControls).getByRole("button", {
+        name: "refresh compensation",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(selectedJobControls).getByRole("button", { name: "hide selected" }),
+    ).toHaveTextContent(/^hide$/);
+    expect(
+      within(selectedJobControls).getByRole("button", {
+        name: "permanently delete selected",
+      }),
     ).toHaveTextContent(/^permanently delete$/);
-    expect(screen.getByRole("button", { name: "restore selected" })).toHaveTextContent(
-      /^restore$/,
-    );
+    expect(
+      within(selectedJobControls).getByRole("button", {
+        name: "restore selected",
+      }),
+    ).toHaveTextContent(/^restore$/);
   });
 
   it("omits the redundant selection instruction when nothing is selected", () => {

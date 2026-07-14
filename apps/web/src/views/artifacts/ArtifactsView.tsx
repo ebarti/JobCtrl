@@ -1,5 +1,10 @@
 import type { ArtifactSortField } from "@jobctrl/contracts";
-import { Outlet, useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
+import {
+  Outlet,
+  useNavigate,
+  useRouterState,
+  useSearch,
+} from "@tanstack/react-router";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
 
@@ -36,20 +41,32 @@ export function ArtifactsView() {
   const navigate = useNavigate({ from: "/artifacts" });
   const showingDetail = useRouterState({
     select: (state) =>
-      state.location.pathname !== "/artifacts" && state.location.pathname !== "/artifacts/",
+      state.location.pathname !== "/artifacts" &&
+      state.location.pathname !== "/artifacts/",
   });
 
-  const { data, isFetching, error } = useArtifactsListQuery(artifactsListInput(search));
+  const { data, isFetching, error } = useArtifactsListQuery(
+    artifactsListInput(search),
+  );
   const message = error instanceof Error ? error.message : null;
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   useEffect(() => {
     setRowSelection({});
-  }, [search.dir, search.page, search.pageSize, search.q, search.sort, search.status]);
+  }, [
+    search.dir,
+    search.page,
+    search.pageSize,
+    search.q,
+    search.sort,
+    search.status,
+  ]);
 
   const setSearch = (next: Partial<ArtifactsSearch>) => {
-    void navigate({ search: (prev: ArtifactsSearch) => ({ ...prev, ...next }) });
+    void navigate({
+      search: (prev: ArtifactsSearch) => ({ ...prev, ...next }),
+    });
   };
 
   const sorting = useMemo<SortingState>(
@@ -70,15 +87,26 @@ export function ArtifactsView() {
   };
 
   return (
-    <div className="route-page route-page--artifacts">
+    <div className="route-page route-page--artifacts editorial-index-page">
       {!showingDetail ? (
         <>
           <PageHead
+            className="editorial-page-head"
             eyebrow="Library"
             title="Artifacts"
-            subtitle={data ? `${data.pagination.total} total` : "loading"}
+            subtitle={
+              <>
+                <span>
+                  Generated materials, their lifecycle, and the last accepted
+                  truth.
+                </span>
+                <span className="page-head-count">
+                  {data ? `${data.pagination.total} total` : "loading"}
+                </span>
+              </>
+            }
           />
-          <section className="card full data-surface">
+          <section className="card full data-surface editorial-data-surface">
             {message ? <div className="banner inline">{message}</div> : null}
             <ArtifactFilterBar search={search} />
             <ArtifactsTable
@@ -93,7 +121,10 @@ export function ArtifactsView() {
               onPageChange={(page) => setSearch({ page })}
               onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
               onOpenArtifact={(artifactId) =>
-                void navigate({ to: "/artifacts/$artifactId", params: { artifactId } })
+                void navigate({
+                  to: "/artifacts/$artifactId",
+                  params: { artifactId },
+                })
               }
             />
           </section>

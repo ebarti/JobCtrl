@@ -33,6 +33,8 @@ describe("<ConnectionStatusPill>", () => {
     const pill = screen.getByText("live");
     expect(pill).toHaveAttribute("aria-live", "polite");
     expect(pill).toHaveAttribute("data-status", "open");
+    expect(pill).toHaveClass("connection-status__state");
+    expect(pill.querySelector(".connection-status__dot")).toHaveAttribute("aria-hidden", "true");
     expect(await screen.findByText("LLM $0.12 / $25.00")).toHaveAttribute("data-status", "ok");
   });
 

@@ -45,7 +45,8 @@ export function RunsView() {
   const navigate = useNavigate({ from: "/runs" });
   const showingDetail = useRouterState({
     select: (state) =>
-      state.location.pathname !== "/runs" && state.location.pathname !== "/runs/",
+      state.location.pathname !== "/runs" &&
+      state.location.pathname !== "/runs/",
   });
   const { data, isFetching, error } = useWorkflowRunsListQuery(
     workflowRunsInput(search),
@@ -83,15 +84,26 @@ export function RunsView() {
   };
 
   return (
-    <div className="route-page route-page--runs">
+    <div className="route-page route-page--runs editorial-index-page">
       {!showingDetail ? (
         <>
           <PageHead
+            className="editorial-page-head"
             eyebrow="Activity"
             title="Workflow runs"
-            subtitle={data ? `${data.pagination.total} total` : "loading"}
+            subtitle={
+              <>
+                <span>
+                  Every workflow execution, its lifecycle, and the product
+                  object it changed.
+                </span>
+                <span className="page-head-count">
+                  {data ? `${data.pagination.total} total` : "loading"}
+                </span>
+              </>
+            }
           />
-          <section className="card full data-surface">
+          <section className="card full data-surface editorial-data-surface">
             {message ? <div className="banner inline">{message}</div> : null}
             <RunsFilterBar
               status={search.status}

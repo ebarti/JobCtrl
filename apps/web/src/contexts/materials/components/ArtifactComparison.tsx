@@ -6,6 +6,7 @@ import type {
 import { useMemo } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
+import { StatusLabel, type StatusLabelTone } from "../../../shared/ui/status-label.js";
 import { useArtifactDetailQuery } from "../../operations/hooks/useArtifactDetailQuery.js";
 import { compareArtifactCoverage } from "../selectors/compareCoverage.js";
 
@@ -97,7 +98,9 @@ function ArtifactComparisonSideSummary({ side }: { readonly side: ArtifactCompar
       <dl className="detail-list compact">
         <div>
           <dt>Status</dt>
-          <dd>{side.status}</dd>
+          <dd>
+            <StatusLabel tone={artifactStatusTone(side.status)}>{side.status}</StatusLabel>
+          </dd>
         </div>
         <div>
           <dt>Template</dt>
@@ -119,6 +122,15 @@ function ArtifactComparisonSideSummary({ side }: { readonly side: ArtifactCompar
       <TagGroup label="Risk labels" values={side.riskLabels} tone="warn" empty="none recorded" />
     </section>
   );
+}
+
+function artifactStatusTone(status: string): StatusLabelTone {
+  const normalized = status.toLowerCase();
+  if (/fail|reject|block|invalid|not[\s_-]*(accept|approv|valid)/.test(normalized)) return "danger";
+  if (/ready|accept|complete|generated|valid/.test(normalized)) return "ok";
+  if (/warn|review|stale/.test(normalized)) return "warn";
+  if (/pending|missing|unknown/.test(normalized)) return "muted";
+  return "info";
 }
 
 function CoverageDeltaPanel({ delta }: { readonly delta: CoverageDelta }) {
@@ -163,17 +175,17 @@ function TagGroup({
   return (
     <div className="artifact-comparison-tag-group">
       <span>{label}</span>
-      <div>
+      <ul className="audit-value-list">
         {values.length ? (
           values.map((value) => (
-            <span className={`tag ${tone}`} key={`${label}:${value}`}>
+            <li className={`audit-value audit-value--${tone}`} key={`${label}:${value}`}>
               {value}
-            </span>
+            </li>
           ))
         ) : (
-          <span className="meta">{empty}</span>
+          <li className="audit-value audit-value--empty">{empty}</li>
         )}
-      </div>
+      </ul>
     </div>
   );
 }

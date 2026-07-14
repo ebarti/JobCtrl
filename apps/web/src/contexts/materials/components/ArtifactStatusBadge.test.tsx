@@ -15,7 +15,7 @@ describe("<ArtifactStatusBadge>", () => {
     const { container } = render(<ArtifactStatusBadge status="approved" />);
     const badge = container.querySelector("span");
 
-    expect(badge?.className).toBe("tag ok");
+    expect(badge?.className).toBe("tag editorial-status ok");
     expect(badge).toHaveAttribute(
       "aria-label",
       "approved: Approved means this generated material passed validation and is the accepted version for this job.",
@@ -35,6 +35,6 @@ describe("<ArtifactStatusBadge>", () => {
   it("renders rejected artifacts with destructive status tone", () => {
     const { container } = render(<ArtifactStatusBadge status="rejected" />);
 
-    expect(container.querySelector("span")?.className).toBe("tag danger");
+    expect(container.querySelector("span")?.className).toBe("tag editorial-status danger");
   });
 });

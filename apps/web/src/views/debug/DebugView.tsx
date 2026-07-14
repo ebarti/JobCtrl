@@ -37,7 +37,9 @@ function isActivitySortField(value: string): value is ActivitySortField {
 export function DebugView() {
   const search = useSearch({ from: "/debug" });
   const navigate = useNavigate({ from: "/debug" });
-  const { data, isFetching, error } = useActivityListQuery(activityInput(search));
+  const { data, isFetching, error } = useActivityListQuery(
+    activityInput(search),
+  );
   const message = error instanceof Error ? error.message : null;
 
   const setSearch = (next: Partial<DebugSearch>) => {
@@ -63,13 +65,24 @@ export function DebugView() {
   };
 
   return (
-    <div className="route-page route-page--debug">
+    <div className="route-page route-page--debug editorial-index-page">
       <PageHead
+        className="editorial-page-head"
         eyebrow="Activity"
         title="Debug"
-        subtitle={data ? `${data.pagination.total} activity events` : "loading"}
+        subtitle={
+          <>
+            <span>
+              Search event history without losing the object and workflow
+              context.
+            </span>
+            <span className="page-head-count">
+              {data ? `${data.pagination.total} activity events` : "loading"}
+            </span>
+          </>
+        }
       />
-      <section className="card full data-surface">
+      <section className="card full data-surface editorial-data-surface">
         {message ? <div className="banner inline">{message}</div> : null}
         <DebugFilterBar search={search} onChange={setSearch} />
         <DebugActivityTable

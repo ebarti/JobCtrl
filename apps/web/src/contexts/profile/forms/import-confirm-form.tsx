@@ -80,19 +80,28 @@ export function ImportConfirmForm() {
     >
       {errorMessage ? <div className="banner inline" role="alert">{errorMessage}</div> : null}
       {statusMessage ? <div className="status-line" role="status">{statusMessage}</div> : null}
-      <div
-        className="resume-import-confirmation flex items-center gap-3 border-y border-border py-3"
-      >
+      <section className="resume-import-confirmation" aria-label="Import summary">
         <IconFileTypePdf
-          className="shrink-0 text-muted-foreground"
+          className="resume-import-confirmation__icon"
           aria-hidden="true"
           size={24}
           stroke={1.7}
         />
-        <p className="m-0 min-w-0 break-words text-[12px] leading-relaxed">
-          Importing <b className="break-all">{filename}</b> with {summary}.
-        </p>
-      </div>
+        <div className="resume-import-confirmation__file">
+          <span>Source PDF</span>
+          <strong className="break-all">{filename}</strong>
+        </div>
+        <dl className="resume-import-confirmation__ledger">
+          <div>
+            <dt>Import scope</dt>
+            <dd>{summary}</dd>
+          </div>
+          <div>
+            <dt>Current state</dt>
+            <dd>Nothing has changed yet</dd>
+          </div>
+        </dl>
+      </section>
       <form.Subscribe selector={(state) => state.errors}>
         {(errors) => {
           const message = errors
@@ -106,7 +115,7 @@ export function ImportConfirmForm() {
         selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}
       >
         {({ canSubmit, isSubmitting }) => (
-          <div className="form-actions resume-import-actions justify-end">
+          <div className="form-actions resume-import-actions">
             <Button asChild variant="outline">
               <Link to="/profile/import/preview">Back</Link>
             </Button>

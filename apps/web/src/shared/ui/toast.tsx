@@ -28,12 +28,13 @@ export const ToastViewport = forwardRef<
 ToastViewport.displayName = ToastPrimitive.Viewport.displayName;
 
 const toastVariants = cva(
-  "group pointer-events-auto relative flex w-full items-center justify-between space-x-2 overflow-hidden rounded-lg border p-4 pr-6 shadow-lg transition-all",
+  "group pointer-events-auto relative flex w-full items-center justify-between space-x-2 overflow-hidden rounded-[2px] border p-4 pr-6 shadow-[var(--shadow-float)] transition-all",
   {
     variants: {
       variant: {
         default: "border-border bg-popover text-popover-foreground",
-        destructive: "destructive group border-destructive bg-destructive text-white",
+        destructive:
+          "destructive group border-border border-l-2 border-l-destructive bg-popover text-destructive",
       },
     },
     defaultVariants: {
@@ -57,7 +58,7 @@ export const ToastAction = forwardRef<
   <ToastPrimitive.Action
     ref={ref}
     className={cn(
-      "inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-border bg-transparent px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+      "inline-flex h-8 shrink-0 items-center justify-center rounded-[2px] border border-border bg-transparent px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
       className,
     )}
     {...props}
@@ -73,7 +74,7 @@ export const ToastClose = forwardRef<
     ref={ref}
     aria-label="Close"
     className={cn(
-      "absolute right-1 top-1 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring group-hover:opacity-100",
+      "absolute right-1 top-1 rounded-[2px] p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring group-hover:opacity-100",
       className,
     )}
     toast-close=""

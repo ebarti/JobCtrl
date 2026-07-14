@@ -10,7 +10,7 @@ import { useProfileQuery } from "../hooks/useProfileQuery.js";
 import { ResumeTemplatePanel } from "./ResumeTemplatePanel.js";
 
 const SPLIT_STORAGE_KEY = "profile-preview-split-width";
-const DEFAULT_EDITOR_WIDTH = 62;
+const DEFAULT_EDITOR_WIDTH = 48;
 const MIN_EDITOR_WIDTH = 38;
 const MAX_EDITOR_WIDTH = 76;
 
@@ -73,15 +73,6 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
     >
       <section className="profile-editor-panel">
         {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
-        {section === "profile" ? (
-          <header className="profile-editor-panel__header">
-            <div>
-              <span className="eyebrow">Canonical source</span>
-              <h2>Resume data</h2>
-              <p>Maintain the evidence-backed baseline used for every tailored resume.</p>
-            </div>
-          </header>
-        ) : null}
         {profileQuery.data ? (
           section === "preferences" ? (
             <>
@@ -119,8 +110,8 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
           <aside className="profile-preview-pane">
             <PreviewWorkbench
               className="profile-preview-workbench"
-              title="Resume preview"
-              description="The live baseline generated from the profile data."
+              title="Baseline resume"
+              description="Current local HTML"
               previewLabel="Baseline resume preview"
             >
               <ResumeStandalonePlateEditor

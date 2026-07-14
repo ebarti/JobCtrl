@@ -4,6 +4,7 @@ import type { JobDetail } from "../../contexts/operations/types.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import { ScoreCorrectionControl } from "../../contexts/scoring/components/ScoreCorrectionControl.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
+import { StatusLabel } from "../../shared/ui/status-label.js";
 
 export interface JobAuditTriageProps {
   detail: JobDetail;
@@ -70,14 +71,15 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
                   <div key={group.label}>
                     <dt>{group.label}</dt>
                     <dd>
-                      {group.facts.map((fact) => (
-                        <span
-                          className={`tag ${factTone(fact)}`}
-                          key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}
-                        >
-                          {fact.detail ? `${fact.label}: ${fact.detail}` : fact.label}
-                        </span>
-                      ))}
+                      <ul className="audit-status-list">
+                        {group.facts.map((fact) => (
+                          <li key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}>
+                            <StatusLabel tone={factTone(fact)}>
+                              {fact.detail ? `${fact.label}: ${fact.detail}` : fact.label}
+                            </StatusLabel>
+                          </li>
+                        ))}
+                      </ul>
                     </dd>
                   </div>
                 ))}
@@ -153,13 +155,13 @@ function TagGroup({
   return (
     <div className="job-audit-tag-group">
       <span>{label}</span>
-      <div>
+      <ul className="audit-value-list">
         {values.map((value) => (
-          <span className={`tag ${tone}`} key={value}>
+          <li className={`audit-value audit-value--${tone}`} key={value}>
             {value}
-          </span>
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }

@@ -24,9 +24,11 @@ import { Button } from "../../shared/ui/button.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { RouteWorkspace } from "../../shared/ui/route-workspace.js";
 import { Section } from "../../shared/ui/section.js";
+import { SectionTabs, SectionTabsList } from "../../shared/ui/section-tabs.js";
+import { TabsContent, TabsTrigger } from "../../shared/ui/tabs.js";
 import { JobAuditTriage } from "./JobAuditTriage.js";
 import { JobDescription } from "./JobDescription.js";
-import { JobOverview } from "./JobOverview.js";
+import { JobOverview, JobSummaryLedger } from "./JobOverview.js";
 
 export interface JobDetailDrawerProps {
   jobId: string;
@@ -98,130 +100,165 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
 
   return (
     <div className="route-page route-page--job-detail" aria-label="Job details">
+      <div className="job-detail-route-controls">
+        <Button
+          aria-label="Back to jobs"
+          className="workspace-back"
+          size="sm"
+          type="button"
+          variant="ghost"
+          onClick={onClose}
+        >
+          <IconArrowLeft aria-hidden="true" size={16} stroke={1.9} />
+          Jobs
+        </Button>
+      </div>
       {errorMessage ? <Empty title={errorMessage} /> : null}
       {!detail && !errorMessage ? <Empty title="Loading job." /> : null}
       {detail ? (
-        <RouteWorkspace
-          aria-label="Job details"
-          className="job-detail-workspace"
-          contentLabel="Job evidence and analysis"
-          inspectorLabel="Job progress, materials, and history"
-          header={
-            <div className="job-detail-workspace__header">
-              <Button
-                aria-label="Back to jobs"
-                className="workspace-back"
-                size="sm"
-                type="button"
-                variant="ghost"
-                onClick={onClose}
-              >
-                <IconArrowLeft aria-hidden="true" size={16} stroke={1.9} />
-                Jobs
-              </Button>
-              <JobOverview detail={detail} />
-              <div className="job-detail-top-actions">
-                <JobActions
-                  jobId={detail.job.jobKey}
-                  currentStage={detail.job.currentSubstage}
-                  canRetryStage={canRetryStage(currentSubstage)}
-                  canRunCurrentStage={canRunCurrentStage(currentSubstage)}
-                  canRetailor={detail.artifacts.length > 0}
-                  applyApprovalRequired={applyApprovalRequired}
-                />
-                <Button asChild size="sm" variant="outline">
-                  <Link
-                    aria-label={`Open Apply Review for ${detail.job.title}`}
-                    search={{ jobKey: detail.job.jobKey }}
-                    to="/apply-review"
-                  >
-                    Open Apply Review
-                  </Link>
-                </Button>
-                <Button asChild size="sm" variant="outline">
-                  <Link
-                    aria-label={`Open evidence map for ${detail.job.title}`}
-                    search={{ q: "", entry: "", job: detail.job.jobKey }}
-                    to="/evidence-map"
-                  >
-                    Evidence map
-                  </Link>
-                </Button>
-              </div>
-            </div>
-          }
-          inspector={
-            <div className="job-detail-workspace__inspector">
-              <Section title="Preparation diagnostics">
-                <StageTimeline
-                  jobId={detail.job.jobKey}
-                  stages={preparationStages(detail.stages)}
-                />
-              </Section>
-              <Section title="Active artifacts">
-                {detail.artifacts.length ? (
-                  detail.artifacts.map((artifact) => (
-                    <div className="mini-row" key={artifact.artifactId}>
-                      <ArtifactStatusBadge status={artifact.status} />
-                      <span>{artifact.type}</span>
-                      <code>{artifact.localPath}</code>
-                      <OpenArtifactButton
-                        artifactId={artifact.artifactId}
-                        disabled={artifact.status === "missing"}
-                      />
-                    </div>
-                  ))
-                ) : (
-                  <Empty title="No active apply-ready artifacts." />
-                )}
-              </Section>
-              <Section title="Apply history">
-                <ApplyHistory jobId={detail.job.jobKey} />
-              </Section>
-              <Section title="Application outcomes">
-                <JobOutcomePanel jobId={detail.job.jobKey} />
-              </Section>
-              <JobContactsPanel
-                jobId={detail.job.jobKey}
-                {...(detail.job.company ? { employer: detail.job.company } : {})}
-              />
-              <JobAuditHistorySection entries={detail.auditHistory} />
-            </div>
-          }
-        >
-          <div className="job-detail-workspace__content">
-            <JobAuditTriage detail={detail} />
-            <CompensationAuditSection
-              jobId={detail.job.jobKey}
-              summary={detail.job.compensationSummary}
-              audit={detail.compensationAudit}
-              fallbackSalary={detail.job.salary}
-            />
-            <Section title="Description" className="job-detail-description">
-              <JobDescription text={detail.job.descriptionPreview} />
-            </Section>
-            {detail.employerAnalysis && !detail.requirementFitReport ? (
-              <RequirementFitMissingCallout jobId={detail.job.jobKey} />
-            ) : null}
-            <EmployerAnalysisPanel
-              analysis={detail.employerAnalysis}
-              className="section job-detail-role-analysis"
-              requirementFitReport={detail.requirementFitReport}
-            />
-            <InterviewPrepPanel
-              jobId={detail.job.jobKey}
-              prep={detail.interviewPrep}
-              reflectionContent={
-                detail.interviewPrep ? (
-                  <InterviewReflectionPanel
+        <SectionTabs defaultValue="overview" className="job-detail-tabs">
+          <RouteWorkspace
+            aria-label="Job details"
+            className="job-detail-workspace"
+            contentLabel="Job evidence and analysis"
+            inspectorLabel="Job progress and audit history"
+            header={
+              <div className="job-detail-workspace__header">
+                <JobOverview detail={detail} />
+                <div className="job-detail-top-actions">
+                  <JobActions
                     jobId={detail.job.jobKey}
-                    prepGeneration={detail.interviewPrep.generation}
+                    currentStage={detail.job.currentSubstage}
+                    canRetryStage={canRetryStage(currentSubstage)}
+                    canRunCurrentStage={canRunCurrentStage(currentSubstage)}
+                    canRetailor={detail.artifacts.length > 0}
+                    applyApprovalRequired={applyApprovalRequired}
                   />
-                ) : null
-              }
-            />
-          </div>
-        </RouteWorkspace>
+                  <Button asChild size="sm" variant="outline">
+                    <Link
+                      aria-label={`Open Apply Review for ${detail.job.title}`}
+                      search={{ jobKey: detail.job.jobKey }}
+                      to="/apply-review"
+                    >
+                      Open Apply Review
+                    </Link>
+                  </Button>
+                  <Button asChild size="sm" variant="outline">
+                    <Link
+                      aria-label={`Open evidence map for ${detail.job.title}`}
+                      search={{ q: "", entry: "", job: detail.job.jobKey }}
+                      to="/evidence-map"
+                    >
+                      Evidence map
+                    </Link>
+                  </Button>
+                </div>
+                <JobSummaryLedger detail={detail} />
+              </div>
+            }
+            tabs={
+              <SectionTabsList aria-label="Job detail sections">
+                <TabsTrigger value="overview">Overview</TabsTrigger>
+                <TabsTrigger value="fit-evidence">Fit &amp; evidence</TabsTrigger>
+                <TabsTrigger value="materials">Materials</TabsTrigger>
+                <TabsTrigger value="activity">Activity</TabsTrigger>
+              </SectionTabsList>
+            }
+            inspector={
+              <div className="job-detail-workspace__inspector">
+                <Section title="Preparation diagnostics">
+                  <StageTimeline
+                    jobId={detail.job.jobKey}
+                    stages={preparationStages(detail.stages)}
+                  />
+                </Section>
+                <JobAuditHistorySection entries={detail.auditHistory} />
+              </div>
+            }
+          >
+            <TabsContent value="overview" className="job-detail-workspace__tab-panel">
+              <div className="job-detail-workspace__content">
+                <Section
+                  title="About the role"
+                  description="Original job description"
+                  className="job-detail-description"
+                >
+                  <JobDescription text={detail.job.descriptionPreview} />
+                </Section>
+              </div>
+            </TabsContent>
+            <TabsContent value="fit-evidence" className="job-detail-workspace__tab-panel">
+              <div className="job-detail-workspace__content">
+                <JobAuditTriage detail={detail} />
+                <CompensationAuditSection
+                  jobId={detail.job.jobKey}
+                  summary={detail.job.compensationSummary}
+                  audit={detail.compensationAudit}
+                  fallbackSalary={detail.job.salary}
+                />
+                {detail.employerAnalysis && !detail.requirementFitReport ? (
+                  <RequirementFitMissingCallout jobId={detail.job.jobKey} />
+                ) : null}
+                <EmployerAnalysisPanel
+                  analysis={detail.employerAnalysis}
+                  className="section job-detail-role-analysis"
+                  requirementFitReport={detail.requirementFitReport}
+                />
+              </div>
+            </TabsContent>
+            <TabsContent value="materials" className="job-detail-workspace__tab-panel">
+              <div className="job-detail-workspace__content">
+                <Section
+                  title="Before you apply"
+                  description="Active artifacts and required material"
+                  className="job-detail-before-apply"
+                >
+                  {detail.artifacts.length ? (
+                    detail.artifacts.map((artifact) => (
+                      <div className="mini-row" key={artifact.artifactId}>
+                        <ArtifactStatusBadge status={artifact.status} />
+                        <span>{artifact.type}</span>
+                        <code>{artifact.localPath}</code>
+                        <OpenArtifactButton
+                          artifactId={artifact.artifactId}
+                          disabled={artifact.status === "missing"}
+                        />
+                      </div>
+                    ))
+                  ) : (
+                    <Empty title="No active apply-ready artifacts." />
+                  )}
+                </Section>
+                <InterviewPrepPanel
+                  jobId={detail.job.jobKey}
+                  prep={detail.interviewPrep}
+                  reflectionContent={
+                    detail.interviewPrep ? (
+                      <InterviewReflectionPanel
+                        jobId={detail.job.jobKey}
+                        prepGeneration={detail.interviewPrep.generation}
+                      />
+                    ) : null
+                  }
+                />
+              </div>
+            </TabsContent>
+            <TabsContent value="activity" className="job-detail-workspace__tab-panel">
+              <div className="job-detail-workspace__content">
+                <Section title="Apply history">
+                  <ApplyHistory jobId={detail.job.jobKey} />
+                </Section>
+                <Section title="Application outcomes">
+                  <JobOutcomePanel jobId={detail.job.jobKey} />
+                </Section>
+                <JobContactsPanel
+                  jobId={detail.job.jobKey}
+                  {...(detail.job.company ? { employer: detail.job.company } : {})}
+                />
+              </div>
+            </TabsContent>
+          </RouteWorkspace>
+        </SectionTabs>
       ) : null}
     </div>
   );

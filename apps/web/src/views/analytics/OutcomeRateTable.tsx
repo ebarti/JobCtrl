@@ -62,7 +62,8 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
       <span className="title-stack">
         <b>{row.label}</b>
         <span>
-          <span className={`tag ${row.badgeTone}`}>{row.dimension}</span> {countLabel(row)}
+          <span className={`analytics-dimension-label ${row.badgeTone}`}>{row.dimension}</span>{" "}
+          {countLabel(row)}
         </span>
       </span>
     ),

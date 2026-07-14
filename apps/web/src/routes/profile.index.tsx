@@ -26,11 +26,16 @@ function ProfilePage() {
       <PageHead
         eyebrow="Setup"
         title="Profile"
-        subtitle="Baseline resume, evidence, and personal details"
+        subtitle="Canonical candidate evidence and the baseline resume that every generated artifact starts from."
         actions={
-          <Button asChild size="sm" variant="outline">
-            <Link to="/evidence-map">Open evidence map</Link>
-          </Button>
+          <>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/evidence-map">Open evidence map</Link>
+            </Button>
+            <Button asChild size="sm">
+              <Link to="/profile/import/upload">Import resume</Link>
+            </Button>
+          </>
         }
       />
       <ProfileEditor />

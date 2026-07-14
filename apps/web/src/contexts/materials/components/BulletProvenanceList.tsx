@@ -48,11 +48,13 @@ function TagList({
       <dt>{label}</dt>
       <dd>
         {items.length ? (
-          items.map((item) => (
-            <span className={`tag ${tone}`} key={item}>
-              {item}
-            </span>
-          ))
+          <ul className="audit-value-list">
+            {items.map((item) => (
+              <li className={`audit-value audit-value--${tone}`} key={item}>
+                {item}
+              </li>
+            ))}
+          </ul>
         ) : (
           <span className="muted">none recorded</span>
         )}
@@ -105,13 +107,13 @@ function BulletProvenanceCard({
 }): JSX.Element {
   return (
     <article className="bullet-provenance">
-      <header>
-        <span className="stage-pill">{formatToken(entry.section)}</span>
-        <span className="tag muted" title="Transform applied">
+      <header className="audit-record-head">
+        <span className="audit-kicker">{formatToken(entry.section)}</span>
+        <span className="audit-inline-meta" title="Transform applied">
           {formatToken(entry.transformType)}
         </span>
         {entry.control ? (
-          <span className="tag muted" title="Governing control rule">
+          <span className="audit-inline-meta" title="Governing control rule">
             {formatToken(entry.control)}
           </span>
         ) : null}

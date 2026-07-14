@@ -21,6 +21,10 @@ import {
 import { Input } from "../../../shared/ui/input.js";
 import { SelectField } from "../../../shared/ui/select-field.js";
 import {
+  StatusLabel,
+  type StatusLabelTone,
+} from "../../../shared/ui/status-label.js";
+import {
   useProviderModelCatalogQuery,
   useSettingsPolicyQuery,
 } from "../../operations/hooks/useSettingsPolicyQueries.js";
@@ -125,11 +129,28 @@ export function AiExecutionPolicyPanel() {
       : editableFieldCount === 0
         ? "Read only"
         : "Partially editable";
-  const collapsedSummary = settingsQuery.error
+  const summaryStatus = settingsQuery.error
     ? "Policy unavailable"
     : response
-      ? `${editStatus} · Primary generator: ${generators[0] ?? "Provider/default policy"}`
+      ? editStatus
       : "Loading policy and saved choices";
+  const statusTone: StatusLabelTone = settingsQuery.error
+    ? "danger"
+    : !response
+      ? "info"
+      : editableFieldCount === 4
+        ? "ok"
+        : editableFieldCount === 0
+          ? "muted"
+          : "warn";
+  const collapsedSummary = (
+    <span className="provider-disclosure__summary">
+      <StatusLabel tone={statusTone}>{summaryStatus}</StatusLabel>
+      {response ? (
+        <span>Primary generator: {generators[0] ?? "Provider/default policy"}</span>
+      ) : null}
+    </span>
+  );
 
   return (
     <DisclosureSection
@@ -161,9 +182,7 @@ export function AiExecutionPolicyPanel() {
             }}
           >
             <div className="ai-execution-policy-status grid gap-2">
-              <p className="m-0 text-[12px] leading-5 text-muted-foreground">
-                Configuration status: {editStatus}.
-              </p>
+              <StatusLabel tone={statusTone}>Configuration status: {editStatus}</StatusLabel>
               {status ? (
                 <p className="m-0 text-[12px] leading-5 text-muted-foreground" role="status">
                   {status}

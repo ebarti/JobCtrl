@@ -17,6 +17,7 @@ import { Field, FieldLabel } from "../../shared/ui/field.js";
 import { Input } from "../../shared/ui/input.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 import { RouteWorkspace } from "../../shared/ui/route-workspace.js";
+import { StatusLabel } from "../../shared/ui/status-label.js";
 import { ToolRow } from "../../shared/ui/tool-row.js";
 
 function entryKindLabel(entry: EvidenceMapEntry): string {
@@ -37,10 +38,14 @@ function gapKindLabel(gap: EvidenceGap): string {
   }
 }
 
-function tagTone(value: string | null | undefined): "danger" | "info" | "muted" | "ok" | "warn" {
+function tagTone(
+  value: string | null | undefined,
+): "danger" | "info" | "muted" | "ok" | "warn" {
   if (!value) return "muted";
-  if (["covered", "matched", "verified", "declared"].includes(value)) return "ok";
-  if (["missing", "missing_from_profile", "blocked"].includes(value)) return "danger";
+  if (["covered", "matched", "verified", "declared"].includes(value))
+    return "ok";
+  if (["missing", "missing_from_profile", "blocked"].includes(value))
+    return "danger";
   if (["transferable", "declared_only"].includes(value)) return "warn";
   return "info";
 }
@@ -49,7 +54,10 @@ function compactDate(value: string | null): string {
   return value || "No date range";
 }
 
-function includesText(value: string | null | undefined, needle: string): boolean {
+function includesText(
+  value: string | null | undefined,
+  needle: string,
+): boolean {
   return Boolean(value && value.toLowerCase().includes(needle));
 }
 
@@ -84,18 +92,18 @@ function entryMatchesQuery(entry: EvidenceMapEntry, q: string): boolean {
 }
 
 function requirementLinkLabel(usage: EvidenceUsageRef): string {
-  return [
-    usage.jobTitle || usage.jobKey,
-    usage.requirementText,
-    usage.requirementFitKind,
-  ].filter(Boolean).join(" · ");
+  return [usage.jobTitle || usage.jobKey, usage.requirementText]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function resumeLinkLabel(usage: EvidenceUsageRef): string {
   return [
     usage.jobTitle || usage.jobKey,
     usage.generatedTextPreview || usage.bulletId,
-  ].filter(Boolean).join(" · ");
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function UsageLink({ usage }: { readonly usage: EvidenceUsageRef }) {
@@ -107,16 +115,22 @@ function UsageLink({ usage }: { readonly usage: EvidenceUsageRef }) {
         to="/artifacts/$artifactId"
       >
         <span>{resumeLinkLabel(usage)}</span>
-        <span className="tag muted">artifact</span>
+        <span className="evidence-usage-kind mono">artifact</span>
       </Link>
     );
   }
   return (
-    <Link className="evidence-usage-link" params={{ jobId: usage.jobKey }} to="/jobs/$jobId">
+    <Link
+      className="evidence-usage-link"
+      params={{ jobId: usage.jobKey }}
+      to="/jobs/$jobId"
+    >
       <span>{requirementLinkLabel(usage) || usage.jobKey}</span>
-      <span className={`tag ${tagTone(usage.requirementFitKind ?? usage.coverageState)}`}>
+      <StatusLabel
+        tone={tagTone(usage.requirementFitKind ?? usage.coverageState)}
+      >
         {usage.requirementFitKind ?? usage.coverageState ?? "job"}
-      </span>
+      </StatusLabel>
     </Link>
   );
 }
@@ -136,7 +150,9 @@ function UsageGroup({
       <h3>{title}</h3>
       <ul className="evidence-usage-list">
         {usages.map((usage, index) => (
-          <li key={`${usage.kind}:${usage.jobKey}:${usage.artifactId ?? ""}:${usage.requirementId ?? ""}:${index}`}>
+          <li
+            key={`${usage.kind}:${usage.jobKey}:${usage.artifactId ?? ""}:${usage.requirementId ?? ""}:${index}`}
+          >
             <UsageLink usage={usage} />
           </li>
         ))}
@@ -155,7 +171,9 @@ function EvidenceEntryButton({
   readonly selected: boolean;
 }) {
   const usageCount =
-    entry.resumeUsages.length + entry.requirementUsages.length + entry.coverageUsages.length;
+    entry.resumeUsages.length +
+    entry.requirementUsages.length +
+    entry.coverageUsages.length;
   return (
     <li>
       <Link
@@ -169,9 +187,9 @@ function EvidenceEntryButton({
           <span className="muted">{entryKindLabel(entry)}</span>
         </span>
         <span className="evidence-entry-meta">
-          <span className={`tag ${tagTone(entry.freshness.evidenceStrength)}`}>
+          <StatusLabel tone={tagTone(entry.freshness.evidenceStrength)}>
             {entry.freshness.evidenceStrength ?? "unrated"}
-          </span>
+          </StatusLabel>
           <span className="meta">{usageCount} uses</span>
         </span>
       </Link>
@@ -179,7 +197,11 @@ function EvidenceEntryButton({
   );
 }
 
-function EvidenceDetail({ entry }: { readonly entry: EvidenceMapEntry | null }) {
+function EvidenceDetail({
+  entry,
+}: {
+  readonly entry: EvidenceMapEntry | null;
+}) {
   if (!entry) {
     return <Empty title="Select evidence to inspect usage." />;
   }
@@ -193,13 +215,15 @@ function EvidenceDetail({ entry }: { readonly entry: EvidenceMapEntry | null }) 
         <p className="meta">{entryKindLabel(entry)}</p>
         <h2 id="evidence-detail-title">{entry.title}</h2>
         <div className="evidence-tags">
-          <span className={`tag ${tagTone(freshness.evidenceStrength)}`}>
+          <StatusLabel tone={tagTone(freshness.evidenceStrength)}>
             {freshness.evidenceStrength ?? "unrated"}
-          </span>
-          <span className={freshness.userConfirmed ? "tag ok" : "tag warn"}>
+          </StatusLabel>
+          <StatusLabel tone={freshness.userConfirmed ? "ok" : "warn"}>
             {freshness.userConfirmed ? "confirmed" : "unconfirmed"}
+          </StatusLabel>
+          <span className="evidence-date mono">
+            {compactDate(freshness.evidenceDateRange)}
           </span>
-          <span className="tag muted">{compactDate(freshness.evidenceDateRange)}</span>
         </div>
       </header>
 
@@ -221,9 +245,9 @@ function EvidenceDetail({ entry }: { readonly entry: EvidenceMapEntry | null }) 
             </div>
           </dl>
           {entry.story.metrics.length ? (
-            <ul className="evidence-chip-list" aria-label="Story metrics">
+            <ul className="evidence-inline-list" aria-label="Story metrics">
               {entry.story.metrics.map((metric) => (
-                <li className="tag info" key={metric}>{metric}</li>
+                <li key={metric}>{metric}</li>
               ))}
             </ul>
           ) : null}
@@ -232,15 +256,18 @@ function EvidenceDetail({ entry }: { readonly entry: EvidenceMapEntry | null }) 
 
       <section className="evidence-detail-group">
         <h3>Skills and tags</h3>
-        <ul className="evidence-chip-list">
+        <ul className="evidence-inline-list">
           {[...entry.skills, ...entry.tags].map((value) => (
-            <li className="tag muted" key={value}>{value}</li>
+            <li key={value}>{value}</li>
           ))}
         </ul>
       </section>
 
       <UsageGroup title="Used in resumes" usages={entry.resumeUsages} />
-      <UsageGroup title="Requirement fit history" usages={entry.requirementUsages} />
+      <UsageGroup
+        title="Requirement fit history"
+        usages={entry.requirementUsages}
+      />
       <UsageGroup title="Coverage history" usages={entry.coverageUsages} />
     </div>
   );
@@ -255,7 +282,9 @@ function GapList({ gaps }: { readonly gaps: readonly EvidenceGap[] }) {
       {gaps.map((gap) => (
         <li key={gap.gapId}>
           <div>
-            <span className={`tag ${tagTone(gap.fitKind ?? gap.kind)}`}>{gapKindLabel(gap)}</span>
+            <StatusLabel tone={tagTone(gap.fitKind ?? gap.kind)}>
+              {gapKindLabel(gap)}
+            </StatusLabel>
             <strong>{gap.requirementText}</strong>
             <p className="muted">{gap.reason}</p>
           </div>
@@ -273,7 +302,11 @@ function GapList({ gaps }: { readonly gaps: readonly EvidenceGap[] }) {
   );
 }
 
-function StoryList({ entries }: { readonly entries: readonly EvidenceMapEntry[] }) {
+function StoryList({
+  entries,
+}: {
+  readonly entries: readonly EvidenceMapEntry[];
+}) {
   const stories = entries.filter((entry) => entry.story);
   if (!stories.length) {
     return <Empty title="No reusable stories match this view." />;
@@ -313,20 +346,38 @@ export function EvidenceMapView() {
     selectedEntry.data ??
     filteredEntries.find((entry) => entry.entryId === selectedEntryId) ??
     null;
-  const errorMessage = evidenceMap.error instanceof Error ? evidenceMap.error.message : null;
+  const errorMessage =
+    evidenceMap.error instanceof Error ? evidenceMap.error.message : null;
 
   const setSearch = (next: Partial<EvidenceMapSearch>) => {
-    void navigate({ search: (prev: EvidenceMapSearch) => ({ ...prev, ...next }) });
+    void navigate({
+      search: (prev: EvidenceMapSearch) => ({ ...prev, ...next }),
+    });
   };
 
   return (
     <div className="route-page route-page--evidence-map">
       <PageHead
+        className="editorial-page-head"
         eyebrow="Library"
         title="Career evidence map"
-        subtitle={evidenceMap.data ? `${filteredEntries.length} entries` : "loading"}
+        subtitle={
+          <>
+            <span>
+              Trace canonical evidence through requirements, artifacts, and
+              visible gaps.
+            </span>
+            <span className="page-head-count">
+              {evidenceMap.data
+                ? `${filteredEntries.length} entries`
+                : "loading"}
+            </span>
+          </>
+        }
       />
-      {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
+      {errorMessage ? (
+        <div className="banner inline">{errorMessage}</div>
+      ) : null}
       <RouteWorkspace
         aria-label="Career evidence workspace"
         className="evidence-map-view evidence-map-workspace"
@@ -340,11 +391,15 @@ export function EvidenceMapView() {
             role="search"
             primary={
               <Field className="tool-row__search">
-                <FieldLabel htmlFor="evidence-map-search">Search evidence</FieldLabel>
+                <FieldLabel htmlFor="evidence-map-search">
+                  Search evidence
+                </FieldLabel>
                 <Input
                   id="evidence-map-search"
                   value={search.q}
-                  onChange={(event) => setSearch({ q: event.target.value, entry: "" })}
+                  onChange={(event) =>
+                    setSearch({ q: event.target.value, entry: "" })
+                  }
                   placeholder="Skill, story, metric..."
                 />
               </Field>
@@ -352,7 +407,10 @@ export function EvidenceMapView() {
             secondary={
               search.job ? (
                 <Button asChild size="sm" variant="outline">
-                  <Link search={{ ...search, job: "", entry: "" }} to="/evidence-map">
+                  <Link
+                    search={{ ...search, job: "", entry: "" }}
+                    to="/evidence-map"
+                  >
                     Clear job filter
                   </Link>
                 </Button>

@@ -1,6 +1,7 @@
 import type { ArtifactTailoringExplanation } from "@jobctrl/contracts";
 import type { ReactNode } from "react";
 
+import { StatusLabel, type StatusLabelTone } from "../../../shared/ui/status-label.js";
 import { BulletProvenanceList } from "./BulletProvenanceList.js";
 
 export interface TailoringExplanationSectionProps {
@@ -70,9 +71,11 @@ function hasItems(items: readonly string[]): boolean {
 
 function EvidenceList({ items }: { readonly items: readonly string[] }) {
   return (
-    <ul className="compact-list">
+    <ul className="audit-value-list">
       {items.map((item) => (
-        <li key={item}>{item}</li>
+        <li className="audit-value" key={item}>
+          {item}
+        </li>
       ))}
     </ul>
   );
@@ -130,10 +133,20 @@ function AuditStatus({
 }) {
   return (
     <span className="audit-status">
-      <span>{verdict ?? "-"}</span>
-      {score === null ? null : <span>{scoreText(score)}</span>}
+      <StatusLabel tone={auditStatusTone(verdict)}>{verdict ?? "not recorded"}</StatusLabel>
+      {score === null ? null : <span className="audit-status__score">{scoreText(score)}</span>}
     </span>
   );
+}
+
+function auditStatusTone(verdict: string | null): StatusLabelTone {
+  const normalized = verdict?.toLowerCase() ?? "";
+  if (/fail|reject|block|unsafe|invalid|not[\s_-]*(pass|accept|approv|valid)/.test(normalized)) {
+    return "danger";
+  }
+  if (/pass|accept|approv|complete|valid/.test(normalized)) return "ok";
+  if (/warn|review|risk|residual/.test(normalized)) return "warn";
+  return verdict ? "info" : "muted";
 }
 
 function AuditResponseList({
@@ -287,9 +300,9 @@ function VoicePassBlock({
           <dt>Outcome</dt>
           <dd>
             {voicePass.accepted ? (
-              <span className="tag ok">accepted</span>
+              <StatusLabel tone="ok">accepted</StatusLabel>
             ) : (
-              <span className="tag warn">not accepted</span>
+              <StatusLabel tone="warn">not accepted</StatusLabel>
             )}
           </dd>
         </div>

@@ -15,8 +15,9 @@ describe("<OutreachDetailDrawer>", () => {
     await waitFor(() =>
       expect(view.getByRole("heading", { name: "Dana Reyes" })).toBeInTheDocument(),
     );
-    // Phase 1 facts + provenance remain.
+    await user.click(view.getByRole("tab", { name: "Provenance" }));
     expect(view.getByText("dana.reyes@acme.example")).toBeInTheDocument();
+    await user.click(view.getByRole("tab", { name: "Outreach" }));
     // Phase 3 outreach thread panel is composed into the drawer (contact-only thread).
     await waitFor(() =>
       expect(view.getByRole("heading", { name: "Outreach" })).toBeInTheDocument(),

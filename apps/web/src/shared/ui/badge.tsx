@@ -4,14 +4,13 @@ import type { HTMLAttributes, JSX } from "react";
 import { cn } from "../lib/cn.js";
 
 const badgeVariants = cva(
-  "inline-flex min-h-[22px] items-center rounded-full border px-2.5 text-[11px] font-[850] leading-none tracking-[0.01em] transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  "inline-flex min-h-[22px] items-center rounded-none border-0 border-l-2 bg-transparent px-2 text-[11px] font-bold leading-none tracking-0 transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
   {
     variants: {
       variant: {
-        default: "border-transparent bg-accent text-accent-foreground",
-        secondary: "border-transparent bg-muted text-muted-foreground",
-        destructive:
-          "border-transparent bg-[color-mix(in_oklab,var(--destructive)_14%,var(--card))] text-destructive",
+        default: "border-primary text-foreground",
+        secondary: "border-border text-muted-foreground",
+        destructive: "border-destructive text-destructive",
         outline: "border-border text-muted-foreground",
       },
     },

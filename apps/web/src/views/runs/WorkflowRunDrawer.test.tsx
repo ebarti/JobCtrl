@@ -7,6 +7,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { render, screen, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { runsSearchSchema } from "../../routes/-runs.search.js";
@@ -37,6 +38,7 @@ function buildRouter() {
 
 describe("<WorkflowRunDrawer>", () => {
   it("renders the run as a route workspace without dropping detail or failure facts", async () => {
+    const user = userEvent.setup();
     const harness = buildProviderHarness();
     const router = buildRouter();
     render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
@@ -59,8 +61,10 @@ describe("<WorkflowRunDrawer>", () => {
     expect(within(workspace).getAllByText("failed").length).toBeGreaterThan(0);
     expect(within(workspace).getByText("run-pipeline-1")).toBeInTheDocument();
     expect(within(workspace).getByText("temporal-run-1")).toBeInTheDocument();
+    await user.click(within(workspace).getByRole("tab", { name: "Diagnostics" }));
     expect(within(workspace).getByText("activity_error")).toBeInTheDocument();
     expect(within(workspace).getByText("yes")).toBeInTheDocument();
+    await user.click(within(workspace).getByRole("tab", { name: "Timeline" }));
     expect(within(workspace).getByText("WorkflowStarted")).toBeInTheDocument();
     expect(within(workspace).getByText("WorkflowFailed")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

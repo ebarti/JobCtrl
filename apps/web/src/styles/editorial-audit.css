@@ -1,0 +1,919 @@
+/*
+ * Editorial audit and evidence language
+ *
+ * Consequential data reads as a ruled ledger. Evidence values remain visible
+ * without becoming a collection of badges, and lifecycle state is delegated to
+ * the shared dot + text status treatment.
+ */
+
+.audit-value-list,
+.audit-status-list {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.8rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.audit-status-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.route-page--apply-review .tag.editorial-status::before {
+  display: none;
+  content: none;
+}
+
+.audit-value {
+  position: relative;
+  min-width: 0;
+  padding-inline-start: 0.65rem;
+  color: var(--foreground);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.audit-value::before {
+  position: absolute;
+  inset-block-start: 0.58em;
+  inset-inline-start: 0;
+  inline-size: 0.25rem;
+  block-size: 0.25rem;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  content: "";
+}
+
+.audit-value--ok::before {
+  background: var(--success);
+}
+
+.audit-value--info::before {
+  background: var(--status-info);
+}
+
+.audit-value--warn::before,
+.audit-value--warning::before {
+  background: var(--warning);
+}
+
+.audit-value--danger::before {
+  background: var(--destructive);
+}
+
+.audit-value--empty {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.audit-value--empty::before {
+  display: none;
+}
+
+.audit-link {
+  color: var(--primary);
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-thickness: 0.0625rem;
+  text-underline-offset: 0.18em;
+}
+
+.audit-link:focus-visible,
+:where(
+    .persona-audit-disclosure,
+    .employer-analysis-ensemble,
+    .interview-prep-sources,
+    .compensation-evidence-rows,
+    .artifact-risk-finding,
+    .resume-pin-source-check,
+    .resume-pin-source-span-details
+  ) > summary:focus-visible {
+  outline: 0.125rem solid var(--ring);
+  outline-offset: 0.125rem;
+}
+
+.audit-kicker {
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  font-weight: 760;
+  line-height: 1.25;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.audit-kicker--ok {
+  color: var(--success);
+}
+
+.audit-kicker--info {
+  color: var(--status-info);
+}
+
+.audit-kicker--warn {
+  color: var(--warning);
+}
+
+.audit-inline-meta {
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+.audit-record-head {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+}
+
+/* Shared summary and detail ledgers -------------------------------------- */
+
+:where(
+    .tailoring-evidence,
+    .employer-analysis,
+    .artifact-comparison,
+    .artifact-risk-summary,
+    .job-audit-triage
+  ) .evidence-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+  border-inline-start: 1px solid var(--border);
+}
+
+:where(
+    .tailoring-evidence,
+    .employer-analysis,
+    .artifact-comparison,
+    .artifact-risk-summary,
+    .job-audit-triage
+  ) .evidence-summary-grid > div {
+  min-width: 0;
+  border: 0;
+  border-block-end: 1px solid var(--border);
+  border-inline-end: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.7rem 0.75rem;
+  box-shadow: none;
+}
+
+:where(
+    .tailoring-evidence,
+    .bullet-provenance,
+    .employer-analysis,
+    .compensation-panel,
+    .resume-pin-detail,
+    .artifact-comparison-side
+  ) .detail-list.compact {
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+}
+
+:where(
+    .tailoring-evidence,
+    .bullet-provenance,
+    .employer-analysis,
+    .compensation-panel,
+    .resume-pin-detail,
+    .artifact-comparison-side
+  ) .detail-list.compact > div {
+  grid-template-columns: minmax(7rem, 0.34fr) minmax(0, 0.66fr);
+  gap: 0.75rem;
+  border-block-end: 1px solid var(--border);
+  padding-block: 0.55rem;
+}
+
+:where(
+    .tailoring-evidence,
+    .bullet-provenance,
+    .employer-analysis,
+    .compensation-panel,
+    .resume-pin-detail,
+    .artifact-comparison-side
+  ) .detail-list.compact :where(dt, dd) {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+:where(
+    .tailoring-evidence,
+    .bullet-provenance,
+    .employer-analysis,
+    .compensation-panel,
+    .resume-pin-detail,
+    .artifact-comparison-side
+  ) .detail-list.compact dt {
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Tailoring and provenance ---------------------------------------------- */
+
+.tailoring-evidence {
+  gap: 0;
+}
+
+.tailoring-evidence > :where(.evidence-block, .artifact-comparison) {
+  gap: 0.75rem;
+  border-block-start: 1px solid var(--border);
+  padding-block: 1rem;
+}
+
+.tailoring-evidence > .evidence-summary-grid + .evidence-block {
+  border-block-start: 0;
+}
+
+.tailoring-evidence .evidence-block h4 {
+  font-size: 0.8125rem;
+  font-weight: 780;
+  letter-spacing: -0.01em;
+}
+
+.tailoring-change-list,
+.bullet-provenance-list,
+.persona-audit-list,
+.prompt-audit-list {
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+}
+
+:where(.tailoring-change, .bullet-provenance, .persona-audit, .prompt-audit, .audit-response) {
+  min-width: 0;
+  border: 0;
+  border-block-end: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.8rem 0;
+  box-shadow: none;
+}
+
+.tailoring-change header {
+  margin-block-end: 0.65rem;
+}
+
+.bullet-provenance header {
+  margin-block-end: 0.65rem;
+}
+
+.bullet-provenance-diff {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  border: 1px solid var(--border);
+}
+
+.bullet-provenance-diff-side {
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.75rem;
+}
+
+.bullet-provenance-diff-side + .bullet-provenance-diff-side {
+  border-inline-start: 1px solid var(--border);
+}
+
+.bullet-provenance-tags dd {
+  display: block;
+}
+
+.finding-list {
+  border: 0;
+  border-inline-start: 0.125rem solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.25rem 0 0.25rem 0.75rem;
+}
+
+.finding-list.danger {
+  border-inline-start-color: var(--destructive);
+}
+
+.finding-list.warning {
+  border-inline-start-color: var(--warning);
+}
+
+:where(.tailoring-evidence, .employer-analysis, .artifact-risk-finding, .resume-pin-detail)
+  .compact-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+:where(.tailoring-evidence, .employer-analysis, .artifact-risk-finding, .resume-pin-detail)
+  .compact-list li {
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 0 0 0.65rem;
+  color: var(--foreground);
+  font-size: 0.75rem;
+}
+
+:where(.tailoring-evidence, .employer-analysis, .artifact-risk-finding, .resume-pin-detail)
+  .compact-list li::before {
+  position: absolute;
+  inset-block-start: 0.6em;
+  inset-inline-start: 0;
+  inline-size: 0.2rem;
+  block-size: 0.2rem;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  content: "";
+}
+
+.audit-text-block {
+  gap: 0.5rem;
+  border-block-start: 1px solid var(--border);
+  padding-block-start: 0.75rem;
+}
+
+.audit-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+}
+
+.audit-status .audit-status__score::before {
+  margin-inline-end: 0.6rem;
+  color: var(--border-strong, var(--border));
+  content: "·";
+}
+
+.audit-status .editorial-status__label::before {
+  margin: 0;
+  content: none;
+}
+
+.persona-audit header {
+  align-items: center;
+}
+
+.persona-audit-disclosure,
+.employer-analysis-ensemble,
+.interview-prep-sources,
+.compensation-evidence-rows,
+.resume-pin-source-check,
+.resume-pin-source-span-details {
+  border-block-start: 1px solid var(--border);
+  padding-block-start: 0.65rem;
+}
+
+:where(
+    .persona-audit-disclosure,
+    .employer-analysis-ensemble,
+    .interview-prep-sources,
+    .compensation-evidence-rows,
+    .resume-pin-source-check,
+    .resume-pin-source-span-details
+  ) > summary {
+  min-block-size: 1.5rem;
+  color: var(--foreground);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.prompt-audit pre {
+  border-inline-start: 1px solid var(--border);
+  background: var(--muted);
+  padding: 0.75rem;
+}
+
+/* Artifact comparison ---------------------------------------------------- */
+
+.artifact-comparison-sides {
+  gap: 0;
+  border: 1px solid var(--border);
+}
+
+.artifact-comparison-side,
+.artifact-comparison-delta {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.75rem;
+  box-shadow: none;
+}
+
+.artifact-comparison-side + .artifact-comparison-side {
+  border-inline-start: 1px solid var(--border);
+}
+
+.artifact-comparison-delta {
+  border: 1px solid var(--border);
+}
+
+.artifact-comparison-delta-grid {
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+  border-inline-start: 1px solid var(--border);
+}
+
+.artifact-comparison-tag-group {
+  gap: 0.4rem;
+  border-block-end: 1px solid var(--border);
+  border-inline-end: 1px solid var(--border);
+  padding: 0.65rem;
+}
+
+.artifact-comparison-tag-group > span {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Employer analysis ------------------------------------------------------ */
+
+.employer-analysis {
+  gap: 0;
+}
+
+.employer-analysis > .evidence-block {
+  gap: 0.75rem;
+  border-block-start: 1px solid var(--border);
+  padding-block: 1rem;
+}
+
+.employer-analysis-requirement-list,
+.employer-analysis-keyword-list,
+.employer-analysis-ensemble-body {
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+}
+
+:where(.employer-analysis-requirement, .employer-analysis-keyword, .employer-analysis-sub) {
+  border: 0;
+  border-block-end: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.8rem 0;
+  box-shadow: none;
+}
+
+.employer-analysis-requirement {
+  gap: 0;
+}
+
+.employer-analysis-match-side {
+  gap: 0.55rem;
+  border: 0;
+  border-inline-start: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0 0 0 0.9rem;
+}
+
+.employer-analysis-signal-row {
+  gap: 0.35rem;
+  border-block-start: 1px solid var(--border);
+  padding-block-start: 0.5rem;
+}
+
+.employer-analysis-signal-row > .audit-value-list {
+  display: flex;
+}
+
+.employer-analysis-evidence {
+  border-inline-start-width: 0.125rem;
+  font-style: normal;
+}
+
+/* Interview preparation ------------------------------------------------- */
+
+.interview-prep-gate {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  border-block: 1px solid var(--border);
+  padding-block: 0.7rem;
+}
+
+.interview-prep-gate > .interview-prep-warning-group {
+  flex: 1 1 100%;
+  border-block-start: 1px solid var(--border);
+  padding-block-start: 0.65rem;
+}
+
+.interview-prep-items {
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+}
+
+.interview-prep-item {
+  gap: 0.7rem;
+  border: 0;
+  border-block-end: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.85rem 0;
+  box-shadow: none;
+}
+
+.interview-prep-item-head {
+  align-items: baseline;
+}
+
+.interview-prep-provenance {
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+}
+
+.interview-prep-provenance :where(dt, dd) {
+  min-width: 0;
+  border-block-end: 1px solid var(--border);
+  padding-block: 0.5rem;
+}
+
+.interview-prep-provenance dd {
+  gap: 0.35rem 0.75rem;
+}
+
+.interview-prep-warning-group {
+  border-inline-start: 0.125rem solid var(--warning);
+  padding-inline-start: 0.75rem;
+}
+
+/* Compensation evidence ------------------------------------------------- */
+
+.compensation-strip {
+  border-block: 1px solid var(--border);
+  padding-block: 0.65rem;
+}
+
+.compensation-cell > .editorial-status,
+.compensation-strip > .editorial-status {
+  font-size: 0.6875rem;
+}
+
+.compensation-cell .editorial-status :where(.status-dot, .editorial-status__label),
+.compensation-strip .editorial-status :where(.status-dot, .editorial-status__label) {
+  color: inherit;
+}
+
+.compensation-panels {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  border: 1px solid var(--border);
+}
+
+.compensation-panel {
+  gap: 0.75rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.85rem;
+  box-shadow: none;
+}
+
+.compensation-panel + .compensation-panel {
+  border-inline-start: 1px solid var(--border);
+}
+
+.compensation-detail-grid {
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+  border-inline-start: 1px solid var(--border);
+}
+
+.compensation-detail-grid > div {
+  border-block-end: 1px solid var(--border);
+  border-inline-end: 1px solid var(--border);
+  padding: 0.55rem;
+}
+
+.compensation-evidence-row-list {
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+}
+
+.compensation-evidence-rows > summary b {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.compensation-evidence-row {
+  gap: 0.6rem;
+  border: 0;
+  border-block-end: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.75rem 0;
+  box-shadow: none;
+}
+
+.compensation-evidence-row dl {
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+  border-inline-start: 1px solid var(--border);
+}
+
+.compensation-evidence-row dl > div {
+  border-block-end: 1px solid var(--border);
+  border-inline-end: 1px solid var(--border);
+  padding: 0.45rem;
+}
+
+.compensation-factor-list > ul,
+.compensation-source-trail > ul {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  border-block-start: 1px solid var(--border);
+  padding: 0;
+  list-style: none;
+}
+
+.compensation-factor-list > ul > li,
+.compensation-source-trail > ul > li {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.38fr) minmax(0, 0.62fr);
+  gap: 0.25rem 0.75rem;
+  border-block-end: 1px solid var(--border);
+  padding-block: 0.55rem;
+}
+
+.compensation-factor-list > ul > li > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+/* Score and job audit ledgers ------------------------------------------- */
+
+.score-dimensions,
+.job-audit-metrics {
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+  border-inline-start: 1px solid var(--border);
+}
+
+.score-dimension,
+.job-audit-metrics > div {
+  border: 0;
+  border-block-end: 1px solid var(--border);
+  border-inline-end: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.65rem;
+  box-shadow: none;
+}
+
+.score-signal-row,
+.job-audit-tag-group,
+.job-audit-fact-list > div {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.3fr) minmax(0, 0.7fr);
+  gap: 0.75rem;
+  border-block-start: 1px solid var(--border);
+  padding-block: 0.55rem;
+}
+
+.score-signal-row > span,
+.job-audit-tag-group > span,
+.job-audit-fact-list dt {
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.job-audit-fact-list dd {
+  display: block;
+  margin: 0;
+}
+
+.job-audit-concerns {
+  gap: 0.5rem;
+  border-block-start: 1px solid var(--border);
+  padding-block-start: 0.75rem;
+}
+
+/* Artifact risk and resume line audit ----------------------------------- */
+
+.artifact-risk-summary {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.artifact-risk-summary h4 {
+  margin: 0;
+}
+
+.artifact-risk-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+  border-inline-start: 1px solid var(--border);
+}
+
+.artifact-risk-metrics > div {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.42fr) minmax(0, 0.58fr);
+  gap: 0.6rem;
+  border: 0;
+  border-block-end: 1px solid var(--border);
+  border-inline-end: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.6rem;
+}
+
+.artifact-risk-findings {
+  display: grid;
+  gap: 0;
+  border-block-start: 1px solid var(--border);
+}
+
+.artifact-risk-finding {
+  border: 0;
+  border-block-end: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.artifact-risk-finding:is(.danger, .warning) {
+  border-color: var(--border);
+}
+
+.artifact-risk-finding-label::before {
+  flex: 0 0 auto;
+  inline-size: 0.4rem;
+  block-size: 0.4rem;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.artifact-risk-finding.danger .artifact-risk-finding-label {
+  color: var(--destructive);
+}
+
+.artifact-risk-finding.warning .artifact-risk-finding-label {
+  color: var(--warning);
+}
+
+.artifact-risk-finding :where(summary, .compact-list, .meta) {
+  padding-inline: 0;
+}
+
+.artifact-risk-finding .compact-list {
+  display: grid;
+  gap: 0.35rem;
+  padding-block-end: 0.75rem;
+}
+
+.artifact-risk-finding .compact-list li {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 0 0 0.65rem;
+}
+
+.resume-pin-detail,
+.resume-comment-thread {
+  border: 0;
+  border-block-start: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.8rem 0;
+  box-shadow: none;
+}
+
+.resume-pin-risk {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+
+.resume-pin-justification,
+.resume-pin-source-check-body > section {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.resume-pin-source-check {
+  border: 0;
+  border-block-start: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.resume-pin-source-check > summary {
+  padding: 0.65rem 0;
+}
+
+.resume-pin-source-check-body {
+  gap: 0.75rem;
+  border-block-start: 1px solid var(--border);
+  background: transparent;
+  padding: 0.75rem 0 0;
+}
+
+.resume-pin-source-evidence,
+.resume-pin-source-evidence.muted,
+.resume-pin-source-evidence.missing,
+.resume-pin-source-span-details summary {
+  border-radius: 0;
+  background: transparent;
+}
+
+.resume-pin-source-span-details summary {
+  padding-inline: 0;
+}
+
+.resume-comment-thread-meta {
+  gap: 0.4rem 0.8rem;
+}
+
+@container (max-width: 42rem) {
+  .bullet-provenance-diff,
+  .artifact-comparison-sides,
+  .compensation-panels,
+  .employer-analysis-requirement {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bullet-provenance-diff-side + .bullet-provenance-diff-side,
+  .artifact-comparison-side + .artifact-comparison-side,
+  .compensation-panel + .compensation-panel,
+  .employer-analysis-match-side {
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--border);
+    padding-inline-start: 0;
+    padding-block-start: 0.75rem;
+  }
+
+  .score-signal-row,
+  .job-audit-tag-group,
+  .job-audit-fact-list > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.35rem;
+  }
+}
+
+@media (max-width: 42rem) {
+  .compensation-panels,
+  .artifact-comparison-sides,
+  .bullet-provenance-diff {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .compensation-panel + .compensation-panel,
+  .artifact-comparison-side + .artifact-comparison-side,
+  .bullet-provenance-diff-side + .bullet-provenance-diff-side {
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--border);
+  }
+
+  .artifact-risk-metrics,
+  :where(
+      .tailoring-evidence,
+      .employer-analysis,
+      .artifact-comparison,
+      .artifact-risk-summary,
+      .job-audit-triage
+    ) .evidence-summary-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (forced-colors: active) {
+  .audit-value::before {
+    border: 1px solid currentColor;
+    background: currentColor;
+  }
+
+  .finding-list,
+  .interview-prep-warning-group {
+    border-inline-start-color: CanvasText;
+  }
+}

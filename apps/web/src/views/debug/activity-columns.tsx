@@ -1,6 +1,7 @@
 import type { ActivityEventSummary } from "../../contexts/operations/types.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import type { DataGridColumn } from "../../shared/ui/filterable-data-grid.js";
+import { StatusLabel } from "../../shared/ui/status-label.js";
 import { activityLevelTone } from "./activity-tone.js";
 
 function activityContext(activity: ActivityEventSummary): string {
@@ -20,9 +21,9 @@ export const activityColumns: Array<DataGridColumn<ActivityEventSummary>> = [
     minWidth: 62,
     sortable: true,
     render: (activity) => (
-      <span className={`tag ${activityLevelTone(activity.level)}`}>
+      <StatusLabel tone={activityLevelTone(activity.level)}>
         {activity.level}
-      </span>
+      </StatusLabel>
     ),
   },
   {
@@ -33,7 +34,9 @@ export const activityColumns: Array<DataGridColumn<ActivityEventSummary>> = [
     width: 74,
     minWidth: 62,
     sortable: true,
-    render: (activity) => <span className="stage-pill">{activity.stage}</span>,
+    render: (activity) => (
+      <span className="activity-stage-label">{activity.stage}</span>
+    ),
   },
   {
     id: "message",

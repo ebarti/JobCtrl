@@ -67,7 +67,11 @@ export function AnalyticsView() {
       <PageHead
         eyebrow="Overview"
         title="Outcome analytics"
-        subtitle={analytics ? `${applied} applied` : "loading"}
+        subtitle={
+          analytics
+            ? `${applied} applied · descriptive associations from recorded outcomes`
+            : "Loading recorded outcomes"
+        }
       />
       <section className="card full analytics-view">
         {message ? <div className="banner inline">{message}</div> : null}

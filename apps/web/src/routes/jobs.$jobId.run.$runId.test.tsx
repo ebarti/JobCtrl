@@ -7,6 +7,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { render, screen, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
@@ -43,6 +44,7 @@ function buildRouter() {
 
 describe("<JobRunTimelineWorkspace>", () => {
   it("renders the nested timeline as a complete route workspace", async () => {
+    const user = userEvent.setup();
     server.use(
       http.get("*/v1/workflow-runs/:runId", () =>
         HttpResponse.json(
@@ -94,6 +96,7 @@ describe("<JobRunTimelineWorkspace>", () => {
     ).toBeInTheDocument();
     expect(within(workspace).getAllByText("run-1").length).toBeGreaterThan(0);
     expect(within(workspace).getByText("temporal-apply-1")).toBeInTheDocument();
+    await user.click(within(workspace).getByRole("tab", { name: "Timeline" }));
     expect(within(workspace).getByText("Workflow Started")).toBeInTheDocument();
     expect(
       within(workspace).getByText("Apply agent acquired job"),

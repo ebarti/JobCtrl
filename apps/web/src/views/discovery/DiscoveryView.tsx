@@ -7,7 +7,11 @@ import { PageHead } from "../../shared/ui/page-head.js";
 export function DiscoveryView() {
   return (
     <div className="route-page route-page--discovery">
-      <PageHead eyebrow="Pipeline" title="Discovery" />
+      <PageHead
+        eyebrow="Pipeline"
+        title="Discovery"
+        subtitle="Search defaults, source execution, supervision, and intake controls."
+      />
       <div className="discovery-view-stack">
         <TargetSearchSettingsPanel />
         <DiscoveryAutomationSettingsPanel />

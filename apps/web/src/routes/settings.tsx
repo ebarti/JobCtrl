@@ -24,7 +24,11 @@ function SettingsLayout() {
 
   return (
     <div className="route-page route-page--settings">
-      <PageHead eyebrow="Setup" title="Settings" />
+      <PageHead
+        eyebrow="Setup"
+        title="Settings"
+        subtitle="Runtime policy, providers, model choices, and optional local capabilities."
+      />
       <div className="config-layout">
         <SectionTabs className="settings-route-tabs grid gap-[18px]" value={activeTab}>
           <nav className="settings-section-navigation" aria-label="Settings sections">

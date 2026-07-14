@@ -10,6 +10,10 @@ export const Route = createFileRoute("/settings/browser")({
 function BrowserSettingsRoute() {
   return (
     <div className="settings-browser-sections">
+      <header className="settings-browser-intro">
+        <h2>Browser and extension</h2>
+        <p>Optional capabilities are explicit, revocable, and scoped to local JobCtrl workflows.</p>
+      </header>
       <BrowserCapabilitiesPanel />
       <ExtensionPairingPanel />
     </div>

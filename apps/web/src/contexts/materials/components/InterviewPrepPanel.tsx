@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
+import { StatusLabel } from "../../../shared/ui/status-label.js";
 import { GenerateInterviewPrepButton } from "./GenerateInterviewPrepButton.js";
 
 export interface InterviewPrepPanelProps {
@@ -28,7 +29,9 @@ function PrepItemCard({ item, jobId }: { readonly item: InterviewPrepItem; reado
   return (
     <article className="interview-prep-item">
       <div className="interview-prep-item-head">
-        <span className={`tag ${kindTone(item.kind)}`}>{KIND_LABELS[item.kind]}</span>
+        <span className={`audit-kicker audit-kicker--${kindTone(item.kind)}`}>
+          {KIND_LABELS[item.kind]}
+        </span>
         <h4>{item.title}</h4>
       </div>
       <p>{item.generatedText}</p>
@@ -40,7 +43,7 @@ function PrepItemCard({ item, jobId }: { readonly item: InterviewPrepItem; reado
               <dd>
                 {item.evidenceIds.map((evidenceId) => (
                   <Link
-                    className="tag info"
+                    className="audit-link"
                     key={evidenceId}
                     search={{ q: "", entry: evidenceId, job: jobId }}
                     to="/evidence-map"
@@ -55,11 +58,13 @@ function PrepItemCard({ item, jobId }: { readonly item: InterviewPrepItem; reado
             <>
               <dt>{item.kind === "gap_drill" ? "Gap requirements" : "Requirements"}</dt>
               <dd>
-                {item.requirementIds.map((requirementId) => (
-                  <span className="tag muted" key={requirementId}>
-                    {requirementId}
-                  </span>
-                ))}
+                <ul className="audit-value-list">
+                  {item.requirementIds.map((requirementId) => (
+                    <li className="audit-value audit-value--muted" key={requirementId}>
+                      {requirementId}
+                    </li>
+                  ))}
+                </ul>
               </dd>
             </>
           ) : null}
@@ -77,7 +82,7 @@ function PrepItemCard({ item, jobId }: { readonly item: InterviewPrepItem; reado
       ) : null}
       {item.warnings.length ? (
         <div className="interview-prep-warning-group">
-          <span className="tag warn">accepted residual warnings</span>
+          <StatusLabel tone="warn">accepted residual warnings</StatusLabel>
           <ul>
             {item.warnings.map((warning) => (
               <li key={warning}>{warning}</li>
@@ -93,15 +98,17 @@ function GateAudit({ prep }: { readonly prep: InterviewPrep }) {
   const warnings = prep.gateAudit.warnings;
   return (
     <div className="interview-prep-gate">
-      <span className={prep.gateAudit.status === "passed" ? "tag ok" : "tag danger"}>
+      <StatusLabel tone={prep.gateAudit.status === "passed" ? "ok" : "danger"}>
         gate {prep.gateAudit.status}
-      </span>
-      {prep.gateAudit.judgeVerdict ? <span className="tag muted">{prep.gateAudit.judgeVerdict}</span> : null}
-      <span className="tag muted">generation {prep.generation}</span>
-      {prep.model ? <span className="tag muted">{prep.model}</span> : null}
+      </StatusLabel>
+      {prep.gateAudit.judgeVerdict ? (
+        <span className="audit-inline-meta">{prep.gateAudit.judgeVerdict}</span>
+      ) : null}
+      <span className="audit-inline-meta">generation {prep.generation}</span>
+      {prep.model ? <span className="audit-inline-meta">{prep.model}</span> : null}
       {warnings.length ? (
         <div className="interview-prep-warning-group">
-          <span className="tag warn">accepted residual warnings</span>
+          <StatusLabel tone="warn">accepted residual warnings</StatusLabel>
           <ul>
             {warnings.map((warning) => (
               <li key={warning}>{warning}</li>

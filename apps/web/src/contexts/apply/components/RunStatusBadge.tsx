@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import type { WorkflowRunStatus } from "@jobctrl/contracts";
 
 import { assertNever } from "../../../shared/lib/exhaustive.js";
+import { StatusLabel } from "../../../shared/ui/status-label.js";
 import type { ApplyRunTone } from "../lib/apply-run-tone.js";
 
 export interface RunStatusBadgeProps {
@@ -18,7 +19,7 @@ export interface RunStatusBadgeProps {
  */
 export function RunStatusBadge({ status }: RunStatusBadgeProps): JSX.Element {
   const tone: ApplyRunTone = workflowRunStatusTone(status);
-  return <span className={`tag ${tone}`}>{statusLabel(status)}</span>;
+  return <StatusLabel tone={tone}>{statusLabel(status)}</StatusLabel>;
 }
 
 function workflowRunStatusTone(status: WorkflowRunStatus): ApplyRunTone {

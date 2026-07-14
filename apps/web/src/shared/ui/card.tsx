@@ -3,7 +3,7 @@ import { forwardRef, type HTMLAttributes } from "react";
 import { cn } from "../lib/cn.js";
 
 export const cardClassName =
-  "rounded-lg border border-border bg-card text-card-foreground shadow-[var(--shadow-panel)]";
+  "rounded-none border border-border bg-card text-card-foreground shadow-none";
 
 export const Card = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (

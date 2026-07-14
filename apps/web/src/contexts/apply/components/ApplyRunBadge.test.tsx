@@ -9,7 +9,7 @@ describe("<ApplyRunBadge>", () => {
     it(`renders the ${status} status with a non-default tone`, () => {
       const { container } = render(<ApplyRunBadge result={status} />);
       const span = container.querySelector("span");
-      expect(span?.className).toMatch(/tag (ok|info|warn|danger|muted)/);
+      expect(span?.className).toMatch(/editorial-status (ok|info|warn|danger|muted)/);
       expect(screen.getByText(status)).toBeInTheDocument();
     });
   }

@@ -4,7 +4,6 @@ import {
   type ProfileUpdateRequest,
 } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
-import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import type { ProfileConfigResponse } from "../../operations/types.js";
@@ -98,7 +97,6 @@ export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) 
   const [statusMessage, setStatusMessage] = useState("");
   const [resetToken, setResetToken] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
-  const isProfileSection = section === "profile";
   const saveLabel = section === "target-search" ? "Save discovery settings" : "Save all";
   const discardLabel = section === "target-search" ? "Discard changes" : "Discard all";
   const savedMessage =
@@ -177,11 +175,6 @@ export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) 
       <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting })}>
         {({ isDirty, isSubmitting }) => (
           <div className="editor-bulk-actions">
-            {isProfileSection ? (
-              <Button asChild size="sm" variant="outline">
-                <Link to="/profile/import/upload">Import resume</Link>
-              </Button>
-            ) : null}
             <Button
               size="sm"
               type="submit"

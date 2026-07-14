@@ -13,6 +13,10 @@ import {
 } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
 import {
+  StatusLabel,
+  type StatusLabelTone,
+} from "../../../shared/ui/status-label.js";
+import {
   useCopyLinkedInBrowserProfileMutation,
   useDisableBrowserCapabilityMutation,
   useEnableBrowserCapabilityMutation,
@@ -23,6 +27,14 @@ const LABELS: Record<BrowserCapabilityId, string> = {
   "core-browser": "Core managed browser",
   "auto-apply-browser": "Auto-apply browser",
   "authenticated-linkedin-browser": "Authenticated LinkedIn browser",
+};
+
+const STATUS_TONES: Record<BrowserCapabilityItem["status"], StatusLabelTone> = {
+  ready: "ok",
+  failed: "danger",
+  unavailable: "danger",
+  missing: "warn",
+  disabled: "muted",
 };
 
 export function BrowserCapabilitiesPanel() {
@@ -178,10 +190,19 @@ export function BrowserCapabilitiesPanel() {
             key={capability.id}
             title={LABELS[capability.id]}
             description={capability.detail}
-            collapsedSummary={`Status: ${capability.status}`}
+            collapsedSummary={(
+              <StatusLabel tone={browserCapabilityTone(capability.status)}>
+                Status: {capability.status}
+              </StatusLabel>
+            )}
             defaultOpen={false}
           >
-            <p className="browser-capability-status">Current status: {capability.status}</p>
+            <StatusLabel
+              className="browser-capability-status"
+              tone={browserCapabilityTone(capability.status)}
+            >
+              Current status: {capability.status}
+            </StatusLabel>
             {renderCapabilityControls(capability)}
           </DisclosureSection>
         ))}
@@ -189,4 +210,10 @@ export function BrowserCapabilitiesPanel() {
       {message ? <div className="status-line" role="status">{message}</div> : null}
     </DisclosureSection>
   );
+}
+
+function browserCapabilityTone(
+  status: BrowserCapabilityItem["status"],
+): StatusLabelTone {
+  return STATUS_TONES[status];
 }

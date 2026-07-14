@@ -1,9 +1,10 @@
 import type { OutreachDraftStatus } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
+import { StatusLabel, type StatusLabelTone } from "../../../shared/ui/status-label.js";
 import { outreachDraftStatusLabel } from "../lib/draft-copy.js";
 
-const STATUS_TONE: Record<OutreachDraftStatus, string> = {
+const STATUS_TONE: Record<OutreachDraftStatus, StatusLabelTone> = {
   candidate: "info",
   approved: "ok",
   rejected: "danger",
@@ -17,8 +18,12 @@ export interface DraftStatusBadgeProps {
 export function DraftStatusBadge({ status }: DraftStatusBadgeProps): JSX.Element {
   const label = outreachDraftStatusLabel(status);
   return (
-    <span className={`tag ${STATUS_TONE[status]} outreach-draft-status-${status}`} title={`Draft status: ${label}`}>
+    <StatusLabel
+      className={`outreach-draft-status-${status}`}
+      title={`Draft status: ${label}`}
+      tone={STATUS_TONE[status]}
+    >
       {label}
-    </span>
+    </StatusLabel>
   );
 }

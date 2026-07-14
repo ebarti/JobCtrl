@@ -77,148 +77,219 @@ export function JobBulkActions({
       ? "restore"
       : "delete selected";
   return (
-    <div className="bulk-bar">
-      <ToggleGroup
-        aria-label="Job views"
-        className="job-view-switcher max-w-full flex-wrap"
-        size="sm"
-        spacing={1}
-        type="single"
-        value={search.deleted}
-        variant="outline"
-        onValueChange={(value) => {
-          if (value) {
-            onSetDeleted(value as JobsSearch["deleted"]);
-          }
-        }}
-      >
-        {JOB_VIEWS.map((view) => (
-          <ToggleGroupItem key={view.value} value={view.value}>
-            {view.label}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-      {selectedCount ? (
-        <span className="meta">{selectedCount} selected</span>
-      ) : null}
-      <button
-        className="tab"
-        type="button"
-        disabled={!hasItems}
-        onClick={onSelectPage}
-      >
-        select page
-      </button>
-      <button
-        className="tab"
-        type="button"
-        disabled={!hasAnyMatching || hasLocalFilters}
-        onClick={onSelectAllMatching}
-      >
-        select all matching
-      </button>
-      <button
-        className="tab"
-        type="button"
-        disabled={!selectedCount}
-        onClick={onClearSelection}
-      >
-        clear selected
-      </button>
-      <RefreshAllCompensationButton onSuccess={onMaintenanceSuccess} />
-      {staleCount || selectedStaleKeys.length ? (
-        <ResetStaleScoresButton
-          jobKeys={selectedStaleKeys}
-          staleCount={selectedStaleKeys.length || staleCount}
-          label={
-            selectedStaleKeys.length
-              ? "reset stale selected"
-              : "reset all stale scores"
-          }
-          onSuccess={onResetStaleSuccess}
-        />
-      ) : null}
-      {!restoring && !hidden && !closed ? (
-        <>
-          <RescoreCurrentPolicyButton onSuccess={onMaintenanceSuccess} />
-          <RetailorCurrentPolicyButton onSuccess={onMaintenanceSuccess} />
-          {selectedJobKeys.length ? (
-            <>
-              <RescoreCurrentPolicyButton
-                jobKeys={selectedJobKeys}
-                label="rescore selected"
-                onSuccess={onMaintenanceSuccess}
-              />
-              <RetailorCurrentPolicyButton
-                jobKeys={selectedJobKeys}
-                label="re-tailor selected"
-                onSuccess={onMaintenanceSuccess}
-              />
-            </>
-          ) : null}
-        </>
-      ) : null}
-      {retrySelectedFailures ? (
-          <button
-            className="tab on"
-            type="button"
-            disabled={!selectedCount || retryLoading}
-            onClick={onRetryFailedSelected}
-          >
-            retry selected
-          </button>
-      ) : null}
-      {retryAllFailures ? (
-        <>
-          <button
-            className="tab"
-            type="button"
-            disabled={hasLocalFilters || pendingPreparationLoading}
-            onClick={onRunPendingPreparation}
-          >
-            continue pending prep
-          </button>
-          <button
-            className="tab"
-            type="button"
-            disabled={hasLocalFilters || retryLoading}
-            onClick={onRetryAllFailed}
-          >
-            retry all failed
-          </button>
-        </>
-      ) : null}
-      {!hidden ? (
-        <button
-          aria-label="hide selected"
-          className="tab danger-action"
-          type="button"
-          disabled={!selectedCount || loading}
-          onClick={onHideSelected}
+    <div className="bulk-bar jobs-index-controls">
+      <div className="jobs-index-view-row">
+        <span
+          className="jobs-index-control-label"
+          id="jobs-index-queue-label"
         >
-          hide
-        </button>
-      ) : null}
-      {restoring || hidden ? (
-        <button
-          aria-label="permanently delete selected"
-          className="tab danger-action"
-          type="button"
-          disabled={!selectedCount || loading}
-          onClick={onPermanentlyDeleteSelected}
+          Queue
+        </span>
+        <ToggleGroup
+          aria-labelledby="jobs-index-queue-label"
+          className="job-view-switcher max-w-full flex-wrap"
+          size="sm"
+          spacing={1}
+          type="single"
+          value={search.deleted}
+          variant="outline"
+          onValueChange={(value) => {
+            if (value) {
+              onSetDeleted(value as JobsSearch["deleted"]);
+            }
+          }}
         >
-          permanently delete
-        </button>
-      ) : null}
-      <button
-        aria-label={restoring ? "restore selected" : undefined}
-        className={`tab ${restoring || hidden ? "on" : "danger-action"}`}
-        type="button"
-        disabled={!selectedCount || loading}
-        onClick={onPrimaryAction}
-      >
-        {primaryLabel}
-      </button>
+          {JOB_VIEWS.map((view) => (
+            <ToggleGroupItem key={view.value} value={view.value}>
+              {view.label}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+        <span className="jobs-index-selection-count" aria-live="polite">
+          {selectedCount ? `${selectedCount} selected` : null}
+        </span>
+      </div>
+
+      <div className="jobs-index-action-row">
+        <div
+          aria-labelledby="jobs-index-selection-label"
+          className="jobs-index-action-group jobs-index-action-group--selection"
+          role="group"
+        >
+          <span
+            className="jobs-index-control-label"
+            id="jobs-index-selection-label"
+          >
+            Selection
+          </span>
+          <div className="jobs-index-action-list">
+            <button
+              className="jobs-index-action"
+              type="button"
+              disabled={!hasItems}
+              onClick={onSelectPage}
+            >
+              select page
+            </button>
+            <button
+              className="jobs-index-action"
+              type="button"
+              disabled={!hasAnyMatching || hasLocalFilters}
+              onClick={onSelectAllMatching}
+            >
+              select all matching
+            </button>
+            <button
+              className="jobs-index-action"
+              type="button"
+              disabled={!selectedCount}
+              onClick={onClearSelection}
+            >
+              clear selected
+            </button>
+          </div>
+        </div>
+
+        <div
+          aria-labelledby="jobs-index-preparation-label"
+          className="jobs-index-action-group jobs-index-action-group--preparation"
+          role="group"
+        >
+          <span
+            className="jobs-index-control-label"
+            id="jobs-index-preparation-label"
+          >
+            Preparation
+          </span>
+          <div className="jobs-index-action-list">
+            <RefreshAllCompensationButton
+              className="jobs-index-action"
+              onSuccess={onMaintenanceSuccess}
+            />
+            {staleCount || selectedStaleKeys.length ? (
+              <ResetStaleScoresButton
+                className="jobs-index-action"
+                jobKeys={selectedStaleKeys}
+                staleCount={selectedStaleKeys.length || staleCount}
+                label={
+                  selectedStaleKeys.length
+                    ? "reset stale selected"
+                    : "reset all stale scores"
+                }
+                onSuccess={onResetStaleSuccess}
+              />
+            ) : null}
+            {!restoring && !hidden && !closed ? (
+              <>
+                <RescoreCurrentPolicyButton
+                  className="jobs-index-action"
+                  onSuccess={onMaintenanceSuccess}
+                />
+                <RetailorCurrentPolicyButton
+                  className="jobs-index-action"
+                  onSuccess={onMaintenanceSuccess}
+                />
+              </>
+            ) : null}
+            {retryAllFailures ? (
+              <>
+                <button
+                  className="jobs-index-action"
+                  type="button"
+                  disabled={hasLocalFilters || pendingPreparationLoading}
+                  onClick={onRunPendingPreparation}
+                >
+                  continue pending prep
+                </button>
+                <button
+                  className="jobs-index-action"
+                  type="button"
+                  disabled={hasLocalFilters || retryLoading}
+                  onClick={onRetryAllFailed}
+                >
+                  retry all failed
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
+
+        <div
+          aria-labelledby="jobs-index-selected-label"
+          className="jobs-index-action-group jobs-index-action-group--selected"
+          role="group"
+        >
+          <span
+            className="jobs-index-control-label"
+            id="jobs-index-selected-label"
+          >
+            Selected jobs
+          </span>
+          <div className="jobs-index-action-list">
+            {!restoring && !hidden && !closed && selectedJobKeys.length ? (
+              <>
+                <RescoreCurrentPolicyButton
+                  className="jobs-index-action"
+                  jobKeys={selectedJobKeys}
+                  label="rescore selected"
+                  onSuccess={onMaintenanceSuccess}
+                />
+                <RetailorCurrentPolicyButton
+                  className="jobs-index-action"
+                  jobKeys={selectedJobKeys}
+                  label="re-tailor selected"
+                  onSuccess={onMaintenanceSuccess}
+                />
+              </>
+            ) : null}
+            {retrySelectedFailures ? (
+              <button
+                className="jobs-index-action jobs-index-action--emphasis"
+                type="button"
+                disabled={!selectedCount || retryLoading}
+                onClick={onRetryFailedSelected}
+              >
+                retry selected
+              </button>
+            ) : null}
+            {!hidden ? (
+              <button
+                aria-label="hide selected"
+                className="jobs-index-action jobs-index-action--danger"
+                type="button"
+                disabled={!selectedCount || loading}
+                onClick={onHideSelected}
+              >
+                hide
+              </button>
+            ) : null}
+            {restoring || hidden ? (
+              <button
+                aria-label="permanently delete selected"
+                className="jobs-index-action jobs-index-action--danger"
+                type="button"
+                disabled={!selectedCount || loading}
+                onClick={onPermanentlyDeleteSelected}
+              >
+                permanently delete
+              </button>
+            ) : null}
+            <button
+              aria-label={restoring ? "restore selected" : undefined}
+              className={`jobs-index-action ${
+                restoring || hidden
+                  ? "jobs-index-action--emphasis"
+                  : "jobs-index-action--danger"
+              }`}
+              type="button"
+              disabled={!selectedCount || loading}
+              onClick={onPrimaryAction}
+            >
+              {primaryLabel}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

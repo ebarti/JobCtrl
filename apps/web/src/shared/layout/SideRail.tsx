@@ -122,7 +122,7 @@ export function RailNav({ className, onNavigate }: RailNavProps) {
   );
 }
 
-export function LocalModeCard() {
+export function LocalModeStatus() {
   const workspace = useDemoWorkspace();
   const text =
     workspace.mode === "demo"
@@ -131,7 +131,7 @@ export function LocalModeCard() {
         : "Demo mode — this tab only"
       : "Local mode — all data stays on device";
   return (
-    <div className="side-rail__footer">
+    <div className="side-rail__footer" role="note" aria-label={text} title={text}>
       <span className="side-rail__status-dot" aria-hidden="true" />
       <span className="side-rail__footer-text">{text}</span>
     </div>
@@ -146,7 +146,7 @@ export function SideRail() {
       </Link>
       <RailNav />
       <span className="side-rail__spacer" />
-      <LocalModeCard />
+      <LocalModeStatus />
       <LegalNotice className="legal-notice legal-notice--rail" />
     </aside>
   );

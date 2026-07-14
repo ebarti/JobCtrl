@@ -37,7 +37,7 @@ describe("stage-state parity (the second-most important test in the app)", () =>
       const { container } = render(<StageBadge state={state} />);
       const span = container.querySelector("span");
       expect(span, `expected a <span> in <StageBadge state="${state}">`).toBeTruthy();
-      expect(span?.className).toMatch(/tag /);
+      expect(span?.className).toMatch(/editorial-status/);
       expect(span?.className).toMatch(TONE_PATTERN);
       expect(screen.getByText(state)).toBeInTheDocument();
     });

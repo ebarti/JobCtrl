@@ -71,7 +71,58 @@ function renderJobDetailDrawer(jobId: string) {
   };
 }
 
+async function selectJobDetailTab(label: string) {
+  await userEvent.setup().click(await screen.findByRole("tab", { name: label }));
+}
+
 describe("<JobDetailDrawer>", () => {
+  it("keeps the jobs return control available while detail data is loading", async () => {
+    const user = userEvent.setup();
+    const { router } = renderJobDetailDrawer("job-1");
+
+    expect(screen.getByText("Loading job.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Back to jobs" }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/jobs"));
+  });
+
+  it("uses accessible detail tabs while keeping the progress and audit inspector persistent", async () => {
+    const user = userEvent.setup();
+    renderJobDetailDrawer("job-1");
+
+    const tabList = await screen.findByRole("tablist", { name: "Job detail sections" });
+    const overviewTab = within(tabList).getByRole("tab", { name: "Overview" });
+    const fitEvidenceTab = within(tabList).getByRole("tab", { name: "Fit & evidence" });
+    const materialsTab = within(tabList).getByRole("tab", { name: "Materials" });
+    const activityTab = within(tabList).getByRole("tab", { name: "Activity" });
+    const inspector = screen.getByLabelText("Job progress and audit history");
+
+    expect(overviewTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Overview" })).toHaveTextContent("About the role");
+    expect(within(inspector).getByText("Preparation diagnostics")).toBeInTheDocument();
+    expect(within(inspector).getByText("Audit history")).toBeInTheDocument();
+
+    await user.click(overviewTab);
+    await user.keyboard("{ArrowRight}");
+
+    expect(fitEvidenceTab).toHaveAttribute("aria-selected", "true");
+    expect(
+      within(screen.getByRole("tabpanel", { name: "Fit & evidence" })).getByRole("region", {
+        name: "Job audit triage",
+      }),
+    ).toBeInTheDocument();
+
+    await user.click(materialsTab);
+    expect(screen.getByRole("tabpanel", { name: "Materials" })).toHaveTextContent(
+      "Before you apply",
+    );
+
+    await user.click(activityTab);
+    expect(screen.getByRole("tabpanel", { name: "Activity" })).toHaveTextContent("Apply history");
+    expect(within(inspector).getByText("Preparation diagnostics")).toBeInTheDocument();
+    expect(within(inspector).getByText("Audit history")).toBeInTheDocument();
+  });
+
   it("renders source-conflict compensation warnings only inside compensation evidence", async () => {
     if (sampleCompensationAudit.market.recordStatus !== "recorded") {
       throw new Error("sample compensation audit must include recorded market evidence");
@@ -170,6 +221,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("job-source-conflict");
+    await selectJobDetailTab("Fit & evidence");
 
     const compensation = await screen.findByRole("region", { name: "Compensation evidence" });
     expect(within(compensation).getByText("source_conflict_with_posted_salary")).toBeInTheDocument();
@@ -236,12 +288,14 @@ describe("<JobDetailDrawer>", () => {
 
     renderJobDetailDrawer("https://example.com/jobs/1");
 
+    await user.click(await screen.findByRole("tab", { name: "Fit & evidence" }));
     await user.click(await screen.findByRole("button", { name: "refresh compensation" }));
 
     await waitFor(() => expect(calls).toEqual([{}]));
   });
 
   it("summarizes ranking, readiness, blockers, eligibility, and Apply Review handoff", async () => {
+    const user = userEvent.setup();
     server.use(
       http.get("*/v1/jobs/:jobKey", ({ params }) => {
         return HttpResponse.json(
@@ -301,6 +355,9 @@ describe("<JobDetailDrawer>", () => {
 
     renderJobDetailDrawer("https://example.com/jobs/1");
 
+    const overview = await screen.findByRole("tabpanel", { name: "Overview" });
+    expect(within(overview).getByText("About the role")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Fit & evidence" }));
     const triage = await screen.findByRole("region", { name: "Job audit triage" });
     const workspace = screen.getByRole("article", { name: "Job details" });
     const toolbar = within(workspace).getByRole("toolbar", { name: "Job actions" });
@@ -342,10 +399,7 @@ describe("<JobDetailDrawer>", () => {
     expect(screen.queryByText("Score breakdown")).not.toBeInTheDocument();
     expect(screen.queryByText("Tailoring rationale")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Role Analysis" })).toHaveClass("job-detail-role-analysis");
-    const description = screen.getByText("Description").closest("section");
-    expect(description).not.toBeNull();
-    expect(description).toHaveClass("job-detail-description");
-    expect(triage.compareDocumentPosition(description as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("tabpanel", { name: "Overview" })).not.toBeInTheDocument();
   });
 
   it("shows a not-found state instead of the raw API 404 for missing jobs", async () => {
@@ -359,6 +413,7 @@ describe("<JobDetailDrawer>", () => {
 
     await waitFor(() => expect(screen.getByText("Job not found.")).toBeInTheDocument());
     expect(screen.queryByText(/JobCtrl API request failed: 404/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back to jobs" })).toBeInTheDocument();
   });
 
   it("renders compensation audit range, statistical confidence, and reported sources", async () => {
@@ -381,6 +436,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("https://example.com/jobs/compensation");
+    await selectJobDetailTab("Fit & evidence");
 
     const compensation = await screen.findByRole("region", { name: "Compensation evidence" });
     expect(within(compensation).getByText("Compensation")).toBeInTheDocument();
@@ -435,6 +491,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("https://example.com/jobs/1");
+    await selectJobDetailTab("Fit & evidence");
 
     const requirement = await screen.findByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
@@ -476,6 +533,7 @@ describe("<JobDetailDrawer>", () => {
     );
 
     renderJobDetailDrawer("https://example.com/jobs/legacy-fit");
+    await selectJobDetailTab("Fit & evidence");
 
     const callout = await screen.findByRole("region", { name: "Requirement fit not assessed" });
     expect(within(callout).getByText("Requirement fit not assessed")).toBeInTheDocument();
@@ -512,7 +570,7 @@ describe("<JobDetailDrawer>", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/jobs"));
   });
 
-  it("renders user-facing audit history as the collapsed final drawer section", async () => {
+  it("keeps user-facing audit history persistent as the collapsed final inspector section", async () => {
     const user = userEvent.setup();
     renderJobDetailDrawer("job-1");
 
@@ -522,11 +580,11 @@ describe("<JobDetailDrawer>", () => {
     expect(auditDisclosure).not.toHaveAttribute("open");
 
     const workspace = screen.getByRole("article", { name: "Job details" });
-    const sections = Array.from(workspace.querySelectorAll("section.section"));
+    const inspector = within(workspace).getByLabelText("Job progress and audit history");
+    const sections = Array.from(inspector.querySelectorAll("section.section"));
     expect(sections.at(-1)).toContainElement(auditDisclosure);
     expect(sections.at(-1)).toHaveTextContent("Audit history");
-    expect(sections[1]).toHaveTextContent("Compensation");
-    expect(sections[2]).toHaveTextContent("Description");
+    expect(sections[0]).toHaveTextContent("Preparation diagnostics");
 
     await user.click(auditSummary);
     expect(auditDisclosure).toHaveAttribute("open");

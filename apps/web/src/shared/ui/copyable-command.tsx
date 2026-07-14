@@ -25,7 +25,7 @@ export function CopyableCommand({ command, className, label = "Copy command" }: 
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 font-mono text-xs",
+        "flex items-center justify-between gap-2 rounded-[2px] border border-border bg-muted px-3 py-2 font-mono text-xs",
         className,
       )}
     >

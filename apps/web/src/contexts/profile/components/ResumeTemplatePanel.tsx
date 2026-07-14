@@ -21,6 +21,7 @@ import { Input } from "../../../shared/ui/input.js";
 import { PreviewWorkbench } from "../../../shared/ui/preview-workbench.js";
 import { SegmentedField } from "../../../shared/ui/segmented-field.js";
 import { SelectField } from "../../../shared/ui/select-field.js";
+import { StatusLabel } from "../../../shared/ui/status-label.js";
 import {
   useSaveResumeTemplateMutation,
   useSetDefaultResumeTemplateMutation,
@@ -225,7 +226,9 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
       title="Resume templates"
       status={
         selectedTemplateIsDefault ? (
-          <span className="resume-template-default-state">Default template</span>
+          <StatusLabel className="resume-template-default-state" tone="ok">
+            Default template
+          </StatusLabel>
         ) : undefined
       }
       primaryControls={

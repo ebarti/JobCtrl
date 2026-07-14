@@ -2,19 +2,9 @@ import { useNavigate } from "@tanstack/react-router";
 
 import type { DashboardSummary } from "../../contexts/operations/types.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
-import { StatCard, type StatTone } from "../../shared/ui/stat-card.js";
+import { StatCard } from "../../shared/ui/stat-card.js";
 
 export type KpiTarget = "all" | "failed" | "blocked" | "ready" | "applied";
-type KpiTone = "alert" | "warn" | "ok";
-
-const VALUE_TONE: Record<KpiTone, StatTone> = {
-  alert: "down",
-  warn: "warn",
-  ok: "up",
-};
-
-const KPI_HOVER =
-  "transition-colors hover:border-[color-mix(in_oklch,var(--primary)_45%,var(--border))]";
 
 const KPI_BASE: JobsSearch = {
   q: "",
@@ -64,49 +54,42 @@ const ITEMS: ReadonlyArray<{
   readonly key: keyof DashboardSummary["totals"];
   readonly caption: (summary: DashboardSummary) => string;
   readonly target: KpiTarget;
-  readonly tone: KpiTone | null;
 }> = [
   {
     label: "Jobs",
     key: "jobs",
     caption: (summary) => `+${summary.totals.jobsToday} today`,
     target: "all",
-    tone: null,
   },
   {
     label: "Failures",
     key: "failures",
     caption: () => "needs retry",
     target: "failed",
-    tone: "alert",
   },
   {
     label: "Blocked",
     key: "blocked",
     caption: () => "needs review",
     target: "blocked",
-    tone: "warn",
   },
   {
     label: "Ready",
     key: "ready",
     caption: () => "ready queue",
     target: "ready",
-    tone: "ok",
   },
   {
     label: "Applied",
     key: "applied",
     caption: (summary) => `+${summary.totals.appliedToday} today`,
     target: "applied",
-    tone: null,
   },
   {
     label: "Dry runs",
     key: "dryRuns",
     caption: () => "today excluded",
     target: "all",
-    tone: null,
   },
 ];
 
@@ -118,16 +101,14 @@ export function KpiGrid({ summary }: KpiGridProps) {
   const navigate = useNavigate();
   return (
     <section className="kpis">
-      {ITEMS.map(({ label, key, caption, target, tone }) => {
+      {ITEMS.map(({ label, key, caption, target }) => {
         const search = kpiSearchFor(target);
         return (
           <StatCard
             key={label}
             asChild
-            className={KPI_HOVER}
             label={label}
             value={summary.totals[key]}
-            valueTone={tone ? VALUE_TONE[tone] : undefined}
             delta={caption(summary)}
           >
             <a

@@ -1104,6 +1104,7 @@ function ResumeReviewSurface({
 
 function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const reviewState = reviewStateLabel(item);
+  const status = materialStatus(item);
   const activeRun = activeApplyRun(item);
   const resumeAuditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
   const templatesQuery = useResumeTemplatesQuery();
@@ -1190,6 +1191,13 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
               className="apply-review-selected-context"
               aria-label={`Review controls and material facts for ${item.title}`}
             >
+              <div className="apply-review-selected-title">
+                <h2>{item.title}</h2>
+                <p>
+                  {item.company} · {item.source}
+                </p>
+              </div>
+              <span className={`apply-review-selected-status tag ${status.tone}`}>{status.label}</span>
               {reviewState ? (
                 <span className="tag muted">Current decision: {reviewState}.</span>
               ) : null}

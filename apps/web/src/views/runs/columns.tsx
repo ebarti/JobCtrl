@@ -62,12 +62,11 @@ export const workflowRunColumns: Array<DataGridColumn<WorkflowRunSummary>> = [
     label: "Mode",
     sortable: true,
     getFilterValue: (row) => (row.dryRun ? "dry-run" : "live"),
-    render: (row) =>
-      row.dryRun ? (
-        <span className="tag info">dry-run</span>
-      ) : (
-        <span>live</span>
-      ),
+    render: (row) => (
+      <span className="run-mode-label mono">
+        {row.dryRun ? "dry-run" : "live"}
+      </span>
+    ),
   },
   {
     id: "started_at",
@@ -81,9 +80,7 @@ export const workflowRunColumns: Array<DataGridColumn<WorkflowRunSummary>> = [
     label: "Duration",
     sortable: true,
     getFilterValue: (row) => formatDurationMs(row.durationMs),
-    render: (row) => (
-      <span>{formatDurationMs(row.durationMs)}</span>
-    ),
+    render: (row) => <span>{formatDurationMs(row.durationMs)}</span>,
   },
   {
     id: "finished_at",

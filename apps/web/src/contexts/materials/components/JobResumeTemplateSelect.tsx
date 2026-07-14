@@ -2,6 +2,7 @@ import type { ResumeTemplateSummary, ResumeTemplateState } from "@jobctrl/contra
 import type { JSX } from "react";
 import { useId } from "react";
 
+import { StatusLabel } from "../../../shared/ui/status-label.js";
 import { ResumeTemplateStatusBadge } from "./ResumeTemplateStatusBadge.js";
 
 export interface JobResumeTemplateSelectProps {
@@ -54,9 +55,9 @@ export function JobResumeTemplateSelect({
       <div className="resume-template-job-select-status" aria-live="polite">
         <ResumeTemplateStatusBadge state={current} />
         {refreshing ? (
-          <span className="tag info" id={refreshStatusId}>
+          <StatusLabel id={refreshStatusId} tone="info">
             updating materials
-          </span>
+          </StatusLabel>
         ) : null}
       </div>
     </div>

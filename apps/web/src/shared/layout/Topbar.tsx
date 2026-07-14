@@ -15,10 +15,33 @@ import {
 import { BrandMark } from "./BrandMark.js";
 import { ConnectionStatusPill } from "./ConnectionStatusPill.js";
 import { LegalNotice } from "./LegalNotice.js";
-import { RailNav } from "./SideRail.js";
+import { LocalModeStatus, RailNav } from "./SideRail.js";
 import { ThemeToggle } from "./ThemeToggle.js";
 
 const DENSITY_OPTIONS: ReadonlyArray<Density> = ["compact", "regular", "comfy"];
+
+interface DensityControlProps {
+  readonly className: string;
+  readonly density: Density;
+  readonly onDensityChange: (density: Density) => void;
+}
+
+function DensityControl({ className, density, onDensityChange }: DensityControlProps) {
+  return (
+    <Select value={density} onValueChange={(value) => onDensityChange(value as Density)}>
+      <SelectTrigger className={className} aria-label="Row density">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent align="end">
+        {DENSITY_OPTIONS.map((option) => (
+          <SelectItem key={option} value={option}>
+            {option[0]?.toUpperCase()}{option.slice(1)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
 
 export function Topbar() {
   const { density, setDensity } = useDensity();
@@ -33,13 +56,34 @@ export function Topbar() {
             <IconMenu2 aria-hidden="true" size={18} />
           </button>
         </SheetTrigger>
-        <SheetContent side="left" aria-describedby={undefined}>
-          <SheetHeader>
-            <SheetTitle>
+        <SheetContent
+          side="left"
+          className="mobile-navigation-sheet"
+          aria-describedby={undefined}
+        >
+          <SheetHeader className="mobile-navigation-sheet__header">
+            <SheetTitle className="mobile-navigation-sheet__title">
               <BrandMark showTagline />
             </SheetTitle>
           </SheetHeader>
           <RailNav className="sheet-nav" onNavigate={() => setNavOpen(false)} />
+          <section
+            className="mobile-navigation-sheet__utilities"
+            aria-labelledby="mobile-navigation-utilities-title"
+          >
+            <h2 id="mobile-navigation-utilities-title">Interface controls</h2>
+            <div className="mobile-navigation-sheet__density-row">
+              <span>Row density</span>
+              <DensityControl
+                className="mobile-navigation-sheet__density"
+                density={density}
+                onDensityChange={setDensity}
+              />
+            </div>
+            <ThemeToggle />
+            <ConnectionStatusPill />
+          </section>
+          <LocalModeStatus />
           <LegalNotice className="legal-notice legal-notice--sheet" />
         </SheetContent>
       </Sheet>
@@ -58,19 +102,14 @@ export function Topbar() {
           }}
         />
       </label>
-      <Select value={density} onValueChange={(value) => setDensity(value as Density)}>
-        <SelectTrigger className="topbar__density" aria-label="Row density">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent align="end">
-          {DENSITY_OPTIONS.map((option) => (
-            <SelectItem key={option} value={option}>
-              {option[0]?.toUpperCase()}{option.slice(1)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <ThemeToggle />
+      <DensityControl
+        className="topbar__density"
+        density={density}
+        onDensityChange={setDensity}
+      />
+      <span className="topbar__theme-control">
+        <ThemeToggle />
+      </span>
       <ConnectionStatusPill />
       <LegalNotice className="legal-notice legal-notice--topbar" />
     </header>

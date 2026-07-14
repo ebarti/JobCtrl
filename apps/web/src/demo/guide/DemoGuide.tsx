@@ -121,7 +121,7 @@ export function DemoGuide() {
 
   return (
     <aside
-      className="fixed bottom-4 right-4 z-40 grid w-[min(22rem,calc(100vw-2rem))] gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground shadow-[var(--shadow-panel)] motion-reduce:transition-none"
+      className="fixed bottom-4 right-4 z-40 grid w-[min(22rem,calc(100vw-2rem))] gap-3 rounded-[2px] border border-border bg-card p-4 text-card-foreground shadow-[var(--shadow-float)] motion-reduce:transition-none"
       aria-labelledby="demo-guide-title"
     >
       <div className="flex items-start justify-between gap-3">

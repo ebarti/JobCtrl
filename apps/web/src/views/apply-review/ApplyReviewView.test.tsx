@@ -859,9 +859,9 @@ describe("<ApplyReviewView>", () => {
     expect(selectedHeader).toBeInstanceOf(HTMLElement);
     const header = within(selectedHeader as HTMLElement);
     expect(header.queryByText("Selected application")).not.toBeInTheDocument();
-    expect(header.queryByText("Principal Platform Engineer")).not.toBeInTheDocument();
-    expect(header.queryByText(/Globex · score 9/i)).not.toBeInTheDocument();
-    expect(header.queryByText("materials ready")).not.toBeInTheDocument();
+    expect(header.getByRole("heading", { name: "Principal Platform Engineer" })).toBeInTheDocument();
+    expect(header.getByText(/Globex · Lever/i)).toBeInTheDocument();
+    expect(header.getByText("materials ready")).toBeInTheDocument();
     expect(document.querySelector(".apply-review-status-note")).not.toBeInTheDocument();
     expect(header.getByRole("region", { name: "Compensation" })).toBeInTheDocument();
     expect(header.getByLabelText("Resume template")).toBeInTheDocument();

@@ -1,6 +1,7 @@
 import type { ContactRole } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
+import { StatusLabel } from "../../../shared/ui/status-label.js";
 import { contactRoleLabel } from "../lib/contact-copy.js";
 
 export interface ContactRoleBadgeProps {
@@ -10,8 +11,8 @@ export interface ContactRoleBadgeProps {
 export function ContactRoleBadge({ role }: ContactRoleBadgeProps): JSX.Element {
   const label = contactRoleLabel(role);
   return (
-    <span className={`tag contact-role-${role}`} title={`Contact role: ${label}`}>
+    <StatusLabel className={`contact-role-${role}`} title={`Contact role: ${label}`} tone="muted">
       {label}
-    </span>
+    </StatusLabel>
   );
 }

@@ -54,6 +54,7 @@ import {
 
 import { Empty } from "../../../shared/ui/empty.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../../shared/ui/PdfPreviewViewer.js";
+import { StatusLabel, type StatusLabelTone } from "../../../shared/ui/status-label.js";
 import { useArtifactDetailQuery } from "../../operations/hooks/useArtifactDetailQuery.js";
 import { formatToken, scorePercent } from "../lib/audit-format.js";
 
@@ -1475,11 +1476,13 @@ function OptionalTagRow({
     <div>
       <dt>{label}</dt>
       <dd>
-        {values.map((value) => (
-          <span className={`tag ${tone}`} key={value}>
-            {value}
-          </span>
-        ))}
+        <ul className="audit-value-list">
+          {values.map((value) => (
+            <li className={`audit-value audit-value--${tone}`} key={value}>
+              {value}
+            </li>
+          ))}
+        </ul>
       </dd>
     </div>
   );
@@ -1505,8 +1508,8 @@ function CompactFindingList({
       <summary>
         <span className="artifact-risk-finding-label">
           <b>{label}</b>
-          <span className="tag muted">{items.length}</span>
-          {sourceLabel ? <span className="tag muted">{sourceLabel}</span> : null}
+          <span className="audit-inline-meta">{items.length}</span>
+          {sourceLabel ? <span className="audit-inline-meta">{sourceLabel}</span> : null}
         </span>
         <span className="artifact-risk-finding-preview">{items[0]}</span>
       </summary>
@@ -1645,6 +1648,13 @@ function commentThreadStateLabel(thread: ResumeCommentThread): string {
   return formatToken(thread.state.replaceAll("_", " "));
 }
 
+function commentThreadTone(thread: ResumeCommentThread): StatusLabelTone {
+  if (/resolved|accepted|closed/.test(thread.state)) return "ok";
+  if (/blocked|rejected|failed/.test(thread.state)) return "danger";
+  if (/review|rewrite|open/.test(thread.state)) return "warn";
+  return "info";
+}
+
 function ResumeCommentReplyForm({
   disabled,
   thread,
@@ -1722,10 +1732,10 @@ function ResumeCommentThreadPanel({
       {threads.map((thread) => (
         <article className={`resume-comment-thread ${thread.state}`} key={thread.threadId}>
           <div className="resume-comment-thread-meta">
-            <span className="tag info">{commentThreadStateLabel(thread)}</span>
-            {thread.riskLabel ? <span className="tag warn">{thread.riskLabel}</span> : null}
+            <StatusLabel tone={commentThreadTone(thread)}>{commentThreadStateLabel(thread)}</StatusLabel>
+            {thread.riskLabel ? <StatusLabel tone="warn">{thread.riskLabel}</StatusLabel> : null}
             {thread.lineAnchor?.lineNumber ? <span className="mono">line {thread.lineAnchor.lineNumber}</span> : null}
-            {!thread.anchorResolved ? <span className="tag warn">anchor unresolved</span> : null}
+            {!thread.anchorResolved ? <StatusLabel tone="warn">anchor unresolved</StatusLabel> : null}
           </div>
           <p>{thread.commentBody}</p>
           <div className="resume-comment-thread-source">
@@ -3281,7 +3291,7 @@ function SelectedPinInspector({
           <span className="eyebrow">{formatToken(pin.section)}</span>
           <h4>{pin.title}</h4>
         </div>
-        <span className={`tag ${tone}`}>{pinStatus(pin, risk)}</span>
+        <StatusLabel tone={tone}>{pinStatus(pin, risk)}</StatusLabel>
       </header>
       <LineJustification pin={pin} />
       <details className="resume-pin-source-check">

@@ -12,6 +12,10 @@ import { AdaptiveFieldGrid } from "../../../shared/ui/adaptive-field-grid.js";
 import { Button } from "../../../shared/ui/button.js";
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { SelectField } from "../../../shared/ui/select-field.js";
+import {
+  StatusLabel,
+  type StatusLabelTone,
+} from "../../../shared/ui/status-label.js";
 import { useProviderModelsQuery } from "../hooks/useProviderModelsQuery.js";
 import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
 import { useUpdateSettingsMutation } from "../hooks/useUpdateSettingsMutation.js";
@@ -177,6 +181,15 @@ function ProviderModelPreference({
         : catalog?.configured
           ? "Needs attention"
           : "Configure first";
+  const statusTone: StatusLabelTone = isDemo
+    ? "neutral"
+    : catalogPending
+      ? "info"
+      : catalog?.ready && models.length > 0
+        ? "ok"
+        : catalog?.ready || catalog?.configured
+          ? "warn"
+          : "muted";
   const savedChoiceLabel = settingsReady
     ? savedModel || "Provider default"
     : settingsPending
@@ -229,11 +242,16 @@ function ProviderModelPreference({
         className="provider-preference-disclosure"
         title={providerCopy.title}
         description={providerCopy.description}
-        collapsedSummary={`Status: ${statusLabel} · Saved: ${savedChoiceLabel}`}
+        collapsedSummary={(
+          <span className="provider-disclosure__summary">
+            <StatusLabel tone={statusTone}>Status: {statusLabel}</StatusLabel>
+            <span>Saved: {savedChoiceLabel}</span>
+          </span>
+        )}
       >
         <div className="provider-preference-content grid gap-4">
           <div className="provider-preference-status grid gap-1 text-[12px] leading-5 text-muted-foreground">
-            <p className="m-0">Status: {statusLabel}</p>
+            <StatusLabel tone={statusTone}>Status: {statusLabel}</StatusLabel>
             <p className="m-0">Saved choice: {savedChoiceLabel}</p>
             <p className="m-0">Live availability from the authenticated provider runtime.</p>
             {catalog?.message ? <p className="m-0">{catalog.message}</p> : null}

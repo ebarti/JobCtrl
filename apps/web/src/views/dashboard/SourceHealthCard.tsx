@@ -48,7 +48,9 @@ export function SourceHealthCard({ summary }: SourceHealthCardProps) {
                 />
               </span>
               {source.consecutiveFailures ? (
-                <span className="tag danger">{source.consecutiveFailures} fails</span>
+                <span className="dashboard-signal dashboard-signal--danger">
+                  {source.consecutiveFailures} fails
+                </span>
               ) : null}
             </div>
           ))

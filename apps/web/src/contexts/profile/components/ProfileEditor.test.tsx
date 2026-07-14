@@ -44,8 +44,7 @@ describe("<ProfileEditor>", () => {
       withRouter: true,
     });
 
-    expect(await screen.findByRole("heading", { name: "Resume data" })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Resume preview" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Baseline resume" })).toBeInTheDocument();
     expect(await screen.findByText("Baseline resume editor")).toBeInTheDocument();
     expect(await screen.findByText("Plate HTML/CSS editor")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Bold" })).toBeInTheDocument();

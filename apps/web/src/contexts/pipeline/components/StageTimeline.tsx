@@ -1,7 +1,6 @@
 import type { JSX } from "react";
 import type { StageSummary } from "@jobctrl/contracts";
 
-import { StatusDot } from "../../../shared/ui/status-dot.js";
 import { TailorJobButton } from "../../materials/components/RetailorCurrentPolicyButton.js";
 import { StageBadge } from "./StageBadge.js";
 
@@ -12,16 +11,15 @@ export interface StageTimelineProps {
 
 export function StageTimeline({ stages, jobId }: StageTimelineProps): JSX.Element {
   return (
-    <ol className="timeline">
+    <ol className="timeline editorial-timeline">
       {stages.map((stage) => {
         const diagnostics = stageDiagnostics(stage);
         return (
           <li key={stage.stage} className="timeline-row">
-            <span className="timeline-row-head">
-              <StatusDot state={stage.state} />
+            <div className="timeline-row-summary">
               <StageBadge stage={stage.stage} />
-            </span>
-            <StageBadge state={stage.state} />
+              <StageBadge state={stage.state} />
+            </div>
             {diagnostics.length ? (
               <dl className="timeline-diagnostics" aria-label={`${stage.stage} diagnostics`}>
                 {diagnostics.map(([label, value]) => (

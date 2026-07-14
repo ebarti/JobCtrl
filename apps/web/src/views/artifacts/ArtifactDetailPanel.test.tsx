@@ -180,6 +180,7 @@ describe("<ArtifactDetailPanel>", () => {
   });
 
   it("renders tailoring rationale from artifact detail evidence", async () => {
+    const user = userEvent.setup();
     renderArtifactRoute(<ArtifactDetailPanel artifactId="artifact-preview" />, "approved", {
       targetSeniority: "senior",
       claimMode: "evidence_reframing",
@@ -336,6 +337,7 @@ describe("<ArtifactDetailPanel>", () => {
       },
     });
 
+    await user.click(await screen.findByRole("tab", { name: "Audit" }));
     expect(await screen.findByText("Tailoring rationale")).toBeInTheDocument();
     expect(screen.getByText("Senior")).toBeInTheDocument();
     expect(screen.getByText("Evidence Reframing")).toBeInTheDocument();
@@ -385,6 +387,7 @@ describe("<ArtifactDetailPanel>", () => {
   });
 
   it("does not show missing resume keyword matches when coverage was not recorded", async () => {
+    const user = userEvent.setup();
     renderArtifactRoute(<ArtifactDetailPanel artifactId="artifact-preview" />, "approved", {
       targetSeniority: null,
       claimMode: null,
@@ -464,6 +467,7 @@ describe("<ArtifactDetailPanel>", () => {
       },
     });
 
+    await user.click(await screen.findByRole("tab", { name: "Audit" }));
     expect(await screen.findByText("Resume match audit")).toBeInTheDocument();
     expect(screen.getByText("not recorded for this artifact")).toBeInTheDocument();
     expect(screen.getByText("Target job keywords")).toBeInTheDocument();
@@ -491,6 +495,7 @@ describe("<ArtifactDetailPanel>", () => {
       ],
     );
 
+    await user.click(await screen.findByRole("tab", { name: "Compare" }));
     expect(await screen.findByText("Artifact comparison")).toBeInTheDocument();
     const comparisonPicker = await screen.findByRole("combobox", { name: "Compare with" });
     expect(comparisonPicker).toHaveTextContent(/candidate/i);

@@ -4,10 +4,10 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ArtifactComparison } from "../../contexts/materials/components/ArtifactComparison.js";
+import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
 import { useOpenArtifactMutation } from "../../contexts/materials/hooks/useOpenArtifactMutation.js";
 import { TailoringExplanationSection } from "../../contexts/materials/components/TailoringExplanationSection.js";
 import { artifactStatusDescription } from "../../contexts/materials/lib/artifact-status-copy.js";
-import { artifactStatusTone } from "../../contexts/materials/lib/artifact-status-tone.js";
 import { useArtifactDetailQuery } from "../../contexts/operations/hooks/useArtifactDetailQuery.js";
 import { useArtifactsListQuery } from "../../contexts/operations/hooks/useArtifactsListQuery.js";
 import type { ArtifactsListInput } from "../../contexts/operations/types.js";
@@ -19,16 +19,24 @@ import { PdfPreviewViewer } from "../../shared/ui/PdfPreviewViewer.js";
 import { RouteWorkspace } from "../../shared/ui/route-workspace.js";
 import { SelectField } from "../../shared/ui/select-field.js";
 import { Section } from "../../shared/ui/section.js";
+import { SectionTabs, SectionTabsList } from "../../shared/ui/section-tabs.js";
+import { TabsContent, TabsTrigger } from "../../shared/ui/tabs.js";
 
 export interface ArtifactDetailPanelProps {
   artifactId: string;
 }
 
 function isPreviewablePdfArtifact(type: string, localPath: string): boolean {
-  return type.toLowerCase().endsWith("_pdf") || localPath.toLowerCase().endsWith(".pdf");
+  return (
+    type.toLowerCase().endsWith("_pdf") ||
+    localPath.toLowerCase().endsWith(".pdf")
+  );
 }
 
-function artifactPreviewCacheKey(createdAt: string | null, sizeBytes: number | null): string {
+function artifactPreviewCacheKey(
+  createdAt: string | null,
+  sizeBytes: number | null,
+): string {
   return `${createdAt ?? "unknown"}:${sizeBytes ?? "unknown"}`;
 }
 
@@ -36,7 +44,9 @@ function isSuppressed(status: string): boolean {
   return status.toLowerCase() === "suppressed";
 }
 
-function artifactComparisonListInput(type: string | null | undefined): ArtifactsListInput {
+function artifactComparisonListInput(
+  type: string | null | undefined,
+): ArtifactsListInput {
   const input: ArtifactsListInput = {
     pageSize: 200,
     sort: "created_at",
@@ -78,14 +88,20 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
     void navigate({ to: "/artifacts", search });
   }, [navigate, search]);
 
-  const { data: detail, error: queryError } = useArtifactDetailQuery(artifactId);
+  const { data: detail, error: queryError } =
+    useArtifactDetailQuery(artifactId);
   const comparisonListInput = useMemo(
     () => artifactComparisonListInput(detail?.artifact.type),
     [detail?.artifact.type],
   );
-  const comparisonList = useArtifactsListQuery(comparisonListInput, { enabled: Boolean(detail) });
+  const comparisonList = useArtifactsListQuery(comparisonListInput, {
+    enabled: Boolean(detail),
+  });
   const comparisonCandidates = useMemo(
-    () => (detail ? comparableArtifacts(detail.artifact, comparisonList.data?.items ?? []) : []),
+    () =>
+      detail
+        ? comparableArtifacts(detail.artifact, comparisonList.data?.items ?? [])
+        : [],
     [comparisonList.data?.items, detail],
   );
   const [comparisonArtifactId, setComparisonArtifactId] = useState<string>("");
@@ -93,111 +109,209 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
   const errorMessage =
     queryError instanceof Error
       ? queryError.message
-      : openArtifact.error?.message ?? "";
+      : (openArtifact.error?.message ?? "");
+  const hasPdfPreview = detail
+    ? isPreviewablePdfArtifact(
+        detail.artifact.type,
+        detail.artifact.localPath,
+      )
+    : false;
+  const stateTitle = errorMessage || "Loading artifact.";
 
   useEffect(() => {
     setComparisonArtifactId((current) =>
       comparisonCandidates.some((candidate) => candidate.artifactId === current)
         ? current
-        : comparisonCandidates[0]?.artifactId ?? "",
+        : (comparisonCandidates[0]?.artifactId ?? ""),
     );
   }, [artifactId, comparisonCandidates]);
 
   return (
-    <div className="route-page route-page--artifact-detail" aria-label="Artifact details">
-      {errorMessage && !detail ? <Empty title={errorMessage} /> : null}
-      {!detail && !errorMessage ? <Empty title="Loading artifact." /> : null}
+    <div
+      className="route-page route-page--artifact-detail"
+      aria-label="Artifact details"
+    >
+      {!detail ? (
+        <section className="detail-route-state" aria-label="Artifact state">
+          <Button
+            aria-label="Back to artifacts"
+            className="workspace-back"
+            size="sm"
+            type="button"
+            variant="ghost"
+            onClick={close}
+          >
+            <IconArrowLeft aria-hidden="true" size={16} stroke={1.9} />
+            Artifacts
+          </Button>
+          <Empty title={stateTitle} />
+        </section>
+      ) : null}
       {detail ? (
-        <RouteWorkspace
-          aria-label="Artifact details"
-          className="artifact-detail-workspace"
-          contentLabel="Artifact preview"
-          inspectorLabel="Artifact audit and comparison"
-          header={
-            <div className="artifact-detail-workspace__header">
-              <Button
-                aria-label="Back to artifacts"
-                className="workspace-back"
-                size="sm"
-                type="button"
-                variant="ghost"
-                onClick={close}
-              >
-                <IconArrowLeft aria-hidden="true" size={16} stroke={1.9} />
-                Artifacts
-              </Button>
-              <span
-                className={`tag ${artifactStatusTone(detail.artifact.status)}`}
-                title={artifactStatusDescription(detail.artifact.status)}
-              >
-                {detail.artifact.status}
-              </span>
-              <div className="artifact-detail-workspace__title">
-                <small>{detail.artifact.company}</small>
-                <h1>{detail.artifact.title || detail.artifact.type}</h1>
-                <p>
-                  {detail.artifact.type} · created {formatDateTime(detail.artifact.createdAt)}
-                </p>
-              </div>
-              <div className="artifact-detail-workspace__actions">
+        <SectionTabs className="artifact-detail-tabs" defaultValue="preview">
+          <RouteWorkspace
+            aria-label="Artifact details"
+            className="artifact-detail-workspace"
+            contentLabel="Artifact workspace panels"
+            inspectorLabel="Artifact details"
+            tabs={
+              <nav aria-label="Artifact detail panels">
+                <SectionTabsList>
+                  <TabsTrigger value="preview">Preview</TabsTrigger>
+                  <TabsTrigger value="audit">Audit</TabsTrigger>
+                  <TabsTrigger value="compare">Compare</TabsTrigger>
+                </SectionTabsList>
+              </nav>
+            }
+            header={
+              <div className="artifact-detail-workspace__header">
                 <Button
+                  aria-label="Back to artifacts"
+                  className="workspace-back"
                   size="sm"
                   type="button"
-                  disabled={openArtifact.isPending || detail.artifact.status === "missing"}
-                  onClick={() => openArtifact.mutate({ artifactId: detail.artifact.artifactId })}
+                  variant="ghost"
+                  onClick={close}
                 >
-                  {openArtifact.isPending ? "opening" : isDemo ? "preview in browser" : "open"}
+                  <IconArrowLeft aria-hidden="true" size={16} stroke={1.9} />
+                  Artifacts
                 </Button>
-                <Button
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                  disabled={!detail.artifact.jobKey}
-                  onClick={() =>
-                    void navigate({
-                      to: "/jobs/$jobId",
-                      params: { jobId: detail.artifact.jobKey },
-                    })
-                  }
-                >
-                  open related job
-                </Button>
+                <span className="artifact-detail-workspace__status">
+                  <ArtifactStatusBadge status={detail.artifact.status} />
+                </span>
+                <div className="artifact-detail-workspace__title">
+                  <small>{detail.artifact.company}</small>
+                  <h1>{detail.artifact.title || detail.artifact.type}</h1>
+                  <p>
+                    {detail.artifact.type} · created{" "}
+                    {formatDateTime(detail.artifact.createdAt)}
+                  </p>
+                </div>
+                <div className="artifact-detail-workspace__actions">
+                  <Button
+                    size="sm"
+                    type="button"
+                    disabled={
+                      openArtifact.isPending ||
+                      detail.artifact.status === "missing"
+                    }
+                    onClick={() =>
+                      openArtifact.mutate({
+                        artifactId: detail.artifact.artifactId,
+                      })
+                    }
+                  >
+                    {openArtifact.isPending
+                      ? "opening"
+                      : isDemo
+                        ? "preview in browser"
+                        : "open"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                    disabled={!detail.artifact.jobKey}
+                    onClick={() =>
+                      void navigate({
+                        to: "/jobs/$jobId",
+                        params: { jobId: detail.artifact.jobKey },
+                      })
+                    }
+                  >
+                    open related job
+                  </Button>
+                </div>
               </div>
-            </div>
-          }
-          inspector={
-            <div className="artifact-detail-workspace__inspector">
-              <Section title="Artifact details">
-                {isSuppressed(detail.artifact.status) ? (
-                  <div className="banner inline">
-                    This artifact is historical audit material and is not active apply-ready
-                    material.
-                  </div>
-                ) : null}
-                <dl className="detail-list">
-                  <div>
-                    <dt>Status</dt>
-                    <dd>{artifactStatusDescription(detail.artifact.status)}</dd>
-                  </div>
-                  <div>
-                    <dt>Artifact id</dt>
-                    <dd className="mono">{detail.artifact.artifactId}</dd>
-                  </div>
-                  <div>
-                    <dt>Job</dt>
-                    <dd>{detail.artifact.jobKey || "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Local path</dt>
-                    <dd className="mono">{detail.artifact.localPath || "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Size</dt>
-                    <dd>{detail.artifact.size}</dd>
-                  </div>
-                </dl>
-              </Section>
-              <TailoringExplanationSection explanation={detail.tailoringExplanation} />
+            }
+            inspector={
+              <div className="artifact-detail-workspace__inspector">
+                <Section title="Artifact details">
+                  {isSuppressed(detail.artifact.status) ? (
+                    <div className="banner inline">
+                      This artifact is historical audit material and is not active
+                      apply-ready material.
+                    </div>
+                  ) : null}
+                  <dl className="detail-list">
+                    <div>
+                      <dt>Status</dt>
+                      <dd>{artifactStatusDescription(detail.artifact.status)}</dd>
+                    </div>
+                    <div>
+                      <dt>Artifact id</dt>
+                      <dd className="mono">{detail.artifact.artifactId}</dd>
+                    </div>
+                    <div>
+                      <dt>Job</dt>
+                      <dd>{detail.artifact.jobKey || "-"}</dd>
+                    </div>
+                    <div>
+                      <dt>Local path</dt>
+                      <dd className="mono">{detail.artifact.localPath || "-"}</dd>
+                    </div>
+                    <div>
+                      <dt>Size</dt>
+                      <dd>{detail.artifact.size}</dd>
+                    </div>
+                  </dl>
+                </Section>
+              </div>
+            }
+          >
+            {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
+            <TabsContent
+              className={
+                hasPdfPreview
+                  ? "artifact-detail-workspace__panel artifact-detail-workspace__panel--preview"
+                  : "artifact-detail-workspace__panel"
+              }
+              forceMount
+              value="preview"
+            >
+              {hasPdfPreview ? (
+                <section
+                  className="artifact-preview-panel"
+                  aria-label="Artifact PDF preview"
+                >
+                  <PdfPreviewViewer
+                    cacheKey={artifactPreviewCacheKey(
+                      detail.artifact.createdAt,
+                      detail.artifact.sizeBytes,
+                    )}
+                    loadingMessage="The artifact PDF is loading into the in-app preview."
+                    loadingTitle="Rendering artifact PDF."
+                    openLabel="open PDF"
+                    pageAltPrefix={detail.artifact.title || detail.artifact.type}
+                    title="Artifact preview"
+                    url={api.artifactPreviewPdfUrl(
+                      detail.artifact.artifactId,
+                      artifactPreviewCacheKey(
+                        detail.artifact.createdAt,
+                        detail.artifact.sizeBytes,
+                      ),
+                    )}
+                  />
+                </section>
+              ) : (
+                <Empty title="This artifact type does not have an in-app PDF preview." />
+              )}
+            </TabsContent>
+            <TabsContent
+              className="artifact-detail-workspace__panel"
+              forceMount
+              value="audit"
+            >
+              <TailoringExplanationSection
+                className="section artifact-detail-workspace__audit"
+                explanation={detail.tailoringExplanation}
+              />
+            </TabsContent>
+            <TabsContent
+              className="artifact-detail-workspace__panel"
+              forceMount
+              value="compare"
+            >
               <Section title="Artifact comparison">
                 {comparisonList.isFetching && !comparisonList.data ? (
                   <p className="meta">Loading comparable artifacts.</p>
@@ -226,32 +340,9 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                   <Empty title="No other artifact for this job and type was found in the current artifact list." />
                 )}
               </Section>
-            </div>
-          }
-        >
-          {isPreviewablePdfArtifact(detail.artifact.type, detail.artifact.localPath) ? (
-            <section className="artifact-preview-panel" aria-label="Artifact PDF preview">
-              <PdfPreviewViewer
-                cacheKey={artifactPreviewCacheKey(
-                  detail.artifact.createdAt,
-                  detail.artifact.sizeBytes,
-                )}
-                loadingMessage="The artifact PDF is loading into the in-app preview."
-                loadingTitle="Rendering artifact PDF."
-                openLabel="open PDF"
-                pageAltPrefix={detail.artifact.title || detail.artifact.type}
-                title="Artifact preview"
-                url={api.artifactPreviewPdfUrl(
-                  detail.artifact.artifactId,
-                  artifactPreviewCacheKey(detail.artifact.createdAt, detail.artifact.sizeBytes),
-                )}
-              />
-            </section>
-          ) : (
-            <Empty title="This artifact type does not have an in-app PDF preview." />
-          )}
-          {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
-        </RouteWorkspace>
+            </TabsContent>
+          </RouteWorkspace>
+        </SectionTabs>
       ) : null}
     </div>
   );

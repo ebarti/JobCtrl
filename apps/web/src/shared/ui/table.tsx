@@ -42,7 +42,7 @@ export const TableRow = forwardRef<HTMLTableRowElement, HTMLAttributes<HTMLTable
     <tr
       ref={ref}
       className={cn(
-        "border-b border-border transition-colors hover:bg-[color-mix(in_oklch,var(--primary)_4%,var(--card))] data-[state=selected]:bg-[color-mix(in_oklch,var(--primary)_8%,var(--card))]",
+        "border-b border-border transition-colors hover:bg-[color-mix(in_oklch,var(--foreground)_3.5%,var(--card))] data-[state=selected]:bg-transparent data-[state=selected]:shadow-[inset_2px_0_0_var(--primary)]",
         className,
       )}
       {...props}

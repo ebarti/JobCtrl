@@ -9,6 +9,7 @@ import type {
 } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
+import { StatusLabel } from "../../../shared/ui/status-label.js";
 import { formatToken, scorePercent, weightPercent } from "../lib/audit-format.js";
 
 export interface EmployerAnalysisPanelProps {
@@ -250,21 +251,23 @@ function RequirementItem({
   return (
     <article className="employer-analysis-requirement" aria-label={`Requirement: ${requirement.text}`}>
       <div className="employer-analysis-requirement-side">
-        <header>
-          <span className={`tag ${tier}`}>{formatToken(requirement.tier)}</span>
+        <header className="audit-record-head">
+          <span className={`audit-kicker audit-kicker--${tier}`}>
+            {formatToken(requirement.tier)}
+          </span>
           <span
-            className="tag muted"
+            className="audit-inline-meta"
             title="Relative priority from job-post analysis, not a match score"
           >
             importance {weightPercent(requirement.weight)}
           </span>
           {flagged ? (
-            <span
-              className="tag warn"
+            <StatusLabel
+              tone="warn"
               title="The ensemble agreement marked this requirement as non-unanimous across model legs."
             >
               ensemble divergence
-            </span>
+            </StatusLabel>
           ) : null}
         </header>
         <p className="employer-analysis-requirement-text">{requirement.text}</p>
@@ -277,21 +280,24 @@ function RequirementItem({
       <div className="employer-analysis-match-side">
         <header>
           <span>Requirement fit</span>
-          <span className={`tag ${assessment.tone}`} title={assessment.title}>
+          <StatusLabel tone={assessment.tone} title={assessment.title}>
             {assessment.label}
-          </span>
+          </StatusLabel>
         </header>
         <p className="employer-analysis-rationale">{assessment.explanation}</p>
         {assessment.rows.map((row) => (
           <div className="employer-analysis-signal-row" key={`${requirement.id}:${row.label}`}>
             <span>{row.label}</span>
-            <span>
+            <ul className="audit-value-list">
               {row.values.map((value) => (
-                <span className={`tag ${row.tone ?? assessment.tone}`} key={`${row.label}:${value}`}>
+                <li
+                  className={`audit-value audit-value--${row.tone ?? assessment.tone}`}
+                  key={`${row.label}:${value}`}
+                >
                   {value}
-                </span>
+                </li>
               ))}
-            </span>
+            </ul>
           </div>
         ))}
       </div>
@@ -305,14 +311,14 @@ function KeywordItem({ keyword }: { readonly keyword: EmployerAnalysisKeyword })
       <header>
         <b>{keyword.keyword}</b>
         {keyword.requirement_ref ? (
-          <span className="tag muted" title="Serves requirement">
+          <span className="audit-inline-meta" title="Serves requirement">
             {keyword.requirement_ref}
           </span>
         ) : null}
         {keyword.is_orphan ? (
-          <span className="tag warn" title="Not tied to a specific requirement">
+          <StatusLabel tone="warn" title="Not tied to a specific requirement">
             orphan
-          </span>
+          </StatusLabel>
         ) : null}
       </header>
       {keyword.evidence_span ? (
@@ -343,7 +349,7 @@ function SubAnalysisDetails({
           <article className="employer-analysis-sub" key={sub.model_id}>
             <header>
               <b>{sub.model_id}</b>
-              <span className="tag muted">{formatToken(sub.inferred_seniority)}</span>
+              <span className="audit-inline-meta">{formatToken(sub.inferred_seniority)}</span>
             </header>
             {sub.role_framing ? <p>{sub.role_framing}</p> : null}
             <span className="muted">
@@ -412,11 +418,16 @@ export function EmployerAnalysisPanel({
             <dt>Ensemble</dt>
             <dd>
               {analysis.is_degraded ? (
-                <span className="tag warn" title={`${analysis.legs_succeeded}/${analysis.legs_attempted} models succeeded`}>
+                <StatusLabel
+                  tone="warn"
+                  title={`${analysis.legs_succeeded}/${analysis.legs_attempted} models succeeded`}
+                >
                   degraded ({analysis.legs_succeeded}/{analysis.legs_attempted})
-                </span>
+                </StatusLabel>
               ) : (
-                <span className="tag ok">{formatToken(analysis.ensemble_completeness) || "complete"}</span>
+                <StatusLabel tone="ok">
+                  {formatToken(analysis.ensemble_completeness) || "complete"}
+                </StatusLabel>
               )}
             </dd>
           </div>

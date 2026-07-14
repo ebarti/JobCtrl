@@ -1015,8 +1015,7 @@ export function StructuredProfileEditor({
   );
 
   const targetSearchSection = () => (
-    <section className="form-section">
-      <h3>Target search</h3>
+    <section className="form-section" aria-label="Target search fields">
       <div className="target-preferences-grid">
         {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS)}
         {targetSearchCheckboxGroup(

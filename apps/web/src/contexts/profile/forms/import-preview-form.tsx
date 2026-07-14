@@ -94,6 +94,7 @@ export function ImportPreviewForm() {
             <ChoiceControl
               name="importProfile"
               label="Profile data"
+              description="Personal details, experience, education, skills, and profile evidence."
               checked={field.state.value}
               onBlur={field.handleBlur}
               onCheckedChange={(checked) => field.handleChange(checked === true)}
@@ -105,6 +106,7 @@ export function ImportPreviewForm() {
             <ChoiceControl
               name="importStyle"
               label="Style data"
+              description="Type scale, spacing, section order, and emphasis from the source resume."
               checked={field.state.value}
               onBlur={field.handleBlur}
               onCheckedChange={(checked) => field.handleChange(checked === true)}
@@ -125,7 +127,7 @@ export function ImportPreviewForm() {
         selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}
       >
         {({ canSubmit, isSubmitting }) => (
-          <div className="form-actions resume-import-actions justify-end">
+          <div className="form-actions resume-import-actions">
             <Button asChild variant="outline">
               <Link to="/profile/import/upload">Back</Link>
             </Button>

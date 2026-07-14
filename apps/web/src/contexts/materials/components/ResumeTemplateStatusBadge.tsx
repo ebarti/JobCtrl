@@ -1,6 +1,8 @@
 import type { ResumeTemplateState, ResumeTemplateStaleState } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
+import { StatusLabel } from "../../../shared/ui/status-label.js";
+
 export interface ResumeTemplateStatusBadgeProps {
   readonly state?: ResumeTemplateState | null | undefined;
 }
@@ -16,9 +18,9 @@ const STATUS_LABELS: Record<ResumeTemplateStaleState, string> = {
 export function ResumeTemplateStatusBadge({ state }: ResumeTemplateStatusBadgeProps): JSX.Element | null {
   if (!state) return null;
   return (
-    <span className={`tag ${toneForState(state.state)}`} title={templateTitle(state)}>
+    <StatusLabel title={templateTitle(state)} tone={toneForState(state.state)}>
       {STATUS_LABELS[state.state]}
-    </span>
+    </StatusLabel>
   );
 }
 

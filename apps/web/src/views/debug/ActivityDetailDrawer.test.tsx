@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { renderWithProviders } from "../../test/render.js";
@@ -6,6 +7,7 @@ import { ActivityDetailDrawer } from "./ActivityDetailDrawer.js";
 
 describe("<ActivityDetailDrawer>", () => {
   it("renders the selected event as a route workspace without losing activity facts", async () => {
+    const user = userEvent.setup();
     renderWithProviders(<ActivityDetailDrawer eventId="evt-1" />, {
       withRouter: true,
     });
@@ -40,6 +42,7 @@ describe("<ActivityDetailDrawer>", () => {
     expect(payload).toHaveTextContent('"eventId": "evt-1"');
     expect(payload).toHaveTextContent('"message": "Job scored 8/10"');
 
+    await user.click(screen.getByRole("tab", { name: "Timeline" }));
     const timeline = screen.getByRole("region", { name: "Activity event timeline" });
     expect(within(timeline).getByText("JobScored")).toBeInTheDocument();
     expect(within(timeline).getByText("Job scored 8/10")).toBeInTheDocument();

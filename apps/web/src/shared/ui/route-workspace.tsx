@@ -4,6 +4,7 @@ import { cn } from "../lib/cn.js";
 
 export interface RouteWorkspaceProps extends HTMLAttributes<HTMLElement> {
   readonly header?: ReactNode;
+  readonly tabs?: ReactNode;
   readonly navigation?: ReactNode;
   readonly inspector?: ReactNode;
   readonly children: ReactNode;
@@ -14,6 +15,7 @@ export interface RouteWorkspaceProps extends HTMLAttributes<HTMLElement> {
 
 export function RouteWorkspace({
   header,
+  tabs,
   navigation,
   inspector,
   children,
@@ -26,6 +28,7 @@ export function RouteWorkspace({
   return (
     <article className={cn("route-workspace", className)} {...props}>
       {header ? <header className="route-workspace__header">{header}</header> : null}
+      {tabs ? <div className="route-workspace__tabs">{tabs}</div> : null}
       <div
         className="route-workspace__grid"
         data-has-inspector={Boolean(inspector)}

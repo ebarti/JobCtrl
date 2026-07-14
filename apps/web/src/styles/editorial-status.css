@@ -1,0 +1,143 @@
+/*
+ * Editorial status language
+ *
+ * Statuses read as evidence in a ledger: a small semantic dot followed by
+ * direct language. The retained tone classes remain a stable hook for callers
+ * while this layer intentionally removes the legacy rounded-tag treatment.
+ */
+
+.editorial-status {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 0;
+  gap: 0.375rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.editorial-status .status-dot {
+  flex: 0 0 auto;
+  inline-size: 0.4375rem;
+  block-size: 0.4375rem;
+  border: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.editorial-status.ok {
+  color: var(--success);
+}
+
+.editorial-status.warn {
+  color: var(--warning);
+}
+
+.editorial-status.danger {
+  color: var(--destructive);
+}
+
+.editorial-status.info {
+  color: var(--status-info);
+}
+
+.editorial-status.muted,
+.editorial-status.neutral {
+  color: var(--muted-foreground);
+}
+
+.stage-label {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.stage-label.neutral {
+  color: var(--muted-foreground);
+}
+
+.stage-label.info {
+  color: var(--status-info);
+}
+
+.stage-label.ok {
+  color: var(--success);
+}
+
+.editorial-timeline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+  list-style: none;
+}
+
+.editorial-timeline > .timeline-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.5rem;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.75rem 0;
+}
+
+.editorial-timeline .timeline-row-summary {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.375rem 1rem;
+}
+
+.editorial-timeline .timeline-diagnostics {
+  width: auto;
+  gap: 0.25rem;
+  padding-inline-start: 0.875rem;
+}
+
+.editorial-timeline .timeline-diagnostics div {
+  grid-template-columns: minmax(4.5rem, max-content) minmax(0, 1fr);
+}
+
+.editorial-timeline .timeline-action {
+  width: fit-content;
+}
+
+.apply-run-timeline-list {
+  gap: 0;
+  border-top: 1px solid var(--border);
+}
+
+.apply-run-timeline-event {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+@media (forced-colors: active) {
+  .editorial-status .status-dot {
+    border: 1px solid currentColor;
+  }
+}

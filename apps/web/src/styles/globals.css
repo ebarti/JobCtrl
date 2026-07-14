@@ -78,24 +78,26 @@ code,
   gap: 6px 12px;
   margin: 12px 16px 0;
   padding: 10px 12px;
-  border: 1px solid var(--warning);
-  border-radius: calc(var(--radius) * 0.8);
-  background: color-mix(in oklch, var(--warning) 10%, var(--card));
+  border: 1px solid var(--border);
+  border-inline-start: 2px solid var(--warning);
+  border-radius: 0.125rem;
+  background: var(--surface-subtle);
   color: var(--foreground);
   font-size: 12px;
   line-height: 1.45;
 }
 
 .demo-workspace-notice strong {
-  color: var(--warning-foreground);
+  color: var(--warning);
 }
 
 .demo-receipt-history {
   margin: 8px 16px 0;
   padding: 8px 12px;
   border: 1px solid var(--border);
-  border-radius: calc(var(--radius) * 0.8);
-  background: var(--card);
+  border-inline-start: 2px solid var(--success);
+  border-radius: 0.125rem;
+  background: var(--surface-subtle);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -570,7 +572,7 @@ select,
 input,
 textarea {
   border: 1px solid var(--input);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
   color: var(--foreground);
   padding: 8px 10px;
@@ -597,7 +599,7 @@ input[type="radio"] {
   flex: 0 0 auto;
   margin: 0;
   padding: 0;
-  border-radius: 4px;
+  border-radius: var(--radius);
   box-shadow: none;
   accent-color: var(--primary);
 }
@@ -802,7 +804,7 @@ input[type="radio"] {
   min-width: 0;
   overflow: clip;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--card);
 }
 
@@ -828,7 +830,7 @@ input[type="radio"] {
   align-items: center;
   gap: 10px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: transparent;
   padding: 4px;
   color: var(--foreground);
@@ -955,7 +957,7 @@ input[type="radio"] {
   gap: 0;
   overflow: hidden;
   border: 1px solid var(--input);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--surface-subtle);
   padding: 2px;
 }
@@ -963,7 +965,7 @@ input[type="radio"] {
 .segmented-field [data-slot="toggle-group-item"] {
   min-width: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--muted-foreground);
   padding-inline: 10px;
@@ -1039,7 +1041,7 @@ input[type="radio"] {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--card);
 }
 
@@ -1110,7 +1112,7 @@ input[type="radio"] {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--card);
 }
 
@@ -1161,7 +1163,7 @@ input[type="radio"] {
   gap: 10px 14px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius);
   background: var(--card);
 }
 
@@ -2001,8 +2003,9 @@ input[type="radio"] {
 }
 
 .banner.credential-store-notice--guidance {
-  background: var(--status-info-muted);
-  color: var(--foreground);
+  border-inline-start-color: var(--status-info);
+  background: var(--surface-subtle);
+  color: var(--status-info);
 }
 
 .banner.credential-store-notice.credential-store-recovery {
@@ -2113,7 +2116,7 @@ input[type="radio"] {
   width: 100%;
   min-height: var(--jh-row-height);
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: transparent;
   padding: 8px 10px;
   text-align: left;
@@ -2516,7 +2519,7 @@ input[type="radio"] {
   min-width: 0;
   gap: 7px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
   color: inherit;
   cursor: pointer;
@@ -2664,7 +2667,7 @@ input[type="radio"] {
   min-height: min(54dvh, 640px);
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
 }
 
@@ -2707,7 +2710,7 @@ input[type="radio"] {
   max-height: 34dvh;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 12px;
   scrollbar-gutter: stable;
@@ -2722,7 +2725,7 @@ input[type="radio"] {
   height: min(66dvh, 720px);
   min-height: 520px;
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: var(--radius);
 }
 
 .apply-review-materials-scroll {
@@ -2883,7 +2886,7 @@ input[type="radio"] {
   min-width: 0;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: #242424;
 }
 
@@ -2922,7 +2925,7 @@ input[type="radio"] {
   display: inline-flex;
   overflow: hidden;
   border: 1px solid rgb(255 255 255 / 18%);
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: rgb(255 255 255 / 5%);
 }
 
@@ -2977,7 +2980,7 @@ input[type="radio"] {
 .resume-format-select input {
   min-block-size: 30px;
   border: 1px solid rgb(255 255 255 / 18%);
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: #242424;
   color: #f5f5f5;
   font: inherit;
@@ -2998,7 +3001,7 @@ input[type="radio"] {
   gap: 7px;
   padding: 8px;
   border: 1px solid rgb(255 255 255 / 18%);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: #242424;
   box-shadow: 0 12px 28px rgb(0 0 0 / 35%);
 }
@@ -3017,7 +3020,7 @@ input[type="radio"] {
   grid-column: 1 / -1;
   max-inline-size: 280px;
   border: 1px solid rgb(248 113 113 / 50%);
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: #301616;
   color: #fecaca;
   font-size: 11px;
@@ -3351,7 +3354,7 @@ input[type="radio"] {
   inline-size: 204px;
   gap: 4px;
   border: 1px solid #111;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: #fff;
   box-shadow: 0 8px 22px rgb(0 0 0 / 14%);
   color: #111;
@@ -3402,7 +3405,7 @@ input[type="radio"] {
 
 .resume-render-warnings span {
   border: 1px solid rgb(255 255 255 / 18%);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 4px 6px;
 }
 
@@ -3442,7 +3445,7 @@ input[type="radio"] {
   display: grid;
   gap: 8px;
   border: 1px solid rgb(255 255 255 / 16%);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 10px;
   background: rgb(255 255 255 / 5%);
 }
@@ -3482,7 +3485,7 @@ input[type="radio"] {
 .resume-comment-reply-form select {
   min-width: 0;
   border: 1px solid rgb(255 255 255 / 22%);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: #1f1f1f;
   color: #f5f5f5;
 }
@@ -3504,7 +3507,7 @@ input[type="radio"] {
   margin: 40px auto;
   padding: 18px;
   border: 1px solid color-mix(in oklab, var(--warning) 60%, var(--border));
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: #fff;
   color: #202124;
 }
@@ -3615,7 +3618,7 @@ input[type="radio"] {
 .resume-pin-risk {
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 10px;
 }
 
@@ -3660,7 +3663,7 @@ input[type="radio"] {
   gap: 6px;
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 10px;
 }
@@ -3792,7 +3795,7 @@ input[type="radio"] {
   gap: 8px;
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 10px;
 }
 
@@ -3863,7 +3866,7 @@ input[type="radio"] {
   gap: 8px;
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 5px 7px;
 }
@@ -3897,7 +3900,7 @@ input[type="radio"] {
   flex: 1 1 220px;
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: color-mix(in oklch, var(--muted) 62%, var(--card));
 }
 
@@ -4115,7 +4118,7 @@ input[type="radio"] {
 .outcome-correction-form {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 10px;
 }
@@ -4176,7 +4179,7 @@ input[type="radio"] {
   display: grid;
   gap: 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
   padding: 12px;
 }
@@ -4228,7 +4231,7 @@ input[type="radio"] {
 
 .discovery-tab-panel .discovery-control-panel {
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
 }
 
@@ -4271,7 +4274,7 @@ input[type="radio"] {
 .discovery-source-summary span {
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 7px 8px;
   color: var(--muted-foreground);
@@ -4348,7 +4351,7 @@ input[type="radio"] {
   width: 100%;
   min-width: 72px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: var(--card);
   padding: 5px 6px;
   color: var(--foreground);
@@ -4417,7 +4420,7 @@ input[type="radio"] {
   min-width: 28px;
   min-height: 28px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
   color: var(--foreground);
   font: inherit;
@@ -4454,7 +4457,7 @@ input[type="radio"] {
   max-width: 180px;
   min-height: 28px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
   color: var(--foreground);
   font: inherit;
@@ -4477,7 +4480,7 @@ input[type="radio"] {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
 }
 
 .saved-table-density button {
@@ -4516,7 +4519,7 @@ input[type="radio"] {
 .saved-table-rule-editor input {
   min-height: 30px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
   color: var(--foreground);
   font: inherit;
@@ -4547,7 +4550,7 @@ input[type="radio"] {
   align-items: center;
   gap: 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 4px 6px;
   color: var(--foreground);
   font-size: 12px;
@@ -4575,7 +4578,7 @@ input[type="radio"] {
   gap: 8px;
   min-height: 34px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 4px 6px;
 }
 
@@ -4652,7 +4655,7 @@ input[type="radio"] {
   gap: 8px;
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 10px;
 }
@@ -4716,7 +4719,7 @@ input[type="radio"] {
   max-height: 148px;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
   padding: 6px;
 }
@@ -4727,7 +4730,7 @@ input[type="radio"] {
   align-items: center;
   gap: 8px;
   min-height: 26px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   padding: 2px 4px;
   color: var(--foreground);
   font-size: 12px;
@@ -4935,7 +4938,7 @@ input[type="radio"] {
   width: 24px;
   height: 24px;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--muted-foreground);
   padding: 0;
@@ -4983,7 +4986,7 @@ input[type="radio"] {
   min-height: 24px;
   margin-left: 8px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--muted-foreground);
   font: inherit;
@@ -5105,7 +5108,7 @@ input[type="radio"] {
   width: fit-content;
   max-width: 100%;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius);
   padding: 2px 6px;
   font-size: 11px;
   font-weight: 650;
@@ -5287,7 +5290,7 @@ input[type="radio"] {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   padding: 1px 6px;
   font-size: 0.75rem;
   background: color-mix(in oklch, var(--muted-foreground) 12%, var(--muted));
@@ -5880,7 +5883,7 @@ input[type="radio"] {
   align-items: center;
   gap: 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 6px 8px;
   text-align: left;
@@ -5903,8 +5906,9 @@ input[type="radio"] {
 }
 
 .status-line.warning {
-  background: color-mix(in oklch, var(--warning) 12%, var(--card));
-  color: var(--warning-foreground);
+  border-inline-start: 2px solid var(--warning);
+  background: var(--surface-subtle);
+  color: var(--warning);
 }
 
 .empty,
@@ -5916,7 +5920,8 @@ input[type="radio"] {
 
 .banner {
   border-bottom: 1px solid var(--border);
-  background: color-mix(in oklch, var(--destructive) 10%, var(--card));
+  border-inline-start: 2px solid var(--destructive);
+  background: var(--surface-subtle);
   color: var(--destructive);
 }
 
@@ -5946,7 +5951,7 @@ input[type="radio"] {
   block-size: calc(100dvh - 32px);
   margin: 16px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
   scrollbar-gutter: stable;
 }
@@ -6091,7 +6096,7 @@ input[type="radio"] {
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 
 .interview-prep-item-head {
@@ -6287,7 +6292,7 @@ input[type="radio"] {
 .finding-list {
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 10px;
 }
 
@@ -6323,7 +6328,7 @@ input[type="radio"] {
 .tailoring-change {
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 10px;
 }
 
@@ -6370,7 +6375,7 @@ input[type="radio"] {
 .audit-response {
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 8px;
 }
 
@@ -6543,7 +6548,7 @@ input[type="radio"] {
 .employer-analysis-sub {
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 10px;
 }
 
@@ -6577,7 +6582,7 @@ input[type="radio"] {
   display: grid;
   gap: 8px;
   min-width: 0;
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: color-mix(in oklch, var(--muted) 42%, transparent);
   padding: 8px;
 }
@@ -6659,7 +6664,7 @@ input[type="radio"] {
 .bullet-provenance-diff-side {
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 8px;
 }
 
@@ -6727,7 +6732,7 @@ input[type="radio"] {
   flex-direction: column;
   gap: 3px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 8px;
 }
 
@@ -6752,7 +6757,7 @@ input[type="radio"] {
   gap: 8px;
   margin: 16px 28px;
   border: 1px solid rgba(199, 103, 69, 0.24);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: rgba(199, 103, 69, 0.1);
   padding: 12px;
 }
@@ -6764,7 +6769,7 @@ input[type="radio"] {
   align-items: center;
   margin: 16px 28px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 12px;
 }
@@ -6804,7 +6809,7 @@ input[type="radio"] {
   align-items: flex-start;
   gap: 6px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 10px;
 }
@@ -6981,7 +6986,7 @@ input[type="radio"] {
   min-width: 0;
   gap: 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 12px;
 }
 
@@ -7049,7 +7054,7 @@ input[type="radio"] {
 }
 
 .compensation-evidence-rows > summary b {
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: var(--muted);
   color: var(--foreground);
   padding: 1px 4px;
@@ -7069,7 +7074,7 @@ input[type="radio"] {
   gap: 6px;
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 8px;
 }
 
@@ -7141,7 +7146,7 @@ input[type="radio"] {
 .compensation-warning-list code {
   width: fit-content;
   max-width: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: var(--muted);
   color: var(--foreground);
   padding: 1px 4px;
@@ -7407,7 +7412,7 @@ input[type="radio"] {
 
 .description-text code {
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 0 4px;
   font-size: 0.92em;
@@ -7523,7 +7528,7 @@ input[type="radio"] {
   justify-content: space-between;
   gap: 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--popover);
   color: inherit;
   padding: 10px;
@@ -7618,7 +7623,7 @@ input[type="radio"] {
   display: grid;
   gap: 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--popover);
   padding: 10px;
 }
@@ -7649,7 +7654,7 @@ input[type="radio"] {
   gap: 14px;
   min-height: 116px;
   border: 1px dashed var(--input);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 14px;
 }
@@ -7682,7 +7687,7 @@ input[type="radio"] {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
   color: var(--muted-foreground);
   font-size: 11px;
@@ -7693,7 +7698,7 @@ input[type="radio"] {
   flex-direction: column;
   gap: 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 10px;
 }
 
@@ -7784,7 +7789,7 @@ input[type="radio"] {
   align-items: end;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: color-mix(in srgb, var(--muted) 72%, var(--card));
 }
 
@@ -7800,7 +7805,7 @@ input[type="radio"] {
 .form-section {
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--card);
 }
 
@@ -7825,7 +7830,7 @@ input[type="radio"] {
   flex-direction: column;
   gap: 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 10px;
 }
@@ -7881,7 +7886,7 @@ input[type="radio"] {
   flex-direction: column;
   gap: 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
   padding: 10px;
 }
@@ -7911,7 +7916,7 @@ input[type="radio"] {
 
 .advanced-policy-group {
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
   padding: 10px;
 }
@@ -7937,7 +7942,7 @@ input[type="radio"] {
   gap: 8px 10px;
   padding: 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
 }
 
@@ -8039,7 +8044,7 @@ input[type="radio"] {
   align-items: center;
   gap: 6px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 6px 9px;
   color: var(--muted-foreground);
@@ -8056,7 +8061,7 @@ input[type="radio"] {
   align-items: end;
   padding: 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
 }
 
@@ -8080,7 +8085,7 @@ input[type="radio"] {
   align-items: stretch;
   flex-wrap: wrap;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
   padding: 8px;
 }
@@ -8101,7 +8106,7 @@ input[type="radio"] {
   flex-direction: column;
   gap: 4px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 8px;
 }
@@ -8128,7 +8133,7 @@ input[type="radio"] {
   align-self: center;
   min-height: 32px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: var(--muted);
   padding: 8px 10px;
 }
@@ -8141,7 +8146,7 @@ input[type="radio"] {
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--muted-foreground);
 }
@@ -8188,7 +8193,7 @@ input[type="radio"] {
   top: 78px;
   align-self: start;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--card);
 }
 
@@ -8286,7 +8291,7 @@ input[type="radio"] {
 .pdf-audit-line-target {
   position: absolute;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: transparent;
   cursor: pointer;
   padding: 0;
@@ -9817,7 +9822,7 @@ input[type="radio"] {
   margin: 0;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--surface-subtle);
   padding: 12px;
   white-space: pre-wrap;

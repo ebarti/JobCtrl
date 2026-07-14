@@ -474,7 +474,11 @@ export function PipelinesView() {
   const message = operations.error instanceof Error ? operations.error.message : null;
   return (
     <div className="route-page route-page--pipelines">
-      <PageHead eyebrow="Pipeline" title="Pipelines" />
+      <PageHead
+        eyebrow="Pipeline"
+        title="Pipelines"
+        subtitle="Execution cohorts, stage backlogs, worker capacity, and completion estimates."
+      />
       {message ? <div className="banner" role="alert">Pipeline operations are unavailable: {message}</div> : null}
       {operations.data ? (
         <PipelineWorkspace snapshot={operations.data} />

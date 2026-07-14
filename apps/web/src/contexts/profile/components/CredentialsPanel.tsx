@@ -14,6 +14,10 @@ import {
   InspectorLedgerItem,
 } from "../../../shared/ui/inspector-ledger.js";
 import {
+  StatusLabel,
+  type StatusLabelTone,
+} from "../../../shared/ui/status-label.js";
+import {
   ClaudeProviderForm,
   GoogleProviderForm,
 } from "../forms/provider-setup-forms.js";
@@ -144,7 +148,14 @@ export function CredentialsPanel() {
         {store && capSolver ? (
           <DisclosureSection
             className="provider-disclosure provider-disclosure--capsolver"
-            collapsedSummary={`${credentialStatusLabel(capSolver)} · Optional · restart required`}
+            collapsedSummary={(
+              <span className="provider-disclosure__summary">
+                <StatusLabel tone={credentialStatusTone(capSolver)}>
+                  {credentialStatusLabel(capSolver)}
+                </StatusLabel>
+                <span>Optional · restart required</span>
+              </span>
+            )}
             defaultOpen={false}
             description="A CapSolver key only enables JobCtrl's owned solver tool during a user-started Apply. Unsupported or unconfigured CAPTCHA always fails closed."
             title="Apply CAPTCHA solver"
@@ -238,7 +249,7 @@ function ProviderDisclosure({
       className="provider-disclosure"
       collapsedSummary={(
         <span className="provider-disclosure__summary">
-          <span>{statusLabel}</span>
+          <StatusLabel tone={providerStatusTone(status)}>{statusLabel}</StatusLabel>
           <span>Ownership: {ownership}</span>
         </span>
       )}
@@ -248,7 +259,10 @@ function ProviderDisclosure({
       title={title}
     >
       <InspectorLedger className="provider-status-ledger">
-        <InspectorLedgerItem label="Status" value={statusLabel} />
+        <InspectorLedgerItem
+          label="Status"
+          value={<StatusLabel tone={providerStatusTone(status)}>{statusLabel}</StatusLabel>}
+        />
         <InspectorLedgerItem label="Effective ownership" value={ownership} />
         {status?.mode ? (
           <InspectorLedgerItem label="Detected mode" value={status.mode} />
@@ -379,7 +393,7 @@ function ReadOnlyProviderGuidance({
           className="provider-disclosure provider-disclosure--readonly"
           collapsedSummary={(
             <span className="provider-disclosure__summary">
-              <span>Read only</span>
+              <StatusLabel tone="muted">Read only</StatusLabel>
               <span>Ownership: external provider environment</span>
             </span>
           )}
@@ -504,6 +518,22 @@ function credentialStatusLabel(
   if (credential.effectiveSource === "environment") return "Environment-managed";
   if (credential.effectiveSource === "inspection_unknown") return "Status unavailable";
   return credential.configured ? "Configured" : "Not configured";
+}
+
+function credentialStatusTone(
+  credential: CredentialsResponse["credentials"][number],
+): StatusLabelTone {
+  if (credential.effectiveSource === "inspection_unknown") return "warn";
+  if (credential.effectiveSource === "environment" || credential.configured) return "ok";
+  return "muted";
+}
+
+function providerStatusTone(
+  status: ProviderStatusItem | undefined,
+): StatusLabelTone {
+  if (status?.ready) return "ok";
+  if (status?.configured) return "warn";
+  return "muted";
 }
 
 function findStatus(

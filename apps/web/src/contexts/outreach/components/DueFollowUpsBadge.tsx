@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { StatusLabel } from "../../../shared/ui/status-label.js";
 import { useDueFollowUpsQuery } from "../hooks/useDueFollowUpsQuery.js";
 
 // Compact count of follow-ups that are due right now, for surfacing next to the
@@ -12,8 +13,12 @@ export function DueFollowUpsBadge(): JSX.Element | null {
     return null;
   }
   return (
-    <span className="tag outreach-due-badge" aria-label={`${dueCount} follow-ups due`}>
+    <StatusLabel
+      ariaLabel={`${dueCount} follow-ups due`}
+      className="outreach-due-badge"
+      tone="warn"
+    >
       {dueCount} due
-    </span>
+    </StatusLabel>
   );
 }

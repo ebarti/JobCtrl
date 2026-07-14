@@ -1,0 +1,563 @@
+/*
+ * Editorial application-review workspace
+ *
+ * This route is a continuous decision surface: the queue, evidence, and
+ * current material share one ruled sheet. Keep status information legible,
+ * but do not turn its audit evidence into a second layer of rounded cards.
+ */
+
+.route-page--apply-review {
+  container: apply-review / inline-size;
+  gap: 0.875rem;
+}
+
+.route-page--apply-review .page-head {
+  padding-block: 0.25rem 0.375rem;
+}
+
+.route-page--apply-review .page-head h1 {
+  font-size: clamp(1.7rem, 2.4cqi, 2.15rem);
+  letter-spacing: -0.055em;
+}
+
+.route-page--apply-review .apply-review-workspace-shell {
+  overflow: visible;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.route-page--apply-review .route-workspace__grid[data-has-navigation="true"][data-has-inspector="false"] {
+  grid-template-columns: minmax(14.5rem, 0.28fr) minmax(0, 1fr);
+}
+
+.route-page--apply-review .route-workspace__navigation,
+.route-page--apply-review .route-workspace__content {
+  padding: 0;
+}
+
+/* Queue: a compact, ordered decision list rather than a stack of cards. */
+.route-page--apply-review .apply-review-queue {
+  background: var(--card);
+}
+
+.route-page--apply-review .apply-review-queue-head {
+  display: flex;
+  min-block-size: 2.55rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.625rem 0.875rem;
+}
+
+.route-page--apply-review .apply-review-queue-head .eyebrow {
+  color: var(--foreground);
+  font-size: 0.6875rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.route-page--apply-review .apply-review-queue-head b {
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  font-weight: 650;
+}
+
+.route-page--apply-review .apply-review-queue-list {
+  gap: 0;
+  max-block-size: min(72dvh, 56rem);
+  margin: 0;
+  padding: 0;
+  background: var(--card);
+}
+
+.route-page--apply-review .apply-review-queue-list > li {
+  border-bottom: 1px solid var(--border);
+}
+
+.route-page--apply-review .apply-review-queue-item {
+  position: relative;
+  gap: 0.35rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.875rem 0.875rem 0.9rem;
+}
+
+.route-page--apply-review .apply-review-queue-item::before {
+  position: absolute;
+  inset-block: 0.7rem;
+  inset-inline-start: 0;
+  inline-size: 2px;
+  background: transparent;
+  content: "";
+}
+
+.route-page--apply-review .apply-review-queue-item:hover {
+  border-color: transparent;
+  background: color-mix(in oklch, var(--foreground) 3%, transparent);
+}
+
+.route-page--apply-review .apply-review-queue-item.selected {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.route-page--apply-review .apply-review-queue-item.selected::before {
+  background: var(--primary);
+}
+
+.route-page--apply-review .apply-review-queue-title {
+  gap: 0.625rem;
+}
+
+.route-page--apply-review .apply-review-queue-title b {
+  font-size: 0.9rem;
+  line-height: 1.22;
+  white-space: normal;
+}
+
+.route-page--apply-review .apply-review-queue-score {
+  display: inline-grid;
+  flex: 0 0 1.75rem;
+  inline-size: 1.75rem;
+  block-size: 1.75rem;
+  place-items: center;
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.route-page--apply-review .apply-review-queue-item .meta {
+  padding-inline-start: 2.375rem;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+}
+
+.route-page--apply-review .apply-review-queue-item > .tag {
+  width: fit-content;
+  margin-inline-start: 2.375rem;
+}
+
+/* The selected job and human decision are deliberately kept above the audit. */
+.route-page--apply-review .apply-review-selected-toolbar,
+.route-page--apply-review .apply-review-selected-head {
+  margin: 0;
+}
+
+.route-page--apply-review .apply-review-selected-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(22rem, 0.86fr);
+  gap: 1rem;
+  align-items: start;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--card);
+  padding: 0.875rem 1rem;
+}
+
+.route-page--apply-review .apply-review-selected-head .tool-row__primary {
+  align-items: flex-start;
+}
+
+.route-page--apply-review .apply-review-selected-context {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem 0.75rem;
+}
+
+.route-page--apply-review .apply-review-selected-title {
+  display: grid;
+  min-inline-size: min(100%, 15rem);
+  gap: 0.15rem;
+  margin-inline-end: auto;
+}
+
+.route-page--apply-review .apply-review-selected-title h2 {
+  margin: 0;
+  font-size: clamp(1rem, 1.65cqi, 1.2rem);
+  font-weight: 780;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.route-page--apply-review .apply-review-selected-title p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.route-page--apply-review .apply-review-selected-status {
+  margin-inline-start: auto;
+}
+
+.route-page--apply-review .apply-review-selected-context .compensation-strip,
+.route-page--apply-review .apply-review-selected-context .resume-template-job-select,
+.route-page--apply-review .apply-review-audit-facts {
+  flex: 1 1 100%;
+}
+
+.route-page--apply-review .compensation-strip {
+  gap: 0.3rem 0.55rem;
+  font-size: 0.72rem;
+}
+
+.route-page--apply-review .compensation-strip-label,
+.route-page--apply-review .apply-review-audit-facts dt {
+  color: var(--muted-foreground);
+  font-size: 0.625rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.route-page--apply-review .resume-template-job-select {
+  grid-template-columns: minmax(10rem, 1fr) auto;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.4rem 0;
+}
+
+.route-page--apply-review .apply-review-audit-facts {
+  gap: 0;
+  margin: 0.15rem 0 0;
+  border-top: 1px solid var(--border);
+}
+
+.route-page--apply-review .apply-review-audit-facts > div {
+  grid-template-columns: minmax(5.25rem, 0.28fr) minmax(0, 1fr);
+  gap: 0.625rem;
+  padding-block: 0.45rem;
+}
+
+.route-page--apply-review .apply-review-audit-facts > div + div {
+  border-top: 1px solid var(--border);
+}
+
+.route-page--apply-review .apply-review-audit-facts dd {
+  gap: 0.35rem 0.625rem;
+}
+
+.route-page--apply-review .apply-review-selected-actions {
+  display: grid;
+  justify-self: stretch;
+  justify-content: end;
+  gap: 0.5rem;
+}
+
+.route-page--apply-review .apply-review-selected-actions > .button,
+.route-page--apply-review .apply-review-selected-actions > a,
+.route-page--apply-review .apply-review-selected-actions .tab,
+.route-page--apply-review .apply-review-selected-actions .button {
+  border-radius: 0;
+}
+
+.route-page--apply-review .apply-review-selected-actions .apply-review-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.route-page--apply-review .apply-review-approval-binding {
+  flex-basis: 100%;
+  justify-content: flex-end;
+  gap: 0.25rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.45rem;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+}
+
+.route-page--apply-review .apply-review-approval-block {
+  flex-basis: 100%;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+/* Evidence and material are adjacent columns on one flat, scrollable sheet. */
+.route-page--apply-review .apply-review-workspace {
+  grid-template-columns: minmax(19rem, 0.9fr) minmax(0, 1.1fr);
+  gap: 0;
+  padding: 0;
+  background: var(--card);
+}
+
+.route-page--apply-review .apply-review-pane {
+  min-block-size: min(57dvh, 44rem);
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.route-page--apply-review .apply-review-pane + .apply-review-pane {
+  border-inline-start: 1px solid var(--border);
+}
+
+.route-page--apply-review .apply-review-pane > header {
+  gap: 0.25rem;
+  background: transparent;
+  padding: 1rem 1rem 0.8rem;
+}
+
+.route-page--apply-review .apply-review-pane > header .eyebrow {
+  font-size: 0.625rem;
+}
+
+.route-page--apply-review .apply-review-pane > header h2 {
+  font-size: 0.95rem;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+}
+
+.route-page--apply-review .apply-review-pane-scroll {
+  padding: 0 1rem 1rem;
+}
+
+.route-page--apply-review .apply-review-materials-scroll {
+  gap: 0;
+}
+
+.route-page--apply-review .apply-review-preview-block {
+  gap: 0.625rem;
+  padding-block: 0.875rem;
+}
+
+.route-page--apply-review .apply-review-preview-block:first-child {
+  padding-top: 0;
+}
+
+.route-page--apply-review .apply-review-preview-block + .apply-review-preview-block {
+  padding-top: 0.875rem;
+}
+
+.route-page--apply-review .apply-review-preview-block h3 {
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
+.route-page--apply-review .apply-review-document {
+  border-radius: 0;
+  background: color-mix(in oklch, var(--background) 55%, var(--card));
+  padding: 0.75rem;
+}
+
+.route-page--apply-review .apply-review-html-line-review,
+.route-page--apply-review .apply-review-pdf-line-review {
+  background: transparent;
+  padding: 0;
+}
+
+.route-page--apply-review .resume-plate-editor,
+.route-page--apply-review .pdf-preview-viewer {
+  border-radius: 0;
+}
+
+/* Audit language is a ledger: a label, direct text, and hairline separation. */
+.route-page--apply-review .tag {
+  min-block-size: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  font-size: 0.6875rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.route-page--apply-review .tag:not(.muted) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.route-page--apply-review .tag:not(.muted)::before {
+  inline-size: 0.375rem;
+  block-size: 0.375rem;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.route-page--apply-review .tag.muted {
+  color: var(--muted-foreground);
+}
+
+.route-page--apply-review .tag.ok {
+  color: var(--success);
+}
+
+.route-page--apply-review .tag.warn {
+  color: var(--warning);
+}
+
+.route-page--apply-review .tag.info {
+  color: var(--status-info);
+}
+
+.route-page--apply-review .tag.danger {
+  color: var(--destructive);
+}
+
+.route-page--apply-review .apply-review-ideal-profile,
+.route-page--apply-review .apply-review-score-evidence,
+.route-page--apply-review .apply-review-audit-section,
+.route-page--apply-review .artifact-comparison,
+.route-page--apply-review .apply-review-artifact-risk {
+  border-top: 1px solid var(--border);
+  padding-top: 0.875rem;
+}
+
+.route-page--apply-review .apply-review-ideal-profile > section + section,
+.route-page--apply-review .apply-review-score-evidence,
+.route-page--apply-review .apply-review-audit-section + .apply-review-audit-section {
+  margin-top: 0.875rem;
+}
+
+.route-page--apply-review .apply-review-ideal-profile h4,
+.route-page--apply-review .apply-review-score-evidence h4,
+.route-page--apply-review .apply-review-audit-section h4 {
+  font-size: 0.75rem;
+  text-transform: none;
+}
+
+.route-page--apply-review .apply-review-ideal-requirements {
+  gap: 0;
+  margin-top: 0.625rem;
+}
+
+.route-page--apply-review .apply-review-ideal-requirements > li {
+  padding-block: 0.75rem;
+}
+
+.route-page--apply-review .apply-review-requirement-fit-grid {
+  gap: 0;
+  background: transparent;
+}
+
+.route-page--apply-review .apply-review-requirement-fit-grid > div {
+  gap: 0.325rem;
+  border-block: 1px solid var(--border);
+  background: transparent;
+  padding: 0.55rem;
+}
+
+.route-page--apply-review .apply-review-requirement-fit-grid > div + div {
+  border-inline-start: 1px solid var(--border);
+}
+
+.route-page--apply-review .apply-review-evidence-list {
+  gap: 0;
+}
+
+.route-page--apply-review .apply-review-evidence-list > div {
+  grid-template-columns: minmax(7rem, 0.4fr) minmax(0, 1fr);
+  gap: 0.625rem;
+  border-top: 1px solid var(--border);
+  padding-block: 0.5rem;
+}
+
+.route-page--apply-review .apply-review-evidence-list dd,
+.route-page--apply-review .apply-review-audit-summary,
+.route-page--apply-review .apply-review-audit-tags > span:last-child,
+.route-page--apply-review .apply-review-audit-revision {
+  gap: 0.35rem 0.625rem;
+}
+
+.route-page--apply-review .apply-review-audit-tags {
+  grid-template-columns: minmax(6.5rem, 0.38fr) minmax(0, 1fr);
+  gap: 0.625rem;
+  margin-top: 0.25rem;
+}
+
+.route-page--apply-review .artifact-comparison {
+  gap: 0.625rem;
+}
+
+.route-page--apply-review .artifact-comparison-sides {
+  gap: 0;
+  border: 1px solid var(--border);
+}
+
+.route-page--apply-review .artifact-comparison-side,
+.route-page--apply-review .artifact-comparison-delta {
+  border: 0;
+  border-radius: 0;
+  padding: 0.625rem;
+}
+
+.route-page--apply-review .artifact-comparison-side + .artifact-comparison-side {
+  border-inline-start: 1px solid var(--border);
+}
+
+.route-page--apply-review .artifact-comparison-delta {
+  border: 1px solid var(--border);
+}
+
+@container apply-review (max-width: 62rem) {
+  .route-page--apply-review .route-workspace__grid[data-has-navigation="true"][data-has-inspector="false"],
+  .route-page--apply-review .apply-review-selected-head,
+  .route-page--apply-review .apply-review-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .route-page--apply-review .route-workspace__navigation {
+    border-inline: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .route-page--apply-review .apply-review-pane + .apply-review-pane {
+    border-inline: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .route-page--apply-review .apply-review-selected-actions,
+  .route-page--apply-review .apply-review-selected-actions .apply-review-actions,
+  .route-page--apply-review .apply-review-approval-binding {
+    justify-content: flex-start;
+  }
+}
+
+@container apply-review (max-width: 38rem) {
+  .route-page--apply-review .apply-review-queue-head,
+  .route-page--apply-review .apply-review-selected-head,
+  .route-page--apply-review .apply-review-pane > header,
+  .route-page--apply-review .apply-review-pane-scroll {
+    padding-inline: 0.75rem;
+  }
+
+  .route-page--apply-review .apply-review-requirement-fit-grid,
+  .route-page--apply-review .artifact-comparison-sides {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .route-page--apply-review .apply-review-requirement-fit-grid > div + div,
+  .route-page--apply-review .artifact-comparison-side + .artifact-comparison-side {
+    border-inline-start: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .route-page--apply-review .apply-review-audit-facts > div,
+  .route-page--apply-review .apply-review-evidence-list > div,
+  .route-page--apply-review .apply-review-audit-tags {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.3rem;
+  }
+}
+
+@media (forced-colors: active) {
+  .route-page--apply-review .apply-review-queue-item.selected::before {
+    background: Highlight;
+  }
+
+  .route-page--apply-review .tag:not(.muted)::before {
+    border: 1px solid currentColor;
+  }
+}

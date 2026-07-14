@@ -12,6 +12,8 @@ const readJson = <T>(path: string): T => JSON.parse(readText(path)) as T;
 
 const tokensCss = readText("apps/web/src/styles/tokens.css");
 const globalsCss = readText("apps/web/src/styles/globals.css");
+const editorialFoundationCss = readText("apps/web/src/styles/editorial-foundation.css");
+const editorialStatusCss = readText("apps/web/src/styles/editorial-status.css");
 const componentsJson = readJson<{
   style: string;
   tailwind: { config: string; css: string; baseColor: string; cssVariables: boolean };
@@ -83,11 +85,6 @@ const requiredThemeMappings = [
 ] as const;
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-const cssRuleContaining = (selector: string): string => {
-  const pattern = new RegExp(`[^{}]*${escapeRegExp(selector)}[^{}]*\\{(?<body>[^}]*)\\}`, "m");
-  const match = globalsCss.match(pattern);
-  return match?.groups?.body?.trim() ?? "";
-};
 const absentPattern = (prefix: string, parts: readonly string[], joiner = "") =>
   new RegExp(`${escapeRegExp(prefix)}${parts.map(escapeRegExp).join(escapeRegExp(joiner))}(?![a-z0-9-])`, "i");
 
@@ -122,9 +119,9 @@ describe("shadcn token contract", () => {
       expect(matches.length, `expected light and dark definitions for token ${token}`).toBeGreaterThanOrEqual(2);
     }
 
-    expect(tokensCss, "expected the mock-up 8px radius token").toContain("--radius: 0.5rem;");
-    expect(tokensCss, "expected light violet primary value").toContain("--primary: oklch(0.541 0.281 293.009);");
-    expect(tokensCss, "expected dark violet primary value").toContain("--primary: oklch(0.702 0.183 293.541);");
+    expect(tokensCss, "expected the editorial 2px radius token").toContain("--radius: 0.125rem;");
+    expect(tokensCss, "expected light violet focus value").toContain("--primary: #6d28d9;");
+    expect(tokensCss, "expected dark violet focus value").toContain("--primary: #a78bfa;");
     expect(tokensCss, "expected violet-ramp chart token").toContain("--chart-1: oklch(0.541 0.281 293.009);");
   });
 
@@ -152,27 +149,28 @@ describe("shadcn token contract", () => {
       "background: color-mix(in oklch, var(--card) 96%, transparent);",
     );
     expect(globalsCss, "expected brand mark to use the primary token").toContain("background: var(--primary);");
-    expect(globalsCss, "expected active shell tabs to use accent token").toContain("background: var(--accent);");
+    expect(editorialFoundationCss, "expected active shell navigation to remain unfilled").toContain(
+      ".side-rail__link.on {\n  background: transparent;",
+    );
     expect(globalsCss, "expected shell controls to use the popover token").toContain("background: var(--popover);");
     expect(globalsCss, "expected connection banners to use destructive token").toContain(
       "border: 1px solid var(--destructive);",
     );
   });
 
-  it("keeps success badges visibly green", () => {
-    const tagOkRule = cssRuleContaining(".tag.ok");
-    const stagePillOkRule = cssRuleContaining(".stage-pill.ok");
-
-    expect(tagOkRule, "expected a shared success badge rule").toContain(
-      "background: color-mix(in oklab, var(--success) 32%, var(--card));",
+  it("keeps semantic status visible without capsule chrome", () => {
+    expect(editorialStatusCss, "expected the shared editorial status primitive").toContain(
+      ".editorial-status {",
     );
-    expect(tagOkRule, "expected success badge border to stay green").toContain(
-      "box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--success) 52%, transparent);",
+    expect(editorialStatusCss, "expected status backgrounds to remain neutral").toContain(
+      "background: transparent;",
     );
-    expect(tagOkRule, "expected success badge text to stay green").toContain(
-      "color: color-mix(in oklab, var(--success) 78%, var(--foreground));",
+    expect(editorialStatusCss, "expected success status text to use the semantic token").toContain(
+      ".editorial-status.ok {\n  color: var(--success);",
     );
-    expect(stagePillOkRule, "stage pills should use the same success rule as tags").toBe(tagOkRule);
+    expect(editorialStatusCss, "expected status to avoid rounded badge chrome").toContain(
+      "border-radius: 0;",
+    );
   });
 
   it("keeps shadcn preset config and packages wired", () => {

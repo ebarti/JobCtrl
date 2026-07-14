@@ -62,7 +62,10 @@ describe("<SideRail>", () => {
     renderRail();
 
     expect(await screen.findByRole("link", { name: "JobCtrl" })).toHaveAttribute("href", "/dashboard");
-    expect(screen.getByText("Local mode — all data stays on device")).toBeInTheDocument();
+    const localMode = screen.getByText("Local mode — all data stays on device").parentElement;
+    expect(localMode).toHaveAttribute("role", "note");
+    expect(localMode).toHaveAttribute("aria-label", "Local mode — all data stays on device");
+    expect(localMode).toHaveAttribute("title", "Local mode — all data stays on device");
     expect(screen.getByText("Copyright © 2026 Eloi Barti")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "AGPL-3.0-only" })).toHaveAttribute(
       "href",

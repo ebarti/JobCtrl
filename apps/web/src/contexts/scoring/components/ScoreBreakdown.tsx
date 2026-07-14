@@ -85,13 +85,13 @@ export function ScoreBreakdown({
         </div>
       </div>
       {scoreKeywords.length ? (
-        <div className="keyword-list" aria-label="Matched keywords">
+        <ul className="audit-value-list keyword-list" aria-label="Matched keywords">
           {scoreKeywords.map((keyword) => (
-            <span className="tag info" key={keyword}>
+            <li className="audit-value audit-value--info" key={keyword}>
               {keyword}
-            </span>
+            </li>
           ))}
-        </div>
+        </ul>
       ) : null}
       <SignalList label="Matched signals" values={scoreBreakdown.matchedSignals} />
       <SignalList label="Missing signals" values={scoreBreakdown.missingSignals} />
@@ -140,12 +140,15 @@ function SignalList({
 }) {
   if (!values?.length) return null;
   return (
-    <div className="keyword-list" aria-label={label}>
-      {values.map((value) => (
-        <span className={`tag ${tone}`} key={value}>
-          {value}
-        </span>
-      ))}
+    <div className="score-signal-row">
+      <span>{label}</span>
+      <ul className="audit-value-list keyword-list" aria-label={label}>
+        {values.map((value) => (
+          <li className={`audit-value audit-value--${tone}`} key={value}>
+            {value}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

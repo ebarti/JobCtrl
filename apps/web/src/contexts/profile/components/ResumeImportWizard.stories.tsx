@@ -56,6 +56,10 @@ export const StepUpload: Story = {
   render: () => <WizardHost initialPath="/profile/import/upload" />,
 };
 
+export const Start: Story = {
+  render: () => <WizardHost initialPath="/profile/import" />,
+};
+
 export const StepPreview: Story = {
   render: () => <WizardHost initialPath="/profile/import/preview" />,
 };

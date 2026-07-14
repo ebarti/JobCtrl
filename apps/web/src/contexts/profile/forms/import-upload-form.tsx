@@ -84,6 +84,11 @@ export function ImportUploadForm() {
             <span className="min-w-0">
               <b>Resume PDF</b>
               <small className="break-all">{field.state.value || "No file selected"}</small>
+              <small>
+                {field.state.value
+                  ? "Selected file will be read locally."
+                  : "PDF only · processed on this device"}
+              </small>
             </span>
             <Input
               className="resume-import-upload__input"
@@ -113,7 +118,7 @@ export function ImportUploadForm() {
         })}
       >
         {({ canSubmit, isSubmitting }) => (
-          <div className="form-actions resume-import-actions justify-end">
+          <div className="form-actions resume-import-actions">
             <Button asChild variant="outline">
               <Link to="/profile">Cancel</Link>
             </Button>

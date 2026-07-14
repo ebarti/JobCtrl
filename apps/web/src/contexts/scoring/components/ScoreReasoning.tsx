@@ -33,13 +33,13 @@ export function ScoreReasoning({ text, fitScore }: ScoreReasoningProps) {
         </p>
       )}
       {parsed.keywords.length ? (
-        <div className="keyword-list" aria-label="Tracked keywords">
+        <ul className="audit-value-list keyword-list" aria-label="Tracked keywords">
           {parsed.keywords.map((keyword) => (
-            <span className="tag info" key={keyword}>
+            <li className="audit-value audit-value--info" key={keyword}>
               {keyword}
-            </span>
+            </li>
           ))}
-        </div>
+        </ul>
       ) : null}
     </div>
   );

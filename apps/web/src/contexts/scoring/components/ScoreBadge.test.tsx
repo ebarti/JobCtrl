@@ -36,22 +36,20 @@ describe("<ScoreBadge>", () => {
     expect(badge).toHaveTextContent("7");
   });
 
-  it("maps 10 to green, 5 to neutral gray, and 0 to red", () => {
+  it("maps 10, 5, and 0 to semantic text tones without status-card styles", () => {
     const { container, rerender } = render(<ScoreBadge score={10} />);
     const badge = () => container.querySelector("span");
 
     expect(badge()).toHaveAttribute("data-score-tone", "positive");
-    expect(badge()?.style.getPropertyValue("--fit-score-bg")).toContain("var(--success) 52%");
-    expect(badge()?.style.getPropertyValue("--fit-score-border")).toContain("var(--success) 66%");
+    expect(badge()).toHaveAttribute("aria-label", "Fit score 10 out of 10");
+    expect(badge()).not.toHaveAttribute("style");
 
     rerender(<ScoreBadge score={5} />);
     expect(badge()).toHaveAttribute("data-score-tone", "neutral");
-    expect(badge()?.style.getPropertyValue("--fit-score-bg")).toBe("var(--muted)");
-    expect(badge()?.style.getPropertyValue("--fit-score-fg")).toBe("var(--muted-foreground)");
+    expect(badge()).not.toHaveAttribute("style");
 
     rerender(<ScoreBadge score={0} />);
     expect(badge()).toHaveAttribute("data-score-tone", "negative");
-    expect(badge()?.style.getPropertyValue("--fit-score-bg")).toContain("var(--destructive) 52%");
-    expect(badge()?.style.getPropertyValue("--fit-score-border")).toContain("var(--destructive) 66%");
+    expect(badge()).not.toHaveAttribute("style");
   });
 });

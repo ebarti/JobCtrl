@@ -21,6 +21,16 @@ import { ThemeProvider } from "./shared/providers/ThemeProvider.js";
 import { ToasterProvider } from "./shared/providers/ToasterProvider.js";
 import { TooltipProvider } from "./shared/ui/tooltip.js";
 import "./styles/globals.css";
+import "./styles/editorial-foundation.css";
+import "./styles/editorial-status.css";
+import "./styles/editorial-library.css";
+import "./styles/editorial-job-detail.css";
+import "./styles/editorial-jobs-index.css";
+import "./styles/editorial-setup.css";
+import "./styles/editorial-apply-review.css";
+import "./styles/editorial-audit.css";
+import "./styles/editorial-operations.css";
+import "./styles/editorial-shell.css";
 
 const queryClient = createQueryClient();
 const root = createRoot(document.getElementById("root")!);

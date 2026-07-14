@@ -34,7 +34,9 @@ export function ApplyRunsCard({ summary }: ApplyRunsCardProps) {
                   {run.company} · {formatDateTime(run.startedAt)}
                 </span>
               </span>
-              {run.dryRun ? <span className="tag info">dry-run</span> : null}
+              {run.dryRun ? (
+                <span className="dashboard-signal dashboard-signal--info">dry-run</span>
+              ) : null}
             </button>
           ))
         ) : (
