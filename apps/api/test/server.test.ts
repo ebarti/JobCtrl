@@ -7,6 +7,7 @@ import { createJobCtrlApiClient } from "@jobctrl/api-client";
 import {
   CREDENTIAL_VALUE_MAX_LENGTH,
   CredentialKeys,
+  PipelineOperationsSnapshotSchema,
   ProviderConfigurationKeys,
   SecretCredentialKeys,
   type ActionCommandPayload,
@@ -1309,6 +1310,18 @@ describe("local TypeScript API", () => {
     });
 
     await app.close();
+  });
+
+  it("serves the typed pipeline operations snapshot from the existing SQLite schema", async () => {
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({ method: "GET", url: "/v1/pipeline/operations" });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(PipelineOperationsSnapshotSchema.safeParse(response.json()).success).toBe(true);
+    } finally {
+      await app.close();
+    }
   });
 
   it("classifies current running work as active or stuck from canonical stage timestamps", async () => {

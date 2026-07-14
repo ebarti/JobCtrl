@@ -2671,6 +2671,365 @@ export interface PipelineProgressSummary {
   updatedAt: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Pipeline operations read model
+//
+// This is deliberately separate from PipelineProgressSummary. The legacy
+// progress payload describes a stage's current progress line; this snapshot
+// describes an execution-scoped operational view, including the capacity and
+// external backlog that make an overall completion percentage misleading.
+// ---------------------------------------------------------------------------
+
+export const PIPELINE_OPERATIONS_PHASES = [
+  "discovering",
+  "draining",
+  "completed",
+  "completed_with_issues",
+  "failed",
+  "canceled",
+] as const;
+export const PipelineOperationsPhaseSchema = z.enum(PIPELINE_OPERATIONS_PHASES);
+export type PipelineOperationsPhase = z.infer<typeof PipelineOperationsPhaseSchema>;
+
+export const PIPELINE_OPERATIONS_STAGE_SCOPES = [
+  "current_execution",
+  "execution_sweep",
+  "global_outside_execution",
+] as const;
+export const PipelineOperationalStageScopeSchema = z.enum(PIPELINE_OPERATIONS_STAGE_SCOPES);
+export type PipelineOperationalStageScope = z.infer<typeof PipelineOperationalStageScopeSchema>;
+
+export const PipelineStageCountsSchema = z
+  .object({
+    /** The number of items the owning source has determined are in scope. */
+    eligible: z.number().int().nonnegative(),
+    waiting: z.number().int().nonnegative(),
+    processing: z.number().int().nonnegative(),
+    succeeded: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+    blocked: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    exhausted: z.number().int().nonnegative(),
+    canceled: z.number().int().nonnegative(),
+    needsVerification: z.number().int().nonnegative(),
+    stale: z.number().int().nonnegative(),
+    unknown: z.number().int().nonnegative(),
+  })
+  .strict();
+export type PipelineStageCounts = z.infer<typeof PipelineStageCountsSchema>;
+
+export const PipelineOperationsFreshnessSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("fresh"),
+      asOf: z.string(),
+      staleAfterSeconds: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("stale"),
+      asOf: z.string(),
+      staleAfterSeconds: z.number().int().positive(),
+      reason: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("unsupported"),
+      asOf: z.string(),
+      staleAfterSeconds: z.number().int().positive(),
+      reason: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("unavailable"),
+      asOf: z.string(),
+      staleAfterSeconds: z.number().int().positive(),
+      reason: z.string().min(1),
+    })
+    .strict(),
+]);
+export type PipelineOperationsFreshness = z.infer<typeof PipelineOperationsFreshnessSchema>;
+
+export const PipelineTaskQueueStatsSchema = z
+  .object({
+    pollerCount: z.number().int().nonnegative(),
+    approximateBacklogCount: z.number().int().nonnegative(),
+    approximateBacklogAgeSeconds: z.number().nonnegative(),
+    tasksAddRate: z.number().nonnegative(),
+    tasksDispatchRate: z.number().nonnegative(),
+  })
+  .strict();
+export type PipelineTaskQueueStats = z.infer<typeof PipelineTaskQueueStatsSchema>;
+
+export const PipelineApproximateTaskQueueSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("available"),
+      observedAt: z.string(),
+      workflow: PipelineTaskQueueStatsSchema,
+      activity: PipelineTaskQueueStatsSchema,
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("stale"),
+      observedAt: z.string(),
+      lastKnownStatus: z.enum(["available", "unsupported", "unavailable"]),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("unsupported"),
+      observedAt: z.string(),
+      reasonCode: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("unavailable"),
+      observedAt: z.string(),
+      reasonCode: z.string().min(1),
+    })
+    .strict(),
+]);
+export type PipelineApproximateTaskQueue = z.infer<typeof PipelineApproximateTaskQueueSchema>;
+
+const PipelineAvailableCapacityBaseSchema = z.object({
+  status: z.literal("available"),
+  asOf: z.string(),
+  staleAfterSeconds: z.number().int().positive(),
+  taskQueue: z.string().nullable(),
+  freshWorkerCount: z.number().int().nonnegative(),
+  staleWorkerCount: z.number().int().nonnegative(),
+  invalidWorkerCount: z.number().int().nonnegative(),
+  configuredSlots: z.number().int().nonnegative(),
+  activeSlots: z.number().int().nonnegative(),
+  availableSlots: z.number().int().nonnegative(),
+  executorThreads: z.number().int().nonnegative(),
+  slotSaturation: z.number().min(0).max(1).nullable(),
+  approximateTaskQueue: PipelineApproximateTaskQueueSchema,
+});
+
+const PipelineAvailableCapacitySchema = z.discriminatedUnion("kind", [
+  PipelineAvailableCapacityBaseSchema.extend({
+    kind: z.literal("shared_activity_pool"),
+  }).strict(),
+  PipelineAvailableCapacityBaseSchema.extend({
+    kind: z.literal("shared_activity_pool_with_internal_parallelism"),
+    internalParallelism: z.number().int().positive(),
+  }).strict(),
+]);
+
+export const PipelineCapacitySchema = z.union([
+  PipelineAvailableCapacitySchema,
+  z
+    .object({
+      status: z.literal("stale"),
+      asOf: z.string(),
+      staleAfterSeconds: z.number().int().positive(),
+      taskQueue: z.string().nullable(),
+      reason: z.string().min(1),
+      approximateTaskQueue: PipelineApproximateTaskQueueSchema,
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("unavailable"),
+      asOf: z.string(),
+      staleAfterSeconds: z.number().int().positive(),
+      taskQueue: z.string().nullable(),
+      reason: z.string().min(1),
+      approximateTaskQueue: PipelineApproximateTaskQueueSchema,
+    })
+    .strict(),
+]);
+export type PipelineCapacity = z.infer<typeof PipelineCapacitySchema>;
+
+export const PipelineEtaSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("available"),
+      lowSeconds: z.number().nonnegative(),
+      highSeconds: z.number().nonnegative(),
+      confidence: z.enum(["low", "medium", "high"]),
+      basis: z.enum(["source_rate", "stage_throughput", "cohort_throughput"]),
+      sampleSize: z.number().int().nonnegative(),
+      asOf: z.string(),
+      caveat: z.string().nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("calibrating"),
+      completedSamples: z.number().int().nonnegative(),
+      minimumSamples: z.number().int().positive(),
+      asOf: z.string(),
+      reason: z.enum(["insufficient_samples", "membership_open"]),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("paused"),
+      reason: z.enum(["worker_unavailable", "budget_exceeded", "blocked", "no_dispatch"]),
+      asOf: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("stale"),
+      reason: z.enum(["telemetry_stale", "observation_stale", "unknown_scope"]),
+      asOf: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("unavailable"),
+      reason: z.enum([
+        "no_work",
+        "telemetry_stale",
+        "unsupported",
+        "unknown_scope",
+        "contention_unbounded",
+      ]),
+      asOf: z.string(),
+    })
+    .strict(),
+]);
+export type PipelineEta = z.infer<typeof PipelineEtaSchema>;
+
+export const PipelineExecutionCohortSummarySchema = z
+  .object({
+    members: z.number().int().nonnegative(),
+    planned: z.number().int().nonnegative(),
+    notEligible: z.number().int().nonnegative(),
+    pending: z.number().int().nonnegative(),
+    failedPlan: z.number().int().nonnegative(),
+    terminal: z.number().int().nonnegative(),
+    remaining: z.number().int().nonnegative(),
+  })
+  .strict();
+export type PipelineExecutionCohortSummary = z.infer<typeof PipelineExecutionCohortSummarySchema>;
+
+export const DiscoveryExecutionSummarySchema = z
+  .object({
+    discoverWorkflowId: z.string().min(1),
+    discoverRunId: z.string().min(1),
+    selectedAs: z.enum(["active_or_draining", "latest_terminal"]),
+    workflowStatus: z.enum(WORKFLOW_RUN_STATUSES),
+    phase: PipelineOperationsPhaseSchema,
+    membershipClosed: z.boolean(),
+    startedAt: z.string().nullable(),
+    finishedAt: z.string().nullable(),
+    errorCode: z.string().nullable(),
+    currentExecution: PipelineExecutionCohortSummarySchema,
+    sweptExistingBacklog: PipelineExecutionCohortSummarySchema,
+  })
+  .strict();
+export type DiscoveryExecutionSummary = z.infer<typeof DiscoveryExecutionSummarySchema>;
+
+export const PipelineStageBacklogSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("domain_jobs"),
+      counts: PipelineStageCountsSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("not_separate"),
+      reason: z.string().min(1),
+    })
+    .strict(),
+]);
+export type PipelineStageBacklog = z.infer<typeof PipelineStageBacklogSchema>;
+
+export const PipelineOperationalStageSchema = z
+  .object({
+    stage: z.string().min(1),
+    label: z.string().min(1),
+    scope: PipelineOperationalStageScopeSchema,
+    currentExecution: PipelineStageCountsSchema,
+    existingBacklog: PipelineStageBacklogSchema,
+    capacity: PipelineCapacitySchema,
+    eta: PipelineEtaSchema,
+    asOf: z.string(),
+  })
+  .strict();
+export type PipelineOperationalStage = z.infer<typeof PipelineOperationalStageSchema>;
+
+export const SourceFamilyProgressSchema = z
+  .object({
+    planned: z.number().int().nonnegative(),
+    counts: PipelineStageCountsSchema,
+    eta: PipelineEtaSchema,
+    asOf: z.string(),
+  })
+  .strict();
+export type SourceFamilyProgress = z.infer<typeof SourceFamilyProgressSchema>;
+
+export const DiscoveryReconciliationProgressSchema = z
+  .object({
+    enrichment: PipelineStageCountsSchema,
+    preparationFanout: PipelineStageCountsSchema,
+    asOf: z.string(),
+  })
+  .strict();
+export type DiscoveryReconciliationProgress = z.infer<typeof DiscoveryReconciliationProgressSchema>;
+
+const PipelineActiveItemBaseSchema = z.object({
+  activityType: z.string().min(1),
+  workflowId: z.string().nullable(),
+  executionId: z.string().nullable(),
+  attempt: z.number().int().positive(),
+  startedAt: z.string(),
+});
+
+export const PipelineActiveItemSchema = z.discriminatedUnion("kind", [
+  PipelineActiveItemBaseSchema.extend({
+    kind: z.literal("resolved_job"),
+    jobKey: z.string().min(1),
+    title: z.string().nullable(),
+    company: z.string().nullable(),
+    stage: z.string().min(1),
+  }).strict(),
+  PipelineActiveItemBaseSchema.extend({
+    kind: z.literal("source_family"),
+    sourceFamily: z.string().min(1),
+  }).strict(),
+  PipelineActiveItemBaseSchema.extend({
+    kind: z.literal("orchestration"),
+    operation: z.string().min(1),
+  }).strict(),
+  PipelineActiveItemBaseSchema.extend({
+    kind: z.literal("unresolved_runtime_activity"),
+    opaqueId: z.string().min(1),
+  }).strict(),
+]);
+export type PipelineActiveItem = z.infer<typeof PipelineActiveItemSchema>;
+
+export const PipelineOperationsSnapshotSchema = z
+  .object({
+    generatedAt: z.string(),
+    etaEstimatorVersion: z.literal("pipeline-eta-v1"),
+    freshness: PipelineOperationsFreshnessSchema,
+    execution: DiscoveryExecutionSummarySchema.nullable(),
+    capacity: PipelineCapacitySchema,
+    sourceFamilies: SourceFamilyProgressSchema.nullable(),
+    reconciliation: DiscoveryReconciliationProgressSchema.nullable(),
+    stages: z.array(PipelineOperationalStageSchema),
+    activeItems: z.array(PipelineActiveItemSchema).max(20),
+    /** Null when worker runtime inventory cannot make an exact statement. */
+    activeItemsTotal: z.number().int().nonnegative().nullable(),
+    /** Null when the inventory itself is unavailable or stale. */
+    activeItemsTruncated: z.boolean().nullable(),
+    overallEta: PipelineEtaSchema,
+  })
+  .strict();
+export type PipelineOperationsSnapshot = z.infer<typeof PipelineOperationsSnapshotSchema>;
+
 export interface ApplyRunTimelineEventSummary {
   at: string | null;
   type: string;

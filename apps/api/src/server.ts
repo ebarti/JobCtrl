@@ -230,6 +230,7 @@ import {
   getWorkflowRunDetail,
   readSettingsConfig,
 } from "./read-model.js";
+import { buildPipelineOperationsSnapshot } from "./pipeline-operations.js";
 import { refreshProjections } from "./projections.js";
 import { createResumeHtmlPdfRenderer, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 import {
@@ -533,6 +534,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/dashboard/summary", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => buildDashboardSummary(db)),
+  );
+
+  app.get("/v1/pipeline/operations", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) =>
+      buildPipelineOperationsSnapshot(db, {
+        dbPath: options.dbPath,
+        configPath: options.configPath,
+      }),
+    ),
   );
 
   app.get("/v1/analytics/outcomes", async (_request, reply) =>
