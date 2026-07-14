@@ -99,12 +99,14 @@ export interface WorkerRuntimeTelemetrySnapshot {
   staleWorkerCount: number;
   invalidWorkerCount: number;
   configuredSlots: number;
+  /** Exact occupied slots across all executing Temporal activities. */
   activeSlots: number;
   availableSlots: number;
   executorThreads: number;
   slotSaturation: number | null;
   activeCountsByType: Partial<Record<OperationalActivityType, number>>;
   activeDetails: ActiveActivityTelemetryDetail[];
+  /** Exact active count for the allowlisted detail/type subset only. */
   activeDetailsTotal: number;
   activeDetailsTruncated: boolean;
   activityDurationsByType: Partial<Record<OperationalActivityType, ActivityDurationTelemetry>>;
@@ -143,6 +145,7 @@ interface ParsedWorkerTelemetry {
   executorThreads: number;
   activeCountsByType: Partial<Record<OperationalActivityType, number>>;
   activeDetails: ActiveActivityTelemetryDetail[];
+  activeDetailsTotal: number;
   activeDetailsTruncated: boolean;
   activityDurationsByType: Partial<Record<OperationalActivityType, ActivityDurationTelemetry>>;
 }
@@ -238,6 +241,7 @@ export function readWorkerRuntimeTelemetry(
 
     const configuredSlots = sum(validRows.map((row) => row.configuredSlots));
     const activeSlots = sum(validRows.map((row) => row.activeSlots));
+    const activeDetailsTotal = sum(validRows.map((row) => row.activeDetailsTotal));
     const details = validRows
       .flatMap((row) => row.activeDetails)
       .sort((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt))
@@ -259,9 +263,10 @@ export function readWorkerRuntimeTelemetry(
       slotSaturation: configuredSlots > 0 ? activeSlots / configuredSlots : null,
       activeCountsByType: mergeActivityCounts(validRows),
       activeDetails: details,
-      activeDetailsTotal: activeSlots,
+      activeDetailsTotal,
       activeDetailsTruncated:
-        activeSlots > details.length || validRows.some((row) => row.activeDetailsTruncated),
+        activeDetailsTotal > details.length ||
+        validRows.some((row) => row.activeDetailsTruncated),
       activityDurationsByType: mergeActivityDurations(validRows),
       taskQueueObservation: freshestTaskQueueObservation(freshRows, now, staleAfterMs),
     };
@@ -322,20 +327,25 @@ function parseWorkerTelemetry(row: HeartbeatRow): ParsedWorkerTelemetry {
     operationalActivityTypes().map((activityType) => activeCountsByType[activityType] ?? 0),
   );
   const reportedDetailsTotal = nonnegativeInteger(row.active_activity_details_total);
+  const activeDetails = parseActiveDetails(row.active_activity_details_json);
   return {
     authoritative:
       nonnegativeInteger(row.heartbeat_schema_version) >= 2 &&
       configuredSlots > 0 &&
       executorThreads > 0 &&
       activeSlots <= configuredSlots &&
-      reportedActiveByType === activeSlots &&
-      reportedDetailsTotal === activeSlots,
+      reportedDetailsTotal <= activeSlots &&
+      activeDetails.length <= reportedDetailsTotal &&
+      reportedActiveByType === reportedDetailsTotal,
     configuredSlots,
     activeSlots,
     executorThreads,
     activeCountsByType,
-    activeDetails: parseActiveDetails(row.active_activity_details_json),
-    activeDetailsTruncated: Boolean(row.active_activity_details_truncated),
+    activeDetails,
+    activeDetailsTotal: reportedDetailsTotal,
+    activeDetailsTruncated:
+      reportedDetailsTotal > activeDetails.length ||
+      Boolean(row.active_activity_details_truncated),
     activityDurationsByType: parseActivityDurations(row.activity_duration_summary_json),
   };
 }

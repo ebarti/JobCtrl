@@ -67,6 +67,47 @@ describe("worker runtime telemetry", () => {
     });
   });
 
+  it("includes non-allowlisted activities in mixed-worker slot occupancy only", () => {
+    const fixture = createFixture();
+    const now = new Date("2026-07-14T10:00:30.000Z");
+    insertHeartbeat(fixture, {
+      workerId: "worker-a",
+      lastSeenAt: "2026-07-14T10:00:20.000Z",
+      configuredSlots: 4,
+      activeSlots: 2,
+      executorThreads: 6,
+      details: activeDetails(1, 0),
+      activeDetailsTotal: 1,
+      counts: { score_job: 1 },
+      queueObservation: availableObservation("2026-07-14T10:00:19.000Z", 0, 1),
+    });
+    insertHeartbeat(fixture, {
+      workerId: "worker-b",
+      lastSeenAt: "2026-07-14T10:00:25.000Z",
+      configuredSlots: 4,
+      activeSlots: 3,
+      executorThreads: 6,
+      details: activeDetails(2, 1),
+      activeDetailsTotal: 2,
+      counts: { score_job: 2 },
+      queueObservation: availableObservation("2026-07-14T10:00:24.000Z", 0, 1),
+    });
+
+    const snapshot = readWorkerRuntimeTelemetry(fixture.dbPath, { now });
+
+    expect(snapshot).toMatchObject({
+      status: "available",
+      configuredSlots: 8,
+      activeSlots: 5,
+      availableSlots: 3,
+      activeDetailsTotal: 3,
+      activeDetailsTruncated: false,
+      activeCountsByType: { score_job: 3 },
+    });
+    expect(snapshot.activeDetails).toHaveLength(3);
+    expect(JSON.stringify(snapshot)).not.toContain("unallowlisted");
+  });
+
   it("excludes a crashed stale process and reports stale when no process remains fresh", () => {
     const fixture = createFixture();
     const now = new Date("2026-07-14T10:02:00.000Z");
@@ -251,10 +292,12 @@ function insertHeartbeat(
     activeSlots: number;
     executorThreads: number;
     details: unknown[];
+    activeDetailsTotal?: number;
     queueObservation: Record<string, unknown>;
     counts?: Record<string, number>;
   },
 ): void {
+  const activeDetailsTotal = input.activeDetailsTotal ?? input.activeSlots;
   fixture.db
     .prepare(
       `INSERT INTO worker_runtime_heartbeats (
@@ -278,8 +321,8 @@ function insertHeartbeat(
       input.activeSlots,
       JSON.stringify(input.counts ?? { score_job: input.activeSlots }),
       JSON.stringify(input.details),
-      input.activeSlots,
-      Number(input.activeSlots > input.details.length),
+      activeDetailsTotal,
+      Number(activeDetailsTotal > input.details.length),
       JSON.stringify({
         score_job: {
           completedCount: 2,

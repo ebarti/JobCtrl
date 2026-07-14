@@ -98,6 +98,13 @@ class ActivityDurationMetric:
 
 @dataclass(frozen=True)
 class ActivityInventorySnapshot:
+    """One process snapshot.
+
+    ``active_activity_count`` is exact shared-slot occupancy across every
+    Temporal activity. ``active_details_total`` and ``counts_by_type`` cover
+    only activities on the operational display allowlist.
+    """
+
     active_activity_count: int
     counts_by_type: Mapping[str, int]
     active_details: tuple[ActiveActivityDetail, ...]
@@ -131,7 +138,7 @@ class ActivityInventorySnapshot:
 
 @dataclass(frozen=True)
 class _ActiveEntry:
-    detail: ActiveActivityDetail
+    detail: ActiveActivityDetail | None
     started_monotonic: float
 
 
@@ -143,7 +150,7 @@ class _MutableDurationMetric:
 
 
 class ActiveActivityInventory:
-    """Concurrency-safe inventory of allowlisted activities in one process."""
+    """Concurrency-safe slot inventory with an allowlisted display subset."""
 
     def __init__(
         self,
@@ -166,41 +173,43 @@ class ActiveActivityInventory:
         workflow_run_id: str | None,
         attempt: int,
         started_at: datetime,
-    ) -> str | None:
+    ) -> str:
         """Register one attempt, returning an opaque process-local token.
 
-        Non-allowlisted activities are ignored. Workflow/run identifiers are
-        retained only when they match the app-owned, projection-resolvable ID
-        grammars; every other identifier is reduced to an opaque hash.
+        Every activity occupies a slot in the exact process total. For an
+        allowlisted activity only, workflow/run identifiers are retained when
+        they match app-owned, projection-resolvable ID grammars and all other
+        identifiers are reduced to an opaque hash. No metadata from an
+        unallowlisted activity is retained.
         """
 
         operational_kind = OPERATIONAL_ACTIVITY_KINDS.get(activity_type)
-        if operational_kind is None:
-            return None
-
         token = uuid.uuid4().hex
-        normalized_started_at = _as_utc(started_at)
-        workflow_ref = _safe_workflow_ref(workflow_id)
-        execution_ref = _safe_temporal_run_ref(workflow_run_id)
-        operational_ref = OperationalActivityRef(
-            kind=operational_kind,
-            opaque_id=_opaque_ref(
-                "op",
-                workflow_id,
-                workflow_run_id,
-                activity_id,
-                activity_type,
-            ),
-        )
-        entry = _ActiveEntry(
-            detail=ActiveActivityDetail(
+        detail: ActiveActivityDetail | None = None
+        if operational_kind is not None:
+            normalized_started_at = _as_utc(started_at)
+            workflow_ref = _safe_workflow_ref(workflow_id)
+            execution_ref = _safe_temporal_run_ref(workflow_run_id)
+            operational_ref = OperationalActivityRef(
+                kind=operational_kind,
+                opaque_id=_opaque_ref(
+                    "op",
+                    workflow_id,
+                    workflow_run_id,
+                    activity_id,
+                    activity_type,
+                ),
+            )
+            detail = ActiveActivityDetail(
                 activity_type=activity_type,
                 operational_ref=operational_ref,
                 workflow_ref=workflow_ref,
                 execution_ref=execution_ref,
                 attempt=max(1, int(attempt)),
                 started_at=normalized_started_at,
-            ),
+            )
+        entry = _ActiveEntry(
+            detail=detail,
             started_monotonic=self._monotonic(),
         )
         with self._lock:
@@ -217,6 +226,8 @@ class ActiveActivityInventory:
             entry = self._active.pop(token, None)
             if entry is None:
                 return
+            if entry.detail is None:
+                return
             duration_ms = max(
                 0,
                 int(round((finished_monotonic - entry.started_monotonic) * 1_000)),
@@ -230,7 +241,7 @@ class ActiveActivityInventory:
             metric.max_duration_ms = max(metric.max_duration_ms, duration_ms)
 
     def snapshot(self) -> ActivityInventorySnapshot:
-        """Return exact counts plus a bounded longest-running detail view."""
+        """Return exact slot occupancy plus a bounded allowlisted detail view."""
 
         with self._lock:
             entries = tuple(self._active.values())
@@ -243,28 +254,32 @@ class ActiveActivityInventory:
                 for activity_type, metric in self._durations.items()
             }
 
-        counts = Counter(entry.detail.activity_type for entry in entries)
+        allowlisted_details = tuple(
+            entry.detail for entry in entries if entry.detail is not None
+        )
+        counts = Counter(detail.activity_type for detail in allowlisted_details)
         ordered = sorted(
-            entries,
-            key=lambda entry: (
-                entry.detail.started_at,
-                entry.detail.operational_ref.opaque_id,
+            allowlisted_details,
+            key=lambda detail: (
+                detail.started_at,
+                detail.operational_ref.opaque_id,
             ),
         )
-        details = tuple(entry.detail for entry in ordered[: self._max_details])
+        details = tuple(ordered[: self._max_details])
         active_total = len(entries)
+        active_details_total = len(allowlisted_details)
         return ActivityInventorySnapshot(
             active_activity_count=active_total,
             counts_by_type=dict(sorted(counts.items())),
             active_details=details,
-            active_details_total=active_total,
-            active_details_truncated=active_total > len(details),
+            active_details_total=active_details_total,
+            active_details_truncated=active_details_total > len(details),
             durations_by_type=durations,
         )
 
 
 class ActivityRuntimeTelemetryInterceptor(Interceptor):
-    """Temporal worker interceptor that brackets every allowlisted attempt."""
+    """Temporal worker interceptor that brackets every activity attempt."""
 
     def __init__(self, inventory: ActiveActivityInventory) -> None:
         self._inventory = inventory
