@@ -54,7 +54,13 @@ import {
 import { createStageStarted, createStageCompleted } from "../src/events/orchestration.js";
 import { createProfileUpdated, createProfileImported, createTailoringPolicyUpdated } from "../src/events/profile.js";
 import { createCompensationFactsUpdated } from "../src/events/compensation.js";
-import { createDigestReviewed } from "../src/events/operations.js";
+import {
+  createDigestReviewed,
+  createPipelineStepCompleted,
+  createPipelineStepFailed,
+  createPipelineStepQueued,
+  createPipelineStepStarted,
+} from "../src/events/operations.js";
 
 describe("DomainEvent base", () => {
   it("createDomainEvent sets envelope fields", () => {
@@ -82,6 +88,105 @@ describe("Operations events", () => {
     expect(event.eventType).toBe("DigestReviewed");
     expect(event.tenantId).toBe("local");
     expect(event.payload.acknowledgedAt).toBe("2026-07-05T10:00:00.000Z");
+  });
+
+  it("normalizes safe PipelineStep lifecycle payloads with explicit execution identity", () => {
+    const execution = {
+      tenantId: LOCAL_TENANT,
+      workflowId: "discover-local",
+      temporalRunId: "temporal-run-1",
+    } as const;
+    const queuedPayload = {
+      detail: { itemCount: 1, code: "source_family" },
+      attempt: 1,
+      itemKey: "family:workday",
+      stepKind: "source_family",
+      execution,
+      queuedAt: "2026-07-14T08:00:00.000Z",
+      rawProviderOutput: "must-not-survive-normalization",
+    } as const;
+    const queued = createPipelineStepQueued(LOCAL_TENANT, queuedPayload);
+    const started = createPipelineStepStarted(LOCAL_TENANT, {
+      execution,
+      stepKind: "source_family",
+      itemKey: "family:workday",
+      attempt: 1,
+      startedAt: "2026-07-14T08:00:01.000Z",
+      detail: { code: "source_family", itemCount: 1 },
+    });
+    const completed = createPipelineStepCompleted(LOCAL_TENANT, {
+      execution,
+      stepKind: "source_family",
+      itemKey: "family:workday",
+      attempt: 1,
+      completedAt: "2026-07-14T08:00:02.000Z",
+      durationMs: 1_000,
+      detail: { code: "source_family", itemCount: 1 },
+    });
+    const failed = createPipelineStepFailed(LOCAL_TENANT, {
+      execution,
+      stepKind: "source_family",
+      itemKey: "family:workday",
+      attempt: 2,
+      failedAt: "2026-07-14T08:00:03.000Z",
+      durationMs: 500,
+      errorCode: "source_timeout",
+      retryable: true,
+      detail: { code: "source_family", itemCount: 1 },
+    });
+
+    expect([queued.eventType, started.eventType, completed.eventType, failed.eventType]).toEqual([
+      "PipelineStepQueued",
+      "PipelineStepStarted",
+      "PipelineStepCompleted",
+      "PipelineStepFailed",
+    ]);
+    expect(queued.payload.execution).toEqual(execution);
+    expect(Object.keys(queued.payload)).toEqual([
+      "execution",
+      "stepKind",
+      "itemKey",
+      "attempt",
+      "detail",
+      "queuedAt",
+    ]);
+    expect(JSON.stringify(queued.payload)).not.toContain("rawProviderOutput");
+    expect(failed.payload).toMatchObject({
+      attempt: 2,
+      errorCode: "source_timeout",
+      retryable: true,
+    });
+  });
+
+  it("rejects unsafe PipelineStep scope keys and free-form error messages", () => {
+    const execution = {
+      tenantId: LOCAL_TENANT,
+      workflowId: "discover-local",
+      temporalRunId: "temporal-run-1",
+    } as const;
+    expect(() =>
+      createPipelineStepQueued(LOCAL_TENANT, {
+        execution,
+        stepKind: "pdf_render",
+        itemKey: "https://example.com/private-job",
+        attempt: 1,
+        queuedAt: "2026-07-14T08:00:00.000Z",
+        detail: null,
+      }),
+    ).toThrow(/safe scope key/);
+    expect(() =>
+      createPipelineStepFailed(LOCAL_TENANT, {
+        execution,
+        stepKind: "enrichment_pass",
+        itemKey: "terminal",
+        attempt: 1,
+        failedAt: "2026-07-14T08:00:00.000Z",
+        durationMs: null,
+        errorCode: "provider said: secret output",
+        retryable: false,
+        detail: null,
+      }),
+    ).toThrow(/safe code/);
   });
 });
 

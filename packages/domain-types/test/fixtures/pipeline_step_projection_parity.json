@@ -1,0 +1,284 @@
+{
+  "tenantId": "local",
+  "events": [
+    {
+      "eventType": "PipelineStepQueued",
+      "occurredAt": "2026-07-14T08:00:00.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "source_family",
+        "itemKey": "family:workday",
+        "attempt": 1,
+        "detail": { "code": "source_family", "itemCount": 1 },
+        "queuedAt": "2026-07-14T08:00:00.000Z",
+        "rawActivityInput": {
+          "jobUrl": "https://jobs.example/private?token=pipeline-secret-canary",
+          "description": "private-job-description-canary",
+          "profile": "candidate-private-profile-canary",
+          "prompt": "private-model-prompt-canary",
+          "providerOutput": "private-provider-output-canary",
+          "artifactPath": "/private/artifacts/resume-canary.pdf",
+          "secret": "private-api-secret-canary"
+        }
+      }
+    },
+    {
+      "eventType": "PipelineStepQueued",
+      "occurredAt": "2026-07-14T08:00:00.100Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "source_family",
+        "itemKey": "family:workday",
+        "attempt": 1,
+        "detail": { "code": "source_family", "itemCount": 1 },
+        "queuedAt": "2026-07-14T08:00:00.000Z"
+      }
+    },
+    {
+      "eventType": "PipelineStepStarted",
+      "occurredAt": "2026-07-14T08:00:01.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "source_family",
+        "itemKey": "family:workday",
+        "attempt": 1,
+        "detail": { "code": "source_family", "itemCount": 1 },
+        "startedAt": "2026-07-14T08:00:01.000Z"
+      }
+    },
+    {
+      "eventType": "PipelineStepCompleted",
+      "occurredAt": "2026-07-14T08:00:03.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "source_family",
+        "itemKey": "family:workday",
+        "attempt": 1,
+        "detail": { "code": "source_family", "itemCount": 1 },
+        "completedAt": "2026-07-14T08:00:03.000Z",
+        "durationMs": 2000
+      }
+    },
+    {
+      "eventType": "PipelineStepStarted",
+      "occurredAt": "2026-07-14T08:00:04.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "source_family",
+        "itemKey": "family:workday",
+        "attempt": 1,
+        "detail": null,
+        "startedAt": "2026-07-14T08:00:01.000Z"
+      }
+    },
+    {
+      "eventType": "PipelineStepQueued",
+      "occurredAt": "2026-07-14T08:01:00.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "enrichment_pass",
+        "itemKey": "terminal",
+        "attempt": 1,
+        "detail": { "code": "terminal_reconciliation", "itemCount": 7 },
+        "queuedAt": "2026-07-14T08:01:00.000Z"
+      }
+    },
+    {
+      "eventType": "PipelineStepStarted",
+      "occurredAt": "2026-07-14T08:01:01.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "enrichment_pass",
+        "itemKey": "terminal",
+        "attempt": 1,
+        "detail": null,
+        "startedAt": "2026-07-14T08:01:01.000Z"
+      }
+    },
+    {
+      "eventType": "PipelineStepFailed",
+      "occurredAt": "2026-07-14T08:01:02.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "enrichment_pass",
+        "itemKey": "terminal",
+        "attempt": 1,
+        "detail": null,
+        "failedAt": "2026-07-14T08:01:02.000Z",
+        "durationMs": 1000,
+        "errorCode": "provider_timeout",
+        "retryable": true
+      }
+    },
+    {
+      "eventType": "PipelineStepFailed",
+      "occurredAt": "2026-07-14T08:01:02.100Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "enrichment_pass",
+        "itemKey": "terminal",
+        "attempt": 1,
+        "detail": null,
+        "failedAt": "2026-07-14T08:01:02.000Z",
+        "durationMs": 1000,
+        "errorCode": "provider_timeout",
+        "retryable": true
+      }
+    },
+    {
+      "eventType": "PipelineStepQueued",
+      "occurredAt": "2026-07-14T08:01:03.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "enrichment_pass",
+        "itemKey": "terminal",
+        "attempt": 2,
+        "detail": { "code": "terminal_reconciliation", "itemCount": 7 },
+        "queuedAt": "2026-07-14T08:01:03.000Z"
+      }
+    },
+    {
+      "eventType": "PipelineStepCompleted",
+      "occurredAt": "2026-07-14T08:01:03.100Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "enrichment_pass",
+        "itemKey": "terminal",
+        "attempt": 1,
+        "detail": null,
+        "completedAt": "2026-07-14T08:01:03.100Z",
+        "durationMs": 2100
+      }
+    },
+    {
+      "eventType": "PipelineStepStarted",
+      "occurredAt": "2026-07-14T08:01:04.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "enrichment_pass",
+        "itemKey": "terminal",
+        "attempt": 2,
+        "detail": null,
+        "startedAt": "2026-07-14T08:01:04.000Z"
+      }
+    },
+    {
+      "eventType": "PipelineStepCompleted",
+      "occurredAt": "2026-07-14T08:01:06.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "enrichment_pass",
+        "itemKey": "terminal",
+        "attempt": 2,
+        "detail": null,
+        "completedAt": "2026-07-14T08:01:06.000Z",
+        "durationMs": 2000
+      }
+    },
+    {
+      "eventType": "PipelineStepQueued",
+      "occurredAt": "2026-07-14T08:02:00.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "existing_backlog_sweep",
+        "itemKey": "existing_backlog",
+        "attempt": 1,
+        "detail": { "code": "existing_backlog", "itemCount": 3 },
+        "queuedAt": "2026-07-14T08:02:00.000Z"
+      }
+    },
+    {
+      "eventType": "PipelineStepFailed",
+      "occurredAt": "2026-07-14T08:02:02.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "existing_backlog_sweep",
+        "itemKey": "existing_backlog",
+        "attempt": 1,
+        "detail": null,
+        "failedAt": "2026-07-14T08:02:02.000Z",
+        "durationMs": 2000,
+        "errorCode": "work_plan_failed",
+        "retryable": false
+      }
+    },
+    {
+      "eventType": "PipelineStepCompleted",
+      "occurredAt": "2026-07-14T08:02:03.000Z",
+      "payload": {
+        "execution": { "tenantId": "local", "workflowId": "discover-local", "temporalRunId": "run-a" },
+        "stepKind": "existing_backlog_sweep",
+        "itemKey": "existing_backlog",
+        "attempt": 1,
+        "detail": null,
+        "completedAt": "2026-07-14T08:02:03.000Z",
+        "durationMs": 3000
+      }
+    }
+  ],
+  "sensitiveValues": [
+    "pipeline-secret-canary",
+    "private-job-description-canary",
+    "candidate-private-profile-canary",
+    "private-model-prompt-canary",
+    "private-provider-output-canary",
+    "/private/artifacts/resume-canary.pdf",
+    "private-api-secret-canary"
+  ],
+  "expected": [
+    {
+      "workflowId": "discover-local",
+      "temporalRunId": "run-a",
+      "stepKind": "enrichment_pass",
+      "itemKey": "terminal",
+      "state": "succeeded",
+      "attempt": 2,
+      "queuedAt": "2026-07-14T08:01:03.000Z",
+      "startedAt": "2026-07-14T08:01:04.000Z",
+      "finishedAt": "2026-07-14T08:01:06.000Z",
+      "durationMs": 2000,
+      "errorCode": null,
+      "retryable": false,
+      "detailCode": "terminal_reconciliation",
+      "detailCount": 7,
+      "lastEventId": 13,
+      "lastUpdatedAt": "2026-07-14T08:01:06.000Z"
+    },
+    {
+      "workflowId": "discover-local",
+      "temporalRunId": "run-a",
+      "stepKind": "existing_backlog_sweep",
+      "itemKey": "existing_backlog",
+      "state": "failed",
+      "attempt": 1,
+      "queuedAt": "2026-07-14T08:02:00.000Z",
+      "startedAt": null,
+      "finishedAt": "2026-07-14T08:02:02.000Z",
+      "durationMs": 2000,
+      "errorCode": "work_plan_failed",
+      "retryable": false,
+      "detailCode": "existing_backlog",
+      "detailCount": 3,
+      "lastEventId": 15,
+      "lastUpdatedAt": "2026-07-14T08:02:02.000Z"
+    },
+    {
+      "workflowId": "discover-local",
+      "temporalRunId": "run-a",
+      "stepKind": "source_family",
+      "itemKey": "family:workday",
+      "state": "succeeded",
+      "attempt": 1,
+      "queuedAt": "2026-07-14T08:00:00.000Z",
+      "startedAt": "2026-07-14T08:00:01.000Z",
+      "finishedAt": "2026-07-14T08:00:03.000Z",
+      "durationMs": 2000,
+      "errorCode": null,
+      "retryable": false,
+      "detailCode": "source_family",
+      "detailCount": 1,
+      "lastEventId": 4,
+      "lastUpdatedAt": "2026-07-14T08:00:03.000Z"
+    }
+  ]
+}

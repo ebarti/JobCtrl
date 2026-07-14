@@ -289,6 +289,22 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
+  PipelineStepQueued: [
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+  ],
+  PipelineStepStarted: [
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+  ],
+  PipelineStepCompleted: [
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+  ],
+  PipelineStepFailed: [
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+  ],
   ApplyRunStarted: [
     applyRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.lists(LOCAL_TENANT),

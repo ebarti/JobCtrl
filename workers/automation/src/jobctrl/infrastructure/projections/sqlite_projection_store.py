@@ -1,8 +1,7 @@
 """SQLite adapter for the Operations read-model projections (Phase 9 / S-32).
 
-The store owns the schema for the five projection tables defined in
-``domain/operations/projections.py`` and provides upsert + query
-helpers used by ``ProjectionBuilder`` and the test fixtures.
+The store owns the Operations projection schema and provides helpers used by
+``ProjectionBuilder`` and the test fixtures.
 
 Table layout (all keyed by ``tenant_id`` to support the future
 multi-tenant rollout per ddd-target.md §9):
@@ -12,13 +11,13 @@ multi-tenant rollout per ddd-target.md §9):
 * ``job_detail_projections``  — full detail row per job
 * ``artifact_list_projections`` — denormalised artifact rows
 * ``apply_run_projections``   — apply-run telemetry per run
+* ``workflow_run_projections`` — Temporal workflow lifecycle per execution
+* ``pipeline_step_projections`` — scoped orchestration-step lifecycle
 * ``source_quality_stats``    — rolling source health window
 
-Schemas are intentionally narrow — every column corresponds to a field
-on the matching projection dataclass.  ``payload_json`` style overflow
-columns are used for nested lists (stages, events, funnel) which keeps
-the table flat enough to query with simple SELECT statements from the
-TS read-model.
+Schemas are intentionally narrow. ``payload_json`` style overflow columns are
+used for nested lists (stages, events, funnel), which keeps the tables flat
+enough to query with simple SELECT statements from the TS read-model.
 """
 
 from __future__ import annotations
@@ -50,6 +49,7 @@ PROJECTION_TABLES: tuple[str, ...] = (
     "evidence_usage_projections",
     "apply_run_projections",
     "workflow_run_projections",
+    "pipeline_step_projections",
     "source_quality_stats",
     "contact_projections",
     "contact_research_task_projections",
@@ -300,6 +300,51 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
         """
         CREATE INDEX IF NOT EXISTS idx_workflow_run_projections_tenant_started
         ON workflow_run_projections(tenant_id, started_at DESC, workflow_id DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pipeline_step_projections (
+            tenant_id              TEXT NOT NULL,
+            discover_workflow_id   TEXT NOT NULL,
+            discover_run_id        TEXT NOT NULL,
+            step_kind              TEXT NOT NULL CHECK (step_kind IN (
+                'source_planning', 'source_family', 'enrichment_pass',
+                'preparation_fanout', 'existing_backlog_sweep', 'pdf_render'
+            )),
+            item_key               TEXT NOT NULL,
+            state                  TEXT NOT NULL CHECK (state IN (
+                'queued', 'running', 'succeeded', 'failed'
+            )),
+            attempt                INTEGER NOT NULL CHECK (attempt >= 1),
+            queued_at              TEXT,
+            started_at             TEXT,
+            finished_at            TEXT,
+            duration_ms            INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+            error_code             TEXT,
+            retryable              INTEGER NOT NULL DEFAULT 0 CHECK (retryable IN (0, 1)),
+            detail_code            TEXT,
+            detail_count           INTEGER CHECK (detail_count IS NULL OR detail_count >= 0),
+            last_event_id          INTEGER NOT NULL,
+            last_updated_at        TEXT NOT NULL,
+            PRIMARY KEY (
+                tenant_id, discover_workflow_id, discover_run_id, step_kind, item_key
+            )
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_pipeline_step_projections_execution
+        ON pipeline_step_projections(
+            tenant_id, discover_workflow_id, discover_run_id, step_kind, state
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_pipeline_step_projections_updated
+        ON pipeline_step_projections(tenant_id, last_updated_at DESC, last_event_id DESC)
         """
     )
     conn.execute(
