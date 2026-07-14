@@ -487,7 +487,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
         ) : null}
         {controls.workers ? (
           <label className="field">
-            <span>Workers</span>
+            <span>Internal concurrency</span>
             <input
               min={1}
               max={16}

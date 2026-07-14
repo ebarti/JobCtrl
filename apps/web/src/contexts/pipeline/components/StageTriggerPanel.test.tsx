@@ -110,7 +110,7 @@ describe("StageTriggerPanel", () => {
     const user = userEvent.setup();
     renderWithProviders(<StageTriggerPanel />);
 
-    expect(screen.getByLabelText("Workers")).toBeInTheDocument();
+    expect(screen.getByLabelText("Internal concurrency")).toBeInTheDocument();
     expect(screen.getByLabelText("Limit")).toBeInTheDocument();
     expect(screen.getByLabelText("Dry run")).toBeInTheDocument();
     expect(screen.queryByLabelText("Minimum score")).not.toBeInTheDocument();
@@ -124,7 +124,7 @@ describe("StageTriggerPanel", () => {
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     expect(screen.getByLabelText("Limit")).toBeInTheDocument();
-    expect(screen.getByLabelText("Workers")).toBeInTheDocument();
+    expect(screen.getByLabelText("Internal concurrency")).toBeInTheDocument();
     expect(screen.getByLabelText("Minimum score")).toBeInTheDocument();
     expect(screen.getByLabelText("Apply model")).toBeInTheDocument();
     expect(screen.getByLabelText("Apply model")).toHaveRole("combobox");
@@ -336,8 +336,8 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     await user.clear(screen.getByLabelText("Limit"));
     await user.type(screen.getByLabelText("Limit"), "12");
-    await user.clear(screen.getByLabelText("Workers"));
-    await user.type(screen.getByLabelText("Workers"), "3");
+    await user.clear(screen.getByLabelText("Internal concurrency"));
+    await user.type(screen.getByLabelText("Internal concurrency"), "3");
     await user.clear(screen.getByLabelText("Minimum score"));
     await user.type(screen.getByLabelText("Minimum score"), "8");
     await user.click(screen.getByLabelText("Headless browser"));
@@ -687,8 +687,8 @@ describe("StageTriggerPanel", () => {
     const { unmount } = renderWithProviders(<StageTriggerPanel />);
 
     expect(screen.getByRole("tab", { name: "Discover" })).toHaveAttribute("aria-selected", "true");
-    await user.clear(screen.getByLabelText("Workers"));
-    await user.type(screen.getByLabelText("Workers"), "5");
+    await user.clear(screen.getByLabelText("Internal concurrency"));
+    await user.type(screen.getByLabelText("Internal concurrency"), "5");
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     await user.clear(screen.getByLabelText("Limit"));
@@ -696,14 +696,14 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByLabelText("Headless browser"));
 
     await user.click(screen.getByRole("tab", { name: "Discover" }));
-    expect(screen.getByLabelText("Workers")).toHaveValue(5);
+    expect(screen.getByLabelText("Internal concurrency")).toHaveValue(5);
     expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
 
     unmount();
     renderWithProviders(<StageTriggerPanel />);
 
     expect(screen.getByRole("tab", { name: "Discover" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByLabelText("Workers")).toHaveValue(5);
+    expect(screen.getByLabelText("Internal concurrency")).toHaveValue(5);
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     expect(screen.getByLabelText("Limit")).toHaveValue(13);

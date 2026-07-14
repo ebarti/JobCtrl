@@ -15,6 +15,7 @@ import type {
   PipelineStepFailed,
   PipelineStepQueued,
   PipelineStepStarted,
+  TenantId,
   WorkflowStarted,
   WorkflowCompleted,
   WorkflowFailed,
@@ -30,11 +31,16 @@ import { digestKeys } from "../operations/digestKeys.js";
 import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
 import { workflowRunsKeys } from "../operations/workflowRunsKeys.js";
+import { pipelineKeys } from "./queryKeys.js";
+
+const pipelineOperationsInvalidation = (tenantId: TenantId): InvalidationItem =>
+  invalidate(pipelineKeys.operations(tenantId));
 
 export const stageStartedHandler = (event: StageStarted): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+  pipelineOperationsInvalidation(event.tenantId),
 ];
 
 export const stageCompletedHandler = (
@@ -43,12 +49,14 @@ export const stageCompletedHandler = (
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+  pipelineOperationsInvalidation(event.tenantId),
 ];
 
 export const stageFailedHandler = (event: StageFailed): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+  pipelineOperationsInvalidation(event.tenantId),
 ];
 
 export const stageExhaustedHandler = (
@@ -57,17 +65,20 @@ export const stageExhaustedHandler = (
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+  pipelineOperationsInvalidation(event.tenantId),
 ];
 
 export const stageResetHandler = (event: StageReset): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  pipelineOperationsInvalidation(event.tenantId),
 ];
 
 export const stageBlockedHandler = (event: StageBlocked): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+  pipelineOperationsInvalidation(event.tenantId),
 ];
 
 export const stageSkippedHandler = (event: StageSkipped): readonly InvalidationItem[] => [
@@ -76,6 +87,7 @@ export const stageSkippedHandler = (event: StageSkipped): readonly InvalidationI
   invalidate(applyReviewKeys.queue(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
   invalidate(digestKeys.all(event.tenantId)),
+  pipelineOperationsInvalidation(event.tenantId),
 ];
 
 export const stageCanceledHandler = (
@@ -86,6 +98,7 @@ export const stageCanceledHandler = (
   invalidate(applyReviewKeys.queue(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
   invalidate(digestKeys.all(event.tenantId)),
+  pipelineOperationsInvalidation(event.tenantId),
 ];
 
 type PreparationWorkItemEvent =
@@ -100,6 +113,7 @@ const preparationWorkItemHandler = (
   const invalidations = [
     invalidate(jobsKeys.lists(event.tenantId)),
     invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+    pipelineOperationsInvalidation(event.tenantId),
   ];
   if (
     event.eventType === "PreparationWorkItemCompleted" &&
@@ -122,9 +136,7 @@ type PipelineStepLifecycleEvent =
   | PipelineStepCompleted
   | PipelineStepFailed;
 
-// The dedicated pipeline-operations query lands later. Until then, refresh the
-// narrowest existing execution-scoped read model that can expose lifecycle
-// diagnostics. The global activity list invalidation is appended by dispatch.
+// The global activity-list invalidation is appended by dispatch.
 const pipelineStepLifecycleHandler = (
   event: PipelineStepLifecycleEvent,
 ): readonly InvalidationItem[] => [
@@ -132,6 +144,7 @@ const pipelineStepLifecycleHandler = (
   invalidate(
     workflowRunsKeys.detail(event.tenantId, event.payload.execution.workflowId),
   ),
+  pipelineOperationsInvalidation(event.tenantId),
 ];
 
 export const pipelineStepQueuedHandler = pipelineStepLifecycleHandler;
@@ -157,6 +170,7 @@ const workflowLifecycleHandler = (
 ): readonly InvalidationItem[] => [
   invalidate(workflowRunsKeys.lists(event.tenantId)),
   invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.workflowId)),
+  pipelineOperationsInvalidation(event.tenantId),
 ];
 
 export const workflowStartedHandler = workflowLifecycleHandler;
