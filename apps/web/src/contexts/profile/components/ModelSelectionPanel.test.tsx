@@ -42,7 +42,7 @@ describe("<ModelSelectionPanel>", () => {
     const claude = await providerCard("Claude");
     const codex = await providerCard("Codex");
     const google = await providerCard("Google");
-    expect(claude.getAllByText(/provider-safe aliases/i)).not.toHaveLength(0);
+    expect(claude.getByText(/live availability/i)).toBeInTheDocument();
     expect(codex.getByText(/live availability/i)).toBeInTheDocument();
     expect(google.getByRole("link", { name: "configure Google" })).toHaveAttribute(
       "href",
@@ -54,12 +54,12 @@ describe("<ModelSelectionPanel>", () => {
   it("saves one ready provider without changing provider priority", async () => {
     const user = userEvent.setup();
     const updateSettings = vi.fn(async () => ({
-      ...sampleSettingsResponse,
-      settings: {
-        ...sampleSettingsResponse.settings,
-        preferredModels: { claude: "opus" },
-      },
-    }));
+        ...sampleSettingsResponse,
+        settings: {
+          ...sampleSettingsResponse.settings,
+          preferredModels: { claude: "claude-opus-4-8" },
+        },
+      }));
     renderWithProviders(<ModelSelectionPanel />, {
       withRouter: true,
       ports: buildTestPorts({
@@ -73,11 +73,11 @@ describe("<ModelSelectionPanel>", () => {
 
     const claude = await providerCard("Claude");
     const select = await claude.findByRole("combobox", { name: /Preferred model/ });
-    expect(select).toHaveValue("sonnet");
-    await user.selectOptions(select, "opus");
+    expect(select).toHaveValue("claude-sonnet-5");
+    await user.selectOptions(select, "claude-opus-4-8");
     await user.click(claude.getByRole("button", { name: "save model" }));
 
-    expect(updateSettings).toHaveBeenCalledWith({ preferredModels: { claude: "opus" } });
+    expect(updateSettings).toHaveBeenCalledWith({ preferredModels: { claude: "claude-opus-4-8" } });
     expect(await claude.findByRole("status")).toHaveTextContent(
       "Claude preference saved for newly started work.",
     );
@@ -104,7 +104,7 @@ describe("<ModelSelectionPanel>", () => {
     const select = await claude.findByRole("combobox", { name: /Preferred model/ });
     expect(select).toHaveValue("");
     await act(async () => resolveSettings(sampleSettingsResponse));
-    await waitFor(() => expect(select).toHaveValue("sonnet"));
+    await waitFor(() => expect(select).toHaveValue("claude-sonnet-5"));
   });
 
   it("clears a saved choice back to the provider default", async () => {

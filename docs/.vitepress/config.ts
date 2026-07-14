@@ -33,120 +33,166 @@ function routeForRewrittenPage(docPath: string): string | null {
   return "/" + rewritten.replace(/index\.md$/, "").replace(/\.md$/, "");
 }
 
-// One unified sidebar for the whole site — the user and developer guides are
-// one navigation tree, in reader-journey order (see "Documentation Standards"
-// in docs/developer/README.md): use the product (User Guide: install → see
-// it → use it daily → tune it → understand the data → protect it) → change
-// the product (Developer Guide) → understand the system (System
-// Architecture) → look things up (API). User-guide pages hide the developer
-// groups in the theme layer; developer sections stay collapsed until opened
-// or active.
+// One guide, one navigation tree. The first two groups answer the questions a
+// new reader asks; contributor, architecture, and reference depth stays
+// available everywhere through collapsed groups. Every route appears once so
+// active-link state and previous/next navigation remain unambiguous.
 const SIDEBAR: DefaultTheme.SidebarItem[] = [
   { text: "Home", link: "/" },
   // Frozen slot for the alternatives-comparison page (launch-readiness plan
   // §8.2). Label/placement are an owner decision (§11.3); the URL is frozen.
   { text: "How It Compares", link: "/comparison" },
   {
-    text: "User Guide",
+    text: "Start Here",
     collapsed: false,
     items: [
-      { text: "Getting Started", link: "/user/getting-started" },
       { text: "Product Tour", link: "/user/screenshots" },
+      { text: "Getting Started", link: "/user/getting-started" },
       { text: "Daily Workflow", link: "/user/normal-flows" },
-      { text: "Configuration", link: "/user/configuration" },
-      { text: "Data, Privacy & Safety", link: "/user/data-and-safety" },
-      { text: "Security", link: "/user/security" },
     ],
   },
   {
-    text: "Developer Guide",
+    text: "The Job-Search Lifecycle",
+    collapsed: false,
+    items: [
+      { text: "Candidate Profile", link: "/user/candidate-profile" },
+      { text: "Discovery & Sources", link: "/user/discovery" },
+      { text: "Enrichment & Extraction", link: "/user/enrichment-and-extraction" },
+      { text: "Scoring", link: "/user/scoring-and-employer-analysis" },
+      { text: "Materials & Tailoring", link: "/user/materials-and-tailoring" },
+      { text: "Apply", link: "/user/apply" },
+      { text: "Outcomes & Feedback", link: "/user/outcomes-and-feedback" },
+      { text: "Contacts & Outreach", link: "/user/contacts-and-outreach" },
+      { text: "Compensation Evidence", link: "/user/compensation-evidence" },
+    ],
+  },
+  {
+    text: "Configuration & Trust",
     collapsed: true,
     items: [
-      { text: "Overview", link: "/developer/" },
+      { text: "Configuration & Credentials", link: "/user/configuration" },
+      { text: "Data, Privacy & Safety", link: "/user/data-and-safety" },
+      {
+        text: "Security",
+        collapsed: true,
+        items: [
+          { text: "Security & Hardening", link: "/user/security" },
+          { text: "Threat Model & Security Engineering", link: "/developer/security" },
+        ],
+      },
+    ],
+  },
+  {
+    text: "Build & Verify",
+    collapsed: true,
+    items: [
+      { text: "Contributor Start", link: "/developer/" },
+      { text: "Repository & Ownership Map", link: "/developer/repository-and-ownership-map" },
       { text: "Local Development", link: "/local-development" },
+      { text: "Documentation Standards", link: "/developer/documentation-standards" },
       {
         text: "Reliability & QA",
         collapsed: true,
         items: [
-          { text: "Overview", link: "/local-reliability-qa" },
+          { text: "What To Run", link: "/local-reliability-qa" },
           { text: "Regression Catalog", link: "/developer/qa/regression-catalog" },
           { text: "Browser Smoke", link: "/developer/qa/browser-smoke" },
           { text: "Frontend QA", link: "/developer/qa/frontend" },
+          { text: "First-Run Validation", link: "/developer/first-run-ttfv" },
           { text: "Complete Checklist", link: "/developer/qa/complete-checklist" },
         ],
       },
-      { text: "Security", link: "/developer/security" },
     ],
   },
-  // Reader-journey order: what the system is (Overview, Runtime) → what it
-  // does (Job Pipeline, then per-stage deep-dives in pipeline order: Scoring →
-  // Materials → Tailoring → Apply feedback) → where data lives (Storage) →
-  // how to watch it (Observability) → how it is designed (backend Domain
-  // Model, Frontend). prev/next footers follow this order, so it is also the
-  // linear reading path.
   {
-    text: "System Architecture",
+    text: "How JobCtrl Works",
     collapsed: true,
     items: [
-      { text: "Overview", link: "/architecture/" },
-      { text: "Runtime Boundaries", link: "/architecture/runtime" },
+      { text: "System Overview", link: "/architecture/" },
+      { text: "Runtime & Processes", link: "/architecture/runtime" },
       {
-        text: "Job Pipeline",
+        text: "Temporal Workflows",
         collapsed: true,
         items: [
-          { text: "Overview", link: "/architecture/pipeline/" },
-          { text: "Stage Walkthrough", link: "/architecture/pipeline/stages" },
-          { text: "Envelope & Activities", link: "/architecture/pipeline/envelope" },
+          { text: "Workflow Catalog", link: "/architecture/pipeline/" },
+          { text: "Stage Execution", link: "/architecture/pipeline/stages" },
+          { text: "Activities, Retries & Cancellation", link: "/architecture/pipeline/envelope" },
           { text: "Concurrency & Fan-out", link: "/architecture/pipeline/concurrency" },
-          { text: "Operations & Events", link: "/architecture/pipeline/operations" },
+          { text: "Schedules, Operations & Recovery", link: "/architecture/pipeline/operations" },
         ],
       },
-      { text: "Scoring", link: "/architecture/scoring" },
-      { text: "Materials & Tailoring Audit", link: "/architecture/materials" },
-      { text: "Tailoring Contract", link: "/architecture/tailoring" },
-      { text: "Apply Feedback & Projections", link: "/architecture/read-model" },
-      { text: "Storage", link: "/architecture/storage" },
-      { text: "Observability", link: "/architecture/observability" },
       {
-        text: "Backend Domain Model (DDD)",
+        text: "Data, Events & Projections",
+        collapsed: true,
+        items: [
+          { text: "Concepts & Ownership", link: "/architecture/data-events-and-projections" },
+          { text: "Storage Authority", link: "/architecture/storage" },
+          { text: "Apply Feedback Projection", link: "/architecture/read-model" },
+        ],
+      },
+      {
+        text: "AI Decisions & Materials",
+        collapsed: true,
+        items: [
+          { text: "Scoring Policy", link: "/architecture/scoring" },
+          { text: "Employer Analysis & Materials Audit", link: "/architecture/materials" },
+          { text: "Tailoring Contract", link: "/architecture/tailoring" },
+        ],
+      },
+      { text: "Contracts, Types & API Boundaries", link: "/architecture/contracts-types-and-api-boundaries" },
+      { text: "Frontend Architecture", link: "/architecture/frontend/" },
+      { text: "Observability", link: "/architecture/observability" },
+    ],
+  },
+  {
+    text: "Reference",
+    collapsed: true,
+    items: [
+      {
+        text: "API",
+        collapsed: true,
+        items: [
+          { text: "Overview", link: "/local-ts-api" },
+          { text: "Profile & Settings", link: "/api/profile-and-settings" },
+          { text: "Jobs & Materials", link: "/api/jobs-and-materials" },
+          { text: "Operations & Events", link: "/api/operations-and-events" },
+          { text: "Complete Contract", link: "/api/complete-contract" },
+        ],
+      },
+      {
+        text: "Backend Domain Model",
         collapsed: true,
         items: [
           { text: "Overview", link: "/architecture/domain-model/" },
-          { text: "Strategic Design", link: "/architecture/domain-model/strategic" },
-          { text: "Tactical Design", link: "/architecture/domain-model/tactical" },
-          { text: "Ports & Adapters", link: "/architecture/domain-model/ports" },
-          { text: "Cross-Context Integration", link: "/architecture/domain-model/integration" },
-          { text: "Persistence & Consistency", link: "/architecture/domain-model/persistence" },
-          { text: "Cloud Deployment", link: "/architecture/domain-model/cloud" },
-          { text: "Risks & Glossary", link: "/architecture/domain-model/reference" },
+          { text: "Contexts & Domain Language", link: "/architecture/domain-model/strategic" },
+          { text: "Aggregates & Invariants", link: "/architecture/domain-model/tactical" },
+          { text: "Interfaces & Adapters", link: "/architecture/domain-model/ports" },
+          { text: "Context Integration", link: "/architecture/domain-model/integration" },
+          { text: "Persistence & Failure Modes", link: "/architecture/domain-model/persistence" },
+          { text: "Hosted Deployment — Future", link: "/architecture/domain-model/cloud" },
         ],
       },
       {
-        text: "Frontend Architecture",
+        text: "Frontend Design",
         collapsed: true,
         items: [
-          { text: "Overview", link: "/architecture/frontend/" },
-          { text: "Bounded Contexts", link: "/architecture/frontend/contexts" },
+          { text: "Frontend Contexts", link: "/architecture/frontend/contexts" },
           { text: "Folder Structure", link: "/architecture/frontend/structure" },
           { text: "Context Patterns", link: "/architecture/frontend/patterns" },
-          { text: "State & Ports", link: "/architecture/frontend/state-and-ports" },
-          { text: "Realtime (SSE)", link: "/architecture/frontend/realtime" },
+          { text: "State & Interfaces", link: "/architecture/frontend/state-and-ports" },
+          { text: "Realtime Updates", link: "/architecture/frontend/realtime" },
           { text: "Integration & Evolution", link: "/architecture/frontend/integration" },
-          { text: "Testing", link: "/architecture/frontend/testing" },
-          { text: "Risks & Glossary", link: "/architecture/frontend/reference" },
+          { text: "Testing Architecture", link: "/architecture/frontend/testing" },
         ],
       },
-    ],
-  },
-  {
-    text: "API",
-    collapsed: true,
-    items: [
-      { text: "Overview", link: "/local-ts-api" },
-      { text: "Profile & Settings", link: "/api/profile-and-settings" },
-      { text: "Jobs & Materials", link: "/api/jobs-and-materials" },
-      { text: "Operations & Events", link: "/api/operations-and-events" },
-      { text: "Complete Contract", link: "/api/complete-contract" },
+      {
+        text: "Glossary & Open Questions",
+        collapsed: true,
+        items: [
+          { text: "Backend Glossary & Risks", link: "/architecture/domain-model/reference" },
+          { text: "Frontend Glossary & Risks", link: "/architecture/frontend/reference" },
+        ],
+      },
     ],
   },
 ];
@@ -237,10 +283,9 @@ export default withMermaid(
     themeConfig: {
       logo: { src: "/assets/brand/app-icon.png", alt: "JobCtrl" },
       siteTitle: 'Job<span class="jh-site-title-accent">Ctrl</span>',
-      nav: [
-        { text: "Guide", link: "/user/getting-started" },
-        { text: "Architecture", link: "/architecture/" },
-      ],
+      // There is one guide. Search, theme controls, and the repository link
+      // remain in the header; the sidebar owns all documentation navigation.
+      nav: [],
       sidebar: SIDEBAR,
       socialLinks: [{ icon: "github", link: REPO_URL }],
       footer: {

@@ -748,7 +748,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
@@ -774,7 +774,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       seedSchema(dbPath);
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/jobs" });
@@ -800,7 +800,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       insertCompensationRows(dbPath);
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
@@ -1035,7 +1035,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
@@ -1190,7 +1190,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const listRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
@@ -1226,7 +1226,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       seedSchema(dbPath);
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const baseline = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
@@ -1273,7 +1273,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const refreshedApp = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const listRes = await refreshedApp.inject({ method: "GET", url: "/v1/jobs?q=event" });
@@ -1338,7 +1338,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const listRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
@@ -1477,7 +1477,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const listRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
@@ -1602,7 +1602,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const listRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
@@ -1710,7 +1710,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const firstRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
@@ -1862,7 +1862,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const firstRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
@@ -1912,7 +1912,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       seedSchema(dbPath);
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const firstRes = await app.inject({ method: "GET", url: "/v1/jobs" });
@@ -1977,7 +1977,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
@@ -2025,7 +2025,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/jobs" });
@@ -2110,7 +2110,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const listRes = await app.inject({ method: "GET", url: "/v1/jobs" });
@@ -2162,7 +2162,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       seedSchema(dbPath);
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const listRes = await app.inject({ method: "GET", url: "/v1/jobs" });
@@ -2349,7 +2349,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const detailRes = await app.inject({
@@ -2511,7 +2511,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const detailRes = await app.inject({
@@ -2793,7 +2793,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const response = await app.inject({ method: "GET", url: "/v1/evidence-map" });
@@ -2996,7 +2996,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const response = await app.inject({ method: "GET", url: "/v1/evidence-map" });
@@ -3182,7 +3182,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         // The text resume serves provenance directly from its own row.
@@ -3391,7 +3391,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const resumeRes = await app.inject({ method: "GET", url: "/v1/artifacts/resume-1" });
@@ -3494,7 +3494,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
@@ -3553,7 +3553,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
@@ -3635,7 +3635,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
@@ -3775,7 +3775,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
@@ -4144,7 +4144,7 @@ describe("dashboard outcome-conversion projection", () => {
       ]);
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
@@ -4202,7 +4202,7 @@ describe("dashboard outcome-conversion projection", () => {
       ]);
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
@@ -4270,7 +4270,7 @@ describe("dashboard outcome-conversion projection", () => {
       seedSuggestions(dbPath, ["accepted", "accepted", "accepted", "corrected", "ignored"]);
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/analytics/outcomes" });
@@ -4362,7 +4362,7 @@ describe("dashboard outcome-conversion projection", () => {
       }
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/analytics/outcomes" });
@@ -4403,7 +4403,7 @@ describe("dashboard outcome-conversion projection", () => {
       ]);
       const app = buildApp({
         dbPath,
-        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+        configPath: path.join(path.dirname(dbPath), "config.json"),
       });
       try {
         const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });

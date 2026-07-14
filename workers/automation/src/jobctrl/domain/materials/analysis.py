@@ -48,9 +48,9 @@ from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 PROMPT_VERSION = "employer-analysis-v1"
 
 # Identifies the default ensemble model/SDK set. Bump when the default leg set
-# or model ids change so the cache invalidates (D-12). The local composition
-# root overrides this with ``JOBCTRL_ANALYSIS_LEGS`` when a user intentionally
-# disables a leg, so cache keys also reflect degraded-mode setup choices.
+# or model ids change so the cache invalidates (D-12). The config.json
+# ``analysis_legs`` setting records intentional degraded-mode choices, so cache
+# keys also reflect those choices.
 SDK_SET_VERSION = "claude+codex+antigravity-v2-synth-default"
 
 RequirementTier = Literal["must_have", "nice_to_have"]

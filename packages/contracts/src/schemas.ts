@@ -1749,11 +1749,6 @@ export type ProfileImportRequest = z.infer<typeof ProfileImportRequestSchema>;
 
 export const SettingsUpdateRequestSchema = z
   .object({
-    targetRole: z.string().trim().max(240).optional(),
-    locationFilter: z.string().trim().max(240).optional(),
-    minFitScore: z.coerce.number().int().min(0).max(10).optional(),
-    autoApply: z.boolean().optional(),
-    applyApprovalRequired: z.boolean().optional(),
     applyConcurrency: z.coerce.number().int().min(1).max(16).optional(),
     workerActivitySlots: z.coerce.number().int().min(1).max(64).optional(),
     dailyBudgetUsd: z.coerce.number().min(0).optional(),
@@ -1798,6 +1793,32 @@ export const CredentialKeys = [
   "CAPSOLVER_API_KEY",
 ] as const;
 export type CredentialKey = (typeof CredentialKeys)[number];
+
+export const SecretCredentialKeys = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "CAPSOLVER_API_KEY",
+] as const satisfies readonly CredentialKey[];
+export type SecretCredentialKey = (typeof SecretCredentialKeys)[number];
+
+export const ProviderConfigurationKeys = [
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "ANTHROPIC_AWS_WORKSPACE_ID",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "ANTHROPIC_VERTEX_PROJECT_ID",
+  "CLOUD_ML_REGION",
+  "ANTHROPIC_FOUNDRY_RESOURCE",
+  "AWS_PROFILE",
+  "AWS_REGION",
+  "GOOGLE_GENAI_USE_VERTEXAI",
+  "GOOGLE_CLOUD_PROJECT",
+  "GOOGLE_CLOUD_LOCATION",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+] as const satisfies readonly CredentialKey[];
+export type ProviderConfigurationKey = (typeof ProviderConfigurationKeys)[number];
 
 export const CREDENTIAL_VALUE_MAX_LENGTH = 8_000;
 const CREDENTIAL_VALUE_UNSAFE_CHARACTERS = /[\r\n\u0000]/u;
@@ -1865,7 +1886,7 @@ export type CredentialBatchUpdateRequest = z.infer<
 export const ProviderIds = ["codex", "claude", "google"] as const;
 export type ProviderId = (typeof ProviderIds)[number];
 
-export const ProviderModelCatalogSourceSchema = z.enum(["live", "provider_aliases"]);
+export const ProviderModelCatalogSourceSchema = z.literal("live");
 export type ProviderModelCatalogSource = z.infer<typeof ProviderModelCatalogSourceSchema>;
 
 export const ProviderModelSchema = z
@@ -1903,11 +1924,10 @@ export const ProviderModelCatalogResultSchema = z
           path: ["providers", index, "provider"],
         });
       }
-      const expectedSource = provider.provider === "claude" ? "provider_aliases" : "live";
-      if (provider.source !== expectedSource) {
+      if (provider.source !== "live") {
         context.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `${provider.provider} catalog source must be ${expectedSource}`,
+          message: `${provider.provider} catalog source must be live`,
           path: ["providers", index, "source"],
         });
       }
@@ -3504,12 +3524,7 @@ export const CorrectScoreRequestSchema = z
 export type CorrectScoreRequest = z.infer<typeof CorrectScoreRequestSchema>;
 export type CorrectScoreResponse = JobDetail;
 
-export interface DashboardSettings {
-  targetRole: string;
-  locationFilter: string;
-  minFitScore: number;
-  autoApply: boolean;
-  applyApprovalRequired: boolean;
+export interface JobCtrlSettings {
   applyConcurrency: number;
   workerActivitySlots: number;
   dailyBudgetUsd: number;
@@ -3537,41 +3552,23 @@ export const SETTING_ACTIVATIONS = [
 export type SettingActivation = (typeof SETTING_ACTIVATIONS)[number];
 
 const effectiveSettingSchema = <T extends z.ZodType>(value: T) =>
-  z.discriminatedUnion("source", [
-    z
-      .object({
-        value,
-        source: z.literal("environment"),
-        activation: z.enum(SETTING_ACTIVATIONS),
-        editable: z.literal(false),
-      })
-      .strict(),
-    z
-      .object({
-        value,
-        source: z.enum(["persisted", "default"]),
-        activation: z.enum(SETTING_ACTIVATIONS),
-        editable: z.literal(true),
-      })
-      .strict(),
-  ]);
+  z
+    .object({
+      value,
+      source: z.enum(["persisted", "default"]),
+      activation: z.enum(SETTING_ACTIVATIONS),
+      editable: z.literal(true),
+    })
+    .strict();
 
-export type EffectiveSetting<T> =
-  | {
-      value: T;
-      source: "environment";
-      activation: SettingActivation;
-      editable: false;
-    }
-  | {
-      value: T;
-      source: "persisted" | "default";
-      activation: SettingActivation;
-      editable: true;
-    };
+export type EffectiveSetting<T> = {
+  value: T;
+  source: "persisted" | "default";
+  activation: SettingActivation;
+  editable: true;
+};
 
-export interface EffectiveDashboardSettings {
-  llmModelOverride: EffectiveSetting<string | null>;
+export interface EffectiveJobCtrlSettings {
   dailyBudgetUsd: EffectiveSetting<number>;
   applyConcurrency: EffectiveSetting<number>;
   workerActivitySlots: EffectiveSetting<number>;
@@ -3590,11 +3587,6 @@ export const SettingsResponseSchema = z
     ok: z.literal(true),
     settings: z
       .object({
-        targetRole: z.string(),
-        locationFilter: z.string(),
-        minFitScore: z.number(),
-        autoApply: z.boolean(),
-        applyApprovalRequired: z.boolean(),
         applyConcurrency: z.number(),
         workerActivitySlots: z.number(),
         dailyBudgetUsd: z.number(),
@@ -3617,7 +3609,6 @@ export const SettingsResponseSchema = z
       .strict(),
     effectiveSettings: z
       .object({
-        llmModelOverride: effectiveSettingSchema(z.string().nullable()),
         dailyBudgetUsd: effectiveSettingSchema(z.number()),
         applyConcurrency: effectiveSettingSchema(z.number()),
         workerActivitySlots: effectiveSettingSchema(z.number()),
@@ -3631,33 +3622,17 @@ export const SettingsResponseSchema = z
         targetCriteria: effectiveSettingSchema(z.string()),
       })
       .strict(),
-    paths: z.object({ settingsPath: z.string() }).strict(),
+    paths: z.object({ configPath: z.string() }).strict(),
   })
   .strict();
 
 export interface SettingsResponse {
   ok: true;
-  settings: DashboardSettings;
-  effectiveSettings: EffectiveDashboardSettings;
+  settings: JobCtrlSettings;
+  effectiveSettings: EffectiveJobCtrlSettings;
   paths: {
-    settingsPath: string;
+    configPath: string;
   };
-}
-
-export interface SettingManagedByEnvironmentResponse {
-  ok: false;
-  error: "setting_managed_by_environment";
-  field:
-    | "workerActivitySlots"
-    | "analysisLegs"
-    | "tailoringGeneratorModels"
-    | "tailoringJudgeModel"
-    | "tailoringJudgeMinScore"
-    | "applyMaxBudgetUsd"
-    | "applyTimeoutSeconds";
-  source: "environment";
-  activation: SettingActivation;
-  message: string;
 }
 
 export const EXTENSION_CAPABILITY_VALUES = ["capture", "autofill_read"] as const;
@@ -3861,6 +3836,9 @@ export type CompensationSourcePolicyUpdateRequest = z.infer<
 
 export const DiscoverySettingsUpdateRequestSchema = z
   .object({
+    minFitScore: z.coerce.number().int().min(0).max(10).optional(),
+    autoApply: z.boolean().optional(),
+    applyApprovalRequired: z.boolean().optional(),
     boards: z.array(z.enum(["indeed", "linkedin", "zip_recruiter", "glassdoor"])).min(1).optional(),
     resultsPerSite: z.coerce.number().int().min(1).max(1000).optional(),
     hoursOld: z.coerce.number().int().min(1).max(8760).optional(),
@@ -3876,6 +3854,9 @@ export const DiscoverySettingsUpdateRequestSchema = z
 export type DiscoverySettingsUpdateRequest = z.infer<typeof DiscoverySettingsUpdateRequestSchema>;
 
 export interface DiscoverySettings {
+  minFitScore: number;
+  autoApply: boolean;
+  applyApprovalRequired: boolean;
   boards: Array<"indeed" | "linkedin" | "zip_recruiter" | "glassdoor">;
   resultsPerSite: number;
   hoursOld: number;
@@ -3890,6 +3871,9 @@ export interface DiscoverySettings {
 }
 
 export interface EffectiveDiscoverySettings {
+  minFitScore: EffectiveSetting<number>;
+  autoApply: EffectiveSetting<boolean>;
+  applyApprovalRequired: EffectiveSetting<boolean>;
   boards: EffectiveSetting<DiscoverySettings["boards"]>;
   resultsPerSite: EffectiveSetting<number>;
   hoursOld: EffectiveSetting<number>;
@@ -3907,6 +3891,9 @@ export const DiscoverySettingsResponseSchema = z
     ok: z.literal(true),
     settings: z
       .object({
+        minFitScore: z.number(),
+        autoApply: z.boolean(),
+        applyApprovalRequired: z.boolean(),
         boards: z.array(z.enum(["indeed", "linkedin", "zip_recruiter", "glassdoor"])),
         resultsPerSite: z.number(),
         hoursOld: z.number(),
@@ -3922,6 +3909,9 @@ export const DiscoverySettingsResponseSchema = z
       .strict(),
     effectiveSettings: z
       .object({
+        minFitScore: effectiveSettingSchema(z.number()),
+        autoApply: effectiveSettingSchema(z.boolean()),
+        applyApprovalRequired: effectiveSettingSchema(z.boolean()),
         boards: effectiveSettingSchema(
           z.array(z.enum(["indeed", "linkedin", "zip_recruiter", "glassdoor"])),
         ),
@@ -3945,18 +3935,10 @@ export interface DiscoverySettingsResponse {
   effectiveSettings: EffectiveDiscoverySettings;
 }
 
-export interface DiscoverySettingManagedByEnvironmentResponse {
-  ok: false;
-  error: "setting_managed_by_environment";
-  field: "roleFilterMode" | "roleFilterModel" | "maxParallelFamilies" | "crawlUserAgentProduct" | "crawlUserAgentContact";
-  source: "environment";
-  message: string;
-}
-
 export interface CredentialsResponse {
   ok: true;
   store: {
-    kind: "macos_keychain";
+    kind: "config_and_macos_keychain";
     available: boolean;
     unavailableReason: "inspection_failed" | "unsupported_platform" | null;
     requiresWorkerRestart: true;
@@ -3966,8 +3948,8 @@ export interface CredentialsResponse {
     label: string;
     /** Keychain inspection is reported separately from the effective owner. */
     configured: boolean | null;
-    storage: "keychain";
-    effectiveSource: "environment" | "keychain" | "absent" | "inspection_unknown";
+    storage: "keychain" | "config";
+    effectiveSource: "environment" | "keychain" | "config" | "absent" | "inspection_unknown";
     editable: boolean;
   }>;
 }

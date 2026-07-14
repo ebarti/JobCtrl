@@ -1,6 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
-
 import type {
   CompensationSourceAccessMode,
   CompensationSourcePolicyUpdateRequest,
@@ -9,11 +6,15 @@ import type {
   CompensationSupportedField,
 } from "./contracts.js";
 import {
+  ConfigFileInputError,
+  isRecord,
+  readConfigObject,
+  updateConfigObject,
+} from "./config-file.js";
+import {
   GLASSDOOR_COMPENSATION_ACCESS_MODES,
   LEVELS_FYI_COMPENSATION_ACCESS_MODES,
 } from "./contracts.js";
-
-type EnvLike = Readonly<Record<string, string | undefined>>;
 
 interface StoredCompensationSourcePreference {
   enabled: boolean;
@@ -35,15 +36,14 @@ const GLASSDOOR_ACCESS_MODES = new Set<CompensationSourceAccessMode>(
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 
 export function listCompensationSources(
-  env: EnvLike = process.env,
   preferences: CompensationSourcePreferences = {},
 ): CompensationSourceRegistryResponse {
   return {
     ok: true,
     sources: [
       postedSalarySource(),
-      levelsSource(env, preferences.levels_fyi),
-      glassdoorSource(env, preferences.glassdoor),
+      levelsSource(preferences.levels_fyi),
+      glassdoorSource(preferences.glassdoor),
       manualReportedCompensationSource(),
       euroTopTechSource(),
     ],
@@ -53,9 +53,17 @@ export function listCompensationSources(
 export class CompensationSourcePolicyInputError extends Error {}
 
 export function readCompensationSourcePreferences(
-  settingsPath: string,
+  configPath: string,
 ): CompensationSourcePreferences {
-  const settings = readSettingsObject(settingsPath, false);
+  let settings: Record<string, unknown>;
+  try {
+    settings = readConfigObject(configPath);
+  } catch (error) {
+    if (error instanceof ConfigFileInputError) {
+      return {};
+    }
+    throw error;
+  }
   const rawSources = isRecord(settings["compensation_sources"])
     ? settings["compensation_sources"]
     : {};
@@ -76,32 +84,35 @@ export function readCompensationSourcePreferences(
 }
 
 export function updateCompensationSourcePolicy(
-  settingsPath: string,
+  configPath: string,
   request: CompensationSourcePolicyUpdateRequest,
-  env: EnvLike = process.env,
 ): CompensationSourceRegistryResponse {
-  const settings = readSettingsObject(settingsPath, true);
-  const currentSources = isRecord(settings["compensation_sources"])
-    ? settings["compensation_sources"]
-    : {};
-  const nextSources: Record<string, unknown> = { ...currentSources };
-  nextSources[request.sourceId] =
-    request.sourceId === "levels_fyi"
-      ? {
-          enabled: request.enabled,
-          access_mode: request.accessMode,
-          europe_coverage_confirmed: request.europeCoverageConfirmed,
-        }
-      : {
-          enabled: request.enabled,
-          access_mode: request.accessMode,
-        };
-  settings["compensation_sources"] = nextSources;
-  writeSettingsObject(settingsPath, settings);
-  return listCompensationSources(
-    env,
-    readCompensationSourcePreferences(settingsPath),
-  );
+  try {
+    updateConfigObject(configPath, (settings) => {
+      const currentSources = isRecord(settings["compensation_sources"])
+        ? settings["compensation_sources"]
+        : {};
+      const nextSources: Record<string, unknown> = { ...currentSources };
+      nextSources[request.sourceId] =
+        request.sourceId === "levels_fyi"
+          ? {
+              enabled: request.enabled,
+              access_mode: request.accessMode,
+              europe_coverage_confirmed: request.europeCoverageConfirmed,
+            }
+          : {
+              enabled: request.enabled,
+              access_mode: request.accessMode,
+            };
+      settings["compensation_sources"] = nextSources;
+    });
+  } catch (error) {
+    if (error instanceof ConfigFileInputError) {
+      throw new CompensationSourcePolicyInputError(error.message);
+    }
+    throw error;
+  }
+  return listCompensationSources(readCompensationSourcePreferences(configPath));
 }
 
 function postedSalarySource(): CompensationSourcePolicySummary {
@@ -130,39 +141,22 @@ function postedSalarySource(): CompensationSourcePolicySummary {
 }
 
 function levelsSource(
-  env: EnvLike,
   preference: StoredCompensationSourcePreference | undefined,
 ): CompensationSourcePolicySummary {
-  const rawEnvironmentAccessMode =
-    env["JOBCTRL_LEVELS_FYI_ACCESS_MODE"]?.trim().toLowerCase() ?? "";
-  const environmentAccessMode = normalizeAccessMode(
-    env["JOBCTRL_LEVELS_FYI_ACCESS_MODE"],
-  );
-  const environmentAccessPermitted = environmentAccessMode
-    ? LEVELS_ACCESS_MODES.has(environmentAccessMode)
-    : false;
-  const invalidEnvironmentAccessMode =
-    !preference && Boolean(rawEnvironmentAccessMode) && !environmentAccessPermitted;
-  const environmentOrDefaultAccessMode = rawEnvironmentAccessMode
-    ? environmentAccessMode
-    : "public_markdown";
-  const accessMode = preference
-    ? preference.accessMode
-    : environmentOrDefaultAccessMode;
-  const enabled = preference?.enabled ?? environmentAccessPermitted;
+  // Public provider-authored Markdown is the safe, tokenless default access
+  // basis. It remains disabled until the user opts in, but does not pretend a
+  // commercial license is required merely because no preference is stored.
+  const accessMode = preference?.accessMode ?? "public_markdown";
+  const enabled = preference?.enabled ?? false;
   const accessPermitted = accessMode ? LEVELS_ACCESS_MODES.has(accessMode) : false;
   const publicMarkdown = accessMode === "public_markdown";
-  const europeCoverageConfirmed =
-    preference?.europeCoverageConfirmed ??
-    isTrue(env["JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE"]);
+  const europeCoverageConfirmed = preference?.europeCoverageConfirmed ?? false;
   const available =
     enabled &&
     accessPermitted &&
     (publicMarkdown || europeCoverageConfirmed);
   const disabledReason =
-    invalidEnvironmentAccessMode
-      ? "Configured Levels.fyi access mode is not permitted for compensation import."
-      : !enabled
+    !enabled
       ? "Disabled in Compensation sources settings."
       : levelsDisabledReason(
           accessMode,
@@ -230,14 +224,10 @@ function levelsSource(
 }
 
 function glassdoorSource(
-  env: EnvLike,
   preference: StoredCompensationSourcePreference | undefined,
 ): CompensationSourcePolicySummary {
-  const environmentAccessMode = normalizeAccessMode(
-    env["JOBCTRL_GLASSDOOR_ACCESS_MODE"],
-  );
-  const accessMode = preference ? preference.accessMode : environmentAccessMode;
-  const enabled = preference?.enabled ?? Boolean(environmentAccessMode);
+  const accessMode = preference?.accessMode ?? null;
+  const enabled = preference?.enabled ?? false;
   const accessPermitted = accessMode
     ? GLASSDOOR_ACCESS_MODES.has(accessMode)
     : false;
@@ -411,50 +401,6 @@ function parseStoredPreference(
         )
       : false,
   };
-}
-
-function readSettingsObject(
-  settingsPath: string,
-  strict: boolean,
-): Record<string, unknown> {
-  if (!fs.existsSync(settingsPath)) {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as unknown;
-    if (isRecord(parsed)) {
-      return parsed;
-    }
-  } catch (error) {
-    if (strict) {
-      const message =
-        error instanceof Error ? error.message : "Invalid settings JSON.";
-      throw new CompensationSourcePolicyInputError(message);
-    }
-    return {};
-  }
-  if (strict) {
-    throw new CompensationSourcePolicyInputError(
-      `${path.basename(settingsPath)} must contain a JSON object.`,
-    );
-  }
-  return {};
-}
-
-function writeSettingsObject(
-  settingsPath: string,
-  settings: Record<string, unknown>,
-): void {
-  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-  fs.writeFileSync(
-    settingsPath,
-    `${JSON.stringify(settings, null, 2)}\n`,
-    "utf8",
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function stringValue(value: unknown): string | undefined {

@@ -188,7 +188,7 @@ class DiscoverWorkflow:
         await self._sweep_preexisting_preparation(payload)
         # R9 Phase 3 — optional parallel source families, GATED. Families are
         # processed in batches of ``plan.max_parallel_families`` (env
-        # ``JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES``, default 1 = sequential =
+        # ``max_parallel_families`` in SQLite, default 1 = sequential =
         # current behavior). Within a batch the source crawls run concurrently
         # (``asyncio.gather``); the batch's streaming enrichment + fan-out then
         # runs ONCE afterwards, so enrichment is never run concurrently (it

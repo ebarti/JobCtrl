@@ -53,10 +53,10 @@ def read_auto_apply_loop_settings(
     path: Path | str | None = None,
 ) -> AutoApplyLoopSettings:
     return AutoApplyLoopSettings(
-        enabled=read_auto_apply_enabled(path, default=False),
-        min_score=read_min_fit_score(path, default=7),
+        enabled=read_auto_apply_enabled(default=False),
+        min_score=read_min_fit_score(default=7),
         workers=read_apply_concurrency(path, default=1),
-        approval_required=read_apply_approval_required(path, default=True),
+        approval_required=read_apply_approval_required(default=True),
     )
 
 

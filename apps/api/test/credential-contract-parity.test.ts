@@ -1,6 +1,9 @@
 import fs from "node:fs";
 
-import { CredentialKeys } from "@jobctrl/contracts";
+import {
+  ProviderConfigurationKeys,
+  SecretCredentialKeys,
+} from "@jobctrl/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -46,7 +49,7 @@ function pythonNumber(source: string, name: string): number {
 }
 
 describe("TypeScript/Python Keychain contract parity", () => {
-  it("keeps service, binary, full key set, account mapping, and restart semantics aligned", () => {
+  it("keeps secret and non-secret provider key ownership aligned", () => {
     const pythonSource = fs.readFileSync(
       new URL(
         "../../../workers/automation/src/jobctrl/config.py",
@@ -62,7 +65,10 @@ describe("TypeScript/Python Keychain contract parity", () => {
       KEYCHAIN_SECURITY_BINARY,
     );
     expect(pythonTuple(pythonSource, "KEYCHAIN_PROVIDER_KEYS")).toEqual([
-      ...CredentialKeys,
+      ...SecretCredentialKeys,
+    ]);
+    expect(pythonTuple(pythonSource, "PROVIDER_CONFIGURATION_KEYS")).toEqual([
+      ...ProviderConfigurationKeys,
     ]);
     expect(pythonString(pythonSource, "KEYCHAIN_ACCOUNT_MAPPING")).toBe(
       KEYCHAIN_ACCOUNT_MAPPING,

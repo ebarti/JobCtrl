@@ -1,4 +1,4 @@
-# Security
+# Threat Model & Security Engineering
 
 JobCtrl is a local-first application, and its security model follows from that:
 the trust boundary is the developer's or user's own machine, not a network
@@ -89,6 +89,7 @@ Locality is enforced structurally for ordinary local callers:
 | --- | --- | --- |
 | Loopback bind | The API binds `127.0.0.1` by default and refuses a non-loopback host unless `JOBCTRL_API_ALLOW_REMOTE_BIND` is set. | `apps/api/src/config.ts` |
 | Host-header allowlist | Requests whose `Host` is not `127.0.0.1`, `localhost`, or `[::1]` are rejected as `forbidden_host`. This is the DNS-rebinding defense. | `apps/api/src/server.ts`, `apps/api/src/local-origin.ts` |
+| Peer-address validation | Requests whose actual socket peer is not loopback are rejected as `forbidden_remote_client`, so a remote caller cannot satisfy locality by forging a loopback `Host`. | `apps/api/src/server.ts`, `apps/api/src/local-origin.ts` |
 | Origin/Referer check | Unsafe mutation requests require a first-party local web `Origin`/`Referer`; arbitrary loopback web origins and no-token headerless clients are rejected as `cross_site_request`. | `apps/api/src/server.ts`, `apps/api/src/local-origin.ts` |
 | Fetch metadata check | Unsafe browser mutations that carry `Sec-Fetch-Site` metadata must use a trusted value unless the request is a trusted extension request. | `apps/api/src/server.ts` |
 | Local capability token | Authenticated `/v1/extension/*` routes require a bearer token stored under `~/.jobctrl/`; non-browser local clients can also use it for unsafe mutations when no browser origin/fetch metadata is present. The loopback Host gate still applies. | `apps/api/src/server.ts`, `apps/api/src/extension-auth.ts`, `apps/api/src/local-origin.ts` |
@@ -134,12 +135,13 @@ and discovered posting/apply URLs. The shared politeness gateway honors
 `robots.txt` for rendered detail crawls, uses an honest User-Agent, paces
 requests per host, and enforces run budgets; `python-jobspy` remains a
 documented residual because its internal per-board requests cannot be
-robots-gated. Contact-research public-page fetches have a private-network and
-redirect egress guard; broader discovery/enrichment/browser fetches still need
-review for SSRF-style navigation to loopback, RFC1918, or cloud metadata
-addresses when a remotely controlled page, redirect, or discovered URL can
-influence a fetch and cause captured data to be stored, rendered, sent to an
-LLM, or exported to telemetry.
+robots-gated. The shared public-HTTP guard rejects loopback, private-network,
+link-local, reserved, unspecified, multicast, metadata, and non-HTTP(S)
+destinations. Discovery detail rendering, smart extraction, Playwright
+enrichment, LinkedIn apply resolution, contact research, and apply launch use
+the guard at their applicable initial, final, redirect, popup, and subrequest
+boundaries. New fetch/navigation paths must reuse that guard rather than
+creating an unreviewed egress exception.
 
 **LLM scoring, materials, and outreach.** Scoring, employer analysis,
 interview prep, contact research, outreach drafts, resume tailoring, and

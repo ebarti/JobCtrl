@@ -152,11 +152,11 @@ describe("daily digest read model", () => {
   });
 
   it("exposes GET /v1/digest as a passive read", async () => {
-    const { dbPath, settingsPath, tempDir, cleanup } = makeTempDb();
+    const { dbPath, configPath, tempDir, cleanup } = makeTempDb();
     try {
       seedDigestDatabase(dbPath, tempDir);
-      fs.writeFileSync(settingsPath, JSON.stringify({ min_fit_score: fixture.minFitScore }));
-      const app = buildApp({ dbPath, settingsPath });
+      fs.writeFileSync(configPath, JSON.stringify({ min_fit_score: fixture.minFitScore }));
+      const app = buildApp({ dbPath, configPath });
 
       const response = await app.inject({ method: "GET", url: "/v1/digest" });
       expect(response.statusCode).toBe(200);
@@ -187,11 +187,11 @@ describe("daily digest read model", () => {
   });
 
   it("advances the watermark only through POST /v1/digest/acknowledge", async () => {
-    const { dbPath, settingsPath, tempDir, cleanup } = makeTempDb();
+    const { dbPath, configPath, tempDir, cleanup } = makeTempDb();
     try {
       seedDigestDatabase(dbPath, tempDir);
-      fs.writeFileSync(settingsPath, JSON.stringify({ min_fit_score: fixture.minFitScore }));
-      const app = buildApp({ dbPath, settingsPath });
+      fs.writeFileSync(configPath, JSON.stringify({ min_fit_score: fixture.minFitScore }));
+      const app = buildApp({ dbPath, configPath });
 
       const response = await app.inject({
         method: "POST",
@@ -237,11 +237,11 @@ describe("daily digest read model", () => {
   });
 });
 
-function makeTempDb(): { dbPath: string; settingsPath: string; tempDir: string; cleanup: () => void } {
+function makeTempDb(): { dbPath: string; configPath: string; tempDir: string; cleanup: () => void } {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-digest-"));
   return {
     dbPath: path.join(tempDir, "jobctrl.db"),
-    settingsPath: path.join(tempDir, "dashboard.json"),
+    configPath: path.join(tempDir, "config.json"),
     tempDir,
     cleanup: () => fs.rmSync(tempDir, { recursive: true, force: true }),
   };

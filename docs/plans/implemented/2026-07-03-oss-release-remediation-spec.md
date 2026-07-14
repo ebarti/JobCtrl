@@ -760,8 +760,8 @@ Work items:
    `felony_conviction`, `previously_worked_at_employer` — each
    `true | false | null` (null = unknown) — plus an extensible
    string-keyed map for additional attestations. `how_heard` stays a
-   plain preference field, not an attestation. Update
-   `profile.example.json` with nulls and comments.
+   plain preference field, not an attestation. Expose these fields through the
+   Candidate Profile contract and UI with unknown values represented as null.
 3. **Prompt rendering.** Render an attestation section ONLY from non-null
    values. Instruct: if a required screening question maps to an unknown
    attestation, do not guess — output

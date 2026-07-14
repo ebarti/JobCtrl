@@ -24,13 +24,16 @@ are composers that live under `views/` (§3.10, §11).
 ## 3.1 Frontend Context Map
 
 ```mermaid
-flowchart LR
-    ROUTES["Typed routes<br/>URL + search state"] --> VIEWS["View composers<br/>layout + cross-context composition"]
-    VIEWS --> CONTEXTS["Bounded-context folders<br/>discovery · enrichment · profile · scoring<br/>materials · apply · pipeline · outreach"]
-    CONTEXTS --> OPS["Operations context<br/>read hooks · query keys · invalidation"]
-    OPS --> PORTS["Shared ports + adapters<br/>API · event stream · session · storage"]
-    PORTS --> BACKEND["Fastify API + SSE endpoint"]
-    SHARED["Shared kernel<br/>UI · layout · providers · stores · helpers"] --> VIEWS
+flowchart TD
+    ROUTES@{ icon: "tabler:route", form: "rounded", h: 64, label: "Typed routes<br/>URL + search state" }
+    VIEWS@{ icon: "tabler:layout-dashboard", form: "rounded", h: 64, label: "View composers<br/>layout + cross-context composition" }
+    CONTEXTS@{ icon: "tabler:stack-2", form: "rounded", h: 76, label: "Bounded-context folders<br/>discovery · enrichment · profile · scoring<br/>materials · apply · pipeline · outreach" }
+    OPS@{ icon: "tabler:database-cog", form: "rounded", h: 64, label: "Operations context<br/>read hooks · query keys · invalidation" }
+    PORTS@{ icon: "tabler:plug-connected", form: "rounded", h: 64, label: "Shared ports + adapters<br/>API · event stream · session · storage" }
+    BACKEND@{ icon: "tabler:api", form: "rounded", h: 64, label: "Fastify API + SSE" }
+    SHARED@{ icon: "tabler:box", form: "rounded", h: 64, label: "Shared kernel<br/>UI · layout · providers · stores · helpers" }
+    ROUTES --> VIEWS --> CONTEXTS --> OPS --> PORTS --> BACKEND
+    SHARED --> VIEWS
     SHARED --> CONTEXTS
 
     class ROUTES,VIEWS,CONTEXTS,OPS,PORTS,SHARED ui

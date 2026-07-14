@@ -20,7 +20,7 @@ const PROVIDER_COPY: Readonly<Record<ProviderId, { title: string; description: s
   },
   claude: {
     title: "Claude",
-    description: "Choose a provider-safe alias that works across supported Claude authentication routes.",
+    description: "Choose from the models exposed by your authenticated Claude Agent SDK runtime.",
   },
   google: {
     title: "Google",
@@ -34,7 +34,6 @@ export function ModelSelectionPanel() {
   const settingsQuery = useSettingsQuery();
   const catalogQuery = useProviderModelsQuery();
   const settings = settingsQuery.data?.settings;
-  const modelOverride = settingsQuery.data?.effectiveSettings.llmModelOverride;
   const providers = new Map(
     (catalogQuery.data?.providers ?? []).map((provider) => [provider.provider, provider]),
   );
@@ -48,16 +47,10 @@ export function ModelSelectionPanel() {
           a second is recommended for resilience, not required.
         </p>
         <p>
-          Saved choices apply to newly started work. An explicit workflow model, then
-          <code> LLM_MODEL</code>, takes precedence over these preferences.
+          Saved choices in <code>config.json</code> apply to newly started work. An explicit
+          per-workflow model takes precedence when that workflow supports one.
         </p>
       </div>
-
-      {modelOverride?.source === "environment" ? (
-        <div className="banner credential-store-notice credential-store-notice--guidance" role="status">
-          <code>LLM_MODEL={modelOverride.value}</code> is managed by the launch environment. Saved provider selections remain fallback preferences until this override is removed.
-        </div>
-      ) : null}
 
       {isDemo ? (
         <div className="banner credential-store-notice credential-store-notice--guidance" role="status">
@@ -123,6 +116,7 @@ function ProviderModelCard({
   }));
   const [statusMessage, setStatusMessage] = useState("");
   const providerCopy = PROVIDER_COPY[provider];
+  const modelHintId = `preferred-model-${provider}-hint`;
   const models = catalog?.models ?? [];
   const knownModelIds = new Set(models.map((model) => model.id));
   const draftModel =
@@ -190,9 +184,7 @@ function ProviderModelCard({
       </header>
 
       <p className="provider-model-source">
-        {catalog?.source === "provider_aliases"
-          ? "Provider-safe aliases; your Claude route resolves the concrete model."
-          : "Live availability from the authenticated provider connection."}
+        Live availability from the authenticated provider runtime.
       </p>
       {catalog?.message ? <p className="provider-status-message">{catalog.message}</p> : null}
 
@@ -209,6 +201,8 @@ function ProviderModelCard({
             <span>Preferred model</span>
             <select
               id={`preferred-model-${provider}`}
+              name={`preferred-model-${provider}`}
+              aria-describedby={modelHintId}
               value={draftModel}
               disabled={!canEdit}
               onChange={(event) => {
@@ -223,11 +217,11 @@ function ProviderModelCard({
               ) : null}
               {models.map((model) => (
                 <option key={model.id} value={model.id}>
-                  {model.displayName}{model.isDefault ? " · provider default" : ""}
+                  {modelOptionLabel(model.displayName, model.id)}{model.isDefault ? " · provider default" : ""}
                 </option>
               ))}
             </select>
-            <small className="field-hint">
+            <small className="field-hint" id={modelHintId}>
               {savedModel
                 ? `Saved: ${savedModel}`
                 : "No saved preference; the provider chooses its default."}
@@ -262,4 +256,11 @@ function ProviderModelCard({
       ) : null}
     </article>
   );
+}
+
+function modelOptionLabel(displayName: string, modelId: string): string {
+  const normalized = (value: string) => value.toLowerCase().replaceAll(/[^a-z0-9]+/g, "");
+  return normalized(displayName) === normalized(modelId)
+    ? displayName
+    : `${displayName} · ${modelId}`;
 }

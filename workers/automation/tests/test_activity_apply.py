@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import sqlite3
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -12,6 +13,7 @@ from temporalio import workflow
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
+from jobctrl import config
 from jobctrl.apply.activities import (
     ApplyActivityInput,
     ApplyActivityOutput,
@@ -122,15 +124,21 @@ async def test_apply_activity_continuous_calls_apply_main_with_limit_zero():
 
 @pytest.mark.asyncio
 async def test_auto_apply_activity_live_reads_min_score_and_workers(monkeypatch, tmp_path):
-    settings_path = tmp_path / "dashboard.json"
+    settings_path = tmp_path / "config.json"
     settings_path.write_text(
-        '{"min_fit_score": 9, "apply_concurrency": 4, "apply_approval_required": true}',
+        '{"apply_concurrency": 4}',
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "jobctrl.infrastructure.scoring.criteria_provider.DEFAULT_SETTINGS_PATH",
-        settings_path,
-    )
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(settings_path))
+    db_path = tmp_path / "jobctrl.db"
+    sqlite3.connect(db_path).close()
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    discovery = config._default_discovery_search_config()
+    discovery["automation"] = {
+        "min_fit_score": 9,
+        "apply_approval_required": True,
+    }
+    config._save_discovery_search_config_to_db(discovery)
     queue = f"apply-{uuid.uuid4()}"
 
     with patch(

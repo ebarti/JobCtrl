@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import threading
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -112,17 +111,9 @@ def _parse_model_spec(model: str | None) -> tuple[str | None, str | None, str]:
 
 
 def _resolve_default_model_spec(default_model: str | None) -> tuple[str | None, str | None, str]:
-    """Resolve the environment override only for provider-neutral defaults."""
+    """Resolve an explicit workflow model or the provider-neutral default."""
 
-    provider, selected_model, label = _parse_model_spec(default_model)
-    if label != "default":
-        return provider, selected_model, label
-    environment_model = os.environ.get("LLM_MODEL")
-    if environment_model is not None and environment_model.strip():
-        provider, selected_model, label = _parse_model_spec(environment_model)
-        # An explicit ``LLM_MODEL=default`` still outranks the saved preference.
-        return provider, selected_model, "environment:default" if label == "default" else label
-    return None, None, "default"
+    return _parse_model_spec(default_model)
 
 
 def _run_sync(awaitable: Awaitable[Any]) -> Any:

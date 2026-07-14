@@ -12,7 +12,7 @@ const PROVIDER_TOP_LEVEL = ["claude-agent-sdk", "google-antigravity", "openai-co
 const PACKS = [
   {
     id: "claude-agent-sdk",
-    version: "0.2.87",
+    version: "0.2.115",
     owner: "Anthropic PBC",
     source: "https://pypi.org/project/claude-agent-sdk/",
     license: "MIT AND LicenseRef-Anthropic-Commercial-Terms",

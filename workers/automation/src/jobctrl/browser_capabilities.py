@@ -13,7 +13,6 @@ import os
 import secrets
 import stat
 import subprocess
-import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,8 +21,7 @@ from typing import Literal
 
 from jobctrl.runtime import is_bundled_runtime, payload_path
 
-CAPABILITY_STATE_FILENAME = "browser-capabilities.json"
-CAPABILITY_STATE_LOCK_FILENAME = ".browser-capabilities.lock"
+BROWSER_CAPABILITIES_CONFIG_KEY = "browser_capabilities"
 CAPABILITY_STATE_SCHEMA_VERSION = 1
 _CATALOG_SCHEMA_VERSION = 1
 _CORE_BROWSER = "core-browser"
@@ -106,54 +104,12 @@ class BrowserCapabilityStatus:
     executable: Path | None = None
 
 
-def capability_state_path(*, app_dir: Path | None = None) -> Path:
-    """Return the only mutable state file for browser capability choices."""
+def browser_capability_config_path(*, app_dir: Path | None = None) -> Path:
+    """Return config.json, the owner of browser capability choices."""
 
-    if app_dir is None:
-        from jobctrl.config import APP_DIR
+    from jobctrl.config import get_config_path
 
-        app_dir = APP_DIR
-    return Path(app_dir) / CAPABILITY_STATE_FILENAME
-
-
-@contextmanager
-def _browser_capability_state_lock(*, app_dir: Path | None = None):
-    """Serialize capability read-modify-write transactions across processes."""
-
-    path = capability_state_path(app_dir=app_dir)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
-    flags = os.O_RDWR | os.O_CREAT
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor = os.open(path.parent / CAPABILITY_STATE_LOCK_FILENAME, flags, 0o600)
-    try:
-        os.fchmod(descriptor, 0o600)
-        if os.name == "nt":
-            import msvcrt
-
-            if os.fstat(descriptor).st_size == 0:
-                os.write(descriptor, b"\0")
-            os.lseek(descriptor, 0, os.SEEK_SET)
-            msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield
-    finally:
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                os.lseek(descriptor, 0, os.SEEK_SET)
-                msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
-        finally:
-            os.close(descriptor)
+    return get_config_path(app_dir=app_dir)
 
 
 def capability_profile_dir(capability_id: str, *, app_dir: Path | None = None) -> Path:
@@ -360,47 +316,43 @@ def load_browser_capability_state(
     """Read mutable state; absence intentionally means catalog defaults."""
 
     resolved_catalog = catalog or load_browser_capability_catalog()
-    path = capability_state_path(app_dir=app_dir)
+    from jobctrl.config import ConfigFileError, load_config_file
+
     try:
-        raw = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
+        config = load_config_file(app_dir=app_dir, strict=True)
+    except ConfigFileError as exc:
+        raise BrowserCapabilityStateError("config.json cannot be read") from exc
+    payload = config.get(BROWSER_CAPABILITIES_CONFIG_KEY)
+    if payload is None:
         return _default_state()
-    except OSError as exc:
-        raise BrowserCapabilityStateError("browser capability state cannot be read") from exc
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise BrowserCapabilityStateError("browser capability state is invalid JSON") from exc
     return _validate_state(payload, catalog=resolved_catalog)
 
 
-def _write_browser_capability_state(
-    state: dict[str, object],
+@contextmanager
+def _browser_capability_state_transaction(
     *,
     app_dir: Path | None = None,
     catalog: BrowserCapabilityCatalog | None = None,
-) -> None:
+):
+    """Edit browser capability state inside the shared config.json transaction."""
     resolved_catalog = catalog or load_browser_capability_catalog()
-    _validate_state(state, catalog=resolved_catalog)
-    path = capability_state_path(app_dir=app_dir)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary = Path(temporary_name)
+    from jobctrl.config import ConfigFileError, edit_config_file
+
     try:
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(state, handle, sort_keys=True, separators=(",", ":"))
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        path.chmod(0o600)
-    except Exception:
-        try:
-            temporary.unlink(missing_ok=True)
-        finally:
-            raise
+        with edit_config_file(app_dir=app_dir) as config:
+            payload = config.get(BROWSER_CAPABILITIES_CONFIG_KEY)
+            state = (
+                _default_state()
+                if payload is None
+                else _validate_state(payload, catalog=resolved_catalog)
+            )
+            yield state
+            config[BROWSER_CAPABILITIES_CONFIG_KEY] = _validate_state(
+                state,
+                catalog=resolved_catalog,
+            )
+    except ConfigFileError as exc:
+        raise BrowserCapabilityStateError("config.json cannot be updated") from exc
 
 
 def _record_for(state: dict[str, object], capability_id: str) -> dict[str, object] | None:
@@ -529,8 +481,7 @@ def enable_system_browser_capability(
         raise BrowserCapabilityError(
             "cannot enable this capability because the selected browser executable is unavailable or not executable"
         )
-    with _browser_capability_state_lock(app_dir=app_dir):
-        state = load_browser_capability_state(app_dir=app_dir, catalog=resolved_catalog)
+    with _browser_capability_state_transaction(app_dir=app_dir, catalog=resolved_catalog) as state:
         records = state["capabilities"]
         assert isinstance(records, dict)
         previous = _record_for(state, capability_id)
@@ -540,7 +491,6 @@ def enable_system_browser_capability(
             "profileCopied": bool(previous and previous.get("profileCopied")),
             "profileCopyConsent": previous.get("profileCopyConsent") if previous else None,
         }
-        _write_browser_capability_state(state, app_dir=app_dir, catalog=resolved_catalog)
     return browser_capability_status(capability_id, app_dir=app_dir, catalog=resolved_catalog)
 
 
@@ -558,8 +508,7 @@ def disable_browser_capability(
     if capability_id not in _OPTIONAL_SYSTEM_BROWSER_CAPABILITIES:
         resolved_catalog.get(capability_id)
         raise BrowserCapabilityError(f"{capability_id} cannot be disabled")
-    with _browser_capability_state_lock(app_dir=app_dir):
-        state = load_browser_capability_state(app_dir=app_dir, catalog=resolved_catalog)
+    with _browser_capability_state_transaction(app_dir=app_dir, catalog=resolved_catalog) as state:
         records = state["capabilities"]
         assert isinstance(records, dict)
         previous = _record_for(state, capability_id)
@@ -569,7 +518,6 @@ def disable_browser_capability(
             "profileCopied": bool(previous and previous.get("profileCopied")),
             "profileCopyConsent": previous.get("profileCopyConsent") if previous else None,
         }
-        _write_browser_capability_state(state, app_dir=app_dir, catalog=resolved_catalog)
     return browser_capability_status(capability_id, app_dir=app_dir, catalog=resolved_catalog)
 
 
@@ -666,8 +614,18 @@ def copy_authenticated_linkedin_profile(
     if consent_method not in {"explicit-cli", "explicit-ui-v1"}:
         raise BrowserProfileConsentRequiredError("browser profile-copy consent must be explicit")
     resolved_catalog = catalog or load_browser_capability_catalog()
-    with _browser_capability_state_lock(app_dir=app_dir):
-        state = load_browser_capability_state(app_dir=app_dir, catalog=resolved_catalog)
+
+    # A profile can be large enough that copying it takes longer than the
+    # config-lock stale threshold.  Keep the config transaction limited to
+    # inspecting and later recording capability state; the no-follow copy has
+    # its own filesystem safety boundary below.
+    source = Path(source_profile).expanduser()
+    if not source.is_dir() or source.is_symlink():
+        raise BrowserCapabilityError("the selected browser profile cannot be copied")
+    destination = capability_profile_dir("authenticated-linkedin-browser", app_dir=app_dir)
+    _owned_profile_path(destination, app_dir=app_dir, require_existing=False)
+
+    with _browser_capability_state_transaction(app_dir=app_dir, catalog=resolved_catalog) as state:
         record = _record_for(state, "authenticated-linkedin-browser")
         if record is None or not record["enabled"] or record["systemBrowser"] is None:
             raise BrowserCapabilityError("enable authenticated-linkedin-browser before copying a browser profile")
@@ -680,11 +638,7 @@ def copy_authenticated_linkedin_profile(
             raise BrowserCapabilityError(
                 "enable authenticated-linkedin-browser with an available browser before copying a profile"
             )
-        source = Path(source_profile).expanduser()
-        if not source.is_dir() or source.is_symlink():
-            raise BrowserCapabilityError("the selected browser profile cannot be copied")
-        destination = capability_profile_dir("authenticated-linkedin-browser", app_dir=app_dir)
-        _owned_profile_path(destination, app_dir=app_dir, require_existing=False)
+        expected_executable = executable
         existing_copy_is_consented = bool(record.get("profileCopied")) and record.get(
             "profileCopyConsent"
         ) is not None
@@ -694,15 +648,30 @@ def copy_authenticated_linkedin_profile(
                     "an existing JobCtrl browser-profile destination cannot be adopted without a prior explicit copy"
                 )
             return _owned_profile_path(destination, app_dir=app_dir, require_existing=True)
-        _copy_profile_tree(source, destination, app_dir=app_dir)
-        records = state["capabilities"]
-        assert isinstance(records, dict)
-        record["profileCopied"] = True
-        record["profileCopyConsent"] = {
-            "acceptedAt": datetime.now(timezone.utc).isoformat(),
-            "method": consent_method,
-        }
-        _write_browser_capability_state(state, app_dir=app_dir, catalog=resolved_catalog)
+
+    _copy_profile_tree(source, destination, app_dir=app_dir)
+    try:
+        with _browser_capability_state_transaction(app_dir=app_dir, catalog=resolved_catalog) as state:
+            record = _record_for(state, "authenticated-linkedin-browser")
+            if (
+                record is None
+                or not record["enabled"]
+                or record["systemBrowser"] is None
+                or not isinstance(record["systemBrowser"], dict)
+                or record["systemBrowser"].get("executable") != expected_executable
+            ):
+                raise BrowserCapabilityError(
+                    "authenticated-linkedin-browser changed while the profile was copied"
+                )
+            _owned_profile_path(destination, app_dir=app_dir, require_existing=True)
+            record["profileCopied"] = True
+            record["profileCopyConsent"] = {
+                "acceptedAt": datetime.now(timezone.utc).isoformat(),
+                "method": consent_method,
+            }
+    except Exception:
+        _discard_owned_profile_copy(destination, app_dir=app_dir)
+        raise
     return destination
 
 
@@ -835,6 +804,17 @@ def _remove_profile_tree_at(parent_descriptor: int, name: str) -> None:
     os.rmdir(name, dir_fd=parent_descriptor)
 
 
+def _discard_owned_profile_copy(destination: Path, *, app_dir: Path | None) -> None:
+    """Remove a just-copied profile without following a changed profile path."""
+
+    _owned_profile_path(destination, app_dir=app_dir, require_existing=False)
+    try:
+        with _open_owned_profile_parent(app_dir=app_dir) as parent_descriptor:
+            _remove_profile_tree_at(parent_descriptor, destination.name)
+    except OSError as exc:
+        raise BrowserCapabilityError("the copied browser profile could not be discarded") from exc
+
+
 def _copy_profile_tree(source: Path, destination: Path, *, app_dir: Path | None) -> None:
     """Copy through no-follow directory FDs and publish with an anchored rename."""
 
@@ -898,11 +878,11 @@ __all__ = [
     "BrowserCapabilityStatus",
     "BrowserCapabilityUnavailableError",
     "BrowserProfileConsentRequiredError",
-    "CAPABILITY_STATE_FILENAME",
+    "BROWSER_CAPABILITIES_CONFIG_KEY",
     "browser_capability_status",
     "capability_policy_path",
     "capability_profile_dir",
-    "capability_state_path",
+    "browser_capability_config_path",
     "copy_authenticated_linkedin_profile",
     "disable_browser_capability",
     "enable_system_browser_capability",

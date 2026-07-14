@@ -6,55 +6,18 @@ import { describe, expect, it } from "vitest";
 
 import { server } from "../../../test/msw/server.js";
 import { renderHookWithProviders } from "../../../test/render.js";
+import { sampleSettingsResponse } from "../../../test/fixtures/projections.js";
 import { profileKeys } from "../queryKeys.js";
 import { useUpdateSettingsMutation } from "./useUpdateSettingsMutation.js";
-
-const initialSettings = {
-  ok: true,
-  settings: {
-    targetRole: "Platform Engineering",
-    locationFilter: "Remote",
-    minFitScore: 7,
-    autoApply: false,
-    applyApprovalRequired: true,
-    applyConcurrency: 2,
-    workerActivitySlots: 4,
-    dailyBudgetUsd: 25,
-    analysisLegs: ["claude", "codex", "google"],
-    tailoringGeneratorModels: null,
-    tailoringJudgeModel: null,
-    tailoringJudgeMinScore: 0.82,
-    applyMaxBudgetUsd: 5,
-    applyTimeoutSeconds: 900,
-    scoreCriteria: "x",
-    targetCriteria: "y",
-    preferredModels: { claude: "sonnet" },
-  },
-  effectiveSettings: {
-    llmModelOverride: { value: null, source: "default", activation: "next_workflow", editable: true },
-    dailyBudgetUsd: { value: 25, source: "persisted", activation: "live", editable: true },
-    applyConcurrency: { value: 2, source: "persisted", activation: "next_poll", editable: true },
-    workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
-    analysisLegs: { value: ["claude", "codex", "google"], source: "default", activation: "next_analysis", editable: true },
-    tailoringGeneratorModels: { value: null, source: "default", activation: "next_workflow", editable: true },
-    tailoringJudgeModel: { value: null, source: "default", activation: "next_workflow", editable: true },
-    tailoringJudgeMinScore: { value: 0.82, source: "default", activation: "next_workflow", editable: true },
-    applyMaxBudgetUsd: { value: 5, source: "default", activation: "next_apply_job", editable: true },
-    applyTimeoutSeconds: { value: 900, source: "default", activation: "next_apply_job", editable: true },
-    scoreCriteria: { value: "x", source: "persisted", activation: "next_run", editable: true },
-    targetCriteria: { value: "y", source: "persisted", activation: "next_run", editable: true },
-  },
-  paths: { settingsPath: "/tmp/jh.json" },
-};
 
 describe("useUpdateSettingsMutation", () => {
   it("returns the mocked settings response after submit", async () => {
     const { result } = renderHookWithProviders(() => useUpdateSettingsMutation());
     await act(async () => {
-      result.current.mutate({ targetRole: "Director of Platform" });
+      result.current.mutate({ dailyBudgetUsd: 30 });
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.settings.targetRole).toBe("Platform Engineering");
+    expect(result.current.data?.settings.dailyBudgetUsd).toBe(25);
   });
 
   it("rolls back the optimistic settings when the PATCH fails", async () => {
@@ -64,15 +27,15 @@ describe("useUpdateSettingsMutation", () => {
       ),
     );
     const { result, queryClient } = renderHookWithProviders(() => useUpdateSettingsMutation());
-    queryClient.setQueryData(profileKeys.settings(LOCAL_TENANT), initialSettings);
+    queryClient.setQueryData(profileKeys.settings(LOCAL_TENANT), sampleSettingsResponse);
 
     await act(async () => {
-      result.current.mutate({ targetRole: "Forbidden Update" });
+      result.current.mutate({ dailyBudgetUsd: 999 });
     });
     await waitFor(() => expect(result.current.isError).toBe(true));
     const restored = queryClient.getQueryData(profileKeys.settings(LOCAL_TENANT)) as {
-      settings: { targetRole: string };
+      settings: { dailyBudgetUsd: number };
     };
-    expect(restored.settings.targetRole).toBe("Platform Engineering");
+    expect(restored.settings.dailyBudgetUsd).toBe(25);
   });
 });

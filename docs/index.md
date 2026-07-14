@@ -19,30 +19,30 @@ hero:
       text: Run From Source / Release Status
       link: /user/getting-started
     - theme: alt
-      text: Developer Guide
+      text: Contribute
       link: /developer/
 
 features:
   - icon: 🔎
     title: Profile-Driven Discovery
     details: Multi-source discovery driven by your target roles, locations, and seniority — tracking where each job came from, removing duplicates, and retiring postings that have closed.
-    link: /user/normal-flows
-    linkText: See the daily workflow
+    link: /user/discovery
+    linkText: Understand discovery
   - icon: 🎯
     title: Explainable Scoring
     details: A versioned policy scores fit 1–10 from structured evidence, and a per-requirement ledger explains exactly why each score happened.
-    link: /user/screenshots#job-detail
-    linkText: See it on a job
+    link: /user/scoring-and-employer-analysis
+    linkText: Understand scoring
   - icon: 📝
     title: Audited Materials
     details: Tailored resumes where every bullet traces back to its source, gates guard resumes and cover letters against invented facts, and keyword coverage is measured against the final document.
-    link: /user/screenshots#apply-review
-    linkText: See the review screen
+    link: /user/materials-and-tailoring
+    linkText: Understand the audit trail
   - icon: ✅
     title: Supervised Apply
     details: Rehearse with dry runs, approve every live submission explicitly, a browser-level guard blocks dry-run submits, and no application is ever submitted twice.
-    link: /user/security
-    linkText: The approval gates
+    link: /user/apply
+    linkText: Understand apply controls
   - icon: 🔒
     title: Local-First & Private
     details: One SQLite database and generated files under your home directory. Nothing leaves your machine except steps you explicitly configured.

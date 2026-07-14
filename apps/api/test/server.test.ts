@@ -7,6 +7,8 @@ import { createJobCtrlApiClient } from "@jobctrl/api-client";
 import {
   CREDENTIAL_VALUE_MAX_LENGTH,
   CredentialKeys,
+  ProviderConfigurationKeys,
+  SecretCredentialKeys,
   type ActionCommandPayload,
   type CredentialBatchOperation,
   type CredentialKey,
@@ -96,8 +98,7 @@ beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-"));
   options = {
     dbPath: path.join(tempDir, "jobctrl.db"),
-    settingsPath: path.join(tempDir, "dashboard.json"),
-    settingsEnvironment: {},
+    configPath: path.join(tempDir, "config.json"),
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-profile-retailor" })),
     resumePdfRenderer: ({ htmlPath, pdfPath }) => {
       fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
@@ -111,7 +112,7 @@ beforeEach(() => {
   fs.writeFileSync(strayStyleExportPath, JSON.stringify({ font_family: "sans" }));
   fs.writeFileSync(strayTemplateExportPath, INERT_RESUME_TEMPLATE);
   fs.writeFileSync(
-    options.settingsPath,
+    options.configPath,
     JSON.stringify({
       target_role: "Platform Engineering",
       location_filter: "Remote",
@@ -127,6 +128,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   fs.rmSync(tempDir, { force: true, recursive: true });
 });
 
@@ -8015,7 +8017,7 @@ describe("local TypeScript API", () => {
         minScore: 6,
         retailor: true,
       }),
-      { appDir: tempDir, dbPath: options.dbPath },
+      { appDir: tempDir, configPath: options.configPath, dbPath: options.dbPath },
     );
 
     const db = new Database(options.dbPath);
@@ -8291,11 +8293,6 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       settings: {
-        targetRole: "Platform Engineering",
-        locationFilter: "Remote",
-        minFitScore: 8,
-        autoApply: true,
-        applyApprovalRequired: true,
         applyConcurrency: 3,
         workerActivitySlots: 4,
         dailyBudgetUsd: 12.5,
@@ -8304,7 +8301,7 @@ describe("local TypeScript API", () => {
         preferredModels: { claude: "opus" },
       },
       paths: {
-        settingsPath: options.settingsPath,
+        configPath: options.configPath,
       },
       effectiveSettings: {
         dailyBudgetUsd: { value: 12.5, source: "persisted", activation: "live", editable: true },
@@ -8354,16 +8351,14 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("rejects writes to environment-managed discovery settings", async () => {
-    const app = buildApp({
-      ...options,
-      settingsEnvironment: { JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES: "4" },
-    });
+  it("keeps discovery settings SQLite-owned when a legacy environment variable is present", async () => {
+    vi.stubEnv("JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES", "4");
+    const app = buildApp(options);
     const read = await app.inject({ method: "GET", url: "/v1/discovery/settings" });
     expect(read.json()).toMatchObject({
-      settings: { maxParallelFamilies: 4 },
+      settings: { maxParallelFamilies: 1 },
       effectiveSettings: {
-        maxParallelFamilies: { source: "environment", editable: false, activation: "next_run" },
+        maxParallelFamilies: { source: "default", editable: true, activation: "next_run" },
       },
     });
 
@@ -8372,30 +8367,24 @@ describe("local TypeScript API", () => {
       url: "/v1/discovery/settings",
       payload: { maxParallelFamilies: 2 },
     });
-    expect(write.statusCode, write.body).toBe(409);
-    expect(write.json()).toEqual({
-      ok: false,
-      error: "setting_managed_by_environment",
-      field: "maxParallelFamilies",
-      source: "environment",
-      message: "maxParallelFamilies is managed by the launch environment and cannot be changed here.",
+    expect(write.statusCode, write.body).toBe(200);
+    expect(write.json()).toMatchObject({
+      settings: { maxParallelFamilies: 2 },
+      effectiveSettings: {
+        maxParallelFamilies: { source: "persisted", editable: true, activation: "next_run" },
+      },
     });
     await app.close();
   });
 
   it("falls back to defaults when settings are missing", async () => {
-    fs.rmSync(options.settingsPath);
+    fs.rmSync(options.configPath);
     const app = buildApp(options);
     const response = await app.inject({ method: "GET", url: "/v1/settings" });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       settings: {
-        targetRole: "",
-        locationFilter: "",
-        minFitScore: 7,
-        autoApply: false,
-        applyApprovalRequired: true,
         applyConcurrency: 1,
         workerActivitySlots: 4,
         dailyBudgetUsd: 25,
@@ -8420,11 +8409,6 @@ describe("local TypeScript API", () => {
       method: "PATCH",
       url: "/v1/settings",
       payload: {
-        targetRole: "CISO",
-        locationFilter: "Europe remote",
-        minFitScore: 9,
-        autoApply: false,
-        applyApprovalRequired: false,
         applyConcurrency: 2,
         workerActivitySlots: 6,
         dailyBudgetUsd: 19.75,
@@ -8443,11 +8427,6 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       settings: {
-        targetRole: "CISO",
-        locationFilter: "Europe remote",
-        minFitScore: 9,
-        autoApply: false,
-        applyApprovalRequired: false,
         applyConcurrency: 2,
         workerActivitySlots: 6,
         dailyBudgetUsd: 19.75,
@@ -8455,11 +8434,7 @@ describe("local TypeScript API", () => {
         targetCriteria: "Target senior engineering leadership roles.",
       },
     });
-    expect(JSON.parse(fs.readFileSync(options.settingsPath, "utf8"))).toMatchObject({
-      target_role: "CISO",
-      location_filter: "Europe remote",
-      min_fit_score: 9,
-      auto_apply: false,
+    expect(JSON.parse(fs.readFileSync(options.configPath, "utf8"))).toMatchObject({
       apply_concurrency: 2,
       worker_activity_slots: 6,
       daily_budget_usd: 19.75,
@@ -8476,23 +8451,20 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("exposes and protects environment-managed worker activity slots", async () => {
-    const before = fs.readFileSync(options.settingsPath, "utf8");
-    const app = buildApp({
-      ...options,
-      settingsEnvironment: { JOBCTRL_MAX_CONCURRENT_ACTIVITIES: "9" },
-    });
+  it("keeps worker activity slots config-owned when a legacy environment variable is present", async () => {
+    vi.stubEnv("JOBCTRL_MAX_CONCURRENT_ACTIVITIES", "9");
+    const app = buildApp(options);
 
     const read = await app.inject({ method: "GET", url: "/v1/settings" });
     expect(read.statusCode, read.body).toBe(200);
     expect(read.json()).toMatchObject({
-      settings: { workerActivitySlots: 9 },
+      settings: { workerActivitySlots: 4 },
       effectiveSettings: {
         workerActivitySlots: {
-          value: 9,
-          source: "environment",
+          value: 4,
+          source: "default",
           activation: "restart",
-          editable: false,
+          editable: true,
         },
       },
     });
@@ -8502,34 +8474,27 @@ describe("local TypeScript API", () => {
       url: "/v1/settings",
       payload: { workerActivitySlots: 7 },
     });
-    expect(write.statusCode, write.body).toBe(409);
-    expect(write.json()).toEqual({
-      ok: false,
-      error: "setting_managed_by_environment",
-      field: "workerActivitySlots",
-      source: "environment",
-      activation: "restart",
-      message: "workerActivitySlots is managed by the launch environment and cannot be changed here.",
+    expect(write.statusCode, write.body).toBe(200);
+    expect(JSON.parse(fs.readFileSync(options.configPath, "utf8"))).toMatchObject({
+      worker_activity_slots: 7,
     });
-    expect(fs.readFileSync(options.settingsPath, "utf8")).toBe(before);
 
     await app.close();
   });
 
-  it("exposes and rejects environment-managed AI and Apply policy writes", async () => {
-    const app = buildApp({
-      ...options,
-      settingsEnvironment: {
-        JOBCTRL_ANALYSIS_LEGS: "claude,google",
-        JOBCTRL_APPLY_MAX_BUDGET_USD: "0",
-      },
-    });
+  it("keeps AI and Apply policy config-owned when legacy environment variables are present", async () => {
+    vi.stubEnv("JOBCTRL_ANALYSIS_LEGS", "claude,google");
+    vi.stubEnv("JOBCTRL_APPLY_MAX_BUDGET_USD", "0");
+    const app = buildApp(options);
     const read = await app.inject({ method: "GET", url: "/v1/settings" });
     expect(read.json()).toMatchObject({
-      settings: { analysisLegs: ["claude", "google"], applyMaxBudgetUsd: 0 },
+      settings: {
+        analysisLegs: ["claude", "codex", "google"],
+        applyMaxBudgetUsd: 5,
+      },
       effectiveSettings: {
-        analysisLegs: { source: "environment", activation: "next_analysis", editable: false },
-        applyMaxBudgetUsd: { source: "environment", activation: "next_apply_job", editable: false },
+        analysisLegs: { source: "default", activation: "next_analysis", editable: true },
+        applyMaxBudgetUsd: { source: "default", activation: "next_apply_job", editable: true },
       },
     });
     const write = await app.inject({
@@ -8537,11 +8502,9 @@ describe("local TypeScript API", () => {
       url: "/v1/settings",
       payload: { applyMaxBudgetUsd: 9 },
     });
-    expect(write.statusCode, write.body).toBe(409);
-    expect(write.json()).toMatchObject({
-      error: "setting_managed_by_environment",
-      field: "applyMaxBudgetUsd",
-      activation: "next_apply_job",
+    expect(write.statusCode, write.body).toBe(200);
+    expect(JSON.parse(fs.readFileSync(options.configPath, "utf8"))).toMatchObject({
+      apply_max_budget_usd: 9,
     });
     await app.close();
   });
@@ -8555,7 +8518,7 @@ describe("local TypeScript API", () => {
     });
 
     expect(response.statusCode, response.body).toBe(400);
-    expect(JSON.parse(fs.readFileSync(options.settingsPath, "utf8"))).not.toHaveProperty(
+    expect(JSON.parse(fs.readFileSync(options.configPath, "utf8"))).not.toHaveProperty(
       "worker_activity_slots",
     );
     await app.close();
@@ -8567,7 +8530,7 @@ describe("local TypeScript API", () => {
       list: vi.fn(async () => ({
         ok: true as const,
         store: {
-          kind: "macos_keychain" as const,
+          kind: "config_and_macos_keychain" as const,
           available: true,
           unavailableReason: null,
           requiresWorkerRestart: true as const,
@@ -8639,7 +8602,7 @@ describe("local TypeScript API", () => {
     const response = () => ({
       ok: true as const,
       store: {
-        kind: "macos_keychain" as const,
+        kind: "config_and_macos_keychain" as const,
         available: true,
         unavailableReason: null,
         requiresWorkerRestart: true as const,
@@ -8820,7 +8783,7 @@ describe("local TypeScript API", () => {
             provider: "claude",
             configured: true,
             ready: true,
-            source: "provider_aliases",
+            source: "live",
             models: [{ id: "sonnet", displayName: "Sonnet" }],
           },
           {
@@ -8846,7 +8809,7 @@ describe("local TypeScript API", () => {
       ok: true,
       providers: [
         { provider: "codex", source: "live" },
-        { provider: "claude", source: "provider_aliases" },
+        { provider: "claude", source: "live" },
         { provider: "google", models: [] },
       ],
     });
@@ -8855,9 +8818,9 @@ describe("local TypeScript API", () => {
   });
 
   it("validates, merges, and clears preferred models without persisting credentials", async () => {
-    const currentSettings = JSON.parse(fs.readFileSync(options.settingsPath, "utf8"));
+    const currentSettings = JSON.parse(fs.readFileSync(options.configPath, "utf8"));
     currentSettings.preferred_models.google = "gemini-test";
-    fs.writeFileSync(options.settingsPath, JSON.stringify(currentSettings));
+    fs.writeFileSync(options.configPath, JSON.stringify(currentSettings));
     const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
       jsonrpc: "2.0" as const,
       id: 1,
@@ -8874,7 +8837,7 @@ describe("local TypeScript API", () => {
             provider: "claude",
             configured: false,
             ready: false,
-            source: "provider_aliases",
+            source: "live",
             models: [],
             message: "Provider is not configured.",
           },
@@ -8901,7 +8864,7 @@ describe("local TypeScript API", () => {
 
     expect(save.statusCode, save.body).toBe(200);
     expect(save.json().settings.preferredModels).toEqual({ codex: "gpt-test", google: "gemini-test" });
-    const persisted = JSON.parse(fs.readFileSync(options.settingsPath, "utf8"));
+    const persisted = JSON.parse(fs.readFileSync(options.configPath, "utf8"));
     expect(persisted.preferred_models).toEqual({ codex: "gpt-test", google: "gemini-test" });
     expect(JSON.stringify(persisted)).not.toMatch(/credential|api[_-]?key|token/i);
     expect(call).toHaveBeenCalledTimes(1);
@@ -8925,7 +8888,7 @@ describe("local TypeScript API", () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json().settings.preferredModels).toEqual({});
-    expect(JSON.parse(fs.readFileSync(options.settingsPath, "utf8")).preferred_models).toEqual({});
+    expect(JSON.parse(fs.readFileSync(options.configPath, "utf8")).preferred_models).toEqual({});
     expect(call).not.toHaveBeenCalled();
     await app.close();
   });
@@ -8937,7 +8900,7 @@ describe("local TypeScript API", () => {
       result: {
         providers: [
           { provider: "codex", configured: true, ready: true, source: "live", models: [{ id: "gpt-test", displayName: "GPT Test" }] },
-          { provider: "claude", configured: false, ready: false, source: "provider_aliases", models: [], message: "Provider is not configured." },
+          { provider: "claude", configured: false, ready: false, source: "live", models: [], message: "Provider is not configured." },
           { provider: "google", configured: true, ready: true, source: "live", models: [{ id: "gemini-test", displayName: "Gemini Test" }] },
         ],
       },
@@ -8946,7 +8909,7 @@ describe("local TypeScript API", () => {
       ...options,
       providerDispatcher: { call, close: vi.fn(async () => undefined) },
     });
-    const before = fs.readFileSync(options.settingsPath, "utf8");
+    const before = fs.readFileSync(options.configPath, "utf8");
 
     const unavailable = await app.inject({
       method: "PATCH",
@@ -8963,7 +8926,7 @@ describe("local TypeScript API", () => {
     expect(unavailable.json().error).toBe("provider_not_ready");
     expect(invalid.statusCode).toBe(400);
     expect(invalid.json().error).toBe("invalid_preferred_model");
-    expect(fs.readFileSync(options.settingsPath, "utf8")).toBe(before);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
     await app.close();
   });
 
@@ -8982,7 +8945,7 @@ describe("local TypeScript API", () => {
             models: [],
             message: "Live model catalog is temporarily unavailable.",
           },
-          { provider: "claude", configured: true, ready: true, source: "provider_aliases", models: [{ id: "sonnet", displayName: "Sonnet" }] },
+          { provider: "claude", configured: true, ready: true, source: "live", models: [{ id: "sonnet", displayName: "Sonnet" }] },
           { provider: "google", configured: false, ready: false, source: "live", models: [], message: "Provider is not configured." },
         ],
       },
@@ -9086,7 +9049,7 @@ describe("local TypeScript API", () => {
     const response = {
       ok: true as const,
       store: {
-        kind: "macos_keychain" as const,
+        kind: "config_and_macos_keychain" as const,
         available: true,
         unavailableReason: null,
         requiresWorkerRestart: true as const,
@@ -9126,7 +9089,11 @@ describe("local TypeScript API", () => {
     "reports unsupported Keychain storage on %s without spawning or failing credential reads",
     async (platform) => {
       const runSecurity = vi.fn();
-      const credentialStore = new KeychainCredentialStore({ platform, runSecurity });
+      const credentialStore = new KeychainCredentialStore({
+        platform,
+        runSecurity,
+        configPath: options.configPath,
+      });
       const app = buildApp({ ...options, credentialStore });
 
       const initial = await app.inject({ method: "GET", url: "/v1/credentials" });
@@ -9134,17 +9101,19 @@ describe("local TypeScript API", () => {
       expect(initial.json()).toMatchObject({
         ok: true,
         store: {
-          kind: "macos_keychain",
+          kind: "config_and_macos_keychain",
           available: false,
           unavailableReason: "unsupported_platform",
           requiresWorkerRestart: true,
         },
       });
-      expect(
-        initial.json().credentials.every(
-          (credential: { configured: boolean | null }) => credential.configured === null,
+      const byKey = new Map<string, { key: string; configured: boolean | null }>(
+        initial.json().credentials.map(
+          (credential: { key: string; configured: boolean | null }) => [credential.key, credential] as const,
         ),
-      ).toBe(true);
+      );
+      expect(SecretCredentialKeys.every((key) => byKey.get(key)?.configured === null)).toBe(true);
+      expect(ProviderConfigurationKeys.every((key) => byKey.get(key)?.configured === false)).toBe(true);
       expect(runSecurity).not.toHaveBeenCalled();
 
       const save = await app.inject({
@@ -9177,7 +9146,11 @@ describe("local TypeScript API", () => {
     const runSecurity = vi.fn(async () => {
       throw new Error(secret);
     });
-    const credentialStore = new KeychainCredentialStore({ platform: "darwin", runSecurity });
+    const credentialStore = new KeychainCredentialStore({
+      platform: "darwin",
+      runSecurity,
+      configPath: options.configPath,
+    });
     const app = buildApp({ ...options, credentialStore });
     const logError = vi.spyOn(app.log, "error");
 
@@ -9190,11 +9163,13 @@ describe("local TypeScript API", () => {
         unavailableReason: "inspection_failed",
       },
     });
-    expect(
-      initial.json().credentials.every(
-        (credential: { configured: boolean | null }) => credential.configured === null,
+    const byKey = new Map<string, { key: string; configured: boolean | null }>(
+      initial.json().credentials.map(
+        (credential: { key: string; configured: boolean | null }) => [credential.key, credential] as const,
       ),
-    ).toBe(true);
+    );
+    expect(SecretCredentialKeys.every((key) => byKey.get(key)?.configured === null)).toBe(true);
+    expect(ProviderConfigurationKeys.every((key) => byKey.get(key)?.configured === false)).toBe(true);
     expect(initial.body).not.toContain(secret);
 
     const save = await app.inject({

@@ -190,17 +190,17 @@ describe("API runtime config workspace resolution", () => {
     }
   });
 
-  it("expands home-relative workspace and dashboard settings overrides", () => {
+  it("expands home-relative workspace and config overrides", () => {
     const { home, cleanup } = makeHome();
     try {
       const config = resolveApiConfig({
         HOME: home,
         JOBCTRL_DIR: "~/custom-workspace",
-        JOBCTRL_DASHBOARD_CONFIG_PATH: "~/config/dashboard.json",
+        JOBCTRL_CONFIG_PATH: "~/config/config.json",
       });
 
       expect(config.appDir).toBe(path.join(home, "custom-workspace"));
-      expect(config.settingsPath).toBe(path.join(home, "config", "dashboard.json"));
+      expect(config.configPath).toBe(path.join(home, "config", "config.json"));
     } finally {
       cleanup();
     }

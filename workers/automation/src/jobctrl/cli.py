@@ -937,9 +937,8 @@ def setup(
     import subprocess
     import sys
 
-    from jobctrl.config import ensure_dirs, get_env_path, load_env
+    from jobctrl.config import ensure_dirs, get_env_path, load_env, update_config_file
     from jobctrl.infrastructure.setup_probes import (
-        ANALYSIS_LEGS_ENV,
         CODEX_NEUTRALIZED_AUTH_ENV,
         antigravity_auth_kwargs,
         codex_auth_path,
@@ -964,6 +963,7 @@ def setup(
         "toolchain": [],
         "commands": [],
         "analysis": [],
+        "configUpdates": [],
         "envUpdates": [],
     }
 
@@ -1146,7 +1146,13 @@ def setup(
             authenticated_legs.remove("antigravity")
 
     if authenticated_legs:
-        env_updates[ANALYSIS_LEGS_ENV] = ",".join(authenticated_legs)
+        persisted_legs = [
+            "google" if leg == "antigravity" else leg
+            for leg in authenticated_legs
+        ]
+        if not dry_run:
+            update_config_file({"analysis_legs": persisted_legs})
+        summary["configUpdates"] = ["analysis_legs"]
     elif configured_legs:
         if not json_output:
             console.print("[yellow]No analysis leg is authenticated; leaving existing leg configuration unchanged.[/yellow]")
@@ -2598,8 +2604,7 @@ def politeness_doctor_notices(conn, search_cfg: dict) -> list[tuple[str, str, st
     rows.append((
         "crawl user-agent",
         "ok",
-        f"{user_agent} — review before real crawls; override via "
-        "JOBCTRL_CRAWL_UA_PRODUCT / JOBCTRL_CRAWL_UA_CONTACT",
+        f"{user_agent} — review before real crawls; edit it in Discovery runtime settings",
     ))
 
     boards = resolve_jobspy_boards(search_cfg, warn=False)

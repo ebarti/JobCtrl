@@ -11,6 +11,7 @@ from temporalio.client import WorkflowExecutionStatus
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.service import RPCError, RPCStatusCode
 
+from jobctrl import config
 from jobctrl.apply import auto_apply
 from jobctrl.apply.auto_apply import auto_apply_workflow_id, reconcile_auto_apply_loop
 from jobctrl.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
@@ -65,16 +66,30 @@ class _FakeClient:
         return handle
 
 
-def _write_settings(path, **values: object) -> None:
+def _write_config_settings(path, **values: object) -> None:
     path.write_text(json.dumps(values), encoding="utf-8")
+
+
+def _write_discovery_automation_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    **automation: object,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    sqlite3.connect(db_path).close()
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    discovery = config._default_discovery_search_config()
+    discovery["automation"] = automation
+    config._save_discovery_search_config_to_db(discovery)
 
 
 @pytest.mark.asyncio
 async def test_auto_apply_reconciler_does_not_start_a_disabled_browser_capability(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    settings_path = tmp_path / "dashboard.json"
-    _write_settings(settings_path, auto_apply=True)
+    settings_path = tmp_path / "config.json"
+    _write_config_settings(settings_path)
+    _write_discovery_automation_settings(monkeypatch, tmp_path, auto_apply=True)
     client = _FakeClient()
     monkeypatch.setattr(
         auto_apply,
@@ -96,13 +111,17 @@ async def test_auto_apply_reconciler_does_not_start_a_disabled_browser_capabilit
 
 
 @pytest.mark.asyncio
-async def test_auto_apply_on_starts_exactly_one_standing_loop(tmp_path) -> None:
-    settings_path = tmp_path / "dashboard.json"
-    _write_settings(
+async def test_auto_apply_on_starts_exactly_one_standing_loop(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings_path = tmp_path / "config.json"
+    _write_config_settings(
         settings_path,
+        apply_concurrency=3,
+    )
+    _write_discovery_automation_settings(
+        monkeypatch,
+        tmp_path,
         auto_apply=True,
         min_fit_score=9,
-        apply_concurrency=3,
         apply_approval_required=True,
     )
     client = _FakeClient()
@@ -143,9 +162,10 @@ async def test_auto_apply_on_starts_exactly_one_standing_loop(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_auto_apply_off_cancels_the_standing_loop(tmp_path) -> None:
-    settings_path = tmp_path / "dashboard.json"
-    _write_settings(settings_path, auto_apply=False)
+async def test_auto_apply_off_cancels_the_standing_loop(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings_path = tmp_path / "config.json"
+    _write_config_settings(settings_path)
+    _write_discovery_automation_settings(monkeypatch, tmp_path, auto_apply=False)
     workflow_id = auto_apply_workflow_id("local")
     handle = _FakeHandle(WorkflowExecutionStatus.RUNNING)
     client = _FakeClient()
@@ -169,9 +189,13 @@ async def test_auto_apply_off_cancels_the_standing_loop(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_auto_apply_budget_exceeded_halt_does_not_restart_loop(tmp_path) -> None:
-    settings_path = tmp_path / "dashboard.json"
-    _write_settings(settings_path, auto_apply=True, daily_budget_usd=1.0)
+async def test_auto_apply_budget_exceeded_halt_does_not_restart_loop(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_path = tmp_path / "config.json"
+    _write_config_settings(settings_path, daily_budget_usd=1.0)
+    _write_discovery_automation_settings(monkeypatch, tmp_path, auto_apply=True)
     db_path = tmp_path / "jobctrl.db"
     today = datetime.now(timezone.utc).date().isoformat()
     with sqlite3.connect(db_path) as conn:

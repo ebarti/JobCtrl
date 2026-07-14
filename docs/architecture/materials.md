@@ -1,4 +1,4 @@
-# Materials & Tailoring Audit
+# Employer Analysis & Materials Audit
 
 Materials turns job evidence and profile facts into generated artifacts, then
 proves what each rendered claim came from. Generation mechanics and response
@@ -11,15 +11,27 @@ checks, voice, coverage, interview prep, or the artifact inspector.
 ## At A Glance
 
 ```mermaid
-flowchart LR
-    ANALYZE["Analyze employer + requirements"] --> DRAFT["Draft from profile evidence"]
-    DRAFT --> GATES["Validate provenance + truthfulness"]
-    GATES --> VOICE["Optional voice pass"]
-    VOICE --> AUDIT["Re-check rendered text"]
-    AUDIT --> READ["Persist artifacts + audit projections"]
+flowchart TB
+    ANALYZE@{ icon: "tabler:search", form: "rounded", label: "Analyze<br/>employer + requirements", h: 64 }
+    DRAFT@{ icon: "tabler:pencil", form: "rounded", label: "Draft from<br/>profile evidence", h: 64 }
+    GATES@{ icon: "tabler:shield-check", form: "rounded", label: "Validate<br/>provenance + truthfulness", h: 64 }
+    VOICE@{ icon: "tabler:message", form: "rounded", label: "Optional<br/>voice pass", h: 64 }
+    AUDIT@{ icon: "tabler:file-search", form: "rounded", label: "Re-check<br/>rendered text", h: 64 }
+    READ@{ shape: "docs", label: "Persist artifacts<br/>+ audit projections" }
 
-    class ANALYZE,DRAFT,GATES,VOICE,AUDIT py
-    class READ store
+    subgraph GENERATE["Grounded generation"]
+      direction LR
+      ANALYZE -->|requirements| DRAFT
+      DRAFT -->|candidate text| GATES
+    end
+
+    subgraph ACCEPT["Artifact acceptance"]
+      direction LR
+      VOICE -->|rendered candidate| AUDIT
+      AUDIT -->|accepted artifact| READ
+    end
+
+    GATES -->|accepted draft| VOICE
 ```
 
 The invariant is simple: the text audited for provenance and coverage is the

@@ -5,7 +5,7 @@ import path from "node:path";
 export interface ApiRuntimeConfig {
   appDir: string;
   dbPath: string;
-  settingsPath: string;
+  configPath: string;
   host: string;
   port: number;
 }
@@ -26,14 +26,14 @@ export function resolveApiConfig(env: NodeJS.ProcessEnv = process.env): ApiRunti
     );
   }
   const appDir = resolveDefaultWorkspace(env);
-  const settingsOverride = env.JOBCTRL_DASHBOARD_CONFIG_PATH;
+  const configOverride = env.JOBCTRL_CONFIG_PATH;
 
   return {
     appDir,
     dbPath: env.JOBCTRL_DB_PATH || path.join(appDir, "jobctrl.db"),
-    settingsPath: settingsOverride
-      ? expandHomePath(settingsOverride, env)
-      : path.join(appDir, "dashboard.json"),
+    configPath: configOverride
+      ? expandHomePath(configOverride, env)
+      : path.join(appDir, "config.json"),
     host,
     port: Number.isFinite(port) ? port : 8766,
   };

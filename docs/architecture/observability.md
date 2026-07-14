@@ -9,19 +9,17 @@ or wire the worker up to Langfuse.
 ```mermaid
 flowchart LR
     subgraph Worker["The Python worker"]
-        LLM["LLM calls"]
-        WF["Temporal workflows + activities"]
-        RPC["JSON-RPC dispatch"]
+        LLM@{ icon: "tabler:message", form: "rounded", label: "LLM calls", h: 64 }
+        WF@{ icon: "tabler:clock", form: "rounded", label: "Temporal<br/>workflows + activities", h: 64 }
+        RPC@{ icon: "tabler:arrows-exchange", form: "rounded", label: "JSON-RPC<br/>dispatch", h: 64 }
     end
-    OTel["OpenTelemetry (BatchSpanProcessor to OTLPSpanExporter)"]
-    LF(["Langfuse OTLP traces endpoint"])
-    LLM --> OTel
-    WF --> OTel
-    RPC --> OTel
-    OTel -->|"OTLP/HTTP, HTTP Basic auth"| LF
+    OTel@{ icon: "tabler:activity", form: "rounded", label: "OpenTelemetry<br/>batch span processor", h: 64 }
+    LF@{ shape: "cloud", label: "Langfuse<br/>OTLP traces endpoint" }
 
-    class LLM,WF,RPC,OTel py
-    class LF ext
+    LLM -->|generation spans| OTel
+    WF -->|workflow + activity spans| OTel
+    RPC -->|dispatch spans| OTel
+    OTel -->|OTLP/HTTP + Basic auth| LF
 ```
 
 Every OpenTelemetry span described on this page originates in the Python

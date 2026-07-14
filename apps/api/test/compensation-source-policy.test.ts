@@ -9,14 +9,14 @@ import { buildApp } from "../src/server.js";
 
 function withTempApp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-compensation-sources-"));
-  const settingsPath = path.join(dir, "dashboard.json");
+  const configPath = path.join(dir, "config.json");
   const app = buildApp({
     dbPath: path.join(dir, "jobs.db"),
-    settingsPath,
+    configPath,
   });
   return {
     app,
-    settingsPath,
+    configPath,
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
   };
 }
@@ -124,46 +124,16 @@ describe("compensation source policy", () => {
     });
   });
 
-  it.each([
-    {
-      label: "absent",
-      env: {},
+  it("ignores legacy compensation environment settings", () => {
+    vi.stubEnv("JOBCTRL_LEVELS_FYI_ACCESS_MODE", "public_markdown");
+    vi.stubEnv("JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE", "true");
+
+    expect(source(listCompensationSources({}), "levels_fyi")).toMatchObject({
       accessMode: "public_markdown",
-      enabled: false,
       availability: "unavailable",
+      configured: false,
       disabledReason: "Disabled in Compensation sources settings.",
-    },
-    {
-      label: "blank",
-      env: { JOBCTRL_LEVELS_FYI_ACCESS_MODE: "   " },
-      accessMode: "public_markdown",
-      enabled: false,
-      availability: "unavailable",
-      disabledReason: "Disabled in Compensation sources settings.",
-    },
-    {
-      label: "valid",
-      env: { JOBCTRL_LEVELS_FYI_ACCESS_MODE: "public_markdown" },
-      accessMode: "public_markdown",
-      enabled: true,
-      availability: "available",
-      disabledReason: null,
-    },
-    {
-      label: "invalid",
-      env: { JOBCTRL_LEVELS_FYI_ACCESS_MODE: "public_api" },
-      accessMode: "unavailable_until_permitted",
-      enabled: false,
-      availability: "unavailable",
-      disabledReason: "Configured Levels.fyi access mode is not permitted for compensation import.",
-    },
-  ])("keeps API Levels.fyi access semantics aligned for $label env values", (expected) => {
-    expect(source(listCompensationSources(expected.env), "levels_fyi")).toMatchObject({
-      accessMode: expected.accessMode,
-      availability: expected.availability,
-      configured: expected.availability === "available",
-      disabledReason: expected.disabledReason,
-      control: { enabled: expected.enabled },
+      control: { enabled: false },
     });
   });
 
@@ -205,7 +175,11 @@ describe("compensation source policy", () => {
 
   it("still requires explicit Europe coverage for licensed Levels.fyi modes", () => {
     const missingCoverage = listCompensationSources({
-      JOBCTRL_LEVELS_FYI_ACCESS_MODE: "licensed_api",
+      levels_fyi: {
+        enabled: true,
+        accessMode: "licensed_api",
+        europeCoverageConfirmed: false,
+      },
     });
     expect(source(missingCoverage, "levels_fyi")).toMatchObject({
       availability: "unavailable",
@@ -215,8 +189,11 @@ describe("compensation source policy", () => {
     });
 
     const configured = listCompensationSources({
-      JOBCTRL_LEVELS_FYI_ACCESS_MODE: "enterprise_mcp",
-      JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE: "true",
+      levels_fyi: {
+        enabled: true,
+        accessMode: "enterprise_mcp",
+        europeCoverageConfirmed: true,
+      },
     });
     expect(source(configured, "levels_fyi")).toMatchObject({
       availability: "available",
@@ -230,7 +207,11 @@ describe("compensation source policy", () => {
 
   it("requires permitted Glassdoor partner or written-permission access", () => {
     const invalid = listCompensationSources({
-      JOBCTRL_GLASSDOOR_ACCESS_MODE: "public_dataset",
+      glassdoor: {
+        enabled: true,
+        accessMode: "public_dataset",
+        europeCoverageConfirmed: false,
+      },
     });
     expect(source(invalid, "glassdoor")).toMatchObject({
       availability: "unavailable",
@@ -240,7 +221,11 @@ describe("compensation source policy", () => {
     });
 
     const configured = listCompensationSources({
-      JOBCTRL_GLASSDOOR_ACCESS_MODE: "written_permission",
+      glassdoor: {
+        enabled: true,
+        accessMode: "written_permission",
+        europeCoverageConfirmed: false,
+      },
     });
     expect(source(configured, "glassdoor")).toMatchObject({
       availability: "available",
@@ -252,7 +237,7 @@ describe("compensation source policy", () => {
   });
 
   it("persists user-owned Levels.fyi and Glassdoor source settings", async () => {
-    const { app, settingsPath, cleanup } = withTempApp();
+    const { app, configPath, cleanup } = withTempApp();
     try {
       const levelsResponse = await app.inject({
         method: "PATCH",
@@ -317,7 +302,7 @@ describe("compensation source policy", () => {
         },
       });
 
-      expect(JSON.parse(fs.readFileSync(settingsPath, "utf8"))).toMatchObject({
+      expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).toMatchObject({
         compensation_sources: {
           levels_fyi: {
             enabled: true,
@@ -389,12 +374,19 @@ describe("compensation source policy", () => {
   });
 
   it("does not expose credentials, raw provider payloads, local paths, or salary observations", () => {
+    vi.stubEnv("JOBCTRL_LEVELS_FYI_API_KEY", "levels-secret");
+    vi.stubEnv("JOBCTRL_GLASSDOOR_TOKEN", "glassdoor-token");
     const response = listCompensationSources({
-      JOBCTRL_LEVELS_FYI_ACCESS_MODE: "licensed_data_feed",
-      JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE: "1",
-      JOBCTRL_GLASSDOOR_ACCESS_MODE: "partner_api",
-      JOBCTRL_LEVELS_FYI_API_KEY: "levels-secret",
-      JOBCTRL_GLASSDOOR_TOKEN: "glassdoor-token",
+      levels_fyi: {
+        enabled: true,
+        accessMode: "licensed_data_feed",
+        europeCoverageConfirmed: true,
+      },
+      glassdoor: {
+        enabled: true,
+        accessMode: "partner_api",
+        europeCoverageConfirmed: false,
+      },
     });
 
     expect(JSON.stringify(response)).not.toContain("levels-secret");
@@ -422,14 +414,15 @@ describe("compensation source policy", () => {
     });
     vi.stubGlobal("fetch", fetch);
 
-    const first = listCompensationSources({
-      JOBCTRL_LEVELS_FYI_ACCESS_MODE: "licensed_api",
-      JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE: "yes",
-    });
-    const second = listCompensationSources({
-      JOBCTRL_LEVELS_FYI_ACCESS_MODE: "licensed_api",
-      JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE: "yes",
-    });
+    const preferences = {
+      levels_fyi: {
+        enabled: true,
+        accessMode: "licensed_api" as const,
+        europeCoverageConfirmed: true,
+      },
+    };
+    const first = listCompensationSources(preferences);
+    const second = listCompensationSources(preferences);
 
     expect(second).toEqual(first);
     expect(fetch).not.toHaveBeenCalled();

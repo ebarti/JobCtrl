@@ -118,7 +118,7 @@ class Profile:
             reasons.append(
                 "profile data must include a top-level 'resume' block with executive_profile, "
                 "experience_entries, education_entries, skill_categories, and tailoring_rules. "
-                "Run `jobctrl init` or use profile.example.json as a template."
+                "Complete your Candidate Profile in the web app or run `jobctrl init`."
             )
             raise InvalidProfileError(reasons)
 

@@ -9,7 +9,7 @@ import { writeProfileConfig } from "../src/profile-store.js";
 export interface QaWorkspace {
   appDir: string;
   dbPath: string;
-  settingsPath: string;
+  configPath: string;
 }
 
 interface QaJobSeed {
@@ -170,7 +170,7 @@ export function createQaWorkspace(targetDir?: string): QaWorkspace {
   const workspace = {
     appDir,
     dbPath: path.join(appDir, "jobctrl.db"),
-    settingsPath: path.join(appDir, "dashboard.json"),
+    configPath: path.join(appDir, "config.json"),
   };
   seedQaWorkspace(workspace);
   return workspace;
@@ -184,7 +184,7 @@ export function seedQaWorkspace(workspace: QaWorkspace): void {
   fs.mkdirSync(workspace.appDir, { recursive: true });
   seedQaDatabase(workspace.dbPath);
   fs.writeFileSync(
-    workspace.settingsPath,
+    workspace.configPath,
     JSON.stringify(
       {
         target_role: "Director of Platform Engineering",
@@ -1209,7 +1209,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       {
         appDir: workspace.appDir,
         dbPath: workspace.dbPath,
-        settingsPath: workspace.settingsPath,
+        configPath: workspace.configPath,
       },
       null,
       2,

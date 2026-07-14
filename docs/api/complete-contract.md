@@ -1070,7 +1070,7 @@ heartbeat status (`healthy`, `missing`, `stale` after 45 s, or `mismatched`
 when the worker points at a different app dir/database) and an `llmSpend`
 block (`status: ok | over_budget`, today's `estimatedUsd` from the local
 `llm_spend` metering table, and configured `dailyBudgetUsd` from
-`dashboard.json` — default `25`, `0` = unlimited), plus worker startup
+`config.json` — default `25`, `0` = unlimited), plus worker startup
 concurrency metadata
 (`maxConcurrentActivities`, `activityExecutorMaxWorkers`). The web topbar
 surfaces missing or stale worker heartbeats, the Settings page surfaces the
@@ -1120,11 +1120,10 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
 
 ## Settings And Credentials
 
-- `GET /v1/settings` returns the runtime settings stored in the local
-  settings file (`dashboard.json` under the app dir): spend/capacity, apply,
+- `GET /v1/settings` returns the non-secret values stored in the local
+  Settings file (`config.json` under the app dir): spend/capacity,
   scoring guidance, analysis legs, tailoring generator/judge policy, and related
-  preferences. Managed fields include effective source, editability, and
-  activation timing; environment-owned fields reject writes. The response's
+  preferences. Managed fields include effective source and activation timing. The response's
   `preferredModels` is a strict partial mapping
   keyed only by `codex`, `claude`, and `google`, and contains only nonempty
   saved model IDs. `PATCH /v1/settings` updates them; a non-null preferred ID
@@ -1188,9 +1187,9 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
 - `GET /v1/providers/models` returns `{ok: true, providers}` in stable Codex,
   Claude, Google order. Each item includes `provider`, `configured`, `ready`,
   `source`, `models`, and an optional bounded status message. Unready providers
-  return no models. Ready Codex and Google use authenticated live SDK listings
-  (`source: "live"`); ready Claude returns `sonnet`, `opus`, and `haiku` with
-  `source: "provider_aliases"`. Model entries expose only `id`, `displayName`,
+  return no models. Every ready provider uses the authenticated runtime's live
+  model catalog (`source: "live"`): Codex App Server `model/list`, Claude Agent
+  SDK initialization metadata, or the Google SDK model list. Model entries expose only `id`, `displayName`,
   and optional `isDefault`; account, auth, path, and secret metadata never
   cross the JSON-RPC/API boundary. It is read-only and never copies ambient
   Codex auth. A preferred-model patch returns `409` when its provider is not

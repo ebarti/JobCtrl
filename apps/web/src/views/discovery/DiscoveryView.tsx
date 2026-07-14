@@ -1,6 +1,6 @@
 import { DiscoveryProductControls } from "../../contexts/discovery/components/DiscoveryProductControls.js";
 import { DiscoveryRuntimeSettingsPanel } from "../../contexts/discovery/components/DiscoveryRuntimeSettingsPanel.js";
-import { DiscoveryAutomationSettingsPanel } from "../../contexts/profile/components/DiscoveryAutomationSettingsPanel.js";
+import { DiscoveryAutomationSettingsPanel } from "../../contexts/discovery/components/DiscoveryAutomationSettingsPanel.js";
 import { TargetSearchSettingsPanel } from "../../contexts/profile/components/TargetSearchSettingsPanel.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 

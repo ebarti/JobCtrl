@@ -26,6 +26,7 @@ from jobctrl.config import (
     RESUME_PATH,
     RESUME_PDF_PATH,
     ensure_dirs,
+    save_discovery_automation_settings,
 )
 from jobctrl.database import init_db
 from jobctrl.domain.profile.aggregate import Profile
@@ -446,7 +447,10 @@ def _setup_auto_apply() -> None:
     ))
 
     if not Confirm.ask("Enable the standing auto-apply loop?", default=False):
-        _update_dashboard_settings(auto_apply=False, apply_approval_required=True)
+        save_discovery_automation_settings(
+            auto_apply=False,
+            apply_approval_required=True,
+        )
         console.print("[dim]Auto apply is off. You can start apply runs manually after reviewing materials.[/dim]")
         return
 
@@ -454,7 +458,7 @@ def _setup_auto_apply() -> None:
         "Require Apply Review approval before live submit?",
         default=True,
     )
-    _update_dashboard_settings(
+    save_discovery_automation_settings(
         auto_apply=True,
         apply_approval_required=approval_required,
     )
@@ -503,21 +507,6 @@ def _setup_auto_apply() -> None:
         console.print("[green]CapSolver key saved.[/green]")
     else:
         console.print("[dim]Skipped. CAPTCHA challenges will fail closed.[/dim]")
-
-
-def _update_dashboard_settings(**patch: object) -> None:
-    path = APP_DIR / "dashboard.json"
-    if path.exists():
-        try:
-            current = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            current = {}
-        if not isinstance(current, dict):
-            current = {}
-    else:
-        current = {}
-    current.update(patch)
-    path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

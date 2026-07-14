@@ -43,16 +43,24 @@ runner functions in `pipeline/runner.py`, which drive the source adapters):
 
 ```mermaid
 flowchart TD
-    WF[DiscoverWorkflow] --> A1[plan_discovery_sources]
-    WF --> A2[discovery_source_family]
-    WF --> A3[discovery_enrichment]
-    WF --> A4[discovery_preparation_fanout]
-    A1 --> R[pipeline.runner: plan_discovery_source_families]
-    A2 --> RS[pipeline.runner: run_discovery_source_family]
-    A3 --> RE[pipeline.runner: run_discovery_enrichment_stage + hygiene]
-    A4 --> P[pipeline.preparation: start_discovery_preparation_workflows]
-    RS --> ADT[JobSpy / ATS / Workday / Smart Extract adapters]
-    P --> PREP[JobPreparationWorkflow root starts]
+    WF@{ icon: "tabler:git-merge", form: "rounded", h: 64, label: "DiscoverWorkflow" }
+    A1@{ icon: "tabler:map-search", form: "rounded", h: 64, label: "Plan source families" }
+    A2@{ icon: "tabler:radar", form: "rounded", h: 64, label: "Run source family" }
+    A3@{ icon: "tabler:wand", form: "rounded", h: 64, label: "Enrich details + hygiene" }
+    A4@{ icon: "tabler:playlist-add", form: "rounded", h: 64, label: "Fan out preparation" }
+    R@{ icon: "tabler:brand-python", form: "rounded", h: 64, label: "pipeline.runner<br/>plan source families" }
+    RS@{ icon: "tabler:brand-python", form: "rounded", h: 64, label: "pipeline.runner<br/>run source family" }
+    RE@{ icon: "tabler:brand-python", form: "rounded", h: 64, label: "pipeline.runner<br/>run enrichment" }
+    P@{ icon: "tabler:brand-python", form: "rounded", h: 64, label: "pipeline.preparation<br/>start root workflows" }
+    ADT@{ icon: "tabler:plug-connected", form: "rounded", h: 64, label: "JobSpy · ATS · Workday<br/>Smart Extract adapters" }
+    PREP@{ icon: "tabler:clipboard-check", form: "rounded", h: 64, label: "JobPreparationWorkflow<br/>root starts" }
+    WF --> A1 & A2 & A3 & A4
+    A1 --> R
+    A2 --> RS
+    A3 --> RE
+    A4 --> P
+    RS --> ADT
+    P --> PREP
 ```
 
 Key facts about the four activities:

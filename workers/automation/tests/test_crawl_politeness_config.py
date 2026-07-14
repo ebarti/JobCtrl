@@ -1,9 +1,4 @@
-"""Crawl-politeness config surface + doctor disclosure (R10 P5).
-
-Covers the honest-UA env override wiring (owner picks the string; the wiring
-stays generic) and the ``doctor`` disclosure notices (effective UA, broad-board
-activity, robots/rate-limited sources).
-"""
+"""Crawl-politeness config surface + doctor disclosure (R10 P5)."""
 
 from __future__ import annotations
 
@@ -16,8 +11,6 @@ from jobctrl.domain.ports.politeness import (
     default_honest_user_agent,
 )
 from jobctrl.infrastructure.network.politeness import (
-    UA_CONTACT_ENV,
-    UA_PRODUCT_ENV,
     PolitenessGateway,
     PolitenessSourceContext,
     record_politeness_outcome,
@@ -26,13 +19,11 @@ from jobctrl.infrastructure.network.politeness import (
 from jobctrl.operational_metrics import ensure_operational_metric_tables
 
 
-# --- honest-UA env override -------------------------------------------------
+# --- SQLite-owned honest-UA settings ----------------------------------------
 
 
-def test_resolve_honest_ua_defaults_to_the_builtin_identity(monkeypatch) -> None:
-    monkeypatch.delenv(UA_PRODUCT_ENV, raising=False)
-    monkeypatch.delenv(UA_CONTACT_ENV, raising=False)
-    ua = resolve_honest_user_agent()
+def test_resolve_honest_ua_defaults_to_the_builtin_identity() -> None:
+    ua = resolve_honest_user_agent({})
     default = default_honest_user_agent()
     assert ua.product == default.product == "JobCtrl"
     assert ua.contact_url == default.contact_url
@@ -40,27 +31,25 @@ def test_resolve_honest_ua_defaults_to_the_builtin_identity(monkeypatch) -> None
     assert "Mozilla" not in ua.header_value()
 
 
-def test_owner_env_overrides_product_and_contact(monkeypatch) -> None:
-    monkeypatch.setenv(UA_PRODUCT_ENV, "AcmeJobBot")
-    monkeypatch.setenv(UA_CONTACT_ENV, "https://acme.example/bot")
-    ua = resolve_honest_user_agent()
+def test_saved_discovery_identity_overrides_product_and_contact() -> None:
+    ua = resolve_honest_user_agent({
+        "crawl_user_agent": {
+            "product": "AcmeJobBot",
+            "contact": "https://acme.example/bot",
+        }
+    })
     assert ua.product == "AcmeJobBot"
     assert ua.contact_url == "https://acme.example/bot"
     assert ua.header_value() == f"AcmeJobBot/{ua.version} (+https://acme.example/bot)"
 
 
-def test_empty_contact_env_drops_the_contact_suffix(monkeypatch) -> None:
-    monkeypatch.delenv(UA_PRODUCT_ENV, raising=False)
-    monkeypatch.setenv(UA_CONTACT_ENV, "")
-    ua = resolve_honest_user_agent()
+def test_saved_empty_contact_drops_the_contact_suffix() -> None:
+    ua = resolve_honest_user_agent({"crawl_user_agent": {"contact": ""}})
     assert ua.contact_url is None
     assert ua.header_value() == f"JobCtrl/{ua.version}"
 
 
-def test_persisted_discovery_identity_is_used_when_environment_is_absent(monkeypatch) -> None:
-    monkeypatch.delenv(UA_PRODUCT_ENV, raising=False)
-    monkeypatch.delenv(UA_CONTACT_ENV, raising=False)
-
+def test_persisted_discovery_identity_is_used() -> None:
     ua = resolve_honest_user_agent({
         "crawl_user_agent": {
             "product": "JobCtrlResearch",
@@ -72,13 +61,16 @@ def test_persisted_discovery_identity_is_used_when_environment_is_absent(monkeyp
     assert ua.contact_url == "ops@example.test"
 
 
-def test_gateway_default_ua_reflects_the_owner_override(monkeypatch) -> None:
-    monkeypatch.setenv(UA_PRODUCT_ENV, "AcmeJobBot")
-    monkeypatch.setenv(UA_CONTACT_ENV, "https://acme.example/bot")
-    # A gateway built without an explicit UA resolves the effective owner UA, so
-    # every fetch surface picks up the override at once.
-    assert PolitenessGateway().user_agent == f"AcmeJobBot/{default_honest_user_agent().version} (+https://acme.example/bot)"
-    assert "Mozilla" not in PolitenessGateway().user_agent
+def test_gateway_uses_the_saved_discovery_identity() -> None:
+    user_agent = resolve_honest_user_agent({
+        "crawl_user_agent": {
+            "product": "AcmeJobBot",
+            "contact": "https://acme.example/bot",
+        }
+    })
+    gateway = PolitenessGateway(user_agent=user_agent)
+    assert gateway.user_agent == f"AcmeJobBot/{default_honest_user_agent().version} (+https://acme.example/bot)"
+    assert "Mozilla" not in gateway.user_agent
 
 
 # --- doctor disclosure notices ----------------------------------------------
@@ -95,9 +87,7 @@ def _rows_by_check(rows: list[tuple[str, str, str]]) -> dict[str, tuple[str, str
     return {check: (level, note) for check, level, note in rows}
 
 
-def test_doctor_notice_reports_effective_ua(monkeypatch) -> None:
-    monkeypatch.delenv(UA_PRODUCT_ENV, raising=False)
-    monkeypatch.delenv(UA_CONTACT_ENV, raising=False)
+def test_doctor_notice_reports_effective_ua() -> None:
     notices = _rows_by_check(politeness_doctor_notices(_conn(), {"boards": ["greenhouse"]}))
     level, note = notices["crawl user-agent"]
     assert level == "ok"

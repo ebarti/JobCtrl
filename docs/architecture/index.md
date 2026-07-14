@@ -3,87 +3,41 @@ pageClass: jh-visual-doc
 aside: false
 ---
 
-# System Architecture
+# System Overview
 
-JobCtrl is a local-first system: a TypeScript API and a web app (the web app
-talks to the API) orchestrate a Python worker over Temporal (the workflow
-engine). This is the whole machine on one map — every process, store, and
-external dependency, with the data that flows between them:
+JobCtrl is a local-first system: the web app talks to a TypeScript API, which
+dispatches automation to Python over JSON-RPC and Temporal (the workflow
+engine). This map shows the major runnable boundaries and their primary runtime
+traffic; projection internals belong to
+[Data, Events & Projections](data-events-and-projections.md).
 
-```mermaid
-flowchart TD
-  subgraph Client["🌐 Your browser"]
-    Web["Web app<br/>(React + TanStack)"]
-  end
-  subgraph TS["⚡ TypeScript host"]
-    Api["TypeScript API<br/>(Fastify, projection-backed)"]
-    Projections["Projection refresher<br/>(refreshProjections)"]
-    JsonRpc["JSON-RPC bridge<br/>(SubprocessJsonRpcAdapter)"]
-  end
-  subgraph Py["🐍 Python automation"]
-    RpcSrv["jobctrl rpc<br/>(JSON-RPC server)"]
-    Cli["jobctrl CLI"]
-    Worker["Python worker<br/>(queue jobctrl-default)"]
-    Workflows["Workflows + activities<br/>Discover / JobPipeline / JobPreparation<br/>Apply / ProfileImport / CompensationRefresh"]
-    Bus["InProcessEventBus"]
-    Repos["Per-aggregate<br/>repositories"]
-    Builder["ProjectionBuilder"]
-  end
-  Temporal["⏱️ Temporal dev server<br/>(gRPC :7233, UI :8233)"]
-  Db[("SQLite<br/>~/.jobctrl/jobctrl.db")]
-  Files[("Artifact files<br/>resumes · covers · PDFs")]
-  subgraph Ext["🌍 Outside world"]
-    Boards(["Job boards / ATSes"])
-    LLM(["LLM providers"])
-    Browser(["Browser automation<br/>(managed headless shell;<br/>optional system Chrome)"])
-  end
+<script setup>
+import SystemTopology from "../.vitepress/theme/SystemTopology.vue";
+</script>
 
-  Web -- "HTTP + SSE" --> Api
-  Api --> Projections
-  Api -- "complex commands" --> JsonRpc
-  Projections -- "projection rows" --> Db
-  JsonRpc -- "JSON-RPC 2.0<br/>(stdin/stdout)" --> RpcSrv
-  RpcSrv -- "start workflows" --> Temporal
-  RpcSrv -- "sync methods" --> Repos
-  Cli -- "start + await workflows" --> Temporal
-  Temporal -- "task queue" --> Worker
-  Worker --> Workflows
-  Workflows -- "domain writes" --> Repos
-  Repos -- "aggregate rows + job_events" --> Db
-  Repos -- "domain events" --> Bus
-  Bus --> Builder
-  Builder -- "projection rows" --> Db
-  Repos -- "artifact files" --> Files
-  Workflows -- "searches + postings" --> Boards
-  Workflows -- "prompts / completions" --> LLM
-  Workflows -- "form fills (apply)" --> Browser
+<SystemTopology />
 
-  class Web ui
-  class Api,Projections,JsonRpc ts
-  class RpcSrv,Cli,Worker,Workflows,Bus,Repos,Builder py
-  class Temporal infra
-  class Db,Files store
-  class Boards,LLM,Browser ext
-```
-
-What to notice: every durable fact converges on SQLite — workflows write
-aggregates and `job_events` on the Python side, projection builders turn events
-into read rows, and the web app reads only projections; commands travel the
-other way, over JSON-RPC and Temporal. Click the map to zoom.
+Follow the top-to-bottom control path: browser requests enter the API, cross
+the JSON-RPC boundary, become durable Temporal work, and reach the Python
+worker. SQLite is canonical local state, generated artifacts remain files, and
+configured services are an explicit boundary for controlled calls. Job and
+operations reads use projections, whereas profile, Settings, and other focused
+routes read their own canonical owners.
 
 **Read this if** you want the whole-system picture before diving into a single
 boundary, or you need to know which page answers a given question.
 
-- [Runtime Boundaries](runtime.md) — What are the processes, and what does each own?
-- [Job Pipeline](pipeline/index.md) — How does a job move through the stages, workflow by workflow?
-- [Scoring](scoring.md) — How does a discovered job become a defensible fit score?
-- [Materials & Tailoring Audit](materials.md) — How are tailored artifacts generated and every claim audited?
+- [Runtime & Processes](runtime.md) — What are the processes, and what does each own?
+- [Temporal Workflows](pipeline/index.md) — How does a job move through durable workflows and activities?
+- [Data, Events & Projections](data-events-and-projections.md) — Which facts are canonical state, events, read projections, or telemetry?
+- [Storage Authority](storage.md) — Which process and physical store own each durable value?
+- [Scoring Policy](scoring.md) — How does a discovered job become a defensible fit score?
+- [Employer Analysis & Materials Audit](materials.md) — How are generated artifacts and their claims audited?
 - [Tailoring Contract](tailoring.md) — What is the model asked, and which gates approve a resume?
-- [Apply Feedback & Projections](read-model.md) — How do apply outcomes feed back, and how do events become the read model?
-- [Storage](storage.md) — Where does data live on disk (SQLite tables and generated files)?
+- [Contracts, Types & API Boundaries](contracts-types-and-api-boundaries.md) — Where is each cross-process schema defined and enforced?
 - [Observability](observability.md) — How are LLM, workflow, and JSON-RPC spans traced to Langfuse?
-- [Backend Domain Model (DDD)](domain-model/index.md) — How is the domain designed (bounded contexts, aggregates, ports)?
-- [Frontend](frontend/index.md) — How is the web app designed (state layers, contexts, ports, realtime)?
+- [Backend Domain Model](domain-model/index.md) — How is the domain designed (bounded contexts, aggregates, ports)?
+- [Frontend Architecture](frontend/index.md) — How is the web app designed (state layers, contexts, ports, realtime)?
 
 This page is the canonical architecture reference for JobCtrl. The domain
 model this implementation realises is defined in the
@@ -212,37 +166,11 @@ vanishes from the funnel.
    the API runtime `JOBCTRL_DIR`, so action writes land in the same
    database the API and web app read.
 
-## Local Commands
+## Change Or Verify This System
 
-These are source-development commands. The installed bundled product uses one
-native `jobctrl` executable for lifecycle and domain commands and does not
-expose uv, pnpm, or checkout paths.
-
-Python CLI:
-
-```bash
-uv --project workers/automation run jobctrl doctor
-uv --project workers/automation run jobctrl worker   # long-lived Temporal worker
-uv --project workers/automation run jobctrl run
-uv --project workers/automation run jobctrl action score --limit 5
-uv --project workers/automation run jobctrl backup
-uv --project workers/automation run jobctrl rpc      # JSON-RPC server (spawned by the API)
-```
-
-TypeScript API and web app:
-
-```bash
-pnpm api:dev
-pnpm web:dev
-```
-
-Verification:
-
-```bash
-pnpm check
-pnpm test
-uv --project workers/automation run --extra dev pytest -q
-uv --project workers/automation run --extra dev ruff check .
-uv --project workers/automation run python scripts/check-domain-type-parity.py
-git diff --check
-```
+This page owns the system map, not the command catalog. Start with the
+[repository and ownership map](../developer/repository-and-ownership-map.md) to
+find the deciding layer, use [Local Development](../local-development.md) for
+source setup and runtime commands, and choose evidence from
+[Reliability & QA](../local-reliability-qa.md). The installed product's commands
+remain in [Getting Started](../user/getting-started.md).

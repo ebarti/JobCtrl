@@ -63,8 +63,8 @@ export function BrowserCapabilitiesPanel() {
       <div className="provider-form">
         <label className="field" htmlFor={`browser-executable-${capabilityId}`}>
           <span>Chrome or Chromium executable path</span>
-          <input id={`browser-executable-${capabilityId}`} name={`browser-executable-${capabilityId}`} type="password" autoComplete="off" disabled={demo || capability.enabled} value={executablePaths[capabilityId] ?? ""} onChange={(event) => setExecutablePaths((current) => ({ ...current, [capabilityId]: event.target.value }))} />
-          <small>Write-only: never returned, stored in browser state, or shown after submission.</small>
+          <input id={`browser-executable-${capabilityId}`} name={`browser-executable-${capabilityId}`} type="text" autoComplete="off" disabled={demo || capability.enabled} value={executablePaths[capabilityId] ?? ""} onChange={(event) => setExecutablePaths((current) => ({ ...current, [capabilityId]: event.target.value }))} />
+          <small>Saved as non-secret browser configuration in config.json. The status API does not echo local paths.</small>
         </label>
         <div className="form-actions">
           <button className="tab on" type="button" disabled={demo || capability.enabled || enable.isPending} onClick={() => void enableCapability(capabilityId)}>enable selected browser</button>

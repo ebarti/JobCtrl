@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from jobctrl.config import APP_DIR
+from jobctrl.config import get_config_path
 from jobctrl.database import ensure_market_compensation_tables
 from jobctrl.domain.discovery.source_registry import (
     RobotsPolicy,
@@ -707,12 +707,16 @@ def _compensation_source_environment(
     *,
     settings_path: Path | str | None,
 ) -> dict[str, str]:
-    """Apply persisted user source preferences over compatibility env gates."""
+    """Translate config.json source preferences into loader runtime inputs."""
 
     effective = dict(env)
-    resolved_settings_path = Path(
-        settings_path or effective.get("JOBCTRL_DASHBOARD_CONFIG_PATH") or APP_DIR / "dashboard.json"
-    )
+    for key in (
+        "JOBCTRL_LEVELS_FYI_ACCESS_MODE",
+        "JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE",
+        "JOBCTRL_GLASSDOOR_ACCESS_MODE",
+    ):
+        effective.pop(key, None)
+    resolved_settings_path = Path(settings_path) if settings_path else get_config_path()
     preferences = _read_compensation_source_preferences(resolved_settings_path)
     _apply_compensation_source_preference(
         effective,
@@ -739,8 +743,6 @@ def _read_compensation_source_preferences(path: Path) -> dict[str, dict[str, Any
         return {}
     raw_sources = parsed.get("compensation_sources")
     if not isinstance(raw_sources, dict):
-        raw_sources = parsed.get("compensationSources")
-    if not isinstance(raw_sources, dict):
         return {}
     return {str(source_id): value for source_id, value in raw_sources.items() if isinstance(value, dict)}
 
@@ -760,13 +762,10 @@ def _apply_compensation_source_preference(
             env[coverage_var] = "false"
         return
 
-    access_mode = preference.get("access_mode", preference.get("accessMode"))
+    access_mode = preference.get("access_mode")
     env[access_var] = str(access_mode or "").strip()
     if coverage_var is not None:
-        coverage = preference.get(
-            "europe_coverage_confirmed",
-            preference.get("europeCoverageConfirmed", False),
-        )
+        coverage = preference.get("europe_coverage_confirmed", False)
         env[coverage_var] = "true" if coverage is True else "false"
 
 

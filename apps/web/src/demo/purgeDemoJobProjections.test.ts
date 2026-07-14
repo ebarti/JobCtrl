@@ -339,7 +339,7 @@ describe("derived demo projections", () => {
 
   it("recomputes settings-dependent digest thresholds and outcome consumers", () => {
     const snapshot = createSnapshot();
-    snapshot.state.readModel.settings.settings.minFitScore = 9;
+    snapshot.state.readModel.discovery.settings.settings.minFitScore = 9;
 
     recomputeDemoOperationalProjections(snapshot);
 

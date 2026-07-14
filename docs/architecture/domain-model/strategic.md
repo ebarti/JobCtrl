@@ -13,21 +13,33 @@ own), and maps how they hand work to one another.
 
 ```mermaid
 flowchart LR
-    DISC["Discovery"] --> ENRICH["Enrichment"] --> SCORE["Scoring"]
-    PROFILE["Candidate Profile"] --> SCORE
-    SCORE --> MATERIALS["Materials"] --> APPLY["Apply"]
+    DISC@{ icon: "tabler:radar", form: "rounded", label: "Discovery", h: 64 }
+    ENRICH@{ icon: "tabler:wand", form: "rounded", label: "Enrichment", h: 64 }
+    SCORE@{ icon: "tabler:chart-bar", form: "rounded", label: "Scoring", h: 64 }
+    PROFILE@{ icon: "tabler:id", form: "rounded", label: "Candidate profile", h: 64 }
+    MATERIALS@{ icon: "tabler:file-text", form: "rounded", label: "Materials", h: 64 }
+    APPLY@{ icon: "tabler:send", form: "rounded", label: "Apply", h: 64 }
+    DISC --> ENRICH --> SCORE
+    PROFILE --> SCORE
+    SCORE --> MATERIALS --> APPLY
     PROFILE --> MATERIALS
 
-    PIPE["Pipeline Orchestration"] -->|commands| CORE["Core pipeline"]
+    PIPE@{ icon: "tabler:git-merge", form: "rounded", label: "Pipeline orchestration", h: 64 }
+    CORE@{ icon: "tabler:settings-automation", form: "rounded", label: "Core pipeline", h: 64 }
+    PREP@{ icon: "tabler:clipboard-check", form: "rounded", label: "Per-job preparation", h: 64 }
+    PIPE -->|commands| CORE
     CORE -->|domain events| PIPE
-    PIPE --> PREP["Per-job preparation"]
+    PIPE --> PREP
 
-    DISC --> OPS["Operations / read side"]
+    OPS@{ icon: "tabler:stack-2", form: "rounded", label: "Operations · read side", h: 64 }
+    COMP@{ icon: "tabler:currency-dollar", form: "rounded", label: "Compensation", h: 64 }
+    OUT@{ icon: "tabler:address-book", form: "rounded", label: "Contacts · outreach", h: 64 }
+    DISC --> OPS
     SCORE --> OPS
     MATERIALS --> OPS
     APPLY --> OPS
-    COMP["Compensation"] --> OPS
-    OUT["Contact & Outreach"] --> OPS
+    COMP --> OPS
+    OUT --> OPS
 
     class DISC,ENRICH,SCORE,PROFILE,MATERIALS,APPLY,PIPE,CORE,PREP,COMP,OUT py
     class OPS store

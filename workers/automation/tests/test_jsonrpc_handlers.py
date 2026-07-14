@@ -197,7 +197,7 @@ def test_provider_models_dispatches_sanitized_catalog(monkeypatch) -> None:
                 "provider": "claude",
                 "configured": True,
                 "ready": True,
-                "source": "provider_aliases",
+                "source": "live",
                 "models": [],
             },
             {
@@ -735,10 +735,27 @@ def test_refresh_compensation_loads_all_configured_sources_by_default(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("JOBCTRL_LEVELS_FYI_ACCESS_MODE", "licensed_data_feed")
-    monkeypatch.setenv("JOBCTRL_LEVELS_FYI_EUROPE_COVERAGE", "true")
+    settings_path = tmp_path / "config.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "compensation_sources": {
+                    "levels_fyi": {
+                        "enabled": True,
+                        "access_mode": "licensed_data_feed",
+                        "europe_coverage_confirmed": True,
+                    },
+                    "glassdoor": {
+                        "enabled": True,
+                        "access_mode": "written_permission",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(settings_path))
     monkeypatch.setenv("JOBCTRL_LEVELS_FYI_OBSERVATIONS_PATH", str(levels_path))
-    monkeypatch.setenv("JOBCTRL_GLASSDOOR_ACCESS_MODE", "written_permission")
     monkeypatch.setenv("JOBCTRL_GLASSDOOR_OBSERVATIONS_PATH", str(glassdoor_path))
 
     def fake_euro_top_tech_observations(*, max_pages: int = 10, http=None):

@@ -282,10 +282,55 @@ describe("<CredentialsPanel>", () => {
     expect(updateCredentialsBatch).toHaveBeenCalledWith(removeGoogleProviderBatch());
   });
 
-  it.each([
-    ["unsupported_platform", /available only with macOS Keychain/i],
-    ["inspection_failed", /could not safely inspect Keychain/i],
-  ] as const)("keeps Codex actionable when Keychain reports %s", async (reason, notice) => {
+  it("keeps non-secret cloud setup editable when secure secret storage is unsupported", async () => {
+    const user = userEvent.setup();
+    const updateCredentialsBatch = vi.fn(async () => sampleCredentialsResponse);
+    renderPanel({
+      credentials: vi.fn(async () => ({
+        ...sampleCredentialsResponse,
+        store: {
+          ...sampleCredentialsResponse.store,
+          available: false,
+          unavailableReason: "unsupported_platform" as const,
+        },
+        credentials: sampleCredentialsResponse.credentials.map((credential) =>
+          credential.storage === "keychain"
+            ? {
+                ...credential,
+                configured: null,
+                effectiveSource: "inspection_unknown" as const,
+                editable: false,
+              }
+            : credential,
+        ),
+      })),
+      providerStatus: vi.fn(async () => ({ ok: true as const, providers: [] })),
+      updateCredentialsBatch,
+    });
+
+    expect(await screen.findByText(/Non-secret provider settings remain editable in config\.json/i)).toBeInTheDocument();
+    const claude = await providerCard("Claude");
+    const google = await providerCard("Google");
+    expect(within(claude).getByRole("radio", { name: /Anthropic API key/i })).toBeDisabled();
+    expect(within(google).getByRole("radio", { name: /Gemini API key/i })).toBeDisabled();
+    expect(within(claude).queryByLabelText(/Anthropic API key \(required\)/i)).not.toBeInTheDocument();
+    expect(within(google).queryByLabelText(/Gemini API key \(required\)/i)).not.toBeInTheDocument();
+    expect(within(claude).getByRole("radio", { name: /Google Cloud Agent Platform/i })).toBeEnabled();
+    await user.click(within(google).getByRole("radio", { name: /Vertex AI/i }));
+
+    await user.type(within(google).getByLabelText(/Google Cloud project ID/i), "jobctrl-test-project");
+    await user.click(within(google).getByRole("button", { name: "Save Google setup" }));
+
+    await waitFor(() => expect(updateCredentialsBatch).toHaveBeenCalledWith({
+      operations: [
+        { operation: "set", key: "GOOGLE_GENAI_USE_VERTEXAI", value: "true" },
+        { operation: "set", key: "GOOGLE_CLOUD_PROJECT", value: "jobctrl-test-project" },
+        { operation: "set", key: "GOOGLE_CLOUD_LOCATION", value: "us-central1" },
+      ],
+    }));
+  });
+
+  it("keeps guided provider editing fail-closed when Keychain inspection fails", async () => {
     const verifyCodexProvider = vi.fn(async () => ({
       ok: true as const,
       verification: {
@@ -301,7 +346,7 @@ describe("<CredentialsPanel>", () => {
         store: {
           ...sampleCredentialsResponse.store,
           available: false,
-          unavailableReason: reason,
+          unavailableReason: "inspection_failed" as const,
         },
         credentials: sampleCredentialsResponse.credentials.map((credential) => ({
           ...credential,
@@ -311,10 +356,12 @@ describe("<CredentialsPanel>", () => {
       verifyCodexProvider,
     });
 
-    expect(await screen.findByText(notice)).toBeInTheDocument();
+    expect(await screen.findByText(/could not safely inspect Keychain/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/Anthropic API key \(required\)/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Gemini API key \(required\)/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText("CapSolver API key")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save Claude setup" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Google setup" })).not.toBeInTheDocument();
     expect(screen.getByText(/Set GEMINI_API_KEY/i)).toBeInTheDocument();
     const codex = await providerCard("Codex");
     await userEvent.setup().click(
@@ -322,14 +369,9 @@ describe("<CredentialsPanel>", () => {
     );
     expect(verifyCodexProvider).toHaveBeenCalledOnce();
     const privacy = within(screen.getByRole("region", { name: "Credential privacy" }));
-    if (reason === "inspection_failed") {
-      expect(screen.getByText(/guided Claude and Google editing/i)).toBeInTheDocument();
-      expect(screen.getByText(/Codex verification remains available/i)).toBeInTheDocument();
-      expect(privacy.getByText("Keychain status unavailable")).toBeInTheDocument();
-    } else {
-      expect(privacy.getByText("Process environment")).toBeInTheDocument();
-      expect(privacy.queryByText(/macOS Keychain/i)).not.toBeInTheDocument();
-    }
+    expect(screen.getByText(/guided Claude and Google editing/i)).toBeInTheDocument();
+    expect(screen.getByText(/Codex verification remains available/i)).toBeInTheDocument();
+    expect(privacy.getByText("Keychain status unavailable")).toBeInTheDocument();
   });
 
   it("labels isolated auth accurately when the managed SDK is unavailable", async () => {

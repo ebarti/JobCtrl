@@ -10,16 +10,34 @@ contexts own exactly one aggregate root; Operations owns none — it only projec
 read models from the events the others emit.
 
 ```mermaid
-flowchart LR
-    D["Job Discovery"] --> Djob["Job"]
-    E["Job Enrichment"] --> Ejob["JobEnrichment"]
-    P["Candidate Profile"] --> Pp["Profile"]
-    S["Scoring"] --> Ss["JobScore"]
-    M["Materials Generation"] --> Mm["MaterialsSet"]
-    A["Apply Automation"] --> Aa["ApplyRun"]
-    O["Pipeline Orchestration"] --> Oo["JobPipelineState"]
-    C["Contact & Outreach"] --> Cc["Contact"]
-    R["Operations / Read-Side"] --> Rr["(no aggregate — projections only)"]
+flowchart TB
+    D@{ icon: "tabler:radar", form: "rounded", h: 64, label: "Job Discovery" }
+    Djob@{ icon: "tabler:box", form: "rounded", h: 64, label: "Job" }
+    E@{ icon: "tabler:wand", form: "rounded", h: 64, label: "Job Enrichment" }
+    Ejob@{ icon: "tabler:box", form: "rounded", h: 64, label: "JobEnrichment" }
+    P@{ icon: "tabler:id", form: "rounded", h: 64, label: "Candidate Profile" }
+    Pp@{ icon: "tabler:box", form: "rounded", h: 64, label: "Profile" }
+    S@{ icon: "tabler:chart-bar", form: "rounded", h: 64, label: "Scoring" }
+    Ss@{ icon: "tabler:box", form: "rounded", h: 64, label: "JobScore" }
+    M@{ icon: "tabler:file-text", form: "rounded", h: 64, label: "Materials Generation" }
+    Mm@{ icon: "tabler:box", form: "rounded", h: 64, label: "MaterialsSet" }
+    A@{ icon: "tabler:send", form: "rounded", h: 64, label: "Apply Automation" }
+    Aa@{ icon: "tabler:box", form: "rounded", h: 64, label: "ApplyRun" }
+    O@{ icon: "tabler:git-merge", form: "rounded", h: 64, label: "Pipeline Orchestration" }
+    Oo@{ icon: "tabler:box", form: "rounded", h: 64, label: "JobPipelineState" }
+    C@{ icon: "tabler:address-book", form: "rounded", h: 64, label: "Contact & Outreach" }
+    Cc@{ icon: "tabler:box", form: "rounded", h: 64, label: "Contact" }
+    R@{ icon: "tabler:stack-2", form: "rounded", h: 64, label: "Operations / Read-Side" }
+    Rr@{ shape: cyl, label: "No aggregate<br/>projections only" }
+    D --> Djob
+    E --> Ejob
+    P --> Pp
+    S --> Ss
+    M --> Mm
+    A --> Aa
+    O --> Oo
+    C --> Cc
+    R --> Rr
 
     class D,E,P,S,M,A,O,C,Djob,Ejob,Pp,Ss,Mm,Aa,Oo,Cc py
     class R,Rr store

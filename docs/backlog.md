@@ -59,6 +59,15 @@ publication and P7 clean-machine product QA remain open.
 - Expand platform and dependency health checks for local-only integrations:
   credential storage support by OS, browser/PDF/Temporal readiness, external
   board dependencies, and bounded live-smoke diagnostics.
+- Remove persistent provider-secret support from `.env` files and make an
+  OS-backed secure credential store the required local default. Ship native
+  adapters for macOS Keychain, Windows Credential Manager, and Linux Secret
+  Service/keyring before removing the fallback; provide a one-time,
+  secrets-safe migration path for existing `.env` users; make
+  **Settings → Credentials** the canonical local setup surface; and ensure
+  diagnostics report only presence, source, and migration state. Keep any
+  inherited process-environment support explicitly scoped to ephemeral
+  headless/CI use rather than persistent local credential storage.
 - Add local scalability instrumentation and budgets for projection refresh,
   SSE polling, in-memory list/search paths, apply-review preview reads,
   cross-process RPC calls, long-running workflow units, and LLM latency/cost.

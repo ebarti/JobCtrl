@@ -12,18 +12,23 @@ outreach, or any projection-backed list/detail view.
 
 ```mermaid
 flowchart LR
-    WRITE["Workflow or API write"] --> CANON["Canonical rows + job_events"]
-    CANON --> PROJECT["Python or TypeScript projection builder"]
-    PROJECT --> READ["Projection tables"]
-    READ --> API["TypeScript API"]
-    CANON --> SSE["SSE invalidation"]
-    SSE --> CACHE["TanStack Query cache"]
-    API --> CACHE --> VIEW["Web views"]
+    WRITE@{ icon: "tabler:pencil", form: "rounded", label: "Workflow or<br/>API write", h: 64 }
+    CANON@{ shape: "cyl", label: "Canonical rows<br/>+ job_events" }
+    PROJECT@{ icon: "tabler:refresh", form: "rounded", label: "Python or TypeScript<br/>projection builder", h: 64 }
+    READ@{ shape: "cyl", label: "Projection<br/>tables" }
+    API@{ icon: "tabler:api", form: "rounded", label: "TypeScript API", h: 64 }
+    SSE@{ icon: "tabler:bell", form: "rounded", label: "SSE<br/>invalidation", h: 64 }
+    CACHE@{ icon: "tabler:stack-2", form: "rounded", label: "TanStack Query<br/>cache", h: 64 }
+    VIEW@{ icon: "tabler:browser", form: "rounded", label: "Web views", h: 64 }
 
-    class WRITE,PROJECT py
-    class API,SSE ts
-    class CACHE,VIEW ui
-    class CANON,READ store
+    WRITE -->|commit| CANON
+    CANON -->|source data| PROJECT
+    PROJECT -->|materializes| READ
+    READ -->|read DTOs| API
+    CANON -->|domain event| SSE
+    SSE -->|invalidate or patch| CACHE
+    API -->|fetched data| CACHE
+    CACHE -->|renders| VIEW
 ```
 
 The read path never reconstructs domain state from raw events during a request.
@@ -34,15 +39,20 @@ refetch or safely patch.
 
 ```mermaid
 flowchart LR
-    REVIEW["Apply Review decision"] --> CLAIM["Atomic apply claim"]
-    CLAIM --> INTENT["Submit-intent checkpoint"]
-    INTENT --> SUBMIT["Live submission"]
-    SUBMIT --> OUTCOME["Reviewed outcome"]
-    GMAIL["Bounded Gmail evidence"] --> SUGGEST["Outcome suggestion"]
-    SUGGEST -->|user accepts or corrects| OUTCOME
+    REVIEW@{ icon: "tabler:user-check", form: "rounded", label: "Apply Review<br/>decision", h: 64 }
+    CLAIM@{ icon: "tabler:lock", form: "rounded", label: "Atomic<br/>apply claim", h: 64 }
+    INTENT@{ icon: "tabler:clipboard-list", form: "rounded", label: "Submit-intent<br/>checkpoint", h: 64 }
+    SUBMIT@{ icon: "tabler:send", form: "rounded", label: "Live<br/>submission", h: 64 }
+    OUTCOME@{ shape: "docs", label: "Reviewed<br/>outcome" }
+    GMAIL@{ icon: "tabler:brand-gmail", form: "rounded", label: "Bounded Gmail<br/>evidence", h: 64 }
+    SUGGEST@{ icon: "tabler:message", form: "rounded", label: "Outcome<br/>suggestion", h: 64 }
 
-    class CLAIM,INTENT,SUBMIT,GMAIL py
-    class REVIEW,OUTCOME,SUGGEST store
+    REVIEW -->|approved| CLAIM
+    CLAIM -->|claimed run| INTENT
+    INTENT -->|records before submit| SUBMIT
+    SUBMIT -->|terminal evidence| OUTCOME
+    GMAIL -->|bounded evidence| SUGGEST
+    SUGGEST -->|user accepts or corrects| OUTCOME
 ```
 
 ### Approval And At-Most-Once Submission

@@ -37,14 +37,14 @@ enter the system. They do not hold provider credentials or raw feed contents.
 
 | Route | Storage boundary |
 | --- | --- |
-| `GET/PATCH /v1/settings` | File-backed non-secret runtime settings in `dashboard.json`; not discovery scheduling. |
+| `GET/PATCH /v1/settings` | File-backed non-secret Settings values in [`config.json`](#config-json-field-reference); no Discovery-page values. |
 | `GET/PATCH /v1/discovery/settings` | SQLite-backed discovery controls, including scheduling. |
 | `GET /v1/credentials` | Availability/status metadata, not secret values. |
 | `PATCH /v1/credentials` | Store or replace a credential through the local credential adapter. |
 | `PATCH /v1/credentials/batch` | Atomically replace or remove one guided provider configuration. |
 | `DELETE /v1/credentials/:key` | Remove a stored credential. |
 | `GET /v1/providers/status` | Read-only sanitized Codex/Claude/Google configuration and readiness; never copies ambient Codex auth. |
-| `GET /v1/providers/models` | Read-only sanitized model choices in stable Codex/Claude/Google order; never copies ambient Codex auth. Codex and Google are live; Claude is explicitly provider aliases. |
+| `GET /v1/providers/models` | Read-only sanitized model choices in stable Codex/Claude/Google order from each authenticated provider runtime; never copies ambient Codex auth. |
 | `POST /v1/providers/codex/verify` | Explicitly validate and import a reusable normal Codex CLI `auth.json` once when isolated auth is absent, then verify isolated auth without a model call. |
 | `GET /v1/extension/pairing-token` | Read the local extension pairing state. |
 | `POST /v1/extension/pairing-token/rotate` | Rotate the token immediately and disconnect existing extension clients. |
@@ -65,13 +65,45 @@ never overwrites JobCtrl's existing isolated auth or changes the normal Codex
 home. It invokes the same copy-once behavior retained by setup and generation.
 
 `PATCH /v1/settings` stores provider-scoped model choices as
-`preferred_models` in `dashboard.json` and returns them as `preferredModels`.
+`preferred_models` in `config.json` and returns them as `preferredModels`.
 Each supplied non-null ID must be in the current catalog for a ready provider;
 `null` clears a choice even when that provider is unavailable. The setting
 contains provider and model IDs only, never credentials or account metadata.
-The settings and discovery responses also include effective-source,
-editability, and activation metadata for managed controls; an environment-owned
-field is read-only instead of being silently shadowed by a saved value.
+The settings and discovery responses also include effective-source and
+activation metadata for managed controls.
+
+### `config.json` field reference {#config-json-field-reference}
+
+`~/.jobctrl/config.json` is one JSON object containing non-secret values owned
+by the Settings routes. The API returns camel-case field names, while API
+writes persist the canonical snake-case keys below.
+
+This file owns General settings, provider connection metadata, model-execution
+policy, compensation-source policy, and browser-adoption metadata. Every
+durable control composed on `/discovery` is stored in SQLite instead.
+
+| File field | Value and default | Meaning |
+| --- | --- | --- |
+| `apply_concurrency` | Integer `1–16`, default `1` | Maximum number of Apply jobs processed concurrently by the standing loop. |
+| `worker_activity_slots` | Integer `1–64`, default `4` | Desired Python Temporal activity capacity. A saved change becomes active after the worker restarts. |
+| `daily_budget_usd` | Non-negative number, default `25` | Daily LLM spend ceiling in USD. `0` disables the daily ceiling. |
+| `analysis_legs` | Non-empty array of `codex`, `claude`, and/or `google`; default all three | Provider legs used by newly started employer-analysis work. |
+| `tailoring_generator_models` | Non-empty array of model IDs or `null`; default `null` | Ordered generator-model policy for newly started tailoring workflows. `null` uses the provider/default policy. |
+| `tailoring_judge_model` | Model ID or `null`; default `null` | Judge model for newly started tailoring workflows. `null` uses the provider/default policy. |
+| `tailoring_judge_min_score` | Number `0–1`, default `0.82` | Minimum judge score for accepting a tailored candidate. |
+| `apply_max_budget_usd` | Non-negative number, default `5` | Per-application AI-agent budget cap in USD. |
+| `apply_timeout_seconds` | Integer `60–3600`, default `900` | Time limit for one application agent run. |
+| `score_criteria` | String up to 8,000 characters, default `""` | User scoring guidance consumed by subsequent scoring runs. |
+| `target_criteria` | String up to 8,000 characters, default `""` | Additional target-company or role guidance consumed by subsequent scoring runs. This is guidance, not the target-search title list. |
+| `preferred_models` | Object keyed by `codex`, `claude`, and/or `google`; default `{}` | Preferred model ID for each provider. It contains model identifiers only, never credentials. |
+| `compensation_sources` | Optional object; absent by default | Saved user-owned Levels.fyi and Glassdoor source-policy choices. It is written through `/v1/compensation/sources`, not `/v1/settings`. |
+| `provider_connections` | Optional object; absent by default | Non-secret Claude/Google route, project, region, profile, and credential-path configuration written through the Credentials API. Actual API keys remain in Keychain. |
+| `browser_capabilities` | Optional object; absent by default | Non-secret adoption metadata for optional system-browser capabilities. Copied browser contents remain outside this file. |
+
+Within `compensation_sources`, the supported source keys are `levels_fyi` and
+`glassdoor`. Each source stores `enabled` and `access_mode`; `levels_fyi` also
+stores `europe_coverage_confirmed`. These are policy declarations only: the
+file does not contain credentials, feed locations, or compensation records.
 
 ## Which Screen Owns What?
 

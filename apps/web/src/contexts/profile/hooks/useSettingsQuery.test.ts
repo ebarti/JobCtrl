@@ -8,6 +8,6 @@ describe("useSettingsQuery", () => {
   it("returns the mocked settings", async () => {
     const { result } = renderHookWithProviders(() => useSettingsQuery());
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.settings.targetRole).toBe("Platform Engineering");
+    expect(result.current.data?.settings.dailyBudgetUsd).toBe(25);
   });
 });

@@ -845,7 +845,7 @@ function recomputeDigest(draft: MutableSnapshot): void {
   const digest = model.dashboard.digest;
   const activeJobs = activeDemoJobs(draft);
   const activeJobsByKey = new Map(activeJobs.map((job) => [job.jobKey, job]));
-  digest.highFitThreshold = model.settings.settings.minFitScore;
+  digest.highFitThreshold = model.discovery.settings.settings.minFitScore;
   const since = digest.since
     ? Date.parse(digest.since)
     : Number.NEGATIVE_INFINITY;

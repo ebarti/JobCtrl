@@ -6,7 +6,7 @@
   "packs": [
     {
       "id": "claude-agent-sdk",
-      "version": "0.2.87",
+      "version": "0.2.115",
       "owner": "Anthropic PBC",
       "source": "https://pypi.org/project/claude-agent-sdk/",
       "license": "MIT AND LicenseRef-Anthropic-Commercial-Terms",
@@ -49,10 +49,10 @@
         },
         {
           "package": "claude-agent-sdk",
-          "version": "0.2.87",
-          "url": "https://files.pythonhosted.org/packages/6c/4e/b83c4c6ec1e0b63e9d4d58ba9a5abfd9936c55b8ee4c06b88f5e93bdfd70/claude_agent_sdk-0.2.87-py3-none-macosx_11_0_arm64.whl",
-          "sha256": "52204a9609dec3aa96032afd48c07d72e05d13311faf614978f17b61326e6e31",
-          "sizeBytes": 63037960
+          "version": "0.2.115",
+          "url": "https://files.pythonhosted.org/packages/a4/43/609755e7ec7c8031c05f89442154d86f55856a64d234f90845b8035c7ffb/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_arm64.whl",
+          "sha256": "8ca9eea21ed6b1b7d6b35c5bac368210214b36028c68046231ca4ea545854e80",
+          "sizeBytes": 71306972
         },
         {
           "package": "cryptography",

@@ -76,12 +76,9 @@ async def test_check_spend_budget_raises_non_retryable_budget_exceeded(
     tmp_path,
 ) -> None:
     _isolate_db(monkeypatch, tmp_path)
-    settings_path = tmp_path / "dashboard.json"
+    settings_path = tmp_path / "config.json"
     settings_path.write_text(json.dumps({"daily_budget_usd": 1.0}), encoding="utf-8")
-    monkeypatch.setattr(
-        "jobctrl.infrastructure.scoring.criteria_provider.DEFAULT_SETTINGS_PATH",
-        settings_path,
-    )
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(settings_path))
     record_llm_spend(input_tokens=1, output_tokens=1, estimated_usd=1.0)
 
     with pytest.raises(ApplicationError) as exc_info:

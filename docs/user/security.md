@@ -1,9 +1,8 @@
----
-pageClass: jh-user-guide-page
-next: false
----
+<script setup lang="ts">
+import SecurityLayers from "../.vitepress/theme/SecurityLayers.vue";
+</script>
 
-# Security
+# Security & Hardening
 
 JobCtrl is local-first software with one high-risk capability: it can drive a
 browser or Gmail connector to submit a real application. Security therefore
@@ -11,42 +10,32 @@ depends on both local data protection and binding controls around outbound
 actions.
 
 This page owns the user-facing enforcement model. The complete local-file
-inventory is in [Data, Privacy & Safety](data-and-safety.md); exact controls are
-in [Configuration](configuration.md); the repo threat model is in
-[Developer Security](../developer/security.md#repository-threat-model).
+inventory is in [Data, Privacy & Safety](data-and-safety.md); employer-facing
+setup is in [Apply](apply.md), discovery access policy is in
+[Discovery](discovery.md), and shared provider/spend controls are in
+[Configuration](configuration.md). The repo threat model is in
+[Threat Model & Security Engineering](../developer/security.md#repository-threat-model).
 
-## Privacy Quick Answer
+## Implemented Hardening
 
-- Your database, generated artifacts, browser state, and logs stay under your
-  local control.
-- Nothing calls a provider until you configure and use the related feature or
-  explicitly enable its schedule.
-- Local files are not encrypted by JobCtrl; OS account and disk protection are
-  the at-rest boundary.
-- Live apply is approval-gated by default, dry-run is blocked at the browser
-  network layer, and ambiguous post-submit recovery parks for verification.
+JobCtrl uses defense in depth: the model prompt, UI, API, worker, browser, local
+tools, persistence layer, and release path each enforce a narrower part of the
+security contract. No single prompt or checkbox is treated as the security
+boundary.
 
-## Public Demo Boundary
+<SecurityLayers />
 
-The public synthetic demo never connects to the local JobCtrl API, worker,
-browser extension, model providers, job boards, Gmail, or application
-submission transports. Its product state stays in the visitor's browser. A
-same-origin Cloudflare Worker handles only consent, aggregate initialization
-health, allowlisted analytics, and retention.
-
-The demo is unavailable until the visitor accepts first-party analytics
-cookies. A decline creates no visitor or session identifier and redirects to
-`https://jobctrl.dev`; returning shows the consent screen again. Before a
-confirmed grant, the app creates no demo IndexedDB workspace and sends no
-health or product-telemetry event. Post-accept analytics failures never block
-browser-local product interaction.
-
-Telemetry schemas reject free-form content and product identifiers at both the
-browser and Worker boundaries. Cloudflare automatic invocation logs and traces
-are disabled for the demo Workers; only closed lifecycle outcomes may be
-logged. Post-accept withdrawal and immediate visitor-event deletion are
-deferred from this MVP, so the notice relies on the documented cookie and
-90-day raw-data expiry instead of claiming an unavailable control.
+| Boundary | Enforced protection |
+| --- | --- |
+| Local API | Loopback bind, loopback `Host` and peer-address checks, first-party mutation origins, Fetch Metadata validation, and a worker-readiness gate. |
+| Browser extension | Rotatable local capability token, same-origin-only token management, a whitelisted autofill DTO, and no submit capability. |
+| Outbound browsing | Public HTTP(S)-only destination validation across initial URLs, redirects, final pages, popups, and guarded subrequests. Private, loopback, link-local, metadata, and file destinations are blocked. |
+| Credentials and files | Secrets stay outside SQLite and `config.json`; status APIs are secret-free; saved passwords and reviewed artifacts can be used only by origin-bound local tools. |
+| Provider runtimes | JobCtrl-owned provider state, filtered subprocess environments, restricted tool surfaces, and prompt-driven filesystem boundaries isolate model execution from unrelated local data. |
+| Application submission | Bound human approval, browser-enforced dry-run, durable submit intent, at-most-once claiming, and `needs_verification` recovery after an ambiguous crash. |
+| Generated content | Structured outputs, literal evidence grounding, fabrication checks, provenance, judge review, and preservation of the last accepted artifact. |
+| Bundled runtime | Payload path confinement, isolated Python startup, manifest verification, and hash-locked provider packs with activation-time revalidation. |
+| Privacy and release | Metadata-only telemetry, synthetic-demo isolation, private local file modes for sensitive control files, and release scanning for secrets and private artifacts. |
 
 ## What Leaves Your Machine
 
@@ -65,21 +54,40 @@ dry-run and keep targets narrow before live submission.
 
 ## What Stays On Your Machine
 
-The local authorities are `jobctrl.db` (profile, jobs, discovery, events and
-projections), bundled `temporal.db`, `dashboard.json` (non-secret runtime
-settings), `.env` and `gmail/` (credentials), `codex_home/` and provider-runtime
+The local authorities are `jobctrl.db` (profile, jobs, Discovery controls, events and
+projections), bundled `temporal.db`, `config.json` (non-secret Settings
+values), `.env` and `gmail/` (legacy/runtime credentials), `codex_home/` and provider-runtime
 directories, generated material/log directories, browser capability/profile/
 worker state, `backups/`, and legacy resume inputs. Their text may still be sent
 when an explicitly used model or external integration needs that content;
 configured telemetry remains metadata-only.
 
-Browser authority is stored specifically in `browser-capabilities.json`,
-`browser-profiles/`, and `extension-capability-token`.
+Browser-adoption metadata is stored in `config.json`, while copied browser
+profiles and the extension pairing token remain separate protected artifacts.
 
 ::: warning Local does not mean encrypted
 JobCtrl does not encrypt `jobctrl.db`, `.env`, or generated artifacts. Protect
 your OS account/disk and never attach `~/.jobctrl/` to a bug report.
 :::
+
+## Local API And Process Boundary
+
+The product API binds to `127.0.0.1` by default. Every request must name a
+loopback `Host` **and** arrive from a loopback peer address. Checking both
+prevents a remote caller from passing the gate merely by forging a
+`Host: 127.0.0.1` header and limits DNS-rebinding attacks from browser pages.
+
+State-changing browser requests must also come from the first-party local web
+ports and carry a trusted `Origin` or `Referer` plus acceptable
+`Sec-Fetch-Site` metadata. Non-browser local clients need the local capability
+token instead. Worker-backed actions fail with `worker_runtime_unavailable`
+until the API sees a healthy worker heartbeat, so a dead or mismatched worker is
+not mistaken for an executable product state.
+
+These controls are locality enforcement, not user authentication. Deliberately
+binding the API to a non-loopback interface changes the threat model and is not
+a supported substitute for hosted authentication, tenant authorization, and a
+managed secret store.
 
 ## Browser Extension Pairing
 
@@ -87,11 +95,41 @@ The extension uses a local capability token for `/v1/extension/*` loopback
 routes. Settings can display/rotate it only from the CLI or same-origin Settings
 surface. The token does not make a remote API bind safe.
 
+The app directory is created with owner-only permissions and the token file is
+written with mode `0600`. Rotation replaces the token immediately and
+disconnects existing extension clients. An extension-origin request can use a
+valid token for its scoped routes, but it cannot read, mint, or rotate the token
+itself.
+
 Capture requires a click and sends the active page URL/visible text to the local
 API. If the stack is down, the extension holds a bounded local queue. Autofill
 reads only whitelisted profile fields on supported ATS hosts, shows a review
 panel, and never calls submit. Passwords, resume content, and generated free-text
 answers are excluded.
+
+## Outbound Destination And Sensitive-Tool Binding
+
+JobCtrl treats URLs from postings, redirects, captured pages, and model output
+as untrusted. Its shared public-destination guard resolves the target and accepts
+only public HTTP(S). It blocks loopback, private-network, link-local, reserved,
+unspecified, multicast, cloud-metadata, `file:`, and other non-web targets.
+Discovery detail rendering, smart extraction, enrichment, authenticated
+LinkedIn resolution, contact research, and apply launch validate their relevant
+initial, redirect, final-page, popup, or subrequest boundaries instead of
+trusting the first URL once.
+
+The two most sensitive browser tools have an additional destination binding:
+
+- `type_credential` reads the password locally, verifies that the active page
+  origin is one derived from the approved application URL, confirms the focused
+  element is a password field, and then types the secret without returning it to
+  the model;
+- `upload_artifact` resolves only the reviewed resume or cover letter, requires
+  a live file input on the current page, and rejects and records an upload when
+  the page origin differs from the approved application origin.
+
+These checks limit the impact of a malicious page or prompt injection that
+tries to navigate elsewhere before requesting a password or file upload.
 
 ## Approval And Control Gates
 
@@ -175,7 +213,7 @@ Discovery/enrichment uses one gateway for controlled HTTP and Playwright fetches
 `python-jobspy` owns its internal board transport, so JobCtrl can apply only
 invocation-level pacing/budget there. Authenticated LinkedIn uses the user's real
 browser session but remains rate/budget limited. See
-[Configuration → Crawl Politeness](configuration.md#crawl-politeness).
+[Discovery → Crawl Politeness](discovery.md#crawl-politeness).
 
 ## Credentials
 
@@ -190,6 +228,11 @@ or verify that login.
 | CAPTCHA key | `CAPSOLVER_API_KEY` saved from Settings to Keychain on macOS, or supplied by the environment elsewhere; read by the owned local solver, not the model. |
 | Job-site passwords | Optional local profile value typed through a focused-field credential tool, never returned to the model. |
 
+`config.json` contains non-secret Settings values and is replaced atomically
+with owner-only mode `0600`. The extension capability token is also `0600`.
+This limits accidental access by other local accounts, but it is not encryption
+and does not protect against a compromised user account.
+
 Environment values win over Keychain and make the matching Settings control
 read-only. Keychain is loaded only for missing/empty values at process startup,
 so restart the relevant Python process after Claude, Google, or CapSolver
@@ -198,6 +241,29 @@ extension-pairing changes do not require that restart. Provider
 replacement is atomic from the web contract; stored secrets are used internally
 only to restore a failed batch and never cross the HTTP boundary. Windows and
 Linux use environment configuration today.
+
+## Runtime And Supply-Chain Boundary
+
+Bundled mode fails closed around its installed payload. The launcher supplies an
+absolute payload root; the API resolves its Python, web, and browser paths and
+rejects paths outside that tree. Python starts in isolated mode, ignores ambient
+`PYTHONHOME`, `PYTHONPATH`, virtual environments, and user-site packages, and
+does not search a checkout for dotenv files.
+
+Provider runtimes that cannot ship in the core payload are installed from the
+payload-owned provider-pack lock. JobCtrl accepts only the exact locked wheel
+closure from the official HTTPS wheel host, checks size and SHA-256, rejects
+unsafe, encrypted, escaping, or overlapping archive members, and retains the
+source wheels. Activation revalidates those bytes, deterministically derives
+the expected installed tree, and compares it with the live provider pack before
+executing it.
+
+The native supervisor verifies the payload manifest and tree before dispatch
+and records process identity, executable, build identity, manifest digest, and
+ports so cleanup cannot target a recycled PID. Promotion of public bundled
+artifacts also requires the repository privacy scan, signing, and notarization;
+the scan rejects secret assignments, private-profile needles, browser profiles,
+databases, resumes, tokens, logs, and other blocked user artifacts.
 
 ## The Apply Agent
 
@@ -215,6 +281,25 @@ The practical containment layers are browser-enforced dry-run, bound approval,
 at-most-once submission, spend limits, local credential tools, and hard prompt
 rules against fabricated answers, permissions, or sensitive payments. If a
 legal/screening attestation is missing, the agent stops instead of guessing.
+
+## Content Integrity And Auditability
+
+Job postings, imported documents, page text, and all model responses are
+untrusted inputs. JobCtrl uses structured schemas and deterministic validation
+before model output becomes a score, employer analysis, resume, cover letter,
+or application answer. Employer-analysis evidence spans must exist literally in
+the captured posting. Resume and cover-letter gates reject unsupported numbers,
+dates, titles, employers, skills, and tools; rendered-text coverage and
+provenance are computed from the actual selected artifact rather than inferred
+from the prompt.
+
+Judge and adversarial review add another integrity layer, but deterministic
+grounding remains authoritative. When regeneration or review fails, JobCtrl
+keeps the last accepted artifact visible and records the failed attempt instead
+of replacing or hiding known-good material. Approval decisions, submit intent,
+provider failures, residual warnings, terminal outcomes, and verification parks
+remain inspectable in the local event/read model so the UI can explain what
+happened and which evidence was used.
 
 ## Scoring Is Applicant-Side Only
 

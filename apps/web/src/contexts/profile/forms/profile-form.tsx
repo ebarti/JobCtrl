@@ -11,7 +11,7 @@ import type { ProfileConfigResponse } from "../../operations/types.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
-import { AutosaveUndoController } from "./autosave-undo-controller.js";
+import { AutosaveUndoController } from "../../../shared/ui/autosave-undo-controller.js";
 import {
   isProfileDateRangeChronological,
   parseProfileDateRange,

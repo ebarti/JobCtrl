@@ -1,15 +1,22 @@
 import { spawn } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
 
 import type {
   CredentialBatchOperation,
   CredentialKey,
   CredentialsResponse,
+  ProviderConfigurationKey,
+  SecretCredentialKey,
 } from "./contracts.js";
 import {
   CREDENTIAL_VALUE_MAX_LENGTH,
   CredentialKeys,
   CredentialUpdateRequestSchema,
+  ProviderConfigurationKeys,
+  SecretCredentialKeys,
 } from "./contracts.js";
+import { isRecord, readConfigObject, updateConfigObject } from "./config-file.js";
 
 export const KEYCHAIN_SERVICE = "JobCtrl";
 export const KEYCHAIN_SECURITY_BINARY = "/usr/bin/security";
@@ -142,6 +149,7 @@ export interface KeychainCredentialStoreOptions {
   runSecurity?: SecurityCommandRunner;
   commandTimeoutMs?: number;
   env?: NodeJS.ProcessEnv;
+  configPath?: string;
 }
 
 type KeychainSnapshot =
@@ -153,6 +161,7 @@ export class KeychainCredentialStore implements CredentialStore {
   private readonly runSecurity: SecurityCommandRunner;
   private readonly commandTimeoutMs: number;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly configPath: string;
 
   constructor(options: KeychainCredentialStoreOptions = {}) {
     this.platform = options.platform ?? process.platform;
@@ -161,56 +170,86 @@ export class KeychainCredentialStore implements CredentialStore {
       options.commandTimeoutMs ?? KEYCHAIN_COMMAND_TIMEOUT_MS,
     );
     this.env = options.env ?? process.env;
+    this.configPath = options.configPath ?? defaultConfigPath(this.env);
   }
 
   async list(): Promise<CredentialsResponse> {
-    if (!this.supported) {
-      return this.response(
-        CredentialKeys.map(() => null),
-        "unsupported_platform",
-      );
-    }
-
-    const configured = await Promise.all(
-      CredentialKeys.map((key) => this.inspect(key)),
+    const configured = new Map<CredentialKey, boolean | null>();
+    const providerConfiguration = readProviderConfiguration(
+      readConfigObject(this.configPath),
     );
+    for (const key of ProviderConfigurationKeys) {
+      configured.set(key, Boolean(providerConfiguration[key]?.trim()));
+    }
+    const keychainConfigured = this.supported
+      ? await Promise.all(SecretCredentialKeys.map((key) => this.inspect(key)))
+      : SecretCredentialKeys.map(() => null);
+    SecretCredentialKeys.forEach((key, index) => {
+      configured.set(key, keychainConfigured[index] ?? null);
+    });
+    const unavailableReason = this.supported
+      ? keychainConfigured.some((value) => value === null)
+        ? "inspection_failed" as const
+        : null
+      : "unsupported_platform" as const;
     return this.response(
       configured,
-      configured.some((value) => value === null) ? "inspection_failed" : null,
+      unavailableReason,
     );
   }
 
   async set(key: CredentialKey, value: string): Promise<CredentialsResponse> {
+    if (isProviderConfigurationKey(key)) {
+      this.updateProviderConfiguration([{ operation: "set", key, value }]);
+      return this.list();
+    }
     this.ensureNotEnvironmentManaged(key);
     this.ensureSupported();
-    await this.setWithoutInspection(key, value);
+    await this.setWithoutInspection(key, value as SecretCredentialKey);
     return this.list();
   }
 
   async delete(key: CredentialKey): Promise<CredentialsResponse> {
+    if (isProviderConfigurationKey(key)) {
+      this.updateProviderConfiguration([{ operation: "delete", key }]);
+      return this.list();
+    }
     this.ensureNotEnvironmentManaged(key);
     this.ensureSupported();
-    await this.deleteWithoutInspection(key);
+    await this.deleteWithoutInspection(key as SecretCredentialKey);
     return this.list();
   }
 
   async applyBatch(
     operations: readonly CredentialBatchOperation[],
   ): Promise<CredentialsResponse> {
-    for (const operation of operations) {
+    const secretOperations = operations.filter(
+      (operation): operation is CredentialBatchOperation & { key: SecretCredentialKey } =>
+        isSecretCredentialKey(operation.key),
+    );
+    const configurationOperations = operations.filter(
+      (operation): operation is CredentialBatchOperation & { key: ProviderConfigurationKey } =>
+        isProviderConfigurationKey(operation.key),
+    );
+    for (const operation of secretOperations) {
       this.ensureNotEnvironmentManaged(operation.key);
     }
-    this.ensureSupported();
-    const snapshots = new Map<CredentialKey, KeychainSnapshot>();
-    for (const operation of operations) {
+    if (secretOperations.length > 0) {
+      this.ensureSupported();
+    }
+    const snapshots = new Map<SecretCredentialKey, KeychainSnapshot>();
+    for (const operation of secretOperations) {
       if (!snapshots.has(operation.key)) {
         snapshots.set(operation.key, await this.snapshot(operation.key));
       }
     }
 
     try {
-      for (const operation of operations) {
+      for (const operation of secretOperations) {
         await this.applyOperation(operation);
+      }
+      if (configurationOperations.length > 0) {
+        this.updateProviderConfiguration(configurationOperations);
       }
     } catch {
       const restored = await this.restoreSnapshots(snapshots);
@@ -221,7 +260,9 @@ export class KeychainCredentialStore implements CredentialStore {
     return this.list();
   }
 
-  private async applyOperation(operation: CredentialBatchOperation): Promise<void> {
+  private async applyOperation(
+    operation: CredentialBatchOperation & { key: SecretCredentialKey },
+  ): Promise<void> {
     if (operation.operation === "set") {
       await this.setWithoutInspection(operation.key, operation.value);
     } else {
@@ -229,7 +270,7 @@ export class KeychainCredentialStore implements CredentialStore {
     }
   }
 
-  private async snapshot(key: CredentialKey): Promise<KeychainSnapshot> {
+  private async snapshot(key: SecretCredentialKey): Promise<KeychainSnapshot> {
     const result = await this.execute([
       "find-generic-password",
       "-s",
@@ -252,7 +293,7 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   private async restoreSnapshots(
-    snapshots: ReadonlyMap<CredentialKey, KeychainSnapshot>,
+    snapshots: ReadonlyMap<SecretCredentialKey, KeychainSnapshot>,
   ): Promise<boolean> {
     let restored = true;
     for (const [key, snapshot] of snapshots) {
@@ -269,7 +310,7 @@ export class KeychainCredentialStore implements CredentialStore {
     return restored;
   }
 
-  private async setWithoutInspection(key: CredentialKey, value: string): Promise<void> {
+  private async setWithoutInspection(key: SecretCredentialKey, value: string): Promise<void> {
     const result = await this.execute(
       [
         "add-generic-password",
@@ -287,7 +328,7 @@ export class KeychainCredentialStore implements CredentialStore {
     }
   }
 
-  private async deleteWithoutInspection(key: CredentialKey): Promise<void> {
+  private async deleteWithoutInspection(key: SecretCredentialKey): Promise<void> {
     const result = await this.execute([
       "delete-generic-password",
       "-s",
@@ -300,7 +341,7 @@ export class KeychainCredentialStore implements CredentialStore {
     }
   }
 
-  private async inspect(key: CredentialKey): Promise<boolean | null> {
+  private async inspect(key: SecretCredentialKey): Promise<boolean | null> {
     try {
       const result = await this.execute([
         "find-generic-password",
@@ -350,24 +391,26 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   private response(
-    configured: ReadonlyArray<boolean | null>,
+    configured: ReadonlyMap<CredentialKey, boolean | null>,
     unavailableReason: CredentialsResponse["store"]["unavailableReason"],
   ): CredentialsResponse {
     return {
       ok: true,
       store: {
-        kind: "macos_keychain",
+        kind: "config_and_macos_keychain",
         available: unavailableReason === null,
         unavailableReason,
         requiresWorkerRestart: KEYCHAIN_REQUIRES_WORKER_RESTART,
       },
-      credentials: CredentialKeys.map((key, index) => ({
+      credentials: CredentialKeys.map((key) => ({
         key,
         label: LABELS[key],
-        configured: configured[index] ?? null,
-        storage: "keychain" as const,
-        effectiveSource: this.effectiveSource(key, configured[index] ?? null),
-        editable: !this.environmentOwned(key) && configured[index] !== null && this.supported,
+        configured: configured.get(key) ?? null,
+        storage: isProviderConfigurationKey(key) ? "config" as const : "keychain" as const,
+        effectiveSource: this.effectiveSource(key, configured.get(key) ?? null),
+        editable: isProviderConfigurationKey(key)
+          ? true
+          : !this.environmentOwned(key) && configured.get(key) !== null && this.supported,
       })),
     };
   }
@@ -376,6 +419,9 @@ export class KeychainCredentialStore implements CredentialStore {
     key: CredentialKey,
     configured: boolean | null,
   ): CredentialsResponse["credentials"][number]["effectiveSource"] {
+    if (isProviderConfigurationKey(key)) {
+      return configured ? "config" : "absent";
+    }
     if (this.environmentOwned(key)) return "environment";
     if (configured === true) return "keychain";
     if (configured === false) return "absent";
@@ -383,7 +429,7 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   private environmentOwned(key: CredentialKey): boolean {
-    return Boolean(this.env[key]?.trim());
+    return isSecretCredentialKey(key) && Boolean(this.env[key]?.trim());
   }
 
   private ensureNotEnvironmentManaged(key: CredentialKey): void {
@@ -397,6 +443,148 @@ export class KeychainCredentialStore implements CredentialStore {
       throw new CredentialStoreUnavailableError("unsupported_platform");
     }
   }
+
+  private updateProviderConfiguration(
+    operations: readonly (CredentialBatchOperation & { key: ProviderConfigurationKey })[],
+  ): void {
+    updateConfigObject(this.configPath, (config) => {
+      const values = readProviderConfiguration(config);
+      for (const operation of operations) {
+        if (operation.operation === "set") {
+          values[operation.key] = operation.value.trim();
+        } else {
+          delete values[operation.key];
+        }
+      }
+      writeProviderConfiguration(config, values);
+    });
+  }
+}
+
+type ProviderConfigurationValues = Partial<Record<ProviderConfigurationKey, string>>;
+
+function isProviderConfigurationKey(key: CredentialKey): key is ProviderConfigurationKey {
+  return (ProviderConfigurationKeys as readonly string[]).includes(key);
+}
+
+function isSecretCredentialKey(key: CredentialKey): key is SecretCredentialKey {
+  return (SecretCredentialKeys as readonly string[]).includes(key);
+}
+
+function defaultConfigPath(env: NodeJS.ProcessEnv): string {
+  const configured = env.JOBCTRL_CONFIG_PATH?.trim();
+  if (configured) {
+    if (configured === "~") return os.homedir();
+    if (configured.startsWith("~/") || configured.startsWith("~\\")) {
+      return path.join(os.homedir(), configured.slice(2));
+    }
+    return configured;
+  }
+  const appDir = env.JOBCTRL_DIR?.trim() || path.join(os.homedir(), ".jobctrl");
+  return path.join(appDir, "config.json");
+}
+
+function readProviderConfiguration(
+  config: Readonly<Record<string, unknown>>,
+): ProviderConfigurationValues {
+  const result: ProviderConfigurationValues = {};
+  const connections = isRecord(config["provider_connections"])
+    ? config["provider_connections"]
+    : {};
+  const claude = isRecord(connections["claude"]) ? connections["claude"] : {};
+  const google = isRecord(connections["google"]) ? connections["google"] : {};
+  const shared = isRecord(connections["shared"]) ? connections["shared"] : {};
+
+  const claudeMode = textValue(claude["mode"]);
+  if (claudeMode === "vertex") result.CLAUDE_CODE_USE_VERTEX = "1";
+  if (claudeMode === "bedrock") result.CLAUDE_CODE_USE_BEDROCK = "1";
+  if (claudeMode === "anthropic_aws") result.CLAUDE_CODE_USE_ANTHROPIC_AWS = "1";
+  if (claudeMode === "foundry") result.CLAUDE_CODE_USE_FOUNDRY = "1";
+  copyConfiguredValue(result, "ANTHROPIC_VERTEX_PROJECT_ID", claude["vertex_project_id"]);
+  copyConfiguredValue(result, "CLOUD_ML_REGION", claude["vertex_region"]);
+  copyConfiguredValue(result, "ANTHROPIC_AWS_WORKSPACE_ID", claude["aws_workspace_id"]);
+  copyConfiguredValue(result, "ANTHROPIC_FOUNDRY_RESOURCE", claude["foundry_resource"]);
+  copyConfiguredValue(result, "AWS_PROFILE", claude["aws_profile"]);
+  copyConfiguredValue(result, "AWS_REGION", claude["aws_region"]);
+
+  if (textValue(google["mode"]) === "vertex") {
+    result.GOOGLE_GENAI_USE_VERTEXAI = "true";
+  }
+  copyConfiguredValue(result, "GOOGLE_CLOUD_PROJECT", google["project_id"]);
+  copyConfiguredValue(result, "GOOGLE_CLOUD_LOCATION", google["location"]);
+  copyConfiguredValue(
+    result,
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    shared["google_application_credentials_path"],
+  );
+  return result;
+}
+
+function writeProviderConfiguration(
+  config: Record<string, unknown>,
+  values: ProviderConfigurationValues,
+): void {
+  const connections: Record<string, unknown> = {};
+  const claude: Record<string, unknown> = {};
+  const claudeMode = values.CLAUDE_CODE_USE_VERTEX
+    ? "vertex"
+    : values.CLAUDE_CODE_USE_BEDROCK
+      ? "bedrock"
+      : values.CLAUDE_CODE_USE_ANTHROPIC_AWS
+        ? "anthropic_aws"
+        : values.CLAUDE_CODE_USE_FOUNDRY
+          ? "foundry"
+          : null;
+  if (claudeMode) claude["mode"] = claudeMode;
+  assignConfiguredValue(claude, "vertex_project_id", values.ANTHROPIC_VERTEX_PROJECT_ID);
+  assignConfiguredValue(claude, "vertex_region", values.CLOUD_ML_REGION);
+  assignConfiguredValue(claude, "aws_workspace_id", values.ANTHROPIC_AWS_WORKSPACE_ID);
+  assignConfiguredValue(claude, "foundry_resource", values.ANTHROPIC_FOUNDRY_RESOURCE);
+  assignConfiguredValue(claude, "aws_profile", values.AWS_PROFILE);
+  assignConfiguredValue(claude, "aws_region", values.AWS_REGION);
+  if (Object.keys(claude).length > 0) connections["claude"] = claude;
+
+  const google: Record<string, unknown> = {};
+  if (values.GOOGLE_GENAI_USE_VERTEXAI) google["mode"] = "vertex";
+  assignConfiguredValue(google, "project_id", values.GOOGLE_CLOUD_PROJECT);
+  assignConfiguredValue(google, "location", values.GOOGLE_CLOUD_LOCATION);
+  if (Object.keys(google).length > 0) connections["google"] = google;
+
+  const shared: Record<string, unknown> = {};
+  assignConfiguredValue(
+    shared,
+    "google_application_credentials_path",
+    values.GOOGLE_APPLICATION_CREDENTIALS,
+  );
+  if (Object.keys(shared).length > 0) connections["shared"] = shared;
+
+  if (Object.keys(connections).length > 0) {
+    config["provider_connections"] = connections;
+  } else {
+    delete config["provider_connections"];
+  }
+}
+
+function copyConfiguredValue(
+  target: ProviderConfigurationValues,
+  key: ProviderConfigurationKey,
+  value: unknown,
+): void {
+  const normalized = textValue(value);
+  if (normalized) target[key] = normalized;
+}
+
+function assignConfiguredValue(
+  target: Record<string, unknown>,
+  key: string,
+  value: string | undefined,
+): void {
+  const normalized = value?.trim();
+  if (normalized) target[key] = normalized;
+}
+
+function textValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export function createSecurityCommandRunner(

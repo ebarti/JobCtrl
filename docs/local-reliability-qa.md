@@ -80,11 +80,11 @@ revocation, the three-card Settings route at desktop/mobile width, the demo
 read-only boundary, and a sole-provider draft plus synthesis path without making
 a live model call. For model selection, use deterministic SDK fakes to prove
 catalog order, ready-only listing, Codex hidden/invalid filtering, Google
-generate-content filtering, Claude alias labeling, stable deduplication, and
+generate-content filtering, Claude runtime-catalog normalization, stable deduplication, and
 sanitized failures. Prove settings reject an unready provider or unoffered ID,
 allow a clear while unready, persist no credential data, and exercise precedence
-for explicit workflow, `LLM_MODEL`, selected-provider preference, and provider
-default without executing a live provider request.
+for explicit workflow, selected-provider preference, and provider default
+without executing a live provider request.
 
 <a id="scoring-policy-eval-gate"></a>
 <a id="saved-views-smoke"></a>

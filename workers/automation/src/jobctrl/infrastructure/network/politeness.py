@@ -23,7 +23,6 @@ Design notes:
 
 from __future__ import annotations
 
-import os
 import sqlite3
 import threading
 from collections.abc import Mapping
@@ -54,30 +53,19 @@ POLITENESS_ATTEMPT_KIND = "politeness_gate"
 POLITENESS_BLOCKED_OUTCOME = "blocked"
 """Non-terminal ``outcome`` so ``classify_failure`` never reads it as an error."""
 
-UA_PRODUCT_ENV = "JOBCTRL_CRAWL_UA_PRODUCT"
-"""Env override for the honest-UA product token (default ``JobCtrl``)."""
-
-UA_CONTACT_ENV = "JOBCTRL_CRAWL_UA_CONTACT"
-"""Env override for the honest-UA contact. Set empty to drop the contact suffix."""
-
-
 def resolve_honest_user_agent(
     search_cfg: Mapping[str, object] | None = None,
-    env: Mapping[str, str] | None = None,
 ) -> HonestUserAgent:
-    """The effective honest outbound identity, with owner env overrides applied.
+    """Resolve the SQLite-owned honest outbound identity.
 
     Starts from :func:`default_honest_user_agent` (``JobCtrl/<version>
-    (+<repo url>)``, decision D1) and lets the owner override the product token
-    (:data:`UA_PRODUCT_ENV`) and the contact (:data:`UA_CONTACT_ENV`) via env —
-    keeping the override wiring generic without baking in any owner identity. Set
-    the contact env to an empty string to drop the ``(+contact)`` suffix. This
-    is the single point every gateway resolves its default UA from, so the
-    owner-chosen identity applies to every fetch surface at once. It never
+    (+<repo url>)``, decision D1) and applies the product token and contact saved
+    with the Discovery controls. This is the single point every gateway resolves
+    its default UA from, so the owner-chosen identity applies to every fetch
+    surface at once. It never
     impersonates a browser; owners should review the effective value before real
-    crawls (see ``docs/user/configuration.md``)."""
+    crawls (see ``docs/user/discovery.md``)."""
     base = default_honest_user_agent()
-    source = env if env is not None else os.environ
     if search_cfg is None:
         from jobctrl import config
 
@@ -86,13 +74,8 @@ def resolve_honest_user_agent(
     crawl_user_agent = crawl_user_agent if isinstance(crawl_user_agent, Mapping) else {}
     configured_product = str(crawl_user_agent.get("product") or "").strip()
     configured_contact = crawl_user_agent.get("contact")
-    if UA_PRODUCT_ENV in source:
-        product = source.get(UA_PRODUCT_ENV, "").strip() or base.product
-    else:
-        product = configured_product or base.product
-    if UA_CONTACT_ENV in source:
-        contact = source.get(UA_CONTACT_ENV, "").strip() or None
-    elif configured_contact is not None:
+    product = configured_product or base.product
+    if configured_contact is not None:
         contact = str(configured_contact).strip() or None
     else:
         contact = base.contact_url

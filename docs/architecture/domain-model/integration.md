@@ -13,11 +13,15 @@ Temporal workflows whose results come back as more domain events (§6.5).
 ```mermaid
 flowchart LR
     subgraph "Python worker process"
-        Ctx["Bounded contexts"] -->|"domain events"| Bus["InProcessEventBus (sync)"]
-        Bus --> Proj["Operations projections"]
+        Ctx@{ icon: "tabler:hexagons", form: "rounded", label: "Bounded contexts", h: 64 }
+        Bus@{ icon: "tabler:arrows-shuffle", form: "rounded", label: "In-process event bus", h: 64 }
+        Proj@{ icon: "tabler:stack-2", form: "rounded", label: "Operations projections", h: 64 }
+        Ctx -->|"domain events"| Bus --> Proj
     end
-    Api["TypeScript API"] -->|"JSON-RPC bridge (subprocess / HTTP)"| Ctx
-    Ctx -->|"workflow dispatch"| Temporal["Temporal workflows"]
+    Api@{ icon: "tabler:api", form: "rounded", label: "TypeScript API", h: 64 }
+    Temporal@{ icon: "tabler:clock-play", form: "rounded", label: "Temporal workflows", h: 64 }
+    Api -->|"JSON-RPC bridge"| Ctx
+    Ctx -->|"workflow dispatch"| Temporal
     Temporal -->|"result domain events"| Bus
 
     class Ctx,Bus py
@@ -42,20 +46,28 @@ and Operations.
 ```mermaid
 graph LR
     subgraph "Command Flow"
-        PO["Pipeline Orchestration"] -->|"EnrichJob cmd"| JE["Job Enrichment"]
-        PO -->|"ScoreJob cmd"| SC["Scoring"]
-        PO -->|"TailorResume cmd"| MG["Materials Generation"]
-        PO -->|"SubmitApplication cmd"| AA["Apply Automation"]
+        PO@{ icon: "tabler:git-merge", form: "rounded", label: "Pipeline orchestration", h: 64 }
+        JE@{ icon: "tabler:wand", form: "rounded", label: "Job enrichment", h: 64 }
+        SC@{ icon: "tabler:chart-bar", form: "rounded", label: "Scoring", h: 64 }
+        MG@{ icon: "tabler:file-text", form: "rounded", label: "Materials generation", h: 64 }
+        AA@{ icon: "tabler:send", form: "rounded", label: "Apply automation", h: 64 }
+        PO -->|"EnrichJob"| JE
+        PO -->|"ScoreJob"| SC
+        PO -->|"TailorResume"| MG
+        PO -->|"SubmitApplication"| AA
     end
 
     subgraph "Event Flow"
-        JD["Job Discovery"] -->|"JobDiscovered"| EB["Event Bus"]
+        JD@{ icon: "tabler:radar", form: "rounded", label: "Job discovery", h: 64 }
+        EB@{ icon: "tabler:arrows-shuffle", form: "rounded", label: "Event bus", h: 64 }
+        OPS@{ icon: "tabler:stack-2", form: "rounded", label: "Operations", h: 64 }
+        JD -->|"JobDiscovered"| EB
         JE -->|"JobEnriched"| EB
         SC -->|"JobScored"| EB
         MG -->|"ResumeApproved"| EB
         AA -->|"ApplicationSubmitted"| EB
         EB -->|"events"| PO
-        EB -->|"events"| OPS["Operations"]
+        EB -->|"events"| OPS
     end
 
     class PO,JE,SC,MG,AA,JD,EB py

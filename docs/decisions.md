@@ -1444,9 +1444,10 @@ Consequences:
   `on_job_enriched` callback threaded from the activity to `enrichment/detail.py`
   (`run_discovery_enrichment_stage` → `_run_discovery_enrichment_until_idle` →
   `_run_enrich` → `run_enrichment` → `_run_detail_scraper` → `scrape_site_batch`).
-- Phase 3 (parallel source families) is **gated, default off**:
-  `JOBCTRL_MAX_PARALLEL_DISCOVERY_FAMILIES` (default `1` = sequential = today's
-  behavior). Values > 1 process families in batches of that size — the source
+- Phase 3 (parallel source families) is **gated, default off** through the
+  SQLite-backed Discovery Runtime `max_parallel_families` setting (default `1`
+  = sequential = today's behavior). Values > 1 process families in batches of
+  that size — the source
   crawls run concurrently (`asyncio.gather`), then the batch's enrichment +
   score-only fan-out runs once (enrichment never runs concurrently). The cap is
   resolved at planning time and threaded through the plan so the workflow stays
@@ -1658,9 +1659,9 @@ Consequences:
 - a server `Retry-After` is clamped at the limiter sink so a hostile header
   cannot freeze a pooled worker; an over-clamp value is recorded as rate-limited
   and skipped rather than slept
-- the honest UA is owner-tunable via `JOBCTRL_CRAWL_UA_PRODUCT` /
-  `JOBCTRL_CRAWL_UA_CONTACT`; per-host rate/concurrency/budget defaults live on
-  each `SourcePolicy` (a registry policy editor is deferred, D4)
+- the honest UA's product token and contact are owner-tunable in Discovery
+  Runtime's SQLite-backed policy; per-host rate/concurrency/budget defaults live
+  on each `SourcePolicy` (a registry policy editor is deferred, D4)
 
 Cites: R10 crawl-politeness train (PRs #297 → #315); plan
 `docs/plans/implemented/2026-07-05-crawl-politeness-plan.md`; gate G1 in

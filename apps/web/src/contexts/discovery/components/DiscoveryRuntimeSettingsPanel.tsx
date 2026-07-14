@@ -11,7 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Empty } from "../../../shared/ui/empty.js";
-import { useDiscoverySettingsQuery } from "../hooks/useDiscoverySettingsQuery.js";
+import { useDiscoverySettingsQuery } from "../../operations/hooks/useDiscoverySettingsQuery.js";
 import { useUpdateDiscoverySettingsMutation } from "../hooks/useUpdateDiscoverySettingsMutation.js";
 
 const BOARD_OPTIONS: Array<{ value: DiscoverySettings["boards"][number]; label: string }> = [
@@ -285,7 +285,7 @@ function ReadOnlyField({ id, label, value, metadata }: { id: string; label: stri
 }
 
 function settingContext(metadata: EffectiveSetting<unknown>): string {
-  const source = metadata.source === "environment" ? "Managed by the launch environment" : metadata.source === "persisted" ? "Saved in Discovery settings" : "Using the default";
+  const source = metadata.source === "persisted" ? "Saved in SQLite" : "Using the default";
   const activation = metadata.activation === "restart" ? "requires a worker restart" : metadata.activation === "next_run" ? "applies to the next discovery run" : metadata.activation === "next_source_family" ? "applies to the next source family" : metadata.activation === "next_poll" ? "applies on the next worker poll" : "applies immediately";
   return `${source}; ${activation}.`;
 }

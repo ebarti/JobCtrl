@@ -1658,11 +1658,6 @@ export const sampleProfileResponse: ProfileConfigResponse = {
 export const sampleSettingsResponse: SettingsResponse = {
   ok: true,
   settings: {
-    targetRole: "Platform Engineering",
-    locationFilter: "Remote",
-    minFitScore: 7,
-    autoApply: false,
-    applyApprovalRequired: true,
     applyConcurrency: 2,
     workerActivitySlots: 4,
     dailyBudgetUsd: 25,
@@ -1674,10 +1669,9 @@ export const sampleSettingsResponse: SettingsResponse = {
     applyTimeoutSeconds: 900,
     scoreCriteria: "Platform reliability and team leadership.",
     targetCriteria: "Director-plus infrastructure roles.",
-    preferredModels: { claude: "sonnet" },
+    preferredModels: { claude: "claude-sonnet-5" },
   },
   effectiveSettings: {
-    llmModelOverride: { value: null, source: "default", activation: "next_workflow", editable: true },
     dailyBudgetUsd: { value: 25, source: "persisted", activation: "live", editable: true },
     applyConcurrency: { value: 2, source: "persisted", activation: "next_poll", editable: true },
     workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
@@ -1690,7 +1684,7 @@ export const sampleSettingsResponse: SettingsResponse = {
     scoreCriteria: { value: "Platform reliability and team leadership.", source: "persisted", activation: "next_run", editable: true },
     targetCriteria: { value: "Director-plus infrastructure roles.", source: "persisted", activation: "next_run", editable: true },
   },
-  paths: { settingsPath: "/tmp/jobctrl-test/settings.json" },
+  paths: { configPath: "/tmp/jobctrl-test/settings.json" },
 };
 
 export const sampleExtensionCapabilityTokenResponse = {
@@ -1757,6 +1751,9 @@ export const sampleResumeTemplateListResponse: ResumeTemplateListResponse = {
 export const sampleDiscoverySettingsResponse: DiscoverySettingsResponse = {
   ok: true as const,
   settings: {
+    minFitScore: 7,
+    autoApply: false,
+    applyApprovalRequired: true,
     boards: ["indeed", "linkedin", "zip_recruiter"],
     resultsPerSite: 50,
     hoursOld: 72,
@@ -1770,6 +1767,9 @@ export const sampleDiscoverySettingsResponse: DiscoverySettingsResponse = {
     source: "database",
   },
   effectiveSettings: {
+    minFitScore: { value: 7, source: "persisted", activation: "next_run", editable: true },
+    autoApply: { value: false, source: "persisted", activation: "next_poll", editable: true },
+    applyApprovalRequired: { value: true, source: "persisted", activation: "next_apply_job", editable: true },
     boards: { value: ["indeed", "linkedin", "zip_recruiter"], source: "persisted", activation: "next_run", editable: true },
     resultsPerSite: { value: 50, source: "persisted" as const, activation: "next_run" as const, editable: true as const },
     hoursOld: { value: 72, source: "persisted" as const, activation: "next_run" as const, editable: true as const },
@@ -1895,7 +1895,7 @@ export function makeWorkflowRunsPage(
 export const sampleCredentialsResponse: CredentialsResponse = {
   ok: true,
   store: {
-    kind: "macos_keychain",
+    kind: "config_and_macos_keychain",
     available: true,
     unavailableReason: null,
     requiresWorkerRestart: true,
@@ -1937,13 +1937,13 @@ export const sampleProviderModelsResponse: ProviderModelCatalogResponse = {
       provider: "claude",
       configured: true,
       ready: true,
-      source: "provider_aliases",
+      source: "live",
       models: [
-        { id: "sonnet", displayName: "Sonnet" },
-        { id: "opus", displayName: "Opus", isDefault: true },
-        { id: "haiku", displayName: "Haiku" },
+        { id: "claude-fable-5", displayName: "Fable 5" },
+        { id: "claude-opus-4-8", displayName: "Opus 4.8", isDefault: true },
+        { id: "claude-sonnet-5", displayName: "Sonnet 5" },
       ],
-      message: "Claude aliases are available.",
+      message: "Synthetic preview catalog; no Claude account is connected.",
     },
     {
       provider: "google",

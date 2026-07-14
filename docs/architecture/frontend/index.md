@@ -141,36 +141,39 @@ current `App.tsx`. The target architecture enforces strict separation.
 ```mermaid
 graph TB
     subgraph "Server state — TanStack Query"
-        QC["QueryClient cache"]
-        PJ["Projections"]
-        PR["Profile / Settings"]
-        DS["Dashboard summary"]
+        QC@{ icon: "tabler:database-cog", form: "rounded", label: "QueryClient cache", h: 64 }
+        PJ@{ icon: "tabler:stack-2", form: "rounded", label: "Projections", h: 64 }
+        PR@{ icon: "tabler:id", form: "rounded", label: "Profile · settings", h: 64 }
+        DS@{ icon: "tabler:layout-dashboard", form: "rounded", label: "Dashboard summary", h: 64 }
     end
 
     subgraph "URL state — TanStack Router"
-        SP["Typed search params (Zod)"]
-        PP["Path params"]
-        RT["Active route"]
+        SP@{ icon: "tabler:filter-code", form: "rounded", label: "Typed search params", h: 64 }
+        PP@{ icon: "tabler:brackets-angle", form: "rounded", label: "Path params", h: 64 }
+        RT@{ icon: "tabler:route", form: "rounded", label: "Active route", h: 64 }
     end
 
     subgraph "Client state — Zustand + Context"
-        TH["Theme / density"]
-        TN["TenantContext"]
-        TS["Toast queue"]
-        UI["Transient UI flags"]
+        TH@{ icon: "tabler:palette", form: "rounded", label: "Theme · density", h: 64 }
+        TN@{ icon: "tabler:users", form: "rounded", label: "Tenant context", h: 64 }
+        TS@{ icon: "tabler:bell", form: "rounded", label: "Toast queue", h: 64 }
+        UI@{ icon: "tabler:toggle-left", form: "rounded", label: "Transient UI flags", h: 64 }
     end
 
-    BE["apps/api (Fastify) + SSE"] -.->|"fetch / EventSource"| QC
+    BE@{ icon: "tabler:api", form: "rounded", label: "Fastify API · SSE", h: 64 }
+    BE -.->|"fetch · EventSource"| QC
     QC --> PJ
     QC --> PR
     QC --> DS
 
-    BR["Browser URL"] --> SP
+    BR@{ icon: "tabler:browser", form: "rounded", label: "Browser URL", h: 64 }
+    BR --> SP
     BR --> PP
     BR --> RT
     SP -->|"bound to filters / sort / page"| QC
 
-    LS["localStorage"] -.->|"hydrate / persist"| TH
+    LS@{ icon: "tabler:database", form: "rounded", label: "localStorage", h: 64 }
+    LS -.->|"hydrate · persist"| TH
     TN -.->|"tenant prefix"| QC
 
     class BE ts

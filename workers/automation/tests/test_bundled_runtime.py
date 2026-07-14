@@ -330,7 +330,6 @@ def test_bundled_setup_never_runs_repository_toolchains(
     commands: list[list[str]] = []
     for key, value in _bundled_env(tmp_path).items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setenv("JOBCTRL_ANALYSIS_LEGS", "claude")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(config, "_KEYCHAIN_FALLBACK_DIAGNOSTICS", ())
 
@@ -357,7 +356,6 @@ def test_bundled_setup_never_launches_codex_login_for_consumer_auth(
 ) -> None:
     for key, value in _bundled_env(tmp_path).items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setenv("JOBCTRL_ANALYSIS_LEGS", "codex")
     monkeypatch.setenv("CODEX_API_KEY", "unsupported-consumer-alias")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "synthesis-key")
     monkeypatch.setattr(config, "_KEYCHAIN_FALLBACK_DIAGNOSTICS", ())

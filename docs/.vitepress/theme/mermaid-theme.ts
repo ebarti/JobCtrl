@@ -35,6 +35,14 @@ function semanticThemeCss(palette: SemanticPalette): string {
         color: ${text} !important;
         fill: ${text} !important;
       }
+      .node.${name}.icon-shape g[style*="color:"] {
+        color: ${stroke} !important;
+      }
+      .node.${name}.icon-shape g[style*="color:"]
+        :is(path, line, polyline, polygon, circle, ellipse, rect) {
+        fill: none !important;
+        stroke: currentColor !important;
+      }
     `;
   };
 
@@ -81,6 +89,7 @@ const DARK_SEMANTIC: SemanticPalette = {
 const SHARED = {
   startOnLoad: false,
   securityLevel: "loose",
+  look: "neo",
   theme: "base",
   flowchart: {
     curve: "linear",

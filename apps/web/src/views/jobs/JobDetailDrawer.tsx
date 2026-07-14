@@ -14,9 +14,9 @@ import { EmployerAnalysisPanel } from "../../contexts/materials/components/Emplo
 import { InterviewPrepPanel } from "../../contexts/materials/components/InterviewPrepPanel.js";
 import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
 import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHistory.js";
+import { useDiscoverySettingsQuery } from "../../contexts/operations/hooks/useDiscoverySettingsQuery.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
-import { useSettingsQuery } from "../../contexts/profile/hooks/useSettingsQuery.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
 import { RescoreJobButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
@@ -89,8 +89,9 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
   useEscapeKey(true, onClose);
 
   const { data: detail, error: detailError } = useJobDetailQuery(jobId);
-  const settingsQuery = useSettingsQuery();
-  const applyApprovalRequired = settingsQuery.data?.settings.applyApprovalRequired ?? true;
+  const discoverySettingsQuery = useDiscoverySettingsQuery();
+  const applyApprovalRequired =
+    discoverySettingsQuery.data?.settings.applyApprovalRequired ?? true;
   const errorMessage = detailErrorTitle(detailError);
   const currentSubstage = detail?.stages.find(
     (stage) => stage.stage === detail.job.currentSubstage,

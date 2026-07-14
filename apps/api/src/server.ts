@@ -150,10 +150,10 @@ import {
   updateCompensationSourcePolicy,
 } from "./compensation-source-policy.js";
 import { databaseExists, openDatabase } from "./db.js";
+import { ConfigFileInputError } from "./config-file.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
 import {
-  DiscoverySettingManagedByEnvironmentError,
   decideQuarantineEntry,
   dismissManualCapture,
   decideRoleMatchFeedbackSuggestion,
@@ -286,7 +286,6 @@ import {
   hideJob,
   hideJobs,
   InputError,
-  SettingManagedByEnvironmentError,
   markJobApplied,
   markJobSkipped,
   permanentlyDeleteJob,
@@ -326,9 +325,9 @@ const SEC_FETCH_HEADER_NAMES = ["sec-fetch-site", "sec-fetch-mode", "sec-fetch-d
 export interface BuildAppOptions {
   appDir?: string;
   dbPath: string;
-  settingsPath: string;
-  /** Testable launch environment used to resolve effective settings. */
-  settingsEnvironment?: Readonly<Record<string, string | undefined>>;
+  configPath: string;
+  /** Testable process environment for credential/native runtime boundaries. */
+  runtimeEnvironment?: Readonly<Record<string, string | undefined>>;
   /** Absolute path to the prebuilt web root. Omit in source development. */
   webAssetsDir?: string;
   /** Private Python runtime command resolver. Defaults to source-checkout uv. */
@@ -356,7 +355,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   installVitestInjectMutationDefaults(app);
   const appDir = options.appDir ?? path.dirname(options.dbPath);
   const pythonRuntime = options.pythonRuntime ?? defaultSourcePythonRuntime;
-  const actionContext = { appDir, dbPath: options.dbPath };
+  const actionContext = { appDir, dbPath: options.dbPath, configPath: options.configPath };
   const actionDispatcher =
     options.actionDispatcher ??
     createActionDispatcher(undefined, createRuntimeJsonRpcDispatcherFactory(pythonRuntime));
@@ -364,7 +363,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const outreachDraftGenerator = options.outreachDraftGenerator ?? createOutreachDraftGenerator(pythonRuntime);
   const artifactOpener = options.artifactOpener ?? defaultArtifactOpener;
   const credentialStore = options.credentialStore ?? new KeychainCredentialStore({
-    env: options.settingsEnvironment ?? process.env,
+    env: options.runtimeEnvironment ?? process.env,
+    configPath: options.configPath,
   });
   const providerDispatcher =
     options.providerDispatcher ??
@@ -455,7 +455,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     appDir,
     dbExists: databaseExists(options.dbPath),
     dbIdentity: dbFileIdentity(options.dbPath),
-    llmSpend: readLlmSpendHealth(options.dbPath, options.settingsPath),
+    llmSpend: readLlmSpendHealth(options.dbPath, options.configPath),
     worker: readWorkerHealth(options.dbPath),
   }));
 
@@ -541,14 +541,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/digest", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => {
-      const settings = readSettingsConfig(
-        { settingsPath: options.settingsPath },
-        options.settingsEnvironment,
-      ).settings;
+      const discoverySettings = readDiscoverySettings(db).settings;
       return buildDigest(db, {
         applyReviewQueue: listApplyReviewQueue(db),
-        budget: readLlmSpendHealth(options.dbPath, options.settingsPath),
-        minFitScore: settings.minFitScore,
+        budget: readLlmSpendHealth(options.dbPath, options.configPath),
+        minFitScore: discoverySettings.minFitScore,
       });
     }),
   );
@@ -581,16 +578,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   );
 
   app.get("/v1/discovery/settings", async (_request, reply) =>
-    withDb(reply, options.dbPath, (db) =>
-      readDiscoverySettings(db, options.settingsEnvironment),
-    ),
+    withDb(reply, options.dbPath, (db) => readDiscoverySettings(db)),
   );
 
   app.get("/v1/compensation/sources", async () =>
-    listCompensationSources(
-      process.env,
-      readCompensationSourcePreferences(options.settingsPath),
-    ),
+    listCompensationSources(readCompensationSourcePreferences(options.configPath)),
   );
 
   app.patch("/v1/compensation/sources", async (request, reply) => {
@@ -604,9 +596,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     try {
       return updateCompensationSourcePolicy(
-        options.settingsPath,
+        options.configPath,
         body,
-        process.env,
       );
     } catch (error) {
       if (error instanceof CompensationSourcePolicyInputError) {
@@ -627,7 +618,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return undefined;
     }
     return withWritableDb(reply, options.dbPath, (db) =>
-      writeDiscoverySettings(db, body, options.settingsEnvironment),
+      writeDiscoverySettings(db, body),
     );
   });
 
@@ -2193,10 +2184,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   });
 
   app.get("/v1/settings", async () =>
-    readSettingsConfig(
-      { settingsPath: options.settingsPath },
-      options.settingsEnvironment,
-    ),
+    readSettingsConfig({ configPath: options.configPath }),
   );
 
   app.patch("/v1/settings", async (request, reply) => {
@@ -2247,23 +2235,11 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     try {
       return writeSettingsConfig(
-        { settingsPath: options.settingsPath },
+        { configPath: options.configPath },
         body,
-        options.settingsEnvironment,
       );
     } catch (error) {
-      if (error instanceof SettingManagedByEnvironmentError) {
-        void reply.code(409);
-        return {
-          ok: false as const,
-          error: "setting_managed_by_environment" as const,
-          field: error.field,
-          source: error.source,
-          activation: error.activation,
-          message: error.message,
-        };
-      }
-      if (error instanceof InputError) {
+      if (error instanceof InputError || error instanceof ConfigFileInputError) {
         void reply.code(400);
         return { ok: false, error: "invalid_settings", message: error.message };
       }
@@ -3822,16 +3798,6 @@ async function withWritableDb<T>(
     db = openDatabase(dbPath);
     return await write(db);
   } catch (error) {
-    if (error instanceof DiscoverySettingManagedByEnvironmentError) {
-      void reply.code(409);
-      return {
-        ok: false,
-        error: "setting_managed_by_environment",
-        field: error.field,
-        source: error.source,
-        message: error.message,
-      };
-    }
     if (error instanceof ResumeTemplateInputError) {
       void reply.code(400);
       return { ok: false, error: "invalid_resume_template", message: error.message };
