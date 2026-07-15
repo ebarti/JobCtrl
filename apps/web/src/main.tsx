@@ -32,6 +32,7 @@ import "./styles/redesign-job-detail.css";
 import "./styles/redesign-configuration.css";
 import "./styles/redesign-apply-review.css";
 import "./styles/redesign-profile-import.css";
+import "./styles/redesign-pipelines.css";
 import "./styles/redesign-route-gaps.css";
 
 const queryClient = createQueryClient();

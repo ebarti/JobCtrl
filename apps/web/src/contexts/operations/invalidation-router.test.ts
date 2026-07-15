@@ -15,6 +15,7 @@ import { jobsKeys } from "./jobsKeys.js";
 import { outcomesKeys } from "./outcomesKeys.js";
 import { workflowRunsKeys } from "./workflowRunsKeys.js";
 import { discoveryKeys } from "../discovery/queryKeys.js";
+import { pipelineKeys } from "../pipeline/queryKeys.js";
 import { profileKeys } from "../profile/queryKeys.js";
 import { outreachKeys } from "../outreach/queryKeys.js";
 
@@ -272,38 +273,46 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   PreparationWorkItemStarted: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   PreparationWorkItemCompleted: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     artifactsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   PreparationWorkItemFailed: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   PipelineStepQueued: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   PipelineStepStarted: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   PipelineStepCompleted: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   PipelineStepFailed: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   ApplyRunStarted: [
     applyRunsKeys.lists(LOCAL_TENANT),
@@ -372,27 +381,36 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   StageCompleted: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   StageFailed: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   StageExhausted: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
-  StageReset: [jobsKeys.lists(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  StageReset: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    pipelineKeys.operations(LOCAL_TENANT),
+  ],
   StageBlocked: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   StageSkipped: [
     jobsKeys.lists(LOCAL_TENANT),
@@ -400,6 +418,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     applyReviewKeys.queue(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
     digestKeys.all(LOCAL_TENANT),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   StageCanceled: [
     jobsKeys.lists(LOCAL_TENANT),
@@ -407,34 +426,41 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     applyReviewKeys.queue(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
     digestKeys.all(LOCAL_TENANT),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   ProfileUpdated: [profileKeys.profile(LOCAL_TENANT)],
   ProfileImported: [profileKeys.profile(LOCAL_TENANT)],
   WorkflowStarted: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   WorkflowCompleted: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   WorkflowFailed: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   WorkflowCanceled: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
     applyReviewKeys.queue(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   WorkflowTimedOut: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   WorkflowTerminated: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
+    pipelineKeys.operations(LOCAL_TENANT),
   ],
   ContactCreated: [outreachKeys.contactLists(LOCAL_TENANT)],
   ContactUpdated: [

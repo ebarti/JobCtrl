@@ -13,7 +13,13 @@ import { IconPlayerPlay } from "@tabler/icons-react";
 import { type FormEvent, type ReactNode, useState } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
-import { CardHeader } from "../../../shared/ui/card-header.js";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../../../shared/ui/card.js";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../shared/ui/tabs.js";
 import { useDashboardSummaryQuery } from "../../operations/hooks/useDashboardSummaryQuery.js";
 import { useSourceRegistryQuery } from "../../operations/hooks/useDiscoveryProductControlsQuery.js";
@@ -487,7 +493,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
         ) : null}
         {controls.workers ? (
           <label className="field">
-            <span>Workers</span>
+            <span>Internal concurrency</span>
             <input
               min={1}
               max={16}
@@ -644,7 +650,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
 
       <div className="stage-trigger-actions">
         <Button disabled={runStages.isPending || workerUnhealthy} type="submit">
-          <IconPlayerPlay aria-hidden="true" size={16} />
+          <IconPlayerPlay aria-hidden="true" data-icon="inline-start" />
           {workerUnhealthy
             ? health.isPending
               ? "Checking worker"
@@ -700,31 +706,36 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
 
   return (
     <>
-      <section className="card full stage-trigger-panel">
-        <CardHeader title="Pipeline actions" meta={headerMeta} />
-        <Tabs
-          className="stage-trigger-tabs"
-          value={activeStage}
-          onValueChange={(value) => {
-            if (USER_FACING_PIPELINE_STAGE_SET.has(value as PipelineRunStage)) {
-              setActiveStage(value as PipelineRunStage);
-            }
-          }}
-        >
-          <TabsList aria-label="Pipeline stages" className="stage-trigger-tab-list">
+      <Card className="pipeline-card stage-trigger-panel">
+        <CardHeader className="pipeline-card__header">
+          <CardTitle><h2>Pipeline actions</h2></CardTitle>
+          <CardDescription>{headerMeta}</CardDescription>
+        </CardHeader>
+        <CardContent className="pipeline-card__content">
+          <Tabs
+            className="stage-trigger-tabs"
+            value={activeStage}
+            onValueChange={(value) => {
+              if (USER_FACING_PIPELINE_STAGE_SET.has(value as PipelineRunStage)) {
+                setActiveStage(value as PipelineRunStage);
+              }
+            }}
+          >
+            <TabsList aria-label="Pipeline stages" className="stage-trigger-tab-list">
+              {USER_FACING_PIPELINE_STAGES.map((stage) => (
+                <TabsTrigger key={stage} value={stage}>
+                  {labelForStage(stage)}
+                </TabsTrigger>
+              ))}
+            </TabsList>
             {USER_FACING_PIPELINE_STAGES.map((stage) => (
-              <TabsTrigger key={stage} value={stage}>
-                {labelForStage(stage)}
-              </TabsTrigger>
+              <TabsContent key={stage} forceMount value={stage} className="stage-trigger-tab-panel">
+                {stage === activeStage ? stageForm : null}
+              </TabsContent>
             ))}
-          </TabsList>
-          {USER_FACING_PIPELINE_STAGES.map((stage) => (
-            <TabsContent key={stage} forceMount value={stage} className="stage-trigger-tab-panel">
-              {stage === activeStage ? stageForm : null}
-            </TabsContent>
-          ))}
-        </Tabs>
-      </section>
+          </Tabs>
+        </CardContent>
+      </Card>
       {activeStagePanel}
     </>
   );
