@@ -100,11 +100,11 @@ def write_worker_heartbeat(
               max_concurrent_activities INTEGER,
               activity_executor_max_workers INTEGER,
               active_activity_count INTEGER NOT NULL DEFAULT 0,
-              active_activity_counts_json TEXT NOT NULL DEFAULT '{}',
+              active_activity_counts_json TEXT NOT NULL DEFAULT '{{}}',
               active_activity_details_json TEXT NOT NULL DEFAULT '[]',
               active_activity_details_total INTEGER NOT NULL DEFAULT 0,
               active_activity_details_truncated INTEGER NOT NULL DEFAULT 0,
-              activity_duration_summary_json TEXT NOT NULL DEFAULT '{}',
+              activity_duration_summary_json TEXT NOT NULL DEFAULT '{{}}',
               task_queue_observation_json TEXT,
               heartbeat_schema_version INTEGER NOT NULL DEFAULT 2
             )
