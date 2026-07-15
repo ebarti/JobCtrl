@@ -20,7 +20,7 @@ describe("<ProfileForm>", () => {
     });
 
     expect(await screen.findByRole("heading", { name: "Personal information" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Application configurations" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Application configuration" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Target role")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "preferences" })).not.toBeInTheDocument();
   });
@@ -101,7 +101,9 @@ describe("<ProfileForm>", () => {
       />,
     );
 
-    expect(await screen.findByRole("heading", { name: "Application configurations" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 3, name: "Application configuration" }),
+    ).toBeInTheDocument();
     expect(screen.queryByLabelText("Location filter")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Tailoring controls" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Target search" })).not.toBeInTheDocument();
@@ -142,7 +144,7 @@ describe("<ProfileForm>", () => {
     expect(screen.getByRole("group", { name: "Target work model 1" })).toBeInTheDocument();
     expect(screen.getByLabelText("Remote")).toBeInTheDocument();
     expect(screen.getByLabelText("Hybrid")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Application configurations" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Application configuration" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
   });
 

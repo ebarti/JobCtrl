@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { IconChevronDown, IconExternalLink, IconPlus, IconTrash } from "@tabler/icons-react";
 
 import { Checkbox } from "../../../shared/ui/checkbox.js";
@@ -191,6 +191,7 @@ export function StructuredProfileEditor({
 }: StructuredProfileEditorProps) {
   const profile = parseJsonRecord(profileText);
   const style = parseJsonRecord(styleText);
+  const bulletStandardsLabelId = useId();
   const focusTargetsRef = useRef(new Map<string, HTMLInputElement | HTMLSelectElement>());
   const pendingFocusKeyRef = useRef<string | null>(null);
 
@@ -589,7 +590,6 @@ export function StructuredProfileEditor({
   const inventedAdjacentExperienceField = () => (
     <label className="field check">
       <Checkbox
-        aria-label="Enable profile enhancement"
         checked={allowsInventedAdjacentExperience()}
         onCheckedChange={setInventedAdjacentExperienceAllowed}
       />
@@ -600,7 +600,6 @@ export function StructuredProfileEditor({
   const checkboxField = (path: string, label: string) => (
     <label className="field check">
       <Checkbox
-        aria-label={label}
         checked={Boolean(getPathValue(profile, path))}
         onCheckedChange={(checked) => updateProfilePath(path, checked)}
       />
@@ -661,7 +660,7 @@ export function StructuredProfileEditor({
 
   const disabledCheckboxField = (label: string) => (
     <label className="field check disabled">
-      <Checkbox aria-label={label} checked={false} disabled />
+      <Checkbox checked={false} disabled />
       <span>{label}</span>
     </label>
   );
@@ -945,9 +944,12 @@ export function StructuredProfileEditor({
   };
 
   const bulletStandardsField = () => (
-    <fieldset className="field wide checkbox-group-field bullet-standards-group">
+    <fieldset
+      aria-labelledby={bulletStandardsLabelId}
+      className="field wide checkbox-group-field bullet-standards-group"
+    >
       <legend>
-        <span>Bullet standards</span>
+        <span id={bulletStandardsLabelId}>Bullet standards</span>
         <a
           className="configuration-help-link"
           href="https://jobctrl.dev/architecture/tailoring#inputs-to-tailoring"
@@ -962,7 +964,6 @@ export function StructuredProfileEditor({
         {BULLET_STANDARD_OPTIONS.map(([value, label]) => (
           <label className="choice target-choice required-choice" key={value}>
             <Checkbox
-              aria-label={`${label}, required`}
               checked
               disabled
               name="bullet-standard"

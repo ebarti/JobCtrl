@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +13,12 @@ import pytest
 from jobctrl.database import init_db
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.identity import JobSourceObservation
+from jobctrl.domain.enrichment import (
+    ApplicationUrl,
+    ExtractionTier,
+    FullDescription,
+    JobEnrichment,
+)
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.discovery.activities import (
@@ -23,6 +30,7 @@ from jobctrl.infrastructure.discovery.sqlite_execution_repository import (
     SqliteDiscoveryExecutionRepository,
 )
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
 from jobctrl.pipeline import preparation as preparation_pipeline
 from jobctrl.preparation.workflow import JobPreparationInput, _input_summary
 
@@ -48,6 +56,28 @@ def _insert_job(conn: sqlite3.Connection, suffix: str) -> str:
     )
     conn.commit()
     return job_url
+
+
+def _mark_enriched(conn: sqlite3.Connection, job_url: str) -> None:
+    timestamp = datetime.now(timezone.utc).isoformat()
+    enrichment = (
+        JobEnrichment.empty(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(job_url),
+            updated_at=timestamp,
+        )
+        .start_attempt(
+            extraction_tier=ExtractionTier.JSON_LD,
+            started_at=timestamp,
+        )
+        .succeed_attempt(
+            full_description=FullDescription(text="Canonical enriched description"),
+            application_url=ApplicationUrl(value="https://example.com/apply"),
+            extraction_tier=ExtractionTier.JSON_LD,
+            finished_at=timestamp,
+        )
+    )
+    SqliteEnrichmentRepository(conn).save(enrichment)
 
 
 def test_execution_ref_is_serializable_across_every_discovery_handoff() -> None:
@@ -384,6 +414,70 @@ def test_terminal_fanout_decides_every_unselected_observed_membership(
         membership.work_plan_state != "pending"
         for membership in repository.list_for_execution(execution)
         if membership.cohort_kind == "observed_this_run"
+    )
+
+
+def test_terminal_fanout_keeps_unobserved_pending_score_in_existing_backlog(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution = _execution("temporal-run-persistent-enrichment-backlog")
+    SqliteJobRepository(conn)
+    repository = SqliteDiscoveryExecutionRepository(conn)
+    observed_url = _insert_job(conn, "observed-pending-score")
+    backlog_url = _insert_job(conn, "unobserved-pending-score")
+    ineligible_url = _insert_job(conn, "observed-ineligible")
+    _mark_enriched(conn, observed_url)
+    _mark_enriched(conn, backlog_url)
+    conn.execute("UPDATE jobs SET fit_score = 4 WHERE url = ?", (ineligible_url,))
+    conn.commit()
+
+    for job_url in (observed_url, ineligible_url):
+        repository.link_job(
+            execution,
+            job_url,
+            cohort_kind="observed_this_run",
+            source_family="jobspy",
+            source_run_id="source-current",
+        )
+
+    started_inputs: list[JobPreparationInput] = []
+    monkeypatch.setattr(preparation_pipeline, "get_connection", lambda: conn)
+
+    async def starter(spec):
+        started_inputs.append(spec.args[0])
+        return SimpleNamespace(id=spec.workflow_id)
+
+    result = preparation_pipeline.start_discovery_preparation_workflows(
+        tenant_id=LOCAL_TENANT,
+        include_pending_tailor=False,
+        discovery_execution=execution,
+        finalize_observed_work_plans=True,
+        workflow_starter=starter,
+    )
+
+    memberships = {
+        membership.job_url: membership
+        for membership in repository.list_for_execution(execution)
+    }
+    assert result["started"] == {"job_preparation": 2}
+    assert memberships[observed_url].cohort_kind == "observed_this_run"
+    assert memberships[observed_url].work_plan_state == "planned"
+    assert memberships[backlog_url].cohort_kind == "existing_backlog"
+    assert memberships[backlog_url].source_family is None
+    assert memberships[backlog_url].source_run_id is None
+    assert memberships[backlog_url].work_plan_state == "planned"
+    assert memberships[ineligible_url].work_plan_state == "not_eligible"
+    assert memberships[ineligible_url].work_plan_reason == "score_below_threshold"
+    assert {
+        payload.job_url: payload.discovery_cohort_kind for payload in started_inputs
+    } == {
+        observed_url: "observed_this_run",
+        backlog_url: "existing_backlog",
+    }
+    assert all(
+        membership.work_plan_state != "failed"
+        for membership in memberships.values()
     )
 
 
