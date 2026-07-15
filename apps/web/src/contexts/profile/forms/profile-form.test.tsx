@@ -101,7 +101,9 @@ describe("<ProfileForm>", () => {
       />,
     );
 
-    expect(await screen.findByRole("heading", { name: "Application configuration" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 3, name: "Application configuration" }),
+    ).toBeInTheDocument();
     expect(screen.queryByLabelText("Location filter")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Tailoring controls" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Target search" })).not.toBeInTheDocument();
