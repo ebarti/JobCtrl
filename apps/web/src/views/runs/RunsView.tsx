@@ -76,7 +76,7 @@ export function RunsView() {
         title="Workflow runs"
         subtitle={data ? `${data.pagination.total} total` : "loading"}
       />
-      <section className="card full">
+      <section className="card full data-list-card">
         {message ? <div className="banner inline">{message}</div> : null}
         <RunsFilterBar
           status={search.status}

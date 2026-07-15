@@ -23,7 +23,7 @@ export function TablePager({
 }: TablePagerProps): JSX.Element {
   const pages = Math.max(totalPages, 1);
   return (
-    <div className="pager">
+    <div className="pager data-table-pager">
       <button
         className="tab"
         type="button"

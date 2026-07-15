@@ -1,4 +1,5 @@
 import type { ArtifactSummary } from "@jobctrl/contracts";
+import { IconX } from "@tabler/icons-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -114,7 +115,7 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
           type="button"
           onClick={close}
         >
-          x
+          <IconX aria-hidden="true" size={18} stroke={1.8} />
         </button>
         {errorMessage && !detail ? <Empty title={errorMessage} /> : null}
         {!detail && !errorMessage ? <Empty title="Loading artifact." /> : null}

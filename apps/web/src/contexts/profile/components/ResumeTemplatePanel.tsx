@@ -171,7 +171,7 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
   };
 
   return (
-    <section className="form-section resume-template-panel" aria-label="Resume templates">
+    <section className="form-section resume-template-panel resume-template-workspace" aria-label="Resume templates">
       <h3>Resume templates</h3>
       <div className="resume-template-shell">
         <div className="resume-template-controls">

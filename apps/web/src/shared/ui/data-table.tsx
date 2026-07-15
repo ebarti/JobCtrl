@@ -78,7 +78,7 @@ export function DataTable<TData>({
 
   return (
     <>
-      <div className="table" role="table">
+      <div className="table data-table-surface" role="table">
         <div role="rowgroup">
           <div className={headerClassName} role="row">
             {table.getFlatHeaders().map((header) => {

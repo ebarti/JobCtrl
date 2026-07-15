@@ -422,7 +422,7 @@ const PopoverContent = forwardRef<HTMLDivElement, PopoverContentProps>(
               finalFocus ?? (onCloseAutoFocus ? handleFinalFocus : undefined)
             }
             className={cn(
-              "z-50 w-72 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-[var(--shadow-panel)] outline-none",
+              "z-50 w-72 origin-(--transform-origin) rounded-[10px] border border-border bg-popover p-4 text-sm text-popover-foreground shadow-xl outline-none duration-150 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
               className,
             )}
           >

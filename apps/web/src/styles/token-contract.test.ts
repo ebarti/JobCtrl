@@ -122,10 +122,10 @@ describe("shadcn token contract", () => {
       expect(matches.length, `expected light and dark definitions for token ${token}`).toBeGreaterThanOrEqual(2);
     }
 
-    expect(tokensCss, "expected the mock-up 8px radius token").toContain("--radius: 0.5rem;");
-    expect(tokensCss, "expected light violet primary value").toContain("--primary: oklch(0.541 0.281 293.009);");
-    expect(tokensCss, "expected dark violet primary value").toContain("--primary: oklch(0.702 0.183 293.541);");
-    expect(tokensCss, "expected violet-ramp chart token").toContain("--chart-1: oklch(0.541 0.281 293.009);");
+    expect(tokensCss, "expected the Rhea radius token").toContain("--radius: 0.625rem;");
+    expect(tokensCss, "expected light near-black primary value").toContain("--primary: oklch(0.145 0 0);");
+    expect(tokensCss, "expected dark near-white primary value").toContain("--primary: oklch(0.985 0 0);");
+    expect(tokensCss, "expected neutral chart ramp anchor").toContain("--chart-1: oklch(0.24 0 0);");
   });
 
   it("maps tokens through Tailwind CSS-first theme variables", () => {
@@ -176,7 +176,7 @@ describe("shadcn token contract", () => {
   });
 
   it("keeps shadcn preset config and packages wired", () => {
-    expect(componentsJson.style, "expected luma/radix shadcn style").toBe("radix-luma");
+    expect(componentsJson.style, "expected Rhea/Base shadcn style").toBe("base-rhea");
     expect(componentsJson.tailwind.config, "expected CSS-first shadcn Tailwind config").toBe("");
     expect(componentsJson.tailwind.css, "expected shadcn to use the global CSS entrypoint").toBe(
       "src/styles/globals.css",
@@ -190,9 +190,9 @@ describe("shadcn token contract", () => {
     expect(packageJson.dependencies.shadcn, "expected shadcn dependency").toBe("4.11.0");
     expect(packageJson.dependencies["tw-animate-css"], "expected Tailwind v4 animation dependency").toBe("1.4.0");
     expect(
-      packageJson.dependencies["@fontsource-variable/plus-jakarta-sans"],
-      "expected Plus Jakarta Sans font dependency",
-    ).toBe("5.2.8");
+      packageJson.dependencies["@fontsource-variable/geist"],
+      "expected Geist font dependency",
+    ).toBe("^5.2.9");
     expect(
       packageJson.dependencies["@fontsource-variable/jetbrains-mono"],
       "expected JetBrains Mono font dependency",

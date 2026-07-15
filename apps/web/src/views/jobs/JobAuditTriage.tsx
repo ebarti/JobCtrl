@@ -20,8 +20,11 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
     <section className="section job-audit-triage" aria-label="Job audit triage">
       <div className="job-audit-triage-grid">
         <div className="job-audit-triage-column">
-          <div className="job-audit-triage-kicker">Ranking</div>
-          <div className="job-audit-metrics" aria-label="Ranking summary">
+          <header className="job-audit-triage-heading">
+            <span className="job-audit-triage-kicker">Assessment</span>
+            <h3>Fit & evidence</h3>
+          </header>
+          <dl className="job-audit-metrics" aria-label="Ranking summary">
             <Metric label="Fit score" value={`${job.fitScore ?? "-"}/10`} />
             <Metric label="Band" value={score?.fitBand ?? "not recorded"} />
             <Metric label="Confidence" value={score?.confidence ?? "not recorded"} />
@@ -32,11 +35,11 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
                 <Metric label="Must-haves" value={percent(requirementFitReport.summary.mustHaveCoverage)} />
               </>
             ) : null}
-          </div>
+          </dl>
           {reasoning ? (
-            <p>{reasoning}</p>
+            <p className="job-audit-rationale">{reasoning}</p>
           ) : (
-            <p className="muted">No score rationale was stored for this job.</p>
+            <p className="job-audit-rationale muted">No score rationale was stored for this job.</p>
           )}
           {requirementFitReport ? (
             <RequirementFitGroups report={requirementFitReport} />
@@ -61,7 +64,10 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
               />
             </div>
           ) : null}
-          <ScoreCorrectionControl jobId={job.jobKey} currentScore={job.fitScore} />
+          <div className="job-audit-score-correction">
+            <span className="job-audit-triage-kicker">Score correction</span>
+            <ScoreCorrectionControl jobId={job.jobKey} currentScore={job.fitScore} />
+          </div>
           {factGroups.length ? (
             <div className="job-audit-concerns">
               <div className="job-audit-triage-kicker">Apply concerns</div>
@@ -96,8 +102,8 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <span>{label}</span>
-      <b>{value}</b>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
     </div>
   );
 }

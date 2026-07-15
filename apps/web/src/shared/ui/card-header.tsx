@@ -7,9 +7,13 @@ export interface CardHeaderProps {
 
 export function CardHeader({ title, meta }: CardHeaderProps) {
   return (
-    <header className="card-hd">
-      <h2>{title}</h2>
-      {meta ? <span className="meta">{meta}</span> : null}
+    <header className="card-hd" data-slot="legacy-card-header">
+      <h2 data-slot="legacy-card-title">{title}</h2>
+      {meta ? (
+        <span className="meta" data-slot="legacy-card-meta">
+          {meta}
+        </span>
+      ) : null}
     </header>
   );
 }

@@ -95,7 +95,7 @@ export const TabsList = forwardRef<
       activateOnFocus={activateOnFocus ?? activationMode === "automatic"}
       loopFocus={loopFocus ?? loop}
       className={cn(
-        "inline-flex h-9 items-center justify-center rounded-full border border-border bg-muted p-[3px] text-muted-foreground",
+        "inline-flex h-9 items-center justify-start gap-1 border-b border-border bg-transparent p-0 text-muted-foreground",
         className,
       )}
       {...props}
@@ -118,7 +118,7 @@ export const TabsTrigger = forwardRef<
   <TabsPrimitive.Tab
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-full px-3.5 py-1 text-[11px] font-[850] tracking-[0.01em] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-active:bg-card data-active:text-primary data-active:shadow-[var(--shadow-panel)]",
+      "inline-flex h-9 items-center justify-center whitespace-nowrap border-b-2 border-transparent px-3 text-[12px] font-medium transition-[color,border-color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-active:border-foreground data-active:text-foreground",
       className,
     )}
     {...props}

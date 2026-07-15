@@ -1,4 +1,5 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
+import { IconX } from "@tabler/icons-react";
 
 import { ContactDeleteButton } from "../../contexts/outreach/components/ContactDeleteButton.js";
 import { ContactEditButton } from "../../contexts/outreach/components/ContactEditButton.js";
@@ -45,7 +46,7 @@ export function OutreachDetailDrawer({ contactId, onClose }: OutreachDetailDrawe
           type="button"
           onClick={onClose}
         >
-          x
+          <IconX aria-hidden="true" size={18} stroke={1.8} />
         </button>
         {errorMessage && !contact ? <Empty title={errorMessage} /> : null}
         {!contact && !errorMessage ? <Empty title="Loading contact." /> : null}

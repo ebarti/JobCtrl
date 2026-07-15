@@ -43,7 +43,7 @@ export function OutreachView() {
         actions={<DueFollowUpsBadge />}
       />
       <DueFollowUpsPanel />
-      <section className="card full">
+      <section className="card full data-list-card">
         {message ? <div className="banner inline">{message}</div> : null}
         <div className="toolbar">
           <label className="field compact">

@@ -8,12 +8,12 @@ export function ThemeToggle() {
   return (
     <button
       type="button"
-      className="tab"
+      className="tab topbar__theme-toggle"
       aria-label={`Switch to ${next} theme`}
       onClick={() => setTheme(next)}
     >
       {theme === "dark" ? <IconSun aria-hidden="true" size={14} /> : <IconMoon aria-hidden="true" size={14} />}
-      <span>theme</span>
+      <span aria-hidden="true">{theme}</span>
     </button>
   );
 }

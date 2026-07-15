@@ -59,7 +59,7 @@ export function DiscoveryRuntimeSettingsPanel() {
 
   return (
     <section className="card full discovery-runtime-settings">
-      <CardHeader title="Runtime settings" meta="discovery config" />
+      <CardHeader title="Runtime settings" meta="sources, timing, and filtering" />
       {settingsQuery.error ? <div className="banner inline">{settingsQuery.error.message}</div> : null}
       {settingsQuery.data ? (
         <DiscoveryRuntimeSettingsForm initial={settingsQuery.data} />

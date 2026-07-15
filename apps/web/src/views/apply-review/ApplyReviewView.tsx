@@ -41,6 +41,7 @@ import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../shared/ui/PdfPreviewViewer.js";
 import { JobDetailDrawer } from "../jobs/JobDetailDrawer.js";
+import "../../styles/redesign-apply-review.css";
 
 type MaterialStatus = {
   readonly kind: ApplyReviewQueueItem["applyAudit"]["state"];
@@ -76,6 +77,13 @@ function auditTone(state: ApplyReviewQueueItem["applyAudit"]["state"]): Material
   if (state === "ready") return "ok";
   if (state === "preparing") return "info";
   return "warn";
+}
+
+function fitTone(score: number | null): "positive" | "neutral" | "negative" | "unknown" {
+  if (score === null || !Number.isFinite(score)) return "unknown";
+  if (score >= 7) return "positive";
+  if (score >= 5) return "neutral";
+  return "negative";
 }
 
 function selectedItem(
@@ -419,7 +427,7 @@ function ApplyReviewQueue({
   return (
     <aside className="apply-review-queue" aria-label="Application review queue">
       <div className="apply-review-queue-head">
-        <span className="eyebrow">Queue</span>
+        <span>Review queue</span>
         <b>{items.length} human decision{items.length === 1 ? "" : "s"}</b>
       </div>
       <div className="apply-review-queue-list">
@@ -434,7 +442,17 @@ function ApplyReviewQueue({
               onClick={() => onSelect(item.jobKey)}
             >
               <span className="apply-review-queue-title">
-                <span className="tag ok">{item.fitScore ?? "-"}</span>
+                <span
+                  className="apply-review-queue-fit"
+                  data-score-tone={fitTone(item.fitScore)}
+                  aria-label={
+                    item.fitScore === null
+                      ? "Fit score not recorded"
+                      : `Fit score ${item.fitScore} out of 10`
+                  }
+                >
+                  {item.fitScore ?? "–"}
+                </span>
                 <b>{item.title}</b>
               </span>
               <span className="meta">
@@ -1101,6 +1119,7 @@ function ResumeReviewSurface({
 function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const reviewState = reviewStateLabel(item);
   const activeRun = activeApplyRun(item);
+  const status = materialStatus(item);
   const resumeAuditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
   const templatesQuery = useResumeTemplatesQuery();
   const setJobTemplate = useSetJobResumeTemplateMutation();
@@ -1185,20 +1204,38 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           className="apply-review-selected-context"
           aria-label={`Review controls and material facts for ${item.title}`}
         >
-          {reviewState ? <span className="tag muted">Current decision: {reviewState}.</span> : null}
-          <CompensationSummaryStrip
-            summary={item.compensationSummary}
-            label="Compensation"
-          />
-          <ApplyAuditFacts item={item} />
-          <JobResumeTemplateSelect
-            current={item.materialsPreview.resumeTemplate}
-            disabled={templatesQuery.isLoading || setJobTemplate.isPending || ensureCurrentMaterials.isPending}
-            onTemplateChange={handleTemplateChange}
-            refreshing={setJobTemplate.isPending || ensureCurrentMaterials.isPending}
-            templates={templatesQuery.data?.templates ?? []}
-          />
-          {templateMutationError ? <span className="tag warn">{templateMutationError}</span> : null}
+          <div className="apply-review-selected-identity">
+            <span className="apply-review-selected-label">Decision workspace</span>
+            <h2>{item.title}</h2>
+            <p>{item.company} · discovered via {item.source}</p>
+          </div>
+          <div className="apply-review-selected-summary" aria-label="Selected job status">
+            <span className="apply-review-selected-score" data-score-tone={fitTone(item.fitScore)}>
+              <b>{item.fitScore ?? "–"}</b>
+              <span>fit</span>
+            </span>
+            <span className={`apply-review-inline-state ${status.tone}`}>
+              {status.label}
+            </span>
+            {reviewState ? <span className="apply-review-inline-state muted">{reviewState}</span> : null}
+          </div>
+          <div className="apply-review-selected-facts">
+            <CompensationSummaryStrip
+              summary={item.compensationSummary}
+              label="Compensation"
+            />
+            <JobResumeTemplateSelect
+              current={item.materialsPreview.resumeTemplate}
+              disabled={templatesQuery.isLoading || setJobTemplate.isPending || ensureCurrentMaterials.isPending}
+              onTemplateChange={handleTemplateChange}
+              refreshing={setJobTemplate.isPending || ensureCurrentMaterials.isPending}
+              templates={templatesQuery.data?.templates ?? []}
+            />
+            <ApplyAuditFacts item={item} />
+            {templateMutationError ? (
+              <span className="apply-review-inline-state warn">{templateMutationError}</span>
+            ) : null}
+          </div>
         </div>
         <div className="apply-review-selected-actions">
           <button
@@ -1237,7 +1274,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
       ) : null}
 
       <section className="apply-review-workspace" aria-label={`Review evidence for ${item.title}`}>
-        <article className="apply-review-pane">
+        <article className="apply-review-pane apply-review-evidence-pane">
           <header>
             <span className="eyebrow">Job Position</span>
             <h2>Requirements and original post</h2>
@@ -1260,15 +1297,21 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
                 <Empty title="No captured job post text." />
               )}
             </section>
+            <RequirementLedAuditPanel audit={item.materialsPreview.requirementLedAudit} />
           </div>
         </article>
 
-        <article className="apply-review-pane">
+        <article className="apply-review-pane apply-review-materials-pane">
           <header>
             <span className="eyebrow">Application Materials</span>
             <h2>Tailored resume and cover</h2>
           </header>
           <div className="apply-review-pane-scroll apply-review-materials-scroll">
+            <ResumeReviewSurface
+              item={item}
+              onComparisonTargetChange={handleComparisonTargetChange}
+              onDraftGateChange={handleDraftGateChange}
+            />
             {resumeAuditArtifactId ? <ArtifactGroundingRiskPanel artifactId={resumeAuditArtifactId} /> : null}
             <ArtifactComparison
               emptyRightMessage="Render a saved draft to compare it with the accepted artifact."
@@ -1277,12 +1320,6 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
               rightArtifactId={comparisonDraft?.artifactId ?? null}
               rightLabel="Rendered draft"
               rightRiskLabels={comparisonDraft?.riskLabels ?? []}
-            />
-            <RequirementLedAuditPanel audit={item.materialsPreview.requirementLedAudit} />
-            <ResumeReviewSurface
-              item={item}
-              onComparisonTargetChange={handleComparisonTargetChange}
-              onDraftGateChange={handleDraftGateChange}
             />
             <EmailApplicationPreview item={item} />
             <TextPreview
@@ -1344,7 +1381,7 @@ export function ApplyReviewView({
         title="Application review"
         subtitle={`${readyCount} ready · ${preparingCount} preparing · ${repairCount} need repair`}
       />
-      <section className="card full">
+      <section className="apply-review-surface">
         {queueError ? <div className="banner inline">{queueError}</div> : null}
         {queue.isFetching && !queue.data ? <Empty title="Loading review queue." /> : null}
         {queue.data && selected ? (

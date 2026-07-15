@@ -254,7 +254,7 @@ export function SavedTableViewsControl({
   };
 
   return (
-    <div className="saved-table-views-control">
+    <div className="saved-table-views-control data-table-views">
       <label className="saved-table-views-select">
         <span>View</span>
         <select

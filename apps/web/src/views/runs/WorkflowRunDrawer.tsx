@@ -1,3 +1,4 @@
+import { IconX } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
@@ -44,7 +45,7 @@ export function WorkflowRunDrawer({ runId }: WorkflowRunDrawerProps) {
           type="button"
           onClick={close}
         >
-          x
+          <IconX aria-hidden="true" size={18} stroke={1.8} />
         </button>
         {message ? <Empty title={message} /> : null}
         {!message && isLoading ? <Empty title="Loading workflow run." /> : null}

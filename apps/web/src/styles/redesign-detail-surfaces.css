@@ -1,0 +1,631 @@
+/* Secondary workspaces follow the same Rhea-inspired hierarchy as the main
+ * screens: one clear surface, calm dividers, and dense evidence rows. */
+
+.drawer-backdrop {
+  top: var(--topbar-height);
+  left: 232px;
+  align-items: stretch;
+  justify-content: center;
+  padding: 24px 36px 48px;
+  background: var(--background);
+  backdrop-filter: none;
+}
+
+.detail-drawer:not(.job-detail-drawer) {
+  position: relative;
+  width: min(920px, 100%);
+  max-height: calc(100dvh - var(--topbar-height) - 48px);
+  margin-left: auto;
+  margin-right: auto;
+  border: 1px solid color-mix(in oklch, var(--border) 82%, var(--foreground));
+  border-radius: calc(var(--radius) * 1.45);
+  background: var(--card);
+  box-shadow: 0 24px 70px color-mix(in oklch, var(--foreground) 22%, transparent);
+  scrollbar-gutter: stable;
+}
+
+.detail-drawer.artifact-detail-drawer {
+  width: min(1320px, 100%);
+}
+
+.drawer-close {
+  z-index: 4;
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  margin: 14px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: color-mix(in oklch, var(--card) 92%, transparent);
+  color: var(--muted-foreground);
+  box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 7%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.drawer-close:hover {
+  border-color: color-mix(in oklch, var(--foreground) 24%, var(--border));
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.detail-drawer:not(.job-detail-drawer) .drawer-head {
+  gap: 14px;
+  align-items: flex-start;
+  padding: 26px 64px 22px 28px;
+  background: var(--card);
+}
+
+.detail-drawer:not(.job-detail-drawer) .drawer-head > span:first-child {
+  padding-top: 2px;
+}
+
+.detail-drawer:not(.job-detail-drawer) .drawer-head small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.detail-drawer:not(.job-detail-drawer) .drawer-head h2 {
+  margin: 2px 0 0;
+  font-size: clamp(20px, 2vw, 27px);
+  font-weight: 680;
+  letter-spacing: -0.035em;
+  line-height: 1.12;
+}
+
+.detail-drawer:not(.job-detail-drawer) .drawer-head p {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.detail-drawer:not(.job-detail-drawer) > .section,
+.contact-detail-drawer > .section,
+.contact-detail-drawer > .outreach-thread-panel {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 24px 28px;
+}
+
+.detail-drawer:not(.job-detail-drawer) > .section:last-child,
+.contact-detail-drawer > .outreach-thread-panel:last-child {
+  border-bottom: 0;
+}
+
+.detail-drawer:not(.job-detail-drawer) .section > h3,
+.detail-drawer:not(.job-detail-drawer) .outreach-thread-head h3 {
+  margin-bottom: 14px;
+  font-size: 13px;
+  font-weight: 680;
+  letter-spacing: -0.015em;
+}
+
+.detail-drawer:not(.job-detail-drawer) .detail-list {
+  gap: 0;
+  margin-bottom: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.detail-drawer:not(.job-detail-drawer) .detail-list > div {
+  grid-template-columns: minmax(112px, 0.35fr) minmax(0, 1fr);
+  gap: 20px;
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 76%, transparent);
+}
+
+.detail-drawer:not(.job-detail-drawer) .detail-list dt {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.detail-drawer:not(.job-detail-drawer) .detail-list dd {
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.detail-drawer:not(.job-detail-drawer) .timeline {
+  position: relative;
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detail-drawer:not(.job-detail-drawer) .timeline::before {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 3px;
+  width: 1px;
+  background: var(--border);
+  content: "";
+}
+
+.detail-drawer:not(.job-detail-drawer) .timeline > li {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  padding: 9px 0 9px 20px;
+}
+
+.detail-drawer:not(.job-detail-drawer) .timeline > li::before {
+  position: absolute;
+  top: 14px;
+  left: 0;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--card);
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  box-shadow: 0 0 0 1px var(--border);
+  content: "";
+}
+
+.detail-drawer:not(.job-detail-drawer) .timeline p {
+  margin: 3px 0 0;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+/* Artifact details use one settings rail and one dominant preview surface. */
+.artifact-detail-layout {
+  grid-template-columns: minmax(330px, 380px) minmax(540px, 1fr);
+  min-height: calc(100dvh - 126px);
+}
+
+.artifact-detail-sidebar {
+  background: color-mix(in oklch, var(--muted) 30%, var(--card));
+}
+
+.artifact-detail-sidebar > .section,
+.artifact-detail-sidebar > .tailoring-explanation-section {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 22px 24px;
+  background: transparent;
+}
+
+.artifact-detail-sidebar > .section:last-child {
+  border-bottom: 0;
+}
+
+.artifact-detail-sidebar .tab + .tab {
+  margin-left: 6px;
+}
+
+.artifact-preview-panel {
+  display: grid;
+  min-height: 760px;
+  background: oklch(0.18 0 0);
+}
+
+.artifact-preview-panel .pdf-preview-viewer {
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.artifact-preview-panel .pdf-preview-toolbar {
+  min-height: 48px;
+  padding: 9px 14px;
+  border-bottom-color: oklch(1 0 0 / 12%);
+  background: oklch(0.205 0 0);
+}
+
+.artifact-preview-panel .pdf-preview-pages {
+  padding: 28px;
+}
+
+.artifact-comparison,
+.artifact-comparison-body,
+.artifact-comparison-side,
+.artifact-comparison-delta {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.artifact-comparison-head,
+.artifact-comparison-side-head,
+.artifact-comparison-delta-head {
+  padding-right: 0;
+  padding-left: 0;
+  background: transparent;
+}
+
+.artifact-comparison-sides,
+.artifact-comparison-delta-grid {
+  gap: 0;
+  border-top: 1px solid var(--border);
+}
+
+.artifact-comparison-side,
+.artifact-comparison-delta-grid > div {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.artifact-comparison-side + .artifact-comparison-side,
+.artifact-comparison-delta-grid > div:nth-child(even) {
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.artifact-comparison-tag-group .tag,
+.artifact-detail-sidebar .tag {
+  border: 0;
+  border-radius: 3px;
+}
+
+/* Contact details are a single thread, not a stack of cards. */
+.contact-detail-actions {
+  display: flex;
+  gap: 8px;
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--muted) 34%, var(--card));
+}
+
+.contact-detail-drawer .contact-provenance-list,
+.contact-detail-drawer .outreach-draft-history-list,
+.contact-detail-drawer .outreach-send-log-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+  list-style: none;
+}
+
+.contact-detail-drawer .contact-provenance-item,
+.contact-detail-drawer .outreach-draft-history-item,
+.contact-detail-drawer .outreach-send-log-item {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 0;
+  box-shadow: none;
+}
+
+.contact-detail-drawer .outreach-approved-draft,
+.contact-detail-drawer .outreach-candidate-draft,
+.contact-detail-drawer .outreach-send-log,
+.contact-detail-drawer .outreach-follow-up,
+.contact-detail-drawer .draft-gate-results,
+.contact-detail-drawer .draft-gate-block {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.contact-detail-drawer .outreach-approved-draft,
+.contact-detail-drawer .outreach-candidate-draft,
+.contact-detail-drawer .outreach-send-log,
+.contact-detail-drawer .outreach-follow-up {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.contact-detail-drawer .outreach-draft-body {
+  margin: 10px 0;
+  padding: 16px;
+  border-left: 2px solid var(--foreground);
+  border-radius: 0;
+  background: color-mix(in oklch, var(--muted) 46%, var(--card));
+  color: var(--foreground);
+  line-height: 1.65;
+}
+
+.contact-detail-drawer .outreach-draft-actions,
+.contact-detail-drawer .outreach-send-log-actions,
+.contact-detail-drawer .form-actions {
+  gap: 7px;
+}
+
+/* The evidence map is a three-pane research workspace; rows carry selection
+ * state so evidence, gaps, and provenance do not become card mosaics. */
+.evidence-map-view {
+  overflow: hidden;
+  border-radius: calc(var(--radius) * 1.15);
+}
+
+.evidence-map-view > .toolbar {
+  min-height: 64px;
+  padding: 12px 18px;
+  background: var(--card);
+}
+
+.evidence-map-toolbar label {
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.evidence-map-shell {
+  grid-template-columns:
+    minmax(250px, 0.72fr)
+    minmax(410px, 1.18fr)
+    minmax(280px, 0.82fr);
+  min-height: 660px;
+  border-top: 1px solid var(--border);
+}
+
+.evidence-entry-list,
+.evidence-detail,
+.evidence-side-panel {
+  padding: 0;
+}
+
+.evidence-entry-list {
+  background: color-mix(in oklch, var(--muted) 28%, var(--card));
+}
+
+.evidence-entry-list > ul,
+.evidence-gap-list,
+.evidence-story-list {
+  gap: 0;
+}
+
+.evidence-entry-link {
+  align-items: flex-start;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 13px 15px;
+}
+
+.evidence-entry-link:hover {
+  background: color-mix(in oklch, var(--muted) 72%, var(--card));
+}
+
+.evidence-entry-link.selected {
+  background: var(--card);
+  box-shadow: inset 3px 0 0 var(--foreground);
+}
+
+.evidence-entry-link strong {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.evidence-entry-link .muted {
+  font-size: 10px;
+}
+
+.evidence-entry-meta {
+  justify-content: flex-end;
+}
+
+.evidence-entry-meta .tag,
+.evidence-tags .tag,
+.evidence-chip-list .tag {
+  border: 0;
+  border-radius: 3px;
+  padding: 2px 5px;
+  font-size: 9px;
+}
+
+.evidence-detail {
+  gap: 0;
+}
+
+.evidence-detail > header {
+  gap: 8px;
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.evidence-detail > section,
+.evidence-detail-group,
+.evidence-story {
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.evidence-detail > section:last-child {
+  border-bottom: 0;
+}
+
+.evidence-detail h2 {
+  font-size: 22px;
+  font-weight: 680;
+  letter-spacing: -0.03em;
+}
+
+.evidence-detail h3,
+.evidence-side-panel h2 {
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.evidence-story dl > div {
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 14px;
+  padding: 8px 0;
+}
+
+.evidence-usage-list {
+  gap: 0;
+  border-top: 1px solid var(--border);
+}
+
+.evidence-usage-link {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 10px 0;
+  font-size: 11px;
+}
+
+.evidence-usage-link:hover {
+  background: transparent;
+  color: var(--foreground);
+}
+
+.evidence-side-panel {
+  align-content: start;
+  gap: 0;
+  background: color-mix(in oklch, var(--muted) 28%, var(--card));
+}
+
+.evidence-side-panel > h2 {
+  margin: 0;
+  padding: 18px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.evidence-gap-list > li,
+.evidence-story-list > li {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 13px 16px;
+}
+
+.evidence-gap-list > li:hover,
+.evidence-story-list > li:hover {
+  background: color-mix(in oklch, var(--muted) 60%, var(--card));
+}
+
+.evidence-gap-list .tag {
+  width: fit-content;
+  border: 0;
+  border-radius: 3px;
+}
+
+/* Run timeline route uses the same dense event grammar as run drawers. */
+.apply-run-timeline {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 32px;
+}
+
+.apply-run-timeline-list {
+  position: relative;
+  gap: 0;
+}
+
+.apply-run-timeline-list::before {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 4px;
+  width: 1px;
+  background: var(--border);
+  content: "";
+}
+
+.apply-run-timeline-event {
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 14px;
+  padding: 11px 0;
+}
+
+.apply-run-timeline-marker {
+  z-index: 1;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--background);
+  box-shadow: 0 0 0 1px currentColor;
+}
+
+.apply-run-timeline-body {
+  gap: 5px;
+}
+
+.apply-run-timeline-head strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+@media (max-width: 980px) {
+  .artifact-detail-layout,
+  .evidence-map-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .artifact-detail-sidebar,
+  .evidence-entry-list,
+  .evidence-detail {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .artifact-preview-panel {
+    min-height: 660px;
+  }
+
+  .evidence-map-shell {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 1180px) and (min-width: 821px) {
+  .drawer-backdrop {
+    left: 68px;
+    padding: 20px 24px 40px;
+  }
+
+  .detail-drawer:not(.job-detail-drawer) {
+    max-height: calc(100dvh - var(--topbar-height) - 40px);
+  }
+}
+
+@media (max-width: 820px) {
+  .drawer-backdrop {
+    inset: 0;
+    padding: 0;
+  }
+
+  .detail-drawer:not(.job-detail-drawer),
+  .detail-drawer.artifact-detail-drawer {
+    width: 100dvw;
+    max-height: 100dvh;
+    border-width: 0;
+    border-radius: 0;
+  }
+}
+
+@media (max-width: 620px) {
+  .detail-drawer:not(.job-detail-drawer) .drawer-head,
+  .detail-drawer:not(.job-detail-drawer) > .section,
+  .contact-detail-drawer > .section,
+  .contact-detail-drawer > .outreach-thread-panel,
+  .contact-detail-actions {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .detail-drawer:not(.job-detail-drawer) .detail-list > div,
+  .evidence-story dl > div {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .artifact-preview-panel .pdf-preview-pages {
+    padding: 14px;
+  }
+
+  .apply-run-timeline {
+    padding: 22px 16px;
+  }
+}

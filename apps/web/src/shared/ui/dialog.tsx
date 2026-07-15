@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import { cn } from "../lib/cn.js";
+import { Button } from "./button.js";
 
 export interface DialogProps
   extends Omit<DialogPrimitive.Root.Props, "children"> {
@@ -17,7 +18,11 @@ export interface DialogProps
 }
 
 export function Dialog({ children, ...props }: DialogProps) {
-  return <DialogPrimitive.Root {...props}>{children}</DialogPrimitive.Root>;
+  return (
+    <DialogPrimitive.Root data-slot="dialog" {...props}>
+      {children}
+    </DialogPrimitive.Root>
+  );
 }
 Dialog.displayName = "Dialog";
 
@@ -38,6 +43,7 @@ export const DialogTrigger = forwardRef<HTMLButtonElement, DialogTriggerProps>(
 
     return (
       <DialogPrimitive.Trigger
+        data-slot="dialog-trigger"
         {...props}
         ref={ref}
         render={child ?? render}
@@ -63,6 +69,7 @@ export const DialogPortal = forwardRef<
   DialogPortalProps
 >(({ forceMount, keepMounted, ...props }, ref) => (
   <DialogPrimitive.Portal
+    data-slot="dialog-portal"
     {...props}
     keepMounted={keepMounted ?? forceMount}
     ref={ref}
@@ -86,7 +93,12 @@ export const DialogClose = forwardRef<HTMLButtonElement, DialogCloseProps>(
       : undefined;
 
     return (
-      <DialogPrimitive.Close {...props} ref={ref} render={child ?? render}>
+      <DialogPrimitive.Close
+        data-slot="dialog-close"
+        {...props}
+        ref={ref}
+        render={child ?? render}
+      >
         {child ? undefined : children}
       </DialogPrimitive.Close>
     );
@@ -100,8 +112,9 @@ export const DialogOverlay = forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Backdrop
     ref={ref}
+    data-slot="dialog-overlay"
     className={cn(
-      "fixed inset-0 z-50 bg-black/35 data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0",
+      "fixed inset-0 z-50 bg-black/30 duration-150 supports-backdrop-filter:backdrop-blur-[2px] data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0",
       className,
     )}
     {...props}
@@ -122,15 +135,25 @@ export const DialogContent = forwardRef<
     <DialogOverlay />
     <DialogPrimitive.Popup
       ref={ref}
+      data-slot="dialog-content"
       className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-popover p-6 text-popover-foreground shadow-lg duration-200 data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 sm:rounded-lg",
+        "fixed left-1/2 top-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-5 rounded-[10px] border border-border bg-popover p-5 text-sm text-popover-foreground shadow-xl outline-none duration-150 data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 sm:max-w-lg",
         className,
       )}
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
-        <IconX className="h-4 w-4" />
+      <DialogPrimitive.Close
+        data-slot="dialog-close"
+        render={
+          <Button
+            className="absolute right-3 top-3 size-8 bg-muted/60 text-muted-foreground shadow-none"
+            size="icon"
+            variant="ghost"
+          />
+        }
+      >
+        <IconX aria-hidden size={16} />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
     </DialogPrimitive.Popup>
@@ -144,8 +167,9 @@ export function DialogHeader({
 }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
+      data-slot="dialog-header"
       className={cn(
-        "flex flex-col space-y-1.5 text-center sm:text-left",
+        "flex flex-col gap-1.5 pr-8 text-left",
         className,
       )}
       {...props}
@@ -160,8 +184,9 @@ export function DialogFooter({
 }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
+      data-slot="dialog-footer"
       className={cn(
-        "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2",
+        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
         className,
       )}
       {...props}
@@ -176,8 +201,9 @@ export const DialogTitle = forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
+    data-slot="dialog-title"
     className={cn(
-      "text-lg font-semibold leading-none tracking-tight",
+      "font-heading text-base font-medium leading-none tracking-[-0.02em]",
       className,
     )}
     {...props}
@@ -191,7 +217,11 @@ export const DialogDescription = forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn("text-sm text-muted-foreground", className)}
+    data-slot="dialog-description"
+    className={cn(
+      "text-[13px] leading-5 text-muted-foreground *:[a]:underline *:[a]:underline-offset-4 *:[a]:hover:text-foreground",
+      className,
+    )}
     {...props}
   />
 ));

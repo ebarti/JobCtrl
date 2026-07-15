@@ -30,7 +30,7 @@ export function DiscoveryAutomationSettingsPanel() {
 
   return (
     <section className="card full discovery-automation-settings">
-      <CardHeader title="Automation settings" meta="SQLite · scoring and apply" />
+      <CardHeader title="Automation settings" meta="supervision, scoring, and apply" />
       {settingsQuery.error ? <div className="banner inline">{settingsQuery.error.message}</div> : null}
       {settingsQuery.data ? (
         <DiscoveryAutomationSettingsForm initial={settingsQuery.data} />

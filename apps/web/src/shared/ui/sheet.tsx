@@ -11,13 +11,18 @@ import {
 } from "react";
 
 import { cn } from "../lib/cn.js";
+import { Button } from "./button.js";
 
 export interface SheetProps extends Omit<DialogPrimitive.Root.Props, "children"> {
   children?: ReactNode;
 }
 
 export function Sheet({ children, ...props }: SheetProps) {
-  return <DialogPrimitive.Root {...props}>{children}</DialogPrimitive.Root>;
+  return (
+    <DialogPrimitive.Root data-slot="sheet" {...props}>
+      {children}
+    </DialogPrimitive.Root>
+  );
 }
 Sheet.displayName = "Sheet";
 
@@ -38,6 +43,7 @@ export const SheetTrigger = forwardRef<HTMLButtonElement, SheetTriggerProps>(
 
     return (
       <DialogPrimitive.Trigger
+        data-slot="sheet-trigger"
         {...props}
         ref={ref}
         render={child ?? render}
@@ -65,7 +71,12 @@ export const SheetClose = forwardRef<HTMLButtonElement, SheetCloseProps>(
       : undefined;
 
     return (
-      <DialogPrimitive.Close {...props} ref={ref} render={child ?? render}>
+      <DialogPrimitive.Close
+        data-slot="sheet-close"
+        {...props}
+        ref={ref}
+        render={child ?? render}
+      >
         {child ? undefined : children}
       </DialogPrimitive.Close>
     );
@@ -87,6 +98,7 @@ export const SheetPortal = forwardRef<
   SheetPortalProps
 >(({ forceMount, keepMounted, ...props }, ref) => (
   <DialogPrimitive.Portal
+    data-slot="sheet-portal"
     {...props}
     keepMounted={keepMounted ?? forceMount}
     ref={ref}
@@ -99,8 +111,9 @@ export const SheetOverlay = forwardRef<
   DialogPrimitive.Backdrop.Props
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Backdrop
+    data-slot="sheet-overlay"
     className={cn(
-      "fixed inset-0 z-50 bg-black/35 transition-opacity data-starting-style:opacity-0 data-ending-style:opacity-0",
+      "fixed inset-0 z-50 bg-black/30 transition-opacity duration-150 supports-backdrop-filter:backdrop-blur-[2px] data-starting-style:opacity-0 data-ending-style:opacity-0",
       className,
     )}
     {...props}
@@ -110,7 +123,7 @@ export const SheetOverlay = forwardRef<
 SheetOverlay.displayName = "SheetOverlay";
 
 const sheetVariants = cva(
-  "fixed z-50 gap-4 bg-popover p-6 text-popover-foreground shadow-lg transition ease-in-out data-open:duration-500 data-closed:duration-300",
+  "fixed z-50 flex flex-col gap-5 bg-popover p-6 text-sm text-popover-foreground shadow-xl transition ease-in-out data-open:duration-200 data-closed:duration-150",
   {
     variants: {
       side: {
@@ -143,13 +156,23 @@ export const SheetContent = forwardRef<
     <SheetOverlay />
     <DialogPrimitive.Popup
       ref={ref}
+      data-slot="sheet-content"
       data-side={side}
       className={cn(sheetVariants({ side }), className)}
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
-        <IconX className="h-4 w-4" />
+      <DialogPrimitive.Close
+        data-slot="sheet-close"
+        render={
+          <Button
+            className="absolute right-3 top-3 size-8 bg-muted/60 text-muted-foreground shadow-none"
+            size="icon"
+            variant="ghost"
+          />
+        }
+      >
+        <IconX aria-hidden size={16} />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
     </DialogPrimitive.Popup>
@@ -163,8 +186,9 @@ export function SheetHeader({
 }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
+      data-slot="sheet-header"
       className={cn(
-        "flex flex-col space-y-2 text-center sm:text-left",
+        "flex flex-col gap-1.5 pr-8 text-left",
         className,
       )}
       {...props}
@@ -179,8 +203,9 @@ export function SheetFooter({
 }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
+      data-slot="sheet-footer"
       className={cn(
-        "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2",
+        "mt-auto flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
         className,
       )}
       {...props}
@@ -195,7 +220,11 @@ export const SheetTitle = forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
-    className={cn("text-lg font-semibold text-foreground", className)}
+    data-slot="sheet-title"
+    className={cn(
+      "font-heading text-base font-medium leading-none tracking-[-0.02em] text-foreground",
+      className,
+    )}
     {...props}
   />
 ));
@@ -207,7 +236,8 @@ export const SheetDescription = forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn("text-sm text-muted-foreground", className)}
+    data-slot="sheet-description"
+    className={cn("text-[13px] leading-5 text-muted-foreground", className)}
     {...props}
   />
 ));

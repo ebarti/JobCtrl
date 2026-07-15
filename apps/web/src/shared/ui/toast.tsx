@@ -54,6 +54,7 @@ export const ToastViewport = forwardRef<
   return (
     <ToastPrimitive.Viewport
       ref={ref}
+      data-slot="toast-viewport"
       {...(resolvedLabel === undefined ? {} : { "aria-label": resolvedLabel })}
       className={cn(
         "fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]",
@@ -66,13 +67,13 @@ export const ToastViewport = forwardRef<
 ToastViewport.displayName = ToastPrimitive.Viewport.displayName;
 
 const toastVariants = cva(
-  "group pointer-events-auto relative flex w-full items-center justify-between space-x-2 overflow-hidden rounded-lg border p-4 pr-6 shadow-lg transition-all",
+  "group pointer-events-auto relative flex w-full items-center justify-between gap-3 overflow-hidden rounded-[10px] border p-4 pr-10 shadow-xl transition-all",
   {
     variants: {
       variant: {
         default: "border-border bg-popover text-popover-foreground",
         destructive:
-          "destructive group border-destructive bg-destructive text-white",
+          "destructive border-destructive/35 border-l-[3px] border-l-destructive bg-popover text-popover-foreground",
       },
     },
     defaultVariants: {
@@ -90,6 +91,7 @@ export const Toast = forwardRef<
 >(({ className, swipeDirection = "right", variant, ...props }, ref) => (
   <ToastPrimitive.Root
     ref={ref}
+    data-slot="toast"
     className={cn(toastVariants({ variant }), className)}
     swipeDirection={swipeDirection}
     {...props}
@@ -103,7 +105,8 @@ export const ToastContent = forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Content
     ref={ref}
-    className={cn("flex w-full items-center justify-between gap-2", className)}
+    data-slot="toast-content"
+    className={cn("flex w-full items-start justify-between gap-3", className)}
     {...props}
   />
 ));
@@ -119,9 +122,10 @@ export const ToastAction = forwardRef<
 >(({ altText, "aria-label": ariaLabel, className, ...props }, ref) => (
   <ToastPrimitive.Action
     ref={ref}
+    data-slot="toast-action"
     aria-label={ariaLabel ?? altText}
     className={cn(
-      "inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-border bg-transparent px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+      "inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-border bg-transparent px-3 text-[12px] font-medium transition-colors hover:bg-muted hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
       className,
     )}
     {...props}
@@ -135,15 +139,16 @@ export const ToastClose = forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Close
     ref={ref}
+    data-slot="toast-close"
     aria-label="Close"
     className={cn(
-      "absolute right-1 top-1 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring group-hover:opacity-100",
+      "absolute right-2 top-2 rounded-md p-1 text-muted-foreground opacity-60 transition-[background-color,color,opacity] hover:bg-muted hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring group-hover:opacity-100",
       className,
     )}
     toast-close=""
     {...props}
   >
-    <IconX className="size-4" />
+    <IconX aria-hidden size={16} />
   </ToastPrimitive.Close>
 ));
 ToastClose.displayName = ToastPrimitive.Close.displayName;
@@ -154,7 +159,8 @@ export const ToastTitle = forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Title
     ref={ref}
-    className={cn("text-sm font-semibold", className)}
+    data-slot="toast-title"
+    className={cn("text-[13px] font-semibold leading-5", className)}
     {...props}
   />
 ));
@@ -166,7 +172,8 @@ export const ToastDescription = forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Description
     ref={ref}
-    className={cn("text-sm opacity-90", className)}
+    data-slot="toast-description"
+    className={cn("text-[12px] leading-5 text-muted-foreground", className)}
     {...props}
   />
 ));

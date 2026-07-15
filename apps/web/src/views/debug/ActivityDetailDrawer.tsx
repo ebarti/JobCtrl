@@ -1,3 +1,4 @@
+import { IconX } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
@@ -36,7 +37,7 @@ export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
           type="button"
           onClick={close}
         >
-          x
+          <IconX aria-hidden="true" size={18} stroke={1.8} />
         </button>
         {!activity ? (
           <Empty title={`Activity event ${eventId} is no longer in the recent list.`} />

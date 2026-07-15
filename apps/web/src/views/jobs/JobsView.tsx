@@ -672,7 +672,7 @@ export function JobsView() {
         title="Jobs"
         subtitle={data ? `${data.pagination.total} total` : "loading"}
       />
-      <section className="card full">
+      <section className="card full data-list-card">
         {message ? <div className="banner inline">{message}</div> : null}
         <JobBulkActions
           search={search}

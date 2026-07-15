@@ -875,7 +875,7 @@ export function FilterableDataGrid<TData>({
 
   return (
     <div
-      className="filterable-data-grid"
+      className="filterable-data-grid data-surface"
       data-density={density ?? undefined}
     >
       <div className="data-grid-toolbar">

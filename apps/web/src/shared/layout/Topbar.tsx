@@ -1,4 +1,4 @@
-import { IconMenu2 } from "@tabler/icons-react";
+import { IconMenu2, IconSearch } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
@@ -36,30 +36,40 @@ export function Topbar() {
           <LegalNotice className="legal-notice legal-notice--sheet" />
         </SheetContent>
       </Sheet>
-      <input
-        aria-label="Global search"
-        className="global-search"
-        placeholder="Filter jobs, errors, companies..."
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && query.trim()) {
-            void navigate({ to: "/jobs", search: { q: query.trim(), page: 1 } });
-          }
-        }}
-      />
-      <select
-        aria-label="Row density"
-        className="select"
-        value={density}
-        onChange={(event) => setDensity(event.target.value as Density)}
-      >
-        {DENSITY_OPTIONS.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
+      <div className="topbar__search">
+        <IconSearch
+          className="topbar__search-icon"
+          size={16}
+          stroke={1.8}
+          aria-hidden="true"
+        />
+        <input
+          aria-label="Global search"
+          className="global-search"
+          placeholder="Filter jobs, errors, companies..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && query.trim()) {
+              void navigate({ to: "/jobs", search: { q: query.trim(), page: 1 } });
+            }
+          }}
+        />
+      </div>
+      <div className="topbar__density">
+        <select
+          aria-label="Row density"
+          className="select"
+          value={density}
+          onChange={(event) => setDensity(event.target.value as Density)}
+        >
+          {DENSITY_OPTIONS.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      </div>
       <ThemeToggle />
       <ConnectionStatusPill />
       <LegalNotice className="legal-notice legal-notice--topbar" />

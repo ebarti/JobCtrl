@@ -8,7 +8,7 @@ export function TargetSearchSettingsPanel() {
 
   return (
     <section className="card full target-search-settings">
-      <CardHeader title="Discovery settings" meta="target search" />
+      <CardHeader title="Target search" meta="roles, locations, and work models" />
       {profileQuery.error ? <div className="banner inline">{profileQuery.error.message}</div> : null}
       {profileQuery.data ? (
         <ProfileForm initial={profileQuery.data} section="target-search" />

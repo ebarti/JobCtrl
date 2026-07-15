@@ -1,5 +1,6 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobctrl/contracts";
+import { IconX } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
@@ -106,7 +107,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
           type="button"
           onClick={onClose}
         >
-          x
+          <IconX aria-hidden="true" size={18} stroke={1.8} />
         </button>
         {errorMessage ? <Empty title={errorMessage} /> : null}
         {!detail && !errorMessage ? <Empty title="Loading job." /> : null}
@@ -140,61 +141,71 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   Evidence map
                 </Link>
               </div>
-              <JobAuditTriage detail={detail} />
-              <CompensationAuditSection
-                jobId={detail.job.jobKey}
-                summary={detail.job.compensationSummary}
-                audit={detail.compensationAudit}
-                fallbackSalary={detail.job.salary}
-              />
-              <section className="section job-detail-description">
-                <h3>Description</h3>
-                <JobDescription text={detail.job.descriptionPreview} />
-              </section>
-              <div className="job-detail-drawer-main">
-                <Section title="Preparation diagnostics">
-                  <StageTimeline
+              <div className="job-detail-workspace job-detail-drawer-main">
+                <main className="job-detail-primary">
+                  <JobAuditTriage detail={detail} />
+                  <section className="section job-detail-description">
+                    <div className="job-detail-section-heading">
+                      <h3>Description</h3>
+                      <span>Original posting text</span>
+                    </div>
+                    <JobDescription text={detail.job.descriptionPreview} />
+                  </section>
+                  <CompensationAuditSection
                     jobId={detail.job.jobKey}
-                    stages={preparationStages(detail.stages)}
+                    summary={detail.job.compensationSummary}
+                    audit={detail.compensationAudit}
+                    fallbackSalary={detail.job.salary}
                   />
-                </Section>
-                <Section title="Active artifacts">
-                  {detail.artifacts.length ? (
-                    detail.artifacts.map((artifact) => (
-                      <div className="mini-row" key={artifact.artifactId}>
-                        <ArtifactStatusBadge status={artifact.status} />
-                        <span>{artifact.type}</span>
-                        <code>{artifact.localPath}</code>
-                        <OpenArtifactButton
-                          artifactId={artifact.artifactId}
-                          disabled={artifact.status === "missing"}
+                  {detail.employerAnalysis && !detail.requirementFitReport ? (
+                    <RequirementFitMissingCallout jobId={detail.job.jobKey} />
+                  ) : null}
+                  <EmployerAnalysisPanel
+                    analysis={detail.employerAnalysis}
+                    className="section job-detail-role-analysis"
+                    requirementFitReport={detail.requirementFitReport}
+                  />
+                  <InterviewPrepPanel
+                    jobId={detail.job.jobKey}
+                    prep={detail.interviewPrep}
+                    reflectionContent={
+                      detail.interviewPrep ? (
+                        <InterviewReflectionPanel
+                          jobId={detail.job.jobKey}
+                          prepGeneration={detail.interviewPrep.generation}
                         />
-                      </div>
-                    ))
-                  ) : (
-                    <Empty title="No active apply-ready artifacts." />
-                  )}
-                </Section>
-                {detail.employerAnalysis && !detail.requirementFitReport ? (
-                  <RequirementFitMissingCallout jobId={detail.job.jobKey} />
-                ) : null}
-                <EmployerAnalysisPanel
-                  analysis={detail.employerAnalysis}
-                  className="section job-detail-role-analysis"
-                  requirementFitReport={detail.requirementFitReport}
-                />
-                <InterviewPrepPanel
-                  jobId={detail.job.jobKey}
-                  prep={detail.interviewPrep}
-                  reflectionContent={
-                    detail.interviewPrep ? (
-                      <InterviewReflectionPanel
-                        jobId={detail.job.jobKey}
-                        prepGeneration={detail.interviewPrep.generation}
-                      />
-                    ) : null
-                  }
-                />
+                      ) : null
+                    }
+                  />
+                </main>
+                <aside className="job-detail-sidebar" aria-label="Job preparation and audit">
+                  <Section title="Preparation diagnostics">
+                    <StageTimeline
+                      jobId={detail.job.jobKey}
+                      stages={preparationStages(detail.stages)}
+                    />
+                  </Section>
+                  <Section title="Active artifacts">
+                    {detail.artifacts.length ? (
+                      detail.artifacts.map((artifact) => (
+                        <div className="mini-row" key={artifact.artifactId}>
+                          <ArtifactStatusBadge status={artifact.status} />
+                          <span>{artifact.type}</span>
+                          <code>{artifact.localPath}</code>
+                          <OpenArtifactButton
+                            artifactId={artifact.artifactId}
+                            disabled={artifact.status === "missing"}
+                          />
+                        </div>
+                      ))
+                    ) : (
+                      <Empty title="No active apply-ready artifacts." />
+                    )}
+                  </Section>
+                  <JobAuditHistorySection entries={detail.auditHistory} />
+                </aside>
+              </div>
+              <div className="job-detail-follow-up">
                 <Section title="Apply history">
                   <ApplyHistory jobId={detail.job.jobKey} />
                 </Section>
@@ -205,7 +216,6 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   jobId={detail.job.jobKey}
                   {...(detail.job.company ? { employer: detail.job.company } : {})}
                 />
-                <JobAuditHistorySection entries={detail.auditHistory} />
               </div>
             </div>
           </>

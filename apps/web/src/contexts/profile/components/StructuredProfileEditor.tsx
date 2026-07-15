@@ -1,5 +1,15 @@
-import { useEffect, useRef, type ReactNode } from "react";
-import { IconPlus, IconTrash } from "@tabler/icons-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { IconChevronDown, IconExternalLink, IconPlus, IconTrash } from "@tabler/icons-react";
+
+import { Checkbox } from "../../../shared/ui/checkbox.js";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../../shared/ui/select.js";
 
 import {
   GoogleAddressSearchField,
@@ -136,6 +146,39 @@ export interface StructuredProfileEditorProps {
   styleText: string;
   onProfileTextChange: (value: string) => void;
   onStyleTextChange: (value: string) => void;
+}
+
+function ConfigurationSection({
+  children,
+  defaultOpen,
+  description,
+  title,
+}: {
+  readonly children: ReactNode;
+  readonly defaultOpen?: boolean;
+  readonly description: string;
+  readonly title: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen ?? false);
+
+  return (
+    <details
+      className="form-section configuration-section"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        <span className="configuration-section__title-group">
+          <span aria-level={3} className="configuration-section__title" role="heading">
+            {title}
+          </span>
+          <span className="configuration-section__description">{description}</span>
+        </span>
+        <IconChevronDown aria-hidden="true" className="configuration-section__indicator" size={16} />
+      </summary>
+      <div className="configuration-section__body">{children}</div>
+    </details>
+  );
 }
 
 export function StructuredProfileEditor({
@@ -522,30 +565,33 @@ export function StructuredProfileEditor({
   ) => (
     <label className="field">
       <span>{label}</span>
-      <select
-        aria-label={label}
-        value={textAt(profile, path)}
-        onChange={(event) => updateProfilePath(path, event.target.value)}
-      >
-        {options.map((option) => {
-          const value = Array.isArray(option) ? option[0] : option;
-          const text = Array.isArray(option) ? option[1] : option;
-          return (
-            <option key={value} value={value}>
-              {text}
-            </option>
-          );
-        })}
-      </select>
+      <Select value={textAt(profile, path)} onValueChange={(value) => updateProfilePath(path, value)}>
+        <SelectTrigger aria-label={label} className="configuration-select-trigger">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {options.map((option) => {
+              const value = Array.isArray(option) ? option[0] : option;
+              const text = Array.isArray(option) ? option[1] : option;
+              return (
+                <SelectItem key={value} value={value}>
+                  {text}
+                </SelectItem>
+              );
+            })}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
     </label>
   );
 
   const inventedAdjacentExperienceField = () => (
     <label className="field check">
-      <input
-        type="checkbox"
+      <Checkbox
+        aria-label="Enable profile enhancement"
         checked={allowsInventedAdjacentExperience()}
-        onChange={(event) => setInventedAdjacentExperienceAllowed(event.target.checked)}
+        onCheckedChange={setInventedAdjacentExperienceAllowed}
       />
       <span>Enable profile enhancement</span>
     </label>
@@ -553,10 +599,10 @@ export function StructuredProfileEditor({
 
   const checkboxField = (path: string, label: string) => (
     <label className="field check">
-      <input
-        type="checkbox"
+      <Checkbox
+        aria-label={label}
         checked={Boolean(getPathValue(profile, path))}
-        onChange={(event) => updateProfilePath(path, event.target.checked)}
+        onCheckedChange={(checked) => updateProfilePath(path, checked)}
       />
       <span>{label}</span>
     </label>
@@ -615,7 +661,7 @@ export function StructuredProfileEditor({
 
   const disabledCheckboxField = (label: string) => (
     <label className="field check disabled">
-      <input type="checkbox" checked={false} disabled />
+      <Checkbox aria-label={label} checked={false} disabled />
       <span>{label}</span>
     </label>
   );
@@ -900,15 +946,33 @@ export function StructuredProfileEditor({
 
   const bulletStandardsField = () => (
     <fieldset className="field wide checkbox-group-field bullet-standards-group">
-      <legend>Bullet standards</legend>
+      <legend>
+        <span>Bullet standards</span>
+        <a
+          className="configuration-help-link"
+          href="https://jobctrl.dev/architecture/tailoring#inputs-to-tailoring"
+          rel="noreferrer"
+          target="_blank"
+        >
+          Guide
+          <IconExternalLink aria-hidden="true" size={12} />
+        </a>
+      </legend>
       <div className="checkbox-options">
         {BULLET_STANDARD_OPTIONS.map(([value, label]) => (
-          <label className="choice target-choice" key={value}>
-            <input type="checkbox" checked readOnly value={value} />
+          <label className="choice target-choice required-choice" key={value}>
+            <Checkbox
+              aria-label={`${label}, required`}
+              checked
+              disabled
+              name="bullet-standard"
+              value={value}
+            />
             <span>{label}</span>
           </label>
         ))}
       </div>
+      <small>Required evidence-quality standards; these cannot be disabled.</small>
     </fieldset>
   );
 
@@ -1031,17 +1095,20 @@ export function StructuredProfileEditor({
   const styleSelect = (path: string, label: string, options: Array<[string, string]>) => (
     <label className="field">
       <span>{label}</span>
-      <select
-        aria-label={label}
-        value={textAt(style, path)}
-        onChange={(event) => updateStylePath(path, event.target.value)}
-      >
-        {options.map(([value, text]) => (
-          <option key={value} value={value}>
-            {text}
-          </option>
-        ))}
-      </select>
+      <Select value={textAt(style, path)} onValueChange={(value) => updateStylePath(path, value)}>
+        <SelectTrigger aria-label={label} className="configuration-select-trigger">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {options.map(([value, text]) => (
+              <SelectItem key={value} value={value}>
+                {text}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
     </label>
   );
 
@@ -1391,8 +1458,11 @@ export function StructuredProfileEditor({
         targetSearchSection()
       ) : (
         <>
-          <section className="form-section">
-            <h3>Application configurations</h3>
+          <ConfigurationSection
+            defaultOpen
+            description="Availability, work authorization, and compensation defaults."
+            title="Application configuration"
+          >
             <div className="field-grid">
               {applicationConfigurationFields}
               {selectField("work_authorization.legally_authorized_to_work", "Legally authorized to work", [
@@ -1425,10 +1495,13 @@ export function StructuredProfileEditor({
               })}
               {textField("compensation.currency_conversion_note", "Currency note")}
             </div>
-          </section>
+          </ConfigurationSection>
 
-          <section className="form-section">
-            <h3>Tailoring controls</h3>
+          <ConfigurationSection
+            defaultOpen
+            description="Evidence-safe writing rules and generation thresholds."
+            title="Tailoring controls"
+          >
             <div className="tailoring-controls-grid">
               {adjacentExperienceClaimsGroup()}
               {generationPermissionsGroup()}
@@ -1436,10 +1509,12 @@ export function StructuredProfileEditor({
               {revisionPolicyGroup()}
               {additionalGuidanceGroup()}
             </div>
-          </section>
+          </ConfigurationSection>
 
-          <section className="form-section">
-            <h3>Resume style</h3>
+          <ConfigurationSection
+            description="Defaults for generated resumes outside the template workspace."
+            title="Resume style"
+          >
             <div className="field-grid">
               {styleSelect("document_font_size", "Text size", [
                 ["10pt", "Small"],
@@ -1478,7 +1553,7 @@ export function StructuredProfileEditor({
               {styleNumber("page_scale", "Page scale", 0.7, 1, 0.01)}
               {styleNumber("hints_column_width_cm", "Date column width (cm)", 1.5, 5, 0.1)}
             </div>
-          </section>
+          </ConfigurationSection>
         </>
       )}
     </div>

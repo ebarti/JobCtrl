@@ -1,0 +1,537 @@
+/*
+ * Data-intensive screens use a quieter treatment than the rest of the app:
+ * the table is the object, while toolbars and controls stay deliberately
+ * recessive. This keeps the large operational surfaces readable without
+ * turning each row, state, or action into another rounded card.
+ */
+
+.data-surface,
+.data-table-surface,
+.data-table-scroll {
+  min-width: 0;
+}
+
+.data-list-card {
+  overflow: hidden;
+  border-radius: calc(var(--radius) * 1.05);
+  box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 4%, transparent);
+}
+
+.data-list-card > .toolbar,
+.data-list-card > .filter-bar {
+  background: transparent;
+}
+
+.data-surface {
+  border-top: 1px solid var(--border);
+  background: transparent;
+}
+
+.data-grid-toolbar {
+  min-height: 48px;
+  gap: 16px;
+  padding: 9px 16px;
+  background: transparent;
+}
+
+.data-grid-view-title {
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.data-grid-view-title > svg {
+  color: var(--muted-foreground);
+}
+
+.data-grid-view-title .meta {
+  padding-left: 9px;
+  border-left: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 450;
+}
+
+.data-grid-tools {
+  gap: 5px;
+}
+
+.data-grid-filter-chips {
+  gap: 0;
+  padding: 0 16px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-grid-filter-chips button {
+  gap: 5px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 2px 10px;
+  color: var(--foreground);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.data-grid-filter-chips button:first-child {
+  padding-left: 0;
+}
+
+.data-grid-filter-chips button:last-child {
+  border-right: 0;
+}
+
+.data-grid-filter-chips button:hover {
+  background: transparent;
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.filterable-data-grid-scroll {
+  border-bottom: 1px solid var(--border);
+}
+
+.filterable-data-grid-table {
+  font-size: 12px;
+}
+
+.filterable-data-grid-table th,
+.filterable-data-grid-table td {
+  border-color: color-mix(in oklch, var(--border) 82%, transparent);
+  padding: 10px 12px;
+}
+
+.filterable-data-grid[data-density="compact"] .filterable-data-grid-table th,
+.filterable-data-grid[data-density="compact"] .filterable-data-grid-table td {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.filterable-data-grid[data-density="comfy"] .filterable-data-grid-table th,
+.filterable-data-grid[data-density="comfy"] .filterable-data-grid-table td {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.filterable-data-grid-table thead th {
+  background: color-mix(in oklch, var(--muted) 42%, var(--card));
+  color: color-mix(in oklch, var(--muted-foreground) 88%, var(--foreground));
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.07em;
+}
+
+.filterable-data-grid-table tbody th {
+  font-weight: 590;
+}
+
+.filterable-data-grid-table tbody tr.data-grid-row-activatable:hover {
+  background: color-mix(in oklch, var(--foreground) 3%, var(--card));
+}
+
+.filterable-data-grid-table tbody tr[aria-selected="true"] {
+  background: color-mix(in oklch, var(--foreground) 5%, var(--card));
+  box-shadow: inset 2px 0 0 var(--foreground);
+}
+
+.filterable-data-grid-table tbody tr.data-grid-row-tone-success,
+.filterable-data-grid-table tbody tr.data-grid-row-tone-warning,
+.filterable-data-grid-table tbody tr.data-grid-row-tone-danger,
+.filterable-data-grid-table tbody tr.data-grid-row-tone-info {
+  box-shadow: inset 2px 0 0 var(--border);
+}
+
+.filterable-data-grid-table tbody tr.data-grid-row-tone-success {
+  box-shadow: inset 2px 0 0 color-mix(in oklch, var(--success) 58%, var(--border));
+}
+
+.filterable-data-grid-table tbody tr.data-grid-row-tone-warning {
+  box-shadow: inset 2px 0 0 color-mix(in oklch, var(--warning) 62%, var(--border));
+}
+
+.filterable-data-grid-table tbody tr.data-grid-row-tone-danger {
+  box-shadow: inset 2px 0 0 color-mix(in oklch, var(--destructive) 62%, var(--border));
+}
+
+.filterable-data-grid-table tbody tr.data-grid-row-tone-info {
+  box-shadow: inset 2px 0 0 color-mix(in oklch, var(--status-info) 58%, var(--border));
+}
+
+.filterable-data-grid-table .data-grid-cell-tone-success,
+.filterable-data-grid-table .data-grid-cell-tone-warning,
+.filterable-data-grid-table .data-grid-cell-tone-danger,
+.filterable-data-grid-table .data-grid-cell-tone-info {
+  background: transparent;
+}
+
+.filterable-data-grid-table tbody tr.data-grid-group-row th {
+  background: color-mix(in oklch, var(--muted) 54%, var(--card));
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.data-grid-sort-button {
+  gap: 8px;
+}
+
+.data-grid-sort-button:hover {
+  color: var(--foreground);
+}
+
+.data-grid-sort-button svg,
+.data-grid-sort-button > span:last-child {
+  color: var(--muted-foreground);
+}
+
+.data-grid-column-resizer::after {
+  top: 9px;
+  bottom: 9px;
+  background: color-mix(in oklch, var(--border) 76%, transparent);
+}
+
+.data-grid-column-filter-button {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+}
+
+.data-grid-column-filter-button:hover,
+.data-grid-column-filter-button:focus-visible,
+.data-grid-column-filter-button.active {
+  border-color: transparent;
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.data-grid-column-filter-button.active {
+  color: var(--primary);
+}
+
+.data-grid-row-activation-button,
+.table-row-activation-button {
+  min-width: 0;
+  min-height: 0;
+  margin-left: 7px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.data-grid-row-activation-button:hover,
+.table-row-activation-button:hover {
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Scores retain their useful colour signal without becoming colored tiles. */
+.jobs-data-grid-table .fit {
+  width: auto;
+  height: auto;
+  min-width: 1.5rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 760;
+}
+
+.jobs-data-grid-table .fit[data-score-tone="positive"] {
+  color: var(--success);
+}
+
+.jobs-data-grid-table .fit[data-score-tone="negative"] {
+  color: var(--destructive);
+}
+
+.jobs-data-grid-table .fit[data-score-tone="neutral"] {
+  color: var(--warning);
+}
+
+.jobs-data-grid-table .fit[data-score-tone="unknown"] {
+  color: var(--muted-foreground);
+}
+
+.filterable-data-grid-table .tag,
+.filterable-data-grid-table .stage-pill,
+.filterable-data-grid-table .job-compensation-confidence {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 630;
+  letter-spacing: 0;
+}
+
+.filterable-data-grid-table .tag::before,
+.filterable-data-grid-table .stage-pill::before,
+.filterable-data-grid-table .job-compensation-confidence::before {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+  opacity: 0.72;
+}
+
+.filterable-data-grid-table .tag.muted,
+.filterable-data-grid-table .stage-pill.neutral,
+.filterable-data-grid-table .job-compensation-confidence-none {
+  box-shadow: none;
+  background: transparent;
+}
+
+.filterable-data-grid-table .job-compensation-confidence-high {
+  color: var(--success);
+}
+
+.filterable-data-grid-table .job-compensation-confidence-medium {
+  color: var(--warning);
+}
+
+.filterable-data-grid-table .job-compensation-confidence-low {
+  color: var(--destructive);
+}
+
+.data-table-pager {
+  min-height: 52px;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  background: transparent;
+}
+
+.data-table-pager .tab {
+  min-height: 30px;
+  border-color: transparent;
+  border-radius: 4px;
+  padding: 5px 9px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.data-table-pager .tab:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.data-table-pager .meta {
+  padding-inline: 5px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table-pager select {
+  min-height: 30px;
+  border-radius: 4px;
+  padding: 4px 25px 4px 8px;
+  font-size: 11px;
+}
+
+.data-table-views {
+  gap: 2px;
+}
+
+.data-table-views button,
+.data-table-views .saved-table-views-select select {
+  min-width: 30px;
+  min-height: 30px;
+  border-color: transparent;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.data-table-views button:hover:not(:disabled),
+.data-table-views .saved-table-views-select select:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--muted);
+}
+
+.data-table-views .saved-table-views-select {
+  gap: 5px;
+}
+
+.data-table-views .saved-table-views-select span {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.data-table-views .saved-table-views-select select {
+  max-width: 158px;
+  padding: 4px 27px 4px 8px;
+  font-size: 11px;
+}
+
+.data-grid-column-filter-dialog .data-grid-filter-condition {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 4px 0;
+}
+
+.data-grid-filter-operator {
+  border-radius: 4px;
+}
+
+.data-grid-filter-operator button.active {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.data-grid-value-list {
+  border-radius: 4px;
+}
+
+.data-grid-value-option {
+  border-radius: 3px;
+}
+
+.saved-table-density {
+  border-radius: 4px;
+}
+
+.saved-table-rule-list div,
+.saved-table-column-row {
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.data-table-scroll .data-table {
+  border-collapse: collapse;
+}
+
+.data-table-scroll .data-table thead tr {
+  background: color-mix(in oklch, var(--muted) 42%, var(--card));
+}
+
+.data-table-scroll .data-table th {
+  height: 38px;
+  padding-inline: 12px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.07em;
+}
+
+.data-table-scroll .data-table td {
+  padding: 10px 12px;
+  border-color: color-mix(in oklch, var(--border) 82%, transparent);
+}
+
+.data-table-scroll .data-table tr:hover {
+  background: color-mix(in oklch, var(--foreground) 3%, var(--card));
+}
+
+.data-table-surface .table-head {
+  min-height: 38px;
+  background: color-mix(in oklch, var(--muted) 42%, var(--card));
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.07em;
+}
+
+.data-table-surface .table-row-activatable:hover {
+  background: color-mix(in oklch, var(--foreground) 3%, var(--card));
+}
+
+.analytics-view .analytics-toolbar {
+  gap: 3px;
+  padding: 10px 16px;
+  background: transparent;
+}
+
+.analytics-view .segmented {
+  min-height: 28px;
+  border-color: transparent;
+  border-radius: 4px;
+  padding-inline: 9px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.analytics-view .segmented:hover,
+.analytics-view .segmented:focus-visible {
+  border-color: transparent;
+  background: var(--muted);
+}
+
+.analytics-view .segmented.active {
+  background: var(--foreground);
+  color: var(--background);
+  font-weight: 650;
+}
+
+.analytics-summary-strip {
+  grid-template-columns: repeat(auto-fit, minmax(144px, 1fr));
+}
+
+.analytics-summary-strip > div {
+  gap: 5px;
+  padding: 15px 16px 17px;
+}
+
+.analytics-summary-strip span {
+  font-weight: 650;
+}
+
+.analytics-summary-strip b {
+  font-size: 24px;
+  font-weight: 720;
+}
+
+.analytics-caption {
+  background: transparent;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .data-grid-toolbar {
+    gap: 8px;
+    padding-inline: 12px;
+  }
+
+  .data-grid-view-title .meta {
+    display: none;
+  }
+
+  .data-grid-filter-chips {
+    padding-inline: 12px;
+  }
+
+  .data-table-pager {
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-inline: 12px;
+  }
+}

@@ -72,7 +72,7 @@ export function ArtifactsView() {
         title="Artifacts"
         subtitle={data ? `${data.pagination.total} total` : "loading"}
       />
-      <section className="card full">
+      <section className="card full data-list-card">
         {message ? <div className="banner inline">{message}</div> : null}
         <ArtifactFilterBar search={search} />
         <ArtifactsTable

@@ -49,6 +49,8 @@ export function AnalyticsView() {
   const analytics = analyticsQuery.data ?? null;
   const message = analyticsQuery.error instanceof Error ? analyticsQuery.error.message : null;
   const applied = analytics?.totals.applied ?? 0;
+  const activeDimensionLabel =
+    DIMENSION_OPTIONS.find((option) => option.value === dimension)?.label ?? "Dimension";
 
   const setDimension = (next: AnalyticsDimension) => {
     void navigate({ search: (prev: AnalyticsSearch) => ({ ...prev, dimension: next }) });
@@ -61,58 +63,64 @@ export function AnalyticsView() {
         title="Outcome analytics"
         subtitle={analytics ? `${applied} applied` : "loading"}
       />
-      <section className="card full analytics-view">
+      <section className="card full analytics-view data-list-card" aria-label="Outcome analytics workspace">
         {message ? <div className="banner inline">{message}</div> : null}
-        <div className="analytics-toolbar" role="group" aria-label="Outcome analytics dimension">
-          {DIMENSION_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={option.value === dimension ? "segmented active" : "segmented"}
-              aria-pressed={option.value === dimension}
-              onClick={() => setDimension(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-          <label className="analytics-select-label">
-            <span>Dimension</span>
-            <select
-              className="select"
-              value={dimension}
-              onChange={(event) => {
-                const next = event.target.value;
-                if (isAnalyticsDimension(next)) setDimension(next);
-              }}
-            >
-              {DIMENSION_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="analytics-controls">
+          <div className="analytics-controls-copy">
+            <span>Breakdown</span>
+            <strong>{activeDimensionLabel}</strong>
+          </div>
+          <div className="analytics-toolbar" role="group" aria-label="Outcome analytics dimension">
+            {DIMENSION_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={option.value === dimension ? "segmented active" : "segmented"}
+                aria-pressed={option.value === dimension}
+                onClick={() => setDimension(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+            <label className="analytics-select-label">
+              <span>Dimension</span>
+              <select
+                className="select"
+                value={dimension}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  if (isAnalyticsDimension(next)) setDimension(next);
+                }}
+              >
+                {DIMENSION_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
-        <div className="analytics-summary-strip">
-          <div>
-            <span>Applied</span>
-            <b>{analytics?.totals.applied ?? "-"}</b>
+        <dl className="analytics-summary-strip" aria-label="Outcome summary">
+          <div className="analytics-summary-metric analytics-summary-metric-primary">
+            <dt>Applied</dt>
+            <dd>{analytics?.totals.applied ?? "-"}</dd>
           </div>
-          <div>
-            <span>Replies</span>
-            <b>{analytics?.totals.reply ?? "-"}</b>
+          <div className="analytics-summary-metric analytics-summary-metric-primary">
+            <dt>Replies</dt>
+            <dd>{analytics?.totals.reply ?? "-"}</dd>
           </div>
-          <div>
-            <span>Interviews</span>
-            <b>{analytics?.totals.interview ?? "-"}</b>
+          <div className="analytics-summary-metric analytics-summary-metric-primary">
+            <dt>Interviews</dt>
+            <dd>{analytics?.totals.interview ?? "-"}</dd>
           </div>
-          <div>
-            <span>Offers</span>
-            <b>{analytics?.totals.offer ?? "-"}</b>
+          <div className="analytics-summary-metric analytics-summary-metric-primary">
+            <dt>Offers</dt>
+            <dd>{analytics?.totals.offer ?? "-"}</dd>
           </div>
-          <div>
-            <span>Median response</span>
-            <b>
+          <div className="analytics-summary-metric analytics-summary-metric-secondary">
+            <dt>Median response</dt>
+            <dd>
               {analytics
                 ? formatDuration(
                     analytics.timeToResponse.medianMinutes,
@@ -120,11 +128,11 @@ export function AnalyticsView() {
                     analytics.minSample,
                   )
                 : "-"}
-            </b>
+            </dd>
           </div>
-          <div>
-            <span>Suggestions accepted</span>
-            <b>
+          <div className="analytics-summary-metric analytics-summary-metric-secondary">
+            <dt>Suggestions accepted</dt>
+            <dd>
               {analytics
                 ? formatAcceptance(
                     analytics.suggestionAccuracy.acceptanceRate,
@@ -132,9 +140,9 @@ export function AnalyticsView() {
                     analytics.minSample,
                   )
                 : "-"}
-            </b>
+            </dd>
           </div>
-        </div>
+        </dl>
         <SmallSampleNotice {...(analytics ? { minSample: analytics.minSample } : {})} />
         <DimensionBreakdownPanel
           analytics={analytics}

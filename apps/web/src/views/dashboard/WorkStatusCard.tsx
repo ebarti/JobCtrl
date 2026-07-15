@@ -25,11 +25,13 @@ export function WorkStatusCard({ summary }: { summary: DashboardSummary }) {
       />
       <div className="grid grid-cols-2 gap-3 p-4">
         <StatCard
+          className="work-status-stat"
           label="Active work"
           value={work.active}
           delta="queued or moving"
         />
         <StatCard
+          className="work-status-stat"
           label="Stuck work"
           value={work.stuck}
           valueTone={work.stuck ? "down" : undefined}

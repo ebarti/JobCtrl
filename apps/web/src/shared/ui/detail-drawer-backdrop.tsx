@@ -16,7 +16,11 @@ export function DetailDrawerBackdrop({
   };
 
   return (
-    <div className="drawer-backdrop" onClick={handleClick}>
+    <div
+      className="drawer-backdrop"
+      data-slot="detail-drawer-backdrop"
+      onClick={handleClick}
+    >
       {children}
     </div>
   );

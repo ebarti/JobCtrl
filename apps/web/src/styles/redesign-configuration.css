@@ -1,0 +1,890 @@
+/*
+ * Configuration and discovery use an editorial workspace treatment: a small
+ * number of meaningful surfaces, open section bands, and dense but breathable
+ * forms. This intentionally overrides the older nested-card presentation.
+ */
+
+.profile-layout,
+.config-layout,
+.discovery-workspace {
+  --configuration-surface: var(--card);
+  --configuration-subtle: color-mix(in oklch, var(--muted) 62%, var(--card));
+  --configuration-rule: color-mix(in oklch, var(--border) 88%, var(--foreground));
+}
+
+/* Profile and preferences -------------------------------------------------- */
+
+.profile-layout > .card,
+.profile-layout-single > .card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.profile-layout > .card > .card-hd {
+  min-height: 0;
+  padding: 0 0 16px;
+  border: 0;
+  background: transparent;
+}
+
+.profile-layout > .card > .card-hd h2 {
+  font-size: 17px;
+  font-weight: 670;
+  letter-spacing: -0.03em;
+}
+
+.profile-layout .profile-evidence-toolbar {
+  margin-bottom: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.profile-layout .editor-bulk-actions {
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--configuration-rule);
+  border-radius: 8px;
+  background: var(--configuration-surface);
+}
+
+.profile-layout .profile-sections {
+  gap: 0;
+  padding: 0;
+}
+
+.profile-layout .profile-sections > .form-section {
+  overflow: visible;
+  border: 0;
+  border-top: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Personal information is the one clear profile-subject card. */
+.profile-layout .profile-sections > .form-section:first-child {
+  margin-bottom: 16px;
+  border: 1px solid var(--configuration-rule);
+  border-radius: 8px;
+  background: var(--configuration-surface);
+}
+
+.profile-layout .profile-sections > .form-section > h3 {
+  padding: 17px 20px 13px;
+  border-bottom: 1px solid var(--configuration-rule);
+  background: transparent;
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+}
+
+.profile-layout .profile-sections > .form-section:not(:first-child) > h3 {
+  padding: 18px 0 10px;
+  border: 0;
+}
+
+.profile-layout .profile-sections > .form-section .field-grid,
+.profile-layout .profile-sections > .form-section .target-preferences-grid {
+  padding: 16px 20px 20px;
+}
+
+.profile-layout .profile-sections > .form-section:not(:first-child) > .field-grid,
+.profile-layout .profile-sections > .form-section:not(:first-child) > .target-preferences-grid {
+  padding-inline: 0;
+}
+
+.profile-layout .repeat-list {
+  gap: 0;
+  padding: 0 0 18px;
+}
+
+.profile-layout .repeat-card {
+  gap: 14px;
+  border: 0;
+  border-top: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+  padding: 16px 0;
+}
+
+.profile-layout .repeat-list > .tab {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.profile-layout .repeat-card .field-grid {
+  padding: 0;
+}
+
+.profile-layout .bullet-row,
+.profile-layout .skill-row,
+.profile-layout .achievement-evidence-card {
+  border-color: var(--configuration-rule);
+  border-radius: 6px;
+  background: var(--configuration-surface);
+  box-shadow: none;
+}
+
+.profile-layout .target-work-model-option,
+.profile-layout .date-range-present,
+.profile-layout .month-selector {
+  border-color: transparent;
+  border-radius: 4px;
+  background: var(--configuration-subtle);
+}
+
+.profile-layout .target-work-model-option:has(input:checked),
+.profile-layout .date-range-present:has(input:checked) {
+  background: color-mix(in oklch, var(--foreground) 9%, var(--card));
+  color: var(--foreground);
+}
+
+/* Preferences are disclosure bands rather than a stack of decorative cards. */
+.profile-layout-single .configuration-section {
+  overflow: hidden;
+  border: 0;
+  border-top: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+}
+
+.profile-layout-single .configuration-section:last-of-type {
+  border-bottom: 1px solid var(--configuration-rule);
+}
+
+.configuration-section > summary {
+  display: flex;
+  min-height: 70px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  cursor: pointer;
+  list-style: none;
+  padding: 16px 0;
+}
+
+.configuration-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.configuration-section > summary::marker {
+  content: "";
+}
+
+.configuration-section__title-group {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.configuration-section__title {
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+}
+
+.configuration-section__description {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.configuration-section__indicator {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+  transition: transform 150ms ease, color 150ms ease;
+}
+
+.configuration-section[open] > summary .configuration-section__indicator {
+  color: var(--foreground);
+  transform: rotate(180deg);
+}
+
+.configuration-section > summary:hover .configuration-section__title,
+.configuration-section > summary:focus-visible .configuration-section__title {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklch, var(--foreground) 28%, transparent);
+  text-underline-offset: 4px;
+}
+
+.configuration-section__body {
+  padding: 0 0 20px;
+}
+
+.configuration-section .field-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px 18px;
+  padding: 0;
+}
+
+.configuration-section .field-grid.one {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.configuration-section .tailoring-controls-grid {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0 22px;
+  padding: 0;
+}
+
+.configuration-section .tailoring-control-group {
+  min-width: 0;
+  align-self: stretch;
+  border: 0;
+  border-top: 1px solid var(--configuration-rule);
+  margin: 0;
+  padding: 16px 0 18px;
+}
+
+.configuration-section .tailoring-control-group:nth-child(1) {
+  grid-column: span 4;
+}
+
+.configuration-section .tailoring-control-group:nth-child(2) {
+  grid-column: span 8;
+}
+
+.configuration-section .tailoring-control-group:nth-child(3),
+.configuration-section .tailoring-control-group:nth-child(4) {
+  grid-column: span 6;
+}
+
+.configuration-section .tailoring-controls-grid > .field-grid {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--configuration-rule);
+  padding-top: 16px;
+}
+
+.configuration-section .tailoring-control-group legend,
+.configuration-section .bullet-standards-group legend {
+  margin-bottom: 10px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.configuration-section .bullet-standards-group legend {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.configuration-help-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 560;
+  text-decoration: none;
+}
+
+.configuration-help-link:hover,
+.configuration-help-link:focus-visible {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.configuration-section .tailoring-control-group .field-grid {
+  gap: 12px 14px;
+  padding: 0;
+}
+
+.configuration-section .tailoring-control-group .bullet-standards-group {
+  margin-top: 2px;
+}
+
+.configuration-section .checkbox-options {
+  gap: 8px 14px;
+}
+
+.configuration-section .checkbox-options.vertical {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 16px;
+}
+
+.configuration-section .choice,
+.profile-layout .choice,
+.discovery-workspace .choice {
+  color: var(--foreground);
+  font-size: 12px;
+}
+
+.configuration-section .target-choice,
+.profile-layout .target-choice,
+.discovery-workspace .target-choice {
+  min-height: 24px;
+}
+
+.configuration-section .field.check,
+.configuration-section .target-choice.required-choice {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.configuration-section .field.check > button,
+.configuration-section .target-choice.required-choice > button {
+  margin-top: 1px;
+}
+
+.configuration-section .required-choice > [data-disabled] {
+  opacity: 1;
+}
+
+.configuration-section .bullet-standards-group > small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 430;
+  line-height: 1.4;
+}
+
+.configuration-select-trigger {
+  min-height: 40px;
+  border-color: var(--input);
+  border-radius: 6px;
+  background: var(--configuration-surface);
+  box-shadow: none;
+}
+
+/* The template editor is a full-width tool, not a small preview card. */
+.profile-layout-single .resume-template-workspace {
+  overflow: hidden;
+  margin: 24px 0 0;
+  border: 1px solid var(--configuration-rule);
+  border-radius: 8px;
+  background: var(--configuration-surface);
+}
+
+.profile-layout-single .resume-template-workspace > h3 {
+  padding: 17px 20px 13px;
+  border-bottom: 1px solid var(--configuration-rule);
+  background: transparent;
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+}
+
+.resume-template-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px;
+}
+
+.resume-template-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px 16px;
+}
+
+.resume-template-controls .field-grid {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
+  gap: 10px 12px;
+  padding: 0;
+}
+
+.resume-template-controls .field {
+  gap: 5px;
+}
+
+.resume-template-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--configuration-rule);
+  padding-top: 12px;
+}
+
+.resume-template-preview {
+  min-width: 0;
+  border-top: 1px solid var(--configuration-rule);
+  padding-top: 16px;
+}
+
+.resume-template-plate-editor {
+  height: min(80dvh, 980px);
+  min-height: 620px;
+  border: 1px solid var(--configuration-rule);
+  border-radius: 7px;
+}
+
+.resume-template-plate-editor .resume-plate-scroll {
+  padding: clamp(14px, 2vw, 26px);
+}
+
+/* Settings navigation and provider screens -------------------------------- */
+
+.config-layout {
+  gap: 24px;
+}
+
+.config-layout .settings-tabs {
+  width: 100%;
+  align-self: stretch;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+}
+
+.config-layout .settings-tabs .tab {
+  min-height: 38px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 9px 13px 8px;
+  background: transparent;
+  color: var(--muted-foreground);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.config-layout .settings-tabs .tab:hover {
+  background: transparent;
+  color: var(--foreground);
+}
+
+.config-layout .settings-tabs .tab.on {
+  border-color: var(--foreground);
+  background: transparent;
+  color: var(--foreground);
+  box-shadow: none;
+}
+
+.config-layout > .card {
+  overflow: hidden;
+  border-color: var(--configuration-rule);
+  border-radius: 8px;
+  background: var(--configuration-surface);
+  box-shadow: none;
+}
+
+.config-layout > .card > .card-hd {
+  padding: 17px 20px 13px;
+  background: transparent;
+}
+
+.config-layout .provider-card-list {
+  gap: 0;
+  padding: 0;
+}
+
+.config-layout .provider-card {
+  border: 0;
+  border-top: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+  padding: 18px 20px;
+}
+
+.config-layout .provider-card-header {
+  gap: 24px;
+}
+
+.config-layout .provider-card .tag,
+.profile-layout .tag {
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.config-layout .model-selection-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.config-layout .model-selection-list .provider-card {
+  border-top: 0;
+  border-left: 1px solid var(--configuration-rule);
+}
+
+.config-layout .model-selection-list .provider-card:first-child {
+  border-left: 0;
+}
+
+.config-layout .model-selection-intro {
+  border-color: var(--configuration-rule);
+  background: var(--configuration-subtle);
+  padding: 14px 20px;
+}
+
+.config-layout .provider-choice,
+.config-layout .codex-auth-options section,
+.config-layout .provider-cloud-guidance,
+.config-layout .provider-legacy-warning {
+  border-color: var(--configuration-rule);
+  border-radius: 6px;
+  background: var(--configuration-subtle);
+}
+
+.config-layout .provider-choice:has(input:checked) {
+  border-color: var(--foreground);
+  background: var(--configuration-surface);
+  box-shadow: inset 2px 0 0 var(--foreground);
+}
+
+/* Discovery ---------------------------------------------------------------- */
+
+.discovery-workspace {
+  gap: 22px;
+}
+
+.discovery-workspace > .card {
+  overflow: hidden;
+  margin: 0;
+  border-color: var(--configuration-rule);
+  border-radius: 8px;
+  background: var(--configuration-surface);
+  box-shadow: none;
+}
+
+.discovery-workspace > .card > .card-hd {
+  min-height: 0;
+  padding: 17px 20px 13px;
+  background: transparent;
+}
+
+.discovery-workspace > .card > .card-hd h2 {
+  font-size: 15px;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+}
+
+.discovery-workspace .config-form,
+.discovery-workspace .target-preferences-grid {
+  gap: 16px 20px;
+  padding: 16px 20px 20px;
+}
+
+.discovery-workspace .discovery-runtime-settings .config-form {
+  padding: 0;
+}
+
+.discovery-workspace .discovery-runtime-settings .field-grid {
+  gap: 16px 20px;
+  padding: 16px 20px 20px;
+}
+
+.discovery-workspace .editor-bulk-actions,
+.discovery-workspace .form-actions {
+  padding: 12px 20px 18px;
+}
+
+.discovery-workspace .discovery-automation-settings-form {
+  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr);
+  align-items: start;
+}
+
+.discovery-workspace .discovery-automation-settings-form > .field,
+.discovery-workspace .discovery-automation-settings-form > .field-hint,
+.discovery-workspace .discovery-automation-settings-form > .status-line,
+.discovery-workspace .discovery-automation-settings-form > .form-actions {
+  grid-column: auto;
+}
+
+.discovery-workspace .discovery-automation-settings-form > .form-actions {
+  align-self: end;
+  justify-self: start;
+  padding: 0;
+}
+
+.discovery-workspace .discovery-tabs {
+  padding: 0 20px 20px;
+  background: transparent;
+}
+
+.discovery-workspace .discovery-tab-list {
+  width: 100%;
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.discovery-workspace .discovery-tab-list [role="tab"] {
+  min-height: 38px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.discovery-workspace .discovery-tab-list [role="tab"][data-active] {
+  border-color: var(--foreground);
+  background: transparent;
+  color: var(--foreground);
+}
+
+.discovery-workspace .discovery-tab-panel {
+  margin: 0;
+}
+
+.discovery-workspace .discovery-tab-panel .discovery-control-panel {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.discovery-workspace .discovery-panel-head {
+  min-height: 46px;
+  padding: 10px 0;
+}
+
+.discovery-workspace .discovery-panel-head h3 {
+  font-size: 14px;
+  letter-spacing: -0.015em;
+}
+
+.discovery-workspace .discovery-source-summary {
+  gap: 0;
+  border-color: var(--configuration-rule);
+  padding: 0;
+}
+
+.discovery-workspace .discovery-source-summary span {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  border: 0;
+  border-left: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+  padding: 11px 12px;
+}
+
+.discovery-workspace .discovery-source-summary span:first-child {
+  border-left: 0;
+}
+
+.discovery-workspace .discovery-source-summary strong {
+  font-size: 18px;
+  letter-spacing: -0.035em;
+}
+
+.discovery-workspace .source-upsert-form {
+  grid-template-columns: minmax(150px, 0.6fr) minmax(180px, 0.8fr) minmax(132px, 0.45fr) minmax(260px, 1.2fr) auto;
+  align-items: end;
+  gap: 10px;
+  border-color: var(--configuration-rule);
+  padding: 14px 0 0;
+}
+
+.discovery-workspace .source-upsert-form .wide,
+.discovery-workspace .source-upsert-form button {
+  grid-column: auto;
+}
+
+.discovery-workspace .discovery-review-row,
+.discovery-workspace .discovery-preview-row {
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.discovery-workspace .discovery-review-row:first-child,
+.discovery-workspace .discovery-preview-row:first-child {
+  border-top: 1px solid var(--configuration-rule);
+}
+
+.discovery-workspace .source-politeness-badge,
+.discovery-workspace .source-table-tone {
+  border-radius: 3px;
+}
+
+/* Shared controls on these dense form surfaces. */
+.profile-layout .field,
+.config-layout .field,
+.discovery-workspace .field {
+  gap: 6px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.profile-layout .field > span:first-child,
+.config-layout .field > span:first-child,
+.discovery-workspace .field > span:first-child,
+.profile-layout .field > label,
+.config-layout .field > label,
+.discovery-workspace .field > label {
+  color: var(--muted-foreground);
+}
+
+.profile-layout input:not([type="checkbox"]):not([type="radio"]),
+.profile-layout select,
+.profile-layout textarea,
+.config-layout input:not([type="checkbox"]):not([type="radio"]),
+.config-layout select,
+.config-layout textarea,
+.discovery-workspace input:not([type="checkbox"]):not([type="radio"]),
+.discovery-workspace select,
+.discovery-workspace textarea {
+  min-height: 40px;
+  border-color: var(--input);
+  border-radius: 6px;
+  background: var(--configuration-surface);
+  box-shadow: none;
+}
+
+.profile-layout select,
+.config-layout select,
+.discovery-workspace select {
+  padding-right: 30px;
+}
+
+.profile-layout textarea,
+.config-layout textarea,
+.discovery-workspace textarea {
+  min-height: 96px;
+  line-height: 1.5;
+}
+
+.profile-layout input[type="checkbox"],
+.profile-layout input[type="radio"],
+.config-layout input[type="checkbox"],
+.config-layout input[type="radio"],
+.discovery-workspace input[type="checkbox"],
+.discovery-workspace input[type="radio"] {
+  accent-color: var(--foreground);
+}
+
+@media (max-width: 1080px) {
+  .configuration-section .tailoring-control-group:nth-child(1),
+  .configuration-section .tailoring-control-group:nth-child(2),
+  .configuration-section .tailoring-control-group:nth-child(3),
+  .configuration-section .tailoring-control-group:nth-child(4) {
+    grid-column: span 6;
+  }
+
+  .discovery-workspace .source-upsert-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .discovery-workspace .source-upsert-form .wide,
+  .discovery-workspace .source-upsert-form button {
+    grid-column: 1 / -1;
+  }
+
+  .config-layout .model-selection-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .config-layout .model-selection-list .provider-card {
+    border-top: 1px solid var(--configuration-rule);
+    border-left: 0;
+  }
+
+  .config-layout .model-selection-list .provider-card:first-child {
+    border-top: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .profile-layout .profile-sections > .form-section .field-grid,
+  .profile-layout .profile-sections > .form-section .target-preferences-grid,
+  .configuration-section .field-grid,
+  .discovery-workspace .config-form,
+  .discovery-workspace .target-preferences-grid,
+  .discovery-workspace .discovery-runtime-settings .field-grid,
+  .discovery-workspace .discovery-automation-settings-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .configuration-section .tailoring-controls-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .configuration-section .tailoring-control-group:nth-child(n) {
+    grid-column: auto;
+  }
+
+  .configuration-section .checkbox-options.vertical {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .configuration-section > summary {
+    min-height: 0;
+    padding-block: 14px;
+  }
+
+  .resume-template-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .resume-template-actions {
+    justify-content: flex-start;
+  }
+
+  .resume-template-plate-editor {
+    min-height: 480px;
+  }
+
+  .config-layout .settings-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .config-layout .settings-tabs .tab {
+    flex: 0 0 auto;
+  }
+
+  .discovery-workspace > .card > .card-hd,
+  .discovery-workspace .config-form,
+  .discovery-workspace .target-preferences-grid,
+  .discovery-workspace .discovery-runtime-settings .field-grid {
+    padding-inline: 14px;
+  }
+
+  .discovery-workspace .discovery-tabs {
+    padding-inline: 14px;
+  }
+
+  .discovery-workspace .discovery-tab-list {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .discovery-workspace .discovery-tab-list [role="tab"] {
+    flex: 0 0 auto;
+  }
+
+  .discovery-workspace .discovery-source-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .discovery-workspace .discovery-source-summary span:nth-child(odd) {
+    border-left: 0;
+  }
+
+  .discovery-workspace .discovery-source-summary span:nth-child(n + 3) {
+    border-top: 1px solid var(--configuration-rule);
+  }
+
+  .discovery-workspace .discovery-review-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .discovery-workspace .discovery-review-row .row-actions {
+    grid-column: 2;
+  }
+}

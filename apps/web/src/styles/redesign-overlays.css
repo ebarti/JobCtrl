@@ -1,0 +1,97 @@
+/* Shared overlays and feedback use one restrained neutral surface language.
+ * Page-specific drawer geometry remains in the owning redesign stylesheets. */
+
+.empty {
+  display: flex;
+  min-height: 96px;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.empty > [data-slot="empty-title"] {
+  max-width: 54ch;
+}
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid color-mix(in oklch, var(--destructive) 28%, var(--border));
+  border-left: 3px solid var(--destructive);
+  border-radius: 8px;
+  background: var(--card);
+  padding: 11px 13px;
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.banner.inline {
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.banner[role="status"],
+.banner.credential-store-notice--guidance {
+  border-color: color-mix(in oklch, var(--status-info) 26%, var(--border));
+  border-left-color: var(--status-info);
+}
+
+.banner.credential-store-notice--failure,
+.banner[role="alert"] {
+  border-left-color: var(--destructive);
+}
+
+[data-slot="dialog-content"],
+[data-slot="sheet-content"],
+[data-slot="drawer-content"],
+[data-slot="popover-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="toast"] {
+  box-shadow:
+    0 1px 2px color-mix(in oklch, var(--foreground) 7%, transparent),
+    0 18px 44px color-mix(in oklch, var(--foreground) 12%, transparent);
+}
+
+[data-slot="dialog-content"]:focus-visible,
+[data-slot="sheet-content"]:focus-visible,
+[data-slot="drawer-content"]:focus-visible,
+[data-slot="popover-content"]:focus-visible,
+[data-slot="dropdown-menu-content"]:focus-visible,
+[data-slot="dropdown-menu-sub-content"]:focus-visible {
+  outline: none;
+}
+
+@media (max-width: 640px) {
+  [data-slot="dialog-content"] {
+    max-height: calc(100dvh - 32px);
+    overflow-y: auto;
+  }
+
+  [data-slot="toast-viewport"] {
+    padding: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="dialog-overlay"],
+  [data-slot="dialog-content"],
+  [data-slot="sheet-overlay"],
+  [data-slot="sheet-content"],
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="tooltip-content"],
+  [data-slot="toast"] {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
