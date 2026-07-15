@@ -1,27 +1,47 @@
-import type { MouseEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 
-export interface DetailDrawerBackdropProps {
+import { cn } from "../lib/cn.js";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "./sheet.js";
+
+export interface DetailDrawerProps {
   children: ReactNode;
+  className?: string;
+  description: string;
   onDismiss: () => void;
+  title: string;
 }
 
-export function DetailDrawerBackdrop({
+export function DetailDrawer({
   children,
+  className,
+  description,
   onDismiss,
-}: DetailDrawerBackdropProps) {
-  const handleClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (event.target === event.currentTarget) {
-      onDismiss();
-    }
-  };
-
+  title,
+}: DetailDrawerProps) {
   return (
-    <div
-      className="drawer-backdrop"
-      data-slot="detail-drawer-backdrop"
-      onClick={handleClick}
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onDismiss();
+      }}
     >
-      {children}
-    </div>
+      <SheetContent
+        className={cn("drawer detail-drawer", className)}
+        data-slot="detail-drawer"
+        side="right"
+      >
+        <SheetHeader className="sr-only">
+          <SheetTitle>{title}</SheetTitle>
+          <SheetDescription>{description}</SheetDescription>
+        </SheetHeader>
+        {children}
+      </SheetContent>
+    </Sheet>
   );
 }

@@ -109,14 +109,6 @@
   white-space: nowrap;
 }
 
-.apply-review-queue-item > .tag,
-.apply-review-inline-state,
-.apply-review-audit-summary .tag,
-.apply-review-audit-revision .tag,
-.apply-review-audit-shipped-fit .tag,
-.apply-review-audit-tags .tag,
-.apply-review-requirement-fit-grid .tag,
-.apply-review-evidence-list .tag,
 .apply-review-selected-facts .compensation-strip .tag,
 .apply-review-selected-facts .resume-template-job-select .tag {
   min-height: 0;
@@ -131,42 +123,16 @@
   line-height: 1.45;
 }
 
-.apply-review-queue-item > .tag::before,
-.apply-review-inline-state::before {
-  width: 5px;
-  height: 5px;
-  flex: none;
-  border-radius: 50%;
-  background: currentColor;
-  content: "";
-  opacity: 0.75;
+.apply-review-queue-item > [data-slot="status-badge"] {
+  justify-self: start;
 }
 
-.apply-review-queue-item > .tag.ok,
-.apply-review-inline-state.ok,
-.apply-review-audit-summary .tag.ok,
-.apply-review-audit-revision .tag.ok,
-.apply-review-audit-shipped-fit .tag.ok,
-.apply-review-requirement-fit-grid .tag.ok {
-  color: var(--success);
+.apply-review-queue-alert {
+  margin: 14px;
 }
 
-.apply-review-queue-item > .tag.warn,
-.apply-review-inline-state.warn,
-.apply-review-audit-summary .tag.warn,
-.apply-review-audit-revision .tag.warn,
-.apply-review-audit-shipped-fit .tag.warn,
-.apply-review-requirement-fit-grid .tag.warn {
-  color: var(--warning);
-}
-
-.apply-review-queue-item > .tag.info,
-.apply-review-inline-state.info,
-.apply-review-audit-summary .tag.info,
-.apply-review-audit-revision .tag.info,
-.apply-review-audit-shipped-fit .tag.info,
-.apply-review-requirement-fit-grid .tag.info {
-  color: var(--status-info);
+.apply-review-inline-alert {
+  grid-column: 1 / -1;
 }
 
 .apply-review-selected {
@@ -628,6 +594,19 @@
 
 .apply-review-ideal-requirement-head {
   gap: 6px 12px;
+}
+
+.apply-review-requirement-meta,
+.apply-review-evidence-token {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 1.45;
+}
+
+.apply-review-ideal-requirement-head .apply-review-requirement-meta + .apply-review-requirement-meta,
+.apply-review-evidence-token + .apply-review-evidence-token {
+  margin-left: 10px;
 }
 
 .apply-review-requirement-fit-grid {

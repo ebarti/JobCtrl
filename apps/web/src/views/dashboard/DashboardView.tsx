@@ -2,6 +2,7 @@ import { OutcomeSuggestionsPanel } from "../../contexts/apply/components/Applica
 import { useApplicationOutcomesQuery } from "../../contexts/operations/hooks/useApplicationOutcomesQuery.js";
 import { useDashboardSummaryQuery } from "../../contexts/operations/hooks/useDashboardSummaryQuery.js";
 import { useWorkflowRunsListQuery } from "../../contexts/operations/hooks/useWorkflowRunsListQuery.js";
+import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { PageHead } from "../../shared/ui/page-head.js";
@@ -44,8 +45,18 @@ export function DashboardView() {
         subtitle="Pipeline health, outcomes, active work, and the decisions that need attention."
       />
       {summary ? <KpiGrid summary={summary} /> : <KpiSkeleton />}
-      {message ? <div className="banner">{message}</div> : null}
-      {outcomesError ? <div className="banner">{outcomesError}</div> : null}
+      {message ? (
+        <Alert variant="destructive" className="dashboard-error-alert">
+          <AlertTitle>Dashboard unavailable</AlertTitle>
+          <AlertDescription>{message}</AlertDescription>
+        </Alert>
+      ) : null}
+      {outcomesError ? (
+        <Alert variant="destructive" className="dashboard-error-alert">
+          <AlertTitle>Outcome suggestions unavailable</AlertTitle>
+          <AlertDescription>{outcomesError}</AlertDescription>
+        </Alert>
+      ) : null}
       {summary ? (
         <div className="dashboard-stack">
           <div className="dashboard-ops">

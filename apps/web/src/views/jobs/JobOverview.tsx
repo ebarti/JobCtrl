@@ -1,5 +1,6 @@
 import type { JobDetail } from "../../contexts/operations/types.js";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
 
 export interface JobOverviewProps {
   detail: JobDetail;
@@ -35,9 +36,9 @@ export function JobOverview({ detail }: JobOverviewProps) {
           </a>
           <div className="job-overview-readiness" aria-label="Apply readiness">
             <span className="job-overview-readiness-label">Apply readiness</span>
-            <span className={`tag ${auditTone(applyAudit.state)}`} title={applyAudit.summary}>
+            <StatusBadge tone={auditTone(applyAudit.state)} title={applyAudit.summary}>
               {applyAudit.label}
-            </span>
+            </StatusBadge>
           </div>
         </div>
       </div>

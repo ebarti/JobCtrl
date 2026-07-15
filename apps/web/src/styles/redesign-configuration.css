@@ -101,13 +101,42 @@
   padding: 0 0 18px;
 }
 
-.profile-layout .repeat-card {
-  gap: 14px;
+.profile-layout .repeat-section {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px 20px;
   border: 0;
-  border-top: 1px solid var(--configuration-rule);
   border-radius: 0;
   background: transparent;
+  margin: 0;
   padding: 16px 0;
+}
+
+.profile-layout .repeat-section > [data-slot="field-legend"] {
+  grid-column: 1;
+  margin: 0;
+  align-self: center;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.profile-layout .repeat-section > .repeat-controls {
+  grid-column: 2;
+  grid-row: 1;
+  justify-content: flex-end;
+}
+
+.profile-layout .repeat-section > .field-grid,
+.profile-layout .repeat-section > .bullet-list,
+.profile-layout .repeat-section > .skill-list,
+.profile-layout .repeat-section > [data-slot="separator"] {
+  grid-column: 1 / -1;
+}
+
+.profile-layout .repeat-section-separator {
+  background: var(--configuration-rule);
 }
 
 .profile-layout .repeat-list > .tab {
@@ -115,12 +144,20 @@
   margin-top: 4px;
 }
 
-.profile-layout .repeat-card .field-grid {
+.profile-layout .repeat-section .field-grid {
   padding: 0;
 }
 
 .profile-layout .bullet-row,
-.profile-layout .skill-row,
+.profile-layout .skill-row {
+  border: 0;
+  border-bottom: 1px solid color-mix(in oklch, var(--configuration-rule) 72%, transparent);
+  border-radius: 0;
+  background: transparent;
+  padding: 11px 0;
+  box-shadow: none;
+}
+
 .profile-layout .achievement-evidence-card {
   border-color: var(--configuration-rule);
   border-radius: 6px;
@@ -136,8 +173,8 @@
   background: var(--configuration-subtle);
 }
 
-.profile-layout .target-work-model-option:has(input:checked),
-.profile-layout .date-range-present:has(input:checked) {
+.profile-layout .target-work-model-option:has([data-checked]),
+.profile-layout .date-range-present:has([data-checked]) {
   background: color-mix(in oklch, var(--foreground) 9%, var(--card));
   color: var(--foreground);
 }
@@ -155,23 +192,20 @@
   border-bottom: 1px solid var(--configuration-rule);
 }
 
-.configuration-section > summary {
+.configuration-section > .configuration-section__trigger {
   display: flex;
+  width: 100%;
   min-height: 70px;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
-  list-style: none;
+  font: inherit;
   padding: 16px 0;
-}
-
-.configuration-section > summary::-webkit-details-marker {
-  display: none;
-}
-
-.configuration-section > summary::marker {
-  content: "";
+  text-align: left;
 }
 
 .configuration-section__title-group {
@@ -199,13 +233,13 @@
   transition: transform 150ms ease, color 150ms ease;
 }
 
-.configuration-section[open] > summary .configuration-section__indicator {
+.configuration-section > .configuration-section__trigger[data-panel-open] .configuration-section__indicator {
   color: var(--foreground);
   transform: rotate(180deg);
 }
 
-.configuration-section > summary:hover .configuration-section__title,
-.configuration-section > summary:focus-visible .configuration-section__title {
+.configuration-section > .configuration-section__trigger:hover .configuration-section__title,
+.configuration-section > .configuration-section__trigger:focus-visible .configuration-section__title {
   text-decoration: underline;
   text-decoration-color: color-mix(in oklch, var(--foreground) 28%, transparent);
   text-underline-offset: 4px;
@@ -268,11 +302,7 @@
 }
 
 .configuration-section .bullet-standards-group legend {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  padding-right: 48px;
 }
 
 .configuration-help-link {
@@ -298,10 +328,20 @@
 }
 
 .configuration-section .tailoring-control-group .bullet-standards-group {
+  position: relative;
   margin-top: 2px;
 }
 
-.configuration-section .checkbox-options {
+.configuration-section .bullet-standards-group > .configuration-help-link {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.configuration-section .checkbox-options,
+.profile-layout .checkbox-options,
+.discovery-workspace .checkbox-options {
+  flex-direction: row;
   gap: 8px 14px;
 }
 
@@ -341,13 +381,35 @@
   opacity: 1;
 }
 
-.configuration-section .bullet-standards-group > small {
+.configuration-section .bullet-standards-group > [data-slot="field-description"] {
   display: block;
   margin-top: 8px;
   color: var(--muted-foreground);
   font-size: 10px;
   font-weight: 430;
   line-height: 1.4;
+}
+
+.profile-layout .target-work-model-options,
+.discovery-workspace .target-work-model-options {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.profile-layout .month-selector > [data-slot="field-legend"] {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.profile-layout .month-selector-controls > button:first-of-type {
+  flex: 0 0 92px;
+}
+
+.profile-layout .month-selector-controls > button:last-of-type {
+  flex: 1 1 96px;
 }
 
 .configuration-select-trigger {
@@ -724,6 +786,9 @@
 .profile-layout .field > span:first-child,
 .config-layout .field > span:first-child,
 .discovery-workspace .field > span:first-child,
+.profile-layout .field > [data-slot="field-label"],
+.config-layout .field > [data-slot="field-label"],
+.discovery-workspace .field > [data-slot="field-label"],
 .profile-layout .field > label,
 .config-layout .field > label,
 .discovery-workspace .field > label {
@@ -800,6 +865,16 @@
 }
 
 @media (max-width: 760px) {
+  .profile-layout .repeat-section {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .profile-layout .repeat-section > .repeat-controls {
+    grid-column: 1;
+    grid-row: auto;
+    justify-content: flex-start;
+  }
+
   .profile-layout .profile-sections > .form-section .field-grid,
   .profile-layout .profile-sections > .form-section .target-preferences-grid,
   .configuration-section .field-grid,
@@ -822,7 +897,7 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .configuration-section > summary {
+  .configuration-section > .configuration-section__trigger {
     min-height: 0;
     padding-block: 14px;
   }

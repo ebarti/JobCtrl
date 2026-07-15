@@ -83,7 +83,7 @@ describe("<ProfileEditor>", () => {
     expect(
       await screen.findByRole("heading", { name: "Configuration & templates" }),
     ).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Application configurations" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Application configuration" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Location filter")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Target search" })).not.toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Revision policy" })).toBeInTheDocument();

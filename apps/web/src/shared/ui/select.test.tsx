@@ -1,5 +1,8 @@
 import { axe } from "jest-axe";
-import { useDirection } from "@base-ui/react/direction-provider";
+import {
+  DirectionProvider,
+  useDirection,
+} from "@base-ui/react/direction-provider";
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -18,28 +21,39 @@ function DirectionProbe() {
   return <output data-testid="direction-probe">{useDirection()}</output>;
 }
 
+const densityItems = [
+  { label: "Compact", value: "compact" },
+  { label: "Regular", value: "regular" },
+  { label: "Comfortable", value: "comfortable" },
+  { label: "Locked option", value: "locked" },
+];
+
 function DensitySelect({
   defaultOpen,
   defaultValue,
-  dir,
   disabled,
   onValueChange,
   value,
 }: {
   defaultOpen?: boolean;
   defaultValue?: string;
-  dir?: "ltr" | "rtl";
   disabled?: boolean;
   onValueChange?: (value: string) => void;
   value?: string;
 }) {
   return (
     <Select
+      items={densityItems}
       defaultOpen={defaultOpen}
       defaultValue={defaultValue}
-      dir={dir}
       disabled={disabled}
-      onValueChange={onValueChange}
+      onValueChange={
+        onValueChange === undefined
+          ? undefined
+          : (nextValue) => {
+              if (nextValue !== null) onValueChange(nextValue);
+            }
+      }
       value={value}
     >
       <SelectTrigger aria-label="View density">
@@ -61,7 +75,7 @@ function DensitySelect({
 }
 
 describe("<Select>", () => {
-  it("infers item labels so formatted text survives in the trigger", () => {
+  it("uses explicit item labels so formatted text survives in the trigger", () => {
     render(<DensitySelect defaultValue="comfortable" />);
 
     const trigger = screen.getByRole("combobox", { name: "View density" });
@@ -123,15 +137,19 @@ describe("<Select>", () => {
     expect(disabledTrigger).toHaveTextContent("Regular");
   });
 
-  it("maps group labels and Radix popper positioning to Base UI parts", () => {
+  it("maps group labels and trigger-edge positioning to Base UI parts", () => {
     render(
-      <Select defaultOpen defaultValue="compact">
+      <Select
+        items={[{ label: "Compact", value: "compact" }]}
+        defaultOpen
+        defaultValue="compact"
+      >
         <SelectTrigger aria-label="Positioned density">
           <SelectValue />
         </SelectTrigger>
         <SelectContent
           align="end"
-          position="popper"
+          alignItemWithTrigger={false}
           side="top"
           sideOffset={8}
           data-testid="select-popup"
@@ -155,22 +173,27 @@ describe("<Select>", () => {
 
   it("provides the supplied direction and forwards logical positioning", () => {
     render(
-      <Select dir="rtl" defaultOpen defaultValue="regular">
-        <DirectionProbe />
-        <SelectTrigger aria-label="Right-to-left density">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent
-          avoidCollisions={false}
-          position="popper"
-          side="inline-start"
-          data-testid="rtl-popup"
+      <DirectionProvider direction="rtl">
+        <Select
+          items={[{ label: "Regular", value: "regular" }]}
+          defaultOpen
+          defaultValue="regular"
         >
-          <SelectGroup>
-            <SelectItem value="regular">Regular</SelectItem>
-          </SelectGroup>
-        </SelectContent>
-      </Select>,
+          <DirectionProbe />
+          <SelectTrigger aria-label="Right-to-left density">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent
+            alignItemWithTrigger={false}
+            side="inline-start"
+            data-testid="rtl-popup"
+          >
+            <SelectGroup>
+              <SelectItem value="regular">Regular</SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </DirectionProvider>,
     );
 
     expect(screen.getByTestId("direction-probe")).toHaveTextContent("rtl");

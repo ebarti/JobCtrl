@@ -5,12 +5,14 @@ import {
   FilterableDataGrid,
   type DataGridSortState,
 } from "../../shared/ui/filterable-data-grid.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
+import type { StatusTagTone } from "../../shared/ui/status-tokens.js";
 
 export interface OutcomeRateRow {
   readonly id: string;
   readonly dimension: string;
   readonly label: string;
-  readonly badgeTone: "info" | "muted" | "ok" | "warn";
+  readonly badgeTone: StatusTagTone;
   readonly applied: number;
   readonly reply: number;
   readonly interview: number;
@@ -62,7 +64,8 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
       <span className="title-stack analytics-group-cell">
         <b>{row.label}</b>
         <span className="analytics-group-meta">
-          <span className={`tag ${row.badgeTone}`}>{row.dimension}</span> {countLabel(row)}
+          <StatusBadge tone={row.badgeTone}>{row.dimension}</StatusBadge>
+          <span>{countLabel(row)}</span>
         </span>
       </span>
     ),

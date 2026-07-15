@@ -1,5 +1,4 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
-import { IconX } from "@tabler/icons-react";
 
 import { ContactDeleteButton } from "../../contexts/outreach/components/ContactDeleteButton.js";
 import { ContactEditButton } from "../../contexts/outreach/components/ContactEditButton.js";
@@ -7,9 +6,8 @@ import { ContactProvenanceList } from "../../contexts/outreach/components/Contac
 import { ContactRoleBadge } from "../../contexts/outreach/components/ContactRoleBadge.js";
 import { OutreachThreadPanel } from "../../contexts/outreach/components/OutreachThreadPanel.js";
 import { useContactDetailQuery } from "../../contexts/outreach/hooks/useContactDetailQuery.js";
-import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
-import { DetailDrawerBackdrop } from "../../shared/ui/detail-drawer-backdrop.js";
+import { DetailDrawer } from "../../shared/ui/detail-drawer-backdrop.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { Section } from "../../shared/ui/section.js";
 
@@ -25,61 +23,54 @@ function detailErrorTitle(error: unknown): string {
   return error instanceof Error ? error.message : "";
 }
 
-export function OutreachDetailDrawer({ contactId, onClose }: OutreachDetailDrawerProps) {
-  useEscapeKey(true, onClose);
-
+export function OutreachDetailDrawer({
+  contactId,
+  onClose,
+}: OutreachDetailDrawerProps) {
   const { data, error } = useContactDetailQuery(contactId);
   const errorMessage = detailErrorTitle(error);
   const contact = data?.contact;
 
   return (
-    <DetailDrawerBackdrop onDismiss={onClose}>
-      <div
-        className="drawer detail-drawer contact-detail-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Contact details"
-      >
-        <button
-          aria-label="Close contact details"
-          className="drawer-close"
-          type="button"
-          onClick={onClose}
-        >
-          <IconX aria-hidden="true" size={18} stroke={1.8} />
-        </button>
-        {errorMessage && !contact ? <Empty title={errorMessage} /> : null}
-        {!contact && !errorMessage ? <Empty title="Loading contact." /> : null}
-        {contact ? (
-          <>
-            <div className="drawer-head">
-              <span>
-                <ContactRoleBadge role={contact.role} />
-              </span>
-              <span>
-                <small>{contact.employer ?? "No employer"}</small>
-                <h2>{contact.displayName}</h2>
-                <p>
-                  {contact.jobId ? `Linked job ${contact.jobId}` : "Not linked to a job"} · updated{" "}
-                  {formatDateTime(contact.updatedAt)}
-                </p>
-              </span>
-            </div>
-            <div className="contact-detail-actions">
-              <ContactEditButton contact={contact} />
-              <ContactDeleteButton
-                contactId={contact.contactId}
-                displayName={contact.displayName}
-                onDeleted={onClose}
-              />
-            </div>
-            <Section title="Facts and provenance">
-              <ContactProvenanceList attributes={contact.attributes} />
-            </Section>
-            <OutreachThreadPanel contactId={contact.contactId} />
-          </>
-        ) : null}
-      </div>
-    </DetailDrawerBackdrop>
+    <DetailDrawer
+      className="contact-detail-drawer"
+      description="Review the selected contact's facts, provenance, and outreach history."
+      onDismiss={onClose}
+      title="Contact details"
+    >
+      {errorMessage && !contact ? <Empty title={errorMessage} /> : null}
+      {!contact && !errorMessage ? <Empty title="Loading contact." /> : null}
+      {contact ? (
+        <>
+          <div className="drawer-head">
+            <span>
+              <ContactRoleBadge role={contact.role} />
+            </span>
+            <span>
+              <small>{contact.employer ?? "No employer"}</small>
+              <h2>{contact.displayName}</h2>
+              <p>
+                {contact.jobId
+                  ? `Linked job ${contact.jobId}`
+                  : "Not linked to a job"}{" "}
+                · updated {formatDateTime(contact.updatedAt)}
+              </p>
+            </span>
+          </div>
+          <div className="contact-detail-actions">
+            <ContactEditButton contact={contact} />
+            <ContactDeleteButton
+              contactId={contact.contactId}
+              displayName={contact.displayName}
+              onDeleted={onClose}
+            />
+          </div>
+          <Section title="Facts and provenance">
+            <ContactProvenanceList attributes={contact.attributes} />
+          </Section>
+          <OutreachThreadPanel contactId={contact.contactId} />
+        </>
+      ) : null}
+    </DetailDrawer>
   );
 }

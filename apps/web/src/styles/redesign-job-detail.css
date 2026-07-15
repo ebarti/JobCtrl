@@ -5,32 +5,11 @@
  */
 
 .job-detail-drawer {
-  width: min(1440px, 100%);
-  block-size: calc(100dvh - var(--topbar-height) - 48px);
+  width: min(1440px, calc(100dvw - 304px));
   margin: 0 auto;
   border-radius: 10px;
   background: var(--card);
   box-shadow: 0 24px 72px color-mix(in srgb, #000 22%, transparent);
-}
-
-.job-detail-drawer .drawer-close {
-  z-index: 2;
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
-  margin: 14px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  color: var(--muted-foreground);
-}
-
-.job-detail-drawer .drawer-close:hover,
-.job-detail-drawer .drawer-close:focus-visible {
-  border-color: var(--border);
-  background: var(--muted);
-  color: var(--foreground);
 }
 
 .job-detail-drawer .drawer-head {
@@ -136,7 +115,11 @@
   font-size: 12px;
   font-weight: 610;
   text-decoration: underline;
-  text-decoration-color: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
+  text-decoration-color: color-mix(
+    in oklch,
+    var(--muted-foreground) 55%,
+    transparent
+  );
   text-decoration-thickness: 1px;
   text-underline-offset: 4px;
 }
@@ -735,13 +718,14 @@
   background: transparent;
 }
 
-@media (max-width: 1040px) {
+@media (max-width: 1180px) and (min-width: 821px) {
   .job-detail-drawer {
-    width: 100%;
-    block-size: calc(100dvh - var(--topbar-height) - 32px);
+    width: calc(100dvw - 116px);
     margin: 0;
   }
+}
 
+@media (max-width: 1040px) {
   .job-detail-drawer .drawer-head {
     padding-right: 60px;
   }
@@ -768,11 +752,6 @@
 }
 
 @media (max-width: 820px) {
-  .drawer-backdrop:has(.job-detail-drawer) {
-    inset: 0;
-    padding: 0;
-  }
-
   .job-detail-drawer {
     width: 100dvw;
     block-size: 100dvh;
@@ -785,10 +764,6 @@
     grid-template-columns: 45px minmax(0, 1fr);
     gap: 12px;
     padding: 24px 48px 20px 20px;
-  }
-
-  .job-detail-drawer .drawer-close {
-    margin: 10px;
   }
 
   .job-detail-drawer .drawer-head .fit {

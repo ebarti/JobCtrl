@@ -4,6 +4,7 @@ import type { JobDetail } from "../../contexts/operations/types.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import { ScoreCorrectionControl } from "../../contexts/scoring/components/ScoreCorrectionControl.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
 
 export interface JobAuditTriageProps {
   detail: JobDetail;
@@ -77,12 +78,12 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
                     <dt>{group.label}</dt>
                     <dd>
                       {group.facts.map((fact) => (
-                        <span
-                          className={`tag ${factTone(fact)}`}
+                        <StatusBadge
+                          tone={factTone(fact)}
                           key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}
                         >
                           {fact.detail ? `${fact.label}: ${fact.detail}` : fact.label}
-                        </span>
+                        </StatusBadge>
                       ))}
                     </dd>
                   </div>
@@ -161,9 +162,9 @@ function TagGroup({
       <span>{label}</span>
       <div>
         {values.map((value) => (
-          <span className={`tag ${tone}`} key={value}>
+          <StatusBadge tone={tone} key={value}>
             {value}
-          </span>
+          </StatusBadge>
         ))}
       </div>
     </div>

@@ -4,6 +4,7 @@ import type { DashboardSummary } from "../../contexts/operations/types.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
 import { StatusDot } from "../../shared/ui/status-dot.js";
 import { applyRunDotState } from "./apply-run-dot-state.js";
 
@@ -34,7 +35,7 @@ export function ApplyRunsCard({ summary }: ApplyRunsCardProps) {
                   {run.company} · {formatDateTime(run.startedAt)}
                 </span>
               </span>
-              {run.dryRun ? <span className="tag info">dry-run</span> : null}
+              {run.dryRun ? <StatusBadge tone="info">dry-run</StatusBadge> : null}
             </button>
           ))
         ) : (

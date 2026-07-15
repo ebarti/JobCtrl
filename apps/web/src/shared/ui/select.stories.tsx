@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { DirectionProvider } from "@base-ui/react/direction-provider";
 import { useState } from "react";
 
 import {
@@ -19,11 +20,35 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+const densityItems = [
+  { label: "Compact", value: "compact" },
+  { label: "Regular", value: "regular" },
+  { label: "Comfortable", value: "comfortable" },
+  { label: "Locked option", value: "locked" },
+];
+const selectableDensityItems = densityItems.slice(0, 3);
+const placeholderDensityItems = densityItems.slice(0, 2);
+const regularDensityItems = [densityItems[1]!];
+const longListItems = Array.from({ length: 30 }, (_, index) => ({
+  label: `Option ${index + 1}`,
+  value: `option-${index + 1}`,
+}));
+const accessBasisItems = [
+  { label: "Public markdown", value: "public_markdown" },
+  { label: "Licensed API", value: "licensed_api" },
+];
+
 function ControlledDensitySelect() {
   const [value, setValue] = useState("compact");
 
   return (
-    <Select value={value} onValueChange={setValue}>
+    <Select
+      items={selectableDensityItems}
+      value={value}
+      onValueChange={(nextValue) => {
+        if (nextValue !== null) setValue(nextValue);
+      }}
+    >
       <SelectTrigger aria-label="Controlled view density" className="w-56">
         <SelectValue placeholder="Pick a view" />
       </SelectTrigger>
@@ -41,7 +66,7 @@ function ControlledDensitySelect() {
 
 export const Value: Story = {
   render: () => (
-    <Select defaultValue="compact">
+    <Select items={densityItems} defaultValue="compact">
       <SelectTrigger aria-label="View density" className="w-56">
         <SelectValue placeholder="Pick a view" />
       </SelectTrigger>
@@ -65,7 +90,7 @@ export const OpenByDefault: Story = {
     a11y: { element: "[data-base-ui-portal]" },
   },
   render: () => (
-    <Select defaultOpen defaultValue="regular">
+    <Select items={densityItems} defaultOpen defaultValue="regular">
       <SelectTrigger aria-label="View density" className="w-56">
         <SelectValue placeholder="Pick a view" />
       </SelectTrigger>
@@ -86,7 +111,7 @@ export const OpenByDefault: Story = {
 
 export const Placeholder: Story = {
   render: () => (
-    <Select>
+    <Select items={placeholderDensityItems}>
       <SelectTrigger aria-label="Unselected view density" className="w-56">
         <SelectValue placeholder="Pick a view" />
       </SelectTrigger>
@@ -106,7 +131,7 @@ export const Controlled: Story = {
 
 export const Disabled: Story = {
   render: () => (
-    <Select disabled defaultValue="regular">
+    <Select items={regularDensityItems} disabled defaultValue="regular">
       <SelectTrigger aria-label="View density" className="w-56">
         <SelectValue placeholder="Pick a view" />
       </SelectTrigger>
@@ -121,33 +146,35 @@ export const Disabled: Story = {
 
 export const RightToLeft: Story = {
   render: () => (
-    <Select dir="rtl" defaultValue="regular">
-      <SelectTrigger aria-label="Right-to-left view density" className="w-56">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectGroup>
-          <SelectItem value="compact">Compact</SelectItem>
-          <SelectItem value="regular">Regular</SelectItem>
-          <SelectItem value="comfortable">Comfortable</SelectItem>
-        </SelectGroup>
-      </SelectContent>
-    </Select>
+    <DirectionProvider direction="rtl">
+      <Select items={selectableDensityItems} defaultValue="regular">
+        <SelectTrigger aria-label="Right-to-left view density" className="w-56">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            <SelectItem value="compact">Compact</SelectItem>
+            <SelectItem value="regular">Regular</SelectItem>
+            <SelectItem value="comfortable">Comfortable</SelectItem>
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </DirectionProvider>
   ),
 };
 
 export const LongScrollableList: Story = {
   render: () => (
-    <Select defaultOpen defaultValue="option-1">
+    <Select items={longListItems} defaultOpen defaultValue="option-1">
       <SelectTrigger aria-label="Long option list" className="w-56">
         <SelectValue />
       </SelectTrigger>
       <SelectContent className="max-h-48">
         <SelectGroup>
           <SelectLabel>Long option list</SelectLabel>
-          {Array.from({ length: 30 }, (_, index) => (
-            <SelectItem key={index} value={`option-${index + 1}`}>
-              Option {index + 1}
+          {longListItems.map((item) => (
+            <SelectItem key={item.value} value={item.value}>
+              {item.label}
             </SelectItem>
           ))}
         </SelectGroup>
@@ -156,14 +183,17 @@ export const LongScrollableList: Story = {
   ),
 };
 
-export const MigrationContract: Story = {
+export const BaseContract: Story = {
   tags: ["select-contract"],
   render: () => (
-    <Select defaultOpen defaultValue="licensed_api">
+    <Select items={accessBasisItems} defaultOpen defaultValue="licensed_api">
       <SelectTrigger aria-label="Access basis" className="w-56">
         <SelectValue />
       </SelectTrigger>
-      <SelectContent data-testid="select-contract-popup">
+      <SelectContent
+        alignItemWithTrigger={false}
+        data-testid="select-contract-popup"
+      >
         <SelectGroup>
           <SelectLabel>Access basis options</SelectLabel>
           <SelectItem value="public_markdown">Public markdown</SelectItem>
@@ -195,7 +225,7 @@ export const MigrationContract: Story = {
       );
     }
     if (popup.dataset.alignTrigger !== "false") {
-      throw new Error("Expected Radix popper compatibility positioning.");
+      throw new Error("Expected trigger-edge popup positioning.");
     }
     if (!group.getAttribute("aria-labelledby")) {
       throw new Error(

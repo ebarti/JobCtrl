@@ -36,10 +36,12 @@ import { useResumeReviewDraftQuery } from "../../contexts/operations/hooks/useRe
 import { useResumeTemplatesQuery } from "../../contexts/profile/hooks/useResumeTemplatesQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
+import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../shared/ui/PdfPreviewViewer.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
 import { JobDetailDrawer } from "../jobs/JobDetailDrawer.js";
 import "../../styles/redesign-apply-review.css";
 
@@ -391,9 +393,9 @@ function ApplyAuditFacts({ item }: { readonly item: ApplyReviewQueueItem }) {
           <dt>{group.label}</dt>
           <dd>
             {group.facts.map((fact) => (
-              <span className={`tag ${factTone(fact)}`} key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}>
+              <StatusBadge tone={factTone(fact)} key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}>
                 {fact.detail ? `${fact.label}: ${fact.detail}` : fact.label}
-              </span>
+              </StatusBadge>
             ))}
           </dd>
         </div>
@@ -458,7 +460,7 @@ function ApplyReviewQueue({
               <span className="meta">
                 {item.company} · {item.source}
               </span>
-              <span className={`tag ${status.tone}`}>{status.label}</span>
+              <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
             </button>
           );
         })}
@@ -501,10 +503,10 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                       <div className="apply-review-ideal-requirement-head">
                         <b>{requirement.text}</b>
                         <span>
-                          {tier ? <span className="tag muted">{tier}</span> : null}
+                          {tier ? <span className="apply-review-requirement-meta">{tier}</span> : null}
                           {weight ? (
                             <span
-                              className="tag muted"
+                              className="apply-review-requirement-meta"
                               title="Relative priority from job-post analysis, not a match score"
                             >
                               {weight}
@@ -518,25 +520,25 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                       >
                         <div>
                           <span>Candidate fit</span>
-                          <b className={`tag ${fit.tone}`} title={fit.title}>
+                          <StatusBadge tone={fit.tone} title={fit.title}>
                             {fit.label}
-                          </b>
+                          </StatusBadge>
                         </div>
                         <div>
                           <span>Tailoring action</span>
-                          <b className={`tag ${tailoring.tone}`} title={tailoring.title}>
+                          <StatusBadge tone={tailoring.tone} title={tailoring.title}>
                             {tailoring.label}
-                          </b>
+                          </StatusBadge>
                         </div>
                         <div>
                           <span>Resume coverage</span>
-                          <b className={`tag ${coverage.tone}`} title={coverage.title}>
+                          <StatusBadge tone={coverage.tone} title={coverage.title}>
                             {coverage.label}
-                          </b>
+                          </StatusBadge>
                           {requirement.coverage.state === "covered" ? (
-                            <b className="tag muted">
+                            <StatusBadge tone="muted">
                               {formatBulletCount(requirement.coverage.bulletCount)}
-                            </b>
+                            </StatusBadge>
                           ) : null}
                         </div>
                       </div>
@@ -595,7 +597,7 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                 <dt>{group.label}</dt>
                 <dd>
                   {group.values.map((value) => (
-                    <span className="tag muted" key={value}>
+                    <span className="apply-review-evidence-token" key={value}>
                       {value}
                     </span>
                   ))}
@@ -607,7 +609,7 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
               <dd>
                 {item.position.missing.length ? (
                   item.position.missing.map((value) => (
-                    <span className="tag muted" key={value}>
+                    <span className="apply-review-evidence-token" key={value}>
                       {value}
                     </span>
                   ))
@@ -686,8 +688,8 @@ function RequirementLedAuditPanel({
     >
       <h3>Requirement-led tailoring audit</h3>
       <div className="apply-review-audit-summary" aria-label="Requirement-led audit summary">
-        <span className={`tag ${audit.uncoveredRequirements.length ? "warn" : "ok"}`}>{coveredLabel}</span>
-        {audit.reviewBlockers.length ? <span className="tag warn">{reviewBlockerLabel}</span> : null}
+        <StatusBadge tone={audit.uncoveredRequirements.length ? "warn" : "ok"}>{coveredLabel}</StatusBadge>
+        {audit.reviewBlockers.length ? <StatusBadge tone="warn">{reviewBlockerLabel}</StatusBadge> : null}
       </div>
       <BulletOverflowAudit overflows={audit.bulletLimitOverflows} />
       <RevisionAudit
@@ -718,9 +720,9 @@ function AuditTagGroup({
       <span>{label}</span>
       <span>
         {values.map((value) => (
-          <span className={`tag ${tone}`} key={`${label}:${value}`}>
+          <StatusBadge tone={tone} key={`${label}:${value}`}>
             {formatValue(value)}
-          </span>
+          </StatusBadge>
         ))}
       </span>
     </div>
@@ -785,21 +787,21 @@ function RevisionAudit({
       {shippedFit ? (
         <div className="apply-review-audit-shipped-fit" aria-label="Shipped grounded fit">
           {shippedFit.mustHaveCoverage !== null ? (
-            <span className="tag muted">
+            <StatusBadge tone="muted">
               Must-have coverage: {Math.round(shippedFit.mustHaveCoverage * 100)}%
-            </span>
+            </StatusBadge>
           ) : null}
-          <span className={`tag ${shippedFit.coverageBasis === "grounded_shipped_text_v1" ? "ok" : "warn"}`}>
+          <StatusBadge tone={shippedFit.coverageBasis === "grounded_shipped_text_v1" ? "ok" : "warn"}>
             {shippedFit.coverageBasis === "grounded_shipped_text_v1"
               ? "grounded (shipped text)"
               : "judge-claimed (legacy)"}
-          </span>
+          </StatusBadge>
           {shippedFit.score !== null ? (
-            <span className="tag muted">Shipped fit: {formatScoreValue(shippedFit.score)}/10</span>
+            <StatusBadge tone="muted">Shipped fit: {formatScoreValue(shippedFit.score)}/10</StatusBadge>
           ) : null}
-          <span className={`tag ${shippedFit.passed ? "ok" : "warn"}`}>
+          <StatusBadge tone={shippedFit.passed ? "ok" : "warn"}>
             {shippedFit.passed ? "meets revision gate" : "below revision gate"}
-          </span>
+          </StatusBadge>
           <AuditTagGroup
             label={shippedFitFindingsLabel(shippedFit)}
             values={shippedFit.warnings}
@@ -810,22 +812,22 @@ function RevisionAudit({
       ) : null}
       {revision ? (
         <div className="apply-review-audit-revision">
-          <span className={`tag ${revision.thresholdFailed || revision.reviewBlocked ? "warn" : "ok"}`}>
+          <StatusBadge tone={revision.thresholdFailed || revision.reviewBlocked ? "warn" : "ok"}>
             Fit gate: {formatScoreValue(revision.score)}/10
-          </span>
-          <span className={`tag ${revision.coverageBasis === "grounded_shipped_text_v1" ? "ok" : "warn"}`}>
+          </StatusBadge>
+          <StatusBadge tone={revision.coverageBasis === "grounded_shipped_text_v1" ? "ok" : "warn"}>
             {revision.coverageBasis === "grounded_shipped_text_v1" ? "grounded" : "judge-claimed (legacy)"}
-          </span>
+          </StatusBadge>
           {revision.mustHaveCoverage !== null ? (
-            <span className="tag muted">
+            <StatusBadge tone="muted">
               {shippedFit ? "Gate-recorded coverage" : "Must-have coverage"}:{" "}
               {Math.round(revision.mustHaveCoverage * 100)}%
-            </span>
+            </StatusBadge>
           ) : null}
           {revision.revisionsUsed !== null && revision.maxRevisionAttempts !== null ? (
-            <span className="tag muted">
+            <StatusBadge tone="muted">
               Revisions used: {revision.revisionsUsed} of {revision.maxRevisionAttempts}
-            </span>
+            </StatusBadge>
           ) : null}
           {revision.reason ? <p className="meta">{formatAuditMessage(revision.reason)}</p> : null}
           <AuditTagGroup label="Prioritized fixes" values={revision.prioritizedFixes} tone="muted" />
@@ -1214,10 +1216,8 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
               <b>{item.fitScore ?? "–"}</b>
               <span>fit</span>
             </span>
-            <span className={`apply-review-inline-state ${status.tone}`}>
-              {status.label}
-            </span>
-            {reviewState ? <span className="apply-review-inline-state muted">{reviewState}</span> : null}
+            <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+            {reviewState ? <StatusBadge tone="muted">{reviewState}</StatusBadge> : null}
           </div>
           <div className="apply-review-selected-facts">
             <CompensationSummaryStrip
@@ -1233,7 +1233,10 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             />
             <ApplyAuditFacts item={item} />
             {templateMutationError ? (
-              <span className="apply-review-inline-state warn">{templateMutationError}</span>
+              <Alert variant="destructive" className="apply-review-inline-alert">
+                <AlertTitle>Resume template could not be updated</AlertTitle>
+                <AlertDescription>{templateMutationError}</AlertDescription>
+              </Alert>
             ) : null}
           </div>
         </div>
@@ -1382,7 +1385,12 @@ export function ApplyReviewView({
         subtitle={`${readyCount} ready · ${preparingCount} preparing · ${repairCount} need repair`}
       />
       <section className="apply-review-surface">
-        {queueError ? <div className="banner inline">{queueError}</div> : null}
+        {queueError ? (
+          <Alert variant="destructive" className="apply-review-queue-alert">
+            <AlertTitle>Application review queue could not be loaded</AlertTitle>
+            <AlertDescription>{queueError}</AlertDescription>
+          </Alert>
+        ) : null}
         {queue.isFetching && !queue.data ? <Empty title="Loading review queue." /> : null}
         {queue.data && selected ? (
           <div className="apply-review-shell">

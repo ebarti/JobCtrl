@@ -5,6 +5,7 @@ import { useState } from "react";
 import { z } from "zod";
 
 import { fileToBase64 } from "../../../shared/lib/file.js";
+import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../../shared/ui/button.js";
 import { useProfileImportStore } from "../stores/profile-import-store.js";
 
@@ -79,9 +80,9 @@ export function ImportUploadForm() {
       </header>
 
       {readError ? (
-        <div className="banner inline resume-import-alert" role="alert">
-          {readError}
-        </div>
+        <Alert className="resume-import-alert" variant="destructive">
+          <AlertDescription>{readError}</AlertDescription>
+        </Alert>
       ) : null}
 
       <form.Subscribe selector={(state) => state.errors}>
@@ -90,9 +91,9 @@ export function ImportUploadForm() {
             .flat()
             .find((entry): entry is string => typeof entry === "string" && entry.length > 0);
           return message ? (
-            <div className="banner inline resume-import-alert" role="alert">
-              {message}
-            </div>
+            <Alert className="resume-import-alert" variant="destructive">
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
           ) : null;
         }}
       </form.Subscribe>

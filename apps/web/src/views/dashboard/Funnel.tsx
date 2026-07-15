@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import type { DashboardSummary, Stage } from "../../contexts/operations/types.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { SegmentBar } from "../../shared/ui/segment-bar.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
 import { kpiSearchFor } from "./KpiGrid.js";
 
 export interface FunnelProps {
@@ -113,8 +114,12 @@ export function Funnel({ summary }: FunnelProps) {
               ]}
             />
             <span className="legend">
-              {stage.failed ? <span className="danger">{stage.failed} failed</span> : null}
-              {stage.blocked ? <span className="warn">{stage.blocked} blocked</span> : null}
+              {stage.failed ? (
+                <StatusBadge tone="danger">{stage.failed} failed</StatusBadge>
+              ) : null}
+              {stage.blocked ? (
+                <StatusBadge tone="warn">{stage.blocked} blocked</StatusBadge>
+              ) : null}
               {stage.running ? <span>{stage.running} running</span> : null}
               <span>{stage.pending} pending</span>
               {stage.diagnostic ? <span>{stage.diagnostic}</span> : null}

@@ -4,12 +4,14 @@ import type { DashboardSummary } from "../../contexts/operations/types.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
+import type { StatusTagTone } from "../../shared/ui/status-tokens.js";
 
 const RECENT_ACTIVITY_LIMIT = 8;
 
 type Activity = DashboardSummary["activity"][number];
 
-function activityTone(activity: Activity): string {
+function activityTone(activity: Activity): StatusTagTone {
   const level = activity.level.trim().toLowerCase();
   if (level === "error") return "danger";
   if (level === "warn" || level === "warning") return "warn";
@@ -46,9 +48,7 @@ export function RecentActivityCard({ summary }: { summary: DashboardSummary }) {
                 })
               }
             >
-              <span className={`tag ${activityTone(entry)}`}>
-                {entry.level}
-              </span>
+              <StatusBadge tone={activityTone(entry)}>{entry.level}</StatusBadge>
               <span className="title-stack">
                 <b>{entry.message}</b>
                 <span>

@@ -6,6 +6,7 @@ import {
   type DailyDigest,
 } from "../../contexts/operations/index.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
+import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 
@@ -122,8 +123,18 @@ export function DigestPanel() {
   return (
     <section className="card digest-panel">
       <CardHeader title="Daily digest" meta={meta} />
-      {digest.error instanceof Error ? <div className="banner inline">{digest.error.message}</div> : null}
-      {acknowledgeError ? <div className="banner inline">{acknowledgeError}</div> : null}
+      {digest.error instanceof Error ? (
+        <Alert variant="destructive" className="dashboard-inline-alert">
+          <AlertTitle>Daily digest unavailable</AlertTitle>
+          <AlertDescription>{digest.error.message}</AlertDescription>
+        </Alert>
+      ) : null}
+      {acknowledgeError ? (
+        <Alert variant="destructive" className="dashboard-inline-alert">
+          <AlertTitle>Could not mark the digest reviewed</AlertTitle>
+          <AlertDescription>{acknowledgeError}</AlertDescription>
+        </Alert>
+      ) : null}
       {data ? (
         <>
           <div className="digest-list">

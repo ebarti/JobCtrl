@@ -4,6 +4,7 @@ import { useForm } from "@tanstack/react-form";
 import { IconCheck, IconFileTypePdf, IconMinus } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 
+import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { useImportResumeMutation } from "../hooks/useImportResumeMutation.js";
@@ -88,14 +89,14 @@ export function ImportConfirmForm() {
       </header>
 
       {errorMessage ? (
-        <div className="banner inline resume-import-alert" role="alert">
-          {errorMessage}
-        </div>
+        <Alert className="resume-import-alert" variant="destructive">
+          <AlertDescription>{errorMessage}</AlertDescription>
+        </Alert>
       ) : null}
       {statusMessage ? (
-        <div className="status-line resume-import-status" role="status">
-          {statusMessage}
-        </div>
+        <Alert className="resume-import-status" role="status">
+          <AlertDescription>{statusMessage}</AlertDescription>
+        </Alert>
       ) : null}
 
       <form.Subscribe selector={(state) => state.errors}>
@@ -104,9 +105,9 @@ export function ImportConfirmForm() {
             .flat()
             .find((entry): entry is string => typeof entry === "string" && entry.length > 0);
           return message ? (
-            <div className="banner inline resume-import-alert" role="alert">
-              {message}
-            </div>
+            <Alert className="resume-import-alert" variant="destructive">
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
           ) : null;
         }}
       </form.Subscribe>

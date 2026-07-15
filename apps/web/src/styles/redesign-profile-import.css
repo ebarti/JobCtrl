@@ -193,14 +193,13 @@
 }
 
 .resume-import-alert {
-  border: 1px solid color-mix(in oklch, var(--destructive) 34%, var(--border));
   border-radius: calc(var(--radius) * 0.75);
-  background: color-mix(in oklch, var(--destructive) 6%, var(--card));
   padding: 11px 13px;
-  color: var(--destructive);
+}
+
+.resume-import-alert [data-slot="alert-description"] {
   font-size: 12px;
   line-height: 1.45;
-  text-align: left;
 }
 
 .resume-import-target {
@@ -482,6 +481,10 @@
   background: var(--resume-import-subtle);
   color: var(--foreground);
   font-size: 12px;
+}
+
+.resume-import-status [data-slot="alert-description"] {
+  color: inherit;
 }
 
 .resume-import-confirmation-summary {

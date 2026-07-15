@@ -43,6 +43,15 @@
   gap: 20px;
 }
 
+.dashboard-error-alert {
+  margin-bottom: 20px;
+}
+
+.dashboard-view .dashboard-inline-alert {
+  width: auto;
+  margin: 12px 18px;
+}
+
 .dashboard-ops {
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 0;
@@ -226,15 +235,66 @@
   line-height: 1.35;
 }
 
-.dashboard-view .work-status-stat {
-  border: 0;
-  border-radius: 5px;
-  background: color-mix(in oklch, var(--muted) 66%, var(--card));
-  box-shadow: none;
+.dashboard-view .work-status-card {
+  gap: 0;
+  padding-block: 0;
 }
 
-.dashboard-view .work-status-stat [data-slot="stat-value"] {
-  font-weight: 650;
+.dashboard-view .work-status-content {
+  padding: 0;
+}
+
+.dashboard-view .work-status-metrics {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  gap: 0;
+  margin: 0;
+  padding: 18px 20px;
+}
+
+.dashboard-view .work-status-metric {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  padding-inline: 0 20px;
+}
+
+.dashboard-view .work-status-metric:last-child {
+  padding-inline: 20px 0;
+}
+
+.dashboard-view .work-status-metric dt {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 680;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+}
+
+.dashboard-view .work-status-metric dd {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 680;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.dashboard-view .work-status-metric[data-attention="true"] dd {
+  color: var(--destructive);
+}
+
+.dashboard-view .work-status-metric > span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.dashboard-view .work-status-metric-separator {
+  align-self: stretch;
+  height: auto;
 }
 
 @media (max-width: 1500px) {
@@ -307,5 +367,20 @@
   .dashboard-view .funnel-row,
   .dashboard-view .conversion-stage {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-view .work-status-metrics {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .dashboard-view .work-status-metric,
+  .dashboard-view .work-status-metric:last-child {
+    padding: 0;
+  }
+
+  .dashboard-view .work-status-metric-separator {
+    width: 100%;
+    height: 1px;
   }
 }

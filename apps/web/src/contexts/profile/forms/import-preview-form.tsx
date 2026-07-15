@@ -3,6 +3,7 @@ import { useForm } from "@tanstack/react-form";
 import { IconFileTypePdf } from "@tabler/icons-react";
 import { z } from "zod";
 
+import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../../shared/ui/button.js";
 import { Checkbox } from "../../../shared/ui/checkbox.js";
 import { Empty } from "../../../shared/ui/empty.js";
@@ -10,6 +11,7 @@ import {
   Field,
   FieldContent,
   FieldDescription,
+  FieldGroup,
   FieldLabel,
   FieldLegend,
   FieldSet,
@@ -103,7 +105,7 @@ export function ImportPreviewForm() {
         <FieldDescription>
           Select at least one section. You can edit the resulting profile after import.
         </FieldDescription>
-        <div className="import-options resume-import-options">
+        <FieldGroup className="import-options resume-import-options">
           <form.Field name="importProfile">
             {(field) => (
               <Field orientation="horizontal" className="resume-import-option">
@@ -140,7 +142,7 @@ export function ImportPreviewForm() {
               </Field>
             )}
           </form.Field>
-        </div>
+        </FieldGroup>
       </FieldSet>
 
       <form.Subscribe selector={(state) => state.errors}>
@@ -149,9 +151,9 @@ export function ImportPreviewForm() {
             .flat()
             .find((entry): entry is string => typeof entry === "string" && entry.length > 0);
           return message ? (
-            <div className="banner inline resume-import-alert" role="alert">
-              {message}
-            </div>
+            <Alert className="resume-import-alert" variant="destructive">
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
           ) : null;
         }}
       </form.Subscribe>

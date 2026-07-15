@@ -6,7 +6,24 @@ import {
   type AnalyticsDimension,
   type AnalyticsSearch,
 } from "../../routes/-analytics.search.js";
+import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../../shared/ui/card.js";
 import { PageHead } from "../../shared/ui/page-head.js";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../shared/ui/select.js";
+import { ToggleGroup, ToggleGroupItem } from "../../shared/ui/toggle-group.js";
 import { DimensionBreakdownPanel } from "./DimensionBreakdownPanel.js";
 import { SmallSampleNotice } from "./SmallSampleNotice.js";
 
@@ -63,93 +80,111 @@ export function AnalyticsView() {
         title="Outcome analytics"
         subtitle={analytics ? `${applied} applied` : "loading"}
       />
-      <section className="card full analytics-view data-list-card" aria-label="Outcome analytics workspace">
-        {message ? <div className="banner inline">{message}</div> : null}
-        <div className="analytics-controls">
-          <div className="analytics-controls-copy">
+      <Card className="analytics-view data-list-card" aria-label="Outcome analytics workspace">
+        <CardHeader className="analytics-controls">
+          <CardTitle className="analytics-controls-copy">
             <span>Breakdown</span>
             <strong>{activeDimensionLabel}</strong>
-          </div>
-          <div className="analytics-toolbar" role="group" aria-label="Outcome analytics dimension">
-            {DIMENSION_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={option.value === dimension ? "segmented active" : "segmented"}
-                aria-pressed={option.value === dimension}
-                onClick={() => setDimension(option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-            <label className="analytics-select-label">
-              <span>Dimension</span>
-              <select
-                className="select"
-                value={dimension}
-                onChange={(event) => {
-                  const next = event.target.value;
-                  if (isAnalyticsDimension(next)) setDimension(next);
-                }}
-              >
-                {DIMENSION_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        </div>
-        <dl className="analytics-summary-strip" aria-label="Outcome summary">
-          <div className="analytics-summary-metric analytics-summary-metric-primary">
-            <dt>Applied</dt>
-            <dd>{analytics?.totals.applied ?? "-"}</dd>
-          </div>
-          <div className="analytics-summary-metric analytics-summary-metric-primary">
-            <dt>Replies</dt>
-            <dd>{analytics?.totals.reply ?? "-"}</dd>
-          </div>
-          <div className="analytics-summary-metric analytics-summary-metric-primary">
-            <dt>Interviews</dt>
-            <dd>{analytics?.totals.interview ?? "-"}</dd>
-          </div>
-          <div className="analytics-summary-metric analytics-summary-metric-primary">
-            <dt>Offers</dt>
-            <dd>{analytics?.totals.offer ?? "-"}</dd>
-          </div>
-          <div className="analytics-summary-metric analytics-summary-metric-secondary">
-            <dt>Median response</dt>
-            <dd>
-              {analytics
-                ? formatDuration(
-                    analytics.timeToResponse.medianMinutes,
-                    analytics.timeToResponse.n,
-                    analytics.minSample,
-                  )
-                : "-"}
-            </dd>
-          </div>
-          <div className="analytics-summary-metric analytics-summary-metric-secondary">
-            <dt>Suggestions accepted</dt>
-            <dd>
-              {analytics
-                ? formatAcceptance(
-                    analytics.suggestionAccuracy.acceptanceRate,
-                    analytics.suggestionAccuracy.n,
-                    analytics.minSample,
-                  )
-                : "-"}
-            </dd>
-          </div>
-        </dl>
-        <SmallSampleNotice {...(analytics ? { minSample: analytics.minSample } : {})} />
-        <DimensionBreakdownPanel
-          analytics={analytics}
-          dimension={dimension}
-          loading={analyticsQuery.isFetching}
-        />
-      </section>
+          </CardTitle>
+          <CardAction className="analytics-toolbar">
+            <ToggleGroup
+              className="analytics-dimension-toggle"
+              type="single"
+              value={dimension}
+              aria-label="Outcome analytics dimension"
+              onValueChange={(next) => {
+                if (isAnalyticsDimension(next)) setDimension(next);
+              }}
+            >
+              {DIMENSION_OPTIONS.map((option) => (
+                <ToggleGroupItem
+                  key={option.value}
+                  value={option.value}
+                  aria-label={`Break down outcomes by ${option.label.toLowerCase()}`}
+                >
+                  {option.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+            <Select
+              items={[...DIMENSION_OPTIONS]}
+              value={dimension}
+              onValueChange={(next) => {
+                if (isAnalyticsDimension(next)) setDimension(next);
+              }}
+            >
+              <SelectTrigger className="analytics-dimension-select" aria-label="Outcome analytics dimension">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false} side="bottom">
+                <SelectGroup>
+                  {DIMENSION_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </CardAction>
+        </CardHeader>
+        <CardContent className="analytics-content">
+          {message ? (
+            <Alert variant="destructive" className="analytics-error">
+              <AlertTitle>Outcome analytics could not be loaded</AlertTitle>
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          ) : null}
+          <dl className="analytics-summary-strip" aria-label="Outcome summary">
+            <div className="analytics-summary-metric analytics-summary-metric-primary">
+              <dt>Applied</dt>
+              <dd>{analytics?.totals.applied ?? "-"}</dd>
+            </div>
+            <div className="analytics-summary-metric analytics-summary-metric-primary">
+              <dt>Replies</dt>
+              <dd>{analytics?.totals.reply ?? "-"}</dd>
+            </div>
+            <div className="analytics-summary-metric analytics-summary-metric-primary">
+              <dt>Interviews</dt>
+              <dd>{analytics?.totals.interview ?? "-"}</dd>
+            </div>
+            <div className="analytics-summary-metric analytics-summary-metric-primary">
+              <dt>Offers</dt>
+              <dd>{analytics?.totals.offer ?? "-"}</dd>
+            </div>
+            <div className="analytics-summary-metric analytics-summary-metric-secondary">
+              <dt>Median response</dt>
+              <dd>
+                {analytics
+                  ? formatDuration(
+                      analytics.timeToResponse.medianMinutes,
+                      analytics.timeToResponse.n,
+                      analytics.minSample,
+                    )
+                  : "-"}
+              </dd>
+            </div>
+            <div className="analytics-summary-metric analytics-summary-metric-secondary">
+              <dt>Suggestions accepted</dt>
+              <dd>
+                {analytics
+                  ? formatAcceptance(
+                      analytics.suggestionAccuracy.acceptanceRate,
+                      analytics.suggestionAccuracy.n,
+                      analytics.minSample,
+                    )
+                  : "-"}
+              </dd>
+            </div>
+          </dl>
+          <SmallSampleNotice {...(analytics ? { minSample: analytics.minSample } : {})} />
+          <DimensionBreakdownPanel
+            analytics={analytics}
+            dimension={dimension}
+            loading={analyticsQuery.isFetching}
+          />
+        </CardContent>
+      </Card>
     </>
   );
 }
