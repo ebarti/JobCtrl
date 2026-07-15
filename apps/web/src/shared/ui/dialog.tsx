@@ -114,7 +114,7 @@ export const DialogOverlay = forwardRef<
     ref={ref}
     data-slot="dialog-overlay"
     className={cn(
-      "fixed inset-0 z-50 bg-black/30 duration-150 supports-backdrop-filter:backdrop-blur-[2px] data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0",
+      "fixed inset-0 isolate bg-foreground/20 duration-150 supports-backdrop-filter:backdrop-blur-[2px] data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0",
       className,
     )}
     {...props}
@@ -137,7 +137,7 @@ export const DialogContent = forwardRef<
       ref={ref}
       data-slot="dialog-content"
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-5 rounded-[10px] border border-border bg-popover p-5 text-sm text-popover-foreground shadow-xl outline-none duration-150 data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 sm:max-w-lg",
+        "fixed left-1/2 top-1/2 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-5 rounded-[10px] border border-border bg-popover p-5 text-sm text-popover-foreground shadow-xl outline-none duration-150 data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 sm:max-w-lg",
         className,
       )}
       {...props}
@@ -147,13 +147,13 @@ export const DialogContent = forwardRef<
         data-slot="dialog-close"
         render={
           <Button
-            className="absolute right-3 top-3 size-8 bg-muted/60 text-muted-foreground shadow-none"
+            className="absolute right-3 top-3"
             size="icon"
             variant="ghost"
           />
         }
       >
-        <IconX aria-hidden size={16} />
+        <IconX aria-hidden />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
     </DialogPrimitive.Popup>

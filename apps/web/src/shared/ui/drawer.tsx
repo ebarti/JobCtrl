@@ -29,7 +29,7 @@ export const DrawerOverlay = forwardRef<
     ref={ref}
     data-slot="drawer-overlay"
     className={cn(
-      "fixed inset-0 z-50 bg-black/30 supports-backdrop-filter:backdrop-blur-[2px]",
+      "fixed inset-0 isolate bg-foreground/20 supports-backdrop-filter:backdrop-blur-[2px]",
       className,
     )}
     {...props}
@@ -47,7 +47,7 @@ export const DrawerContent = forwardRef<
       ref={ref}
       data-slot="drawer-content"
       className={cn(
-        "fixed inset-x-0 bottom-0 z-50 mt-24 flex h-auto flex-col rounded-t-[10px] border border-border bg-popover text-sm text-popover-foreground shadow-xl",
+        "fixed inset-x-0 bottom-0 mt-24 flex h-auto flex-col rounded-t-[10px] border border-border bg-popover text-sm text-popover-foreground shadow-xl",
         className,
       )}
       {...props}

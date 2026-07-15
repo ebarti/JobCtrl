@@ -113,7 +113,7 @@ export const SheetOverlay = forwardRef<
   <DialogPrimitive.Backdrop
     data-slot="sheet-overlay"
     className={cn(
-      "fixed inset-0 z-50 bg-black/30 transition-opacity duration-150 supports-backdrop-filter:backdrop-blur-[2px] data-starting-style:opacity-0 data-ending-style:opacity-0",
+      "fixed inset-0 isolate bg-foreground/20 transition-opacity duration-150 supports-backdrop-filter:backdrop-blur-[2px] data-starting-style:opacity-0 data-ending-style:opacity-0",
       className,
     )}
     {...props}
@@ -123,7 +123,7 @@ export const SheetOverlay = forwardRef<
 SheetOverlay.displayName = "SheetOverlay";
 
 const sheetVariants = cva(
-  "fixed z-50 flex flex-col gap-5 bg-popover p-6 text-sm text-popover-foreground shadow-xl transition ease-in-out data-open:duration-200 data-closed:duration-150",
+  "fixed flex flex-col gap-5 bg-popover p-6 text-sm text-popover-foreground shadow-xl transition ease-in-out data-open:duration-200 data-closed:duration-150",
   {
     variants: {
       side: {
@@ -166,13 +166,13 @@ export const SheetContent = forwardRef<
         data-slot="sheet-close"
         render={
           <Button
-            className="absolute right-3 top-3 size-8 bg-muted/60 text-muted-foreground shadow-none"
+            className="absolute right-3 top-3"
             size="icon"
             variant="ghost"
           />
         }
       >
-        <IconX aria-hidden size={16} />
+        <IconX aria-hidden />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
     </DialogPrimitive.Popup>

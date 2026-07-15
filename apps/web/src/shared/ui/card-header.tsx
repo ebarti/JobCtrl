@@ -1,19 +1,31 @@
 import type { ReactNode } from "react";
 
+import {
+  CardAction,
+  CardHeader as CardHeaderPrimitive,
+  CardTitle,
+} from "./card.js";
+
 export interface CardHeaderProps {
   title: string;
   meta?: ReactNode;
 }
 
+/**
+ * Compatibility adapter for legacy `.card` sections. New card surfaces should
+ * compose the primitives from `card.tsx` directly.
+ */
 export function CardHeader({ title, meta }: CardHeaderProps) {
   return (
-    <header className="card-hd" data-slot="legacy-card-header">
-      <h2 data-slot="legacy-card-title">{title}</h2>
+    <CardHeaderPrimitive className="card-hd">
+      <CardTitle>
+        <h2>{title}</h2>
+      </CardTitle>
       {meta ? (
-        <span className="meta" data-slot="legacy-card-meta">
-          {meta}
-        </span>
+        <CardAction>
+          <span className="meta">{meta}</span>
+        </CardAction>
       ) : null}
-    </header>
+    </CardHeaderPrimitive>
   );
 }

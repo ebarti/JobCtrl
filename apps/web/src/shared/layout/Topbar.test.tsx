@@ -70,16 +70,25 @@ describe("<Topbar>", () => {
   it("renders the search, density control, and no inline navigation rail", async () => {
     renderTopbar();
 
-    expect(await screen.findByRole("textbox", { name: "Global search" })).toBeInTheDocument();
-    expect(screen.queryByRole("navigation", { name: "Main navigation" })).not.toBeInTheDocument();
-
-    const density = screen.getByRole("combobox", { name: "Row density" });
-    expect(density).toHaveDisplayValue("regular");
-    expect(screen.getByRole("option", { name: "compact" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "regular" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "comfy" })).toBeInTheDocument();
     expect(
-      screen.getByText("Copyright © 2026 Eloi Barti", { selector: ".legal-notice--topbar span" }),
+      await screen.findByRole("textbox", { name: "Global search" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("navigation", { name: "Main navigation" }),
+    ).not.toBeInTheDocument();
+
+    const density = screen.getByRole("group", { name: "Row density" });
+    expect(density).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "regular" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "compact" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "comfy" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Copyright © 2026 Eloi Barti", {
+        selector: ".legal-notice--topbar span",
+      }),
     ).toBeInTheDocument();
   });
 
@@ -87,29 +96,44 @@ describe("<Topbar>", () => {
     const user = userEvent.setup();
     renderTopbar();
 
-    await user.click(await screen.findByRole("button", { name: "Open navigation" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Open navigation" }),
+    );
 
-    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
-    for (const label of ["Dashboard", "Apply review", "Jobs", "Contacts", "Settings"]) {
+    const nav = await screen.findByRole("navigation", {
+      name: "Main navigation",
+    });
+    for (const label of [
+      "Dashboard",
+      "Apply review",
+      "Jobs",
+      "Contacts",
+      "Settings",
+    ]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Copyright © 2026 Eloi Barti")).toBeInTheDocument();
-    expect(within(dialog).getByRole("link", { name: "AGPL-3.0-only" })).toHaveAttribute(
+    expect(
+      within(dialog).getByText("Copyright © 2026 Eloi Barti"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("link", { name: "AGPL-3.0-only" }),
+    ).toHaveAttribute(
       "href",
       "https://github.com/ebarti/JobCtrl/blob/main/LICENSE",
     );
-    expect(within(dialog).getByRole("link", { name: "Source code" })).toHaveAttribute(
-      "href",
-      "https://github.com/ebarti/JobCtrl",
-    );
+    expect(
+      within(dialog).getByRole("link", { name: "Source code" }),
+    ).toHaveAttribute("href", "https://github.com/ebarti/JobCtrl");
     expect(nav).toBeInTheDocument();
   });
 
   it("keeps global search Enter navigation scoped to non-empty trimmed queries", async () => {
     const user = userEvent.setup();
     const { router } = renderTopbar();
-    const search = await screen.findByRole("textbox", { name: "Global search" });
+    const search = await screen.findByRole("textbox", {
+      name: "Global search",
+    });
 
     await user.type(search, "   {Enter}");
     expect(router.state.location.pathname).toBe("/dashboard");
@@ -127,12 +151,10 @@ describe("<Topbar>", () => {
   it("updates the persisted density store from the row density control", async () => {
     const user = userEvent.setup();
     renderTopbar();
-    const density = await screen.findByRole("combobox", { name: "Row density" });
-
-    await user.selectOptions(density, "compact");
+    await user.click(screen.getByRole("button", { name: "compact" }));
     expect(useUiPreferencesStore.getState().density).toBe("compact");
 
-    await user.selectOptions(density, "comfy");
+    await user.click(screen.getByRole("button", { name: "comfy" }));
     expect(useUiPreferencesStore.getState().density).toBe("comfy");
   });
 });

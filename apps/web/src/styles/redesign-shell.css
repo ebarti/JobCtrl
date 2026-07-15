@@ -215,18 +215,6 @@
   flex: 0 0 auto;
 }
 
-.topbar__density .select {
-  min-width: 100px;
-  min-height: 32px;
-  padding: 5px 28px 5px 9px;
-  border-color: var(--border);
-  border-radius: 5px;
-  background: var(--card);
-  font-size: 11px;
-  font-weight: 550;
-  text-transform: capitalize;
-}
-
 .topbar__theme-toggle {
   min-height: 32px;
   padding: 5px 0;
