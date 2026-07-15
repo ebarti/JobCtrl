@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Coroutine
 
 from temporalio import activity
@@ -149,16 +149,19 @@ def start_discovery_preparation_workflows(
         ]
         specs = [spec for _target, spec in target_specs]
         if discovery_execution is not None:
-            workflow_ids_to_start = _record_preparation_work_plans(
+            workflow_cohorts_to_start = _record_preparation_work_plans(
                 targets,
                 tenant_id=tenant_id,
                 discovery_execution=discovery_execution,
                 discovery_cohort_kind=discovery_cohort_kind,
             )
             specs = [
-                spec
+                _with_discovery_cohort(
+                    spec,
+                    workflow_cohorts_to_start[spec.workflow_id],
+                )
                 for _target, spec in target_specs
-                if spec.workflow_id in workflow_ids_to_start
+                if spec.workflow_id in workflow_cohorts_to_start
             ]
             if finalize_observed_work_plans:
                 _finalize_unplanned_observed_work_plans(
@@ -235,7 +238,7 @@ def start_job_preparation_workflow(
             preparation_payload = spec.args[0]
             if not isinstance(preparation_payload, JobPreparationInput):
                 raise TypeError("preparation workflow spec has an unexpected input")
-            workflow_ids_to_start = _record_preparation_work_plans(
+            workflow_cohorts_to_start = _record_preparation_work_plans(
                 [
                     PreparationTarget(
                         job_url=job_url,
@@ -248,8 +251,12 @@ def start_job_preparation_workflow(
                 discovery_execution=discovery_execution,
                 discovery_cohort_kind=discovery_cohort_kind,
             )
-            if spec.workflow_id not in workflow_ids_to_start:
+            if spec.workflow_id not in workflow_cohorts_to_start:
                 return False
+            spec = _with_discovery_cohort(
+                spec,
+                workflow_cohorts_to_start[spec.workflow_id],
+            )
     except Exception:
         if discovery_execution is not None:
             _mark_job_work_plan_failed(
@@ -455,19 +462,20 @@ def _record_preparation_work_plans(
     tenant_id: TenantId,
     discovery_execution: DiscoveryExecutionRef,
     discovery_cohort_kind: DiscoveryExecutionCohortKind,
-) -> set[str]:
+) -> dict[str, DiscoveryExecutionCohortKind]:
     """Persist selected work before asking Temporal to start it.
 
     Existing-backlog rows are created here because selection by the pre-run
-    sweep defines membership. Current-run rows must already exist from the
-    source-observation boundary; silently inventing those rows here would lose
-    their first source metadata and make the mutable source run authoritative.
+    sweep defines membership. An observed fan-out may also derive a persistent
+    enrichment backlog job that no source observed in this execution. Such a
+    target is linked as existing backlog rather than inventing source metadata
+    or attributing it to the current-execution cohort.
     """
 
     if str(tenant_id) != discovery_execution.tenant_id:
         raise ValueError("preparation tenant does not match discovery execution")
     repository = SqliteDiscoveryExecutionRepository(get_connection())
-    workflow_ids_to_start: set[str] = set()
+    workflow_cohorts_to_start: dict[str, DiscoveryExecutionCohortKind] = {}
     for target in targets:
         if discovery_cohort_kind == "existing_backlog":
             membership = repository.link_job(
@@ -478,8 +486,10 @@ def _record_preparation_work_plans(
         else:
             membership = repository.get(discovery_execution, target.job_url)
             if membership is None:
-                raise RuntimeError(
-                    "Observed preparation target is missing discovery execution membership"
+                membership = repository.link_job(
+                    discovery_execution,
+                    target.job_url,
+                    cohort_kind="existing_backlog",
                 )
         workflow_id = preparation_workflow_id(target.idempotency_key)
         canonical_steps = validate_required_steps(target.steps)
@@ -492,7 +502,7 @@ def _record_preparation_work_plans(
                 and membership.preparation_workflow_id == workflow_id
                 and membership.required_steps == canonical_steps
             ):
-                workflow_ids_to_start.add(workflow_id)
+                workflow_cohorts_to_start[workflow_id] = membership.cohort_kind
             continue
         repository.set_work_plan(
             discovery_execution,
@@ -501,8 +511,23 @@ def _record_preparation_work_plans(
             required_steps=target.steps,
             preparation_workflow_id=workflow_id,
         )
-        workflow_ids_to_start.add(workflow_id)
-    return workflow_ids_to_start
+        workflow_cohorts_to_start[workflow_id] = membership.cohort_kind
+    return workflow_cohorts_to_start
+
+
+def _with_discovery_cohort(
+    spec: WorkflowStartSpec,
+    cohort_kind: DiscoveryExecutionCohortKind,
+) -> WorkflowStartSpec:
+    payload = spec.args[0]
+    if not isinstance(payload, JobPreparationInput):
+        raise TypeError("preparation workflow spec has an unexpected input")
+    if payload.discovery_cohort_kind == cohort_kind:
+        return spec
+    return replace(
+        spec,
+        args=(replace(payload, discovery_cohort_kind=cohort_kind),),
+    )
 
 
 def _mark_pending_work_plans_failed(
