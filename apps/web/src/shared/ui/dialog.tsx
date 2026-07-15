@@ -1,44 +1,129 @@
-import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { IconX } from "@tabler/icons-react";
 import {
+  Children,
   forwardRef,
-  type ComponentPropsWithoutRef,
   type ComponentRef,
   type HTMLAttributes,
+  type ReactElement,
+  type ReactNode,
 } from "react";
 
 import { cn } from "../lib/cn.js";
 
-export const Dialog = DialogPrimitive.Root;
-export const DialogTrigger = DialogPrimitive.Trigger;
-export const DialogPortal = DialogPrimitive.Portal;
-export const DialogClose = DialogPrimitive.Close;
+export interface DialogProps
+  extends Omit<DialogPrimitive.Root.Props, "children"> {
+  children?: ReactNode;
+}
+
+export function Dialog({ children, ...props }: DialogProps) {
+  return <DialogPrimitive.Root {...props}>{children}</DialogPrimitive.Root>;
+}
+Dialog.displayName = "Dialog";
+
+export interface DialogTriggerProps extends Omit<
+  DialogPrimitive.Trigger.Props,
+  "render"
+> {
+  /** @deprecated Base UI composes custom triggers with `render`. */
+  asChild?: boolean;
+  render?: DialogPrimitive.Trigger.Props["render"];
+}
+
+export const DialogTrigger = forwardRef<HTMLButtonElement, DialogTriggerProps>(
+  ({ asChild = false, children, render, ...props }, ref) => {
+    const child = asChild
+      ? (Children.only(children) as ReactElement)
+      : undefined;
+
+    return (
+      <DialogPrimitive.Trigger
+        {...props}
+        ref={ref}
+        render={child ?? render}
+      >
+        {child ? undefined : children}
+      </DialogPrimitive.Trigger>
+    );
+  },
+);
+DialogTrigger.displayName = "DialogTrigger";
+
+export interface DialogPortalProps extends Omit<
+  DialogPrimitive.Portal.Props,
+  "keepMounted"
+> {
+  /** @deprecated Base UI calls this `keepMounted`. */
+  forceMount?: boolean | undefined;
+  keepMounted?: boolean | undefined;
+}
+
+export const DialogPortal = forwardRef<
+  ComponentRef<typeof DialogPrimitive.Portal>,
+  DialogPortalProps
+>(({ forceMount, keepMounted, ...props }, ref) => (
+  <DialogPrimitive.Portal
+    {...props}
+    keepMounted={keepMounted ?? forceMount}
+    ref={ref}
+  />
+));
+DialogPortal.displayName = "DialogPortal";
+
+export interface DialogCloseProps extends Omit<
+  DialogPrimitive.Close.Props,
+  "render"
+> {
+  /** @deprecated Base UI composes custom close controls with `render`. */
+  asChild?: boolean;
+  render?: DialogPrimitive.Close.Props["render"];
+}
+
+export const DialogClose = forwardRef<HTMLButtonElement, DialogCloseProps>(
+  ({ asChild = false, children, render, ...props }, ref) => {
+    const child = asChild
+      ? (Children.only(children) as ReactElement)
+      : undefined;
+
+    return (
+      <DialogPrimitive.Close {...props} ref={ref} render={child ?? render}>
+        {child ? undefined : children}
+      </DialogPrimitive.Close>
+    );
+  },
+);
+DialogClose.displayName = "DialogClose";
 
 export const DialogOverlay = forwardRef<
-  ComponentRef<typeof DialogPrimitive.Overlay>,
-  ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
+  ComponentRef<typeof DialogPrimitive.Backdrop>,
+  DialogPrimitive.Backdrop.Props
 >(({ className, ...props }, ref) => (
-  <DialogPrimitive.Overlay
+  <DialogPrimitive.Backdrop
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/35 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "fixed inset-0 z-50 bg-black/35 data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0",
       className,
     )}
     {...props}
   />
 ));
-DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
+DialogOverlay.displayName = "DialogOverlay";
+
+export interface DialogContentProps extends DialogPrimitive.Popup.Props {
+  /** @deprecated Base UI keeps the Portal mounted with `keepMounted`. */
+  forceMount?: boolean | undefined;
+}
 
 export const DialogContent = forwardRef<
-  ComponentRef<typeof DialogPrimitive.Content>,
-  ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
-  <DialogPortal>
+  ComponentRef<typeof DialogPrimitive.Popup>,
+  DialogContentProps
+>(({ className, children, forceMount, ...props }, ref) => (
+  <DialogPortal forceMount={forceMount}>
     <DialogOverlay />
-    <DialogPrimitive.Content
+    <DialogPrimitive.Popup
       ref={ref}
       className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-popover p-6 text-popover-foreground shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
+        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-popover p-6 text-popover-foreground shadow-lg duration-200 data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 sm:rounded-lg",
         className,
       )}
       {...props}
@@ -48,25 +133,37 @@ export const DialogContent = forwardRef<
         <IconX className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
-    </DialogPrimitive.Content>
+    </DialogPrimitive.Popup>
   </DialogPortal>
 ));
-DialogContent.displayName = DialogPrimitive.Content.displayName;
+DialogContent.displayName = "DialogContent";
 
-export function DialogHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function DialogHeader({
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn("flex flex-col space-y-1.5 text-center sm:text-left", className)}
+      className={cn(
+        "flex flex-col space-y-1.5 text-center sm:text-left",
+        className,
+      )}
       {...props}
     />
   );
 }
 DialogHeader.displayName = "DialogHeader";
 
-export function DialogFooter({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function DialogFooter({
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn("flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2", className)}
+      className={cn(
+        "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2",
+        className,
+      )}
       {...props}
     />
   );
@@ -75,20 +172,27 @@ DialogFooter.displayName = "DialogFooter";
 
 export const DialogTitle = forwardRef<
   ComponentRef<typeof DialogPrimitive.Title>,
-  ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
+  DialogPrimitive.Title.Props
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
-    className={cn("text-lg font-semibold leading-none tracking-tight", className)}
+    className={cn(
+      "text-lg font-semibold leading-none tracking-tight",
+      className,
+    )}
     {...props}
   />
 ));
-DialogTitle.displayName = DialogPrimitive.Title.displayName;
+DialogTitle.displayName = "DialogTitle";
 
 export const DialogDescription = forwardRef<
   ComponentRef<typeof DialogPrimitive.Description>,
-  ComponentPropsWithoutRef<typeof DialogPrimitive.Description>
+  DialogPrimitive.Description.Props
 >(({ className, ...props }, ref) => (
-  <DialogPrimitive.Description ref={ref} className={cn("text-sm text-muted-foreground", className)} {...props} />
+  <DialogPrimitive.Description
+    ref={ref}
+    className={cn("text-sm text-muted-foreground", className)}
+    {...props}
+  />
 ));
-DialogDescription.displayName = DialogPrimitive.Description.displayName;
+DialogDescription.displayName = "DialogDescription";

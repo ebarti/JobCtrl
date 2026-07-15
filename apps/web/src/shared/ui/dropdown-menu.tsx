@@ -1,158 +1,330 @@
-import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
+"use client";
+
+import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { IconCheck, IconChevronRight, IconCircle } from "@tabler/icons-react";
 import {
   forwardRef,
-  type ComponentPropsWithoutRef,
   type ComponentRef,
   type HTMLAttributes,
 } from "react";
 
 import { cn } from "../lib/cn.js";
 
-export const DropdownMenu = DropdownMenuPrimitive.Root;
-export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
-export const DropdownMenuGroup = DropdownMenuPrimitive.Group;
-export const DropdownMenuPortal = DropdownMenuPrimitive.Portal;
-export const DropdownMenuSub = DropdownMenuPrimitive.Sub;
-export const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup;
+const noCollisionAvoidance = {
+  align: "none",
+  fallbackAxisSide: "none",
+  side: "none",
+} as const;
+
+const radixCollisionAvoidance = {
+  fallbackAxisSide: "none",
+} as const;
+
+const radixCollisionBoundary: Element[] = [];
+
+export function DropdownMenu({
+  loopFocus = false,
+  ...props
+}: MenuPrimitive.Root.Props) {
+  return <MenuPrimitive.Root loopFocus={loopFocus} {...props} />;
+}
+
+export const DropdownMenuTrigger = forwardRef<
+  HTMLButtonElement,
+  MenuPrimitive.Trigger.Props
+>((props, ref) => <MenuPrimitive.Trigger ref={ref} {...props} />);
+DropdownMenuTrigger.displayName = "DropdownMenuTrigger";
+
+export const DropdownMenuGroup = forwardRef<
+  ComponentRef<typeof MenuPrimitive.Group>,
+  MenuPrimitive.Group.Props
+>((props, ref) => <MenuPrimitive.Group ref={ref} {...props} />);
+DropdownMenuGroup.displayName = "DropdownMenuGroup";
+
+export interface DropdownMenuPortalProps
+  extends Omit<MenuPrimitive.Portal.Props, "keepMounted"> {
+  forceMount?: boolean;
+  keepMounted?: MenuPrimitive.Portal.Props["keepMounted"];
+}
+
+export function DropdownMenuPortal({
+  forceMount,
+  keepMounted,
+  ...props
+}: DropdownMenuPortalProps) {
+  return (
+    <MenuPrimitive.Portal
+      keepMounted={keepMounted ?? forceMount}
+      {...props}
+    />
+  );
+}
+
+export function DropdownMenuSub({
+  loopFocus = false,
+  ...props
+}: MenuPrimitive.SubmenuRoot.Props) {
+  return <MenuPrimitive.SubmenuRoot loopFocus={loopFocus} {...props} />;
+}
+
+export const DropdownMenuRadioGroup = forwardRef<
+  ComponentRef<typeof MenuPrimitive.RadioGroup>,
+  MenuPrimitive.RadioGroup.Props
+>((props, ref) => <MenuPrimitive.RadioGroup ref={ref} {...props} />);
+DropdownMenuRadioGroup.displayName = "DropdownMenuRadioGroup";
 
 export const DropdownMenuSubTrigger = forwardRef<
-  ComponentRef<typeof DropdownMenuPrimitive.SubTrigger>,
-  ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubTrigger> & { inset?: boolean }
+  ComponentRef<typeof MenuPrimitive.SubmenuTrigger>,
+  MenuPrimitive.SubmenuTrigger.Props & { inset?: boolean }
 >(({ className, inset, children, ...props }, ref) => (
-  <DropdownMenuPrimitive.SubTrigger
+  <MenuPrimitive.SubmenuTrigger
     ref={ref}
     className={cn(
-      "flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground",
+      "flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-popup-open:bg-accent data-popup-open:text-accent-foreground",
       inset && "pl-8",
       className,
     )}
     {...props}
   >
     {children}
-    <IconChevronRight className="ml-auto h-4 w-4" />
-  </DropdownMenuPrimitive.SubTrigger>
+    <IconChevronRight aria-hidden className="ml-auto size-4" />
+  </MenuPrimitive.SubmenuTrigger>
 ));
-DropdownMenuSubTrigger.displayName = DropdownMenuPrimitive.SubTrigger.displayName;
+DropdownMenuSubTrigger.displayName = "DropdownMenuSubTrigger";
 
-export const DropdownMenuSubContent = forwardRef<
-  ComponentRef<typeof DropdownMenuPrimitive.SubContent>,
-  ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
->(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.SubContent
-    ref={ref}
-    className={cn(
-      "z-50 min-w-[8rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-[var(--shadow-panel)]",
-      className,
-    )}
-    {...props}
-  />
-));
-DropdownMenuSubContent.displayName = DropdownMenuPrimitive.SubContent.displayName;
+type DropdownMenuPositioningProps = Pick<
+  MenuPrimitive.Positioner.Props,
+  | "align"
+  | "alignOffset"
+  | "anchor"
+  | "arrowPadding"
+  | "collisionAvoidance"
+  | "collisionBoundary"
+  | "collisionPadding"
+  | "disableAnchorTracking"
+  | "positionMethod"
+  | "side"
+  | "sideOffset"
+>;
+
+export type DropdownMenuContentProps = MenuPrimitive.Popup.Props &
+  DropdownMenuPositioningProps & {
+    avoidCollisions?: boolean;
+    container?: MenuPrimitive.Portal.Props["container"];
+    forceMount?: boolean;
+    hideWhenDetached?: boolean;
+    keepMounted?: MenuPrimitive.Portal.Props["keepMounted"];
+    sticky?: boolean | "always" | "partial";
+  };
 
 export const DropdownMenuContent = forwardRef<
-  ComponentRef<typeof DropdownMenuPrimitive.Content>,
-  ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, sideOffset = 4, ...props }, ref) => (
-  <DropdownMenuPrimitive.Portal>
-    <DropdownMenuPrimitive.Content
+  ComponentRef<typeof MenuPrimitive.Popup>,
+  DropdownMenuContentProps
+>(
+  (
+    {
+      align = "center",
+      alignOffset = 0,
+      anchor,
+      arrowPadding = 0,
+      avoidCollisions = true,
+      children,
+      className,
+      collisionAvoidance,
+      collisionBoundary = radixCollisionBoundary,
+      collisionPadding = 0,
+      container,
+      disableAnchorTracking,
+      forceMount,
+      hideWhenDetached = false,
+      keepMounted,
+      positionMethod = "fixed",
+      side = "bottom",
+      sideOffset = 4,
+      sticky = "partial",
+      ...props
+    },
+    ref,
+  ) => {
+    const resolvedCollisionAvoidance =
+      collisionAvoidance ??
+      (avoidCollisions ? radixCollisionAvoidance : noCollisionAvoidance);
+    const resolvedSticky =
+      sticky === "always" ? true : sticky === "partial" ? false : sticky;
+
+    return (
+      <MenuPrimitive.Portal
+        container={container}
+        keepMounted={keepMounted ?? forceMount}
+      >
+        <MenuPrimitive.Positioner
+          align={align}
+          alignOffset={alignOffset}
+          anchor={anchor}
+          arrowPadding={arrowPadding}
+          className={cn(
+            "isolate z-50 outline-none",
+            hideWhenDetached && "data-anchor-hidden:invisible",
+          )}
+          collisionAvoidance={resolvedCollisionAvoidance}
+          collisionBoundary={collisionBoundary}
+          collisionPadding={collisionPadding}
+          disableAnchorTracking={disableAnchorTracking}
+          positionMethod={positionMethod}
+          side={side}
+          sideOffset={sideOffset}
+          sticky={resolvedSticky}
+        >
+          <MenuPrimitive.Popup
+            ref={ref}
+            data-slot="dropdown-menu-content"
+            className={cn(
+              "z-50 min-w-[8rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-[var(--shadow-panel)] outline-none",
+              className,
+            )}
+            {...props}
+          >
+            {children}
+          </MenuPrimitive.Popup>
+        </MenuPrimitive.Positioner>
+      </MenuPrimitive.Portal>
+    );
+  },
+);
+DropdownMenuContent.displayName = "DropdownMenuContent";
+
+export const DropdownMenuSubContent = forwardRef<
+  ComponentRef<typeof MenuPrimitive.Popup>,
+  DropdownMenuContentProps
+>(
+  (
+    {
+      align = "start",
+      alignOffset = -3,
+      className,
+      side = "right",
+      sideOffset = 0,
+      ...props
+    },
+    ref,
+  ) => (
+    <DropdownMenuContent
       ref={ref}
+      align={align}
+      alignOffset={alignOffset}
+      side={side}
       sideOffset={sideOffset}
       className={cn(
         "z-50 min-w-[8rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-[var(--shadow-panel)]",
         className,
       )}
+      data-slot="dropdown-menu-sub-content"
       {...props}
     />
-  </DropdownMenuPrimitive.Portal>
-));
-DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName;
+  ),
+);
+DropdownMenuSubContent.displayName = "DropdownMenuSubContent";
 
 export const DropdownMenuItem = forwardRef<
-  ComponentRef<typeof DropdownMenuPrimitive.Item>,
-  ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item> & { inset?: boolean }
+  ComponentRef<typeof MenuPrimitive.Item>,
+  MenuPrimitive.Item.Props & { inset?: boolean }
 >(({ className, inset, ...props }, ref) => (
-  <DropdownMenuPrimitive.Item
+  <MenuPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50",
       inset && "pl-8",
       className,
     )}
     {...props}
   />
 ));
-DropdownMenuItem.displayName = DropdownMenuPrimitive.Item.displayName;
+DropdownMenuItem.displayName = "DropdownMenuItem";
 
 export const DropdownMenuCheckboxItem = forwardRef<
-  ComponentRef<typeof DropdownMenuPrimitive.CheckboxItem>,
-  ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.CheckboxItem>
+  ComponentRef<typeof MenuPrimitive.CheckboxItem>,
+  MenuPrimitive.CheckboxItem.Props
 >(({ className, children, ...props }, ref) => (
-  <DropdownMenuPrimitive.CheckboxItem
+  <MenuPrimitive.CheckboxItem
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50",
       className,
     )}
     {...props}
   >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-      <DropdownMenuPrimitive.ItemIndicator>
-        <IconCheck className="h-4 w-4" />
-      </DropdownMenuPrimitive.ItemIndicator>
+    <span className="absolute left-2 flex size-3.5 items-center justify-center">
+      <MenuPrimitive.CheckboxItemIndicator>
+        <IconCheck aria-hidden className="size-4" />
+      </MenuPrimitive.CheckboxItemIndicator>
     </span>
     {children}
-  </DropdownMenuPrimitive.CheckboxItem>
+  </MenuPrimitive.CheckboxItem>
 ));
-DropdownMenuCheckboxItem.displayName = DropdownMenuPrimitive.CheckboxItem.displayName;
+DropdownMenuCheckboxItem.displayName = "DropdownMenuCheckboxItem";
 
 export const DropdownMenuRadioItem = forwardRef<
-  ComponentRef<typeof DropdownMenuPrimitive.RadioItem>,
-  ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.RadioItem>
+  ComponentRef<typeof MenuPrimitive.RadioItem>,
+  MenuPrimitive.RadioItem.Props
 >(({ className, children, ...props }, ref) => (
-  <DropdownMenuPrimitive.RadioItem
+  <MenuPrimitive.RadioItem
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50",
       className,
     )}
     {...props}
   >
-    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-      <DropdownMenuPrimitive.ItemIndicator>
-        <IconCircle className="h-2 w-2 fill-current" />
-      </DropdownMenuPrimitive.ItemIndicator>
+    <span className="absolute left-2 flex size-3.5 items-center justify-center">
+      <MenuPrimitive.RadioItemIndicator>
+        <IconCircle aria-hidden className="size-2 fill-current" />
+      </MenuPrimitive.RadioItemIndicator>
     </span>
     {children}
-  </DropdownMenuPrimitive.RadioItem>
+  </MenuPrimitive.RadioItem>
 ));
-DropdownMenuRadioItem.displayName = DropdownMenuPrimitive.RadioItem.displayName;
+DropdownMenuRadioItem.displayName = "DropdownMenuRadioItem";
 
 export const DropdownMenuLabel = forwardRef<
-  ComponentRef<typeof DropdownMenuPrimitive.Label>,
-  ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Label> & { inset?: boolean }
+  ComponentRef<typeof MenuPrimitive.GroupLabel>,
+  MenuPrimitive.GroupLabel.Props & { inset?: boolean }
 >(({ className, inset, ...props }, ref) => (
-  <DropdownMenuPrimitive.Label
+  <MenuPrimitive.GroupLabel
     ref={ref}
-    className={cn("px-2 py-1.5 text-sm font-semibold", inset && "pl-8", className)}
+    className={cn(
+      "px-2 py-1.5 text-sm font-semibold",
+      inset && "pl-8",
+      className,
+    )}
     {...props}
   />
 ));
-DropdownMenuLabel.displayName = DropdownMenuPrimitive.Label.displayName;
+DropdownMenuLabel.displayName = "DropdownMenuLabel";
 
 export const DropdownMenuSeparator = forwardRef<
-  ComponentRef<typeof DropdownMenuPrimitive.Separator>,
-  ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Separator>
+  ComponentRef<typeof MenuPrimitive.Separator>,
+  MenuPrimitive.Separator.Props
 >(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.Separator
+  <MenuPrimitive.Separator
     ref={ref}
     className={cn("-mx-1 my-1 h-px bg-border", className)}
     {...props}
   />
 ));
-DropdownMenuSeparator.displayName = DropdownMenuPrimitive.Separator.displayName;
+DropdownMenuSeparator.displayName = "DropdownMenuSeparator";
 
-export function DropdownMenuShortcut({ className, ...props }: HTMLAttributes<HTMLSpanElement>) {
-  return <span className={cn("ml-auto text-xs tracking-widest text-muted-foreground", className)} {...props} />;
+export function DropdownMenuShortcut({
+  className,
+  ...props
+}: HTMLAttributes<HTMLSpanElement>) {
+  return (
+    <span
+      className={cn(
+        "ml-auto text-xs tracking-widest text-muted-foreground",
+        className,
+      )}
+      {...props}
+    />
+  );
 }
 DropdownMenuShortcut.displayName = "DropdownMenuShortcut";

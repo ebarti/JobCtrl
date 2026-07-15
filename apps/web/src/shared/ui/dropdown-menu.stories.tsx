@@ -5,9 +5,16 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "./dropdown-menu.js";
 
@@ -22,17 +29,43 @@ type Story = StoryObj<typeof meta>;
 export const Actions: Story = {
   render: () => (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline">Actions</Button>
+      <DropdownMenuTrigger render={<Button variant="outline" />}>
+        Actions
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" aria-label="Workspace actions">
-        <DropdownMenuLabel>Workspace</DropdownMenuLabel>
-        <DropdownMenuItem>Open preview</DropdownMenuItem>
-        <DropdownMenuItem>Duplicate item</DropdownMenuItem>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Workspace</DropdownMenuLabel>
+          <DropdownMenuItem>
+            Open preview
+            <DropdownMenuShortcut>⌘O</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuItem>Duplicate item</DropdownMenuItem>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>Share</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent aria-label="Share workspace">
+              <DropdownMenuGroup>
+                <DropdownMenuItem>Email link</DropdownMenuItem>
+                <DropdownMenuItem>Copy link</DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>Display</DropdownMenuLabel>
-        <DropdownMenuCheckboxItem checked>Show helper text</DropdownMenuCheckboxItem>
-        <DropdownMenuItem disabled>Archive unavailable</DropdownMenuItem>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Display</DropdownMenuLabel>
+          <DropdownMenuCheckboxItem checked>
+            Show helper text
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuRadioGroup value="comfortable">
+            <DropdownMenuRadioItem value="compact">
+              Compact density
+            </DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="comfortable">
+              Comfortable density
+            </DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+          <DropdownMenuItem disabled>Archive unavailable</DropdownMenuItem>
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   ),
@@ -40,18 +73,22 @@ export const Actions: Story = {
 
 export const OpenByDefault: Story = {
   parameters: {
-    a11y: { element: '[role="menu"][data-state="open"]' },
+    a11y: { element: '[role="menu"][data-open]' },
   },
   render: () => (
     <DropdownMenu defaultOpen>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline">Actions</Button>
+      <DropdownMenuTrigger render={<Button variant="outline" />}>
+        Actions
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" aria-label="Open menu actions">
-        <DropdownMenuLabel>Open menu</DropdownMenuLabel>
-        <DropdownMenuItem>Rename item</DropdownMenuItem>
-        <DropdownMenuCheckboxItem checked>Selected option</DropdownMenuCheckboxItem>
-        <DropdownMenuItem disabled>Disabled option</DropdownMenuItem>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Open menu</DropdownMenuLabel>
+          <DropdownMenuItem>Rename item</DropdownMenuItem>
+          <DropdownMenuCheckboxItem checked>
+            Selected option
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuItem disabled>Disabled option</DropdownMenuItem>
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   ),

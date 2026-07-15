@@ -9,13 +9,7 @@ const globalsCssPath = resolve(sourceRoot, "styles/globals.css");
 const sourceExtensions = new Set([".ts", ".tsx"]);
 
 // Remove entries from this list as their wrappers migrate to Base UI.
-const radixWrapperAllowlist = new Set([
-  "shared/ui/dialog.tsx",
-  "shared/ui/dropdown-menu.tsx",
-  "shared/ui/sheet.tsx",
-  "shared/ui/toast.tsx",
-  "shared/ui/toggle-group.tsx",
-]);
+const radixWrapperAllowlist = new Set<string>();
 
 const sourceFilesIn = (directory: string): string[] =>
   readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
