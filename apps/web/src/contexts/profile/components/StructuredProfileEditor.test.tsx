@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -162,7 +162,10 @@ describe("<StructuredProfileEditor>", () => {
     render(<StatefulEditor mode="preferences" />);
 
     expect(screen.queryByLabelText("AI may reframe experience titles")).not.toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Change experience titles" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Change experience titles" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 
   it("labels keyword density as advisory emphasis and edits revision gates", () => {
@@ -209,10 +212,11 @@ describe("<StructuredProfileEditor>", () => {
     render(<StatefulEditor mode="preferences" />);
 
     expect(screen.queryByLabelText("Bullet style")).not.toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Bullet standards" })).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Impact" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Technical depth" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Leadership" })).toBeChecked();
+    const bulletStandards = screen.getByRole("group", { name: "Bullet standards" });
+    expect(within(bulletStandards).getByRole("link", { name: "Guide" })).toBeInTheDocument();
+    expect(within(bulletStandards).getByRole("checkbox", { name: "Impact" })).toBeChecked();
+    expect(within(bulletStandards).getByRole("checkbox", { name: "Technical depth" })).toBeChecked();
+    expect(within(bulletStandards).getByRole("checkbox", { name: "Leadership" })).toBeChecked();
   });
 
   it("preserves extracted achievement evidence without exposing it as profile input", () => {
