@@ -49,6 +49,7 @@ import {
   type JSX,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
+  type ReactNode,
   type SetStateAction,
 } from "react";
 
@@ -2559,6 +2560,7 @@ export function ResumeStandalonePlateEditor({
   previewStyle,
   title,
   transformKey,
+  workspaceControls,
 }: {
   readonly className?: string;
   readonly htmlTransform?: ((html: string) => string) | undefined;
@@ -2566,6 +2568,7 @@ export function ResumeStandalonePlateEditor({
   readonly previewStyle?: CSSProperties | undefined;
   readonly title: string;
   readonly transformKey?: string;
+  readonly workspaceControls?: ReactNode;
 }): JSX.Element {
   const htmlState = useResumeHtmlState(htmlUrl, htmlTransform, transformKey);
   const layoutBoxes = useMemo<readonly ResumeLayoutBox[]>(() => [], []);
@@ -2658,6 +2661,11 @@ export function ResumeStandalonePlateEditor({
 
   return (
     <section className={`resume-plate-editor ${className ?? ""}`.trim()} aria-label={title} style={previewStyle}>
+      {workspaceControls ? (
+        <div className="resume-plate-workspace-controls" data-resume-editor-chrome="true">
+          {workspaceControls}
+        </div>
+      ) : null}
       <div className="resume-plate-toolbar" data-resume-editor-chrome="true">
         <b>{title}</b>
         <span className="toolbar-status">Plate HTML/CSS editor</span>

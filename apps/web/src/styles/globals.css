@@ -2297,6 +2297,10 @@ input[type="radio"] {
   background: #242424;
 }
 
+.resume-plate-workspace-controls {
+  flex: 0 0 auto;
+}
+
 .resume-plate-toolbar {
   display: flex;
   flex: 0 0 auto;

@@ -586,21 +586,45 @@
 }
 
 .resume-template-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
+  display: block;
   padding: 16px;
 }
 
 .resume-template-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 16px;
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.resume-template-controls-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+
+.resume-template-controls-title {
+  display: flex;
+  min-width: 180px;
+  flex: 1 1 220px;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.resume-template-controls-title strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.resume-template-controls-title span {
+  color: var(--muted-foreground);
+  font-size: 11px;
 }
 
 .resume-template-controls .field-grid {
-  grid-column: 1 / -1;
   grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
   gap: 10px 12px;
   padding: 0;
@@ -611,25 +635,55 @@
 }
 
 .resume-template-actions {
-  grid-column: 1 / -1;
   display: flex;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-  border-top: 1px solid var(--configuration-rule);
-  padding-top: 12px;
+  margin-left: auto;
 }
 
-.resume-template-preview {
-  min-width: 0;
-  border-top: 1px solid var(--configuration-rule);
-  padding-top: 16px;
+.resume-template-default-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.resume-template-default-status svg {
+  width: 14px;
+  height: 14px;
 }
 
 .resume-template-plate-editor {
-  height: min(80dvh, 980px);
-  min-height: 620px;
+  --background: oklch(0.185 0.012 293);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.225 0.018 293);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.225 0.018 293);
+  --popover-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.29 0.018 293);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.275 0.012 293);
+  --muted-foreground: oklch(0.74 0.012 293);
+  --accent: oklch(0.32 0.075 293.5);
+  --accent-foreground: oklch(0.9 0.055 293.5);
+  --border: oklch(1 0 0 / 14%);
+  --input: oklch(1 0 0 / 20%);
+  --ring: oklch(0.702 0.183 293.541);
+  height: min(88dvh, 1050px);
+  min-height: 760px;
   border: 1px solid var(--configuration-rule);
   border-radius: 7px;
+}
+
+.resume-template-plate-editor .resume-plate-workspace-controls {
+  border-bottom: 1px solid var(--border);
+}
+
+.profile-layout .resume-template-plate-editor .resume-template-controls input:not([type="checkbox"]):not([type="radio"]) {
+  background: var(--card);
+  color: var(--card-foreground);
 }
 
 .resume-template-plate-editor .resume-plate-scroll {
@@ -1157,16 +1211,23 @@
     padding-right: 16px;
   }
 
-  .resume-template-controls {
-    grid-template-columns: minmax(0, 1fr);
+  .resume-template-controls-header {
+    align-items: flex-start;
   }
 
   .resume-template-actions {
-    justify-content: flex-start;
+    width: 100%;
+    margin-left: 0;
   }
 
   .resume-template-plate-editor {
-    min-height: 480px;
+    height: auto;
+    min-height: 0;
+  }
+
+  .resume-template-plate-editor .resume-plate-scroll {
+    height: 560px;
+    flex: none;
   }
 
   .config-layout .settings-tabs {

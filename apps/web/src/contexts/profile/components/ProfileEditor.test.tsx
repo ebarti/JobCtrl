@@ -99,6 +99,8 @@ describe("<ProfileEditor>", () => {
     expect(await screen.findByText("Resume template preview")).toBeInTheDocument();
     const templatePreview = document.querySelector<HTMLElement>(".resume-template-plate-editor");
     expect(templatePreview).toBeTruthy();
+    expect(templatePreview?.querySelector(".resume-template-controls")).toBeTruthy();
+    expect(templatePreview?.querySelector(".resume-template-actions")).toBeTruthy();
     await user.click(screen.getByLabelText("Density"));
     await user.click(await screen.findByRole("option", { name: "Spacious" }));
     expect(templatePreview?.style.getPropertyValue("--resume-template-line-height")).toBe("1.48");

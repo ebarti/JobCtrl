@@ -7,6 +7,9 @@ import { IconDeviceFloppy, IconStar } from "@tabler/icons-react";
 import { useEffect, useMemo, useState, type CSSProperties, type JSX } from "react";
 
 import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAuditPins.js";
+import { Button } from "../../../shared/ui/button.js";
+import { Field, FieldGroup, FieldLabel } from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
 import {
   useSaveResumeTemplateMutation,
@@ -178,192 +181,222 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
     );
   };
 
+  const workspaceControls = (
+    <div className="resume-template-controls" aria-label="Template settings" role="group">
+      <div className="resume-template-controls-header">
+        <div className="resume-template-controls-title">
+          <strong>Template settings</strong>
+          <span>Typography, spacing, and page layout</span>
+        </div>
+        <div className="resume-template-actions">
+          <Button
+            disabled={!theme || isSaving || !displayName.trim()}
+            size="sm"
+            type="button"
+            onClick={() => saveCurrent(false)}
+          >
+            <IconDeviceFloppy aria-hidden="true" data-icon="inline-start" />
+            {saveTemplate.isPending ? "saving" : "save version"}
+          </Button>
+          <Button
+            disabled={!theme || isSaving || !displayName.trim()}
+            size="sm"
+            type="button"
+            variant="outline"
+            onClick={() => saveCurrent(true)}
+          >
+            <IconStar aria-hidden="true" data-icon="inline-start" />
+            save default
+          </Button>
+          <Button
+            disabled={!selectedTemplateCanBeDefault || Boolean(selectedTemplateIsDefault) || isSaving}
+            size="sm"
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              if (!activeTemplate) return;
+              setDefaultTemplate.mutate({
+                templateId: activeTemplate.templateId,
+                versionId: activeTemplate.activeVersion.versionId,
+              });
+            }}
+          >
+            <IconStar aria-hidden="true" data-icon="inline-start" />
+            {setDefaultTemplate.isPending ? "setting" : "set default"}
+          </Button>
+          {selectedTemplateIsDefault ? (
+            <span className="resume-template-default-status" role="status">
+              <IconStar aria-hidden="true" />
+              default template
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <FieldGroup className="field-grid">
+        <Field className="field">
+          <FieldLabel htmlFor="resume-template-selection">Template</FieldLabel>
+          <Select
+            disabled={!templates.length || isSaving}
+            items={templateSelectItems}
+            value={activeTemplate?.templateId ?? null}
+            onValueChange={(nextValue) => { if (nextValue !== null) setActiveTemplateId(nextValue); }}
+          >
+            <SelectTrigger id="resume-template-selection" aria-label="Template" className="w-full"><SelectValue placeholder="No templates available" /></SelectTrigger>
+            <SelectContent><SelectGroup>{templateSelectItems.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+          </Select>
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="resume-template-name">Name</FieldLabel>
+          <Input
+            id="resume-template-name"
+            disabled={!theme || isSaving}
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+          />
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="resume-template-font">Font</FieldLabel>
+          <Select
+            disabled={!theme || isSaving}
+            items={FONT_SELECT_ITEMS}
+            value={theme?.fontFamily ?? "sans"}
+            onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("fontFamily", nextValue); }}
+          >
+            <SelectTrigger id="resume-template-font" aria-label="Font" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectGroup>{FONT_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+          </Select>
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="resume-template-density">Density</FieldLabel>
+          <Select
+            disabled={!theme || isSaving}
+            items={DENSITY_SELECT_ITEMS}
+            value={theme?.density ?? "balanced"}
+            onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("density", nextValue); }}
+          >
+            <SelectTrigger id="resume-template-density" aria-label="Density" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectGroup>{DENSITY_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+          </Select>
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="resume-template-header">Header</FieldLabel>
+          <Select
+            disabled={!theme || isSaving}
+            items={HEADER_SELECT_ITEMS}
+            value={theme?.headerLayout ?? "centered"}
+            onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("headerLayout", nextValue); }}
+          >
+            <SelectTrigger id="resume-template-header" aria-label="Header" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectGroup>{HEADER_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+          </Select>
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="resume-template-headings">Headings</FieldLabel>
+          <Select
+            disabled={!theme || isSaving}
+            items={HEADING_SELECT_ITEMS}
+            value={theme?.sectionHeadingStyle ?? "rule"}
+            onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("sectionHeadingStyle", nextValue); }}
+          >
+            <SelectTrigger id="resume-template-headings" aria-label="Headings" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectGroup>{HEADING_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+          </Select>
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="resume-template-alignment">Alignment</FieldLabel>
+          <Select
+            disabled={!theme || isSaving}
+            items={ALIGNMENT_SELECT_ITEMS}
+            value={theme?.alignment ?? "justified"}
+            onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("alignment", nextValue); }}
+          >
+            <SelectTrigger id="resume-template-alignment" aria-label="Alignment" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectGroup>{ALIGNMENT_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+          </Select>
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="resume-template-bullets">Bullets</FieldLabel>
+          <Select
+            disabled={!theme || isSaving}
+            items={BULLET_SELECT_ITEMS}
+            value={theme?.bulletSpacing ?? "normal"}
+            onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("bulletSpacing", nextValue); }}
+          >
+            <SelectTrigger id="resume-template-bullets" aria-label="Bullets" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectGroup>{BULLET_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+          </Select>
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="resume-template-font-scale">Font scale</FieldLabel>
+          <Input
+            id="resume-template-font-scale"
+            disabled={!theme || isSaving}
+            max={1.2}
+            min={0.85}
+            step={0.01}
+            type="number"
+            value={theme?.fontScale ?? 1}
+            onChange={(event) => updateTheme("fontScale", Number(event.target.value))}
+          />
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="resume-template-accent">Accent</FieldLabel>
+          <Input
+            id="resume-template-accent"
+            disabled={!theme || isSaving}
+            type="color"
+            value={theme?.accentColor ?? "#111111"}
+            onChange={(event) => updateTheme("accentColor", event.target.value)}
+          />
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="resume-template-top-margin">Top margin</FieldLabel>
+          <Input
+            id="resume-template-top-margin"
+            disabled={!theme || isSaving}
+            max={28}
+            min={8}
+            step={0.5}
+            type="number"
+            value={theme?.marginMm.top ?? 16.5}
+            onChange={(event) => updateMargin("top", Number(event.target.value))}
+          />
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="resume-template-side-margin">Side margin</FieldLabel>
+          <Input
+            id="resume-template-side-margin"
+            disabled={!theme || isSaving}
+            max={28}
+            min={8}
+            step={0.5}
+            type="number"
+            value={theme?.marginMm.left ?? 17.5}
+            onChange={(event) => {
+              const value = Number(event.target.value);
+              updateMargin("left", value);
+              updateMargin("right", value);
+            }}
+          />
+        </Field>
+      </FieldGroup>
+      {templatesQuery.isLoading ? <div className="banner inline">Loading resume templates.</div> : null}
+      {saveError || defaultError ? <div className="banner inline">{saveError ?? defaultError}</div> : null}
+    </div>
+  );
+
   return (
     <section className="form-section resume-template-panel resume-template-workspace" aria-label="Resume templates">
       <h3>Resume templates</h3>
       <div className="resume-template-shell">
-        <div className="resume-template-controls">
-          <div className="field-grid">
-            <label className="field">
-              <span>Template</span>
-              <Select
-                disabled={!templates.length || isSaving}
-                items={templateSelectItems}
-                value={activeTemplate?.templateId ?? null}
-                onValueChange={(nextValue) => { if (nextValue !== null) setActiveTemplateId(nextValue); }}
-              >
-                <SelectTrigger aria-label="Template" className="w-full"><SelectValue placeholder="No templates available" /></SelectTrigger>
-                <SelectContent><SelectGroup>{templateSelectItems.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
-              </Select>
-            </label>
-            <label className="field">
-              <span>Name</span>
-              <input
-                disabled={!theme || isSaving}
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Font</span>
-              <Select
-                disabled={!theme || isSaving}
-                items={FONT_SELECT_ITEMS}
-                value={theme?.fontFamily ?? "sans"}
-                onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("fontFamily", nextValue); }}
-              >
-                <SelectTrigger aria-label="Font" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectGroup>{FONT_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
-              </Select>
-            </label>
-            <label className="field">
-              <span>Density</span>
-              <Select
-                disabled={!theme || isSaving}
-                items={DENSITY_SELECT_ITEMS}
-                value={theme?.density ?? "balanced"}
-                onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("density", nextValue); }}
-              >
-                <SelectTrigger aria-label="Density" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectGroup>{DENSITY_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
-              </Select>
-            </label>
-            <label className="field">
-              <span>Header</span>
-              <Select
-                disabled={!theme || isSaving}
-                items={HEADER_SELECT_ITEMS}
-                value={theme?.headerLayout ?? "centered"}
-                onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("headerLayout", nextValue); }}
-              >
-                <SelectTrigger aria-label="Header" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectGroup>{HEADER_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
-              </Select>
-            </label>
-            <label className="field">
-              <span>Headings</span>
-              <Select
-                disabled={!theme || isSaving}
-                items={HEADING_SELECT_ITEMS}
-                value={theme?.sectionHeadingStyle ?? "rule"}
-                onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("sectionHeadingStyle", nextValue); }}
-              >
-                <SelectTrigger aria-label="Headings" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectGroup>{HEADING_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
-              </Select>
-            </label>
-            <label className="field">
-              <span>Alignment</span>
-              <Select
-                disabled={!theme || isSaving}
-                items={ALIGNMENT_SELECT_ITEMS}
-                value={theme?.alignment ?? "justified"}
-                onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("alignment", nextValue); }}
-              >
-                <SelectTrigger aria-label="Alignment" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectGroup>{ALIGNMENT_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
-              </Select>
-            </label>
-            <label className="field">
-              <span>Bullets</span>
-              <Select
-                disabled={!theme || isSaving}
-                items={BULLET_SELECT_ITEMS}
-                value={theme?.bulletSpacing ?? "normal"}
-                onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("bulletSpacing", nextValue); }}
-              >
-                <SelectTrigger aria-label="Bullets" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectGroup>{BULLET_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
-              </Select>
-            </label>
-            <label className="field">
-              <span>Font scale</span>
-              <input
-                disabled={!theme || isSaving}
-                max={1.2}
-                min={0.85}
-                step={0.01}
-                type="number"
-                value={theme?.fontScale ?? 1}
-                onChange={(event) => updateTheme("fontScale", Number(event.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>Accent</span>
-              <input
-                disabled={!theme || isSaving}
-                type="color"
-                value={theme?.accentColor ?? "#111111"}
-                onChange={(event) => updateTheme("accentColor", event.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Top margin</span>
-              <input
-                disabled={!theme || isSaving}
-                max={28}
-                min={8}
-                step={0.5}
-                type="number"
-                value={theme?.marginMm.top ?? 16.5}
-                onChange={(event) => updateMargin("top", Number(event.target.value))}
-              />
-            </label>
-            <label className="field">
-              <span>Side margin</span>
-              <input
-                disabled={!theme || isSaving}
-                max={28}
-                min={8}
-                step={0.5}
-                type="number"
-                value={theme?.marginMm.left ?? 17.5}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  updateMargin("left", value);
-                  updateMargin("right", value);
-                }}
-              />
-            </label>
-          </div>
-          <div className="resume-template-actions">
-            <button className="tab on" disabled={!theme || isSaving || !displayName.trim()} type="button" onClick={() => saveCurrent(false)}>
-              <IconDeviceFloppy size={14} aria-hidden="true" />
-              {saveTemplate.isPending ? "saving" : "save version"}
-            </button>
-            <button className="tab" disabled={!theme || isSaving || !displayName.trim()} type="button" onClick={() => saveCurrent(true)}>
-              <IconStar size={14} aria-hidden="true" />
-              save default
-            </button>
-            <button
-              className="tab"
-              disabled={!selectedTemplateCanBeDefault || Boolean(selectedTemplateIsDefault) || isSaving}
-              type="button"
-              onClick={() => {
-                if (!activeTemplate) return;
-                setDefaultTemplate.mutate({
-                  templateId: activeTemplate.templateId,
-                  versionId: activeTemplate.activeVersion.versionId,
-                });
-              }}
-            >
-              <IconStar size={14} aria-hidden="true" />
-              {setDefaultTemplate.isPending ? "setting" : "set default"}
-            </button>
-            {selectedTemplateIsDefault ? <span className="tag ok">default</span> : null}
-          </div>
-          {templatesQuery.isLoading ? <div className="banner inline">Loading resume templates.</div> : null}
-          {saveError || defaultError ? <div className="banner inline">{saveError ?? defaultError}</div> : null}
-        </div>
-        <div className="resume-template-preview">
-          <ResumeStandalonePlateEditor
-            className="resume-template-plate-editor"
-            htmlUrl={profileHtmlPreviewUrl}
-            previewStyle={previewStyle}
-            title="Resume template preview"
-            transformKey={theme ? JSON.stringify(theme) : "loading"}
-          />
-        </div>
+        <ResumeStandalonePlateEditor
+          className="resume-template-plate-editor"
+          htmlUrl={profileHtmlPreviewUrl}
+          previewStyle={previewStyle}
+          title="Resume template preview"
+          transformKey={theme ? JSON.stringify(theme) : "loading"}
+          workspaceControls={workspaceControls}
+        />
       </div>
     </section>
   );
