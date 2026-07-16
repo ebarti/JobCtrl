@@ -247,7 +247,7 @@ test("runtime overrides stay in contributor documentation", async () => {
     ["`JOBCTRL_DEMO_API_PORT`", "`8787`"],
     ["`JOBCTRL_DEMO_STATE_DIR`", "`.dev/demo/wrangler`"],
     ["`VITE_JOBCTRL_API_BASE_URL`", "proxied `/v1`"],
-    ["`JOBCTRL_TEMPORAL_DB`", "`.dev/temporal/temporal.db`"],
+    ["`JOBCTRL_TEMPORAL_DB`", "`$JOBCTRL_DIR/temporal/temporal.db`"],
     ["`TEMPORAL_ADDRESS`", "`localhost:7233`"],
     ["`TEMPORAL_NAMESPACE`", "`default`"],
     ["`JOBCTRL_API_SSE_POLL_MS`", "`250`"],

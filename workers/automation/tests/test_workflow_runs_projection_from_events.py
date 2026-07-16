@@ -676,6 +676,83 @@ def test_within_run_duplicate_started_does_not_reopen_terminal(
     assert _row_value(row, "finished_at") == "2026-07-04T13:02:00+00:00"
 
 
+def test_explicit_missing_history_recovery_reopens_same_temporal_run(
+    conn: sqlite3.Connection,
+) -> None:
+    """Only the reconciler's marked compensation may reopen the same run.
+
+    A normal duplicate start for a folded terminal stays idempotent (the test
+    above). When the authoritative Temporal history returns, the compensating
+    start preserves the original run id and clears only the provisional
+    ``reconciled_not_found`` verdict; the false terminal remains in history.
+    """
+    _record(
+        conn,
+        create_workflow_started(
+            LOCAL_TENANT,
+            WorkflowStartedPayload(
+                workflow_id="run-recovered",
+                workflow_type="DiscoverWorkflow",
+                input_summary={"limit": 100},
+                started_at="2026-07-13T18:49:49+00:00",
+                temporal_run_id="temporal-recovered",
+            ),
+        ),
+        occurred_at="2026-07-13T18:49:49+00:00",
+    )
+    _record(
+        conn,
+        create_workflow_terminated(
+            LOCAL_TENANT,
+            WorkflowTerminatedPayload(
+                workflow_id="run-recovered",
+                workflow_type="DiscoverWorkflow",
+                error_code="reconciled_not_found",
+                error_message="wrong Temporal history store",
+                finished_at="2026-07-13T22:45:00+00:00",
+                temporal_run_id="temporal-recovered",
+            ),
+        ),
+        occurred_at="2026-07-13T22:45:00+00:00",
+    )
+    _record(
+        conn,
+        create_workflow_started(
+            LOCAL_TENANT,
+            WorkflowStartedPayload(
+                workflow_id="run-recovered",
+                workflow_type="DiscoverWorkflow",
+                input_summary={"limit": 100},
+                started_at="2026-07-13T18:49:49+00:00",
+                temporal_run_id="temporal-recovered",
+                recovered_from_missing_history=True,
+            ),
+        ),
+        occurred_at="2026-07-16T15:00:00+00:00",
+    )
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = conn.execute(
+        "SELECT * FROM workflow_run_projections WHERE workflow_id = ?",
+        ("run-recovered",),
+    ).fetchone()
+    assert _row_value(row, "status") == "in_progress"
+    assert _row_value(row, "error_code") is None
+    assert _row_value(row, "error_message") is None
+    assert _row_value(row, "finished_at") is None
+    assert _row_value(row, "started_at") == "2026-07-13T18:49:49+00:00"
+    assert _row_value(row, "temporal_run_id") == "temporal-recovered"
+    assert json.loads(_row_value(row, "input_summary_json", "{}")) == {"limit": 100}
+    timeline = json.loads(_row_value(row, "events_json", "[]"))
+    assert [event.get("eventType") for event in timeline] == [
+        "WorkflowStarted",
+        "WorkflowTerminated",
+        "WorkflowStarted",
+    ]
+
+
 def test_two_started_markers_for_same_run_are_idempotent(
     conn: sqlite3.Connection,
 ) -> None:

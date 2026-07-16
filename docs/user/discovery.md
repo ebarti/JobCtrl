@@ -74,6 +74,20 @@ exists; calibrating, paused, stale, unavailable, and no-work states stay explici
 instead of becoming a guessed finish time. Freshness and the bounded active-work
 inventory show whether the operational facts are current.
 
+### Workflow recovery across restarts
+
+JobCtrl records the exact Temporal run ID for every projected execution and
+reconciles that exact run after a worker or app restart. If the runtime cannot
+temporarily find its history, the execution is marked provisionally unavailable
+and remains eligible for reconciliation. When the authoritative history becomes
+available again, JobCtrl automatically restores the same run or records its
+actual closed outcome; no manual retry is required.
+
+Start a replacement Discover run only when the exact execution is genuinely
+absent and the runtime inventory confirms that no work remains. The workflow ID,
+exact Temporal run ID, and reconciliation reason remain available in technical
+details for diagnosis and audit.
+
 ### How target search controls are used
 
 These controls do not divide cleanly into “search fields” and “filter fields.”

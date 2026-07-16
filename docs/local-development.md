@@ -91,8 +91,14 @@ defaults to:
   `JOBCTRL_API_PORT=8766`
 - Web API base URL: `VITE_JOBCTRL_API_BASE_URL=http://127.0.0.1:8766`
 - Web port: `5173` (`JOBCTRL_WEB_PORT` can override it)
-- Temporal persistence: `.dev/temporal/temporal.db`
+- Temporal persistence: `$JOBCTRL_DIR/temporal/temporal.db`
   (`JOBCTRL_TEMPORAL_DB` can override it)
+
+`jobctrl.db` and the Temporal history store form one runtime identity. Keeping
+both under `JOBCTRL_DIR` lets an interrupted workflow reconnect to the same
+history when the source stack is restarted from another Git worktree. To run a
+fully isolated stack, give it a separate `JOBCTRL_DIR`; do not point a shared
+`jobctrl.db` at a worktree-local Temporal database.
 
 ### Runtime Overrides
 
@@ -114,7 +120,7 @@ launcher defaults above.
 | `JOBCTRL_DEMO_API_PORT`         | `8787`                      | Local Wrangler port for the demo consent and telemetry API.                                                                                                                                                            |
 | `JOBCTRL_DEMO_STATE_DIR`        | `.dev/demo/wrangler`        | Local Wrangler/D1 persistence shared by demo migrations and the demo API process.                                                                                                                                      |
 | `VITE_JOBCTRL_API_BASE_URL`     | proxied `/v1`               | Browser API origin when not using the default Vite proxy.                                                                                                                                                              |
-| `JOBCTRL_TEMPORAL_DB`           | `.dev/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store.                                                                                                                                                        |
+| `JOBCTRL_TEMPORAL_DB`           | `$JOBCTRL_DIR/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. Override it only together with an isolated `JOBCTRL_DIR`; sharing JobCtrl projections while switching Temporal history stores breaks workflow recovery. |
 | `TEMPORAL_ADDRESS`              | `localhost:7233`            | Temporal server address used by the worker, CLI, and workflow-starting RPC.                                                                                                                                            |
 | `TEMPORAL_NAMESPACE`            | `default`                   | Temporal namespace.                                                                                                                                                                                                    |
 | `JOBCTRL_API_SSE_POLL_MS`       | `250`                       | API event-stream database poll interval in milliseconds.                                                                                                                                                               |
@@ -149,7 +155,7 @@ using the requested port.
 Run individual components only when troubleshooting a specific process:
 
 ```bash
-temporal server start-dev --db-filename .dev/temporal/temporal.db
+temporal server start-dev --db-filename "$JOBCTRL_DIR/temporal/temporal.db"
 pnpm api:dev
 pnpm web:dev
 uv --project workers/automation run jobctrl worker
@@ -159,9 +165,9 @@ uv --project workers/automation run jobctrl doctor
 The Temporal dev server binds the frontend gRPC service on `127.0.0.1:7233` and
 the Web UI on `http://127.0.0.1:8233`. The launcher passes
 `--db-filename "$JOBCTRL_TEMPORAL_DB"` so workflow history persists across
-launcher restarts instead of disappearing when the process exits. With Temporal
-running, `jobctrl doctor` reports `Temporal: reachable`. The Vite web dev
-server proxies `/v1/*` to the TypeScript API by default.
+launcher and worktree restarts instead of disappearing when the process exits.
+With Temporal running, `jobctrl doctor` reports `Temporal: reachable`. The Vite
+web dev server proxies `/v1/*` to the TypeScript API by default.
 
 ### Public demo browser workspace
 

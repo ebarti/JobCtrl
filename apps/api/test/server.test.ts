@@ -5438,6 +5438,66 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("reopens the same Temporal run only for an explicit missing-history recovery", async () => {
+    const recoveredRunId = "temporal-recovered-same-run";
+    const originalStart = "2026-07-13T18:49:49.146Z";
+    const falseTerminalAt = "2026-07-13T22:45:00.000Z";
+    const recoveryAt = "2026-07-16T15:00:00.000Z";
+    const db = new Database(options.dbPath);
+    try {
+      insertDiscoverWorkflowRunRow(db, {
+        status: "terminated",
+        errorCode: "reconciled_not_found",
+        errorMessage: RECONCILED_MESSAGE,
+        startedAt: originalStart,
+        finishedAt: falseTerminalAt,
+        temporalRunId: recoveredRunId,
+      });
+      insertPipelineWorkflowEvent(db, {
+        eventType: "WorkflowStarted",
+        occurredAt: originalStart,
+        workflowId: "discover-local",
+        temporalRunId: recoveredRunId,
+        startedAt: originalStart,
+      });
+      insertPipelineWorkflowEvent(db, {
+        eventType: "WorkflowTerminated",
+        occurredAt: falseTerminalAt,
+        workflowId: "discover-local",
+        temporalRunId: recoveredRunId,
+        errorCode: "reconciled_not_found",
+        errorMessage: RECONCILED_MESSAGE,
+        finishedAt: falseTerminalAt,
+      });
+      insertPipelineWorkflowEvent(db, {
+        eventType: "WorkflowStarted",
+        occurredAt: recoveryAt,
+        workflowId: "discover-local",
+        temporalRunId: recoveredRunId,
+        startedAt: originalStart,
+        recoveredFromMissingHistory: true,
+      });
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json()).toMatchObject({
+        workflowId: "discover-local",
+        status: "in_progress",
+        errorCode: null,
+        errorMessage: null,
+        startedAt: originalStart,
+        finishedAt: null,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("ignores a late duplicate start for an already-terminalized execution", async () => {
     // A finalize-activity retry can append a second `WorkflowStarted` AFTER the
     // run's terminal event, with a later occurredAt. Same temporal run id means
@@ -9682,6 +9742,7 @@ function insertPipelineWorkflowEvent(
     finishedAt?: string;
     durationMs?: number;
     inputSummary?: Record<string, unknown>;
+    recoveredFromMissingHistory?: boolean;
   },
 ): void {
   const payload: Record<string, unknown> = {

@@ -2331,19 +2331,19 @@ async def _worker_heartbeat_loop(
         except Exception:
             log.warning("Worker heartbeat loop iteration failed; will retry", exc_info=True)
             continue
-        # Describe-based reconciler: terminalize workflow-run rows whose
-        # Temporal execution has closed (or vanished on a dev-server restart)
-        # but never got a finalize outcome — e.g. a killed worker.
+        # Describe-based reconciler: settle workflow-run rows whose Temporal
+        # execution closed without finalize, and repair a false
+        # reconciled_not_found terminal if the exact execution reappears.
         if temporal_client is not None:
             try:
-                terminalized = await _reconcile_workflow_runs(temporal_client)
+                reconciled = await _reconcile_workflow_runs(temporal_client)
             except Exception:
                 log.warning("Workflow-run reconciler iteration failed; will retry", exc_info=True)
             else:
-                if terminalized:
+                if reconciled:
                     console.print(
-                        f"[yellow]Reconciler terminalized {terminalized} orphaned "
-                        "workflow run(s).[/yellow]"
+                        f"[yellow]Reconciler updated {reconciled} workflow "
+                        "run(s).[/yellow]"
                     )
             try:
                 from jobctrl.apply.auto_apply import reconcile_auto_apply_loop
@@ -2440,11 +2440,12 @@ def _reconciled_reason(status: str, describe_status: Any) -> tuple[str | None, s
 
 
 async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | None = None) -> int:
-    """Terminalize open ``workflow_run_projections`` rows by describing them.
+    """Reconcile workflow projections against their exact Temporal executions.
 
-    For each non-terminal row: a CLOSED Temporal execution records the matching
-    terminal ``Workflow*`` event; a NOT_FOUND execution (dev-server data loss)
-    records ``WorkflowTerminated``; a still-RUNNING execution is left alone.
+    Normal open rows settle from their exact recorded Temporal run. A
+    ``reconciled_not_found`` terminal remains provisional: the loop keeps
+    probing that same run and repairs the projection if its authoritative
+    history becomes reachable again.
     """
     from jobctrl.database import get_connection
     from jobctrl.domain.tenant import LOCAL_TENANT
@@ -2459,11 +2460,11 @@ async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | Non
     except sqlite3.OperationalError:
         return 0
 
-    terminalized = 0
+    changed = 0
     for run in open_runs:
         if await _reconcile_one_workflow_run(temporal_client, conn, run):
-            terminalized += 1
-    return terminalized
+            changed += 1
+    return changed
 
 
 async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> bool:
@@ -2472,12 +2473,26 @@ async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> 
     workflow_id = str(run.get("workflow_id") or "")
     if not workflow_id:
         return False
+    temporal_run_id = str(run.get("temporal_run_id") or "") or None
+    missing_history_terminal = (
+        str(run.get("status") or "") == "terminated"
+        and str(run.get("error_code") or "") == "reconciled_not_found"
+    )
     try:
-        description = await temporal_client.get_workflow_handle(workflow_id).describe()
+        handle = temporal_client.get_workflow_handle(
+            workflow_id,
+            **({"run_id": temporal_run_id} if temporal_run_id else {}),
+        )
+        description = await handle.describe()
     except RPCError as exc:
         if exc.status == RPCStatusCode.NOT_FOUND:
+            if missing_history_terminal:
+                # The provisional terminal is already recorded. Keep probing
+                # without appending duplicate events so reconnecting to the
+                # authoritative history store can heal it later.
+                return False
             # The dev server lost its history across a restart; treat the run as
-            # terminated so it stops showing as forever-running.
+            # provisionally terminated so it stops showing as forever-running.
             _record_reconciled_outcome(
                 conn,
                 run,
@@ -2493,10 +2508,20 @@ async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> 
         log.warning("describe_workflow failed for %s; will retry", workflow_id, exc_info=True)
         return False
 
+    recovered = False
+    if missing_history_terminal:
+        recovered = _record_reconciled_recovery(
+            conn,
+            run,
+            temporal_run_id=str(description.run_id or temporal_run_id or "") or None,
+        )
+        if not recovered:
+            return False
+
     status = _reconcile_status_map().get(description.status)
     if status is None:
         # RUNNING / CONTINUED_AS_NEW — still live, leave it.
-        return False
+        return recovered
     error_code, error_message = _reconciled_reason(status, description.status)
     _record_reconciled_outcome(
         conn,
@@ -2506,6 +2531,90 @@ async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> 
         error_message=error_message,
         temporal_run_id=description.run_id or run.get("temporal_run_id"),
     )
+    return True
+
+
+def _record_reconciled_recovery(
+    conn,
+    run: dict,
+    *,
+    temporal_run_id: str | None,
+) -> bool:
+    """Reopen one false missing-history terminal after exact-run recovery.
+
+    The prior ``WorkflowTerminated`` event remains in the audit stream. The
+    compensating ``WorkflowStarted`` carries an explicit recovery marker, and
+    both projection folds accept that marker only when the current terminal is
+    ``reconciled_not_found`` and the Temporal run id is unchanged.
+    """
+    from jobctrl.database import get_connection
+    from jobctrl.domain.events.workflow import (
+        WorkflowStartedPayload,
+        create_workflow_started,
+    )
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+    from jobctrl.state import record_job_event
+
+    workflow_id = str(run.get("workflow_id") or "")
+    expected_run_id = str(run.get("temporal_run_id") or "") or None
+    if not workflow_id or not temporal_run_id or temporal_run_id != expected_run_id:
+        return False
+
+    own_txn = not conn.in_transaction
+    if own_txn:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        existing = conn.execute(
+            """
+            SELECT status, error_code, temporal_run_id, started_at,
+                   input_summary_json
+            FROM workflow_run_projections
+            WHERE workflow_id = ?
+            """,
+            (workflow_id,),
+        ).fetchone()
+        if (
+            existing is None
+            or str(existing["status"]) != "terminated"
+            or str(existing["error_code"] or "") != "reconciled_not_found"
+            or str(existing["temporal_run_id"] or "") != temporal_run_id
+        ):
+            if own_txn:
+                conn.rollback()
+            return False
+        try:
+            input_summary = json.loads(existing["input_summary_json"] or "{}")
+        except (TypeError, ValueError):
+            input_summary = {}
+        if not isinstance(input_summary, dict):
+            input_summary = {}
+        event = create_workflow_started(
+            str(run.get("tenant_id") or LOCAL_TENANT),
+            WorkflowStartedPayload(
+                workflow_id=workflow_id,
+                workflow_type=str(run.get("workflow_type") or ""),
+                input_summary=input_summary,
+                started_at=str(existing["started_at"] or "") or None,
+                temporal_run_id=temporal_run_id,
+                recovered_from_missing_history=True,
+            ),
+        )
+        record_job_event(
+            conn,
+            None,
+            "workflow",
+            event.event_type,
+            payload=dict(event.payload),
+            occurred_at=event.occurred_at,
+        )
+        if own_txn:
+            conn.commit()
+    except Exception:
+        if own_txn:
+            conn.rollback()
+        raise
+    ProjectionBuilder(conn_factory=get_connection).refresh()
     return True
 
 

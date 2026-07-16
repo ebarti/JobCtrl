@@ -335,9 +335,13 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
 
 - `jobctrl.db` — local SQLite database with profile, jobs, discovery settings,
   events, projections, and artifact metadata.
-- `temporal.db` — bundled-runtime Temporal persistence. It is rollback-critical
-  alongside `jobctrl.db`: a bundled release transition snapshots and restores
-  the two databases as one verified pair, never as independent files.
+- `temporal.db` — bundled-runtime Temporal persistence;
+  `temporal/temporal.db` is the source-development equivalent. It is
+  rollback-critical alongside `jobctrl.db`: a bundled release transition
+  snapshots and restores the two databases as one verified pair, never as
+  independent files. Source launchers likewise keep both stores under the same
+  `JOBCTRL_DIR` so restarting from another worktree cannot split their runtime
+  identity.
 - `.env` — plaintext, cross-platform fallback for provider/API credentials; it
   is not encrypted at rest.
 - `config.json` — non-secret runtime settings, including `dailyBudgetUsd`,
