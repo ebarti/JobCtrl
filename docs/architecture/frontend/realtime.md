@@ -67,8 +67,10 @@ on a new dedicated endpoint.
   tracable; debuggable in the network panel.
 - **Auth simplicity.** `EventSource` sends cookies (or `Authorization`
   via a small `eventsource` polyfill) — same auth path as REST.
-- **Polling rejected:** wasteful (event arrival is sparse but bursty), poor
-  latency for "apply run completed."
+- **Polling rejected as the durable-change transport:** event arrival is sparse
+  but bursty, and a polling-only design has poor latency for "apply run
+  completed." Narrow polling remains appropriate for ephemeral runtime facts
+  that do not emit domain events (see §7.5).
 - **WebSocket rejected for now:** bidirectional, framing overhead, harder
   to cache-debug, harder to terminate at edge proxies. Named as evolution
   path (§9) if event volume or duplex requirements emerge.
@@ -156,7 +158,7 @@ The event taxonomy lives in `@jobctrl/domain-types` at
 `packages/domain-types/src/events/`. It is a **plain TypeScript
 discriminated union** — there is no Zod. `DomainEvent<T, P>` is the generic
 base interface (its `eventType` field is the discriminant); the union of
-all 69 concrete events is `DomainEventUnion`, with
+all registered concrete events is `DomainEventUnion`, with
 `DomainEventType = DomainEventUnion["eventType"]` and a runtime companion
 array `DOMAIN_EVENT_TYPES` (kept exhaustive against `DomainEventType` by a
 compile-time assertion). `@jobctrl/domain-types` has no `zod` dependency.
@@ -221,6 +223,11 @@ const handlers: Record<DomainEventType, InvalidationHandler> = {
     // Specialized: append to in-memory list rather than invalidate.
     return [{ kind: "apply-run-event", tenantId, runId, event }];
   },
+  PipelineStepStarted: ({ tenantId, execution }) => [
+    workflowRunsKeys.detail(tenantId, execution.workflowId),
+    workflowRunsKeys.lists(tenantId),
+    pipelineKeys.operations(tenantId),
+  ],
   // ... one entry per DomainEventUnion variant
 };
 
@@ -305,8 +312,23 @@ Two patterns exist; both have a place:
   saturates the API for no benefit.
 - **Append-only semantics.** The event payload is exactly the new event to
   append. Patching is trivially correct.
-- **Reconciliation backstop.** When the apply-run drawer is closed and
-  re-opened, it re-fetches, naturally reconciling with any drift.
+- **Reconciliation backstop.** When the apply-run route workspace is left and
+  revisited, it re-fetches, naturally reconciling with any drift.
+
+### Runtime snapshot polling complements SSE
+
+`usePipelineOperationsQuery` reads `GET /v1/pipeline/operations` under
+`pipelineKeys.operations(tenantId)`. `Stage*`, `PreparationWorkItem*`,
+`PipelineStep*`, and `Workflow*` handlers invalidate that key, so durable
+changes still take the fast SSE path.
+
+Worker heartbeats, exact active-slot counts, bounded active-item inventory, and
+Temporal task-queue observations are ephemeral runtime telemetry and do not
+append domain events. The same query therefore has a 10-second stale time and
+polls every 15 seconds while the selected execution is `discovering` or
+`draining`, every 60 seconds otherwise, and never while the page is in the
+background. This narrow polling path refreshes only the operations snapshot; it
+does not replace the event stream or trigger broad cache invalidation.
 
 ## 7.6 Realtime Data Flow
 

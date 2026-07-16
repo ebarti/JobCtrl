@@ -1,8 +1,8 @@
 :root {
   color-scheme: light;
-  --radius: 0.5rem;
+  --radius: 0.625rem;
 
-  --background: oklch(0.967 0.003 264.542);
+  --background: oklch(0.972 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
@@ -10,31 +10,31 @@
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.541 0.281 293.009);
   --primary-foreground: oklch(0.985 0.006 293);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.535 0 0);
+  --secondary: oklch(0.94 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.948 0 0);
+  --muted-foreground: oklch(0.49 0 0);
   --accent: oklch(0.943 0.029 294.588);
   --accent-foreground: oklch(0.541 0.281 293.009);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.928 0.006 264.531);
-  --input: oklch(0.928 0.006 264.531);
-  --ring: oklch(0.541 0.281 293.009 / 0.36);
+  --border: oklch(0.89 0 0);
+  --input: oklch(0.82 0 0);
+  --ring: oklch(0.541 0.281 293.009);
 
-  --chart-1: oklch(0.541 0.281 293.009);
-  --chart-2: oklch(0.606 0.25 292.717);
-  --chart-3: oklch(0.702 0.183 293.541);
-  --chart-4: oklch(0.811 0.111 293.571);
-  --chart-5: oklch(0.894 0.057 293.283);
+  --chart-1: oklch(0.24 0 0);
+  --chart-2: oklch(0.38 0 0);
+  --chart-3: oklch(0.52 0 0);
+  --chart-4: oklch(0.66 0 0);
+  --chart-5: oklch(0.78 0 0);
 
-  --sidebar: oklch(1 0 0 / 0.84);
+  --sidebar: oklch(0.99 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.541 0.281 293.009);
   --sidebar-primary-foreground: oklch(0.985 0.006 293);
   --sidebar-accent: oklch(0.943 0.029 294.588);
   --sidebar-accent-foreground: oklch(0.541 0.281 293.009);
-  --sidebar-border: oklch(0.928 0.006 264.531);
-  --sidebar-ring: oklch(0.541 0.281 293.009 / 0.36);
+  --sidebar-border: oklch(0.89 0 0);
+  --sidebar-ring: oklch(0.541 0.281 293.009);
 
   --success: oklch(0.54 0.13 145);
   --success-foreground: oklch(0.985 0 0);
@@ -42,20 +42,20 @@
   --warning: oklch(0.72 0.15 72);
   --warning-foreground: oklch(0.145 0 0);
   --warning-muted: color-mix(in oklch, var(--warning) 16%, var(--card));
-  --status-info: oklch(0.56 0.11 242);
+  --status-info: oklch(0.56 0.12 242);
   --status-info-foreground: oklch(0.985 0 0);
   --status-info-muted: color-mix(in oklch, var(--status-info) 14%, var(--card));
 
-  --shadow-panel: 0 12px 34px rgb(31 41 55 / 0.08);
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.05);
   --rail-width: 236px;
   --rail-width-collapsed: 72px;
   --topbar-height: 60px;
 
   --jh-font-sans:
-    "Plus Jakarta Sans Variable", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Geist Variable", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   --jh-font-heading:
-    "Plus Jakarta Sans Variable", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    "Geist Variable", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --jh-font-mono:
     "JetBrains Mono Variable", "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
 }
@@ -65,13 +65,13 @@
 
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
+  --card: oklch(0.185 0 0);
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
+  --popover: oklch(0.185 0 0);
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.702 0.183 293.541);
   --primary-foreground: oklch(0.21 0.03 293.5);
-  --secondary: oklch(0.274 0.006 286.033);
+  --secondary: oklch(0.27 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
   --muted-foreground: oklch(0.708 0 0);
@@ -79,23 +79,23 @@
   --accent-foreground: oklch(0.87 0.08 293.5);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.702 0.183 293.541 / 0.4);
+  --input: oklch(1 0 0 / 18%);
+  --ring: oklch(0.702 0.183 293.541);
 
-  --chart-1: oklch(0.702 0.183 293.541);
-  --chart-2: oklch(0.606 0.25 292.717);
-  --chart-3: oklch(0.541 0.281 293.009);
-  --chart-4: oklch(0.811 0.111 293.571);
-  --chart-5: oklch(0.894 0.057 293.283);
+  --chart-1: oklch(0.9 0 0);
+  --chart-2: oklch(0.76 0 0);
+  --chart-3: oklch(0.62 0 0);
+  --chart-4: oklch(0.48 0 0);
+  --chart-5: oklch(0.34 0 0);
 
-  --sidebar: oklch(0.205 0 0 / 0.86);
+  --sidebar: oklch(0.17 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.702 0.183 293.541);
   --sidebar-primary-foreground: oklch(0.21 0.03 293.5);
   --sidebar-accent: oklch(0.32 0.075 293.5);
   --sidebar-accent-foreground: oklch(0.87 0.08 293.5);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.702 0.183 293.541 / 0.4);
+  --sidebar-ring: oklch(0.702 0.183 293.541);
 
   --success: oklch(0.66 0.14 145);
   --success-foreground: oklch(0.145 0 0);
@@ -107,19 +107,86 @@
   --status-info-foreground: oklch(0.145 0 0);
   --status-info-muted: color-mix(in oklch, var(--status-info) 18%, var(--card));
 
-  --shadow-panel: 0 12px 34px rgb(0 0 0 / 0.45);
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.28);
 }
 
 :where(.app-shell) {
   --jh-row-height: 40px;
+  --jh-row-padding-block: 9px;
+  --jh-table-cell-padding-block: 10px;
+  --jh-field-gap: 7px;
+  --jh-field-grid-row-gap: 14px;
+  --jh-field-grid-column-gap: 16px;
+  --jh-control-height: 32px;
 }
 
 :where(.app-shell[data-density="compact"]) {
   --jh-row-height: 32px;
+  --jh-row-padding-block: 6px;
+  --jh-table-cell-padding-block: 7px;
+  --jh-field-gap: 5px;
+  --jh-field-grid-row-gap: 10px;
+  --jh-field-grid-column-gap: 12px;
+  --jh-control-height: 28px;
   font-size: 12px;
 }
 
 :where(.app-shell[data-density="comfy"]) {
   --jh-row-height: 48px;
+  --jh-row-padding-block: 12px;
+  --jh-table-cell-padding-block: 14px;
+  --jh-field-gap: 10px;
+  --jh-field-grid-row-gap: 18px;
+  --jh-field-grid-column-gap: 20px;
+  --jh-control-height: 36px;
   font-size: 14px;
+}
+
+/*
+ * Global density is inherited by shared operational surfaces. A data grid
+ * with its own data-density keeps the explicit saved-view override instead.
+ */
+.app-shell[data-density]
+  :where(
+    .funnel-row,
+    .discovery-review-row,
+    .discovery-preview-row,
+    .data-row,
+    .mini-row,
+    .activity-row
+  ) {
+  min-height: var(--jh-row-height);
+  padding-block: var(--jh-row-padding-block);
+}
+
+.app-shell[data-density]
+  .filterable-data-grid:not([data-density])
+  .filterable-data-grid-table
+  :where(th, td),
+.app-shell[data-density] .data-table :where(th, td) {
+  padding-block: var(--jh-table-cell-padding-block);
+}
+
+.app-shell[data-density] .data-table th {
+  height: var(--jh-row-height);
+}
+
+.app-shell[data-density] :where(.field, [data-slot="field"]) {
+  gap: var(--jh-field-gap);
+}
+
+.app-shell[data-density]
+  :where(
+    .config-form,
+    .field-grid,
+    [data-slot="field-group"],
+    [data-slot="field-set"]
+  ) {
+  row-gap: var(--jh-field-grid-row-gap);
+  column-gap: var(--jh-field-grid-column-gap);
+}
+
+.app-shell[data-density]
+  :where([data-slot="input-group"], [data-slot="select-trigger"]) {
+  height: var(--jh-control-height);
 }

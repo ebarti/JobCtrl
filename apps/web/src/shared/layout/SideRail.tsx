@@ -100,7 +100,12 @@ export function RailNav({ className, onNavigate }: RailNavProps) {
   return (
     <nav className={cn("side-rail__nav", className)} aria-label="Main navigation">
       {NAV_GROUPS.map((group) => (
-        <div key={group.label} className="side-rail__group">
+        <div
+          key={group.label}
+          className="side-rail__group"
+          role="group"
+          aria-label={group.label}
+        >
           <span className="side-rail__group-label">{group.label}</span>
           {group.items.map(({ label, to, icon: NavIcon }) => (
             <Link

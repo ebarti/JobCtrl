@@ -8,11 +8,12 @@ at the top of `docs/`.
   that has landed, been superseded by canonical docs, or been closed with a
   recorded outcome.
 
-As of 2026-07-12, the bundled distribution and public live-demo plans below are
-the active dated plans at the top level. Their implementation stacks have
-landed, but their publication/cutover definitions of done remain open. Earlier
-dated plans have landed or been closed with a recorded outcome and live under
-`implemented/`. Add new accepted-but-not-yet-delivered plans at the top level.
+As of 2026-07-15, the plans below remain active at the top level. Distribution
+and live-demo implementation have landed but retain publication/cutover gates.
+Pipeline operations and the end-to-end redesign are implemented in an open
+stack but retain canonical-documentation, cumulative-QA, review, merge, and
+closeout gates. Earlier completed plans live under `implemented/`. Add new
+accepted-but-not-yet-delivered plans at the top level.
 
 The former top-level `openspec/` corpus was consolidated here on 2026-07-12.
 Each delivered change now has one implemented-plan record containing its
@@ -31,6 +32,8 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 | --- | --- | --- |
 | 2026-07-10 | [Bundled JobCtrl Distribution](2026-07-10-bundled-jobctrl-distribution-plan.md) | Active — P0–P7 code/docs landed in #396 and #399–#405; signed/notarized publication and published-artifact product QA remain open |
 | 2026-07-11 | [Public JobCtrl Live Demo](2026-07-11-public-live-demo-plan.md) | Active — P0–P7 landed in #408–#417 and a private candidate is deployed; public cutover, hosted reruns, and privacy approval remain open |
+| 2026-07-13 | [Discovery Pipeline Operations Visibility](2026-07-13-discovery-pipeline-operations-visibility-plan.md) | Active — implementation published in #459–#462; final docs, cumulative QA, review, merge, and archive evidence remain open |
+| 2026-07-14 | [End-to-End Product Redesign](2026-07-14-end-to-end-product-redesign.md) | Active — primitive/redesign/operations stack published in #453–#463; final docs, cumulative QA, review, merge, and archive evidence remain open |
 
 ## Historical Spec Ledger
 
@@ -88,6 +91,8 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-07-08 | [Web UI/UX Revamp — Left-Rail Shell + JobCtrl Design System](implemented/2026-07-08-web-ui-revamp-plan.md) | Implemented — #356; design-system docs follow-up continues separately in #357 |
 | 2026-07-10 | [Bundled JobCtrl Distribution](2026-07-10-bundled-jobctrl-distribution-plan.md) | Active — #394, #396, and #399–#405 landed; signed/notarized publication and published-artifact product QA pending; ADR 2026-07-10 |
 | 2026-07-11 | [Public JobCtrl Live Demo](2026-07-11-public-live-demo-plan.md) | Active — #407–#417 landed; private candidate deployed; public cutover, hosted reruns, and privacy approval pending |
+| 2026-07-13 | [Discovery Pipeline Operations Visibility](2026-07-13-discovery-pipeline-operations-visibility-plan.md) | Active — implementation published in #459–#462; final documentation, cumulative QA, review, merge, and archive evidence pending |
+| 2026-07-14 | [End-to-End Product Redesign](2026-07-14-end-to-end-product-redesign.md) | Active — implementation stack #453–#463 is open; final documentation, cumulative QA, review, merge, and archive evidence pending |
 
 Two 2026-05-17 backlog specs (`…-add-react`, `…-add-brows`) were drafted on
 `origin/mestre/develop-*` branches and never merged to `main`; only `…-add-root`

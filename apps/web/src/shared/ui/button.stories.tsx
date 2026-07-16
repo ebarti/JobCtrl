@@ -11,7 +11,7 @@ const meta = {
   argTypes: {
     variant: {
       control: { type: "select" },
-      options: ["default", "destructive", "outline", "secondary", "ghost", "link"],
+      options: ["default", "success", "warning", "destructive", "outline", "secondary", "ghost", "link"],
     },
     size: {
       control: { type: "select" },
@@ -28,6 +28,14 @@ export const Default: Story = {};
 
 export const Destructive: Story = {
   args: { variant: "destructive", children: "Delete job" },
+};
+
+export const Success: Story = {
+  args: { variant: "success", children: "Approve" },
+};
+
+export const Warning: Story = {
+  args: { variant: "warning", children: "Defer" },
 };
 
 export const Outline: Story = {
@@ -71,5 +79,14 @@ export const FocusVisible: Story = {
   args: {
     autoFocus: true,
     children: "Save changes",
+  },
+};
+
+export const AsLink: Story = {
+  args: {
+    children: "Open jobs",
+    nativeButton: false,
+    render: <a href="#jobs" role="link" />,
+    variant: "outline",
   },
 };

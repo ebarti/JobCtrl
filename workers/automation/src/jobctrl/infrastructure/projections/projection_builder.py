@@ -117,6 +117,65 @@ WORKFLOW_EVENT_TYPES: tuple[str, ...] = (
     "WorkflowTimedOut",
     "WorkflowTerminated",
 )
+
+PIPELINE_STEP_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "PipelineStepQueued",
+        "PipelineStepStarted",
+        "PipelineStepCompleted",
+        "PipelineStepFailed",
+    }
+)
+_PIPELINE_STEP_EVENT_STATES: dict[str, str] = {
+    "PipelineStepQueued": "queued",
+    "PipelineStepStarted": "running",
+    "PipelineStepCompleted": "succeeded",
+    "PipelineStepFailed": "failed",
+}
+_PIPELINE_STEP_KINDS: frozenset[str] = frozenset(
+    {
+        "source_planning",
+        "source_family",
+        "enrichment_pass",
+        "preparation_fanout",
+        "existing_backlog_sweep",
+        "pdf_render",
+    }
+)
+_PIPELINE_STEP_DETAIL_CODES: frozenset[str] = frozenset(
+    {
+        "source_plan",
+        "source_family",
+        "streaming_pass",
+        "terminal_reconciliation",
+        "existing_backlog",
+        "pdf_render",
+    }
+)
+_SAFE_PIPELINE_ITEM_KEY = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,159}$")
+_SAFE_PIPELINE_ERROR_CODE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,79}$")
+_MAX_SAFE_PIPELINE_INTEGER = 9_007_199_254_740_991
+
+
+@dataclass(frozen=True)
+class _PipelineStepFold:
+    tenant_id: str
+    workflow_id: str
+    temporal_run_id: str
+    step_kind: str
+    item_key: str
+    state: str
+    attempt: int
+    queued_at: str | None
+    started_at: str | None
+    finished_at: str | None
+    duration_ms: int | None
+    error_code: str | None
+    retryable: bool
+    detail_code: str | None
+    detail_count: int | None
+    last_event_id: int
+    last_updated_at: str
 _WORKFLOW_TERMINAL_STATUS: dict[str, str] = {
     "WorkflowCompleted": "succeeded",
     "WorkflowFailed": "failed",
@@ -736,6 +795,7 @@ class ProjectionBuilder:
         dirty_jobs: set[str] = set()
         source_quality_dirty = False
         workflow_runs_dirty = False
+        pipeline_steps_dirty = False
         contacts_dirty = False
         contact_research_dirty = False
         outreach_dirty = False
@@ -753,6 +813,8 @@ class ProjectionBuilder:
                 source_quality_dirty = True
             if str(event_type) in WORKFLOW_EVENT_TYPES:
                 workflow_runs_dirty = True
+            if str(event_type) in PIPELINE_STEP_EVENT_TYPES:
+                pipeline_steps_dirty = True
             if str(event_type) in CONTACT_EVENT_TYPES:
                 contacts_dirty = True
             if str(event_type) in CONTACT_RESEARCH_EVENT_TYPES:
@@ -797,6 +859,8 @@ class ProjectionBuilder:
         if audit_backfill_pending:
             dirty_jobs.update(self._jobs_missing_score_audit_projection())
         workflow_runs_backfill_pending = self._workflow_runs_backfill_pending()
+        if not pipeline_steps_dirty and self._pipeline_steps_backfill_pending():
+            pipeline_steps_dirty = True
         evidence_usage_exists = (
             self._conn.execute(
                 "SELECT 1 FROM evidence_usage_projections WHERE tenant_id = ? LIMIT 1",
@@ -835,6 +899,7 @@ class ProjectionBuilder:
             and max_event_id == watermark
             and not audit_backfill_pending
             and not workflow_runs_backfill_pending
+            and not pipeline_steps_dirty
             and not evidence_usage_dirty
             and not contacts_dirty
             and not contact_research_dirty
@@ -859,6 +924,8 @@ class ProjectionBuilder:
                 self._rebuild_source_quality()
             if workflow_runs_dirty or workflow_runs_backfill_pending:
                 self._rebuild_workflow_runs()
+            if pipeline_steps_dirty:
+                self._rebuild_pipeline_steps()
             if contacts_dirty:
                 self._rebuild_contacts()
             if contact_research_dirty:
@@ -886,6 +953,8 @@ class ProjectionBuilder:
         self._rebuild_apply_runs()
         if workflow_runs_dirty or workflow_runs_backfill_pending:
             self._rebuild_workflow_runs()
+        if pipeline_steps_dirty:
+            self._rebuild_pipeline_steps()
         if source_quality_dirty or (not source_quality_exists and source_quality_history):
             self._rebuild_source_quality()
         if contacts_dirty:
@@ -3183,6 +3252,320 @@ class ProjectionBuilder:
             tuple(sorted(SOURCE_QUALITY_EVENT_TYPES)),
         ).fetchone()
         return bool(row and int(row[0]) > 0)
+
+    def _pipeline_steps_backfill_pending(self) -> bool:
+        """Detect step rows missed after either runtime advanced the watermark."""
+
+        placeholders = ", ".join("?" for _ in PIPELINE_STEP_EVENT_TYPES)
+        try:
+            event_row = self._conn.execute(
+                f"""
+                SELECT COUNT(DISTINCT
+                    JSON_EXTRACT(payload_json, '$.execution.workflowId') || char(31) ||
+                    JSON_EXTRACT(payload_json, '$.execution.temporalRunId') || char(31) ||
+                    JSON_EXTRACT(payload_json, '$.stepKind') || char(31) ||
+                    JSON_EXTRACT(payload_json, '$.itemKey')
+                )
+                FROM job_events
+                WHERE event_type IN ({placeholders})
+                  AND payload_json IS NOT NULL
+                  AND json_valid(payload_json)
+                  AND JSON_EXTRACT(payload_json, '$.execution.tenantId') = ?
+                """,
+                (*sorted(PIPELINE_STEP_EVENT_TYPES), str(self._tenant_id)),
+            ).fetchone()
+            projection_row = self._conn.execute(
+                "SELECT COUNT(*) FROM pipeline_step_projections WHERE tenant_id = ?",
+                (str(self._tenant_id),),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        event_count = int(event_row[0] or 0) if event_row else 0
+        projection_count = int(projection_row[0] or 0) if projection_row else 0
+        return event_count > projection_count
+
+    def _rebuild_pipeline_steps(self) -> None:
+        """Fold orchestration-step facts before advancing the shared watermark.
+
+        The fold is attempt-aware and first-terminal-wins within an attempt.
+        A higher attempt replaces the current row; late events from an older
+        attempt and duplicate start/terminal facts are idempotent. Re-reading
+        the complete event family makes either the Python worker or TypeScript
+        API safe to win the shared ``operations_projections`` watermark race.
+        """
+
+        placeholders = ", ".join("?" for _ in PIPELINE_STEP_EVENT_TYPES)
+        rows = self._conn.execute(
+            f"""
+            SELECT event_id, event_type, occurred_at, payload_json
+            FROM job_events
+            WHERE event_type IN ({placeholders})
+            ORDER BY event_id ASC
+            """,
+            tuple(sorted(PIPELINE_STEP_EVENT_TYPES)),
+        ).fetchall()
+
+        folded: dict[tuple[str, str, str, str], _PipelineStepFold] = {}
+        for row in rows:
+            event = self._parse_pipeline_step_event(row)
+            if event is None:
+                continue
+            key = (
+                event["workflow_id"],
+                event["temporal_run_id"],
+                event["step_kind"],
+                event["item_key"],
+            )
+            current = folded.get(key)
+            if current is None or event["attempt"] > current.attempt:
+                folded[key] = self._new_pipeline_step_fold(event)
+                continue
+            if event["attempt"] < current.attempt:
+                continue
+            if current.state in {"succeeded", "failed"}:
+                continue
+
+            next_state = event["state"]
+            if next_state == "queued":
+                # Duplicate or late queue facts cannot regress a running step.
+                continue
+            if next_state == "running" and current.state == "running":
+                continue
+
+            detail_code = event["detail_code"] or current.detail_code
+            detail_count = (
+                event["detail_count"]
+                if event["detail_code"] is not None
+                else current.detail_count
+            )
+            if next_state == "running":
+                folded[key] = _PipelineStepFold(
+                    tenant_id=current.tenant_id,
+                    workflow_id=current.workflow_id,
+                    temporal_run_id=current.temporal_run_id,
+                    step_kind=current.step_kind,
+                    item_key=current.item_key,
+                    state="running",
+                    attempt=current.attempt,
+                    queued_at=current.queued_at,
+                    started_at=event["lifecycle_at"],
+                    finished_at=None,
+                    duration_ms=None,
+                    error_code=None,
+                    retryable=False,
+                    detail_code=detail_code,
+                    detail_count=detail_count,
+                    last_event_id=event["event_id"],
+                    last_updated_at=event["occurred_at"],
+                )
+                continue
+
+            folded[key] = _PipelineStepFold(
+                tenant_id=current.tenant_id,
+                workflow_id=current.workflow_id,
+                temporal_run_id=current.temporal_run_id,
+                step_kind=current.step_kind,
+                item_key=current.item_key,
+                state=next_state,
+                attempt=current.attempt,
+                queued_at=current.queued_at,
+                started_at=current.started_at,
+                finished_at=event["lifecycle_at"],
+                duration_ms=event["duration_ms"],
+                error_code=event["error_code"],
+                retryable=event["retryable"],
+                detail_code=detail_code,
+                detail_count=detail_count,
+                last_event_id=event["event_id"],
+                last_updated_at=event["occurred_at"],
+            )
+
+        self._conn.execute(
+            "DELETE FROM pipeline_step_projections WHERE tenant_id = ?",
+            (str(self._tenant_id),),
+        )
+        insert = self._conn.execute
+        for projection in sorted(
+            folded.values(),
+            key=lambda item: (
+                item.workflow_id,
+                item.temporal_run_id,
+                item.step_kind,
+                item.item_key,
+            ),
+        ):
+            insert(
+                """
+                INSERT INTO pipeline_step_projections (
+                    tenant_id, discover_workflow_id, discover_run_id, step_kind,
+                    item_key, state, attempt, queued_at, started_at, finished_at,
+                    duration_ms, error_code, retryable, detail_code, detail_count,
+                    last_event_id, last_updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection.tenant_id,
+                    projection.workflow_id,
+                    projection.temporal_run_id,
+                    projection.step_kind,
+                    projection.item_key,
+                    projection.state,
+                    projection.attempt,
+                    projection.queued_at,
+                    projection.started_at,
+                    projection.finished_at,
+                    projection.duration_ms,
+                    projection.error_code,
+                    1 if projection.retryable else 0,
+                    projection.detail_code,
+                    projection.detail_count,
+                    projection.last_event_id,
+                    projection.last_updated_at,
+                ),
+            )
+
+    def _parse_pipeline_step_event(self, row: object) -> dict[str, Any] | None:
+        if isinstance(row, tuple):
+            event_id, event_type, occurred_at, payload_json = row
+        else:
+            event_id = _row_get(row, "event_id")
+            event_type = _row_get(row, "event_type")
+            occurred_at = _row_get(row, "occurred_at")
+            payload_json = _row_get(row, "payload_json")
+        payload = _json_loads(str(payload_json) if payload_json else None, {})
+        if not isinstance(payload, dict) or event_type not in PIPELINE_STEP_EVENT_TYPES:
+            return None
+        execution = payload.get("execution")
+        if not isinstance(execution, dict):
+            return None
+        tenant_id = execution.get("tenantId")
+        workflow_id = execution.get("workflowId")
+        temporal_run_id = execution.get("temporalRunId")
+        if (
+            tenant_id != str(self._tenant_id)
+            or not isinstance(workflow_id, str)
+            or not workflow_id.strip()
+            or not isinstance(temporal_run_id, str)
+            or not temporal_run_id.strip()
+        ):
+            return None
+        step_kind = payload.get("stepKind")
+        item_key = payload.get("itemKey")
+        attempt = payload.get("attempt")
+        if (
+            step_kind not in _PIPELINE_STEP_KINDS
+            or not isinstance(item_key, str)
+            or not _SAFE_PIPELINE_ITEM_KEY.fullmatch(item_key)
+            or isinstance(attempt, bool)
+            or not isinstance(attempt, int)
+            or attempt < 1
+            or attempt > _MAX_SAFE_PIPELINE_INTEGER
+        ):
+            return None
+
+        detail_code: str | None = None
+        detail_count: int | None = None
+        detail = payload.get("detail")
+        if detail is not None:
+            if not isinstance(detail, dict) or detail.get("code") not in _PIPELINE_STEP_DETAIL_CODES:
+                return None
+            raw_count = detail.get("itemCount")
+            if raw_count is not None and (
+                isinstance(raw_count, bool)
+                or not isinstance(raw_count, int)
+                or raw_count < 0
+                or raw_count > _MAX_SAFE_PIPELINE_INTEGER
+            ):
+                return None
+            detail_code = str(detail["code"])
+            detail_count = raw_count
+
+        state = _PIPELINE_STEP_EVENT_STATES[str(event_type)]
+        time_field = {
+            "queued": "queuedAt",
+            "running": "startedAt",
+            "succeeded": "completedAt",
+            "failed": "failedAt",
+        }[state]
+        lifecycle_at = payload.get(time_field)
+        if not isinstance(lifecycle_at, str) or not lifecycle_at.strip():
+            return None
+        occurred_at_text = str(occurred_at) if occurred_at else lifecycle_at
+
+        duration_ms: int | None = None
+        if state in {"succeeded", "failed"}:
+            raw_duration = payload.get("durationMs")
+            if raw_duration is not None and (
+                isinstance(raw_duration, bool)
+                or not isinstance(raw_duration, int)
+                or raw_duration < 0
+                or raw_duration > _MAX_SAFE_PIPELINE_INTEGER
+            ):
+                return None
+            duration_ms = raw_duration
+
+        error_code: str | None = None
+        retryable = False
+        if state == "failed":
+            raw_error_code = payload.get("errorCode")
+            raw_retryable = payload.get("retryable")
+            if (
+                not isinstance(raw_error_code, str)
+                or not _SAFE_PIPELINE_ERROR_CODE.fullmatch(raw_error_code)
+                or not isinstance(raw_retryable, bool)
+            ):
+                return None
+            error_code = raw_error_code
+            retryable = raw_retryable
+
+        try:
+            parsed_event_id = int(event_id)
+        except (TypeError, ValueError):
+            return None
+        if parsed_event_id < 1 or parsed_event_id > _MAX_SAFE_PIPELINE_INTEGER:
+            return None
+        return {
+            "event_id": parsed_event_id,
+            "occurred_at": occurred_at_text,
+            "tenant_id": str(tenant_id),
+            "workflow_id": workflow_id,
+            "temporal_run_id": temporal_run_id,
+            "step_kind": str(step_kind),
+            "item_key": item_key,
+            "state": state,
+            "attempt": attempt,
+            "lifecycle_at": lifecycle_at,
+            "duration_ms": duration_ms,
+            "error_code": error_code,
+            "retryable": retryable,
+            "detail_code": detail_code,
+            "detail_count": detail_count,
+        }
+
+    @staticmethod
+    def _new_pipeline_step_fold(event: dict[str, Any]) -> _PipelineStepFold:
+        state = event["state"]
+        return _PipelineStepFold(
+            tenant_id=event["tenant_id"],
+            workflow_id=event["workflow_id"],
+            temporal_run_id=event["temporal_run_id"],
+            step_kind=event["step_kind"],
+            item_key=event["item_key"],
+            state=state,
+            attempt=event["attempt"],
+            queued_at=event["lifecycle_at"] if state == "queued" else None,
+            started_at=event["lifecycle_at"] if state == "running" else None,
+            finished_at=(
+                event["lifecycle_at"] if state in {"succeeded", "failed"} else None
+            ),
+            duration_ms=event["duration_ms"],
+            error_code=event["error_code"],
+            retryable=event["retryable"],
+            detail_code=event["detail_code"],
+            detail_count=event["detail_count"],
+            last_event_id=event["event_id"],
+            last_updated_at=event["occurred_at"],
+        )
 
     def _workflow_runs_backfill_pending(self) -> bool:
         """Detect workflow-run rows missed by the incremental watermark.

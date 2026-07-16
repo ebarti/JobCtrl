@@ -1,4 +1,4 @@
-import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 
 import { ContactCreateButton } from "../../contexts/outreach/components/ContactCreateButton.js";
 import { ContactImportButton } from "../../contexts/outreach/components/ContactImportButton.js";
@@ -9,6 +9,8 @@ import {
   type ContactsListFilters,
 } from "../../contexts/outreach/hooks/useContactsListQuery.js";
 import type { OutreachSearch } from "../../routes/-outreach.search.js";
+import { Field, FieldGroup, FieldLabel } from "../../shared/ui/field.js";
+import { Input } from "../../shared/ui/input.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 import { OutreachTable } from "./OutreachTable.js";
 
@@ -40,29 +42,39 @@ export function OutreachView() {
         eyebrow="Library"
         title="Contacts"
         subtitle={data ? `${data.items.length} shown` : "loading"}
-        actions={<DueFollowUpsBadge />}
+        actions={
+          <>
+            <DueFollowUpsBadge />
+            <ContactImportButton />
+            <ContactCreateButton />
+          </>
+        }
       />
       <DueFollowUpsPanel />
-      <section className="card full">
+      <section className="card full data-list-card">
         {message ? <div className="banner inline">{message}</div> : null}
-        <div className="toolbar">
-          <label className="field compact">
-            <span>Employer</span>
-            <input
+        <FieldGroup
+          className="contacts-filter-toolbar"
+          role="group"
+          aria-label="Contact filters"
+        >
+          <Field className="contacts-filter-field">
+            <FieldLabel htmlFor="contacts-employer-filter">Employer</FieldLabel>
+            <Input
+              id="contacts-employer-filter"
               value={search.employer}
               onChange={(event) => setSearch({ employer: event.target.value })}
             />
-          </label>
-          <label className="field compact">
-            <span>Job</span>
-            <input
+          </Field>
+          <Field className="contacts-filter-field">
+            <FieldLabel htmlFor="contacts-job-filter">Job</FieldLabel>
+            <Input
+              id="contacts-job-filter"
               value={search.jobId}
               onChange={(event) => setSearch({ jobId: event.target.value })}
             />
-          </label>
-          <ContactCreateButton />
-          <ContactImportButton />
-        </div>
+          </Field>
+        </FieldGroup>
         <OutreachTable
           data={data ?? null}
           loading={isFetching}
@@ -75,7 +87,6 @@ export function OutreachView() {
           }
         />
       </section>
-      <Outlet />
     </>
   );
 }

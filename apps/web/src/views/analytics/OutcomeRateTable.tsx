@@ -5,12 +5,14 @@ import {
   FilterableDataGrid,
   type DataGridSortState,
 } from "../../shared/ui/filterable-data-grid.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
+import type { StatusTagTone } from "../../shared/ui/status-tokens.js";
 
 export interface OutcomeRateRow {
   readonly id: string;
   readonly dimension: string;
   readonly label: string;
-  readonly badgeTone: "info" | "muted" | "ok" | "warn";
+  readonly badgeTone: StatusTagTone;
   readonly applied: number;
   readonly reply: number;
   readonly interview: number;
@@ -59,13 +61,18 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
     getSortValue: (row) => row.label,
     getFilterValue: (row) => row.label,
     render: (row) => (
-      <span className="title-stack">
+      <span className="title-stack analytics-group-cell">
         <b>{row.label}</b>
-        <span>
-          <span className={`tag ${row.badgeTone}`}>{row.dimension}</span> {countLabel(row)}
+        <span className="analytics-group-meta">
+          <StatusBadge icon={false} tone={row.badgeTone}>
+            {row.dimension}
+          </StatusBadge>
+          <span>{countLabel(row)}</span>
         </span>
       </span>
     ),
+    className: "analytics-group-column",
+    headerClassName: "analytics-group-column",
   },
   {
     id: "applied",
@@ -73,6 +80,8 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
     sortable: true,
     getSortValue: (row) => row.applied,
     render: (row) => <span className="mono">{row.applied}</span>,
+    className: "analytics-applied-column",
+    headerClassName: "analytics-applied-column",
   },
   {
     id: "reply",
@@ -85,6 +94,8 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
         <span>{row.reply} replies</span>
       </span>
     ),
+    className: "analytics-rate-column",
+    headerClassName: "analytics-rate-column",
   },
   {
     id: "interview",
@@ -97,6 +108,8 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
         <span>{row.interview} interviews</span>
       </span>
     ),
+    className: "analytics-rate-column",
+    headerClassName: "analytics-rate-column",
   },
   {
     id: "offer",
@@ -109,6 +122,8 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
         <span>{row.offer} offers</span>
       </span>
     ),
+    className: "analytics-rate-column",
+    headerClassName: "analytics-rate-column",
   },
   {
     id: "rejection",
@@ -121,6 +136,8 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
         <span>{row.rejection} rejections</span>
       </span>
     ),
+    className: "analytics-rate-column",
+    headerClassName: "analytics-rate-column",
   },
 ];
 
@@ -166,14 +183,19 @@ function sortRows(rows: readonly OutcomeRateRow[], sort: DataGridSortState): Out
 export interface OutcomeRateTableProps {
   readonly rows: readonly OutcomeRateRow[];
   readonly loading: boolean;
+  readonly title?: string;
 }
 
-export function OutcomeRateTable({ rows, loading }: OutcomeRateTableProps) {
+export function OutcomeRateTable({
+  rows,
+  loading,
+  title = "Outcome analytics table",
+}: OutcomeRateTableProps) {
   const [sort, setSort] = useState<DataGridSortState>({ columnId: "applied", direction: "desc" });
   const sortedRows = useMemo(() => sortRows(rows, sort), [rows, sort]);
   return (
     <FilterableDataGrid<OutcomeRateRow>
-      title="Outcome analytics table"
+      title={title}
       data={sortedRows}
       columns={outcomeRateColumns}
       getRowId={(row) => row.id}

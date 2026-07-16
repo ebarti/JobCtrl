@@ -201,7 +201,14 @@ test("configuration docs match current routes, storage, and opt-in integrations"
     /Environment variables are not an alternate persistence store for non-secret UI settings/,
   );
   assert.match(configuration, /worker activity slots show desired versus active values/);
-  assert.match(normalizedApply, /The path is write-only and is not shown again/);
+  assert.match(
+    normalizedApply,
+    /The screen may passively detect supported Chrome\/Chromium installations.*never a local executable path/i,
+  );
+  assert.match(
+    normalizedApply,
+    /Detection does not launch, adopt, or persist a browser.*an adopted path remains write-only and is not shown again/i,
+  );
   assert.match(normalizedApply, /Rotating the pairing token takes effect immediately/);
 
   for (const document of [readme, dataAndSafety, security, storage]) {
@@ -320,7 +327,9 @@ test("runtime overrides stay in contributor documentation", async () => {
     "Default",
     "What it does",
   ]);
-  assert.deepEqual(parseTableRow(tableLines[1]), ["---", "---", "---"]);
+  const separatorCells = parseTableRow(tableLines[1]);
+  assert.equal(separatorCells.length, 3);
+  assert.ok(separatorCells.every((cell) => /^:?-{3,}:?$/.test(cell)));
   const runtimeRows = tableLines.slice(2).map(parseTableRow);
   assert.deepEqual(
     runtimeRows.map(([variable, defaultValue]) => [variable, defaultValue]),

@@ -20,24 +20,59 @@ browser, mailbox, or model. Never submit an application during QA.
 | Route | Verify |
 | --- | --- |
 | `/dashboard` | KPI/read-model consistency, source health, funnel, and responsive connection status. |
-| `/jobs` | Filters and URL state, list/detail agreement, score/evidence explanation, stage actions, and drawer layout. |
-| `/artifacts` | Registered artifact metadata, previews, comparison, provenance, and explicit missing-audit states. |
+| `/analytics` | Window/dimension filters, counts and rates, sample/confidence warnings, totals, and empty/loading/error states. |
+| `/jobs`, `/jobs/$jobId`, `/jobs/$jobId/run/$runId` | Filters and URL state, list/detail agreement, score/evidence explanation, stage actions, and complete job/run workspaces. |
+| `/artifacts`, `/artifacts/$artifactId` | Registered artifact metadata, previews, comparison, provenance, and explicit missing-audit states. |
 | `/apply-review` | Readiness/blocker truth, editable draft persistence, binding decisions, and accepted-artifact preservation. |
-| `/runs` | Workflow type, progress/timeline, cancellation, and terminal reconciliation. |
+| `/pipelines` | Source-family versus reconciliation topology, execution/sweep/backlog scope, stage ledger, active work, privacy masking, ETA, freshness, queue, and worker capacity. |
+| `/runs`, `/runs/$runId` | Workflow type, progress/timeline, cancellation, and terminal reconciliation. |
 | `/discovery` | Source controls, quarantine/manual capture, schedules, and safe feedback commands. |
-| `/outreach` | Contact provenance, supervised candidate confirmation, draft gates, copy-only delivery, and reminders. |
+| `/outreach`, `/outreach/$contactId` | Contact provenance, supervised candidate confirmation, draft gates, copy-only delivery, and reminders. |
 | `/evidence-map` | Evidence usage/gaps and deep links back to the owning job or artifact. |
-| `/profile`, `/preferences`, `/settings` | Ownership boundaries, autosave, preview, validation, and secret-status handling. |
+| `/debug`, `/activity/$eventId` | Filters, safe payload/audit facts, detail navigation, and no sensitive free-form input leakage. |
+| `/profile`, `/profile/import/*` | Ownership boundaries, save/discard, import steps, real previews, validation, and mounted form state. |
+| `/preferences` | Legacy preference parity, autosave/undo, adaptive fields, and the real resume-template workbench. |
+| `/settings`, `/settings/credentials`, `/settings/models`, `/settings/browser` | General settings, provider ownership/readiness, model policy, passive browser detection versus explicit adoption, pairing, validation, and unavailable states. |
 
 ## High-Value Smokes
 
-- [Jobs drawer audit](complete-checklist.md#jobs-drawer-audit-smoke)
+- [Job Detail audit](complete-checklist.md#jobs-drawer-audit-smoke)
 - [Apply Review](complete-checklist.md#apply-review-smoke)
 - [Materials inspector](complete-checklist.md#materials-generation--inspector-smoke)
 - [Evidence map](complete-checklist.md#evidence-map-smoke)
 - [Outreach planner](complete-checklist.md#outreach-planner-product-smoke)
 - [Interview prep](complete-checklist.md#interview-prep-smoke)
 - [Browser extension](complete-checklist.md#browser-extension-qa)
+
+## Cumulative Redesign Route Sweep
+
+Run the complete Playwright suite first, then walk every route and detail route
+above in the in-app browser against the disposable seed. Record the route,
+state, viewport, theme, density, console result, and interaction result. Cover
+1440px, 1280px, a collapsed-rail desktop width, and 390×844; repeat light/dark
+and compact/regular/comfortable density.
+
+Exercise shared Rhea/Base UI behavior through product routes: labelled Select
+triggers and keyboard navigation, overlay focus return and Escape dismissal,
+disclosures that preserve mounted form state, destructive confirmations,
+visible focus, and no document-level horizontal overflow. Status must remain an
+icon/dot plus text, while coherent cards retain the shared radius and quiet
+elevation without becoming one card per fact.
+
+On `/pipelines`, use the seeded three-source execution and verify exactly two
+separate reconciliation rows, honest scope/freshness/ETA/capacity/queue states,
+two active work items, and no raw/private identifier leakage. On
+`/settings/browser`, verify the initial capability read has no launch,
+adoption, persistence, or path disclosure; enabling is a second explicit action;
+a stale detected ID fails closed; and the advanced manual path plus separate
+profile-copy consent still work.
+
+On `/settings/credentials`, use an environment-owned active provider route.
+Its secret/removal controls must stay read-only while an alternative supported
+route remains editable; saving the alternative must not claim it became active.
+Finally, issue a retry with `runAfter: true` while the worker-readiness stub is
+unavailable and confirm the failed stage, attempts, diagnostics, and audit
+history remain unchanged. Readiness must be proven before reset.
 
 ## Responsive And Theme Pass
 

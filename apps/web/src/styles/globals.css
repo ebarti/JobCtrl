@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/plus-jakarta-sans";
+@import "@fontsource-variable/geist";
 @import "@fontsource-variable/jetbrains-mono";
 @import "./tokens.css";
 
@@ -12,12 +12,16 @@
     box-sizing: border-box;
   }
 
+  #root {
+    isolation: isolate;
+  }
+
   body {
     margin: 0;
     background: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
-    font-size: 13px;
+    font-size: 14px;
   }
 
   h1,
@@ -27,8 +31,8 @@
   h5,
   h6 {
     font-family: var(--font-heading);
-    font-weight: 700;
-    letter-spacing: -0.03em;
+    font-weight: 650;
+    letter-spacing: -0.025em;
   }
 
   button,
@@ -3389,15 +3393,11 @@ input[type="radio"] {
   font-size: 12px;
 }
 
-.apply-review-ideal-profile section {
-  border-left: 2px solid var(--border);
-  padding-left: 10px;
-}
-
 .apply-review-ideal-requirements {
   display: grid;
   gap: 8px;
-  padding-left: 22px;
+  padding-left: 0;
+  list-style: none;
 }
 
 .apply-review-ideal-requirements li {
@@ -3439,34 +3439,41 @@ input[type="radio"] {
   gap: 5px;
 }
 
-.apply-review-requirement-fit-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 6px;
-  margin-top: 6px;
+.apply-review-requirement-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin: 9px 0 0;
 }
 
-.apply-review-requirement-fit-grid > div {
-  display: grid;
+.apply-review-requirement-summary > div {
+  display: flex;
   min-width: 0;
-  align-content: start;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
 }
 
-.apply-review-requirement-fit-grid > div > span {
+.apply-review-requirement-summary dt {
   color: var(--muted-foreground);
   font-size: 11px;
 }
 
-.apply-review-requirement-fit-grid .tag {
+.apply-review-requirement-summary dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+.apply-review-requirement-summary .tag {
   max-width: 100%;
   white-space: normal;
-  justify-self: start;
 }
 
 @media (max-width: 720px) {
-  .apply-review-requirement-fit-grid {
-    grid-template-columns: minmax(0, 1fr);
+  .apply-review-requirement-summary {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
@@ -3896,8 +3903,8 @@ input[type="radio"] {
 }
 
 .saved-table-density button[aria-pressed="true"] {
-  background: var(--foreground);
-  color: var(--card);
+  background: var(--primary);
+  color: var(--primary-foreground);
   font-weight: 650;
 }
 
@@ -4100,8 +4107,8 @@ input[type="radio"] {
 }
 
 .data-grid-filter-operator button.active {
-  background: var(--foreground);
-  color: var(--card);
+  background: var(--primary);
+  color: var(--primary-foreground);
   font-weight: 650;
 }
 
@@ -6826,7 +6833,7 @@ input[type="radio"] {
 
 .profile-resizer:hover span,
 .profile-resizer:focus-visible span {
-  background: var(--foreground);
+  background: var(--primary);
 }
 
 .profile-evidence-toolbar {
@@ -8055,13 +8062,13 @@ input[type="radio"] {
   --color-status-info: var(--status-info);
   --color-status-info-foreground: var(--status-info-foreground);
   --color-status-info-muted: var(--status-info-muted);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);

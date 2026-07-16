@@ -1,10 +1,23 @@
-import { IconMenu2 } from "@tabler/icons-react";
+import { IconMenu2, IconSearch } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { useDensity } from "../hooks/useDensity.js";
 import type { Density } from "../stores/ui-preferences.js";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "../ui/sheet.js";
+import { Button } from "../ui/button.js";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "../ui/input-group.js";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "../ui/sheet.js";
+import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group.js";
 import { BrandMark } from "./BrandMark.js";
 import { ConnectionStatusPill } from "./ConnectionStatusPill.js";
 import { LegalNotice } from "./LegalNotice.js";
@@ -21,10 +34,17 @@ export function Topbar() {
   return (
     <header className="topbar">
       <Sheet open={navOpen} onOpenChange={setNavOpen}>
-        <SheetTrigger asChild>
-          <button type="button" className="tab topbar__hamburger" aria-label="Open navigation">
-            <IconMenu2 aria-hidden="true" size={18} />
-          </button>
+        <SheetTrigger
+          render={
+            <Button
+              aria-label="Open navigation"
+              className="topbar__hamburger"
+              size="icon"
+              variant="ghost"
+            />
+          }
+        >
+          <IconMenu2 aria-hidden="true" />
         </SheetTrigger>
         <SheetContent side="left" aria-describedby={undefined}>
           <SheetHeader>
@@ -36,30 +56,44 @@ export function Topbar() {
           <LegalNotice className="legal-notice legal-notice--sheet" />
         </SheetContent>
       </Sheet>
-      <input
-        aria-label="Global search"
-        className="global-search"
-        placeholder="Filter jobs, errors, companies..."
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && query.trim()) {
-            void navigate({ to: "/jobs", search: { q: query.trim(), page: 1 } });
-          }
-        }}
-      />
-      <select
+      <InputGroup className="topbar__search">
+        <InputGroupAddon>
+          <IconSearch className="topbar__search-icon" aria-hidden="true" />
+        </InputGroupAddon>
+        <InputGroupInput
+          aria-label="Global search"
+          className="global-search"
+          placeholder="Filter jobs, errors, companies..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && query.trim()) {
+              void navigate({
+                to: "/jobs",
+                search: { q: query.trim(), page: 1 },
+              });
+            }
+          }}
+        />
+      </InputGroup>
+      <ToggleGroup
         aria-label="Row density"
-        className="select"
+        className="topbar__density"
+        size="sm"
+        spacing={0}
+        type="single"
         value={density}
-        onChange={(event) => setDensity(event.target.value as Density)}
+        variant="outline"
+        onValueChange={(value) => {
+          if (value) setDensity(value as Density);
+        }}
       >
         {DENSITY_OPTIONS.map((option) => (
-          <option key={option} value={option}>
+          <ToggleGroupItem key={option} value={option}>
             {option}
-          </option>
+          </ToggleGroupItem>
         ))}
-      </select>
+      </ToggleGroup>
       <ThemeToggle />
       <ConnectionStatusPill />
       <LegalNotice className="legal-notice legal-notice--topbar" />

@@ -9,8 +9,12 @@ describe("DiscoveryView", () => {
   it("renders discovery controls as tabs with a source registry table", async () => {
     renderWithProviders(<DiscoveryView />);
 
-    expect(await screen.findByRole("heading", { name: "Discovery settings" })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Target search" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Target search" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 3, name: "Target search" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Target tracks" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Management" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Director of Engineering" })).toBeInTheDocument();
@@ -43,5 +47,27 @@ describe("DiscoveryView", () => {
       screen.getByRole("button", { name: /filter state column/i }),
     );
     expect(screen.getByLabelText("State filter text")).toBeInTheDocument();
+  });
+
+  it("preserves an in-progress automation value across disclosure toggles", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<DiscoveryView />);
+
+    const minimumFitScore = await screen.findByLabelText("Minimum fit score");
+    await user.clear(minimumFitScore);
+    await user.type(minimumFitScore, "9");
+
+    const trigger = screen.getByRole("button", { name: /^Automation settings\b/i });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(minimumFitScore).toBeInTheDocument();
+    expect(minimumFitScore).toHaveValue(9);
+
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Minimum fit score")).toBe(minimumFitScore);
+    expect(minimumFitScore).toHaveValue(9);
   });
 });

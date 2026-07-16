@@ -1,7 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 import { outreachKeys } from "../contexts/operations/queryKeys.js";
-import { OutreachView } from "../views/outreach/OutreachView.js";
 import { outreachSearchSchema, type OutreachSearch } from "./-outreach.search.js";
 
 function contactsListInput(search: OutreachSearch) {
@@ -25,5 +24,5 @@ export const Route = createFileRoute("/outreach")({
       queryFn: () => context.ports.api.listContacts(input),
     });
   },
-  component: OutreachView,
+  component: Outlet,
 });

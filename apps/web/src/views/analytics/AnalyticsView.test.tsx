@@ -58,11 +58,11 @@ describe("<AnalyticsView>", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     await waitFor(() => expect(screen.getByText("11 applied")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: "Apply mode" }));
+    await user.click(screen.getByRole("button", { name: "Break down outcomes by apply mode" }));
 
     expect(router.state.location.search).toMatchObject({ dimension: "apply_mode" });
     expect(screen.getByText("automated live")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Template" }));
+    await user.click(screen.getByRole("button", { name: "Break down outcomes by template" }));
     expect(router.state.location.search).toMatchObject({ dimension: "template" });
     expect(screen.getByText("Modern compact")).toBeInTheDocument();
   });
@@ -110,6 +110,23 @@ describe("<AnalyticsView>", () => {
       expect(screen.getByText("No source outcome rows yet.")).toBeInTheDocument(),
     );
     expect(screen.queryByText("100%")).not.toBeInTheDocument();
+  });
+
+  it("marks analytics load failures with a semantic alert icon", async () => {
+    server.use(
+      http.get("*/v1/analytics/outcomes", () =>
+        new HttpResponse(JSON.stringify({ ok: false, error: "analytics unavailable" }), {
+          status: 503,
+        }),
+      ),
+    );
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness);
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    const title = await screen.findByText("Outcome analytics could not be loaded");
+    const alert = title.closest('[data-slot="alert"]');
+    expect(alert?.querySelector("svg.tabler-icon-alert-triangle")).toBeInTheDocument();
   });
 
   it("does not render denied recommendation copy in headings, captions, or column labels", async () => {

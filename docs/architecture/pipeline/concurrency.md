@@ -1,9 +1,10 @@
 # Concurrency & Fan-out
 
 Where parallelism actually lives in the pipeline, what bounds it, and which
-knobs are real. The short version: a single Python worker executes every
-activity, its slot count is the only Temporal (the workflow engine) concurrency
-control, and workflows fan out for isolation rather than for parallel speed-up.
+knobs are real. The short version: the normal local stack starts one Python
+worker, all matching workers share one Temporal (the workflow engine) task
+queue, activity slots are the execution-capacity boundary, and workflows fan
+out primarily for isolation.
 
 **Read this if** you are tuning worker capacity, wondering why two stages are not
 running in parallel, or hunting a throughput bottleneck.
@@ -34,9 +35,11 @@ flowchart LR
 
 ## The Worker's Capacity Model
 
-A single long-lived worker process (`jobctrl worker`) polls the
-`jobctrl-default` task queue and executes every activity. Two numbers define
-its capacity, both fixed at worker startup in
+The normal local stack runs one long-lived worker process (`jobctrl worker`) on
+the `jobctrl-default` task queue. If more matching workers are running, Temporal
+may dispatch activities to any of them and the Operations read model aggregates
+their fresh capacity. Two numbers define each worker's capacity, both fixed at
+worker startup in
 `infrastructure/temporal/worker.py`:
 
 - **Activity slots** — the `worker_activity_slots` Setting in `config.json`
@@ -46,14 +49,17 @@ its capacity, both fixed at worker startup in
   `slots + 2`, so blocking stage work never spills into the process default
   executor.
 
-The worker heartbeat records both values, `GET /v1/health` returns them, and
-the Settings page shows them, so the running capacity is always inspectable.
-Changing `worker_activity_slots` in Settings writes `config.json`; restart the
-worker to apply the new capacity.
+The worker heartbeat records both values. `GET /v1/health` exposes the health
+boundary, while `GET /v1/pipeline/operations` derives the app directory from
+its configured database path, filters heartbeats to that resolved
+database/app-dir identity, selects the task queue named by the newest matching
+heartbeat, and aggregates fresh schema-valid rows from that queue into
+configured, active, and available slots. Changing `worker_activity_slots` in
+Settings writes `config.json`; restart the worker to apply the new capacity.
 
 Two knobs that look like Temporal concurrency but are not:
 
-- The Pipelines page's **Workers** field flows into the discovery payload and
+- The Pipelines page's **Internal concurrency** field flows into the discovery payload and
   controls per-source scraping parallelism inside a source activity (the
   JobSpy worker count), not Temporal activity slots.
 - Search-combination execution inside one source family is sequential today
@@ -133,6 +139,8 @@ Two knobs that look like Temporal concurrency but are not:
 | LLM spend | `check_spend_budget` preflight stops spendful workflows at the daily ceiling | [Spend Ceiling](operations.md#spend-ceiling) |
 | Retries | per-activity retry policies from the error taxonomy | [Envelope & Activities](envelope.md) |
 | Worker readiness | worker-backed API actions return 503 until a healthy heartbeat exists | [Runtime & Processes](../runtime.md) |
+| Observed capacity | fresh matching heartbeat rows; exact slots include every activity even when safe detail is omitted | [Operations & Events](operations.md#pipeline-operations-snapshot) |
+| Task-queue pressure | approximate workflow/activity backlog and poller observations; unavailable/unsupported are not zero | `GET /v1/pipeline/operations` |
 | Apply single-flight | per-job workflow id + submit-intent checkpoint | [Stage Walkthrough](stages.md#apply) |
 
 ### Worker-Capacity Analysis (Parallel Families)
@@ -162,3 +170,19 @@ destroying long runs. For a chosen cap `M`:
 
 Data-flow context — where each stage persists and how results reach the UI —
 lives in [Operations & Events](operations.md).
+
+## What The Operations Snapshot Can Prove
+
+Runtime activity interception counts every active activity slot. It separately
+keeps an oldest-first, allowlisted detail list capped at 20 and an exact
+allowlisted-detail total, so `activeSlots` may legitimately exceed the number of
+rendered active items. The interceptor never reads activity arguments; unsafe
+identifiers are replaced with local opaque hashes, while only grammar-validated
+workflow/run references may remain readable.
+
+Task-queue statistics are not another capacity total. They are approximate
+Temporal observations for the workflow and activity queue: pollers, backlog
+count/age, and add/dispatch rates. The capacity response preserves
+`unsupported`, `unavailable`, and `stale` states. The ETA estimator therefore
+refuses to divide domain work by nominal slots when runtime telemetry is stale
+or shared queue contention cannot be bounded.

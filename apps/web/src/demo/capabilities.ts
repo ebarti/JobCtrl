@@ -12,6 +12,7 @@ const unavailable = (reason: string) => ({ class: "unavailable", reason }) as co
 export const DEMO_CAPABILITY_MANIFEST = {
   health: local("Shows synthetic browser-local service health."),
   dashboardSummary: local("Reads the synthetic dashboard projection."),
+  pipelineOperations: unavailable("Pipeline operations telemetry is unavailable in the public demo."),
   outcomeAnalytics: local("Reads synthetic conversion analytics."),
   digest: local("Reads the synthetic daily digest."),
   acknowledgeDigest: local("Acknowledges a digest only in browser-local state."),

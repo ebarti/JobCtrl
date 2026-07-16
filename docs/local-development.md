@@ -100,27 +100,27 @@ Use these source-development overrides when troubleshooting a component or
 running isolated or multi-worktree stacks. Most contributors can keep the
 launcher defaults above.
 
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `JOBCTRL_DIR` | `~/.jobctrl` | Local app directory for database, settings, artifacts, logs, browser worker state, and `.env`. |
-| `JOBCTRL_DB_PATH` | `$JOBCTRL_DIR/jobctrl.db` | TypeScript API database path. The Python worker ignores it and always uses `$JOBCTRL_DIR/jobctrl.db`, so overriding it desynchronizes the API from the worker — prefer `JOBCTRL_DIR` to move both. |
-| `JOBCTRL_CONFIG_PATH` | `$JOBCTRL_DIR/config.json` | Non-secret Settings file written by the TypeScript API and read by both API and worker (general controls, provider metadata, browser adoption, and provider-scoped model IDs). Discovery-page values remain in SQLite. |
-| `JOBCTRL_API_HOST` | `127.0.0.1` | Local API bind host. Non-loopback hosts require explicit opt-in. |
-| `JOBCTRL_API_PORT` / `PORT` | `8766` | Local API port. |
-| `JOBCTRL_API_ALLOW_REMOTE_BIND` | unset | Set to `1`, `true`, or `yes` to allow non-loopback API binding. This can expose private local data. |
-| `JOBCTRL_WEB_PORT` | `5173` | Requested Vite development port. |
-| `JOBCTRL_DOCS_PORT` | `4174` | Requested VitePress development port. |
-| `JOBCTRL_DEMO_WEB_PORT` | `5174` | Requested Vite development port for the browser-local demo. |
-| `JOBCTRL_DEMO_API_PORT` | `8787` | Local Wrangler port for the demo consent and telemetry API. |
-| `JOBCTRL_DEMO_STATE_DIR` | `.dev/demo/wrangler` | Local Wrangler/D1 persistence shared by demo migrations and the demo API process. |
-| `VITE_JOBCTRL_API_BASE_URL` | proxied `/v1` | Browser API origin when not using the default Vite proxy. |
-| `JOBCTRL_TEMPORAL_DB` | `.dev/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store. |
-| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address used by the worker, CLI, and workflow-starting RPC. |
-| `TEMPORAL_NAMESPACE` | `default` | Temporal namespace. |
-| `JOBCTRL_API_SSE_POLL_MS` | `250` | API event-stream database poll interval in milliseconds. |
-| `VITE_DEV_API_PROXY_TARGET` | `http://127.0.0.1:8766` | Vite dev-server `/v1` proxy target; override it for isolated or multi-worktree stacks. |
-| `VITE_DEMO_API_PROXY_TARGET` | launcher-managed | Vite dev-server `/api` proxy target for demo mode. The launcher sets it to the tracked local Wrangler process so consent stays same-origin. |
-| `VITE_GOOGLE_MAPS_API_KEY` | unset | Enables Google Maps address search in the Profile form. |
+| Variable                        | Default                     | What it does                                                                                                                                                                                                           |
+| ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `JOBCTRL_DIR`                   | `~/.jobctrl`                | Local app directory for database, settings, artifacts, logs, browser worker state, and `.env`.                                                                                                                         |
+| `JOBCTRL_DB_PATH`               | `$JOBCTRL_DIR/jobctrl.db`   | TypeScript API database path. The Python worker ignores it and always uses `$JOBCTRL_DIR/jobctrl.db`, so overriding it desynchronizes the API from the worker — prefer `JOBCTRL_DIR` to move both.                     |
+| `JOBCTRL_CONFIG_PATH`           | `$JOBCTRL_DIR/config.json`  | Non-secret Settings file written by the TypeScript API and read by both API and worker (general controls, provider metadata, browser adoption, and provider-scoped model IDs). Discovery-page values remain in SQLite. |
+| `JOBCTRL_API_HOST`              | `127.0.0.1`                 | Local API bind host. Non-loopback hosts require explicit opt-in.                                                                                                                                                       |
+| `JOBCTRL_API_PORT` / `PORT`     | `8766`                      | Local API port.                                                                                                                                                                                                        |
+| `JOBCTRL_API_ALLOW_REMOTE_BIND` | unset                       | Set to `1`, `true`, or `yes` to allow non-loopback API binding. This can expose private local data.                                                                                                                    |
+| `JOBCTRL_WEB_PORT`              | `5173`                      | Requested Vite development port.                                                                                                                                                                                       |
+| `JOBCTRL_DOCS_PORT`             | `4174`                      | Requested VitePress development port.                                                                                                                                                                                  |
+| `JOBCTRL_DEMO_WEB_PORT`         | `5174`                      | Requested Vite development port for the browser-local demo.                                                                                                                                                            |
+| `JOBCTRL_DEMO_API_PORT`         | `8787`                      | Local Wrangler port for the demo consent and telemetry API.                                                                                                                                                            |
+| `JOBCTRL_DEMO_STATE_DIR`        | `.dev/demo/wrangler`        | Local Wrangler/D1 persistence shared by demo migrations and the demo API process.                                                                                                                                      |
+| `VITE_JOBCTRL_API_BASE_URL`     | proxied `/v1`               | Browser API origin when not using the default Vite proxy.                                                                                                                                                              |
+| `JOBCTRL_TEMPORAL_DB`           | `.dev/temporal/temporal.db` | Temporal (the workflow engine) dev-server SQLite history store.                                                                                                                                                        |
+| `TEMPORAL_ADDRESS`              | `localhost:7233`            | Temporal server address used by the worker, CLI, and workflow-starting RPC.                                                                                                                                            |
+| `TEMPORAL_NAMESPACE`            | `default`                   | Temporal namespace.                                                                                                                                                                                                    |
+| `JOBCTRL_API_SSE_POLL_MS`       | `250`                       | API event-stream database poll interval in milliseconds.                                                                                                                                                               |
+| `VITE_DEV_API_PROXY_TARGET`     | `http://127.0.0.1:8766`     | Vite dev-server `/v1` proxy target; override it for isolated or multi-worktree stacks.                                                                                                                                 |
+| `VITE_DEMO_API_PROXY_TARGET`    | launcher-managed            | Vite dev-server `/api` proxy target for demo mode. The launcher sets it to the tracked local Wrangler process so consent stays same-origin.                                                                            |
+| `VITE_GOOGLE_MAPS_API_KEY`      | unset                       | Enables Google Maps address search in the Profile form.                                                                                                                                                                |
 
 Inspect the foreground stack from another terminal:
 
@@ -313,17 +313,17 @@ Regenerate public documentation screenshots with `pnpm docs:screenshots` — see
 These contributor-only variables isolate synthetic QA, screenshot generation,
 and CI from a real JobCtrl workspace:
 
-| Variable | What it does |
-| --- | --- |
-| `JOBCTRL_E2E_APP_DIR` | Disposable app directory used by Playwright e2e. |
-| `JOBCTRL_E2E_DB_PATH` | E2E database path. |
-| `JOBCTRL_E2E_SETTINGS_PATH` | E2E settings path. |
-| `JOBCTRL_E2E_API_PORT` | E2E API port. |
-| `JOBCTRL_E2E_WEB_PORT` | E2E web port. |
-| `JOBCTRL_E2E_STUB_DISPATCH` | Routes selected dispatches through deterministic test stubs. |
-| `JOBCTRL_DOCS_SCREENSHOTS` | Opts the Playwright run into rewriting the synthetic documentation screenshots under `docs/`. |
-| `VITE_JOBCTRL_SHOW_DEVTOOLS` | Shows TanStack Router and Query devtools in local Vite dev builds. |
-| `VITE_JOBCTRL_HIDE_DEVTOOLS` | Compatibility override that hides TanStack devtools even when the show flag is set. |
+| Variable                     | What it does                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------- |
+| `JOBCTRL_E2E_APP_DIR`        | Disposable app directory used by ordinary Playwright e2e. For `docs:screenshots`, an existing temporary parent under which the runner creates its own marker-protected child. |
+| `JOBCTRL_E2E_DB_PATH`        | E2E database path.                                                                            |
+| `JOBCTRL_E2E_SETTINGS_PATH`  | E2E settings path.                                                                            |
+| `JOBCTRL_E2E_API_PORT`       | E2E API port.                                                                                 |
+| `JOBCTRL_E2E_WEB_PORT`       | E2E web port.                                                                                 |
+| `JOBCTRL_E2E_STUB_DISPATCH`  | Routes selected dispatches through deterministic test stubs.                                  |
+| `JOBCTRL_DOCS_SCREENSHOTS`   | Opts the Playwright run into rewriting the synthetic documentation screenshots under `docs/`. |
+| `VITE_JOBCTRL_SHOW_DEVTOOLS` | Shows TanStack Router and Query devtools in local Vite dev builds.                            |
+| `VITE_JOBCTRL_HIDE_DEVTOOLS` | Compatibility override that hides TanStack devtools even when the show flag is set.           |
 
 Never point these paths at a real `~/.jobctrl` workspace.
 
@@ -410,8 +410,12 @@ protocol, stop conditions, record privacy rules, and three-run summary command.
 
 The React frontend under `apps/web` follows the architecture documented in
 [`docs/architecture/frontend/`](architecture/frontend/index.md): TanStack Router / Query /
-Form on top of shadcn/ui + Tailwind, a shared filterable data grid for
-tables, and an SSE-fed invalidation router for realtime cache fan-out.
+Form on top of the shadcn Rhea preset, Base UI behavior primitives, and
+Tailwind CSS v4, with a shared filterable data grid for tables and an SSE-fed
+invalidation router for realtime cache fan-out. Shared wrappers under
+`apps/web/src/shared/ui/` own primitive behavior and appearance; route code
+must not import Radix directly or replace an accessible wrapper with a raw
+native lookalike.
 
 Run the dev server:
 
@@ -543,9 +547,12 @@ pnpm docs:screenshots
 The command runs `apps/web/e2e/tests/docs-screenshots.spec.ts` through the
 Playwright e2e harness: it seeds a disposable E2E app directory with the local
 QA seed (`apps/api/test/qa-seed.ts` — fake candidate, jobs, stage state,
-scores, materials, requirement-fit evidence, employer analysis, artifacts, and
-a worker heartbeat), starts the API and web app on E2E ports, and writes PNGs
-to `docs/assets/screenshots/`. No real LLM provider, job source, Gmail
+scores, materials, requirement-fit evidence, employer analysis, artifacts,
+pipeline-operations lineage/projections/ETA samples, and a current worker
+heartbeat), starts the API and web app on E2E ports, and writes PNGs to
+`docs/assets/screenshots/`. The manifest covers all production primary routes,
+detail workspaces, profile-import steps, Settings routes, and fixed mobile
+companions listed in the Product Tour. No real LLM provider, job source, Gmail
 account, or browser submission is involved.
 
 The spec is opt-in: it only writes when `JOBCTRL_DOCS_SCREENSHOTS=1` is set,
@@ -553,50 +560,58 @@ which `pnpm docs:screenshots` does for you. A bare full e2e run
 (`pnpm --filter @jobctrl/web e2e`) skips it, so QA runs never rewrite the
 committed screenshots.
 
-When running multiple worktrees, override the disposable paths and ports:
+The wrapper allocates isolated ports and a marker-owned temporary workspace by
+default. To pin them while running multiple worktrees, create a disposable
+temporary parent and override the parent and ports:
 
 ```bash
+mkdir -p /tmp/jobctrl-docs-shots
 JOBCTRL_E2E_APP_DIR=/tmp/jobctrl-docs-shots \
 JOBCTRL_E2E_API_PORT=8890 \
 JOBCTRL_E2E_WEB_PORT=5290 \
 pnpm docs:screenshots
 ```
 
-Refresh checklist: run the command on a clean checkout, review every PNG for
-private data / broken layout / local-path leaks, confirm the homepage hero copy
-at `docs/public/assets/screenshots/dashboard.png` was refreshed from the
-gallery dashboard screenshot, update docs if screenshot names changed, and
-finish with `git diff --check`.
+Refresh checklist: run the command on a clean checkout, confirm every asset in
+the Product Tour matrix was rewritten, review every desktop and mobile PNG for
+private data, broken layout, clipped content, and local-path leaks, and inspect
+Pipelines for the seeded execution, three source families, two reconciliation
+steps, available worker capacity, stage ledger, and active work. Confirm the
+homepage hero copy at `docs/public/assets/screenshots/dashboard.png` is
+byte-for-byte identical to the gallery dashboard screenshot, update the tour
+if screenshot names changed, and finish with `git diff --check`.
 
-Safety rules: never point generation at `~/.jobctrl`; never use real
+Safety rules: never point generation at `~/.jobctrl` or a shared temporary
+root; an override must name an existing disposable child directory that the
+runner can use only as a parent for its unique marker-owned workspace. Never use real
 resumes, databases, logs, Gmail tokens, or browser profiles; do not run apply
 automation, mailbox scans, real crawling, or real LLM calls for screenshots;
-keep output deterministic (fixed viewport, synthetic database, seeded
-heartbeat, no external providers).
+keep output deterministic (fixed per-surface viewports, synthetic database,
+seeded pipeline operations and heartbeat, no external providers).
 
 ### Launch Demo Asset Inventory
 
 The launch demo assets each prove one product invariant from synthetic data.
 Each asset is classified **A** (static, already covered), **B** (static, new seed
-state), or **C** (dynamic/lifecycle — a driven flow that is *defined* here, not
+state), or **C** (dynamic/lifecycle — a driven flow that is _defined_ here, not
 executed by CI), and maps to a `Current` row in the repository-only claims ledger
 (`docs/claims-ledger.md`), which is the committed source of truth for every claim
 below.
 
-| # | Asset | Class | Claim(s) | Regeneration / proof | Status |
-| --- | --- | --- | --- | --- | --- |
-| 1 | First run → empty dashboard | B | `CL-060`, `CL-072` | Empty-workspace seed variant + a `docs-screenshots.spec.ts` onboarding surface | Deferred — needs an empty-workspace seed variant + capture surface |
-| 2 | Resume / profile import | B/C | `CL-080` | Profile-import wizard capture from a synthetic resume | Deferred — needs an import-flow capture surface |
-| 3 | Discovery → scored jobs + requirement fit + provenance | A | `CL-001`, `CL-010`, `CL-011`, `CL-020` | `pnpm docs:screenshots` → `jobs.png`, `job-detail.png` (seed: scored job, `job_requirement_fit_items`, `job_bullet_provenance`) | Covered |
-| 4 | Apply-review audit surfaces | A | `CL-023`, `CL-024`, `CL-030` | `pnpm docs:screenshots` → `apply-review.png` (seed: approved generation, evidence, `change_annotations`) | Covered |
-| 5 | Failed refresh preserves last accepted artifact | B | `CL-025` | Regression tests `apps/api/test/resume-templates.test.ts` ("keeps the last accepted resume artifact when the PDF render fails"; "reports refresh unavailable without hiding the last accepted artifact") and `apps/api/test/resume-review-drafts.test.ts` ("fails the render and preserves prior approved artifacts …"); run `pnpm api:test` | Covered — invariant proven from fixture |
-| 6 | Tailoring gate rejects an unsupported claim | B | `CL-021` | Grounding-gate regression `workers/automation/tests/test_claim_grounding.py` (a claim whose text is absent from the shipped resume is flagged `ungrounded` with an inspectable reason — the CL-021 fail-closed behaviour) and `workers/automation/tests/test_coverage_audit.py` (fabricated/stuffed keywords fall into `missing`); the apply-review rendering of the resulting blocker is seeded in `apps/api/test/qa-seed.ts` and asserted by `apps/api/test/application-feedback.test.ts` | Covered — gate + surface proven from fixtures |
-| 7 | Dry-run apply completes + live-approval gate + blocked-channel evidence | B / C | `CL-030`–`CL-034` | Approval card + dry-run run (`qa-run-1`) via `pnpm docs:screenshots`; live blocked-channel evidence via a driven dry-run (capability shipped: approval binding + dry-run evidence) | Approval card + dry-run run Covered; live blocked-channel evidence Defined (class C) |
-| 8 | Spend-ceiling stop + health surface | B / C | `CL-040`, `CL-041` | Health surface with an `llm_spend`-at/over-budget seed fixture + capture; stop lifecycle via a driven run (spend ceiling shipped) | Deferred — needs an `llm_spend` seed fixture + health capture; stop lifecycle Defined (class C) |
-| 9 | Reliability demo — kill worker, restart, resume | C | `CL-050` (`TR-008`) | `scripts/reliability-demo.sh` drives `DurabilityProbeWorkflow` (a hermetic durable-timer probe — no crawl/LLM) on an isolated stack; kills the worker by captured PID tree and asserts the same run ids resume in Temporal + the read-model projection. Probe covered by `workers/automation/tests/test_workflow_durability_probe.py`; see [Reliability & QA → Durable-Execution Recovery Demo](local-reliability-qa.md#durable-execution-recovery-demo) | Defined — self-asserting, re-runnable script (verified locally) |
+| #   | Asset                                                                   | Class | Claim(s)                               | Regeneration / proof                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Status                                                                                          |
+| --- | ----------------------------------------------------------------------- | ----- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| 1   | First run → empty dashboard                                             | B     | `CL-060`, `CL-072`                     | Empty-workspace seed variant + a `docs-screenshots.spec.ts` onboarding surface                                                                                                                                                                                                                                                                                                                                                                                                              | Deferred — needs an empty-workspace seed variant + capture surface                              |
+| 2   | Resume / profile import                                                 | B/C   | `CL-080`                               | `pnpm docs:screenshots` → `profile-import-upload.png`, `profile-import-preview.png`, `profile-import-confirm.png`; actual import remains a separately driven lifecycle                                                                                                                                                                                                                                                                                                                      | Static wizard Covered; import mutation lifecycle Defined (class C)                              |
+| 3   | Discovery → scored jobs + requirement fit + provenance                  | A     | `CL-001`, `CL-010`, `CL-011`, `CL-020` | `pnpm docs:screenshots` → `jobs.png`, `job-detail.png` (seed: scored job, `job_requirement_fit_items`, `job_bullet_provenance`)                                                                                                                                                                                                                                                                                                                                                             | Covered                                                                                         |
+| 4   | Apply-review audit surfaces                                             | A     | `CL-023`, `CL-024`, `CL-030`           | `pnpm docs:screenshots` → `apply-review.png` (seed: approved generation, evidence, `change_annotations`)                                                                                                                                                                                                                                                                                                                                                                                    | Covered                                                                                         |
+| 5   | Failed refresh preserves last accepted artifact                         | B     | `CL-025`                               | Regression tests `apps/api/test/resume-templates.test.ts` ("keeps the last accepted resume artifact when the PDF render fails"; "reports refresh unavailable without hiding the last accepted artifact") and `apps/api/test/resume-review-drafts.test.ts` ("fails the render and preserves prior approved artifacts …"); run `pnpm api:test`                                                                                                                                                | Covered — invariant proven from fixture                                                         |
+| 6   | Tailoring gate rejects an unsupported claim                             | B     | `CL-021`                               | Grounding-gate regression `workers/automation/tests/test_claim_grounding.py` (a claim whose text is absent from the shipped resume is flagged `ungrounded` with an inspectable reason — the CL-021 fail-closed behaviour) and `workers/automation/tests/test_coverage_audit.py` (fabricated/stuffed keywords fall into `missing`); the apply-review rendering of the resulting blocker is seeded in `apps/api/test/qa-seed.ts` and asserted by `apps/api/test/application-feedback.test.ts` | Covered — gate + surface proven from fixtures                                                   |
+| 7   | Dry-run apply completes + live-approval gate + blocked-channel evidence | B / C | `CL-030`–`CL-034`                      | Approval card + dry-run run (`qa-run-1`) via `pnpm docs:screenshots`; live blocked-channel evidence via a driven dry-run (capability shipped: approval binding + dry-run evidence)                                                                                                                                                                                                                                                                                                          | Approval card + dry-run run Covered; live blocked-channel evidence Defined (class C)            |
+| 8   | Spend-ceiling stop + health surface                                     | B / C | `CL-040`, `CL-041`                     | Health surface with an `llm_spend`-at/over-budget seed fixture + capture; stop lifecycle via a driven run (spend ceiling shipped)                                                                                                                                                                                                                                                                                                                                                           | Deferred — needs an `llm_spend` seed fixture + health capture; stop lifecycle Defined (class C) |
+| 9   | Reliability demo — kill worker, restart, resume                         | C     | `CL-050` (`TR-008`)                    | `scripts/reliability-demo.sh` drives `DurabilityProbeWorkflow` (a hermetic durable-timer probe — no crawl/LLM) on an isolated stack; kills the worker by captured PID tree and asserts the same run ids resume in Temporal + the read-model projection. Probe covered by `workers/automation/tests/test_workflow_durability_probe.py`; see [Reliability & QA → Durable-Execution Recovery Demo](local-reliability-qa.md#durable-execution-recovery-demo)                                    | Defined — self-asserting, re-runnable script (verified locally)                                 |
 
-Deferred assets (1, 2, 8 health capture) are launch-set follow-ups: they need a
-new synthetic seed variant or capture surface, not a missing product capability.
-Class-C assets (7 live evidence, 8 stop lifecycle, 9) are defined driven flows,
-never faked with a staged static image. No asset regenerates from a real
-workspace.
+Deferred static assets (1 and 8 health capture) are launch-set follow-ups: they
+need a new synthetic seed variant or capture surface, not a missing product
+capability. Class-C assets (2 actual import mutation, 7 live evidence, 8 stop
+lifecycle, 9) are defined driven flows, never faked with a staged static image.
+No asset regenerates from a real workspace.

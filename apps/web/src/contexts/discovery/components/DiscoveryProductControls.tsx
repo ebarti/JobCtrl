@@ -38,6 +38,14 @@ import {
   type DataGridColumn,
   type DataGridFilterState,
 } from "../../../shared/ui/filterable-data-grid.js";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../../shared/ui/select.js";
 import { StatusDot } from "../../../shared/ui/status-dot.js";
 import {
   SourcePolitenessBadges,
@@ -768,9 +776,7 @@ function SourceRegistryPanel({
                   : `Preview ${source.displayName}`
               }
               title={
-                isDemo
-                  ? "Bundled preview — no fetch"
-                  : "Preview observed leads"
+                isDemo ? "Bundled preview — no fetch" : "Preview observed leads"
               }
               disabled={
                 preview.isFetching && previewSourceId === source.sourceId
@@ -856,18 +862,31 @@ function SourceRegistryPanel({
         </label>
         <label className="field">
           <span>Kind</span>
-          <select
+          <Select
+            items={SOURCE_KINDS.map((value) => ({
+              label: label(value),
+              value,
+            }))}
             value={kind}
-            onChange={(event) =>
-              setKind(event.target.value as (typeof SOURCE_KINDS)[number])
-            }
+            onValueChange={(value) => {
+              if (value !== null) {
+                setKind(value as (typeof SOURCE_KINDS)[number]);
+              }
+            }}
           >
-            {SOURCE_KINDS.map((value) => (
-              <option key={value} value={value}>
-                {label(value)}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger aria-label="Kind" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {SOURCE_KINDS.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {label(value)}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </label>
         <label className="field wide">
           <span>Seed URL</span>
@@ -976,17 +995,19 @@ function SourceLocatorPanel({
               <Button
                 size="icon"
                 variant="ghost"
-                asChild
+                nativeButton={false}
+                render={
+                  <a
+                    aria-label={`Open ${candidate.candidateUrl}`}
+                    href={candidate.candidateUrl}
+                    role="link"
+                    target="_blank"
+                    rel="noreferrer"
+                  />
+                }
                 title="Open candidate"
               >
-                <a
-                  aria-label={`Open ${candidate.candidateUrl}`}
-                  href={candidate.candidateUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <IconExternalLink size={14} aria-hidden="true" />
-                </a>
+                <IconExternalLink size={14} aria-hidden="true" />
               </Button>
               <Button
                 type="button"
@@ -1190,8 +1211,8 @@ function RoleMatchFeedbackPanel({
               ) : null}
               {suggestion.evidence[0] ? (
                 <span>
-                  Latest: {suggestion.evidence[0].company || "Unknown company"} ·{" "}
-                  score {suggestion.evidence[0].fitScore}/10
+                  Latest: {suggestion.evidence[0].company || "Unknown company"}{" "}
+                  · score {suggestion.evidence[0].fitScore}/10
                   {suggestion.evidence[0].roleFit === null
                     ? ""
                     : ` · role ${suggestion.evidence[0].roleFit}/10`}
@@ -1357,21 +1378,30 @@ function ManualCaptureRow({
         <form className="manual-capture-form" onSubmit={submit}>
           <label className="field">
             <span>Capture mode</span>
-            <select
+            <Select
+              items={CAPTURE_MODES}
               value={captureMode}
-              onChange={(event) =>
-                setCaptureMode(
-                  event.target
-                    .value as ManualCaptureImportRequest["captureMode"],
-                )
-              }
+              onValueChange={(value) => {
+                if (value !== null) {
+                  setCaptureMode(
+                    value as ManualCaptureImportRequest["captureMode"],
+                  );
+                }
+              }}
             >
-              {CAPTURE_MODES.map((mode) => (
-                <option key={mode.value} value={mode.value}>
-                  {mode.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger aria-label="Capture mode" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {CAPTURE_MODES.map((mode) => (
+                    <SelectItem key={mode.value} value={mode.value}>
+                      {mode.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </label>
           <label className="field">
             <span>{urlRequired ? "Captured URL" : "Source URL"}</span>
@@ -1422,15 +1452,22 @@ function ManualCaptureRow({
         </form>
       </span>
       <div className="row-actions">
-        <Button size="icon" variant="ghost" asChild title="Open page">
-          <a
-            aria-label={`Open ${item.originatingUrl}`}
-            href={item.originatingUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <IconExternalLink size={14} aria-hidden="true" />
-          </a>
+        <Button
+          size="icon"
+          variant="ghost"
+          nativeButton={false}
+          render={
+            <a
+              aria-label={`Open ${item.originatingUrl}`}
+              href={item.originatingUrl}
+              role="link"
+              target="_blank"
+              rel="noreferrer"
+            />
+          }
+          title="Open page"
+        >
+          <IconExternalLink size={14} aria-hidden="true" />
         </Button>
         <Button
           type="button"

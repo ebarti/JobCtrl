@@ -26,8 +26,8 @@ surfaces rather than looking for a separate scoring page:
   threshold can make persisted scores eligible or ineligible for materials; it
   does not rewrite the score or call the scoring model again.
 
-From the Jobs drawer you can record a corrected score with a rationale or ask
-for an explicit re-score against the current policy. The Jobs toolbar also
+From the Job Detail workspace you can record a corrected score with a rationale
+or ask for an explicit re-score against the current policy. The Jobs toolbar also
 offers bounded current-policy maintenance for selected or outdated scores.
 A correction and a re-score are different: correction records your reviewed
 decision; re-score runs the current scoring pipeline and creates a new model-

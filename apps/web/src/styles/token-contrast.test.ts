@@ -8,6 +8,7 @@ const tokensCss = readFileSync(resolve(styleDir, "tokens.css"), "utf8");
 const globalsCss = readFileSync(resolve(styleDir, "globals.css"), "utf8");
 
 const AA_NORMAL = 4.5;
+const NON_TEXT_UI = 3;
 
 type Oklch = { L: number; C: number; H: number };
 
@@ -107,5 +108,31 @@ describe("muted-foreground WCAG AA contrast", () => {
     expect(regressed, "the old oklch(0.556 0 0) must still measure below AA on --muted").toBeLessThan(
       AA_NORMAL,
     );
+  });
+});
+
+describe("JobCtrl violet interaction contrast", () => {
+  it("clears 4.5:1 for primary action text in both themes", () => {
+    const light = contrastRatio(readToken(lightBlock, "primary-foreground"), readToken(lightBlock, "primary"));
+    const dark = contrastRatio(readToken(darkBlock, "primary-foreground"), readToken(darkBlock, "primary"));
+
+    expect(light, `light primary text was ${light.toFixed(3)}:1`).toBeGreaterThanOrEqual(AA_NORMAL);
+    expect(dark, `dark primary text was ${dark.toFixed(3)}:1`).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it("clears 4.5:1 for violet selection text in both themes", () => {
+    const light = contrastRatio(readToken(lightBlock, "accent-foreground"), readToken(lightBlock, "accent"));
+    const dark = contrastRatio(readToken(darkBlock, "accent-foreground"), readToken(darkBlock, "accent"));
+
+    expect(light, `light accent text was ${light.toFixed(3)}:1`).toBeGreaterThanOrEqual(AA_NORMAL);
+    expect(dark, `dark accent text was ${dark.toFixed(3)}:1`).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it("keeps the focus indicator above 3:1 against the app canvas", () => {
+    const light = contrastRatio(readToken(lightBlock, "ring"), readToken(lightBlock, "background"));
+    const dark = contrastRatio(readToken(darkBlock, "ring"), readToken(darkBlock, "background"));
+
+    expect(light, `light focus ring was ${light.toFixed(3)}:1`).toBeGreaterThanOrEqual(NON_TEXT_UI);
+    expect(dark, `dark focus ring was ${dark.toFixed(3)}:1`).toBeGreaterThanOrEqual(NON_TEXT_UI);
   });
 });

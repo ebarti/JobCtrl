@@ -18,7 +18,30 @@ describe("DigestPanel", () => {
     expect(within(newMatches).getByText("3")).toBeInTheDocument();
     expect(newMatches.getAttribute("href")).toContain("discoveredSince=");
     expect(newMatches.getAttribute("href")).toContain("scoredSince=");
+    expect(within(newMatches).getByText("3").querySelector("svg")).toHaveClass(
+      "tabler-icon-circle-check",
+    );
+    const blockedSources = screen.getByRole("link", { name: /blocked sources/i });
+    expect(within(blockedSources).getByText("1").querySelector("svg")).toHaveClass(
+      "tabler-icon-ban",
+    );
     expect(screen.getByText("7d, UTC")).toBeInTheDocument();
+  });
+
+  it("marks digest load failures with a semantic alert icon", async () => {
+    server.use(
+      http.get("*/v1/digest", () =>
+        new HttpResponse(JSON.stringify({ ok: false, error: "digest unavailable" }), {
+          status: 503,
+        }),
+      ),
+    );
+
+    renderWithProviders(<DigestPanel />);
+
+    const title = await screen.findByText("Daily digest unavailable");
+    const alert = title.closest('[data-slot="alert"]');
+    expect(alert?.querySelector("svg.tabler-icon-alert-triangle")).toBeInTheDocument();
   });
 
   it("acknowledges only when the operator marks the digest reviewed", async () => {

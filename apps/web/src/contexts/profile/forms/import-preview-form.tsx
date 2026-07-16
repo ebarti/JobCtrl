@@ -1,8 +1,22 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useForm } from "@tanstack/react-form";
+import { IconFileTypePdf } from "@tabler/icons-react";
 import { z } from "zod";
 
+import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
+import { Button, buttonVariants } from "../../../shared/ui/button.js";
+import { Checkbox } from "../../../shared/ui/checkbox.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "../../../shared/ui/field.js";
+import { PdfPreviewViewer } from "../../../shared/ui/PdfPreviewViewer.js";
 import { useProfileImportStore } from "../stores/profile-import-store.js";
 
 interface PreviewFormValues {
@@ -22,6 +36,7 @@ const PreviewValidator = z
 export function ImportPreviewForm() {
   const navigate = useNavigate();
   const filename = useProfileImportStore((state) => state.filename);
+  const pdfBase64 = useProfileImportStore((state) => state.pdfBase64);
   const importProfile = useProfileImportStore((state) => state.importProfile);
   const importStyle = useProfileImportStore((state) => state.importStyle);
   const setOptions = useProfileImportStore((state) => state.setOptions);
@@ -46,13 +61,16 @@ export function ImportPreviewForm() {
     },
   });
 
-  if (!filename) {
+  if (!filename || !pdfBase64) {
     return (
-      <div className="wizard-step">
+      <div className="wizard-step resume-import-step resume-import-empty-step">
         <Empty title="Pick a PDF on the previous step before continuing." />
-        <div className="form-actions">
-          <Link className="tab" to="/profile/import/upload">
-            back to upload
+        <div className="form-actions resume-import-actions">
+          <Link
+            className={buttonVariants({ variant: "outline" })}
+            to="/profile/import/upload"
+          >
+            Back to upload
           </Link>
         </div>
       </div>
@@ -61,59 +79,123 @@ export function ImportPreviewForm() {
 
   return (
     <form
-      className="wizard-step"
+      className="wizard-step resume-import-step resume-import-step--preview"
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
         void form.handleSubmit();
       }}
     >
-      <p className="status-line">
-        Selected: <b>{filename}</b>
-      </p>
-      <div className="import-options">
-        <form.Field name="importProfile">
-          {(field) => (
-            <label>
-              <input
-                type="checkbox"
-                checked={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.checked)}
-              />
-              profile data
-            </label>
-          )}
-        </form.Field>
-        <form.Field name="importStyle">
-          {(field) => (
-            <label>
-              <input
-                type="checkbox"
-                checked={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.checked)}
-              />
-              style data
-            </label>
-          )}
-        </form.Field>
+      <header className="resume-import-step__header">
+        <span className="resume-import-step__eyebrow">Preview options</span>
+        <h2>Review the PDF and choose the import scope</h2>
+        <p>The original document stays visible while you decide which sections to bring across.</p>
+      </header>
+
+      <div className="resume-import-selected-file">
+        <IconFileTypePdf size={22} stroke={1.65} aria-hidden="true" />
+        <span>
+          <small>Selected PDF</small>
+          <strong>{filename}</strong>
+        </span>
       </div>
+
+      <FieldSet className="resume-import-option-set">
+        <FieldLegend>What should be imported?</FieldLegend>
+        <FieldDescription>
+          Select at least one section. You can edit the resulting profile after import.
+        </FieldDescription>
+        <FieldGroup className="import-options resume-import-options">
+          <form.Field name="importProfile">
+            {(field) => (
+              <Field orientation="horizontal" className="resume-import-option">
+                <Checkbox
+                  id="resume-import-profile-data"
+                  checked={field.state.value}
+                  onBlur={field.handleBlur}
+                  onCheckedChange={(checked) => field.handleChange(checked)}
+                />
+                <FieldContent>
+                  <FieldLabel htmlFor="resume-import-profile-data">Profile data</FieldLabel>
+                  <FieldDescription>
+                    Canonical profile fields parsed from the source resume.
+                  </FieldDescription>
+                </FieldContent>
+              </Field>
+            )}
+          </form.Field>
+          <form.Field name="importStyle">
+            {(field) => (
+              <Field orientation="horizontal" className="resume-import-option">
+                <Checkbox
+                  id="resume-import-style-data"
+                  checked={field.state.value}
+                  onBlur={field.handleBlur}
+                  onCheckedChange={(checked) => field.handleChange(checked)}
+                />
+                <FieldContent>
+                  <FieldLabel htmlFor="resume-import-style-data">Style data</FieldLabel>
+                  <FieldDescription>
+                    Resume rendering style parsed from the source document.
+                  </FieldDescription>
+                </FieldContent>
+              </Field>
+            )}
+          </form.Field>
+        </FieldGroup>
+      </FieldSet>
+
+      <form.Subscribe selector={(state) => state.errors}>
+        {(errors) => {
+          const message = errors
+            .flat()
+            .find((entry): entry is string => typeof entry === "string" && entry.length > 0);
+          return message ? (
+            <Alert className="resume-import-alert" variant="destructive">
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          ) : null;
+        }}
+      </form.Subscribe>
+
+      <section className="resume-import-document-preview" aria-labelledby="resume-import-preview-title">
+        <header>
+          <div>
+            <h3 id="resume-import-preview-title">Original PDF</h3>
+            <p>Inspect every page before continuing.</p>
+          </div>
+          <span>{filename}</span>
+        </header>
+        <div className="resume-import-document-preview__viewer">
+          <PdfPreviewViewer
+            url={`data:application/pdf;base64,${pdfBase64}`}
+            cacheKey={filename}
+            title="Uploaded resume"
+            loadingTitle="Preparing resume preview"
+            loadingMessage="Rendering the selected PDF."
+            pageAltPrefix="Uploaded resume"
+            openLabel="Open original PDF"
+          />
+        </div>
+      </section>
+
       <form.Subscribe
         selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}
       >
         {({ canSubmit, isSubmitting }) => (
-          <div className="form-actions">
-            <button
+          <div className="form-actions resume-import-actions">
+            <Link
+              className={buttonVariants({ variant: "outline" })}
+              to="/profile/import/upload"
+            >
+              Back
+            </Link>
+            <Button
               type="submit"
-              className="tab on"
               disabled={!canSubmit || isSubmitting}
             >
-              next
-            </button>
-            <Link className="tab" to="/profile/import/upload">
-              back
-            </Link>
+              Continue to confirmation
+            </Button>
           </div>
         )}
       </form.Subscribe>

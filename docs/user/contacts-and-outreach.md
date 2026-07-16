@@ -16,9 +16,9 @@ the page title is Contacts. From there you can:
 - import a CSV list, with the filename retained as source provenance; and
 - inspect due follow-ups before opening a contact.
 
-The per-contact drawer at `/outreach/:contactId` shows each fact and its source,
-capture method, timestamp, confidence, and confirmation state. A job's detail
-drawer also composes the contacts linked to that application.
+The Contact Detail route workspace at `/outreach/:contactId` shows each fact
+and its source, capture method, timestamp, confidence, and confirmation state.
+A Job Detail workspace also composes the contacts linked to that application.
 
 Supervised research proposes contacts for review. You start the run for an
 employer or job and may opt into a permitted public source. No public page is

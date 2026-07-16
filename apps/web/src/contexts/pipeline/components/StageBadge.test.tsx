@@ -23,6 +23,26 @@ describe("<StageBadge>", () => {
 
   it("renders a tag with state text when given a `state`", () => {
     render(<StageBadge state="failed" />);
-    expect(screen.getByText("failed")).toBeInTheDocument();
+    expect(screen.getByText("failed")).toHaveAttribute(
+      "data-status-tone",
+      "danger",
+    );
   });
+
+  it.each([
+    ["pending", "clock"],
+    ["queued", "clock"],
+    ["running", "clock"],
+    ["blocked", "ban"],
+    ["canceled", "ban"],
+  ] as const)(
+    "uses the domain-specific icon for state=%s",
+    (state, iconName) => {
+      render(<StageBadge state={state} />);
+
+      expect(screen.getByText(state).querySelector("svg")).toHaveClass(
+        `tabler-icon-${iconName}`,
+      );
+    },
+  );
 });

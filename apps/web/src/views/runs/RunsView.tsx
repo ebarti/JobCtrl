@@ -2,7 +2,7 @@ import {
   WORKFLOW_RUN_SORT_FIELDS,
   type WorkflowRunSortField,
 } from "@jobctrl/contracts";
-import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { SortingState } from "@tanstack/react-table";
 import { useMemo } from "react";
 
@@ -76,7 +76,7 @@ export function RunsView() {
         title="Workflow runs"
         subtitle={data ? `${data.pagination.total} total` : "loading"}
       />
-      <section className="card full">
+      <section className="card full data-list-card">
         {message ? <div className="banner inline">{message}</div> : null}
         <RunsFilterBar
           status={search.status}
@@ -94,7 +94,6 @@ export function RunsView() {
           onOpenRun={openRun}
         />
       </section>
-      <Outlet />
     </>
   );
 }

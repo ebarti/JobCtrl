@@ -1,0 +1,1235 @@
+/*
+ * Configuration and discovery use an editorial workspace treatment: a small
+ * number of meaningful surfaces, open section bands, and dense but breathable
+ * forms. This intentionally overrides the older nested-card presentation.
+ */
+
+.profile-layout,
+.config-layout,
+.discovery-workspace {
+  --configuration-surface: var(--card);
+  --configuration-subtle: color-mix(in oklch, var(--muted) 62%, var(--card));
+  --configuration-rule: color-mix(in oklch, var(--border) 88%, var(--foreground));
+}
+
+/* Shared profile/preferences property grids query the width they actually
+ * receive. The wrapper is the query container so its inner FieldGroup can
+ * move through the required 4/2/1 layouts without viewport assumptions. */
+.adaptive-field-grid {
+  container-name: adaptive-field-grid;
+  container-type: inline-size;
+  min-width: 0;
+  width: 100%;
+}
+
+.adaptive-field-grid__fields {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 15px 18px;
+}
+
+.adaptive-field-span {
+  min-width: 0;
+}
+
+.adaptive-field-span > [data-slot="field"] {
+  height: 100%;
+}
+
+.adaptive-field-span[data-span="wide"] {
+  grid-column: span 2;
+}
+
+.adaptive-field-span[data-span="full"] {
+  grid-column: 1 / -1;
+}
+
+@container adaptive-field-grid (max-width: 56rem) {
+  .adaptive-field-grid__fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container adaptive-field-grid (max-width: 32rem) {
+  .adaptive-field-grid__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adaptive-field-span[data-span] {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Profile and preferences -------------------------------------------------- */
+
+.profile-layout > .card,
+.profile-layout-single > .card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.profile-layout > .card > .card-hd {
+  min-height: 0;
+  padding: 0 0 16px;
+  border: 0;
+  background: transparent;
+}
+
+.profile-layout > .card > .card-hd h2 {
+  font-size: 17px;
+  font-weight: 670;
+  letter-spacing: -0.03em;
+}
+
+.profile-layout .profile-evidence-toolbar {
+  margin-bottom: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.profile-layout .editor-bulk-actions {
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--configuration-rule);
+  border-radius: 8px;
+  background: var(--configuration-surface);
+}
+
+.profile-layout .profile-sections {
+  gap: 0;
+  padding: 0;
+}
+
+.profile-layout .profile-sections > .form-section {
+  overflow: visible;
+  border: 0;
+  border-top: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Personal information is the one clear profile-subject card. */
+.profile-layout .profile-sections > .form-section:first-child {
+  margin-bottom: 16px;
+  border: 1px solid var(--configuration-rule);
+  border-radius: 8px;
+  background: var(--configuration-surface);
+}
+
+.profile-layout .profile-sections > .form-section > h3 {
+  padding: 17px 20px 13px;
+  border-bottom: 1px solid var(--configuration-rule);
+  background: transparent;
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+}
+
+.profile-layout .profile-sections > .form-section:not(:first-child) > h3 {
+  padding: 18px 0 10px;
+  border: 0;
+}
+
+.profile-layout .profile-sections > .form-section .field-grid,
+.profile-layout .profile-sections > .form-section > .configuration-section__body > .adaptive-field-grid,
+.profile-layout .profile-sections > .form-section .target-preferences-grid {
+  padding: 16px 20px 20px;
+}
+
+.profile-layout .profile-sections > .form-section:not(:first-child) > .field-grid,
+.profile-layout .profile-sections > .form-section:not(:first-child) > .configuration-section__body > .adaptive-field-grid,
+.profile-layout .profile-sections > .form-section:not(:first-child) > .target-preferences-grid {
+  padding-inline: 0;
+}
+
+.profile-layout .repeat-list {
+  gap: 0;
+  padding: 0 0 18px;
+}
+
+.profile-layout .repeat-section {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  margin: 0;
+  padding: 16px 0;
+}
+
+.profile-layout .repeat-section > [data-slot="field-legend"] {
+  grid-column: 1;
+  margin: 0;
+  align-self: center;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.profile-layout .repeat-section > .repeat-controls {
+  grid-column: 2;
+  grid-row: 1;
+  justify-content: flex-end;
+}
+
+.profile-layout .repeat-section > .field-grid,
+.profile-layout .repeat-section > .adaptive-field-grid,
+.profile-layout .repeat-section > .bullet-list,
+.profile-layout .repeat-section > .skill-list,
+.profile-layout .repeat-section > [data-slot="separator"] {
+  grid-column: 1 / -1;
+}
+
+.profile-layout .repeat-section-separator {
+  background: var(--configuration-rule);
+}
+
+.profile-layout .repeat-list > .tab {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.profile-layout .repeat-section .field-grid,
+.profile-layout .repeat-section .adaptive-field-grid {
+  padding: 0;
+}
+
+.profile-layout .bullet-row,
+.profile-layout .skill-row {
+  border: 0;
+  border-bottom: 1px solid color-mix(in oklch, var(--configuration-rule) 72%, transparent);
+  border-radius: 0;
+  background: transparent;
+  padding: 11px 0;
+  box-shadow: none;
+}
+
+.profile-layout .achievement-evidence-card {
+  border-color: var(--configuration-rule);
+  border-radius: 6px;
+  background: var(--configuration-surface);
+  box-shadow: none;
+}
+
+.profile-layout .target-work-model-option,
+.profile-layout .date-range-present,
+.profile-layout .month-selector {
+  border-color: transparent;
+  border-radius: 4px;
+  background: var(--configuration-subtle);
+}
+
+.profile-layout .target-work-model-option:has([data-checked]),
+.profile-layout .date-range-present:has([data-checked]) {
+  background: color-mix(in oklch, var(--foreground) 9%, var(--card));
+  color: var(--foreground);
+}
+
+/* Configuration disclosures share one Base UI-backed hierarchy across
+ * Profile, Preferences, Discovery, and Settings. */
+.configuration-section {
+  overflow: hidden;
+  border: 0;
+  border-top: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+}
+
+.profile-layout-single .configuration-section:last-of-type {
+  border-bottom: 1px solid var(--configuration-rule);
+}
+
+.configuration-section__header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.configuration-section__trigger {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  min-height: 70px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 16px 20px;
+  text-align: left;
+}
+
+.configuration-section__title-group {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.configuration-section__title {
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+}
+
+.configuration-section__description {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.configuration-section__summary {
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 1.4;
+}
+
+.configuration-section__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding-right: 20px;
+}
+
+.configuration-section__indicator {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+  transition: transform 150ms ease, color 150ms ease;
+}
+
+.configuration-section__trigger[data-panel-open] .configuration-section__indicator {
+  color: var(--foreground);
+  transform: rotate(180deg);
+}
+
+.configuration-section__trigger:hover .configuration-section__title,
+.configuration-section__trigger:focus-visible .configuration-section__title {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklch, var(--foreground) 28%, transparent);
+  text-underline-offset: 4px;
+}
+
+.configuration-section__body {
+  padding: 0 0 20px;
+}
+
+.configuration-section .field-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px 18px;
+  padding: 0;
+}
+
+.configuration-section .field-grid.one {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.configuration-section .tailoring-controls-grid {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0 22px;
+  padding: 0;
+}
+
+.configuration-section .tailoring-control-tabs {
+  min-width: 0;
+}
+
+.configuration-section .tailoring-control-tabs__list {
+  display: flex;
+  width: 100%;
+  height: auto;
+  overflow-x: auto;
+  border-color: var(--configuration-rule);
+}
+
+.configuration-section .tailoring-control-tabs__list [role="tab"] {
+  flex: 0 0 auto;
+}
+
+.configuration-section .tailoring-tab-panel {
+  margin-top: 0;
+  padding-top: 16px;
+}
+
+.configuration-section .tailoring-tab-panel[hidden] {
+  display: none;
+}
+
+.configuration-section .tailoring-controls-grid--content > .bullet-standards-group,
+.configuration-section .tailoring-controls-grid--writing > .tailoring-control-group,
+.configuration-section .tailoring-controls-grid--quality > .tailoring-control-group {
+  grid-column: 1 / -1;
+}
+
+.configuration-section .tailoring-control-group {
+  min-width: 0;
+  align-self: stretch;
+  border: 0;
+  border-top: 1px solid var(--configuration-rule);
+  margin: 0;
+  padding: 16px 0 18px;
+}
+
+.configuration-section .tailoring-control-group:nth-child(1) {
+  grid-column: span 4;
+}
+
+.configuration-section .tailoring-control-group:nth-child(2) {
+  grid-column: span 8;
+}
+
+.configuration-section .tailoring-control-group:nth-child(3),
+.configuration-section .tailoring-control-group:nth-child(4) {
+  grid-column: span 6;
+}
+
+.configuration-section .tailoring-controls-grid > .field-grid,
+.configuration-section .tailoring-controls-grid > .adaptive-field-grid {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--configuration-rule);
+  padding-top: 16px;
+}
+
+.configuration-section .tailoring-control-group legend,
+.configuration-section .bullet-standards-group legend {
+  margin-bottom: 10px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.configuration-section .bullet-standards-group legend {
+  padding-right: 48px;
+}
+
+.configuration-help-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 560;
+  text-decoration: none;
+}
+
+.configuration-help-link:hover,
+.configuration-help-link:focus-visible {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.configuration-section .tailoring-control-group .field-grid,
+.configuration-section .tailoring-control-group .adaptive-field-grid__fields {
+  gap: 12px 14px;
+  padding: 0;
+}
+
+.configuration-section .tailoring-control-group .bullet-standards-group {
+  position: relative;
+  margin-top: 2px;
+}
+
+.configuration-section .bullet-standards-group > .configuration-help-link {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.configuration-section .checkbox-options,
+.profile-layout .checkbox-options,
+.discovery-workspace .checkbox-options {
+  flex-direction: row;
+  gap: 8px 14px;
+}
+
+/* FieldSet legends do not participate as ordinary grid children. Keep the
+ * semantic group vertical and place the full-width shadcn Fields into an
+ * explicit responsive options grid instead of the legacy label/options grid. */
+.profile-layout .checkbox-option-group,
+.discovery-workspace .checkbox-option-group {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.profile-layout .checkbox-option-group > .checkbox-options,
+.discovery-workspace .checkbox-option-group > .checkbox-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 8px 14px;
+}
+
+.configuration-section .checkbox-options.vertical {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 16px;
+}
+
+.configuration-section .choice,
+.profile-layout .choice,
+.discovery-workspace .choice {
+  color: var(--foreground);
+  font-size: 12px;
+}
+
+.configuration-section .target-choice,
+.profile-layout .target-choice,
+.discovery-workspace .target-choice {
+  min-height: 24px;
+}
+
+.configuration-section .field.check,
+.configuration-section .target-choice.required-choice {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.configuration-section .field.check > button,
+.configuration-section .target-choice.required-choice > button {
+  margin-top: 1px;
+}
+
+.configuration-section .required-choice > [data-disabled] {
+  opacity: 1;
+}
+
+.configuration-section .locked-choice [data-slot="field-content"] {
+  gap: 2px;
+}
+
+.configuration-section .locked-choice [data-slot="field-label"] {
+  color: var(--foreground);
+}
+
+.configuration-section .locked-choice [data-slot="field-description"] {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 430;
+  line-height: 1.4;
+}
+
+.configuration-section .bullet-standards-group > [data-slot="field-description"] {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 430;
+  line-height: 1.4;
+}
+
+.profile-layout .target-work-model-options,
+.discovery-workspace .target-work-model-options {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.profile-layout .month-selector > [data-slot="field-legend"] {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.profile-layout .month-selector-controls > button:first-of-type {
+  flex: 0 0 92px;
+}
+
+.profile-layout .month-selector-controls > button:last-of-type {
+  flex: 1 1 96px;
+}
+
+.configuration-select-trigger {
+  min-height: 40px;
+  border-color: var(--input);
+  border-radius: 6px;
+  background: var(--configuration-surface);
+  box-shadow: none;
+}
+
+/* The template editor is a full-width tool, not a small preview card. */
+.profile-layout-single .resume-template-workspace {
+  overflow: hidden;
+  margin: 24px 0 0;
+  border: 1px solid var(--configuration-rule);
+  border-radius: 8px;
+  background: var(--configuration-surface);
+}
+
+.profile-layout-single .resume-template-workspace > h3 {
+  padding: 17px 20px 13px;
+  border-bottom: 1px solid var(--configuration-rule);
+  background: transparent;
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+}
+
+.resume-template-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px;
+}
+
+.resume-template-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px 16px;
+}
+
+.resume-template-controls .field-grid {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
+  gap: 10px 12px;
+  padding: 0;
+}
+
+.resume-template-controls .field {
+  gap: 5px;
+}
+
+.resume-template-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--configuration-rule);
+  padding-top: 12px;
+}
+
+.resume-template-preview {
+  min-width: 0;
+  border-top: 1px solid var(--configuration-rule);
+  padding-top: 16px;
+}
+
+.resume-template-plate-editor {
+  height: min(80dvh, 980px);
+  min-height: 620px;
+  border: 1px solid var(--configuration-rule);
+  border-radius: 7px;
+}
+
+.resume-template-plate-editor .resume-plate-scroll {
+  padding: clamp(14px, 2vw, 26px);
+}
+
+/* Settings navigation and provider screens -------------------------------- */
+
+.config-layout {
+  gap: 24px;
+}
+
+.config-layout .settings-tabs {
+  width: 100%;
+  align-self: stretch;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+}
+
+.config-layout .settings-tabs .tab {
+  min-height: 38px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 9px 13px 8px;
+  background: transparent;
+  color: var(--muted-foreground);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.config-layout .settings-tabs .tab:hover {
+  background: transparent;
+  color: var(--foreground);
+}
+
+.config-layout .settings-tabs .tab.on {
+  border-color: var(--primary);
+  background: transparent;
+  color: var(--foreground);
+  box-shadow: none;
+}
+
+.config-layout > .card,
+.config-layout > .configuration-section {
+  overflow: hidden;
+  border-color: var(--configuration-rule);
+  border-radius: 8px;
+  background: var(--configuration-surface);
+  box-shadow: none;
+}
+
+.config-layout > .card > .card-hd {
+  padding: 17px 20px 13px;
+  background: transparent;
+}
+
+.config-layout .provider-card-list {
+  gap: 0;
+  padding: 0;
+}
+
+.config-layout .provider-card {
+  border: 0;
+  border-top: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.config-layout .provider-disclosure {
+  border-top: 0;
+}
+
+.config-layout .provider-disclosure .configuration-section__body {
+  padding: 0 20px 18px;
+}
+
+.config-layout .provider-setup-disclosure > .configuration-section__body,
+.config-layout .model-selection-settings > .configuration-section__body {
+  padding-bottom: 20px;
+}
+
+.config-layout .provider-card-header {
+  gap: 24px;
+}
+
+.config-layout .provider-card .tag,
+.profile-layout .tag {
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+/* A credential is one responsive form row: status, field, and actions. The
+ * label/key pair stays with its input so the grid never creates implicit rows. */
+.config-layout .credential-row-form {
+  grid-template-columns: minmax(118px, max-content) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 16px;
+  border-color: var(--configuration-rule);
+}
+
+.config-layout .credential-row-status {
+  min-width: 0;
+  max-width: 100%;
+  border-radius: 4px;
+  justify-self: start;
+  white-space: normal;
+}
+
+.config-layout .credential-row-field-group {
+  min-width: 0;
+  gap: 0;
+}
+
+.config-layout .credential-row-field {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(176px, 0.65fr) minmax(240px, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.config-layout .credential-row-identity,
+.config-layout .credential-row-field input {
+  min-width: 0;
+}
+
+.config-layout .credential-row-identity {
+  gap: 3px;
+}
+
+.config-layout .credential-row-key {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.config-layout .credential-row-actions {
+  display: flex;
+  min-width: 144px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.config-layout .credential-row-actions > button {
+  min-width: 68px;
+}
+
+.config-layout .credential-row-form .status-line {
+  grid-column: 2 / -1;
+}
+
+.config-layout .model-selection-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.config-layout .model-selection-list .provider-card {
+  border-top: 0;
+  border-left: 1px solid var(--configuration-rule);
+}
+
+.config-layout .model-selection-list .provider-card:first-child {
+  border-left: 0;
+}
+
+.config-layout .model-selection-intro {
+  border-color: var(--configuration-rule);
+  background: var(--configuration-subtle);
+  padding: 14px 20px;
+}
+
+.config-layout .provider-choice,
+.config-layout .codex-auth-options section,
+.config-layout .provider-cloud-guidance,
+.config-layout .provider-legacy-warning {
+  border-color: var(--configuration-rule);
+  border-radius: 6px;
+  background: var(--configuration-subtle);
+}
+
+.config-layout .provider-choice:has(input:checked) {
+  border-color: var(--primary);
+  background: var(--configuration-surface);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+/* Discovery ---------------------------------------------------------------- */
+
+.discovery-workspace {
+  gap: 22px;
+}
+
+.discovery-workspace > .card,
+.discovery-workspace > .configuration-section {
+  overflow: hidden;
+  margin: 0;
+  border-color: var(--configuration-rule);
+  border-radius: 8px;
+  background: var(--configuration-surface);
+  box-shadow: none;
+}
+
+.discovery-workspace > .card > .card-hd {
+  min-height: 0;
+  padding: 17px 20px 13px;
+  background: transparent;
+}
+
+.discovery-workspace > .card > .card-hd h2 {
+  font-size: 15px;
+  font-weight: 660;
+  letter-spacing: -0.025em;
+}
+
+.discovery-workspace .config-form,
+.discovery-workspace .target-preferences-grid {
+  gap: 16px 20px;
+  padding: 16px 20px 20px;
+}
+
+.discovery-workspace .discovery-runtime-settings .config-form {
+  padding: 0;
+}
+
+.discovery-workspace .discovery-runtime-settings .field-grid {
+  gap: 16px 20px;
+  padding: 16px 20px 20px;
+}
+
+.discovery-workspace .editor-bulk-actions,
+.discovery-workspace .form-actions {
+  padding: 12px 20px 18px;
+}
+
+.discovery-workspace .discovery-automation-settings-form {
+  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr);
+  align-items: start;
+}
+
+.discovery-workspace .discovery-automation-settings-form > .field,
+.discovery-workspace .discovery-automation-settings-form > .field-hint,
+.discovery-workspace .discovery-automation-settings-form > .status-line,
+.discovery-workspace .discovery-automation-settings-form > .form-actions {
+  grid-column: auto;
+}
+
+.discovery-workspace .discovery-automation-settings-form > .form-actions {
+  align-self: end;
+  justify-self: start;
+  padding: 0;
+}
+
+.discovery-workspace .discovery-tabs {
+  padding: 0 20px 20px;
+  background: transparent;
+}
+
+.discovery-workspace .discovery-tab-list {
+  width: 100%;
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.discovery-workspace .discovery-tab-list [role="tab"] {
+  min-height: 38px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.discovery-workspace .discovery-tab-list [role="tab"][data-active] {
+  border-color: var(--primary);
+  background: transparent;
+  color: var(--foreground);
+}
+
+.discovery-workspace .discovery-tab-panel {
+  margin: 0;
+}
+
+.discovery-workspace .discovery-tab-panel .discovery-control-panel {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.discovery-workspace .discovery-panel-head {
+  min-height: 46px;
+  padding: 10px 0;
+}
+
+.discovery-workspace .discovery-panel-head h3 {
+  font-size: 14px;
+  letter-spacing: -0.015em;
+}
+
+.discovery-workspace .discovery-source-summary {
+  gap: 0;
+  border-color: var(--configuration-rule);
+  padding: 0;
+}
+
+.discovery-workspace .discovery-source-summary span {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  border: 0;
+  border-left: 1px solid var(--configuration-rule);
+  border-radius: 0;
+  background: transparent;
+  padding: 11px 12px;
+}
+
+.discovery-workspace .discovery-source-summary span:first-child {
+  border-left: 0;
+}
+
+.discovery-workspace .discovery-source-summary strong {
+  font-size: 18px;
+  letter-spacing: -0.035em;
+}
+
+.discovery-workspace .source-upsert-form {
+  grid-template-columns: minmax(150px, 0.6fr) minmax(180px, 0.8fr) minmax(132px, 0.45fr) minmax(260px, 1.2fr) auto;
+  align-items: end;
+  gap: 10px;
+  border-color: var(--configuration-rule);
+  padding: 14px 0 0;
+}
+
+.discovery-workspace .source-upsert-form .wide,
+.discovery-workspace .source-upsert-form button {
+  grid-column: auto;
+}
+
+.discovery-workspace .discovery-review-row,
+.discovery-workspace .discovery-preview-row {
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.discovery-workspace .discovery-review-row:first-child,
+.discovery-workspace .discovery-preview-row:first-child {
+  border-top: 1px solid var(--configuration-rule);
+}
+
+.discovery-workspace .source-politeness-badge,
+.discovery-workspace .source-table-tone {
+  border-radius: 3px;
+}
+
+/* Shared controls on these dense form surfaces. */
+.profile-layout .field,
+.config-layout .field,
+.discovery-workspace .field {
+  gap: 6px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.profile-layout .field > span:first-child,
+.config-layout .field > span:first-child,
+.discovery-workspace .field > span:first-child,
+.profile-layout .field > [data-slot="field-label"],
+.config-layout .field > [data-slot="field-label"],
+.discovery-workspace .field > [data-slot="field-label"],
+.profile-layout .field > label,
+.config-layout .field > label,
+.discovery-workspace .field > label {
+  color: var(--muted-foreground);
+}
+
+.profile-layout input:not([type="checkbox"]):not([type="radio"]),
+.profile-layout select,
+.profile-layout textarea,
+.config-layout input:not([type="checkbox"]):not([type="radio"]),
+.config-layout select,
+.config-layout textarea,
+.discovery-workspace input:not([type="checkbox"]):not([type="radio"]),
+.discovery-workspace select,
+.discovery-workspace textarea {
+  min-height: 40px;
+  border-color: var(--input);
+  border-radius: 6px;
+  background: var(--configuration-surface);
+  box-shadow: none;
+}
+
+.profile-layout input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+.profile-layout select:focus-visible,
+.profile-layout textarea:focus-visible,
+.config-layout input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+.config-layout select:focus-visible,
+.config-layout textarea:focus-visible,
+.discovery-workspace input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+.discovery-workspace select:focus-visible,
+.discovery-workspace textarea:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 18%, transparent);
+  outline: none;
+}
+
+.profile-layout select,
+.config-layout select,
+.discovery-workspace select {
+  padding-right: 30px;
+}
+
+.profile-layout textarea,
+.config-layout textarea,
+.discovery-workspace textarea {
+  min-height: 96px;
+  line-height: 1.5;
+}
+
+.profile-layout input[type="checkbox"],
+.profile-layout input[type="radio"],
+.config-layout input[type="checkbox"],
+.config-layout input[type="radio"],
+.discovery-workspace input[type="checkbox"],
+.discovery-workspace input[type="radio"] {
+  accent-color: var(--primary);
+}
+
+@media (max-width: 1080px) {
+  .configuration-section .tailoring-control-group:nth-child(1),
+  .configuration-section .tailoring-control-group:nth-child(2),
+  .configuration-section .tailoring-control-group:nth-child(3),
+  .configuration-section .tailoring-control-group:nth-child(4) {
+    grid-column: span 6;
+  }
+
+  .discovery-workspace .source-upsert-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .discovery-workspace .source-upsert-form .wide,
+  .discovery-workspace .source-upsert-form button {
+    grid-column: 1 / -1;
+  }
+
+  .config-layout .model-selection-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .config-layout .model-selection-list .provider-card {
+    border-top: 1px solid var(--configuration-rule);
+    border-left: 0;
+  }
+
+  .config-layout .model-selection-list .provider-card:first-child {
+    border-top: 0;
+  }
+
+  .config-layout .credential-row-form {
+    grid-template-columns: minmax(118px, max-content) minmax(0, 1fr);
+  }
+
+  .config-layout .credential-row-actions {
+    grid-column: 2;
+    min-width: 0;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 760px) {
+  .profile-layout .repeat-section {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .profile-layout .repeat-section > .repeat-controls {
+    grid-column: 1;
+    grid-row: auto;
+    justify-content: flex-start;
+  }
+
+  .profile-layout .profile-sections > .form-section .field-grid,
+  .profile-layout .profile-sections > .form-section .target-preferences-grid,
+  .configuration-section .field-grid,
+  .discovery-workspace .config-form,
+  .discovery-workspace .target-preferences-grid,
+  .discovery-workspace .discovery-runtime-settings .field-grid,
+  .discovery-workspace .discovery-automation-settings-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .configuration-section .tailoring-controls-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .configuration-section .tailoring-control-group:nth-child(n) {
+    grid-column: auto;
+  }
+
+  .configuration-section .checkbox-options.vertical {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .configuration-section__trigger {
+    min-height: 0;
+    padding: 14px 16px;
+  }
+
+  .configuration-section__actions {
+    padding-right: 16px;
+  }
+
+  .resume-template-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .resume-template-actions {
+    justify-content: flex-start;
+  }
+
+  .resume-template-plate-editor {
+    min-height: 480px;
+  }
+
+  .config-layout .settings-tabs {
+    flex-wrap: wrap;
+  }
+
+  .config-layout .settings-tabs .tab {
+    min-width: min(140px, 100%);
+    flex: 1 1 140px;
+    text-align: center;
+  }
+
+  .config-layout .credential-row-form {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .config-layout .credential-row-field {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .config-layout .credential-row-actions,
+  .config-layout .credential-row-form .status-line {
+    grid-column: 1;
+  }
+
+  .config-layout .credential-row-actions {
+    width: 100%;
+  }
+
+  .config-layout .credential-row-actions > button {
+    flex: 1 1 96px;
+  }
+
+  .discovery-workspace > .card > .card-hd,
+  .discovery-workspace .config-form,
+  .discovery-workspace .target-preferences-grid,
+  .discovery-workspace .discovery-runtime-settings .field-grid {
+    padding-inline: 14px;
+  }
+
+  .discovery-workspace .discovery-tabs {
+    padding-inline: 14px;
+  }
+
+  .discovery-workspace .discovery-tab-list {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .discovery-workspace .discovery-tab-list [role="tab"] {
+    flex: 0 0 auto;
+  }
+
+  .discovery-workspace .discovery-source-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .discovery-workspace .discovery-source-summary span:nth-child(odd) {
+    border-left: 0;
+  }
+
+  .discovery-workspace .discovery-source-summary span:nth-child(n + 3) {
+    border-top: 1px solid var(--configuration-rule);
+  }
+
+  .discovery-workspace .discovery-review-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .discovery-workspace .discovery-review-row .row-actions {
+    grid-column: 2;
+  }
+}

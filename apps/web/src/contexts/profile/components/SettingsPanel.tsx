@@ -1,4 +1,4 @@
-import { CardHeader } from "../../../shared/ui/card-header.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { useHealthQuery } from "../../operations/hooks/useHealthQuery.js";
 import { SettingsForm } from "../forms/settings-form.js";
@@ -11,8 +11,12 @@ export function SettingsPanel() {
   const settings = settingsQuery.data?.settings ?? null;
 
   return (
-    <section className="card full">
-      <CardHeader title="Cost and capacity" meta="general" />
+    <DisclosureSection
+      className="general-cost-capacity-settings"
+      collapsedSummary="Execution limits and worker restart state"
+      description="Daily spend, application concurrency, and worker capacity"
+      title="Cost and capacity"
+    >
       {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
       {settings ? (
         <SettingsForm
@@ -31,6 +35,6 @@ export function SettingsPanel() {
       ) : (
         <Empty title="Loading config." />
       )}
-    </section>
+    </DisclosureSection>
   );
 }

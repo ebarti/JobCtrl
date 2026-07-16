@@ -23,4 +23,37 @@ describe("ActiveRunsCard", () => {
     expect(await screen.findAllByRole("button")).toHaveLength(8);
     expect(screen.queryByText("13 active")).not.toBeInTheDocument();
   });
+
+  it.each([
+    ["starting", "clock"],
+    ["in_progress", "clock"],
+    ["canceled", "ban"],
+    ["terminated", "ban"],
+  ] as const)("uses the domain-specific icon for %s runs", async (status, iconName) => {
+    renderWithProviders(
+      <ActiveRunsCard
+        runs={[{ ...sampleWorkflowRun, status }]}
+        loading={false}
+        error={null}
+      />,
+      { withRouter: true },
+    );
+
+    const label = status.replaceAll("_", " ");
+    expect((await screen.findByText(label)).querySelector("svg")).toHaveClass(
+      `tabler-icon-${iconName}`,
+    );
+  });
+
+  it("marks read failures with a semantic alert icon", async () => {
+    renderWithProviders(
+      <ActiveRunsCard runs={[]} loading={false} error="runs unavailable" />,
+      { withRouter: true },
+    );
+
+    const alert = (await screen.findByText("Active runs unavailable")).closest(
+      '[data-slot="alert"]',
+    );
+    expect(alert?.querySelector("svg.tabler-icon-alert-triangle")).toBeInTheDocument();
+  });
 });

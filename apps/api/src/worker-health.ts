@@ -4,10 +4,11 @@ import Database from "better-sqlite3";
 
 import { databaseExists, openReadOnlyDatabase } from "./db.js";
 import { readJobCtrlSettings } from "./settings-config.js";
+import { WORKER_RUNTIME_STALE_AFTER_MS } from "./worker-runtime-telemetry.js";
 
 const WORKER_HEARTBEAT_TABLE = "worker_runtime_heartbeats";
 const LLM_SPEND_TABLE = "llm_spend";
-const WORKER_STALE_AFTER_MS = 45_000;
+const WORKER_STALE_AFTER_MS = WORKER_RUNTIME_STALE_AFTER_MS;
 
 export type WorkerHealthStatus = "healthy" | "missing" | "stale" | "mismatched";
 

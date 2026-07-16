@@ -1,0 +1,160 @@
+/* Route-adjacent production surfaces that render outside the application shell.
+ * Keep them aligned with the neutral Rhea system instead of their older,
+ * promotional rounded-card treatment. */
+
+.demo-consent-shell {
+  min-height: 100dvh;
+  padding: clamp(20px, 5vw, 56px);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.demo-consent-card {
+  width: min(100%, 620px);
+  padding: clamp(24px, 4vw, 40px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow:
+    0 1px 2px color-mix(in oklch, var(--foreground) 6%, transparent),
+    0 18px 50px color-mix(in oklch, var(--foreground) 8%, transparent);
+}
+
+.demo-consent-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 13px;
+  font-weight: 760;
+  letter-spacing: -0.04em;
+}
+
+.demo-consent-kicker {
+  margin: 24px 0 8px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+}
+
+.demo-consent-card h1 {
+  max-width: 16ch;
+  font-size: clamp(30px, 5vw, 42px);
+  font-weight: 700;
+  letter-spacing: -0.05em;
+  line-height: 1.04;
+}
+
+.demo-consent-card p {
+  color: var(--muted-foreground);
+  line-height: 1.58;
+}
+
+.demo-consent-requirement {
+  margin-top: 22px;
+  color: var(--foreground) !important;
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.demo-consent-return-note,
+.demo-consent-error {
+  margin-top: 16px;
+  padding: 10px 0 10px 13px;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12px;
+}
+
+.demo-consent-return-note {
+  border-left: 2px solid var(--status-info);
+}
+
+.demo-consent-error {
+  border: 0;
+  border-left: 2px solid var(--destructive);
+  color: var(--destructive);
+}
+
+.demo-consent-links a {
+  color: var(--primary);
+  font-weight: 620;
+  text-decoration-color: color-mix(in oklch, var(--primary) 35%, transparent);
+  text-underline-offset: 3px;
+}
+
+.demo-consent-links a:hover,
+.demo-consent-links a:focus-visible {
+  text-decoration-color: var(--primary);
+}
+
+.demo-consent-actions {
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.demo-consent-actions button {
+  min-height: 40px;
+  padding: 9px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.demo-consent-actions button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.demo-consent-accept {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.demo-consent-accept:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--primary) 90%, var(--card));
+}
+
+.demo-consent-decline {
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.demo-consent-decline:hover:not(:disabled) {
+  background: var(--muted);
+}
+
+.demo-guide-panel {
+  border-radius: 10px;
+  box-shadow:
+    0 1px 2px color-mix(in oklch, var(--foreground) 8%, transparent),
+    0 16px 40px color-mix(in oklch, var(--foreground) 11%, transparent);
+}
+
+.demo-guide-panel nav button {
+  border-radius: 6px;
+}
+
+@media (max-width: 520px) {
+  .demo-consent-shell {
+    place-items: stretch;
+    padding: 0;
+  }
+
+  .demo-consent-card {
+    min-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    padding: 28px 20px;
+    box-shadow: none;
+  }
+
+  .demo-consent-card h1 {
+    font-size: 32px;
+  }
+}

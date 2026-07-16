@@ -1,8 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 import { jobsKeys } from "../contexts/operations/jobsKeys.js";
 import { fetchJobsList } from "../contexts/operations/jobsListQuery.js";
-import { JobsView } from "../views/jobs/JobsView.js";
 import { jobsListInput } from "../views/jobs/jobStageFilters.js";
 import { jobsSearchSchema } from "./-jobs.search.js";
 
@@ -16,5 +15,5 @@ export const Route = createFileRoute("/jobs")({
       queryFn: () => fetchJobsList(context.ports.api, input),
     });
   },
-  component: JobsView,
+  component: Outlet,
 });

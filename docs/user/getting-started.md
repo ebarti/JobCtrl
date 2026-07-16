@@ -124,6 +124,12 @@ jobctrl stop
 jobctrl start
 ```
 
+If the active provider route is owned by a non-empty environment variable,
+Settings keeps that active secret and its removal control read-only. You may
+configure another supported auth route in the same provider card, but it does
+not replace the environment-owned route until you remove the environment value
+and restart the relevant process.
+
 You can also store provider settings in `~/.jobctrl/.env`. See
 [Configuration](configuration.md) for provider choices, precedence, and
 budgets. Apply-specific browser, CAPTCHA, and Gmail setup is in
@@ -174,11 +180,18 @@ profile only when you explicitly enable an authenticated-browser or auto-apply
 capability that needs it.
 
 Open **Settings → Browser & extension** to enable an optional system-browser
-capability with an explicit Chrome/Chromium path, or to pair the extension.
-JobCtrl never auto-detects or adopts a system browser. The optional extension can save the current job page and review
-deterministic profile-backed autofill suggestions. It talks only to JobCtrl's
-loopback API and cannot submit an application by itself. Pair it from
-the same Settings tab using the local browser-extension token.
+capability, or to pair the extension. JobCtrl passively detects supported
+Chrome/Chromium installations for this screen, returning only a stable browser
+kind and label—not the local executable path. Detection does not launch, adopt,
+or persist a browser. Choose a detected browser and select **Enable** to adopt
+it explicitly; JobCtrl resolves it again at enable time and fails closed if it
+is no longer available. **Advanced: enter executable path** remains the manual
+fallback when no supported installation is listed.
+
+The optional extension can save the current job page and review deterministic
+profile-backed autofill suggestions. It talks only to JobCtrl's loopback API
+and cannot submit an application by itself. Pair it from the same Settings tab
+using the local browser-extension token.
 
 ## Update, Roll Back, Or Remove JobCtrl
 

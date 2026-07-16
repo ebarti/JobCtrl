@@ -28,6 +28,9 @@ describe("DashboardView", () => {
     expect(await screen.findByRole("heading", { name: "Daily digest" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Outcome suggestions" })).toBeInTheDocument();
     expect(screen.getByText("Recruiter reply indicates an interview request.")).toBeInTheDocument();
+    expect(screen.getByText("stuck").querySelector("svg")).toHaveClass("tabler-icon-ban");
+    expect(screen.getByText("in progress").querySelector("svg")).toHaveClass("tabler-icon-clock");
+    expect(screen.getByText("info").querySelector("svg")).toHaveClass("tabler-icon-info-circle");
   });
 
   it("surfaces workflow-run read failures inside the active-runs card", async () => {
@@ -43,6 +46,22 @@ describe("DashboardView", () => {
 
     expect(await screen.findByRole("heading", { name: "Active runs" })).toBeInTheDocument();
     expect(await screen.findByText(/JobCtrl API request failed: 503/i)).toBeInTheDocument();
+  });
+
+  it("marks dashboard load failures with a semantic alert icon", async () => {
+    server.use(
+      http.get("*/v1/dashboard/summary", () =>
+        new HttpResponse(JSON.stringify({ ok: false, error: "summary unavailable" }), {
+          status: 503,
+        }),
+      ),
+    );
+
+    renderWithProviders(<DashboardView />);
+
+    const title = await screen.findByText("Dashboard unavailable");
+    const alert = title.closest('[data-slot="alert"]');
+    expect(alert?.querySelector("svg.tabler-icon-alert-triangle")).toBeInTheDocument();
   });
 
   it("shows a loading state before the summary resolves, then renders the conversion panel", async () => {

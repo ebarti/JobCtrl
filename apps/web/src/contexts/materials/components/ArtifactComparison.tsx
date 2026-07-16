@@ -3,11 +3,19 @@ import type {
   ArtifactComparisonSide,
   CoverageDelta,
 } from "@jobctrl/contracts";
+import { IconAlertTriangle, IconInfoCircle } from "@tabler/icons-react";
 import { useMemo } from "react";
 
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "../../../shared/ui/alert.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { useArtifactDetailQuery } from "../../operations/hooks/useArtifactDetailQuery.js";
 import { compareArtifactCoverage } from "../selectors/compareCoverage.js";
+import { ArtifactStatusBadge } from "./ArtifactStatusBadge.js";
 
 export interface ArtifactComparisonProps {
   readonly leftArtifactId: string | null | undefined;
@@ -65,7 +73,13 @@ export function ArtifactComparison({
       {leftArtifactId && rightArtifactId && (left.isLoading || right.isLoading) ? (
         <Empty title="Loading artifact comparison." />
       ) : null}
-      {error ? <div className="banner inline">{error}</div> : null}
+      {error ? (
+        <Alert variant="destructive">
+          <IconAlertTriangle aria-hidden="true" />
+          <AlertTitle>Artifact comparison unavailable</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
       {comparison ? <ArtifactComparisonBody comparison={comparison} /> : null}
     </div>
   );
@@ -97,7 +111,9 @@ function ArtifactComparisonSideSummary({ side }: { readonly side: ArtifactCompar
       <dl className="detail-list compact">
         <div>
           <dt>Status</dt>
-          <dd>{side.status}</dd>
+          <dd>
+            <ArtifactStatusBadge status={side.status} />
+          </dd>
         </div>
         <div>
           <dt>Template</dt>
@@ -109,11 +125,21 @@ function ArtifactComparisonSideSummary({ side }: { readonly side: ArtifactCompar
         </div>
         <div>
           <dt>Validation</dt>
-          <dd>{validationLabel(side)}</dd>
+          <dd>
+            <StatusBadge tone={passTone(side.validation.passed)}>
+              {passLabel(side.validation.passed)}
+            </StatusBadge>
+            {validationMetadata(side)}
+          </dd>
         </div>
         <div>
           <dt>Judge</dt>
-          <dd>{judgeLabel(side)}</dd>
+          <dd>
+            <StatusBadge tone={passTone(side.judge.passed)}>
+              {side.judge.verdict ?? passLabel(side.judge.passed)}
+            </StatusBadge>
+            {judgeMetadata(side)}
+          </dd>
         </div>
       </dl>
       <TagGroup label="Risk labels" values={side.riskLabels} tone="warn" empty="none recorded" />
@@ -126,7 +152,11 @@ function CoverageDeltaPanel({ delta }: { readonly delta: CoverageDelta }) {
     return (
       <section className="artifact-comparison-delta" aria-label="Coverage delta">
         <h4>Coverage delta</h4>
-        <div className="banner inline">{coverageMissingLabel(delta.state)}</div>
+        <Alert>
+          <IconInfoCircle aria-hidden="true" />
+          <AlertTitle>Coverage comparison unavailable</AlertTitle>
+          <AlertDescription>{coverageMissingLabel(delta.state)}</AlertDescription>
+        </Alert>
       </section>
     );
   }
@@ -188,20 +218,18 @@ function coverageCountLabel(side: ArtifactComparisonSide): string {
   return `${side.coverageCounts.covered}/${side.coverageCounts.planned} covered${declared}; ${side.coverageCounts.missing} missing`;
 }
 
-function validationLabel(side: ArtifactComparisonSide): string {
-  const status = passLabel(side.validation.passed);
-  return `${status}; ${side.validation.errorCount} errors; ${side.validation.warningCount} warnings`;
+function validationMetadata(side: ArtifactComparisonSide): string {
+  return `; ${side.validation.errorCount} errors; ${side.validation.warningCount} warnings`;
 }
 
-function judgeLabel(side: ArtifactComparisonSide): string {
-  const verdict = side.judge.verdict ?? passLabel(side.judge.passed);
+function judgeMetadata(side: ArtifactComparisonSide): string {
   const score =
     side.judge.score === null
       ? "score not recorded"
       : side.judge.minScore === null
         ? `score ${formatPercent(side.judge.score)}`
         : `score ${formatPercent(side.judge.score)} / minimum ${formatPercent(side.judge.minScore)}`;
-  return `${verdict}; ${score}; ${side.judge.issueCount} issues`;
+  return `; ${score}; ${side.judge.issueCount} issues`;
 }
 
 function formatPercent(value: number): string {
@@ -212,6 +240,12 @@ function passLabel(value: boolean | null): string {
   if (value === true) return "passed";
   if (value === false) return "not passed";
   return "not recorded";
+}
+
+function passTone(value: boolean | null): "danger" | "muted" | "ok" {
+  if (value === true) return "ok";
+  if (value === false) return "danger";
+  return "muted";
 }
 
 function coverageMissingLabel(state: CoverageDelta["state"]): string {

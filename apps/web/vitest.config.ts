@@ -8,6 +8,9 @@ export default defineConfig({
   },
   root: fileURLToPath(new URL(".", import.meta.url)),
   resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
     conditions: ["development", "browser"],
   },
   test: {

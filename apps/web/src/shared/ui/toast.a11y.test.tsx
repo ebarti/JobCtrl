@@ -1,16 +1,58 @@
 import { render, screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { axe } from "jest-axe";
+import { useEffect } from "react";
 import { describe, expect, it } from "vitest";
 
 import {
-  Toast,
-  ToastAction,
-  ToastClose,
-  ToastDescription,
+  ToastPortal,
   ToastProvider,
-  ToastTitle,
   ToastViewport,
+  useToastManager,
+  type ToastManagerData,
 } from "./toast.js";
+import { ToastList } from "./toaster.js";
+
+function ToastSeed({
+  action,
+  closeLabel,
+  variant,
+}: {
+  action: boolean;
+  closeLabel?: string;
+  variant: "default" | "destructive";
+}) {
+  const { add, close } = useToastManager<ToastManagerData>();
+  const destructive = variant === "destructive";
+
+  useEffect(() => {
+    add({
+      id: "accessibility-toast",
+      title: destructive ? "Sync failed" : "Sync complete",
+      description: destructive
+        ? "The synthetic report could not be refreshed."
+        : "The synthetic report is ready for review.",
+      type: destructive ? "error" : "info",
+      timeout: 0,
+      data: {
+        ...(closeLabel ? { closeLabel } : {}),
+        variant: destructive ? "error" : "info",
+      },
+      ...(action
+        ? {
+            actionProps: {
+              "aria-label": "Undo sync",
+              children: "Undo",
+            },
+          }
+        : {}),
+    });
+
+    return () => close("accessibility-toast");
+  }, [action, add, close, closeLabel, destructive]);
+
+  return null;
+}
 
 function renderToast({
   action = false,
@@ -23,19 +65,16 @@ function renderToast({
 } = {}) {
   return render(
     <ToastProvider>
-      <Toast open variant={variant}>
-        <div className="grid gap-1">
-          <ToastTitle>{variant === "destructive" ? "Sync failed" : "Sync complete"}</ToastTitle>
-          <ToastDescription>
-            {variant === "destructive"
-              ? "The synthetic report could not be refreshed."
-              : "The synthetic report is ready for review."}
-          </ToastDescription>
-        </div>
-        {action ? <ToastAction altText="Undo sync">Undo</ToastAction> : null}
-        <ToastClose {...(closeLabel ? { "aria-label": closeLabel } : {})} />
-      </Toast>
-      <ToastViewport />
+      <ToastSeed
+        action={action}
+        variant={variant}
+        {...(closeLabel ? { closeLabel } : {})}
+      />
+      <ToastPortal>
+        <ToastViewport>
+          <ToastList />
+        </ToastViewport>
+      </ToastPortal>
     </ToastProvider>,
   );
 }
@@ -43,22 +82,29 @@ function renderToast({
 describe("Toast accessibility", () => {
   it("has no axe violations for default toasts with a close control", async () => {
     const view = renderToast();
-    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
-    expect(await axe(view.container)).toHaveNoViolations();
+    expect(screen.getByLabelText("Close")).toBeInTheDocument();
+    expect(await axe(view.baseElement)).toHaveNoViolations();
   });
 
   it("has no axe violations for destructive toasts with a close control", async () => {
     const view = renderToast({ variant: "destructive" });
-    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
-    expect(await axe(view.container)).toHaveNoViolations();
+    expect(screen.getByLabelText("Close")).toBeInTheDocument();
+    expect(await axe(view.baseElement)).toHaveNoViolations();
   });
 
   it("keeps action and caller-provided close names accessible", async () => {
-    const view = renderToast({ action: true, closeLabel: "Dismiss sync notice" });
-    const close = screen.getByRole("button", { name: "Dismiss sync notice" });
+    const user = userEvent.setup();
+    const view = renderToast({
+      action: true,
+      closeLabel: "Dismiss sync notice",
+    });
+    const close = screen.getByLabelText("Dismiss sync notice");
+    await user.keyboard("{F6}");
 
-    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Undo sync" }),
+    ).toBeInTheDocument();
     expect(close).toHaveAttribute("toast-close", "");
-    expect(await axe(view.container)).toHaveNoViolations();
+    expect(await axe(view.baseElement)).toHaveNoViolations();
   });
 });

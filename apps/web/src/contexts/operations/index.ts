@@ -129,6 +129,7 @@ export {
 export { useJobApplicationOutcomesQuery } from "./hooks/useJobApplicationOutcomesQuery.js";
 export { useJobDetailQuery } from "./hooks/useJobDetailQuery.js";
 export { useJobsListQuery } from "./hooks/useJobsListQuery.js";
+export { usePipelineOperationsQuery } from "./hooks/usePipelineOperationsQuery.js";
 export { useWorkflowRunsListQuery } from "./hooks/useWorkflowRunsListQuery.js";
 
 export { EventStreamProvider, useEventStreamStatus } from "./providers/EventStreamProvider.js";

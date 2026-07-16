@@ -198,6 +198,13 @@ function CompensationSourceControls({
   const prerequisitesMet =
     control.accessMode !== null &&
     (!control.europeCoverageRequired || control.europeCoverageConfirmed);
+  const accessModeItems = [
+    { label: "Not configured", value: NOT_CONFIGURED },
+    ...control.allowedAccessModes.map((mode) => ({
+      label: formatLabel(mode),
+      value: mode,
+    })),
+  ];
 
   const update = (
     patch: Partial<
@@ -247,16 +254,18 @@ function CompensationSourceControls({
             {source.displayName} access mode
           </FieldLabel>
           <Select
+            items={accessModeItems}
             disabled={busy}
             value={control.accessMode ?? NOT_CONFIGURED}
-            onValueChange={(value) =>
+            onValueChange={(value) => {
+              if (value === null) return;
               update({
                 accessMode:
                   value === NOT_CONFIGURED
                     ? null
                     : (value as UserCompensationSourceControl["accessMode"]),
-              })
-            }
+              });
+            }}
           >
             <SelectTrigger
               id={accessModeId}
@@ -264,17 +273,17 @@ function CompensationSourceControls({
             >
               <SelectValue placeholder="Choose access basis" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent alignItemWithTrigger={false}>
               <SelectGroup>
-                <SelectItem
-                  disabled={control.enabled}
-                  value={NOT_CONFIGURED}
-                >
-                  Not configured
-                </SelectItem>
-                {control.allowedAccessModes.map((mode) => (
-                  <SelectItem key={mode} value={mode}>
-                    {formatLabel(mode)}
+                {accessModeItems.map((item) => (
+                  <SelectItem
+                    key={item.value}
+                    disabled={
+                      item.value === NOT_CONFIGURED && control.enabled
+                    }
+                    value={item.value}
+                  >
+                    {item.label}
                   </SelectItem>
                 ))}
               </SelectGroup>

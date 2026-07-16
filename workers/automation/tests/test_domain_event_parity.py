@@ -8,8 +8,14 @@ from pathlib import Path
 
 from jobctrl.domain.events import (
     DOMAIN_EVENT_TYPES,
+    DiscoveryExecutionRefLike,
     DuplicateJobLinkedPayload,
     DuplicateJobLinkRejectedPayload,
+    PipelineStepCompletedPayload,
+    PipelineStepFailedPayload,
+    PipelineStepQueuedPayload,
+    PipelineStepSafeDetail,
+    PipelineStepStartedPayload,
 )
 
 _TS_EVENTS_DIR = (
@@ -25,12 +31,19 @@ def _snake_to_camel(name: str) -> str:
 def _ts_interface_fields(interface: str) -> frozenset[str]:
     text = "\n".join(path.read_text() for path in _TS_EVENTS_DIR.glob("*.ts"))
     match = re.search(
-        r"export interface " + re.escape(interface) + r"\s*\{(.*?)\n\}",
+        r"(?:export\s+)?interface "
+        + re.escape(interface)
+        + r"(?:\s+extends\s+([^\{]+))?\s*\{(.*?)\n\}",
         text,
         flags=re.DOTALL,
     )
     assert match is not None, f"TypeScript interface {interface} not found"
-    return frozenset(re.findall(r"readonly\s+(\w+)\??:", match.group(1)))
+    inherited = frozenset()
+    if match.group(1):
+        for parent in match.group(1).split(","):
+            inherited |= _ts_interface_fields(parent.strip())
+    own = frozenset(re.findall(r"readonly\s+(\w+)\??:", match.group(2)))
+    return inherited | own
 
 
 def _assert_payload_field_parity(payload_cls: type, interface: str) -> None:
@@ -70,3 +83,19 @@ def test_duplicate_job_link_payload_fields_match_typescript() -> None:
     _assert_payload_field_parity(
         DuplicateJobLinkRejectedPayload, "DuplicateJobLinkRejectedPayload"
     )
+
+
+def test_pipeline_step_payload_fields_match_typescript() -> None:
+    """Lifecycle payloads must stay byte-shape compatible across runtimes."""
+
+    execution_fields = frozenset(
+        _snake_to_camel(name) for name in DiscoveryExecutionRefLike.__annotations__
+    )
+    assert execution_fields == _ts_interface_fields("DiscoveryExecutionRef")
+    _assert_payload_field_parity(PipelineStepSafeDetail, "PipelineStepSafeDetail")
+    _assert_payload_field_parity(PipelineStepQueuedPayload, "PipelineStepQueuedPayload")
+    _assert_payload_field_parity(PipelineStepStartedPayload, "PipelineStepStartedPayload")
+    _assert_payload_field_parity(
+        PipelineStepCompletedPayload, "PipelineStepCompletedPayload"
+    )
+    _assert_payload_field_parity(PipelineStepFailedPayload, "PipelineStepFailedPayload")

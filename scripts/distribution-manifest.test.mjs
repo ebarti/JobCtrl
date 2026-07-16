@@ -94,11 +94,12 @@ test("distribution contracts are complete and every version source resolves", as
   assert.ok(report.componentCount >= 20);
   assert.equal(report.lockedInputCount, 6);
   assert.equal(report.pythonLicenseEvidenceCount, 2);
-  assert.equal(report.nodeLicenseEvidenceCount, 18);
+  assert.equal(report.nodeLicenseEvidenceCount, 13);
   assert.equal(report.capabilityCount, 3);
   assert.deepEqual(report.platforms, ["darwin-arm64"]);
   assert.equal(report.versions["jobctrl-launcher"], "2.0.0");
   assert.equal(report.versions["playwright-python"], "1.58.0");
+  assert.equal(report.versions["font-geist"], "5.2.9");
   assert.equal(report.versions["font-jetbrains-mono"], "5.2.8");
   assert.equal(report.versions["pdfjs-renderer"], "5.7.284");
   assert.equal(report.versions["claude-agent-sdk"], "0.2.115");
@@ -338,7 +339,7 @@ test("license evidence locks are closed, immutable, exact, and bound to dependen
   ].map((file) => readFile(path.join(process.cwd(), file), "utf8")))).join("\n");
 
   assert.equal(validatePythonLicenseEvidenceLocks(pythonLicenseEvidenceLocks, uvLock).inputs.length, 2);
-  assert.equal(validateNodeLicenseEvidenceLocks(nodeLicenseEvidenceLocks, pnpmLocks).inputs.length, 18);
+  assert.equal(validateNodeLicenseEvidenceLocks(nodeLicenseEvidenceLocks, pnpmLocks).inputs.length, 13);
 
   const missingPythonSubject = structuredClone(pythonLicenseEvidenceLocks);
   missingPythonSubject.inputs.pop();

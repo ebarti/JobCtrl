@@ -1,7 +1,13 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { useState } from "react";
 
 import { Button } from "./button.js";
-import { Popover, PopoverContent, PopoverTrigger } from "./popover.js";
+import {
+  Popover,
+  PopoverClose,
+  PopoverContent,
+  PopoverTrigger,
+} from "./popover.js";
 
 const meta = {
   title: "Shared/UI/Popover",
@@ -14,12 +20,18 @@ type Story = StoryObj<typeof meta>;
 export const FilterPicker: Story = {
   render: () => (
     <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="outline">Filter options</Button>
+      <PopoverTrigger render={<Button variant="outline" />}>
+        Filter options
       </PopoverTrigger>
-      <PopoverContent aria-label="Saved filter options" className="w-64">
+      <PopoverContent
+        align="start"
+        aria-label="Saved filter options"
+        className="w-64"
+      >
         <div className="grid gap-2">
-          <p className="text-sm font-medium text-popover-foreground">Saved filters</p>
+          <p className="text-sm font-medium text-popover-foreground">
+            Saved filters
+          </p>
           <ul className="space-y-1 text-sm text-muted-foreground">
             <li>Updated recently</li>
             <li>Owned by reviewer</li>
@@ -37,8 +49,8 @@ export const FilterPicker: Story = {
 export const OpenByDefault: Story = {
   render: () => (
     <Popover defaultOpen>
-      <PopoverTrigger asChild>
-        <Button variant="outline">Help</Button>
+      <PopoverTrigger render={<Button variant="outline" />}>
+        Help
       </PopoverTrigger>
       <PopoverContent aria-label="Help details" className="w-64">
         <div className="grid gap-2 text-sm">
@@ -51,4 +63,38 @@ export const OpenByDefault: Story = {
       </PopoverContent>
     </Popover>
   ),
+};
+
+export const ControlledModal: Story = {
+  render: function ControlledModalPopover() {
+    const [open, setOpen] = useState(false);
+
+    return (
+      <div className="flex items-center gap-3">
+        <Popover modal open={open} onOpenChange={setOpen}>
+          <PopoverTrigger render={<Button variant="outline" />}>
+            Controlled popover
+          </PopoverTrigger>
+          <PopoverContent
+            align="start"
+            aria-label="Controlled popover details"
+            className="w-64"
+            side="right"
+            sideOffset={8}
+          >
+            <p className="text-sm text-muted-foreground">
+              This state exercises controlled open callbacks, modal focus,
+              custom positioning, and the close part.
+            </p>
+            <PopoverClose render={<Button size="sm" variant="outline" />}>
+              Close
+            </PopoverClose>
+          </PopoverContent>
+        </Popover>
+        <span className="text-sm text-muted-foreground">
+          {open ? "Open" : "Closed"}
+        </span>
+      </div>
+    );
+  },
 };

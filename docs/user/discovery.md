@@ -43,10 +43,36 @@ Parallel families are capped at four and should not exceed the worker's active
 activity slots. See
 [Concurrency & Fan-out](../architecture/pipeline/concurrency.md).
 
-The Discovery page also hosts the **Automation settings** card. Its minimum-fit,
+The Discovery page also hosts the **Automation settings** disclosure. Its minimum-fit,
 auto-apply, and approval controls affect Apply eligibility and submission, so
 their behavior is documented in
 [Apply → Approval And Automation Modes](apply.md#approval-and-automation-modes).
+
+## Launch And Observe Discovery
+
+Discovery owns the controls that decide what may enter a run; **Pipelines** owns
+starting and observing that run. In Pipelines, choose the Discover action, set a
+bounded result limit, internal source concurrency, optional source, and dry-run
+mode, then keep the operations workspace open while work proceeds.
+
+The workspace deliberately keeps different scopes and units separate:
+
+- **Current execution** is work admitted to the selected Discover execution.
+- **Execution sweep** is eligible pre-existing backlog that execution adopted.
+- **Global outside execution** is unrelated backlog and is not part of the
+  selected execution's completion claim.
+- **Source-family progress** reports source intake; enrichment and preparation
+  reconciliation report the downstream drain. A finished crawl can therefore
+  coexist with preparation that is still running.
+- **Worker capacity** reports Temporal workers and shared activity slots.
+  Source-family internal concurrency is a separate control, and approximate
+  task-queue depth is not a count of domain jobs.
+
+Per-stage rows expose outcomes, existing backlog, capacity, observation time,
+and ETA. ETA is an observed range with confidence and basis when enough evidence
+exists; calibrating, paused, stale, unavailable, and no-work states stay explicit
+instead of becoming a guessed finish time. Freshness and the bounded active-work
+inventory show whether the operational facts are current.
 
 ### How target search controls are used
 
@@ -96,8 +122,8 @@ desired, instead of relying on several simultaneous track/floor selections.
 A scraping proxy, when needed, is part of the SQLite discovery settings
 (`host:port:user:pass` form); there is no `PROXY` environment variable.
 
-![JobCtrl Discovery page with target search, seniority floors, job boards, and source registry](../assets/screenshots/discovery.png)
-*Target roles, locations, seniority floors, work models, and source controls are edited on the Discovery page and stored in SQLite.*
+![JobCtrl Discovery workspace with target search, sources, schedules, runtime, capture, and diagnostics](../assets/screenshots/discovery.png)
+*Discovery owns the SQLite-backed controls that shape source intake; Pipelines launches and observes the resulting execution.*
 
 Discovery scheduling is also a SQLite-backed setting: `scheduling_enabled`
 defaults to `false`, `schedule_cron` defaults to `0 7 * * *`, and worker

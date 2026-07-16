@@ -8,7 +8,8 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { CardHeader } from "../../../shared/ui/card-header.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
 import { useProviderModelsQuery } from "../hooks/useProviderModelsQuery.js";
 import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
 import { useUpdateSettingsMutation } from "../hooks/useUpdateSettingsMutation.js";
@@ -37,10 +38,28 @@ export function ModelSelectionPanel() {
   const providers = new Map(
     (catalogQuery.data?.providers ?? []).map((provider) => [provider.provider, provider]),
   );
+  const readyProviderCount = ProviderIds.filter((providerId) => {
+    const provider = providers.get(providerId);
+    return provider?.ready && provider.models.length > 0;
+  }).length;
+  const savedPreferenceCount = ProviderIds.filter(
+    (providerId) => settings?.preferredModels[providerId],
+  ).length;
+  const collapsedSummary = isDemo
+    ? `Preview only · ${savedChoiceCount(savedPreferenceCount)}`
+    : catalogQuery.error
+      ? `Catalog unavailable · ${savedChoiceCount(savedPreferenceCount)}`
+      : catalogQuery.isPending
+        ? `Checking provider catalog · ${savedChoiceCount(savedPreferenceCount)}`
+        : `${readyProviderCount} of ${ProviderIds.length} providers ready · ${savedChoiceCount(savedPreferenceCount)}`;
 
   return (
-    <section className="card full model-selection-shell">
-      <CardHeader title="Model selection" meta="new work" />
+    <DisclosureSection
+      className="model-selection-shell model-selection-settings"
+      collapsedSummary={collapsedSummary}
+      description="Preferred provider models for newly started work"
+      title="Model selection"
+    >
       <div className="model-selection-intro">
         <p>
           Configure at least one provider before choosing its preferred model. One provider is enough;
@@ -89,7 +108,7 @@ export function ModelSelectionPanel() {
           />
         ))}
       </div>
-    </section>
+    </DisclosureSection>
   );
 }
 
@@ -131,6 +150,12 @@ function ProviderModelCard({
   const canEdit = settingsReady && catalogReady && !catalogPending && !isDemo;
   const unchanged = draftModel === currentSavedModel;
   const canSave = canEdit && draftIsValid && !unchanged && !updateSettings.isPending;
+  const providerDefaultValue = `__${provider}-provider-default__`;
+  const modelItems = [
+    { label: "Provider default", value: providerDefaultValue },
+    ...(savedModelUnavailable && savedModel ? [{ label: `${savedModel} (no longer available)`, value: savedModel }] : []),
+    ...models.map((model) => ({ label: `${modelOptionLabel(model.displayName, model.id)}${model.isDefault ? " · provider default" : ""}`, value: model.id })),
+  ];
   const statusLabel = isDemo
     ? "Preview only"
     : catalogPending
@@ -142,6 +167,9 @@ function ProviderModelCard({
         : catalog?.configured
           ? "Needs attention"
           : "Configure first";
+  const savedChoiceLabel = settingsReady
+    ? savedModel || "Provider default"
+    : "Checking saved choice";
 
   async function persistPreference(nextModel: string | null) {
     setStatusMessage("");
@@ -175,13 +203,19 @@ function ProviderModelCard({
 
   return (
     <article className="provider-card model-selection-card" data-provider={provider}>
-      <header className="provider-card-header">
-        <div>
-          <h3>{providerCopy.title}</h3>
-          <p>{providerCopy.description}</p>
-        </div>
-        <span className={`tag ${catalogReady && !isDemo ? "ok" : "muted"}`}>{statusLabel}</span>
-      </header>
+      <DisclosureSection
+        actions={(
+          <span className={`tag ${catalogReady && !isDemo ? "ok" : "muted"}`}>
+            {statusLabel}
+          </span>
+        )}
+        className="provider-disclosure provider-preference-disclosure"
+        collapsedSummary={`Saved: ${savedChoiceLabel}`}
+        defaultOpen={false}
+        description={providerCopy.description}
+        headingLevel={3}
+        title={providerCopy.title}
+      >
 
       <p className="provider-model-source">
         Live availability from the authenticated provider runtime.
@@ -199,28 +233,21 @@ function ProviderModelCard({
         <div className="provider-model-form">
           <label className="field" htmlFor={`preferred-model-${provider}`}>
             <span>Preferred model</span>
-            <select
-              id={`preferred-model-${provider}`}
+            <Select
               name={`preferred-model-${provider}`}
-              aria-describedby={modelHintId}
-              value={draftModel}
+              items={modelItems}
+              value={draftModel || providerDefaultValue}
               disabled={!canEdit}
-              onChange={(event) => {
-                setDraftState({ base: currentSavedModel, value: event.target.value });
+              onValueChange={(nextValue) => {
+                if (nextValue === null) return;
+                setDraftState({ base: currentSavedModel, value: nextValue === providerDefaultValue ? "" : nextValue });
                 setStatusMessage("");
                 updateSettings.reset();
               }}
             >
-              <option value="">Provider default</option>
-              {savedModelUnavailable ? (
-                <option value={savedModel} disabled>{savedModel} (no longer available)</option>
-              ) : null}
-              {models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {modelOptionLabel(model.displayName, model.id)}{model.isDefault ? " · provider default" : ""}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id={`preferred-model-${provider}`} aria-label="Preferred model" aria-describedby={modelHintId} className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectGroup>{modelItems.map((item) => <SelectItem key={item.value} value={item.value} disabled={savedModelUnavailable && item.value === savedModel}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+            </Select>
             <small className="field-hint" id={modelHintId}>
               {savedModel
                 ? `Saved: ${savedModel}`
@@ -254,8 +281,13 @@ function ProviderModelCard({
           {statusMessage}
         </p>
       ) : null}
+      </DisclosureSection>
     </article>
   );
+}
+
+function savedChoiceCount(count: number): string {
+  return `${count} saved ${count === 1 ? "choice" : "choices"}`;
 }
 
 function modelOptionLabel(displayName: string, modelId: string): string {

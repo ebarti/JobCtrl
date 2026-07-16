@@ -1,9 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/artifacts/")({
-  component: ArtifactsIndexComponent,
-});
+import { ArtifactsView } from "../views/artifacts/ArtifactsView.js";
 
-function ArtifactsIndexComponent() {
-  return null;
-}
+export const Route = createFileRoute("/artifacts/")({
+  component: ArtifactsView,
+});

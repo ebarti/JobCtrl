@@ -27,6 +27,7 @@ from jobctrl.database import (
     ensure_source_observation_tables,
 )
 from jobctrl.domain.discovery.identity import AtsKind, CanonicalJobIdentity
+from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.source_registry import (
     ATS_API_POLICY,
     LocatorPolicy,
@@ -483,6 +484,7 @@ def run_scheduled_ats_sources(
     gateway: PolitenessGateway | None = None,
     limit: int = 0,
     cancel_event: threading.Event | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict[str, Any]:
     """Run Greenhouse, Lever, and Ashby through the Discovery use case.
 
@@ -511,7 +513,11 @@ def run_scheduled_ats_sources(
     if not adapters:
         return ScheduledAtsSummary().to_result_dict()
 
-    job_repository = SqliteJobRepository(conn)
+    job_repository = SqliteJobRepository(
+        conn,
+        discovery_execution=discovery_execution,
+        source_family="ats_api" if discovery_execution is not None else None,
+    )
     enrichment_repository = SqliteEnrichmentRepository(conn)
     use_case = DiscoverJobsUseCase(
         repository=job_repository,

@@ -36,7 +36,8 @@ Part of the [Domain Model](index.md) reference.
    drift if not kept in sync. **Mitigation:** `packages/domain-types` is the
    shared authority — hand-authored TypeScript mirrored byte-for-byte by the
    Python registry — and tests plus a release check enforce that the two stay in
-   lockstep (the 68-entry domain event registry is the canonical example).
+   lockstep (the registry-derived domain event parity test is the canonical
+   example; prose does not maintain a duplicate count).
 
 6. **Over-engineering risk.** DDD + hexagonal architecture adds indirection. For
    a local-first single-user product, this indirection must pay for itself in

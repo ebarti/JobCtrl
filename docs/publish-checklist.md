@@ -1,4 +1,4 @@
-# Publish-Mechanics Checklist
+# Publish Checklist
 
 > **Repository-only.** Excluded from the published docs site (registered in
 > `docs/.vitepress/config.ts` `UNPUBLISHED_FILES` + `srcExclude`, like
@@ -11,43 +11,156 @@
 
 ## Purpose and boundary
 
-A concrete, verifiable checklist for the **mechanical** publish steps, each with
+A concrete, verifiable checklist for the pending publication actions, each with
 a verification and a rollback note. This checklist **prepares and verifies** the
-steps; it does **not** execute them.
+steps; it does **not** execute them. The cumulative product-redesign acceptance
+gate is included because the redesigned application, screenshots, and owning
+documentation must be one exact-tree release candidate before any public
+cutover begins.
 
 The **authoritative release gate is OSS spec §5**
 ([`docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md`](plans/implemented/2026-07-03-oss-release-remediation-spec.md)
 §5 "Release gate — flipping public"). That gate owns the capability and privacy
 preconditions (W0.\* privacy scanner, W1.\* apply safety, W2.\* naming/governance,
 Temporal P1b–P5). This checklist does not duplicate those; it lists only the
-publish *mechanics* that feed the gate. The sole sequencing exception is the
-owner decision recorded on 2026-07-10: because GitHub refuses to start the
-private-repository jobs under the current billing state, the owner may flip
-visibility after the complete exact-tree local gate passes solely to unblock
-the hosted runs. Docs deployment, release tagging, Homebrew stable publication,
-and PyPI publication remain prohibited until every hosted gate is then green.
+publish *mechanics* that feed the gate. If GitHub cannot start the hosted jobs
+while the repository is private, the owner may flip visibility after the
+complete exact-tree local gate passes solely to unblock those runs. Docs
+deployment, release tagging, Homebrew stable publication, and PyPI publication
+remain prohibited until every hosted gate is then green.
 
 ## Owner-only actions (do not execute here)
 
-Every step below is an **owner-only** action. Implementing agents prepare and
-verify; the repository owner executes. Steps 9.3 and 9.4 additionally depend on
-the pre-publication rename train and are **out of scope for R7a** — they belong
-to the rename train / post-rename launch assets (R7b).
+Every state-changing step below is an **owner-only** action. Implementing agents
+prepare and run read-only verification; the repository owner executes. The
+remaining actions are governed by the release gate plus the active bundled
+distribution, public-demo, and end-to-end redesign plans.
+
+## Required sequence
+
+1. Assemble the complete Rhea/Base UI stack, including the cumulative browser
+   annotation fixes.
+2. Finish canonical documentation and regenerate the synthetic product
+   screenshots on that assembled tree.
+3. Freeze the resulting integration-tip SHA. Only then run the cumulative
+   static, route-workspace, browser, visual, accessibility, reviewer, and QA
+   gates in 9.0.
+4. Fix any finding on the integration tip, update affected docs or screenshots,
+   freeze a new SHA, and rerun the invalidated gate. Do not carry evidence from
+   an older tree forward.
+5. After merge, prove the audited `main` tree is byte-for-byte the frozen
+   integration tree. If merge or rebase changes content, rerun the invalidated
+   9.0 gates. Continue with visibility, hosted exact-SHA gates, signed
+   publication, published-artifact acceptance, and the docs/demo cutover in the
+   order below.
 
 ## Steps
 
+### 9.0 — Cumulative Rhea/Base UI redesign acceptance
+
+The owning contract is
+[`docs/plans/2026-07-14-end-to-end-product-redesign.md`](plans/2026-07-14-end-to-end-product-redesign.md),
+especially §§11–14. This is a release precondition, not permission to publish.
+
+- **Documentation and screenshot freeze.** Complete every owning user,
+  architecture, API, requirements, decision, and QA document before starting
+  the cumulative QA run. Regenerate screenshots only through the seeded
+  Playwright harness, inspect every changed image at its intended viewport, and
+  ensure the product tour describes the rendered application:
+
+  ```bash
+  corepack pnpm docs:screenshots
+  corepack pnpm docs:build
+  corepack pnpm docs:check:runtime
+  ```
+
+  Commit the resulting docs and images into the integration tip before the
+  cumulative gate. A later product, fixture, screenshot, or owning-doc change
+  invalidates the affected evidence and requires a new exact-tree run.
+- **Static, component, and contract gate.** Run the commands in the redesign
+  plan §12.1 and the
+  [Cumulative Rhea/Base UI Final Gate](local-reliability-qa.md#cumulative-rheabase-ui-final-gate).
+  At minimum this includes the full repository checks, web unit/type/build and
+  Storybook gates, the focused API/Python integration tests, and diff hygiene.
+- **Base UI/shadcn boundary.** Preserve shadcn-owned composition and styling in
+  `apps/web/src/shared/ui/`; Base UI supplies accessible behavior underneath
+  those wrappers. The boundary gate must find no direct `@radix-ui/*` imports,
+  no raw native selects, and no route/context code bypassing the shared
+  wrappers. Prove keyboard navigation, accessible names, focus containment and
+  return, Escape/outside dismissal, controlled state, and portal stacking on a
+  real route, not only from component classes.
+- **Route-workspace gate.** Run the focused workspace regressions before the
+  browser sweep:
+
+  ```bash
+  corepack pnpm --filter @jobctrl/web exec vitest run \
+    'src/routes/-jobs.$jobId.run.$runId.test.tsx' \
+    src/views/jobs/JobDetailDrawer.test.tsx \
+    src/views/artifacts/ArtifactDetailPanel.test.tsx \
+    src/views/outreach/OutreachDetailDrawer.test.tsx \
+    src/views/runs/WorkflowRunDrawer.test.tsx \
+    src/views/debug/ActivityDetailDrawer.test.tsx
+  ```
+
+  Job, job-run, artifact, contact, workflow-run, and activity details must be
+  complete route workspaces with their facts, actions, history, provenance,
+  warnings, and failure evidence still reachable. A legacy `*Drawer` filename
+  is not permission to render a transient drawer.
+- **Browser and visual gate.** Run the complete web E2E suite, the seeded route
+  visual gate, and the
+  [cumulative route sweep](developer/qa/browser-smoke.md#cumulative-redesign-route-sweep):
+
+  ```bash
+  corepack pnpm --filter @jobctrl/web e2e
+  JOBCTRL_E2E_APP_DIR=/tmp/jobctrl-route-qa \
+  JOBCTRL_E2E_API_PORT=8878 \
+  JOBCTRL_E2E_WEB_PORT=5275 \
+  corepack pnpm --filter @jobctrl/web e2e -- tests/route-visual-qa.spec.ts
+  ```
+
+  Verify every production route and detail route in light/dark and
+  compact/regular/comfortable density at 1440px, 1280px, collapsed-rail, and
+  390×844. Record route, state, viewport, theme, density, console result, and
+  interaction result. Compare the production-shaped states to the approved
+  prototype frames while treating current code/contracts as the authority for
+  every field, action, warning, unavailable state, and audit record.
+- **Synthetic-only safety.** Screenshot, browser, visual, credential-state,
+  materials, and workflow QA must use seeded or disposable workspaces, stubbed
+  dispatchers, and synthetic fixtures. Do not submit an application, scan a
+  real mailbox, use real profile/contact/job data, expose or modify real
+  credentials, spend against a live model, invoke worker-backed work merely for
+  visual proof, or mutate a real JobCtrl database/browser profile.
+- **Independent gates.** `pr-reviewer` and `qa` must each return `Gate: PASS`
+  with no Blocker or High finding on the frozen SHA. Resolve or explicitly list
+  remaining Medium/Low observations in the final PR body.
+- **Verification.** Record the frozen SHA and exact command results. Confirm
+  the `base-rhea` token/type/radius/card/status contract, route-workspace parity,
+  generated screenshots, docs build/runtime checks, complete route sweep,
+  accessibility behavior, truthful pipeline operations, credential ownership,
+  browser-capability adoption, and retry-readiness preservation all pass on
+  that same tree.
+- **Rollback.** Do not publish. Fix the owning layer, update any affected docs
+  and screenshots first, freeze a new SHA, and rerun the invalidated gate. Never
+  hide a failed parity, accessibility, safety, or auditability result with a
+  cosmetic exception.
+
 ### 9.1 — Repository visibility flip (owner-only)
 
+- **Preconditions.** The complete 9.0 gate passes on the frozen integration
+  tree, the merged `main` tree is identical, and every release-gate prerequisite
+  below is satisfied. Record the resulting audited `main` SHA for every hosted
+  and publication action.
 - **Action.** Owner flips `github.com/ebarti/JobCtrl` from private to public.
 - **Verification.**
   - Before the flip, run the complete local matrix on the exact `main` tree,
     including strict release/privacy scanning and built-distribution scanning.
-  - Immediately after the flip, rerun Release Privacy, Docs Site, Python CI,
-    Sync Homebrew Tap, and TypeScript CI on that exact `main` SHA. The current
-    private-repository runs are zero-step billing failures and are not passing
-    evidence. If Release Privacy fails after actually executing, return the
-    repository to private while investigating. Any other hosted failure blocks
-    docs deployment, tagging, and publication.
+  - Immediately after the flip, rerun Release Privacy, Docs Site, Demo Site,
+    Native Launcher CI, Python CI, and TypeScript CI on that exact `main` SHA.
+    `Sync Homebrew Tap` is reusable only from the later signed-release workflow;
+    it is not a standalone post-flip build gate. A run with zero executed steps
+    is not passing evidence. If Release Privacy fails after actually executing,
+    return the repository to private while investigating. Any other hosted
+    failure blocks docs/demo cutover, tagging, and publication.
   - `python3 scripts/release_check.py` reports zero findings locally on the
     exact commit to be published.
   - Every box in OSS spec §5 is checked, including the final human manual QA
@@ -60,15 +173,16 @@ to the rename train / post-rename launch assets (R7b).
   OSS spec §1 records the owner's acceptance of historical blobs remaining
   reachable.
 
-### 9.2 — Docs-site deploy (owner-only)
+### 9.2 — Docs-site deploy and public cutover (owner-only)
 
-- **Preconditions (OSS spec §5 gate).** Deploying `docs/.vitepress/dist` to the
-  public `jobctrl-docs` Cloudflare project is itself a going-public act, so it
-  carries the **same OSS spec §5 gate as 9.1**. The `deploy` job in
+- **Preconditions (OSS spec §5 gate).** Making `docs/.vitepress/dist` publicly
+  reachable through the `jobctrl-docs` Cloudflare project is a going-public
+  act, so it carries the **same OSS spec §5 gate as 9.1** and requires the 9.0
+  redesign gate on the same SHA. A candidate may be deployed only while it
+  remains access-restricted. The `deploy` job in
   `docs-site.yml` is gated only on `DOCS_DEPLOY_ENABLED` and `main` — **not**
   on `release-check` — so this checklist is the
-  only guard. Before setting `DOCS_DEPLOY_ENABLED` or configuring the Cloudflare
-  secrets:
+  only guard. Before setting `DOCS_DEPLOY_ENABLED`:
   - `python3 scripts/release_check.py` reports zero findings locally on the
     exact commit to be deployed, and `release-check`
     (`.github/workflows/release-check.yml`) is green on that `main` commit.
@@ -78,219 +192,117 @@ to the rename train / post-rename launch assets (R7b).
   - The claims-ledger freeze (`docs/claims-ledger.md`, GATE G1) is re-stamped at
     the actual freeze `main` sha and owner-signed, so the public site cannot
     ship provisional or unsigned public claims.
-- **Action.** Set the repository variable `DOCS_DEPLOY_ENABLED=true` and the two
-  Cloudflare secrets (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) so the
-  `deploy` job in `.github/workflows/docs-site.yml` runs from `main` (it is
-  gated on `vars.DOCS_DEPLOY_ENABLED == 'true'` and `main`;
-  it deploys `docs/.vitepress/dist` to the Cloudflare Pages project
-  `jobctrl-docs`).
-- **Verification.** On the next `main` push the `deploy` job runs (not skipped),
-  the site serves, and `pnpm docs:build` + `pnpm docs:check:runtime` are green on
-  the built artifact.
-- **Rollback.** Unset `DOCS_DEPLOY_ENABLED` → the `deploy` job skips cleanly and
-  the workflow stays green. If a bad build shipped, redeploy the previous
-  `docs-site-dist` artifact.
+  - Before removing the access restriction, complete the published-artifact
+    acceptance and user-documentation cutover in 9.6 so stable install commands
+    cannot become public before their release evidence exists.
+  - Complete the staged external demo verification in 9.7 while the docs site
+    and its Live Demo CTA remain access-restricted. Removing the docs restriction
+    is the CTA publication action and must not precede that verification.
+- **Action.** Set the repository variable `DOCS_DEPLOY_ENABLED=true` so the
+  `deploy` job in `.github/workflows/docs-site.yml` can run. Manually dispatch
+  `Docs Site` at the audited `main` ref; do not wait for an unrelated push.
+  Keep the candidate access-restricted until every public-cutover precondition
+  above passes, then remove the restriction.
+- **Verification.** Confirm the dispatched run SHA equals the gated and frozen
+  `main` SHA, the `deploy` job runs rather than skips, and `pnpm docs:build` +
+  `pnpm docs:check:runtime` are green on that built artifact. After removing the
+  restriction, verify the site from an external non-allowlisted network and
+  confirm no Cloudflare Access challenge appears.
+- **Rollback.** Re-enable the Cloudflare Access restriction (or otherwise
+  disable the public custom domain), then unset `DOCS_DEPLOY_ENABLED` so future
+  deploy jobs skip. If a bad build shipped, redeploy the previous
+  `docs-site-dist` artifact before reopening access. Unsetting the variable
+  alone does not withdraw an already deployed Pages site.
 
-### 9.3 — Repository-rename redirect (owner-only; rename landed 2026-07-07)
-
-> **Update 2026-07-07.** The rename train
-> ([`docs/plans/implemented/2026-07-05-rename-jobctrl-plan.md`](plans/implemented/2026-07-05-rename-jobctrl-plan.md))
-> has merged and the repository is `ebarti/JobCtrl`; `REPO_URL` already points
-> at it. What remains is verifying the old-URL redirects at the visibility
-> flip.
+### 9.3 — Repository-rename redirect (owner-only)
 
 - **Action.** After the visibility flip, verify GitHub's
-  automatic old-URL redirects resolve; `REPO_URL` in
-  `docs/.vitepress/config.ts` and the README badges already point at
-  `ebarti/JobCtrl`; re-run `pnpm docs:build` if any link needed fixing.
+  automatic old-URL redirects resolve and confirm that `REPO_URL` in
+  `docs/.vitepress/config.ts` and the README badges point at `ebarti/JobCtrl`.
+  Repair any stale target and rerun `pnpm docs:build`.
 - **Rollback (for reference).** Rename back (GitHub reserves the prior name);
   revert the `REPO_URL`/link edits.
 
-### 9.4 — Release tagging (owner-only; rename landed 2026-07-07)
+### 9.4 — Release tagging and publication (owner-only)
 
-> **Update 2026-07-11.** The distribution is renamed (`pyproject` name
-> `jobctrl`) and stable-only package publishing is integrated into
-> `.github/workflows/release-distribution.yml`. It runs only after that same
-> owner-dispatched workflow has published and verified an immutable,
-> non-prerelease GitHub Release. The standalone `release-pypi.yml` path is
-> intentionally absent, and `.github/workflows/publish.yml` stays disabled, so
-> older tagged commits cannot supply the former tag-push publication logic.
-> `release_check` enforces the distribution name, one version across every
-> shipped manifest and built distribution, and an exact `v<version>` tag.
-> Unrestricted manual and tag-push publishing are disabled. The
-> GitHub `pypi` environment exists and admits only `v*` tags; add a required
-> reviewer after the visibility/plan change makes that protection available.
-> The historical "Publish to PyPI" workflow remains `disabled_manually`.
-> The owner selected **v2.0.0** as the first public release version on
-> 2026-07-10. All shipped manifests are prepared at that version before the
-> tag; publishing the tag remains an owner-only action after hosted gates pass.
-
-- **Action.** Re-check that the `jobctrl` PyPI name is still available and
-  configure/verify its Trusted Publisher immediately before release. A pending
-  publisher can create the project on first publish but does **not** reserve the
-  name ([PyPI documentation](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)).
-  Confirm the owner-approved first version and configure the Trusted Publisher
-  for workflow `release-distribution.yml` and environment `pypi`. Dispatch the
-  signed distribution workflow with an exact tag targeting audited current
-  `main`. After immutable GitHub publication, its clean `pypi-resolve` job
-  checks out that exact ref without credentials, verifies the tracked finalizer
-  bundle and license notice, verifies the immutable Release attestation, safely
-  extracts the audit evidence with system Python, and validates the signed P6
-  candidate against the protected public key and key ID before any project
-  dependency runs. Two independent builders then install only the locked
+- **Preconditions.** The 9.0 redesign gate and every exact-tree local and hosted
+  gate in 9.1 pass, the claims ledger is frozen at that audited `main` SHA, and
+  every protected release environment in 9.4a is configured.
+- **Action.** Fetch `origin/main` and tags, verify that the audited local commit
+  and `origin/main` resolve to the same SHA, then create and push the exact
+  `v2.0.0` tag on that commit. Verify the remote tag and `main` still resolve to
+  that SHA before dispatch. Re-check that the `jobctrl` PyPI name is still
+  available and configure/verify its Trusted Publisher immediately before
+  release. A pending publisher can create the project on first publish but does
+  **not** reserve the name
+  ([PyPI documentation](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)).
+  Configure the Trusted Publisher for workflow `release-distribution.yml` and
+  environment `pypi`. Dispatch that workflow at `refs/tags/v2.0.0` with
+  `release_tag=v2.0.0` and the remaining owner-approved release inputs. After
+  immutable GitHub publication, its clean `pypi-resolve` job checks out that
+  exact ref without credentials, verifies the tracked finalizer bundle and
+  license notice, verifies the immutable Release attestation, safely extracts
+  the audit evidence with system Python, and
+  validates the signed P6 candidate against the protected public key and key ID
+  before any project dependency runs. Two independent builders then install
+  only the locked
   `release-build` group (`build` and Hatchling), create fixed-epoch wheel and
   source archives without isolation, and run the strict scanner. A fresh job
   byte-compares both inventories and authors the publication checksum. The
   separate `pypi` job has no checkout, build tools, or release-key inputs: it
-  re-resolves the tag and current `main`, verifies only the compare-sealed
+  re-resolves the tag and audited `main`, verifies only the compare-sealed
   artifact, and uses OIDC to publish those unchanged bytes. Verify the PyPI
   package and immutable GitHub Release after the workflow succeeds.
 - **Rollback.** Preserve the immutable Release and tag as audit evidence. Yank
   a bad PyPI file/version when necessary, then publish a new higher-sequence
   signed release that explicitly revokes or supersedes the affected build.
 
-### 9.4a — Signed distribution environments (owner-only)
+### 9.4a — Signed distribution environment protections (owner-only)
 
-Before dispatching `Release distribution`, configure the following protected
-GitHub environments. Keep private values in environment secrets; keep the
-public Ed25519 trust anchor in protected environment variables. Do not write
-either into the tracked signing policy. Configure **every** environment below
-with a deployment tag rule matching only protected `v*` tags; do not admit
-branches. Dispatch the workflow at `refs/tags/<release_tag>` so its own
-`GITHUB_REF` and `GITHUB_SHA` are the same audited tag/commit checked out by
-the resolver. These environment rules are the server-side defense against a
-modified branch workflow removing the in-workflow identity check:
+This step is protection-only. Do not generate, rotate, re-enter, or relocate
+release credentials during launch, and do not add a PyPI API token: the PyPI
+job publishes through OIDC. The tracked `blocked-awaiting-credentials` and
+`unprovisioned` signing-policy values are fail-closed workflow posture, not
+evidence that a live environment secret or variable is absent.
 
-Generate the JobCtrl Ed25519 release key pair once, outside the repository. This
-key signs JobCtrl manifests and release descriptors; it is separate from the
-Apple Developer ID certificate used to sign macOS executables:
+- **Action.** Read the live repository and environment-scoped secret/variable
+  inventories by name without reading or printing values. If a workflow input
+  is genuinely missing, stop and coordinate its provisioning outside this
+  checklist; do not embed key-generation or clipboard commands here. After the
+  visibility flip, require an owner approval on
+  `release-signing`, `release-publication`, `release-verification`, and `pypi`.
+  Add a deployment policy matching only protected `v*` tags to each of the
+  three `release-*` environments, and confirm that `pypi` remains tag-only.
+  Do not admit branches. Verify the external PyPI Trusted Publisher mapping
+  named in 9.4.
+- **Verification.** Read back every environment rule before dispatch: each
+  environment requires owner approval and admits only protected `v*` tags.
+  Dispatch at `refs/tags/<release_tag>` so `GITHUB_REF` and `GITHUB_SHA` identify
+  the same audited tag and commit checked by the resolver. Confirm the jobs
+  pause at their intended approvals and that the workflow's fail-closed input
+  and trust-anchor checks pass without printing protected values.
+- **Rollback.** Cancel the release run if an environment rule or protected
+  input check fails. Keep the repository and docs access-restricted, correct the
+  protection or external publisher mapping, and rerun from the same audited tag;
+  do not weaken an environment rule or move credentials to bypass the failure.
 
-```bash
-release_key_dir="$HOME/.jobctrl-release-secrets"
-(
-  set -euo pipefail
-  umask 077
-  mkdir -p "$release_key_dir"
-  chmod 700 "$release_key_dir"
-  private_der="$release_key_dir/jobctrl-release-v1.pk8"
-  if [[ -e "$private_der" ]]; then
-    echo "release key already exists; refusing to overwrite it" >&2
-    exit 1
-  fi
-  node --input-type=module - "$private_der" <<'NODE'
-import { writeFileSync } from "node:fs";
-import { generateKeyPairSync } from "node:crypto";
-
-const { privateKey } = generateKeyPairSync("ed25519");
-const privateDer = Buffer.from(privateKey.export({ format: "der", type: "pkcs8" }));
-writeFileSync(process.argv[2], privateDer, { flag: "wx", mode: 0o600 });
-NODE
-)
-```
-
-Back up the private-key file offline. Never commit it. Copy the canonical
-base64 PKCS#8 DER value for the `JOBCTRL_RELEASE_SIGNING_KEY` environment secret,
-then paste it into `release-signing` before running the next clipboard command:
-
-```bash
-base64 < "$release_key_dir/jobctrl-release-v1.pk8" | tr -d '\n' | pbcopy
-```
-
-Derive and copy the matching raw 32-byte public key for the
-`JOBCTRL_RELEASE_PUBLIC_KEY` environment variable in `release-verification`:
-
-```bash
-node --input-type=module - "$release_key_dir/jobctrl-release-v1.pk8" <<'NODE' | pbcopy
-import { readFileSync } from "node:fs";
-import { createPrivateKey, createPublicKey } from "node:crypto";
-
-const privateDer = readFileSync(process.argv[2]);
-const privateKey = createPrivateKey({ key: privateDer, format: "der", type: "pkcs8" });
-if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("release key is not Ed25519");
-const spki = Buffer.from(createPublicKey(privateKey).export({ format: "der", type: "spki" }));
-const prefix = Buffer.from("302a300506032b6570032100", "hex");
-if (spki.length !== 44 || !spki.subarray(0, prefix.length).equals(prefix)) {
-  throw new Error("unexpected Ed25519 public-key encoding");
-}
-process.stdout.write(spki.subarray(prefix.length).toString("base64"));
-NODE
-```
-
-Set `JOBCTRL_RELEASE_KEY_ID` to `jobctrl-release-v1`. The signing workflow
-derives the public key from the protected private key and fails unless it
-exactly matches the independently protected verification value.
-
-- `release-signing`: `JOBCTRL_RELEASE_SIGNING_KEY`,
-  `JOBCTRL_APPLE_DEVELOPER_ID_P12`,
-  `JOBCTRL_APPLE_DEVELOPER_ID_PASSWORD`, `JOBCTRL_APPLE_SIGNING_IDENTITY`,
-  `JOBCTRL_APPLE_NOTARY_PROFILE`, `JOBCTRL_APPLE_NOTARY_API_KEY`,
-  `JOBCTRL_APPLE_NOTARY_KEY_ID`, and `JOBCTRL_APPLE_NOTARY_ISSUER`. Require an
-  owner approval. The signing job starts on a fresh runner only after locked
-  dependencies and both unsigned comparison builds have passed; it performs no
-  package installation and runs only the sealed finalizer plus system signing
-  and notarization tools.
-- `release-publication`: environment secrets `JOBCTRL_R2_ACCESS_KEY_ID`,
-  `JOBCTRL_R2_SECRET_ACCESS_KEY`, `JOBCTRL_RELEASE_ADMIN_READ_TOKEN` (a
-  fine-grained token with repository Administration read access), and
-  `HOMEBREW_TAP_DEPLOY_KEY`; plus protected environment variables
-  `JOBCTRL_R2_ACCOUNT_ID` and `JOBCTRL_R2_BUCKET`. The R2 access key must have
-  Object Read & Write permission scoped only to the release bucket. Keep the
-  credentials as environment secrets; the reusable Homebrew workflow resolves
-  the tap key only inside its `publish` job after the environment approval,
-  rather than accepting it through `workflow_call`. Require a separate owner
-  approval. Publication writes directly to the configured R2 S3 endpoint with
-  conditional `PutObject` (`If-Match` / `If-None-Match: *`), then verifies the
-  resulting bytes through `https://releases.jobctrl.dev`.
-- `release-verification`: protected environment variables
-  `JOBCTRL_RELEASE_PUBLIC_KEY` and `JOBCTRL_RELEASE_KEY_ID`, the non-secret but
-  integrity-sensitive release trust anchor. Require an owner approval. The
-  credential-free distribution-prepare jobs embed this key. After immutable
-  GitHub publication, the clean PyPI resolution gate checks against the same
-  protected values before dependency execution; the two builders receive
-  neither value. None of those jobs receives an OIDC token or publication
-  authority.
-- `pypi`: configure only the PyPI Trusted Publisher. Require an owner approval
-  and the same protected `v*` tag-only deployment rule.
-  The OIDC-only publish job receives no checkout, build tooling, dependencies,
-  or release-key inputs; it receives only the compare-sealed package bytes and
-  checksum.
-
-Dispatch supplies the full expected SHA-256 of the currently served channel
-pointer (or `absent` only for the first one). Two fresh macOS runners build
-unsigned candidates independently; a third runner compares them before the
-credentialed signer receives either. Fresh runners then isolate signing,
-immutable draft publication, pointer CAS, tap publication, and final GitHub
-Release publication from dependency installation and repository execution. A
-separate credential-free runner smoke-tests the public build-scoped assets and
-runs Homebrew audit/install/test. Only then does the minimal CAS job promote
-the signer-authored channel pointer. The top-level concurrency key serializes
-each channel/platform, and the stable tap job cannot start until that pointer
-promotion succeeds or proves the exact pointer is already live. An exact
-existing pointer is a safe resume; a different or stale pointer is a deliberate
-conflict that fails before Homebrew can be changed. The workflow publishes and
-post-lock verifies the immutable GitHub Release after pointer and tap
-publication; only the stable channel can then enter the clean two-builder PyPI
-lane.
-
-**Current hosted-release status.** The `jobctrl-releases` R2 bucket,
-`https://releases.jobctrl.dev` custom domain, and repository immutable Releases
-are provisioned. The `release-publication` R2 credentials, administration-read
-token, Homebrew deploy key, account ID, and bucket are configured. GitHub
-currently rejects required-reviewer and tag-policy protection for this private
-repository under its billing/plan state, and Actions jobs are zero-step blocked
-by the same account state. Restore billing/plan access, configure the required
-owner approval plus `v*`-tag-only deployment policy, and complete the first
-live signed-release verification. No user-facing curl or Homebrew
-stable-install claim may be made until those hosted gates have completed.
+**Hosted-execution stop condition.** After the visibility flip, require every
+hosted gate to execute real steps on the exact audited SHA. If GitHub cannot
+execute them, stop publication and resolve hosted Actions availability before
+proceeding. Keep the repository and docs access-restricted, and do not advertise
+curl or Homebrew as stable install paths, until 9.4a and the first live signed
+release verification complete.
 
 ### 9.5 — Homebrew tap publication (signed-release-gated)
 
 `packaging/homebrew/Formula/jobctrl.rb.tmpl` is the one canonical formula
-template. There is no checked-in rendered formula or public stable install
-claim. The implemented P6 signer job renders the formula once from the signed
-stable descriptor and exports its exact SHA-256. A credential-free job
-smoke-tests that formula and published ZIP without re-rendering either. The reusable tap
-workflow receives the untouched signed candidate and separate smoke evidence,
+template in this repository. Before publication, replace any legacy HEAD-only
+or source-bootstrap tap formula only through the signed workflow; never treat
+it as stable release evidence. The implemented P6 signer job renders the
+replacement formula once from the signed stable descriptor and exports its
+exact SHA-256. A credential-free job smoke-tests that formula and published ZIP
+without re-rendering either. The reusable tap workflow receives the untouched
+signed candidate and separate smoke evidence,
 re-verifies the signer-rooted formula digest, and seals the exact formula
 without tap credentials before handing only the formula and checksum to a
 fresh deploy-key job. It never triggers from `main` or merely from a published
@@ -308,12 +320,83 @@ runtime payload from the Cellar during `brew install`.
 - **Rollback.** Revert `Formula/jobctrl.rb` in the tap after coordinating a
   signed release revocation; the source-development instructions are separate.
 
-## Status summary
+### 9.6 — Published-artifact acceptance and user-doc cutover (owner-only)
 
-| Step | Owner-only | Rename-gated | Status |
-| --- | --- | --- | --- |
-| 9.1 Visibility flip | Yes | No | Prepared; owner flips after exact-tree local green, then immediately verifies hosted gates |
-| 9.2 Docs-site deploy | Yes | No | Blocked until the post-public hosted gates are green; owner executes |
-| 9.3 Rename redirect | Yes | Landed 2026-07-07 | Redirect verify at flip; owner executes |
-| 9.4 Release tagging | Yes | Landed 2026-07-07 | v2.0.0 selected and mechanics ready; blocked until post-public hosted gates pass |
-| 9.5 Homebrew tap | Signed artifact only | No | P0–P6 workflow, canonical template/generator, and fail-closed reusable sync are implemented; execution remains blocked on Apple signing/notarization, release-origin publication, immutable Releases, and hosted Actions availability |
+The owning contract is
+[`docs/plans/2026-07-10-bundled-jobctrl-distribution-plan.md`](plans/2026-07-10-bundled-jobctrl-distribution-plan.md)
+Phase 7 and its Definition of Done.
+
+- **Preconditions.** Steps 9.4 and 9.5 publish the signed release, immutable
+  build assets, stable channel pointer, PyPI distributions, and verified tap
+  formula. Keep stable install claims access-restricted until this step passes.
+- **Action.** Run and record the plan's published-artifact acceptance matrix:
+  clean Apple-silicon macOS installs through both curl and Homebrew; no source
+  checkout or developer toolchain; fresh and existing JobCtrl state; warm and
+  cold provider authentication; core use without authenticated-browser
+  capabilities; explicit enable/disable and adoption of those capabilities;
+  update, forced failed update, rollback, migration, uninstall, and default data
+  preservation; and real-path TTFV evidence for the first scored job and first
+  reviewable tailored PDF. Confirm both acquisition paths report the same build
+  ID and manifest digest.
+- **Action — documentation cutover.** Only after the acceptance matrix passes,
+  verify every canonical user surface named by the plan presents the two stable
+  acquisition commands followed by one `jobctrl start` surface, removes
+  developer tools from user requirements, explains managed versus optional
+  browser capabilities, and preserves source-development commands for
+  contributors.
+- **Verification.** Every item in the plan's Definition of Done passes; release
+  evidence records the clean-machine, lifecycle, TTFV, SBOM, license, size,
+  signature, checksum, and provenance results; no Blocker/High review or QA
+  finding remains. Only then archive the plan and allow curl/Homebrew stable
+  advertising; the docs public cutover in 9.2 additionally waits for the staged
+  demo verification in 9.7.
+- **Rollback.** If any acceptance item fails, withdraw stable install claims,
+  keep the docs access-restricted, restore the prior signed channel pointer and
+  tap formula when one exists, and revert the user-doc cutover. Preserve the
+  immutable failed-release evidence and user data while preparing a new signed
+  release that supersedes or revokes it.
+
+### 9.7 — Public live-demo cutover (owner-only)
+
+The owning implementation and privacy contract is
+[`docs/plans/2026-07-11-public-live-demo-plan.md`](plans/2026-07-11-public-live-demo-plan.md).
+Public cutover must satisfy that plan's Definition of Done.
+
+- **Preconditions.** The exact-tree local gate and all post-public hosted gates
+  in 9.1 and the published-artifact gate in 9.6 pass. The owner approves the
+  controller identity, privacy contact,
+  public privacy/cookie notice, Cloudflare processor/transfer posture, and the
+  lawful basis and copy for the acceptance-required consent gate and disclosed
+  non-linkable operational counters. The claims ledger is frozen at the release
+  SHA. No Blocker/High security, review, or QA finding remains.
+- **Action.** On the approved deployment, remove the Cloudflare Access IP
+  restriction from `demo.jobctrl.dev` while keeping the docs site and its Live
+  Demo CTA access-restricted. Leave `DEMO_DEPLOY_ENABLED=true` only while
+  production deployment from audited `main` is intended.
+- **Staged verification.** From an external non-allowlisted network and a fresh
+  browser profile, direct routes load; only the static consent shell exists
+  before a decision; decline redirects to `jobctrl.dev`; confirmed consent
+  initializes only the isolated synthetic workspace; irreversible effects
+  remain simulated; product-state values never cross the telemetry boundary;
+  D1 retention,
+  security headers, production smoke, and rollback rehearsal pass. Record the
+  exact deployment/SHA evidence required by the demo plan. Only after this
+  passes, complete 9.2 to expose the docs site and CTA, then verify the public
+  CTA resolves to the already-verified demo.
+- **Rollback.** Re-enable the Cloudflare Access restriction first, disable
+  `DEMO_DEPLOY_ENABLED`, restore the previous Pages/Worker deployment and D1
+  bindings if needed, and withdraw the public CTA. Preserve audit evidence for
+  the failed cutover.
+
+## Pending-action summary
+
+| Step | Executor | Pending action |
+| --- | --- | --- |
+| 9.0 Rhea/Base UI acceptance | Implementers + reviewer + QA | Finish docs and synthetic screenshots first, freeze the integration SHA, then pass static, workspace, browser, visual, accessibility, review, and QA gates on that tree. |
+| 9.1 Visibility flip | Owner | Run the exact-tree local gate, flip visibility, then rerun every hosted build gate on the same SHA. |
+| 9.2 Docs-site deploy | Owner | Dispatch at the gated `main` SHA, then remove Access only after 9.6 and the staged 9.7 demo verification pass. |
+| 9.3 Rename redirect | Owner | Verify old-URL redirects after the flip and repair any stale repository links. |
+| 9.4 Release and PyPI | Owner | Create and push `v2.0.0` on audited `main`, verify remote SHA parity, then dispatch and verify the signed release. |
+| 9.5 Homebrew tap | Signed workflow | Replace the legacy formula only with the verified render after release-origin smoke passes. |
+| 9.6 Published-artifact acceptance | Owner | Run clean-machine, lifecycle, TTFV, and release-evidence gates, then complete the stable user-doc cutover. |
+| 9.7 Public live demo | Owner | Approve the privacy/legal boundary, remove demo Access, verify externally while the CTA stays restricted, then expose it through 9.2. |

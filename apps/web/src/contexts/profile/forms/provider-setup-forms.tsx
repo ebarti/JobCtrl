@@ -56,7 +56,7 @@ const claudeValuesSchema = z
       requireValue(values.apiKey, "apiKey", "Paste an Anthropic API key.");
     } else if (values.mode === "vertex") {
       requireValue(values.vertexProjectId, "vertexProjectId", "Enter the Google Cloud project ID.");
-      requireValue(values.vertexRegion, "vertexRegion", "Enter the Agent Platform region.");
+      requireValue(values.vertexRegion, "vertexRegion", "Enter the Vertex AI region.");
     } else if (values.mode === "anthropic_aws") {
       requireValue(values.awsWorkspaceId, "awsWorkspaceId", "Enter the Claude Platform workspace ID.");
     } else if (values.mode === "foundry") {
@@ -113,8 +113,9 @@ export function ClaudeProviderForm({
   const [message, setMessage] = useState("");
   const [removalOpen, setRemovalOpen] = useState(false);
   const [removalError, setRemovalError] = useState("");
+  const effectiveMode = claudeModeFromStatus(currentMode);
   const environmentManaged = activeModeManagedByEnvironment(
-    claudeModeFromStatus(currentMode),
+    effectiveMode,
     environmentManagedKeys,
     CLAUDE_MODE_CREDENTIAL_KEYS,
   );
@@ -123,7 +124,7 @@ export function ClaudeProviderForm({
   );
   const form = useForm({
     defaultValues: {
-      mode: (secretStorageAvailable ? "anthropic_api_key" : "vertex") as ClaudeMode,
+      mode: (effectiveMode ?? (secretStorageAvailable ? "anthropic_api_key" : "vertex")) as ClaudeMode,
       apiKey: "",
       vertexProjectId: "",
       vertexRegion: "global",
@@ -135,8 +136,8 @@ export function ClaudeProviderForm({
     },
     onSubmit: async ({ value, formApi }) => {
       setMessage("");
-      if (environmentManaged) {
-        setMessage("Claude setup is managed by the launch environment and is read-only here.");
+      if (environmentManaged && value.mode === effectiveMode) {
+        setMessage("Claude's active mode is managed by the launch environment. Choose another mode to save local settings.");
         return;
       }
       const parsed = claudeValuesSchema.safeParse(value);
@@ -204,8 +205,10 @@ export function ClaudeProviderForm({
             value={field.state.value}
             onChange={field.handleChange}
             options={CLAUDE_OPTIONS}
-            disabled={environmentManaged}
-            disabledValues={secretStorageAvailable ? [] : ["anthropic_api_key"]}
+            disabledValues={[
+              ...(secretStorageAvailable ? [] : ["anthropic_api_key" as ClaudeMode]),
+              ...(environmentManaged && effectiveMode ? [effectiveMode] : []),
+            ]}
           />
         )}
       </form.Field>
@@ -221,7 +224,7 @@ export function ClaudeProviderForm({
                     label="Anthropic API key"
                     help="Stored only in macOS Keychain. JobCtrl never returns the value after saving."
                     required
-                    disabled={!secretStorageAvailable}
+                    disabled={!secretStorageAvailable || environmentManagedKeys.includes("ANTHROPIC_API_KEY")}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={field.handleChange}
@@ -231,7 +234,7 @@ export function ClaudeProviderForm({
             ) : mode === "vertex" ? (
               <>
                 <CloudGuidance command="gcloud auth application-default login">
-                  Configure Google Application Default Credentials outside JobCtrl, or set <code>GOOGLE_APPLICATION_CREDENTIALS</code> to an existing service-account JSON file. No credential file is uploaded or copied here.
+                  Set up ADC outside JobCtrl, then enter the project details below. See the <a href="https://jobctrl.dev/user/configuration#claude">JobCtrl Claude guide</a>.
                 </CloudGuidance>
                 <form.Field name="vertexProjectId">
                   {(field) => (
@@ -242,7 +245,7 @@ export function ClaudeProviderForm({
                   {(field) => (
                     <TextField
                       id="claude-vertex-region"
-                      label="Agent Platform region"
+                      label="Vertex AI region"
                       help="Use global when your enabled models support it."
                       required
                       field={field}
@@ -315,31 +318,36 @@ export function ClaudeProviderForm({
           </div>
         )}
       </form.Subscribe>
-      <ProviderFormActions
-        configured={configured}
-        pending={update.isPending}
-        message={message}
-        saveLabel="Save Claude setup"
-        readOnly={environmentManaged}
-        removeAction={
-          configured && !environmentManaged ? (
-            <ProviderRemovalDialog
-              error={removalError}
-              open={removalOpen}
+      <form.Subscribe selector={(state) => state.values.mode}>
+        {(mode) => (
+          <>
+            <ProviderFormActions
               pending={update.isPending}
-              provider="Claude"
-              onConfirm={() => void removeProvider()}
-              onOpenChange={(open) => {
-                setRemovalError("");
-                setRemovalOpen(open);
-              }}
+              message={message}
+              saveLabel="Save Claude setup"
+              readOnly={environmentManaged && mode === effectiveMode}
+              removeAction={
+                configured && !environmentManaged ? (
+                  <ProviderRemovalDialog
+                    error={removalError}
+                    open={removalOpen}
+                    pending={update.isPending}
+                    provider="Claude"
+                    onConfirm={() => void removeProvider()}
+                    onOpenChange={(open) => {
+                      setRemovalError("");
+                      setRemovalOpen(open);
+                    }}
+                  />
+                ) : null
+              }
             />
-          ) : null
-        }
-      />
-      {environmentManaged ? (
-        <p className="provider-form-message" role="status">Claude's effective mode is owned by the launch environment; save and removal controls are read-only.</p>
-      ) : null}
+            {environmentManaged ? (
+              <p className="provider-form-message" role="status">Claude's active setup includes values owned by the launch environment. Those fields and provider removal stay read-only; other editable settings can still be saved.</p>
+            ) : null}
+          </>
+        )}
+      </form.Subscribe>
     </form>
   );
 }
@@ -354,8 +362,9 @@ export function GoogleProviderForm({
   const [message, setMessage] = useState("");
   const [removalOpen, setRemovalOpen] = useState(false);
   const [removalError, setRemovalError] = useState("");
+  const effectiveMode = googleModeFromStatus(currentMode);
   const environmentManaged = activeModeManagedByEnvironment(
-    googleModeFromStatus(currentMode),
+    effectiveMode,
     environmentManagedKeys,
     GOOGLE_MODE_CREDENTIAL_KEYS,
   );
@@ -364,7 +373,7 @@ export function GoogleProviderForm({
   );
   const form = useForm({
     defaultValues: {
-      mode: (secretStorageAvailable ? "gemini_api_key" : "vertex") as GoogleMode,
+      mode: (effectiveMode ?? (secretStorageAvailable ? "gemini_api_key" : "vertex")) as GoogleMode,
       apiKey: "",
       projectId: "",
       location: "us-central1",
@@ -372,8 +381,8 @@ export function GoogleProviderForm({
     },
     onSubmit: async ({ value, formApi }) => {
       setMessage("");
-      if (environmentManaged) {
-        setMessage("Google setup is managed by the launch environment and is read-only here.");
+      if (environmentManaged && value.mode === effectiveMode) {
+        setMessage("Google's active mode is managed by the launch environment. Choose another mode to save local settings.");
         return;
       }
       const parsed = googleValuesSchema.safeParse(value);
@@ -441,8 +450,10 @@ export function GoogleProviderForm({
             value={field.state.value}
             onChange={field.handleChange}
             options={GOOGLE_OPTIONS}
-            disabled={environmentManaged}
-            disabledValues={secretStorageAvailable ? [] : ["gemini_api_key"]}
+            disabledValues={[
+              ...(secretStorageAvailable ? [] : ["gemini_api_key" as GoogleMode]),
+              ...(environmentManaged && effectiveMode ? [effectiveMode] : []),
+            ]}
           />
         )}
       </form.Field>
@@ -458,7 +469,7 @@ export function GoogleProviderForm({
                     label="Gemini API key"
                     help="Stored only in macOS Keychain and never returned by the API."
                     required
-                    disabled={!secretStorageAvailable}
+                    disabled={!secretStorageAvailable || environmentManagedKeys.includes("GEMINI_API_KEY")}
                     value={field.state.value}
                     onBlur={field.handleBlur}
                     onChange={field.handleChange}
@@ -468,7 +479,7 @@ export function GoogleProviderForm({
             ) : (
               <>
                 <CloudGuidance command="gcloud auth application-default login">
-                  Configure Google Application Default Credentials outside JobCtrl, or set <code>GOOGLE_APPLICATION_CREDENTIALS</code> to an existing service-account JSON file. No credential file is uploaded or copied here.
+                  Set up ADC outside JobCtrl, then enter the project details below. See the <a href="https://jobctrl.dev/user/configuration#google">JobCtrl Google guide</a>.
                 </CloudGuidance>
                 <form.Field name="projectId">
                   {(field) => <TextField id="google-vertex-project" label="Google Cloud project ID" required field={field} />}
@@ -495,31 +506,36 @@ export function GoogleProviderForm({
           </div>
         )}
       </form.Subscribe>
-      <ProviderFormActions
-        configured={configured}
-        pending={update.isPending}
-        message={message}
-        saveLabel="Save Google setup"
-        readOnly={environmentManaged}
-        removeAction={
-          configured && !environmentManaged ? (
-            <ProviderRemovalDialog
-              error={removalError}
-              open={removalOpen}
+      <form.Subscribe selector={(state) => state.values.mode}>
+        {(mode) => (
+          <>
+            <ProviderFormActions
               pending={update.isPending}
-              provider="Google"
-              onConfirm={() => void removeProvider()}
-              onOpenChange={(open) => {
-                setRemovalError("");
-                setRemovalOpen(open);
-              }}
+              message={message}
+              saveLabel="Save Google setup"
+              readOnly={environmentManaged && mode === effectiveMode}
+              removeAction={
+                configured && !environmentManaged ? (
+                  <ProviderRemovalDialog
+                    error={removalError}
+                    open={removalOpen}
+                    pending={update.isPending}
+                    provider="Google"
+                    onConfirm={() => void removeProvider()}
+                    onOpenChange={(open) => {
+                      setRemovalError("");
+                      setRemovalOpen(open);
+                    }}
+                  />
+                ) : null
+              }
             />
-          ) : null
-        }
-      />
-      {environmentManaged ? (
-        <p className="provider-form-message" role="status">Google's effective mode is owned by the launch environment; save and removal controls are read-only.</p>
-      ) : null}
+            {environmentManaged ? (
+              <p className="provider-form-message" role="status">Google's active setup includes values owned by the launch environment. Those fields and provider removal stay read-only; other editable settings can still be saved.</p>
+            ) : null}
+          </>
+        )}
+      </form.Subscribe>
     </form>
   );
 }
@@ -553,15 +569,27 @@ function ProviderChoices<T extends string>({
       <div className="provider-choice-list">
         {options.map((option) => {
           const id = `${name}-${option.value}`;
+          const optionDisabled = disabled || disabledValues.includes(option.value);
           return (
-            <label className="provider-choice" htmlFor={id} key={option.value}>
+            <label
+              className="provider-choice"
+              htmlFor={id}
+              key={option.value}
+              onClick={(event) => {
+                const control = event.currentTarget.control;
+                if (optionDisabled || !control || event.target === control) return;
+                event.preventDefault();
+                control.focus();
+                control.click();
+              }}
+            >
               <input
                 checked={value === option.value}
                 id={id}
                 name={name}
                 type="radio"
                 value={option.value}
-                disabled={disabled || disabledValues.includes(option.value)}
+                disabled={optionDisabled}
                 onChange={() => onChange(option.value)}
               />
               <span>
@@ -677,14 +705,12 @@ function CloudGuidance({ command, children }: { command: string; children: React
 }
 
 function ProviderFormActions({
-  configured,
   pending,
   message,
   saveLabel,
   removeAction,
   readOnly = false,
 }: {
-  configured: boolean;
   pending: boolean;
   message: string;
   saveLabel: string;
@@ -697,9 +723,6 @@ function ProviderFormActions({
         {pending ? "Saving…" : saveLabel}
       </button>
       {removeAction}
-      <span className={`tag ${configured ? "ok" : "muted"}`}>
-        {configured ? "Configured" : "Not configured"}
-      </span>
       <div aria-live="polite" className="provider-form-message" role="status">
         {message}
       </div>
@@ -854,8 +877,8 @@ const CLAUDE_OPTIONS: readonly ChoiceOption<ClaudeMode>[] = [
   },
   {
     value: "vertex",
-    label: "Google Cloud Agent Platform",
-    description: "Claude through Google Cloud Application Default Credentials.",
+    label: "Google Vertex AI",
+    description: "Claude through Vertex AI with Google Application Default Credentials.",
   },
   {
     value: "bedrock",
@@ -886,3 +909,16 @@ const GOOGLE_OPTIONS: readonly ChoiceOption<GoogleMode>[] = [
     description: "Gemini through Google Application Default Credentials.",
   },
 ];
+
+export function providerModeLabel(
+  provider: "claude" | "google",
+  mode: string | null | undefined,
+): string | null {
+  const normalized =
+    provider === "claude"
+      ? claudeModeFromStatus(mode)
+      : googleModeFromStatus(mode);
+  if (!normalized) return null;
+  const options = provider === "claude" ? CLAUDE_OPTIONS : GOOGLE_OPTIONS;
+  return options.find((option) => option.value === normalized)?.label ?? null;
+}

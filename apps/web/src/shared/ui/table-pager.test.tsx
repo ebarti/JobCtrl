@@ -1,6 +1,5 @@
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import { TablePager } from "./table-pager.js";
@@ -65,7 +64,7 @@ describe("TablePager", () => {
     expect(onPageChange).toHaveBeenLastCalledWith(3);
   });
 
-  it("keeps Page size as a native named select and reports numeric option values", async () => {
+  it("uses the shared Select and reports numeric page-size values", async () => {
     const { onPageSizeChange } = renderPager({
       pageSize: 50,
       pageSizeOptions: [25, 50, 100],
@@ -73,15 +72,17 @@ describe("TablePager", () => {
     const user = userEvent.setup();
     const pageSize = screen.getByRole("combobox", { name: "Page size" });
 
-    expect(pageSize.tagName).toBe("SELECT");
-    await user.selectOptions(pageSize, "100");
+    expect(pageSize).toHaveAttribute("data-slot", "select-trigger");
+    await user.click(pageSize);
+    await user.click(await screen.findByRole("option", { name: "100/page" }));
     expect(onPageSizeChange).toHaveBeenLastCalledWith(100);
   });
 
   it("keeps pager focus indicators tied to the standard ring token", () => {
-    const css = readFileSync("src/styles/globals.css", "utf8");
+    renderPager();
+    const pageSize = screen.getByRole("combobox", { name: "Page size" });
 
-    expect(css).toMatch(/\.pager \.tab:focus-visible\s*\{[^}]*--ring/s);
-    expect(css).toMatch(/\.pager select:focus-visible\s*\{[^}]*--ring/s);
+    expect(pageSize).toHaveClass("focus-visible:ring-3");
+    expect(pageSize).toHaveClass("focus-visible:ring-ring/30");
   });
 });

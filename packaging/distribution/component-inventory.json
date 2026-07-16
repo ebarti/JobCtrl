@@ -78,16 +78,16 @@
       "notes": "Bundled web font. The OFL license text and font attribution must be present in the release."
     },
     {
-      "id": "font-plus-jakarta-sans",
+      "id": "font-geist",
       "classification": "core-runtime",
-      "owner": "Tokotype and Fontsource contributors",
-      "versionSource": "apps/web/package.json#dependencies.@fontsource-variable/plus-jakarta-sans",
-      "source": "https://github.com/fontsource/font-files/tree/main/fonts/variable/plus-jakarta-sans",
+      "owner": "The Geist Project Authors and Fontsource contributors",
+      "versionSource": "pnpm-lock.yaml#@fontsource-variable/geist",
+      "source": "https://github.com/fontsource/font-files/tree/main/fonts/variable/geist",
       "license": "OFL-1.1",
       "redistribution": "bundle",
       "requiredInCore": false,
       "embeddedIn": "jobctrl-web",
-      "notes": "Bundled web font. The OFL license text and font attribution must be present in the release."
+      "notes": "Bundled web font. The OFL license text and Geist/Fontsource attribution must be present in the release."
     },
     {
       "id": "node-runtime",

@@ -1,6 +1,7 @@
 import type { ContactCreateRequest } from "@jobctrl/contracts";
 import { useState } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
 import {
   Dialog,
   DialogContent,
@@ -22,7 +23,7 @@ export interface ContactCreateButtonProps {
 export function ContactCreateButton({
   jobId,
   employer,
-  label = "add contact",
+  label = "New contact",
   className,
 }: ContactCreateButtonProps) {
   const [open, setOpen] = useState(false);
@@ -45,10 +46,10 @@ export function ContactCreateButton({
         }
       }}
     >
-      <DialogTrigger asChild>
-        <button type="button" className={className ?? "tab on"}>
-          {label}
-        </button>
+      <DialogTrigger
+        render={<Button size="sm" {...(className ? { className } : {})} />}
+      >
+        {label}
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>

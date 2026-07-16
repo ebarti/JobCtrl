@@ -1,10 +1,16 @@
-import { DEFAULT_PIPELINE_LLM_MODEL, type PipelineStageRunResponse } from "@jobctrl/contracts";
+import {
+  DEFAULT_PIPELINE_LLM_MODEL,
+  type PipelineStageRunResponse,
+} from "@jobctrl/contracts";
 import { userEvent } from "@testing-library/user-event";
 import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "../../../test/render.js";
-import { sampleDashboardSummary, sampleHealthResponse } from "../../../test/fixtures/projections.js";
+import {
+  sampleDashboardSummary,
+  sampleHealthResponse,
+} from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { useStageTriggerStore } from "../stores/stage-trigger-store.js";
 import { StageTriggerPanel } from "./StageTriggerPanel.js";
@@ -19,7 +25,9 @@ describe("StageTriggerPanel", () => {
     renderWithProviders(<StageTriggerPanel />);
 
     expect(screen.getByLabelText("Dry run")).toBeChecked();
-    expect(await screen.findByRole("button", { name: "Run Discover" })).toBeEnabled();
+    expect(
+      await screen.findByRole("button", { name: "Run Discover" }),
+    ).toBeEnabled();
   });
 
   it("blocks stage runs when the JobCtrl automation worker heartbeat is missing", async () => {
@@ -33,7 +41,8 @@ describe("StageTriggerPanel", () => {
             worker: {
               ...sampleHealthResponse.worker,
               status: "missing" as const,
-              message: "No JobCtrl automation worker heartbeat has been written to the API database.",
+              message:
+                "No JobCtrl automation worker heartbeat has been written to the API database.",
               heartbeat: null,
             },
           })),
@@ -42,11 +51,15 @@ describe("StageTriggerPanel", () => {
       }),
     });
 
-    expect(await screen.findByRole("button", { name: "Worker unavailable" })).toBeDisabled();
+    expect(
+      await screen.findByRole("button", { name: "Worker unavailable" }),
+    ).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "No JobCtrl automation worker heartbeat has been written to the API database.",
     );
-    await user.click(screen.getByRole("button", { name: "Worker unavailable" }));
+    await user.click(
+      screen.getByRole("button", { name: "Worker unavailable" }),
+    );
     expect(runPipelineStages).not.toHaveBeenCalled();
   });
 
@@ -74,12 +87,18 @@ describe("StageTriggerPanel", () => {
       }),
     });
 
-    expect(await screen.findByRole("button", { name: "Run Discover" })).toBeEnabled();
+    expect(
+      await screen.findByRole("button", { name: "Run Discover" }),
+    ).toBeEnabled();
 
-    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Run Discover" }),
+    );
 
     await waitFor(() => expect(health).toHaveBeenCalledTimes(2));
-    expect(await screen.findByRole("button", { name: "Worker unavailable" })).toBeDisabled();
+    expect(
+      await screen.findByRole("button", { name: "Worker unavailable" }),
+    ).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "JobCtrl automation worker runtime does not match the API runtime",
     );
@@ -90,16 +109,26 @@ describe("StageTriggerPanel", () => {
     renderWithProviders(<StageTriggerPanel />);
 
     expect(screen.getAllByRole("tabpanel", { hidden: true })).toHaveLength(2);
-    expect(screen.queryByRole("tab", { name: "Enrich" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Score" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Tailor" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Cover" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Enrich" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Score" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Tailor" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Cover" }),
+    ).not.toBeInTheDocument();
 
     for (const tab of screen.getAllByRole("tab")) {
       const panelId = tab.getAttribute("aria-controls");
 
       if (panelId === null) {
-        throw new Error(`Expected ${tab.textContent ?? "stage"} tab to control a panel`);
+        throw new Error(
+          `Expected ${tab.textContent ?? "stage"} tab to control a panel`,
+        );
       }
 
       expect(document.getElementById(panelId)).toBeInTheDocument();
@@ -110,7 +139,7 @@ describe("StageTriggerPanel", () => {
     const user = userEvent.setup();
     renderWithProviders(<StageTriggerPanel />);
 
-    expect(screen.getByLabelText("Workers")).toBeInTheDocument();
+    expect(screen.getByLabelText("Internal concurrency")).toBeInTheDocument();
     expect(screen.getByLabelText("Limit")).toBeInTheDocument();
     expect(screen.getByLabelText("Dry run")).toBeInTheDocument();
     expect(screen.queryByLabelText("Minimum score")).not.toBeInTheDocument();
@@ -124,7 +153,7 @@ describe("StageTriggerPanel", () => {
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     expect(screen.getByLabelText("Limit")).toBeInTheDocument();
-    expect(screen.getByLabelText("Workers")).toBeInTheDocument();
+    expect(screen.getByLabelText("Internal concurrency")).toBeInTheDocument();
     expect(screen.getByLabelText("Minimum score")).toBeInTheDocument();
     expect(screen.getByLabelText("Apply model")).toBeInTheDocument();
     expect(screen.getByLabelText("Apply model")).toHaveRole("combobox");
@@ -146,40 +175,48 @@ describe("StageTriggerPanel", () => {
       />,
     );
 
-    expect(screen.getByText("Discover supplemental controls")).toBeInTheDocument();
-    expect(screen.queryByText("Apply supplemental controls")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Discover supplemental controls"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Apply supplemental controls"),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
 
     expect(screen.getByText("Apply supplemental controls")).toBeInTheDocument();
-    expect(screen.queryByText("Discover supplemental controls")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Discover supplemental controls"),
+    ).not.toBeInTheDocument();
   });
 
   it("submits a bounded Discover run from the stage tab", async () => {
     const user = userEvent.setup();
-    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
-      ok: true as const,
-      action: "run_stage" as const,
-      status: "succeeded",
-      jobKey: "pipeline",
-      count: 1,
-      command: {
-        stages: ["discover"],
-        limit: 1000,
-        workers: 1,
-        minScore: 7,
-        validationMode: "normal" as const,
-        dryRun: false,
-        rescore: false,
-        retailor: false,
-        headless: false,
-        model: "default",
-        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
-        tailorModels: [],
-        continuous: false,
-      },
-      actions: [],
-    }));
+    const runPipelineStages = vi.fn(
+      async (_request: unknown): Promise<PipelineStageRunResponse> => ({
+        ok: true as const,
+        action: "run_stage" as const,
+        status: "succeeded",
+        jobKey: "pipeline",
+        count: 1,
+        command: {
+          stages: ["discover"],
+          limit: 1000,
+          workers: 1,
+          minScore: 7,
+          validationMode: "normal" as const,
+          dryRun: false,
+          rescore: false,
+          retailor: false,
+          headless: false,
+          model: "default",
+          llmModel: DEFAULT_PIPELINE_LLM_MODEL,
+          tailorModels: [],
+          continuous: false,
+        },
+        actions: [],
+      }),
+    );
     renderWithProviders(<StageTriggerPanel />, {
       ports: buildTestPorts({ api: { runPipelineStages } }),
     });
@@ -188,9 +225,12 @@ describe("StageTriggerPanel", () => {
     expect(limitInput).toHaveAttribute("max", "1000");
     await user.clear(limitInput);
     await user.type(limitInput, "1000");
-    await user.selectOptions(await screen.findByLabelText("Source"), "jobspy:linkedin");
+    await user.click(await screen.findByRole("combobox", { name: "Source" }));
+    await user.click(await screen.findByRole("option", { name: /LinkedIn/ }));
     await user.click(screen.getByLabelText("Dry run"));
-    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Run Discover" }),
+    );
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
     const request = runPipelineStages.mock.calls[0]?.[0];
@@ -225,110 +265,120 @@ describe("StageTriggerPanel", () => {
       jobKey: "pipeline",
       command: { action: "cancel" as const, jobKey: "pipeline", runId },
     }));
-    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
-      ok: true as const,
-      action: "run_stage" as const,
-      status: "queued",
-      jobKey: "pipeline",
-      count: 1,
-      command: {
-        stages: ["discover"],
-        limit: 25,
-        workers: 1,
-        minScore: 7,
-        validationMode: "normal" as const,
-        dryRun: true,
-        rescore: false,
-        retailor: false,
-        headless: false,
-        model: "default",
-        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
-        tailorModels: [],
-        continuous: false,
-      },
-      actions: [
-        {
-          ok: true as const,
-          runId: "discover-run-1",
-          workflowId: "discover-run-1",
-          actionId: "discover-run-1",
-          action: "run_stage" as const,
-          status: "queued",
-          jobKey: "pipeline",
-          command: {
-            action: "run_stage" as const,
-            jobKey: "pipeline",
-            stage: "discover",
-            limit: 25,
-            workers: 1,
-            minScore: 7,
-            validationMode: "normal",
-            dryRun: true,
-            rescore: false,
-            retailor: false,
-            headless: false,
-            continuous: false,
-          },
+    const runPipelineStages = vi.fn(
+      async (_request: unknown): Promise<PipelineStageRunResponse> => ({
+        ok: true as const,
+        action: "run_stage" as const,
+        status: "queued",
+        jobKey: "pipeline",
+        count: 1,
+        command: {
+          stages: ["discover"],
+          limit: 25,
+          workers: 1,
+          minScore: 7,
+          validationMode: "normal" as const,
+          dryRun: true,
+          rescore: false,
+          retailor: false,
+          headless: false,
+          model: "default",
+          llmModel: DEFAULT_PIPELINE_LLM_MODEL,
+          tailorModels: [],
+          continuous: false,
         },
-      ],
-    }));
+        actions: [
+          {
+            ok: true as const,
+            runId: "discover-run-1",
+            workflowId: "discover-run-1",
+            actionId: "discover-run-1",
+            action: "run_stage" as const,
+            status: "queued",
+            jobKey: "pipeline",
+            command: {
+              action: "run_stage" as const,
+              jobKey: "pipeline",
+              stage: "discover",
+              limit: 25,
+              workers: 1,
+              minScore: 7,
+              validationMode: "normal",
+              dryRun: true,
+              rescore: false,
+              retailor: false,
+              headless: false,
+              continuous: false,
+            },
+          },
+        ],
+      }),
+    );
     renderWithProviders(<StageTriggerPanel />, {
       ports: buildTestPorts({ api: { cancelWorkflowRun, runPipelineStages } }),
     });
 
-    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
-    await user.click(await screen.findByRole("button", { name: "Stop Discover run" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Run Discover" }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Stop Discover run" }),
+    );
 
-    await waitFor(() => expect(cancelWorkflowRun).toHaveBeenCalledWith("discover-run-1"));
+    await waitFor(() =>
+      expect(cancelWorkflowRun).toHaveBeenCalledWith("discover-run-1"),
+    );
   });
 
   it("submits the active stage and its persisted options through the pipeline mutation", async () => {
     const user = userEvent.setup();
-    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
-      ok: true as const,
-      action: "run_stage" as const,
-      status: "queued",
-      jobKey: "pipeline",
-      count: 1,
-      command: {
-        stages: ["apply"],
-        limit: 12,
-        workers: 3,
-        minScore: 8,
-        validationMode: "normal" as const,
-        dryRun: true,
-        rescore: false,
-        retailor: false,
-        headless: true,
-        model: "sonnet",
-        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
-        tailorModels: [],
-        continuous: true,
-      },
-      actions: [
-        {
-          ok: true as const,
-          runId: "apply-run-123",
-          actionId: "apply-run-123",
-          action: "apply",
-          status: "queued",
-          jobKey: "pipeline",
-          command: {
-            action: "apply",
-            jobKey: "pipeline",
-            stage: "apply",
-            limit: 12,
-            workers: 3,
-            minScore: 8,
-            dryRun: true,
-            headless: true,
-            model: "sonnet",
-            llmModel: DEFAULT_PIPELINE_LLM_MODEL,
-            continuous: true,
-          },
+    const runPipelineStages = vi.fn(
+      async (_request: unknown): Promise<PipelineStageRunResponse> => ({
+        ok: true as const,
+        action: "run_stage" as const,
+        status: "queued",
+        jobKey: "pipeline",
+        count: 1,
+        command: {
+          stages: ["apply"],
+          limit: 12,
+          workers: 3,
+          minScore: 8,
+          validationMode: "normal" as const,
+          dryRun: true,
+          rescore: false,
+          retailor: false,
+          headless: true,
+          model: "sonnet",
+          llmModel: DEFAULT_PIPELINE_LLM_MODEL,
+          tailorModels: [],
+          continuous: true,
         },
-      ],
-    }));
+        actions: [
+          {
+            ok: true as const,
+            runId: "apply-run-123",
+            actionId: "apply-run-123",
+            action: "apply",
+            status: "queued",
+            jobKey: "pipeline",
+            command: {
+              action: "apply",
+              jobKey: "pipeline",
+              stage: "apply",
+              limit: 12,
+              workers: 3,
+              minScore: 8,
+              dryRun: true,
+              headless: true,
+              model: "sonnet",
+              llmModel: DEFAULT_PIPELINE_LLM_MODEL,
+              continuous: true,
+            },
+          },
+        ],
+      }),
+    );
     renderWithProviders(<StageTriggerPanel />, {
       ports: buildTestPorts({ api: { runPipelineStages } }),
     });
@@ -336,13 +386,14 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     await user.clear(screen.getByLabelText("Limit"));
     await user.type(screen.getByLabelText("Limit"), "12");
-    await user.clear(screen.getByLabelText("Workers"));
-    await user.type(screen.getByLabelText("Workers"), "3");
+    await user.clear(screen.getByLabelText("Internal concurrency"));
+    await user.type(screen.getByLabelText("Internal concurrency"), "3");
     await user.clear(screen.getByLabelText("Minimum score"));
     await user.type(screen.getByLabelText("Minimum score"), "8");
     await user.click(screen.getByLabelText("Headless browser"));
     await user.click(screen.getByLabelText("Continuous"));
-    await user.selectOptions(screen.getByLabelText("Apply model"), "sonnet");
+    await user.click(screen.getByRole("combobox", { name: "Apply model" }));
+    await user.click(await screen.findByRole("option", { name: "Sonnet" }));
     await user.click(screen.getByRole("button", { name: "Run Apply" }));
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
@@ -364,28 +415,40 @@ describe("StageTriggerPanel", () => {
       continuous: true,
     });
     expect(request).not.toHaveProperty("tailorJudgeMinScore");
-    expect(await screen.findByText("Apply queued successfully (run apply-run-123).")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Apply queued successfully (run apply-run-123)."),
+    ).toBeInTheDocument();
   });
 
   it("does not expose Tailor as a product pipeline stage", () => {
     renderWithProviders(<StageTriggerPanel />);
 
-    expect(screen.queryByRole("tab", { name: "Tailor" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Run Tailor" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Tailor" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Run Tailor" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Tailor models")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Judge model")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Minimum judge score")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Minimum judge score"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
   });
 
   it("shows a live starting status while the worker request is pending", async () => {
     const user = userEvent.setup();
-    const runPipelineStages = vi.fn(() => new Promise<PipelineStageRunResponse>(() => undefined));
+    const runPipelineStages = vi.fn(
+      () => new Promise<PipelineStageRunResponse>(() => undefined),
+    );
     renderWithProviders(<StageTriggerPanel />, {
       ports: buildTestPorts({ api: { runPipelineStages } }),
     });
 
-    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Run Discover" }),
+    );
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Starting Discover... waiting for local worker response.",
@@ -394,7 +457,9 @@ describe("StageTriggerPanel", () => {
 
   it("replaces the local starting label with the latest backend stage event", async () => {
     const user = userEvent.setup();
-    const runPipelineStages = vi.fn(() => new Promise<PipelineStageRunResponse>(() => undefined));
+    const runPipelineStages = vi.fn(
+      () => new Promise<PipelineStageRunResponse>(() => undefined),
+    );
     renderWithProviders(<StageTriggerPanel />, {
       ports: buildTestPorts({
         api: {
@@ -419,7 +484,9 @@ describe("StageTriggerPanel", () => {
       }),
     });
 
-    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Run Discover" }),
+    );
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Discover in progress: Discovery source workday started (#538).",
@@ -481,7 +548,9 @@ describe("StageTriggerPanel", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Discover 60% complete (3/5): Workday scraper complete.",
     );
-    expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "60");
+    expect(
+      screen.getByRole("progressbar", { name: "Discover progress" }),
+    ).toHaveAttribute("value", "60");
   });
 
   it("shows source-level discovery progress instead of opaque stage counts", async () => {
@@ -524,7 +593,9 @@ describe("StageTriggerPanel", () => {
       "Discover 8% complete: JobSpy 35/72 searches done: Head of Platform in Spain (remote); 13 new, 46 dupes, 412 filtered, 0 errors, 1000 found.",
     );
     expect(status).not.toHaveTextContent("(0/6)");
-    expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "8");
+    expect(
+      screen.getByRole("progressbar", { name: "Discover progress" }),
+    ).toHaveAttribute("value", "8");
   });
 
   it("describes partial preparation progress as automatically retried and actionable", async () => {
@@ -553,7 +624,9 @@ describe("StageTriggerPanel", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Discover 100% complete with warnings (1/1): Discovery finished with warnings. Recoverable scoring and tailoring work is retried automatically; items that exhaust retry attempts need attention from the job details.",
     );
-    expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "100");
+    expect(
+      screen.getByRole("progressbar", { name: "Discover progress" }),
+    ).toHaveAttribute("value", "100");
   });
 
   it("shows a stop control for backend running discovery progress", async () => {
@@ -592,9 +665,13 @@ describe("StageTriggerPanel", () => {
       }),
     });
 
-    await user.click(await screen.findByRole("button", { name: "Stop Discover run" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Stop Discover run" }),
+    );
 
-    await waitFor(() => expect(cancelWorkflowRun).toHaveBeenCalledWith("workflow-run-1"));
+    await waitFor(() =>
+      expect(cancelWorkflowRun).toHaveBeenCalledWith("workflow-run-1"),
+    );
   });
 
   it("describes failed backend discovery progress as not running and runnable again", async () => {
@@ -611,7 +688,8 @@ describe("StageTriggerPanel", () => {
                 completed: 3,
                 total: 5,
                 currentStep: "Smart extract",
-                message: "Discovery source smartextract was left running by a prior worker.",
+                message:
+                  "Discovery source smartextract was left running by a prior worker.",
                 updatedAt: new Date().toISOString(),
               },
             ],
@@ -623,72 +701,83 @@ describe("StageTriggerPanel", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Discover not running. Last progress 60% (3/5): Smart extract is ready to run again.",
     );
-    expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "60");
+    expect(
+      screen.getByRole("progressbar", { name: "Discover progress" }),
+    ).toHaveAttribute("value", "60");
   });
 
   it("surfaces failed worker action responses", async () => {
     const user = userEvent.setup();
-    const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
-      ok: true as const,
-      action: "run_stage" as const,
-      status: "failed",
-      jobKey: "pipeline",
-      count: 1,
-      command: {
-        stages: ["discover"],
-        limit: 12,
-        workers: 1,
-        minScore: 7,
-        validationMode: "normal" as const,
-        dryRun: true,
-        rescore: false,
-        retailor: false,
-        headless: false,
-        model: "default",
-        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
-        tailorModels: [],
-        continuous: false,
-      },
-      actions: [
-        {
-          ok: true as const,
-          runId: "action-score",
-          actionId: "action-score",
-          action: "run_stage",
-          status: "failed",
-          jobKey: "pipeline",
-          command: {
-            action: "run_stage",
-            jobKey: "pipeline",
-            stage: "discover",
-            limit: 12,
-            workers: 1,
-            minScore: 7,
-            validationMode: "normal",
-            dryRun: true,
-            rescore: false,
-            retailor: false,
-          },
-          message: "Worker unavailable.",
+    const runPipelineStages = vi.fn(
+      async (): Promise<PipelineStageRunResponse> => ({
+        ok: true as const,
+        action: "run_stage" as const,
+        status: "failed",
+        jobKey: "pipeline",
+        count: 1,
+        command: {
+          stages: ["discover"],
+          limit: 12,
+          workers: 1,
+          minScore: 7,
+          validationMode: "normal" as const,
+          dryRun: true,
+          rescore: false,
+          retailor: false,
+          headless: false,
+          model: "default",
+          llmModel: DEFAULT_PIPELINE_LLM_MODEL,
+          tailorModels: [],
+          continuous: false,
         },
-      ],
-    }));
+        actions: [
+          {
+            ok: true as const,
+            runId: "action-score",
+            actionId: "action-score",
+            action: "run_stage",
+            status: "failed",
+            jobKey: "pipeline",
+            command: {
+              action: "run_stage",
+              jobKey: "pipeline",
+              stage: "discover",
+              limit: 12,
+              workers: 1,
+              minScore: 7,
+              validationMode: "normal",
+              dryRun: true,
+              rescore: false,
+              retailor: false,
+            },
+            message: "Worker unavailable.",
+          },
+        ],
+      }),
+    );
     renderWithProviders(<StageTriggerPanel />, {
       ports: buildTestPorts({ api: { runPipelineStages } }),
     });
 
-    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Run Discover" }),
+    );
 
-    expect(await screen.findByText("Discover failed to start: Worker unavailable.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Discover failed to start: Worker unavailable."),
+    ).toBeInTheDocument();
   });
 
   it("keeps separate per-stage tab config and restores it after remount", async () => {
     const user = userEvent.setup();
     const { unmount } = renderWithProviders(<StageTriggerPanel />);
 
-    expect(screen.getByRole("tab", { name: "Discover" })).toHaveAttribute("aria-selected", "true");
-    await user.clear(screen.getByLabelText("Workers"));
-    await user.type(screen.getByLabelText("Workers"), "5");
+    expect(screen.getByRole("tab", { name: "Discover" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await user.clear(screen.getByLabelText("Internal concurrency"));
+    await user.type(screen.getByLabelText("Internal concurrency"), "5");
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     await user.clear(screen.getByLabelText("Limit"));
@@ -696,14 +785,17 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByLabelText("Headless browser"));
 
     await user.click(screen.getByRole("tab", { name: "Discover" }));
-    expect(screen.getByLabelText("Workers")).toHaveValue(5);
+    expect(screen.getByLabelText("Internal concurrency")).toHaveValue(5);
     expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
 
     unmount();
     renderWithProviders(<StageTriggerPanel />);
 
-    expect(screen.getByRole("tab", { name: "Discover" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByLabelText("Workers")).toHaveValue(5);
+    expect(screen.getByRole("tab", { name: "Discover" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByLabelText("Internal concurrency")).toHaveValue(5);
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     expect(screen.getByLabelText("Limit")).toHaveValue(13);

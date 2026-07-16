@@ -63,7 +63,7 @@ const ROUTE_SURFACES: readonly RouteSurface[] = [
   {
     path: "/settings",
     activeLink: "Settings",
-    proof: (page) => page.getByRole("heading", { name: "Config" }),
+    proof: (page) => page.getByRole("heading", { name: "Settings", level: 1 }),
     surface: (page) => page.locator(".card").first(),
   },
   {
@@ -241,6 +241,15 @@ async function expectPaintedSurface(
   locator: Locator,
   label: string,
 ): Promise<void> {
+  await expectRenderedSurface(locator, label);
+  const styles = await readSurfaceStyles(locator);
+  expectPainted(styles.backgroundColor, `${label} background`);
+}
+
+async function expectRenderedSurface(
+  locator: Locator,
+  label: string,
+): Promise<void> {
   await expect(locator, `${label} should be visible`).toBeVisible({
     timeout: 30_000,
   });
@@ -249,8 +258,43 @@ async function expectPaintedSurface(
   expect(styles.visibility, `${label} should be visible`).not.toBe("hidden");
   expect(styles.width, `${label} width`).toBeGreaterThan(0);
   expect(styles.height, `${label} height`).toBeGreaterThan(0);
-  expectPainted(styles.backgroundColor, `${label} background`);
   expectPainted(styles.color, `${label} foreground`);
+}
+
+async function expectActiveNavigation(
+  locator: Locator,
+  label: string,
+): Promise<void> {
+  await expect(locator, `${label} should be visible`).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(locator, `${label} should identify the current route`).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  const styles = await locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const marker = getComputedStyle(element, "::before");
+    const rect = element.getBoundingClientRect();
+    return {
+      color: style.color,
+      display: style.display,
+      height: rect.height,
+      markerBackground: marker.backgroundColor,
+      markerDisplay: marker.display,
+      markerWidth: Number.parseFloat(marker.width),
+      visibility: style.visibility,
+      width: rect.width,
+    };
+  });
+  expect(styles.display, `${label} should be rendered`).not.toBe("none");
+  expect(styles.visibility, `${label} should be visible`).not.toBe("hidden");
+  expect(styles.width, `${label} width`).toBeGreaterThan(0);
+  expect(styles.height, `${label} height`).toBeGreaterThan(0);
+  expectPainted(styles.color, `${label} foreground`);
+  expect(styles.markerDisplay, `${label} selection rule`).not.toBe("none");
+  expect(styles.markerWidth, `${label} selection rule width`).toBeGreaterThanOrEqual(2);
+  expectPainted(styles.markerBackground, `${label} selection rule`);
 }
 
 async function expectBorderedSurface(
@@ -396,19 +440,16 @@ async function expectShellForRoute(
   });
   await expectPaintedSurface(page.locator(".topbar"), `${route.path} topbar`);
   await expectBorderedSurface(page.locator(".topbar"), `${route.path} topbar`);
-  await expectPaintedSurface(
+  await expectActiveNavigation(
     page.getByRole("link", { name: route.activeLink }),
     `${route.path} active nav`,
   );
-  await expectPaintedSurface(
-    route.surface(page),
-    `${route.path} route surface`,
-  );
+  await expectRenderedSurface(route.surface(page), `${route.path} route surface`);
   await expect(
     page.getByRole("textbox", { name: "Global search" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("combobox", { name: "Row density" }),
+    page.getByRole("group", { name: "Row density" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: /Switch to (dark|light) theme/i }),
@@ -417,9 +458,9 @@ async function expectShellForRoute(
 }
 
 async function setDensity(page: Page, density: Density): Promise<void> {
-  await page
-    .getByRole("combobox", { name: "Row density" })
-    .selectOption(density);
+  const option = page.getByRole("button", { name: density, exact: true });
+  await option.click();
+  await expect(option).toHaveAttribute("aria-pressed", "true");
   const shell = page.locator(".app-shell");
   await expect(shell).toHaveAttribute("data-density", density);
   await expect
@@ -487,7 +528,7 @@ async function expectDashboardFunnelContained(page: Page): Promise<void> {
   );
 }
 
-test("representative routes stay painted in light and dark themes", async ({
+test("representative routes stay legible in light and dark themes", async ({
   page,
 }) => {
   test.setTimeout(90_000);
@@ -548,8 +589,8 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
   );
   await expectKeyboardFocusIndicator(
     page,
-    page.getByRole("combobox", { name: "Row density" }),
-    "row density select",
+    page.getByRole("button", { name: "comfy", exact: true }),
+    "selected row density control",
   );
 
   const titleFilter = page.getByRole("button", {
@@ -577,13 +618,13 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
   await expect(deleteSelected).toBeVisible();
 
   await page.goto("/settings");
-  await expect(page.getByRole("heading", { name: "Config" })).toBeVisible({
+  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible({
     timeout: 30_000,
   });
   await expectKeyboardFocusIndicator(
     page,
-    page.getByLabel("Apply concurrency"),
-    "settings apply concurrency input",
+    page.getByLabel("Concurrent applications"),
+    "settings concurrent applications input",
   );
 
   await page.goto("/discovery");
@@ -623,10 +664,11 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
     page,
     page.getByRole("tab", { name: "Discover", selected: true }),
     "pipeline discover tab",
+    100,
   );
 });
 
-test("route overlays open with seeded data and dismiss from the keyboard", async ({
+test("detail workspaces open with seeded data and preserve route navigation", async ({
   page,
 }) => {
   await page.goto("/jobs");
@@ -636,27 +678,29 @@ test("route overlays open with seeded data and dismiss from the keyboard", async
   await page
     .getByRole("button", { name: /Open job Director of Platform Engineering/i })
     .click();
-  const jobDialog = page.getByRole("dialog", { name: "Job details" });
-  await expect(jobDialog).toBeVisible({ timeout: 30_000 });
+  const jobWorkspace = page.getByRole("article", { name: "Job details" });
+  await expect(jobWorkspace).toBeVisible({ timeout: 30_000 });
   await expectKeyboardFocusIndicator(
     page,
-    page.getByRole("button", { name: /Close job details/i }),
-    "job detail close",
+    page.getByRole("button", { name: "Back to jobs" }),
+    "job detail back navigation",
   );
-  await page.keyboard.press("Escape");
-  await expect(jobDialog).toHaveCount(0);
+  await page.getByRole("button", { name: "Back to jobs" }).click();
+  await expect(page).toHaveURL(/\/jobs(?:\?|$)/);
+  await expect(jobWorkspace).toHaveCount(0);
 
   await page.goto("/artifacts/2");
-  const artifactDialog = page.getByRole("dialog", { name: "Artifact details" });
-  await expect(artifactDialog).toBeVisible({ timeout: 30_000 });
+  const artifactWorkspace = page.getByRole("article", { name: "Artifact details" });
+  await expect(artifactWorkspace).toBeVisible({ timeout: 30_000 });
   await expectArtifactPdfPreviewRendered(page);
   await expectKeyboardFocusIndicator(
     page,
-    page.getByRole("button", { name: /Close artifact details/i }),
-    "artifact detail close",
+    page.getByRole("button", { name: "Back to artifacts" }),
+    "artifact detail back navigation",
   );
-  await page.keyboard.press("Escape");
-  await expect(artifactDialog).toHaveCount(0);
+  await page.getByRole("button", { name: "Back to artifacts" }).click();
+  await expect(page).toHaveURL(/\/artifacts(?:\?|$)/);
+  await expect(artifactWorkspace).toHaveCount(0);
 
   await page.goto("/runs");
   await expect(page.locator("table.runs-data-grid-table")).toBeVisible({
@@ -666,15 +710,16 @@ test("route overlays open with seeded data and dismiss from the keyboard", async
     .getByRole("button", { name: /Open run/i })
     .first()
     .click();
-  const runDialog = page.getByRole("dialog", { name: "Workflow run details" });
-  await expect(runDialog).toBeVisible({ timeout: 30_000 });
+  const runWorkspace = page.getByRole("article", { name: "Workflow run details" });
+  await expect(runWorkspace).toBeVisible({ timeout: 30_000 });
   await expectKeyboardFocusIndicator(
     page,
-    page.getByRole("button", { name: /Close workflow run details/i }),
-    "workflow run detail close",
+    page.getByRole("link", { name: "Back to workflow runs" }),
+    "workflow run back navigation",
   );
-  await page.keyboard.press("Escape");
-  await expect(runDialog).toHaveCount(0);
+  await page.getByRole("link", { name: "Back to workflow runs" }).click();
+  await expect(page).toHaveURL(/\/runs(?:\?|$)/);
+  await expect(runWorkspace).toHaveCount(0);
 
   await page.goto("/debug");
   await expect(page.locator("table.activity-data-grid-table")).toBeVisible({
@@ -687,21 +732,24 @@ test("route overlays open with seeded data and dismiss from the keyboard", async
   );
 });
 
-test("Apply Review failed-tailoring facts remain readable in the selected header", async ({
+test("Apply Review decision card keeps facts readable and decisions on one row", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1666, height: 900 });
   await installFailedTailoringApplyReviewRoutes(page);
   await page.goto("/apply-review");
 
-  const selectedHeader = page.locator(".apply-review-selected-head");
-  await expect(selectedHeader).toBeVisible({ timeout: 30_000 });
-  await expect(selectedHeader).toContainText("Tailored resume missing");
-  await expect(selectedHeader).toContainText("tailor failed");
+  const decisionCard = page.locator(".apply-review-decision-card");
+  await expect(decisionCard).toBeVisible({ timeout: 30_000 });
+  await expect(decisionCard).toContainText("Tailored resume missing");
+  await expect(decisionCard).toContainText("tailor failed");
 
-  const layout = await selectedHeader.evaluate((element) => {
-    const context = element.querySelector(".apply-review-selected-context");
+  const layout = await decisionCard.evaluate((element) => {
+    const context = element.querySelector(".apply-review-selected-facts");
     const actions = element.querySelector(".apply-review-selected-actions");
+    const decisionButtons = [...element.querySelectorAll(".apply-review-decision-buttons button")].map((node) =>
+      node.getBoundingClientRect(),
+    );
     const factValues = [...element.querySelectorAll(".apply-review-audit-facts dd")].map((node) =>
       node.getBoundingClientRect(),
     );
@@ -710,8 +758,10 @@ test("Apply Review failed-tailoring facts remain readable in the selected header
     );
     return {
       actionWidth: actions?.getBoundingClientRect().width ?? 0,
+      buttonTopSpread: Math.max(...decisionButtons.map((rect) => rect.top)) -
+        Math.min(...decisionButtons.map((rect) => rect.top)),
       contextWidth: context?.getBoundingClientRect().width ?? 0,
-      headerHeight: element.getBoundingClientRect().height,
+      cardHeight: element.getBoundingClientRect().height,
       maxTagHeight: Math.max(...tags.map((rect) => rect.height)),
       minFactValueWidth: Math.min(...factValues.map((rect) => rect.width)),
       minTagWidth: Math.min(...tags.map((rect) => rect.width)),
@@ -721,11 +771,12 @@ test("Apply Review failed-tailoring facts remain readable in the selected header
   });
 
   expect(layout.contextWidth, "audit context should have real horizontal space").toBeGreaterThan(600);
-  expect(layout.actionWidth, "approval metadata should stay capped").toBeLessThanOrEqual(540);
+  expect(layout.actionWidth, "approval controls should use the card width").toBeGreaterThan(600);
+  expect(layout.buttonTopSpread, "decision buttons should remain on one row").toBeLessThanOrEqual(1);
   expect(layout.minFactValueWidth, "audit fact values should not collapse").toBeGreaterThan(500);
   expect(layout.minTagWidth, "audit chips should not wrap letter-by-letter").toBeGreaterThan(250);
   expect(layout.maxTagHeight, "audit chips should remain compact").toBeLessThan(60);
-  expect(layout.headerHeight, "selected header should not stretch into a tall blank page").toBeLessThan(420);
+  expect(layout.cardHeight, "decision card should remain a compact summary").toBeLessThan(720);
   expect(layout.scrollWidth, "route should not create horizontal overflow").toBeLessThanOrEqual(
     layout.viewportWidth + 1,
   );
@@ -751,7 +802,7 @@ test("requirement-fit drawer and Apply Review cards have visual regression cover
     else document.addEventListener("DOMContentLoaded", attach, { once: true });
   });
   await page.goto(`/jobs/${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}?${JOB_FILTER_PARAMS}`);
-  const drawer = page.getByRole("dialog", { name: "Job details" });
+  const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 30_000 });
 
   const drawerRequirement = drawer

@@ -7,8 +7,8 @@ export interface SectionProps {
 
 export function Section({ title, children }: SectionProps) {
   return (
-    <section className="section">
-      <h3>{title}</h3>
+    <section className="section" data-slot="section">
+      <h3 data-slot="section-title">{title}</h3>
       {children}
     </section>
   );

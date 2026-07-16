@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Coroutine
 
 from temporalio import activity
@@ -19,12 +19,21 @@ from temporalio.common import WorkflowIDConflictPolicy
 
 from jobctrl import database as db_module
 from jobctrl.database import get_connection, get_jobs_by_stage
+from jobctrl.domain.discovery.execution import (
+    DiscoveryExecutionCohortKind,
+    DiscoveryExecutionRef,
+    DiscoveryExecutionWorkPlanState,
+    validate_required_steps,
+)
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.materials.use_cases import SuppressTailoredArtifactsUseCase
 from jobctrl.domain.preparation import PreparationWorkItemKind, make_preparation_idempotency_key
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.materials import SqliteMaterialsRepository, SqliteTailoringPolicyRepository
+from jobctrl.infrastructure.discovery.sqlite_execution_repository import (
+    SqliteDiscoveryExecutionRepository,
+)
 from jobctrl.infrastructure.rpc.workflow_starter import (
     WorkflowStarter,
     default_workflow_starter,
@@ -96,30 +105,76 @@ def start_discovery_preparation_workflows(
     tenant_id: TenantId = LOCAL_TENANT,
     workflow_starter: WorkflowStarter | None = None,
     include_pending_tailor: bool = True,
+    discovery_execution: DiscoveryExecutionRef | None = None,
+    discovery_cohort_kind: DiscoveryExecutionCohortKind = "observed_this_run",
+    finalize_observed_work_plans: bool = False,
 ) -> dict[str, Any]:
     """Derive targets and start per-job preparation workflows in batches."""
-    targets = derive_preparation_targets(
-        DerivePreparationTargetsInput(
-            tenant_id=str(tenant_id),
-            min_score=min_score,
-            limit=limit,
-            include_pending_tailor=include_pending_tailor,
+    try:
+        targets = derive_preparation_targets(
+            DerivePreparationTargetsInput(
+                tenant_id=str(tenant_id),
+                min_score=min_score,
+                limit=limit,
+                include_pending_tailor=include_pending_tailor,
+            )
         )
-    )
-    specs = [
-        _workflow_spec_for_target(
-            target,
-            tenant_id=tenant_id,
-            min_score=min_score,
-            workers=workers,
-            validation_mode=validation_mode,
-            llm_model=llm_model,
-            tailor_models=tailor_models,
-            tailor_judge_model=tailor_judge_model,
-            tailor_judge_min_score=tailor_judge_min_score,
-        )
-        for target in targets
-    ]
+    except Exception:
+        if discovery_execution is not None:
+            _mark_pending_work_plans_failed(
+                discovery_execution,
+                reason="target_derivation_failed",
+            )
+        raise
+
+    try:
+        target_specs = [
+            (
+                target,
+                _workflow_spec_for_target(
+                    target,
+                    tenant_id=tenant_id,
+                    min_score=min_score,
+                    workers=workers,
+                    validation_mode=validation_mode,
+                    llm_model=llm_model,
+                    tailor_models=tailor_models,
+                    tailor_judge_model=tailor_judge_model,
+                    tailor_judge_min_score=tailor_judge_min_score,
+                    discovery_execution=discovery_execution,
+                    discovery_cohort_kind=discovery_cohort_kind,
+                ),
+            )
+            for target in targets
+        ]
+        specs = [spec for _target, spec in target_specs]
+        if discovery_execution is not None:
+            workflow_cohorts_to_start = _record_preparation_work_plans(
+                targets,
+                tenant_id=tenant_id,
+                discovery_execution=discovery_execution,
+                discovery_cohort_kind=discovery_cohort_kind,
+            )
+            specs = [
+                _with_discovery_cohort(
+                    spec,
+                    workflow_cohorts_to_start[spec.workflow_id],
+                )
+                for _target, spec in target_specs
+                if spec.workflow_id in workflow_cohorts_to_start
+            ]
+            if finalize_observed_work_plans:
+                _finalize_unplanned_observed_work_plans(
+                    discovery_execution,
+                    min_score=db_module.effective_tailoring_min_score(min_score),
+                )
+    except Exception:
+        if discovery_execution is not None:
+            _mark_pending_work_plans_failed(
+                discovery_execution,
+                reason="work_plan_persistence_failed",
+            )
+        raise
     starter = workflow_starter or default_workflow_starter
     started = 0
     for batch in _batches(specs, PREPARATION_CHILD_BATCH_SIZE):
@@ -147,6 +202,8 @@ def start_job_preparation_workflow(
     tailor_judge_min_score: float | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
     workflow_starter: WorkflowStarter | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
+    discovery_cohort_kind: DiscoveryExecutionCohortKind = "observed_this_run",
 ) -> bool:
     """Start ONE job's ``SCORE_JOB`` preparation workflow (R9 Phase 2 handoff).
 
@@ -158,22 +215,58 @@ def start_job_preparation_workflow(
     version, latest source event), so `USE_EXISTING` makes the per-job handoff
     and the reconciling fan-outs converge on exactly one execution per job (I1).
     """
-    conn = get_connection()
-    target_version = current_scoring_policy_version(conn, tenant_id)
-    spec = build_preparation_workflow_spec(
-        tenant_id=tenant_id,
-        job_url=job_url,
-        steps=["score", "tailor", "cover", "pdf"],
-        kind=PreparationWorkItemKind.SCORE_JOB,
-        target_version=target_version,
-        min_score=min_score,
-        workers=workers,
-        validation_mode=validation_mode,
-        llm_model=llm_model,
-        tailor_models=tailor_models,
-        tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score,
-    )
+    try:
+        conn = get_connection()
+        target_version = current_scoring_policy_version(conn, tenant_id)
+        spec = build_preparation_workflow_spec(
+            tenant_id=tenant_id,
+            job_url=job_url,
+            steps=["score", "tailor", "cover", "pdf"],
+            kind=PreparationWorkItemKind.SCORE_JOB,
+            target_version=target_version,
+            min_score=min_score,
+            workers=workers,
+            validation_mode=validation_mode,
+            llm_model=llm_model,
+            tailor_models=tailor_models,
+            tailor_judge_model=tailor_judge_model,
+            tailor_judge_min_score=tailor_judge_min_score,
+            discovery_execution=discovery_execution,
+            discovery_cohort_kind=(
+                discovery_cohort_kind if discovery_execution is not None else None
+            ),
+        )
+        if discovery_execution is not None:
+            preparation_payload = spec.args[0]
+            if not isinstance(preparation_payload, JobPreparationInput):
+                raise TypeError("preparation workflow spec has an unexpected input")
+            workflow_cohorts_to_start = _record_preparation_work_plans(
+                [
+                    PreparationTarget(
+                        job_url=job_url,
+                        idempotency_key=preparation_payload.idempotency_key,
+                        target_version=preparation_payload.target_version,
+                        steps=list(preparation_payload.steps),
+                    )
+                ],
+                tenant_id=tenant_id,
+                discovery_execution=discovery_execution,
+                discovery_cohort_kind=discovery_cohort_kind,
+            )
+            if spec.workflow_id not in workflow_cohorts_to_start:
+                return False
+            spec = _with_discovery_cohort(
+                spec,
+                workflow_cohorts_to_start[spec.workflow_id],
+            )
+    except Exception:
+        if discovery_execution is not None:
+            _mark_job_work_plan_failed(
+                discovery_execution,
+                job_url=job_url,
+                reason="work_plan_persistence_failed",
+            )
+        raise
     starter = workflow_starter or default_workflow_starter
     _run_start_batch([spec], starter)
     return True
@@ -200,6 +293,8 @@ def build_preparation_workflow_spec(
     source_event_id: str | None = None,
     expected_app_dir: str | None = None,
     expected_db_path: str | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
+    discovery_cohort_kind: DiscoveryExecutionCohortKind | None = None,
 ) -> WorkflowStartSpec:
     source_event = source_event_id if source_event_id is not None else _latest_source_event_id(get_connection(), job_url)
     idempotency_key = make_preparation_idempotency_key(
@@ -228,6 +323,8 @@ def build_preparation_workflow_spec(
         llm_model=llm_model or DEFAULT_PIPELINE_LLM_MODEL_SPEC,
         expected_app_dir=expected_app_dir,
         expected_db_path=expected_db_path,
+        discovery_execution=discovery_execution,
+        discovery_cohort_kind=discovery_cohort_kind,
     )
     return WorkflowStartSpec(
         workflow=JobPreparationWorkflow,
@@ -332,6 +429,8 @@ def _workflow_spec_for_target(
     tailor_models: tuple[str, ...],
     tailor_judge_model: str | None,
     tailor_judge_min_score: float | None,
+    discovery_execution: DiscoveryExecutionRef | None,
+    discovery_cohort_kind: DiscoveryExecutionCohortKind,
 ) -> WorkflowStartSpec:
     payload = JobPreparationInput(
         tenant_id=str(tenant_id),
@@ -346,12 +445,240 @@ def _workflow_spec_for_target(
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
         tailor_judge_min_score=tailor_judge_min_score,
+        discovery_execution=discovery_execution,
+        discovery_cohort_kind=(
+            discovery_cohort_kind if discovery_execution is not None else None
+        ),
     )
     return WorkflowStartSpec(
         workflow=JobPreparationWorkflow,
         args=(payload,),
         workflow_id=preparation_workflow_id(target.idempotency_key),
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+
+
+def _record_preparation_work_plans(
+    targets: list[PreparationTarget],
+    *,
+    tenant_id: TenantId,
+    discovery_execution: DiscoveryExecutionRef,
+    discovery_cohort_kind: DiscoveryExecutionCohortKind,
+) -> dict[str, DiscoveryExecutionCohortKind]:
+    """Persist selected work before asking Temporal to start it.
+
+    Existing-backlog rows are created here because selection by the pre-run
+    sweep defines membership. An observed fan-out may also derive a persistent
+    enrichment backlog job that no source observed in this execution. Such a
+    target is linked as existing backlog rather than inventing source metadata
+    or attributing it to the current-execution cohort.
+    """
+
+    if str(tenant_id) != discovery_execution.tenant_id:
+        raise ValueError("preparation tenant does not match discovery execution")
+    repository = SqliteDiscoveryExecutionRepository(get_connection())
+    workflow_cohorts_to_start: dict[str, DiscoveryExecutionCohortKind] = {}
+    for target in targets:
+        if discovery_cohort_kind == "existing_backlog":
+            membership = repository.link_job(
+                discovery_execution,
+                target.job_url,
+                cohort_kind="existing_backlog",
+            )
+        else:
+            membership = repository.get(discovery_execution, target.job_url)
+            if membership is None:
+                membership = repository.link_job(
+                    discovery_execution,
+                    target.job_url,
+                    cohort_kind="existing_backlog",
+                )
+        workflow_id = preparation_workflow_id(target.idempotency_key)
+        canonical_steps = validate_required_steps(target.steps)
+        if membership.work_plan_state in {"planned", "not_eligible"}:
+            # A pre-run plan remains authoritative after backlog-to-observed
+            # promotion. A later source event may derive a different idempotency
+            # key, but it must neither rewrite nor start parallel work.
+            if (
+                membership.work_plan_state == "planned"
+                and membership.preparation_workflow_id == workflow_id
+                and membership.required_steps == canonical_steps
+            ):
+                workflow_cohorts_to_start[workflow_id] = membership.cohort_kind
+            continue
+        repository.set_work_plan(
+            discovery_execution,
+            target.job_url,
+            state="planned",
+            required_steps=target.steps,
+            preparation_workflow_id=workflow_id,
+        )
+        workflow_cohorts_to_start[workflow_id] = membership.cohort_kind
+    return workflow_cohorts_to_start
+
+
+def _with_discovery_cohort(
+    spec: WorkflowStartSpec,
+    cohort_kind: DiscoveryExecutionCohortKind,
+) -> WorkflowStartSpec:
+    payload = spec.args[0]
+    if not isinstance(payload, JobPreparationInput):
+        raise TypeError("preparation workflow spec has an unexpected input")
+    if payload.discovery_cohort_kind == cohort_kind:
+        return spec
+    return replace(
+        spec,
+        args=(replace(payload, discovery_cohort_kind=cohort_kind),),
+    )
+
+
+def _mark_pending_work_plans_failed(
+    discovery_execution: DiscoveryExecutionRef,
+    *,
+    reason: str,
+) -> None:
+    repository = SqliteDiscoveryExecutionRepository(get_connection())
+    for membership in repository.list_for_execution(discovery_execution):
+        if membership.work_plan_state != "pending":
+            continue
+        repository.set_work_plan(
+            discovery_execution,
+            membership.job_url,
+            state="failed",
+            reason=reason,
+        )
+
+
+def _mark_job_work_plan_failed(
+    discovery_execution: DiscoveryExecutionRef,
+    *,
+    job_url: str,
+    reason: str,
+) -> None:
+    repository = SqliteDiscoveryExecutionRepository(get_connection())
+    membership = repository.get(discovery_execution, job_url)
+    if membership is None or membership.work_plan_state != "pending":
+        return
+    repository.set_work_plan(
+        discovery_execution,
+        job_url,
+        state="failed",
+        reason=reason,
+    )
+
+
+def _finalize_unplanned_observed_work_plans(
+    discovery_execution: DiscoveryExecutionRef,
+    *,
+    min_score: int,
+) -> None:
+    """Close every unresolved current-cohort work-plan decision.
+
+    Only canonical evidence can produce ``not_eligible``. Any unselected job
+    whose lack of work cannot be proved becomes ``failed``; leaving it pending
+    would make the execution drain forever and treating it as no-work would
+    inflate completion.
+    """
+
+    conn = get_connection()
+    repository = SqliteDiscoveryExecutionRepository(conn)
+    for membership in repository.list_for_execution(discovery_execution):
+        if membership.cohort_kind != "observed_this_run":
+            continue
+        if membership.work_plan_state not in {"pending", "failed"}:
+            continue
+        state, reason = _unselected_work_plan_outcome(
+            conn,
+            job_url=membership.job_url,
+            min_score=min_score,
+        )
+        repository.set_work_plan(
+            discovery_execution,
+            membership.job_url,
+            state=state,
+            reason=reason,
+        )
+
+
+def _unselected_work_plan_outcome(
+    conn: sqlite3.Connection,
+    *,
+    job_url: str,
+    min_score: int,
+) -> tuple[DiscoveryExecutionWorkPlanState, str]:
+    is_deleted = "0"
+    if _table_exists(conn, "jobctrl_deleted_jobs"):
+        is_deleted = """
+            CASE WHEN EXISTS (
+                SELECT 1
+                  FROM jobctrl_deleted_jobs deleted
+                 WHERE deleted.job_url = jobs.url
+                   AND (
+                       deleted.restored_at IS NULL
+                       OR julianday(deleted.restored_at) <= julianday(deleted.deleted_at)
+                   )
+            ) THEN 1 ELSE 0 END
+        """
+    row = conn.execute(
+        f"""
+        SELECT {db_module._EFFECTIVE_FIT_SCORE} AS effective_score,
+               CASE WHEN {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM}
+                    THEN 1 ELSE 0 END AS score_eligible,
+               pss.latest_active_state AS active_state,
+               jm.jm_resume_pdf_path AS resume_pdf_path,
+               jm.jm_cover_pdf_path AS cover_pdf_path,
+               {is_deleted} AS is_deleted
+          FROM jobs
+          {db_module._LATEST_SCORE_JOIN}
+          {db_module._LATEST_MATERIALS_JOIN}
+          {db_module._ACTIVE_STATE_JOIN}
+         WHERE jobs.url = ?
+        """,
+        (job_url,),
+    ).fetchone()
+    if row is None:
+        return ("failed", "canonical_job_missing")
+
+    effective_score = row["effective_score"]
+    if effective_score is not None and float(effective_score) < int(min_score):
+        return ("not_eligible", "score_below_threshold")
+    if effective_score is not None and not bool(row["score_eligible"]):
+        return ("not_eligible", "score_eligibility_blocked")
+    if bool(row["is_deleted"]):
+        return ("not_eligible", "job_not_actionable")
+    if str(row["active_state"] or "") in {"closed", "expired", "removed", "location_incompatible"}:
+        return ("not_eligible", "posting_not_actionable")
+    if row["resume_pdf_path"] and row["cover_pdf_path"]:
+        return ("not_eligible", "preparation_already_accounted")
+
+    stage_rows = conn.execute(
+        """
+        SELECT stage, state
+          FROM job_stage_states
+         WHERE job_url = ?
+           AND stage IN ('score', 'tailor', 'cover', 'apply')
+        """,
+        (job_url,),
+    ).fetchall()
+    stage_states = {str(stage_row["stage"]): str(stage_row["state"]) for stage_row in stage_rows}
+    if stage_states.get("apply") == "succeeded":
+        return ("not_eligible", "preparation_already_accounted")
+    if (
+        stage_states.get("score") == "succeeded"
+        and stage_states.get("tailor") == "skipped"
+        and stage_states.get("cover") == "skipped"
+    ):
+        return ("not_eligible", "preparation_explicitly_skipped")
+    return ("failed", "preparation_target_not_selected")
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone()
+        is not None
     )
 
 

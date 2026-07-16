@@ -33,11 +33,13 @@ from jobctrl import config
 from jobctrl.config import CONFIG_DIR
 from jobctrl.database import get_stats, init_db, resurface_deleted_job
 from jobctrl.domain.discovery.identity import DuplicateJobLink, JobSourceObservation
+from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.use_cases import (
     CONTENT_MATCH_CONFIDENCE,
     CONTENT_SHINGLE_MATCH_CONFIDENCE,
 )
 from jobctrl.domain.errors import TransientNetworkError
+from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.events import (
     DuplicateJobLinkedPayload,
     create_duplicate_job_linked,
@@ -136,6 +138,7 @@ def _merge_smart_extract_content_duplicate(
     url: str,
     site: str,
     observed_at: str,
+    run_id: str,
 ) -> None:
     """Attach a content-matched Smart Extract posting to its existing owner.
 
@@ -173,7 +176,7 @@ def _merge_smart_extract_content_duplicate(
             source_id=f"smartextract:{site}",
             source_native_id=url,
             observed_url=url,
-            run_id="smartextract",
+            run_id=run_id,
             observed_at=observed_at,
         ),
     )
@@ -202,6 +205,8 @@ def _store_jobs_filtered(
     query: object | None = None,
     limit: int = 0,
     source_url: str | None = None,
+    run_id: str = "smartextract",
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> tuple[int, int]:
     """Store usable jobs with title, location, and description filtering."""
     now = datetime.now(timezone.utc).isoformat()
@@ -209,7 +214,11 @@ def _store_jobs_filtered(
     existing = 0
     filtered = 0
     missing_description = 0
-    repository = SqliteJobRepository(conn)
+    repository = SqliteJobRepository(
+        conn,
+        discovery_execution=discovery_execution,
+        source_family="smartextract" if discovery_execution is not None else None,
+    )
     publisher = DurableJobEventPublisher(conn, stage="discover")
 
     for job in jobs:
@@ -243,6 +252,7 @@ def _store_jobs_filtered(
                 url=url,
                 site=site,
                 observed_at=now,
+                run_id=run_id,
             )
             existing += 1
             continue
@@ -331,6 +341,19 @@ def _store_jobs_filtered(
                     )
             resurface_deleted_job(conn, url, resurfaced_at=now)
             existing += 1
+
+        repository.attach_source_observation(
+            LOCAL_TENANT,
+            JobId(url),
+            JobSourceObservation(
+                source_observation_id=f"obs:{uuid.uuid4().hex}",
+                source_id=f"smartextract:{site}",
+                source_native_id=url,
+                observed_url=url,
+                run_id=run_id,
+                observed_at=now,
+            ),
+        )
 
     if filtered:
         log.info("Filtered %d jobs (wrong title/location)", filtered)
@@ -1451,6 +1474,8 @@ def _run_all(
     workers: int = 1,
     limit: int = 0,
     cancel_event: threading.Event | None = None,
+    run_id: str = "smartextract",
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict:
     """Run smart extract on all targets.
 
@@ -1484,6 +1509,8 @@ def _run_all(
                 query=target.get("query_spec") or target.get("queries") or target.get("query"),
                 limit=remaining if limit > 0 else 0,
                 source_url=target.get("url"),
+                run_id=run_id,
+                discovery_execution=discovery_execution,
             )
             total_new += new
             total_existing += existing
@@ -1580,6 +1607,8 @@ def run_smart_extract(
     workers: int = 1,
     limit: int = 0,
     cancel_event: threading.Event | None = None,
+    run_id: str | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict:
     """Main entry point for AI-powered smart extraction.
 
@@ -1619,4 +1648,6 @@ def run_smart_extract(
         workers=workers,
         limit=limit,
         cancel_event=cancel_event,
+        run_id=run_id or "smartextract",
+        discovery_execution=discovery_execution,
     )

@@ -1,5 +1,5 @@
 import type { CredentialsResponse } from "@jobctrl/contracts";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { axe } from "jest-axe";
 import { describe, expect, it, vi } from "vitest";
@@ -78,8 +78,17 @@ describe("<CredentialsPanel> a11y", () => {
           },
         }),
       });
+      const heading = await screen.findByRole("heading", { name: provider });
+      const card = heading.closest("article");
+      if (!card) throw new Error(`Missing ${provider} provider card`);
       await user.click(
-        await screen.findByRole("button", { name: `Remove ${provider} setup` }),
+        within(card).getByRole("button", {
+          expanded: false,
+          name: new RegExp(`^${provider}\\b`, "i"),
+        }),
+      );
+      await user.click(
+        await within(card).findByRole("button", { name: `Remove ${provider} setup` }),
       );
       await screen.findByRole("dialog", { name: `Remove ${provider} provider setup?` });
 

@@ -50,7 +50,7 @@
     "extension:e2e": "corepack pnpm --filter @jobctrl/extension e2e",
     "qa:seed": "corepack pnpm --filter @jobctrl/api qa:seed",
     "qa:test": "corepack pnpm --filter @jobctrl/api qa:test",
-    "docs:screenshots": "JOBCTRL_DOCS_SCREENSHOTS=1 corepack pnpm --filter @jobctrl/web e2e -- tests/docs-screenshots.spec.ts",
+    "docs:screenshots": "node scripts/capture-docs-screenshots.mjs",
     "docs:dev": "scripts/dev run docs",
     "docs:start": "scripts/dev start docs",
     "docs:status": "scripts/dev status docs",

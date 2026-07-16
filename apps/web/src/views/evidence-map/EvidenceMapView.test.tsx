@@ -8,12 +8,16 @@ import {
 } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 
+import type { EvidenceUsageRef } from "../../contexts/operations/types.js";
 import { artifactsSearchSchema } from "../../routes/-artifacts.search.js";
 import { evidenceMapSearchSchema } from "../../routes/-evidence-map.search.js";
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
+import { sampleEvidenceMapResponse } from "../../test/fixtures/projections.js";
 import { buildProviderHarness } from "../../test/render.js";
+import { server } from "../../test/msw/server.js";
 import { EvidenceMapView } from "./EvidenceMapView.js";
 
 function renderEvidenceMap(initialEntry = "/evidence-map") {
@@ -63,7 +67,7 @@ function renderEvidenceMap(initialEntry = "/evidence-map") {
 
 describe("<EvidenceMapView>", () => {
   it("renders career evidence, gaps, and links usage back to artifacts and jobs", async () => {
-    renderEvidenceMap();
+    const { container } = renderEvidenceMap();
 
     expect(
       await screen.findByRole("heading", { name: "Career evidence map" }),
@@ -77,11 +81,33 @@ describe("<EvidenceMapView>", () => {
       name: /Led automation that reduced incident response time by 42%/i,
     });
     expect(artifactLink).toHaveAttribute("href", "/artifacts/artifact-resume-1");
+    expect(within(artifactLink).getByText("artifact")).not.toHaveAttribute(
+      "data-slot",
+      "status-badge",
+    );
 
     const requirementLinks = screen.getAllByRole("link", {
       name: /Own platform reliability and observability programs/i,
     });
-    expect(requirementLinks[0]).toHaveAttribute("href", "/jobs/job-1");
+    const requirementLink = requirementLinks[0];
+    expect(requirementLink).toBeDefined();
+    if (!requirementLink) {
+      throw new Error("Expected a requirement usage link");
+    }
+    expect(requirementLink).toHaveAttribute("href", "/jobs/job-1");
+    expect(within(requirementLink).getByText("matched")).toHaveAttribute(
+      "data-slot",
+      "status-badge",
+    );
+    expect(screen.getByText("42% faster incident response")).not.toHaveAttribute(
+      "data-slot",
+      "status-badge",
+    );
+    expect(screen.getByText("2024-2025")).not.toHaveAttribute(
+      "data-slot",
+      "status-badge",
+    );
+    expect(container.querySelectorAll(".evidence-map-view .tag")).toHaveLength(0);
   });
 
   it("filters entries through URL search while preserving the detail panel", async () => {
@@ -103,6 +129,40 @@ describe("<EvidenceMapView>", () => {
       }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Python" })).toBeInTheDocument();
+  });
+
+  it("renders transferable fit as a flat semantic status instead of a legacy pill", async () => {
+    const entry = sampleEvidenceMapResponse.entries[0];
+    const matchedUsage = entry?.requirementUsages[0];
+    if (!entry || !matchedUsage) {
+      throw new Error("Evidence Map fixture must include a requirement usage");
+    }
+    const transferableUsage: EvidenceUsageRef = {
+      ...matchedUsage,
+      requirementId: "req-transferable-platform-experience",
+      requirementText: "Translate platform reliability experience",
+      requirementFitKind: "transferable",
+    };
+    server.use(
+      http.get("*/v1/evidence-map", () =>
+        HttpResponse.json({
+          ...sampleEvidenceMapResponse,
+          entries: [
+            { ...entry, requirementUsages: [...entry.requirementUsages, transferableUsage] },
+            ...sampleEvidenceMapResponse.entries.slice(1),
+          ],
+        }),
+      ),
+    );
+
+    const { container } = renderEvidenceMap();
+
+    const transferableBadge = await screen.findByText("transferable");
+    expect(transferableBadge).toHaveAttribute("data-slot", "status-badge");
+    expect(transferableBadge).toHaveAttribute("data-status-tone", "info");
+    expect(transferableBadge).not.toHaveClass("tag");
+    expect(transferableBadge.closest("a")).toHaveAttribute("href", "/jobs/job-1");
+    expect(container.querySelectorAll(".evidence-map-view .tag")).toHaveLength(0);
   });
 
   it("opens with a job filter from a job-detail deep link", async () => {

@@ -30,6 +30,7 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Loopback API Binding By Default](#_2026-05-02-loopback-api-binding-by-default) · 2026-05-02
 - [Stage State Is The Operational Source Of Truth](#_2026-05-02-stage-state-is-the-operational-source-of-truth) · 2026-05-02
 - [Copyable Commands Stay, Buttons Use Structured Actions](#_2026-05-03-copyable-commands-stay-buttons-use-structured-actions) · 2026-05-03
+- [Pipeline Operations Use Immutable Execution Lineage And Privacy-Safe Runtime Telemetry](#_2026-07-14-pipeline-operations-use-immutable-execution-lineage-and-privacy-safe-runtime-telemetry) · 2026-07-14
 
 **Backend domain model (DDD + hexagonal)**
 
@@ -46,6 +47,7 @@ the Historical Spec Ledger in `plans/README.md`.
 - [Frontend Hexagonal Ports With Local + Hosted Adapters Named](#_2026-05-06-frontend-hexagonal-ports-with-local-hosted-adapters-named) · 2026-05-06
 - [SSE Realtime Via `GET /v1/events/stream` + Invalidation Router](#_2026-05-06-sse-realtime-via-get-v1-events-stream-invalidation-router) · 2026-05-06
 - [View-vs-Context Dichotomy + 1:1 Backend Bounded-Context Mirror](#_2026-05-06-view-vs-context-dichotomy-1-1-backend-bounded-context-mirror) · 2026-05-06
+- [shadcn Rhea/Base Wrappers Are The Frontend Primitive Boundary](#_2026-07-15-shadcn-rheabase-wrappers-are-the-frontend-primitive-boundary) · 2026-07-15
 - [Saved Table Views Stay Client-Persisted Templates](#_2026-07-05-saved-table-views-stay-client-persisted-templates) · 2026-07-05
 - [Daily Digest Stays Local And Explicitly Acknowledged](#_2026-07-05-daily-digest-stays-local-and-explicitly-acknowledged) · 2026-07-05
 
@@ -242,7 +244,6 @@ Consequences:
 - `workers/automation/pyproject.toml` owns Python packaging and CLI metadata
 - `pnpm-lock.yaml` is the canonical JavaScript lockfile
 
-
 ## 2026-05-06: DDD + Hexagonal Architecture Adopted
 
 Status: accepted
@@ -399,16 +400,19 @@ Status: accepted
 
 Decision: standardise the `apps/web` frontend on the TanStack family —
 **TanStack Router** (file-based via `@tanstack/router-vite-plugin`),
-**TanStack Query v5**, **TanStack Table v8**, and **TanStack Form** — paired
-with shadcn/ui primitives over Radix and Tailwind CSS 4. The pre-migration
+**TanStack Query v5**, **TanStack Table v8**, and **TanStack Form** — originally
+paired with shadcn/ui primitives over Radix and Tailwind CSS 4. That historical
+primitive choice is superseded by the 2026-07-15 Rhea/Base decision below. The pre-migration
 2,527-line `App.tsx` with `useState<View>` switching, `useEffect`-driven
 fetches, manual `requestSeq` ref dedup, and `window.dispatchEvent`
 cross-component coordination is gone.
 
 Rationale:
 
-- URL-first state is the right default: filters, sort, page index, drawer
-  state, and selected job all need to survive refresh and be shareable. A
+- URL-first state is the right default: filters, sort, page index, and selected
+  detail state all need to survive refresh and be shareable. The historical
+  implementation called this drawer state; the current product renders route
+  workspaces. A
   router with typed search-param schemas (Zod-derived) makes this the path
   of least resistance; ad-hoc `useState` makes URL drift the path of least
   resistance.
@@ -456,10 +460,14 @@ Amended (2026-07-04): three details above have drifted. (1) The router codegen
 plugin is `@tanstack/router-plugin` — the `@tanstack/router-vite-plugin` package
 was renamed; the Vite integration is imported from it. (2) `routeTree.gen.ts` is
 **committed** to the repo (`apps/web/src/routeTree.gen.ts`), not gitignored. (3)
-The invalidation router wires **seven** aggregate-context `DomainEvent` handlers
+The invalidation router wires aggregate-context `DomainEvent` handlers
 (`contexts/{discovery,enrichment,profile,scoring,materials,apply,pipeline}/handlers.ts`);
-`operations/` hosts the router itself rather than a handler, so there are seven
-handlers across the eight context folders, not eight.
+`operations/` hosts the router itself rather than a domain handler. Registry
+and parity tests, rather than prose counts, enforce complete coverage.
+
+Amended (2026-07-15): the primitive-layer part of this decision is superseded
+by [shadcn Rhea/Base Wrappers Are The Frontend Primitive Boundary](#_2026-07-15-shadcn-rheabase-wrappers-are-the-frontend-primitive-boundary).
+The TanStack and Tailwind decisions remain accepted.
 
 ## 2026-05-06: Frontend Hexagonal Ports With Local + Hosted Adapters Named
 
@@ -471,16 +479,16 @@ feature hooks depend only on **port interfaces**; concrete adapters bind in
 local-mode adapter in `shared/adapters/local/` today and the hosted-mode
 adapter named-not-built per the cloud-evolution path:
 
-| Port | Local-mode adapter | Hosted-mode adapter (named) |
-|---|---|---|
-| `ApiClientPort` | `FetchApiClientAdapter` | Same adapter; JWT injected by hosted `AuthInterceptor`. |
-| `EventStreamPort` | `SseEventStreamAdapter` | `WebSocketEventStreamAdapter`. |
-| `StoragePort` | `LocalStorageAdapter` | `IndexedDbAdapter`. |
-| `SessionPort` | `LocalSessionAdapter` (returns `LOCAL_TENANT`) | `JwtSessionAdapter` (Auth0 / Cognito). |
-| `ClipboardPort` | `NavigatorClipboardAdapter` | Same adapter. |
-| `OpenInOsPort` | `OpenArtifactAdapter` | Disabled in hosted mode; presigned-URL download instead. |
-| `TelemetryPort` | `ConsoleTelemetryAdapter` | `OpenTelemetryWebAdapter` → OTLP. |
-| `FeatureFlagPort` | `StaticFeatureFlagAdapter` | Backend-served, cached in Query. |
+| Port              | Local-mode adapter                             | Hosted-mode adapter (named)                              |
+| ----------------- | ---------------------------------------------- | -------------------------------------------------------- |
+| `ApiClientPort`   | `FetchApiClientAdapter`                        | Same adapter; JWT injected by hosted `AuthInterceptor`.  |
+| `EventStreamPort` | `SseEventStreamAdapter`                        | `WebSocketEventStreamAdapter`.                           |
+| `StoragePort`     | `LocalStorageAdapter`                          | `IndexedDbAdapter`.                                      |
+| `SessionPort`     | `LocalSessionAdapter` (returns `LOCAL_TENANT`) | `JwtSessionAdapter` (Auth0 / Cognito).                   |
+| `ClipboardPort`   | `NavigatorClipboardAdapter`                    | Same adapter.                                            |
+| `OpenInOsPort`    | `OpenArtifactAdapter`                          | Disabled in hosted mode; presigned-URL download instead. |
+| `TelemetryPort`   | `ConsoleTelemetryAdapter`                      | `OpenTelemetryWebAdapter` → OTLP.                        |
+| `FeatureFlagPort` | `StaticFeatureFlagAdapter`                     | Backend-served, cached in Query.                         |
 
 Rationale:
 
@@ -516,7 +524,7 @@ Consequences:
   hook call; the benefit is a hosted-mode swap that is bounded to the
   adapter file.
 - The `OpenInOsPort` is the only port whose hosted-mode behaviour
-  *cannot* be the same as local-mode (browsers cannot open local files);
+  _cannot_ be the same as local-mode (browsers cannot open local files);
   the hosted adapter returns `Unsupported` and the UI surfaces a
   presigned-URL download affordance instead.
 - Cites: `docs/architecture/frontend/` §6, §9.
@@ -531,9 +539,9 @@ Decision: realtime updates flow over a Server-Sent Events stream
 endpoint contract:
 
 - `text/event-stream`; `Cache-Control: no-cache`; `X-Accel-Buffering: no`.
-- Server tails `job_events` with the COALESCE on the *event row's*
+- Server tails `job_events` with the COALESCE on the _event row's_
   extracted tenant — `COALESCE(JSON_EXTRACT(payload_json, '$.tenantId'),
-  'local') = :tenantId` — so legacy rows missing `$.tenantId` still match
+'local') = :tenantId` — so legacy rows missing `$.tenantId` still match
   the local-mode filter without a write-side backfill. Emits each row as
   `id: <event_id>` + `event: <event_type>` + `data: <payload_json>`.
 - Resume precedence: `Last-Event-ID` HTTP header (sent by the browser's
@@ -565,7 +573,7 @@ Rationale:
 - Auth is the same path as REST (cookies or `Authorization` via a small
   polyfill).
 - The router is testable in isolation: `handleEvent(event,
-  mockQueryClient)` for each event type, asserting the exact set of
+mockQueryClient)` for each event type, asserting the exact set of
   `invalidateQueries` / `setQueryData` calls. Per `docs/architecture/frontend/`
   §10.2, this is "the most important unit test in the app" — the
   contract surface between the backend's events and the frontend's cache.
@@ -596,13 +604,21 @@ Consequences:
 
 Amended (2026-07-04): the `DomainEvent` type is a **plain TypeScript
 discriminated union**, not a Zod schema. It lives in
-`packages/domain-types/src/events/index.ts` (`DomainEventUnion`, 68 event types
+`packages/domain-types/src/events/index.ts` (`DomainEventUnion`, the canonical event types
 in `DOMAIN_EVENT_TYPES`), mirrored by the Python registry — it is not in
 `packages/contracts`. The SSE adapter validates each frame by set-membership on
 the known event types plus `JSON.parse`
 (`apps/web/src/shared/ports/lib/parseDomainEvent.ts`), not by Zod parsing. The
 `Record<DomainEvent["eventType"], InvalidationHandler>` typing and the
 `every-event-has-handler.test.ts` parity test still hold.
+
+Amended (2026-07-15): the current runtime registry includes the
+execution-scoped `PipelineStep*` lifecycle events. The Python parity test
+requires its registry to match the same ordered tuple. Durable `Stage*`,
+`PreparationWorkItem*`, `PipelineStep*`, and
+`Workflow*` changes invalidate `pipelineKeys.operations`; narrow polling of the
+operations snapshot remains necessary for worker-heartbeat and task-queue facts
+that do not emit domain events.
 
 ## 2026-05-06: View-vs-Context Dichotomy + 1:1 Backend Bounded-Context Mirror
 
@@ -755,7 +771,7 @@ Consequences:
   Gmail message ids dedupe
 - outcomes are suggestions until a user commits them; manual outcomes remain
   available without any mailbox scan
-- the Apply Review queue (`views/apply-review/`) and the job drawer outcome
+- the Apply Review queue (`views/apply-review/`) and the Jobs detail-workspace outcome
   timeline read these local models through Operations hooks
 
 Cites: `docs/plans/implemented/2026-06-01-apply-review-outcome-feedback.md`;
@@ -1148,10 +1164,10 @@ Status: accepted
 Decision: Temporal workflow execution becomes visible and self-terminalizing
 without a TypeScript Temporal SDK and without trigger-coupled reapers.
 
-- **`Workflow*` event family (6 types)** — `WorkflowStarted`,
+- **`Workflow*` event family** — `WorkflowStarted`,
   `WorkflowCompleted`, `WorkflowFailed`, `WorkflowCanceled`, `WorkflowTimedOut`,
   `WorkflowTerminated` — landed in lockstep across the Python and TS event
-  registries and the web invalidation router (61 → 67 event types). They carry
+  registries and the web invalidation router. They carry
   `workflowId`, `workflowType`, an input summary, and a terminal status within
   the existing 12-state `WORKFLOW_RUN_STATUSES`.
 - **Loop closure via finalize activities.** Every workflow emits a
@@ -1640,13 +1656,13 @@ Rationale:
   (an AST tripwire test enforces this), and pacing survives `ThreadPoolExecutor`
   fan-out because the limiter is a process singleton
 - recording blocks as outcomes (not errors) keeps root-cause signal honest: a
-  source that yields nothing shows *why* without inflating scrape-failure counts
+  source that yields nothing shows _why_ without inflating scrape-failure counts
 
 Consequences:
 
 - documented public JSON APIs (Greenhouse/Lever/Ashby/Workday CXS) are
   robots-exempt at their API host (D2); page-rendering methods are robots-checked
-- robots unreachability follows the D6 split: a `4xx`/`404` is *no restrictions*
+- robots unreachability follows the D6 split: a `4xx`/`404` is _no restrictions_
   (allow), a `5xx`/timeout fails closed and re-checks on a short TTL, and a DNS
   failure / refused connection fails open with a warning — so a host that refuses
   `/robots.txt` while still serving content is crawled unenforced (the accepted
@@ -1710,7 +1726,7 @@ Rationale:
   the owning aggregate, projected into `contact_projections`, and rendered in the
   UI — a displayed fact with no provenance is a defect to compute, not a field to
   hide
-- **sensitivity:** attribute *values* (names, emails, notes) are treated like raw
+- **sensitivity:** attribute _values_ (names, emails, notes) are treated like raw
   email bodies in the apply-feedback design — they live only in
   `contact_attributes.value_json`; events, projections, logs, and telemetry carry
   only safe references
@@ -1735,7 +1751,7 @@ Consequences:
 Delivered (2026-07-06, Phases 4-5): send logging + follow-ups landed and the
 no-auto-send invariant is held by **four enforcement layers** (plan §8.3): (a) the
 `OutreachThread` aggregate can only reach a "sent" state through a user-attested
-`OutreachSendLog` over an *approved* draft — mirroring the `ApplyRun`
+`OutreachSendLog` over an _approved_ draft — mirroring the `ApplyRun`
 dry-run/evidence coherence guard — so "approve draft" and "log send" are distinct
 actions; (b) a no-send-transport grep guard over the outreach code on both
 runtimes; (c) an adapter-never-called test asserting the full lifecycle opens no
@@ -1747,7 +1763,7 @@ computes "due" over schedule + clock at read time, and any optional recurring
 reminder defaults OFF (mirroring discovery `scheduling_enabled = false`). No send
 transport, `gmail.send` scope, or dependency on the OSS spec §W1.7 owned-send was
 added. Product QA landed a seeded Playwright smoke for the full contact/outreach
-path (job drawer contacts, supervised candidate review, `/outreach` draft review,
+path (Jobs detail-workspace contacts, supervised candidate review, `/outreach` draft review,
 user-attested send log, due follow-up reminders) plus a regression-matrix row for
 the event/projection no-value-leak boundary.
 
@@ -1775,13 +1791,13 @@ Options under consideration:
 
 Measured inputs required before the owner records a verdict:
 
-| Input | Evidence source | Current state |
-| --- | --- | --- |
-| TTFV-1, clean environment to first post-T0 discovered scored job | three gateable owner-run records from `scripts/ttfv-real.mjs run`, summarized by `scripts/ttfv-real.mjs summarize` | pending owner baseline |
-| TTFV-2, clean environment to first reviewable tailored resume PDF | same gateable measurement records and summary | pending owner baseline |
-| Friction map by phase | `install`, `workspace_init`, `stack_start`, `real_job_pipeline`, and probe timings in each measurement record | pending owner baseline |
-| Platform matrix | owner's Apple-silicon macOS run is the gate; Linux is optional owner sanity data | pending owner baseline |
-| Auth scenario | owner notes `warm-auth` or `cold-auth` for each run outside committed records | pending owner baseline |
+| Input                                                             | Evidence source                                                                                                    | Current state          |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------- |
+| TTFV-1, clean environment to first post-T0 discovered scored job  | three gateable owner-run records from `scripts/ttfv-real.mjs run`, summarized by `scripts/ttfv-real.mjs summarize` | pending owner baseline |
+| TTFV-2, clean environment to first reviewable tailored resume PDF | same gateable measurement records and summary                                                                      | pending owner baseline |
+| Friction map by phase                                             | `install`, `workspace_init`, `stack_start`, `real_job_pipeline`, and probe timings in each measurement record      | pending owner baseline |
+| Platform matrix                                                   | owner's Apple-silicon macOS run is the gate; Linux is optional owner sanity data                                   | pending owner baseline |
+| Auth scenario                                                     | owner notes `warm-auth` or `cold-auth` for each run outside committed records                                      | pending owner baseline |
 
 Evidence already known:
 
@@ -1851,3 +1867,121 @@ that initial artifact.
 Cites: active plan
 `docs/plans/2026-07-10-bundled-jobctrl-distribution-plan.md`; the superseded
 pending-decision record immediately above; `docs/developer/first-run-ttfv.md`.
+
+## 2026-07-14: Pipeline Operations Use Immutable Execution Lineage And Privacy-Safe Runtime Telemetry
+
+Status: accepted
+
+Decision: pipeline operations are reported from one current snapshot that
+joins immutable Discover execution lineage, durable projection-backed progress,
+and fresh privacy-safe worker/runtime observations. It does not infer a run from
+mutable source observations, flatten unlike queues into one denominator, or
+offer historical point-in-time reconstruction.
+
+The execution identity is `(tenant, Discover workflow ID, Temporal run ID)`.
+`discovery_execution_jobs` owns one membership per job and exact run, split into
+`observed_this_run` and `existing_backlog`; an observed swept job is promoted,
+never duplicated. Explicit plan states distinguish unresolved work from planned
+or not-eligible work. Both cohorts participate in the delivered
+`discovering`/`draining`/terminal phase calculation.
+
+Progress has two durable authorities:
+
+- canonical `job_stage_states` remains authoritative for per-job
+  enrich/score/tailor/cover lifecycle;
+- the four `PipelineStep*` events fold attempt-aware execution-owned source
+  planning/family, reconciliation, preparation fan-out, backlog-sweep, and PDF
+  lifecycle into `pipeline_step_projections`.
+
+`GET /v1/pipeline/operations` keeps `current_execution`, `execution_sweep`, and
+`global_outside_execution` scopes distinct. It reports source-family progress
+separately from reconciliation and downstream stages. The API selects an active
+or draining execution, otherwise the latest terminal execution. At request
+time, it derives the app directory from the configured database path, selects
+the task queue named by the newest heartbeat for that database/app-dir identity,
+and overlays fresh schema-valid rows from that queue plus its freshest typed
+Temporal task-queue observation.
+
+Runtime telemetry counts every active activity slot but exposes only a bounded
+allowlisted active-item inventory. The interceptor never reads activity
+arguments. Unsafe identifiers become non-reversible local opaque references;
+raw URLs, descriptions, profile data, prompts, provider output, artifact paths,
+payloads, credentials, and exception text are excluded. Unsupported,
+unavailable, stale, and invalid runtime observations remain explicit states.
+
+The `pipeline-eta-v1` overall estimator returns a low/high range only when
+execution membership is closed, fresh usable capacity exists, every remaining
+stage has enough recent successful duration evidence, and shared contention can
+be bounded. Per-stage and source-family estimates can price their already-known
+scoped backlog before membership closes, subject to the same capacity, evidence,
+and contention gates. Otherwise the relevant estimate returns a typed
+calibrating, paused, stale, or unavailable state. A numeric range is an
+operational estimate, not a completion promise.
+
+Rationale:
+
+- deterministic workflow IDs can be reused, while source observations and job
+  stage rows alone cannot prove which Temporal run owns work;
+- source-family completion is not whole-pipeline completion, and task-queue
+  backlog is an infrastructure unit rather than a job count;
+- durable events cannot reconstruct current worker slots or queue pressure;
+- operational visibility must not create a new path for private job/profile or
+  provider content to enter broad read models or telemetry.
+
+Consequences:
+
+- the current snapshot intentionally mixes rebuildable durable projections with
+  freshness-labeled runtime observations; it cannot answer historical capacity
+  questions;
+- SSE invalidates durable lifecycle changes, while 15-second active / 60-second
+  idle foreground polling refreshes heartbeat and task-queue state;
+- numeric ETA may remain unavailable under shared-queue contention or sparse
+  samples; the UI must render the typed reason rather than invent a countdown;
+- `PipelinesView` calls the Operations-owned read hook and passes its typed
+  result into Pipeline-owned presentation and controls, using the shared
+  redesign layout primitives.
+
+Cites: `docs/api/operations-and-events.md`;
+`docs/architecture/pipeline/operations.md`;
+`docs/architecture/read-model.md`;
+`docs/architecture/observability.md`;
+`docs/architecture/frontend/integration.md`.
+
+## 2026-07-15: shadcn Rhea/Base Wrappers Are The Frontend Primitive Boundary
+
+Status: accepted
+
+Decision: the frontend primitive layer uses shadcn's `base-rhea` preset over
+Base UI. Generated components are copied into `apps/web/src/shared/ui/` and
+become owned JobCtrl wrappers. Bounded contexts and views consume those
+wrappers; they do not import `@base-ui/react/*` or `@radix-ui/*` directly.
+Radix is not a compatibility layer and direct Radix imports are forbidden.
+
+The boundary is executable. `base-ui-migration-boundary.test.ts` parses all
+frontend TypeScript import forms and fails on any direct `@radix-ui/*` import;
+its allowlist is empty. It also rejects raw `<select>` elements in favor of the
+shared Base UI-backed Select and verifies the isolated root stacking context
+used by portaled primitives. Owned wrappers retain focused unit and
+accessibility tests for their public behavior; upstream Base UI tests do not
+substitute for those wrapper contracts.
+
+Rationale:
+
+- one primitive family prevents incompatible focus, portal, and controlled-state
+  semantics from leaking into product contexts;
+- the Rhea preset matches the implemented neutral, information-dense visual
+  grammar while keeping the Tailwind token contract;
+- copied wrappers provide a narrow migration seam and make generated code
+  reviewable, editable, and testable as product code.
+
+Consequences:
+
+- future shadcn updates are reviewed as changes to owned code, not accepted as
+  an opaque dependency upgrade;
+- a future primitive migration begins inside `shared/ui/` and its tests;
+- new direct Radix imports, raw select bypasses, or undocumented wrapper
+  allowlists fail the migration-boundary fitness test.
+
+Cites: `docs/architecture/frontend/patterns.md`;
+`docs/architecture/frontend/testing.md`;
+`apps/web/src/shared/ui/base-ui-migration-boundary.test.ts`.

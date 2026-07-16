@@ -1,5 +1,48 @@
-import { useEffect, useRef, type ReactNode } from "react";
-import { IconPlus, IconTrash } from "@tabler/icons-react";
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+} from "react";
+import { IconExternalLink, IconPlus, IconTrash } from "@tabler/icons-react";
+
+import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
+import {
+  AdaptiveFieldGrid,
+  AdaptiveFieldSpan,
+} from "../../../shared/ui/adaptive-field-grid.js";
+import { Checkbox } from "../../../shared/ui/checkbox.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+  FieldTitle,
+} from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../../shared/ui/select.js";
+import { Separator } from "../../../shared/ui/separator.js";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "../../../shared/ui/tabs.js";
+import { Textarea } from "../../../shared/ui/textarea.js";
 
 import {
   GoogleAddressSearchField,
@@ -129,6 +172,24 @@ const ROLE_AREA_PLACEHOLDER = "Engineering, security, platform";
 const TARGET_LOCATION_LABEL = "Locations and work models";
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? "";
 
+type StructuredInputAttributes = Omit<
+  InputHTMLAttributes<HTMLInputElement>,
+  "onChange" | "type" | "value"
+> & {
+  helperText?: ReactNode;
+  valueKind?: "text";
+};
+
+type StructuredTextareaAttributes = Omit<
+  TextareaHTMLAttributes<HTMLTextAreaElement>,
+  "onChange" | "placeholder" | "value"
+>;
+
+function editorControlId(scope: "profile" | "style", path: string, suffix = "") {
+  const normalizedPath = path.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+  return `structured-${scope}-${normalizedPath}${suffix ? `-${suffix}` : ""}`;
+}
+
 export interface StructuredProfileEditorProps {
   applicationConfigurationFields?: ReactNode;
   mode?: "profile" | "preferences" | "target-search";
@@ -181,9 +242,11 @@ export function StructuredProfileEditor({
 
   if (!profile || !style) {
     return (
-      <div className="banner inline">
-        The structured editor needs valid profile data. Reload the profile after fixing the saved data.
-      </div>
+      <Alert className="banner inline">
+        <AlertDescription>
+          The structured editor needs valid profile data. Reload the profile after fixing the saved data.
+        </AlertDescription>
+      </Alert>
     );
   }
 
@@ -344,15 +407,20 @@ export function StructuredProfileEditor({
   const textField = (
     path: string,
     label: string,
-    type = "text",
-    attrs: Record<string, unknown> = {},
+    type: InputHTMLAttributes<HTMLInputElement>["type"] = "text",
+    attrs: StructuredInputAttributes = {},
   ) => {
-    const { valueKind, ...inputAttrs } = attrs;
+    const { helperText, valueKind, ...inputAttrs } = attrs;
+    const id = inputAttrs.id ?? editorControlId("profile", path);
+    const descriptionId = helperText ? `${id}-description` : undefined;
+    const describedBy = [inputAttrs["aria-describedby"], descriptionId].filter(Boolean).join(" ") || undefined;
     return (
-      <label className="field">
-        <span>{label}</span>
-        <input
+      <Field className="field">
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <Input
           {...inputAttrs}
+          aria-describedby={describedBy}
+          id={id}
           type={type}
           value={textAt(profile, path)}
           onChange={(event) =>
@@ -364,7 +432,8 @@ export function StructuredProfileEditor({
             )
           }
         />
-      </label>
+        {helperText ? <FieldDescription id={descriptionId}>{helperText}</FieldDescription> : null}
+      </Field>
     );
   };
 
@@ -391,7 +460,7 @@ export function StructuredProfileEditor({
 
   const constrainedNumberOrEmpty = (
     value: string,
-    attrs: Record<string, unknown>,
+    attrs: Pick<InputHTMLAttributes<HTMLInputElement>, "max" | "min">,
     keepText = false,
   ) => {
     const parsed = numberOrEmpty(value);
@@ -414,45 +483,79 @@ export function StructuredProfileEditor({
     value: ProfileMonthValue,
     onChange: (value: ProfileMonthValue) => void,
     disabled = false,
-  ) => (
-    <div className="month-selector">
-      <span>{label}</span>
+  ) => {
+    const emptyMonthValue = "__empty-month__";
+    const emptyYearValue = "__empty-year__";
+    const monthItems = [
+      { label: "Month", value: emptyMonthValue },
+      ...PROFILE_MONTHS.map((month) => ({ label: month.label, value: month.value })),
+    ];
+    const yearItems = [
+      { label: "Year", value: emptyYearValue },
+      ...years.map((year) => ({ label: year, value: year })),
+    ];
+    return (
+    <FieldSet className="month-selector">
+      <FieldLegend variant="label">{label}</FieldLegend>
       <div className="month-selector-controls">
-        <select
-          aria-label={`${label} month`}
+        <Select
           disabled={disabled}
-          value={value.month}
-          onChange={(event) => onChange({ ...value, month: event.target.value })}
+          items={monthItems}
+          value={value.month || emptyMonthValue}
+          onValueChange={(month) =>
+            onChange({
+              ...value,
+              month: month === null || month === emptyMonthValue ? "" : month,
+            })
+          }
         >
-          <option value="">Month</option>
-          {PROFILE_MONTHS.map((month) => (
-            <option key={month.value} value={month.value}>
-              {month.label}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label={`${label} year`}
+          <SelectTrigger aria-label={`${label} month`} className="configuration-select-trigger">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {monthItems.map((month) => (
+                <SelectItem key={month.value} value={month.value}>
+                  {month.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Select
           disabled={disabled}
-          value={value.year}
-          onChange={(event) => onChange({ ...value, year: event.target.value })}
+          items={yearItems}
+          value={value.year || emptyYearValue}
+          onValueChange={(year) =>
+            onChange({
+              ...value,
+              year: year === null || year === emptyYearValue ? "" : year,
+            })
+          }
         >
-          <option value="">Year</option>
-          {years.map((year) => (
-            <option key={year} value={year}>
-              {year}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger aria-label={`${label} year`} className="configuration-select-trigger">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {yearItems.map((year) => (
+                <SelectItem key={year.value} value={year.value}>
+                  {year.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </div>
-    </div>
-  );
+    </FieldSet>
+    );
+  };
 
   const monthField = (path: string, label: string) => {
     const value = parseProfileMonth(textAt(profile, path));
     return (
-      <div className="field month-field">
-        <span>{label}</span>
+      <Field className="field month-field">
+        <FieldTitle>{label}</FieldTitle>
         <div className="month-field-body">
           {monthSelector(label, value, (next) => updateProfilePath(path, formatProfileMonth(next)))}
           <button
@@ -464,7 +567,7 @@ export function StructuredProfileEditor({
             clear
           </button>
         </div>
-      </div>
+      </Field>
     );
   };
 
@@ -474,27 +577,28 @@ export function StructuredProfileEditor({
     const updateDateRange = (next: Partial<typeof value>) => {
       updateProfilePath(path, formatProfileDateRange({ ...value, ...next }));
     };
+    const presentId = editorControlId("profile", path, "present");
     return (
-      <div className="field date-range-field wide">
-        <span>{label}</span>
+      <Field className="field date-range-field wide" data-invalid={hasError || undefined}>
+        <FieldTitle>{label}</FieldTitle>
         <div className={`date-range-body${hasError ? " invalid" : ""}`}>
           {monthSelector("Start", value.start, (start) => updateDateRange({ start }))}
           {value.present
             ? null
             : monthSelector("End", value.end, (end) => updateDateRange({ end, present: false }))}
-          <label className="choice date-range-present">
-            <input
-              type="checkbox"
+          <Field className="choice date-range-present" orientation="horizontal">
+            <Checkbox
+              id={presentId}
               checked={value.present}
-              onChange={(event) =>
+              onCheckedChange={(checked) =>
                 updateDateRange({
-                  end: event.target.checked ? emptyProfileMonth() : value.end,
-                  present: event.target.checked,
+                  end: checked ? emptyProfileMonth() : value.end,
+                  present: checked,
                 })
               }
             />
-            <span>Present</span>
-          </label>
+            <FieldLabel htmlFor={presentId}>Present</FieldLabel>
+          </Field>
           <button
             className="tab"
             type="button"
@@ -510,8 +614,8 @@ export function StructuredProfileEditor({
             clear
           </button>
         </div>
-        {hasError ? <span className="field-error">End date must be after start date.</span> : null}
-      </div>
+        {hasError ? <FieldError>End date must be after start date.</FieldError> : null}
+      </Field>
     );
   };
 
@@ -519,48 +623,78 @@ export function StructuredProfileEditor({
     path: string,
     label: string,
     options: Array<[string, string]> | string[],
-  ) => (
-    <label className="field">
-      <span>{label}</span>
-      <select
-        aria-label={label}
+  ) => {
+    const id = editorControlId("profile", path);
+    const items = options.map((option) => ({
+      label: Array.isArray(option) ? option[1] : option,
+      value: Array.isArray(option) ? option[0] : option,
+    }));
+    return (
+    <Field className="field">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Select
+        items={items}
         value={textAt(profile, path)}
-        onChange={(event) => updateProfilePath(path, event.target.value)}
+        onValueChange={(value) => updateProfilePath(path, value)}
       >
-        {options.map((option) => {
-          const value = Array.isArray(option) ? option[0] : option;
-          const text = Array.isArray(option) ? option[1] : option;
-          return (
-            <option key={value} value={value}>
-              {text}
-            </option>
-          );
-        })}
-      </select>
-    </label>
-  );
+        <SelectTrigger id={id} aria-label={label} className="configuration-select-trigger">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {items.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </Field>
+    );
+  };
 
-  const inventedAdjacentExperienceField = () => (
-    <label className="field check">
-      <input
-        type="checkbox"
+  const inventedAdjacentExperienceField = () => {
+    const id = editorControlId("profile", ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH);
+    return (
+    <Field className="field check" orientation="horizontal">
+      <Checkbox
+        id={id}
         checked={allowsInventedAdjacentExperience()}
-        onChange={(event) => setInventedAdjacentExperienceAllowed(event.target.checked)}
+        onCheckedChange={setInventedAdjacentExperienceAllowed}
       />
-      <span>Enable profile enhancement</span>
-    </label>
-  );
+      <FieldLabel htmlFor={id}>Enable profile enhancement</FieldLabel>
+    </Field>
+    );
+  };
 
-  const checkboxField = (path: string, label: string) => (
-    <label className="field check">
-      <input
-        type="checkbox"
+  const checkboxField = (path: string, label: string) => {
+    const id = editorControlId("profile", path);
+    return (
+    <Field className="field check" orientation="horizontal">
+      <Checkbox
+        id={id}
         checked={Boolean(getPathValue(profile, path))}
-        onChange={(event) => updateProfilePath(path, event.target.checked)}
+        onCheckedChange={(checked) => updateProfilePath(path, checked)}
       />
-      <span>{label}</span>
-    </label>
-  );
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+    </Field>
+    );
+  };
+
+  const yesNoCheckboxField = (path: string, label: string) => {
+    const id = editorControlId("profile", path);
+    return (
+    <Field className="field check" orientation="horizontal">
+      <Checkbox
+        id={id}
+        checked={textAt(profile, path) === "Yes"}
+        onCheckedChange={(checked) => updateProfilePath(path, checked ? "Yes" : "No")}
+      />
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+    </Field>
+    );
+  };
 
   const numberField = (
     path: string,
@@ -569,10 +703,12 @@ export function StructuredProfileEditor({
   ) => {
     const value = getPathValue(profile, path);
     const displayedValue = value === undefined || value === null || value === "" ? attrs.defaultValue : value;
+    const id = editorControlId("profile", path);
     return (
-      <label className="field">
-        <span>{label}</span>
-        <input
+      <Field className="field">
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <Input
+          id={id}
           type="number"
           min={attrs.min}
           max={attrs.max}
@@ -583,7 +719,7 @@ export function StructuredProfileEditor({
             updateProfilePath(path, typeof parsed === "number" ? Math.round(parsed) : parsed);
           }}
         />
-      </label>
+      </Field>
     );
   };
 
@@ -595,10 +731,12 @@ export function StructuredProfileEditor({
     const rawValue = getPathValue(profile, path);
     const ratioValue = rawValue === undefined || rawValue === null || rawValue === "" ? attrs.defaultValue : Number(rawValue);
     const percentValue = Number.isFinite(ratioValue) ? Math.round(ratioValue * 100) : Math.round(attrs.defaultValue * 100);
+    const id = editorControlId("profile", path);
     return (
-      <label className="field">
-        <span>{label}</span>
-        <input
+      <Field className="field">
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <Input
+          id={id}
           type="number"
           min={attrs.min}
           max={attrs.max}
@@ -609,43 +747,62 @@ export function StructuredProfileEditor({
             updateProfilePath(path, typeof parsed === "number" ? Math.round(parsed) / 100 : parsed);
           }}
         />
-      </label>
+      </Field>
     );
   };
 
-  const disabledCheckboxField = (label: string) => (
-    <label className="field check disabled">
-      <input type="checkbox" checked={false} disabled />
-      <span>{label}</span>
-    </label>
-  );
+  const disabledCheckboxField = (label: string, reason: string) => {
+    const id = editorControlId("profile", label, "disabled");
+    const descriptionId = `${id}-description`;
+    return (
+      <Field
+        className="field check disabled locked-choice"
+        data-disabled
+        orientation="horizontal"
+      >
+        <Checkbox aria-describedby={descriptionId} id={id} checked={false} disabled />
+        <FieldContent>
+          <FieldLabel htmlFor={id}>{label}</FieldLabel>
+          <FieldDescription id={descriptionId}>{reason}</FieldDescription>
+        </FieldContent>
+      </Field>
+    );
+  };
 
   const textareaField = (
     path: string,
     label: string,
     placeholder = "",
-    attrs: Record<string, unknown> = {},
-  ) => (
-    <label className="field wide">
-      <span>{label}</span>
-      <textarea
+    attrs: StructuredTextareaAttributes = {},
+  ) => {
+    const id = attrs.id ?? editorControlId("profile", path);
+    return (
+    <Field className="field wide">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Textarea
         {...attrs}
+        id={id}
         placeholder={placeholder}
         value={textAt(profile, path)}
         onChange={(event) => updateProfilePath(path, event.target.value)}
       />
-    </label>
-  );
+    </Field>
+    );
+  };
 
-  const listField = (path: string, label: string) => (
-    <label className="field wide">
-      <span>{label}</span>
-      <textarea
+  const listField = (path: string, label: string) => {
+    const id = editorControlId("profile", path);
+    return (
+    <Field className="field wide">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Textarea
+        id={id}
         value={textArrayAt(profile, path).join("\n")}
         onChange={(event) => updateProfilePath(path, lines(event.target.value))}
       />
-    </label>
-  );
+    </Field>
+    );
+  };
 
   const delimitedListField = (
     path: string,
@@ -671,12 +828,12 @@ export function StructuredProfileEditor({
       updateValues([...values, ""]);
     };
     return (
-      <div className="field wide inline-list-field">
-        <span>{label}</span>
+      <Field className="field wide inline-list-field">
+        <FieldTitle>{label}</FieldTitle>
         <div className={`inline-list${options.compact ? " compact" : ""}`}>
           {values.map((value, index) => (
             <div className="inline-list-row" key={`${path}-${index}`}>
-              <input
+              <Input
                 aria-label={`${label} ${index + 1}`}
                 placeholder={options.placeholder}
                 ref={registerFocusTarget(focusKey(index))}
@@ -710,7 +867,7 @@ export function StructuredProfileEditor({
             {addLabel}
           </button>
         </div>
-      </div>
+      </Field>
     );
   };
 
@@ -744,29 +901,49 @@ export function StructuredProfileEditor({
     };
 
     return (
-      <fieldset className="field wide checkbox-group-field">
-        <legend>{label}</legend>
-        <div className="checkbox-group-list">
-          {groups.map((group) => (
-            <div
-              className={`checkbox-option-group${group.label ? "" : " ungrouped"}`}
-              key={`${path}-${group.label || "ungrouped"}`}
-            >
-              {group.label ? <span className="checkbox-group-label">{group.label}</span> : null}
-              <div className="checkbox-options">
+      <FieldSet className="field wide checkbox-group-field">
+        <FieldLegend>{label}</FieldLegend>
+        <FieldGroup className="checkbox-group-list">
+          {groups.map((group) => {
+            const optionFields = (
+              <FieldGroup className="checkbox-options">
                 {group.options.map((option) => (
-                  <label className="choice target-choice" key={`${path}-${option.value}`}>
-                    <input
-                      type="checkbox"
+                  <Field
+                    className="choice target-choice"
+                    key={`${path}-${option.value}`}
+                    orientation="horizontal"
+                  >
+                    <Checkbox
+                      id={editorControlId("profile", path, option.value)}
                       checked={selected.has(option.value)}
-                      onChange={(event) => updateSelection(option.value, event.target.checked)}
+                      onCheckedChange={(checked) => updateSelection(option.value, checked)}
                     />
-                    <span>{option.label}</span>
-                  </label>
+                    <FieldLabel htmlFor={editorControlId("profile", path, option.value)}>
+                      {option.label}
+                    </FieldLabel>
+                  </Field>
                 ))}
-              </div>
-            </div>
-          ))}
+              </FieldGroup>
+            );
+            return group.label ? (
+              <FieldSet
+                className="checkbox-option-group"
+                key={`${path}-${group.label}`}
+              >
+                <FieldLegend className="checkbox-group-label" variant="label">
+                  {group.label}
+                </FieldLegend>
+                {optionFields}
+              </FieldSet>
+            ) : (
+              <FieldGroup
+                className="checkbox-option-group ungrouped"
+                key={`${path}-ungrouped`}
+              >
+                {optionFields}
+              </FieldGroup>
+            );
+          })}
           {customValues.length > 0 ? (
             <div className="unsupported-target-values">
               <span>Unsupported saved values</span>
@@ -785,8 +962,8 @@ export function StructuredProfileEditor({
               </div>
             </div>
           ) : null}
-        </div>
-      </fieldset>
+        </FieldGroup>
+      </FieldSet>
     );
   };
 
@@ -835,12 +1012,12 @@ export function StructuredProfileEditor({
     };
 
     return (
-      <div className="field wide target-location-model-field">
-        <span>{TARGET_LOCATION_LABEL}</span>
+      <Field className="field wide target-location-model-field">
+        <FieldTitle>{TARGET_LOCATION_LABEL}</FieldTitle>
         <div className="target-location-model-list">
           {rows.map((row, index) => (
             <div className="target-location-model-row" key={`${locationPath}-${index}`}>
-              <input
+              <Input
                 aria-label={`Target location ${index + 1}`}
                 ref={registerFocusTarget(locationFocusKey(index))}
                 value={row.location}
@@ -858,22 +1035,28 @@ export function StructuredProfileEditor({
                   insertRowAfter(index, { location: event.currentTarget.value });
                 }}
               />
-              <fieldset className="target-work-model-group" aria-label={`Target work model ${index + 1}`}>
-                {workModelOptions.map((value) => {
-                  const checkboxId = `target-work-model-${index}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-                  return (
-                    <label className="target-work-model-option" key={value} htmlFor={checkboxId}>
-                      <input
-                        id={checkboxId}
-                        type="checkbox"
-                        checked={commaListAt(row.workModel).includes(value)}
-                        onChange={(event) => toggleWorkModel(index, value, event.target.checked)}
-                      />
-                      <span>{value}</span>
-                    </label>
-                  );
-                })}
-              </fieldset>
+              <FieldSet className="target-work-model-group">
+                <FieldLegend className="sr-only">Target work model {index + 1}</FieldLegend>
+                <FieldGroup className="target-work-model-options">
+                  {workModelOptions.map((value) => {
+                    const checkboxId = `target-work-model-${index}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+                    return (
+                      <Field
+                        className="target-work-model-option"
+                        key={value}
+                        orientation="horizontal"
+                      >
+                        <Checkbox
+                          id={checkboxId}
+                          checked={commaListAt(row.workModel).includes(value)}
+                          onCheckedChange={(checked) => toggleWorkModel(index, value, checked)}
+                        />
+                        <FieldLabel htmlFor={checkboxId}>{value}</FieldLabel>
+                      </Field>
+                    );
+                  })}
+                </FieldGroup>
+              </FieldSet>
               <button
                 className="icon-button"
                 type="button"
@@ -894,37 +1077,72 @@ export function StructuredProfileEditor({
             add location
           </button>
         </div>
-      </div>
+      </Field>
     );
   };
 
   const bulletStandardsField = () => (
-    <fieldset className="field wide checkbox-group-field bullet-standards-group">
-      <legend>Bullet standards</legend>
-      <div className="checkbox-options">
-        {BULLET_STANDARD_OPTIONS.map(([value, label]) => (
-          <label className="choice target-choice" key={value}>
-            <input type="checkbox" checked readOnly value={value} />
-            <span>{label}</span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
+    <FieldSet className="field wide checkbox-group-field bullet-standards-group">
+      <FieldLegend>Bullet standards</FieldLegend>
+      <a
+        className="configuration-help-link"
+        href="https://jobctrl.dev/architecture/tailoring#inputs-to-tailoring"
+        rel="noreferrer"
+        target="_blank"
+      >
+        Guide
+        <IconExternalLink aria-hidden="true" size={12} />
+      </a>
+      <FieldGroup className="checkbox-options">
+        {BULLET_STANDARD_OPTIONS.map(([value, label]) => {
+          const id = editorControlId("profile", "bullet-standard", value);
+          const descriptionId = `${id}-description`;
+          return (
+            <Field
+              className="choice target-choice required-choice locked-choice"
+              data-disabled
+              key={value}
+              orientation="horizontal"
+            >
+              <Checkbox
+                aria-describedby={descriptionId}
+                id={id}
+                checked
+                disabled
+                name="bullet-standard"
+                value={value}
+              />
+              <FieldContent>
+                <FieldLabel htmlFor={id}>{label}</FieldLabel>
+                <FieldDescription id={descriptionId}>
+                  Required for evidence-quality resumes and cannot be disabled.
+                </FieldDescription>
+              </FieldContent>
+            </Field>
+          );
+        })}
+      </FieldGroup>
+      <FieldDescription>
+        Required evidence-quality standards; these cannot be disabled.
+      </FieldDescription>
+    </FieldSet>
   );
 
   const adjacentExperienceClaimsGroup = () => (
-    <fieldset className="field wide checkbox-group-field tailoring-control-group">
-      <legend>Adjacent experience claims</legend>
-      <div className="field-grid one">
-        {inventedAdjacentExperienceField()}
-      </div>
-    </fieldset>
+    <FieldSet className="field wide checkbox-group-field tailoring-control-group">
+      <FieldLegend>Adjacent experience claims</FieldLegend>
+      <AdaptiveFieldGrid>
+        <AdaptiveFieldSpan span="wide">
+          {inventedAdjacentExperienceField()}
+        </AdaptiveFieldSpan>
+      </AdaptiveFieldGrid>
+    </FieldSet>
   );
 
   const generationPermissionsGroup = () => (
-    <fieldset className="field wide checkbox-group-field tailoring-control-group">
-      <legend>Generation permissions</legend>
-      <div className="checkbox-options vertical">
+    <FieldSet className="field wide checkbox-group-field tailoring-control-group">
+      <FieldLegend>Generation permissions</FieldLegend>
+      <FieldGroup className="checkbox-options vertical">
         {checkboxField(
           "resume.tailoring_rules.tailoring_policy.allow_summary_rewrite",
           "Rewrite executive summary",
@@ -937,15 +1155,18 @@ export function StructuredProfileEditor({
           "resume.tailoring_rules.tailoring_policy.allow_skill_reordering",
           "Select and order existing skills",
         )}
-        {disabledCheckboxField("Change experience titles")}
-      </div>
-    </fieldset>
+        {disabledCheckboxField(
+          "Change experience titles",
+          "Experience titles remain fixed to profile evidence during tailoring.",
+        )}
+      </FieldGroup>
+    </FieldSet>
   );
 
   const writingStyleGroup = () => (
-    <fieldset className="field wide checkbox-group-field tailoring-control-group">
-      <legend>Writing style</legend>
-      <div className="field-grid">
+    <FieldSet className="field wide checkbox-group-field tailoring-control-group">
+      <FieldLegend>Writing style</FieldLegend>
+      <AdaptiveFieldGrid>
         {selectField("resume.tailoring_rules.writing_style.tone", "Writing tone", [
           ["direct", "Direct"],
           ["executive", "Executive"],
@@ -963,15 +1184,14 @@ export function StructuredProfileEditor({
           "resume.tailoring_rules.writing_style.avoid_first_person",
           "Avoid first-person language",
         )}
-        {bulletStandardsField()}
-      </div>
-    </fieldset>
+      </AdaptiveFieldGrid>
+    </FieldSet>
   );
 
   const revisionPolicyGroup = () => (
-    <fieldset className="field wide checkbox-group-field tailoring-control-group revision-policy-group">
-      <legend>Revision policy</legend>
-      <div className="field-grid">
+    <FieldSet className="field wide checkbox-group-field tailoring-control-group revision-policy-group">
+      <FieldLegend>Revision policy</FieldLegend>
+      <AdaptiveFieldGrid>
         {numberField("resume.tailoring_rules.revision_gates.min_fit_score", "Minimum fit score", {
           min: 1,
           max: 10,
@@ -990,25 +1210,27 @@ export function StructuredProfileEditor({
           step: 1,
           defaultValue: 1,
         })}
-      </div>
-    </fieldset>
+      </AdaptiveFieldGrid>
+    </FieldSet>
   );
 
   const additionalGuidanceGroup = () => (
-    <div className="field-grid one">
-      {textareaField(
-        "resume.tailoring_rules.custom_tailoring_prompt",
-        "Additional guidance",
-        "Writing and positioning guidance; evidence rules still apply.",
-        { maxLength: 1200 },
-      )}
-    </div>
+    <AdaptiveFieldGrid>
+      <AdaptiveFieldSpan span="full">
+        {textareaField(
+          "resume.tailoring_rules.custom_tailoring_prompt",
+          "Additional guidance",
+          "Writing and positioning guidance; evidence rules still apply.",
+          { maxLength: 1200 },
+        )}
+      </AdaptiveFieldSpan>
+    </AdaptiveFieldGrid>
   );
 
   const targetSearchSection = () => (
     <section className="form-section">
       <h3>Target search</h3>
-      <div className="target-preferences-grid">
+      <FieldGroup className="target-preferences-grid">
         {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS)}
         {targetSearchCheckboxGroup(
           "experience.target_seniority_floor",
@@ -1024,31 +1246,45 @@ export function StructuredProfileEditor({
         })}
         {delimitedListField("experience.target_role", "Target roles", "add role", { compact: true })}
         {targetLocationWorkModelField()}
-      </div>
+      </FieldGroup>
     </section>
   );
 
-  const styleSelect = (path: string, label: string, options: Array<[string, string]>) => (
-    <label className="field">
-      <span>{label}</span>
-      <select
-        aria-label={label}
+  const styleSelect = (path: string, label: string, options: Array<[string, string]>) => {
+    const id = editorControlId("style", path);
+    const items = options.map(([value, text]) => ({ label: text, value }));
+    return (
+    <Field className="field">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Select
+        items={items}
         value={textAt(style, path)}
-        onChange={(event) => updateStylePath(path, event.target.value)}
+        onValueChange={(value) => updateStylePath(path, value)}
       >
-        {options.map(([value, text]) => (
-          <option key={value} value={value}>
-            {text}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
+        <SelectTrigger id={id} aria-label={label} className="configuration-select-trigger">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {items.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </Field>
+    );
+  };
 
-  const styleNumber = (path: string, label: string, min: number, max: number, step: number) => (
-    <label className="field">
-      <span>{label}</span>
-      <input
+  const styleNumber = (path: string, label: string, min: number, max: number, step: number) => {
+    const id = editorControlId("style", path);
+    return (
+    <Field className="field">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input
+        id={id}
         type="number"
         min={min}
         max={max}
@@ -1056,8 +1292,9 @@ export function StructuredProfileEditor({
         value={textAt(style, path)}
         onChange={(event) => updateStylePath(path, numberOrEmpty(event.target.value))}
       />
-    </label>
-  );
+    </Field>
+    );
+  };
 
   const experienceEntries = recordArrayAt(profile, "resume.experience_entries");
   const educationEntries = recordArrayAt(profile, "resume.education_entries");
@@ -1077,9 +1314,15 @@ export function StructuredProfileEditor({
     <div className="profile-sections">
       {mode === "profile" ? (
         <>
-          <section className="form-section">
-            <h3>Personal information</h3>
-            <div className="field-grid">
+          <DisclosureSection
+            className="profile-disclosure profile-disclosure--personal"
+            collapsedSummary="Contact · address · professional links"
+            defaultOpen
+            description="Contact, address, and professional links"
+            headingLevel={3}
+            title="Personal information"
+          >
+            <AdaptiveFieldGrid>
               {textField("personal.full_name", "Full name", "text", { required: true })}
               {textField("personal.preferred_name", "Preferred name")}
               {textField("personal.email", "Email", "email", { required: true })}
@@ -1097,12 +1340,18 @@ export function StructuredProfileEditor({
               {textField("personal.github_url", "GitHub URL", "url")}
               {textField("personal.portfolio_url", "Portfolio URL", "url")}
               {textField("personal.website_url", "Website URL", "url")}
-            </div>
-          </section>
+            </AdaptiveFieldGrid>
+          </DisclosureSection>
 
-          <section className="form-section">
-            <h3>Resume baseline</h3>
-            <div className="field-grid">
+          <DisclosureSection
+            className="profile-disclosure profile-disclosure--baseline"
+            collapsedSummary="Experience · executive profile · verified metrics"
+            defaultOpen
+            description="Default experience summary and verified evidence"
+            headingLevel={3}
+            title="Resume baseline"
+          >
+            <AdaptiveFieldGrid>
               {textField("experience.years_of_experience_total", "Total years of experience", "number", {
                 min: 0,
                 step: 1,
@@ -1117,296 +1366,386 @@ export function StructuredProfileEditor({
                 "number",
                 { min: 1, max: 99, step: 1 },
               )}
-            </div>
-            <div className="field-grid one">
-              {textareaField("resume.executive_profile.baseline_text", "Executive profile baseline")}
-              {listField("resume_constraints.real_metrics", "Verified resume metrics")}
-            </div>
-          </section>
+            </AdaptiveFieldGrid>
+            <AdaptiveFieldGrid>
+              <AdaptiveFieldSpan span="full">
+                {textareaField("resume.executive_profile.baseline_text", "Executive profile baseline")}
+              </AdaptiveFieldSpan>
+              <AdaptiveFieldSpan span="full">
+                {listField("resume_constraints.real_metrics", "Verified resume metrics")}
+              </AdaptiveFieldSpan>
+            </AdaptiveFieldGrid>
+          </DisclosureSection>
 
-          <section className="form-section">
-        <h3>Experience entries</h3>
-        <div className="repeat-list">
-          {experienceEntries.map((entry, index) => {
-            const entryId = textFrom(entry["id"]);
-            const bullets = editableTextArrayAt(profile, `resume.experience_entries.${index}.bullets`);
-            const requiredBullets = new Set(
-              asTextArray(
-                recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id")[entryId],
-              ),
-            );
-            return (
-              <div className="repeat-card" key={`${entryId || "experience"}-${index}`}>
-                <div className="repeat-hd">
-                  <b>{textFrom(entry["title"]) || `Experience ${index + 1}`}</b>
-                  <div className="repeat-controls">
-                    <label className="choice">
-                      <input
-                        type="checkbox"
-                        checked={requiredExperienceIds.has(entryId)}
-                        disabled={!entryId}
-                        onChange={(event) =>
-                          setRequiredId(
-                            "resume.tailoring_rules.required_experience_entry_ids",
-                            entryId,
-                            event.target.checked,
-                          )
-                        }
-                      />
-                      <span>must appear in final resume</span>
-                    </label>
-                    <button
-                      className="tab"
-                      type="button"
-                      onClick={() => removeRepeatItem("resume.experience_entries", index)}
-                    >
-                      remove experience
-                    </button>
-                  </div>
-                </div>
-                <div className="field-grid">
-                  {dateRangeField(`resume.experience_entries.${index}.date_range`, "Date range")}
-                  {textField(`resume.experience_entries.${index}.title`, "Title")}
-                  {textField(`resume.experience_entries.${index}.company`, "Company")}
-                  {textField(`resume.experience_entries.${index}.location`, "Location")}
-                </div>
-                <div className="bullet-list">
-                  {bullets.map((bullet, bulletIndex) => (
-                    <div className="bullet-row" key={`${entryId}-${bulletIndex}`}>
-                      <div className="bullet-row-top">
-                        <span className="bullet-label">Bullet {bulletIndex + 1}</span>
-                        <label className="choice bullet-choice">
-                          <input
-                            type="checkbox"
-                            checked={requiredBullets.has(bullet)}
-                            disabled={!entryId || !bullet}
-                            onChange={(event) =>
-                              setRequiredBullet(entryId, bullet, event.target.checked)
+          <DisclosureSection
+            className="profile-disclosure profile-disclosure--experience"
+            collapsedSummary={`${experienceEntries.length} ${
+              experienceEntries.length === 1 ? "entry" : "entries"
+            }`}
+            defaultOpen={false}
+            description="Roles, dates, bullets, and required content"
+            headingLevel={3}
+            title="Experience entries"
+          >
+            <FieldGroup className="repeat-list">
+              {experienceEntries.map((entry, index) => {
+                const entryId = textFrom(entry["id"]);
+                const bullets = editableTextArrayAt(profile, `resume.experience_entries.${index}.bullets`);
+                const requiredBullets = new Set(
+                  asTextArray(
+                    recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id")[entryId],
+                  ),
+                );
+                const requiredEntryId = editorControlId("profile", `experience-${index}`, "required");
+                return (
+                  <Fragment key={`${entryId || "experience"}-${index}`}>
+                    {index > 0 ? <Separator className="repeat-section-separator" /> : null}
+                    <FieldSet className="repeat-section">
+                      <FieldLegend>
+                        {textFrom(entry["title"]) || `Experience ${index + 1}`}
+                      </FieldLegend>
+                      <div className="repeat-controls">
+                        <Field
+                          className="choice"
+                          data-disabled={!entryId || undefined}
+                          orientation="horizontal"
+                        >
+                          <Checkbox
+                            id={requiredEntryId}
+                            checked={requiredExperienceIds.has(entryId)}
+                            disabled={!entryId}
+                            onCheckedChange={(checked) =>
+                              setRequiredId(
+                                "resume.tailoring_rules.required_experience_entry_ids",
+                                entryId,
+                                checked,
+                              )
                             }
                           />
-                          <span>Required</span>
-                        </label>
+                          <FieldLabel htmlFor={requiredEntryId}>must appear in final resume</FieldLabel>
+                        </Field>
+                        <button
+                          className="tab"
+                          type="button"
+                          onClick={() => removeRepeatItem("resume.experience_entries", index)}
+                        >
+                          remove experience
+                        </button>
                       </div>
-                      <textarea
-                        aria-label={`Bullet ${bulletIndex + 1}`}
-                        value={bullet}
-                        onChange={(event) =>
-                          updateProfilePath(
-                            `resume.experience_entries.${index}.bullets.${bulletIndex}`,
-                            event.target.value,
-                          )
-                        }
-                      />
-                      <button
-                        className="icon-button"
-                        type="button"
-                        aria-label={`Remove bullet ${bulletIndex + 1}`}
-                        title="Remove bullet"
-                        onClick={() => removeBullet(index, bulletIndex)}
-                      >
-                        <IconTrash size={14} aria-hidden="true" />
-                      </button>
-                    </div>
-                  ))}
-                  <button className="tab add-bullet" type="button" onClick={() => addBullet(index)}>
-                    <IconPlus size={14} aria-hidden="true" />
-                    add bullet
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-          <button
-            className="tab"
-            type="button"
-            onClick={() => addRepeatItem("resume.experience_entries")}
-          >
-            add experience
-          </button>
-        </div>
-          </section>
+                      <AdaptiveFieldGrid>
+                        {dateRangeField(`resume.experience_entries.${index}.date_range`, "Date range")}
+                        {textField(`resume.experience_entries.${index}.title`, "Title")}
+                        {textField(`resume.experience_entries.${index}.company`, "Company")}
+                        {textField(`resume.experience_entries.${index}.location`, "Location")}
+                      </AdaptiveFieldGrid>
+                      <Separator />
+                      <FieldGroup className="bullet-list">
+                        {bullets.map((bullet, bulletIndex) => {
+                          const requiredBulletId = editorControlId(
+                            "profile",
+                            `experience-${index}-bullet-${bulletIndex}`,
+                            "required",
+                          );
+                          return (
+                            <Field className="bullet-row" key={`${entryId}-${bulletIndex}`}>
+                              <div className="bullet-row-top">
+                                <FieldTitle className="bullet-label">Bullet {bulletIndex + 1}</FieldTitle>
+                                <Field
+                                  className="choice bullet-choice"
+                                  data-disabled={!entryId || !bullet || undefined}
+                                  orientation="horizontal"
+                                >
+                                  <Checkbox
+                                    id={requiredBulletId}
+                                    checked={requiredBullets.has(bullet)}
+                                    disabled={!entryId || !bullet}
+                                    onCheckedChange={(checked) =>
+                                      setRequiredBullet(entryId, bullet, checked)
+                                    }
+                                  />
+                                  <FieldLabel htmlFor={requiredBulletId}>Required</FieldLabel>
+                                </Field>
+                              </div>
+                              <Textarea
+                                aria-label={`Bullet ${bulletIndex + 1}`}
+                                value={bullet}
+                                onChange={(event) =>
+                                  updateProfilePath(
+                                    `resume.experience_entries.${index}.bullets.${bulletIndex}`,
+                                    event.target.value,
+                                  )
+                                }
+                              />
+                              <button
+                                className="icon-button"
+                                type="button"
+                                aria-label={`Remove bullet ${bulletIndex + 1}`}
+                                title="Remove bullet"
+                                onClick={() => removeBullet(index, bulletIndex)}
+                              >
+                                <IconTrash size={14} aria-hidden="true" />
+                              </button>
+                            </Field>
+                          );
+                        })}
+                        <button className="tab add-bullet" type="button" onClick={() => addBullet(index)}>
+                          <IconPlus size={14} aria-hidden="true" />
+                          add bullet
+                        </button>
+                      </FieldGroup>
+                    </FieldSet>
+                  </Fragment>
+                );
+              })}
+              <button
+                className="tab"
+                type="button"
+                onClick={() => addRepeatItem("resume.experience_entries")}
+              >
+                add experience
+              </button>
+            </FieldGroup>
+          </DisclosureSection>
 
-          <section className="form-section">
-        <h3>Education</h3>
-        <div className="repeat-list">
-          {educationEntries.map((entry, index) => {
-            const entryId = textFrom(entry["id"]);
-            return (
-              <div className="repeat-card" key={`${entryId || "education"}-${index}`}>
-                <div className="repeat-hd">
-                  <b>{textFrom(entry["degree"]) || `Education ${index + 1}`}</b>
-                  <div className="repeat-controls">
-                    <label className="choice">
-                      <input
-                        type="checkbox"
-                        checked={requiredEducationIds.has(entryId)}
-                        disabled={!entryId}
-                        onChange={(event) =>
-                          setRequiredId(
-                            "resume.tailoring_rules.required_education_entry_ids",
-                            entryId,
-                            event.target.checked,
-                          )
-                        }
-                      />
-                      <span>must appear in final resume</span>
-                    </label>
-                    <button
-                      className="tab"
-                      type="button"
-                      onClick={() => removeRepeatItem("resume.education_entries", index)}
-                    >
-                      remove education
-                    </button>
-                  </div>
-                </div>
-                <div className="field-grid">
-                  {monthField(`resume.education_entries.${index}.date`, "Completion month")}
-                  {textField(`resume.education_entries.${index}.degree`, "Degree")}
-                  {textField(`resume.education_entries.${index}.institution`, "Institution")}
-                  {textField(`resume.education_entries.${index}.location`, "Location")}
-                </div>
-              </div>
-            );
-          })}
-          <button
-            className="tab"
-            type="button"
-            onClick={() => addRepeatItem("resume.education_entries")}
+          <DisclosureSection
+            className="profile-disclosure profile-disclosure--education"
+            collapsedSummary={`${educationEntries.length} ${
+              educationEntries.length === 1 ? "entry" : "entries"
+            }`}
+            defaultOpen={false}
+            description="Degrees, institutions, completion dates, and required content"
+            headingLevel={3}
+            title="Education"
           >
-            add education
-          </button>
-        </div>
-          </section>
+            <FieldGroup className="repeat-list">
+              {educationEntries.map((entry, index) => {
+                const entryId = textFrom(entry["id"]);
+                const requiredEntryId = editorControlId("profile", `education-${index}`, "required");
+                return (
+                  <Fragment key={`${entryId || "education"}-${index}`}>
+                    {index > 0 ? <Separator className="repeat-section-separator" /> : null}
+                    <FieldSet className="repeat-section">
+                      <FieldLegend>
+                        {textFrom(entry["degree"]) || `Education ${index + 1}`}
+                      </FieldLegend>
+                      <div className="repeat-controls">
+                        <Field
+                          className="choice"
+                          data-disabled={!entryId || undefined}
+                          orientation="horizontal"
+                        >
+                          <Checkbox
+                            id={requiredEntryId}
+                            checked={requiredEducationIds.has(entryId)}
+                            disabled={!entryId}
+                            onCheckedChange={(checked) =>
+                              setRequiredId(
+                                "resume.tailoring_rules.required_education_entry_ids",
+                                entryId,
+                                checked,
+                              )
+                            }
+                          />
+                          <FieldLabel htmlFor={requiredEntryId}>must appear in final resume</FieldLabel>
+                        </Field>
+                        <button
+                          className="tab"
+                          type="button"
+                          onClick={() => removeRepeatItem("resume.education_entries", index)}
+                        >
+                          remove education
+                        </button>
+                      </div>
+                      <AdaptiveFieldGrid>
+                        {monthField(`resume.education_entries.${index}.date`, "Completion month")}
+                        {textField(`resume.education_entries.${index}.degree`, "Degree")}
+                        {textField(`resume.education_entries.${index}.institution`, "Institution")}
+                        {textField(`resume.education_entries.${index}.location`, "Location")}
+                      </AdaptiveFieldGrid>
+                    </FieldSet>
+                  </Fragment>
+                );
+              })}
+              <button
+                className="tab"
+                type="button"
+                onClick={() => addRepeatItem("resume.education_entries")}
+              >
+                add education
+              </button>
+            </FieldGroup>
+          </DisclosureSection>
 
-          <section className="form-section">
-        <h3>Skill categories</h3>
-        <div className="repeat-list">
-          {skillCategories.map((entry, index) => {
-            const entryId = textFrom(entry["id"]);
-            const skills = editableTextArrayAt(profile, `resume.skill_categories.${index}.items`);
-            const requiredSkills = new Set(
-              asTextArray(
-                recordAt(profile, "resume.tailoring_rules.required_skills_by_category_id")[entryId],
-              ),
-            );
-            return (
-              <div className="repeat-card" key={`${entryId || "skills"}-${index}`}>
-                <div className="repeat-hd">
-                  <b>{textFrom(entry["label"]) || `Skill category ${index + 1}`}</b>
-                  <div className="repeat-controls">
-                    <label className="choice">
-                      <input
-                        type="checkbox"
-                        checked={requiredSkillIds.has(entryId)}
-                        disabled={!entryId}
-                        onChange={(event) =>
-                          setRequiredId(
-                            "resume.tailoring_rules.required_skill_category_ids",
-                            entryId,
-                            event.target.checked,
-                          )
-                        }
-                      />
-                      <span>must appear in final resume</span>
-                    </label>
-                    <button
-                      className="tab"
-                      type="button"
-                      onClick={() => removeRepeatItem("resume.skill_categories", index)}
-                    >
-                      remove skill category
-                    </button>
-                  </div>
-                </div>
-                <div className="field-grid">
-                  {textField(`resume.skill_categories.${index}.label`, "Label")}
-                </div>
-                <div className="skill-list">
-                  {skills.map((skill, skillIndex) => (
-                    <div className="skill-row" key={`${entryId}-${skillIndex}`}>
-                      <label className="skill-input field">
-                        <span>Skill {skillIndex + 1}</span>
-                        <input
-                          value={skill}
-                          onChange={(event) =>
-                            updateProfilePath(
-                              `resume.skill_categories.${index}.items.${skillIndex}`,
-                              event.target.value,
-                            )
-                          }
-                        />
-                      </label>
-                      <label className="choice skill-choice">
-                        <input
-                          type="checkbox"
-                          checked={requiredSkills.has(skill)}
-                          disabled={!entryId || !skill}
-                          onChange={(event) =>
-                            setRequiredSkill(entryId, skill, event.target.checked)
-                          }
-                        />
-                        <span>Required</span>
-                      </label>
-                      <button
-                        className="icon-button"
-                        type="button"
-                        aria-label={`Remove skill ${skillIndex + 1}`}
-                        title="Remove skill"
-                        onClick={() => removeSkill(index, skillIndex)}
-                      >
-                        <IconTrash size={14} aria-hidden="true" />
-                      </button>
-                    </div>
-                  ))}
-                  <button className="tab add-bullet" type="button" onClick={() => addSkill(index)}>
-                    <IconPlus size={14} aria-hidden="true" />
-                    add skill
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-          <button
-            className="tab"
-            type="button"
-            onClick={() => addRepeatItem("resume.skill_categories")}
+          <DisclosureSection
+            className="profile-disclosure profile-disclosure--skills"
+            collapsedSummary={`${skillCategories.length} ${
+              skillCategories.length === 1 ? "category" : "categories"
+            }`}
+            defaultOpen={false}
+            description="Skill groups, individual skills, and required content"
+            headingLevel={3}
+            title="Skill categories"
           >
-            add skill category
-          </button>
-        </div>
-          </section>
+            <FieldGroup className="repeat-list">
+              {skillCategories.map((entry, index) => {
+                const entryId = textFrom(entry["id"]);
+                const skills = editableTextArrayAt(profile, `resume.skill_categories.${index}.items`);
+                const requiredSkills = new Set(
+                  asTextArray(
+                    recordAt(profile, "resume.tailoring_rules.required_skills_by_category_id")[entryId],
+                  ),
+                );
+                const requiredEntryId = editorControlId("profile", `skills-${index}`, "required");
+                return (
+                  <Fragment key={`${entryId || "skills"}-${index}`}>
+                    {index > 0 ? <Separator className="repeat-section-separator" /> : null}
+                    <FieldSet className="repeat-section">
+                      <FieldLegend>
+                        {textFrom(entry["label"]) || `Skill category ${index + 1}`}
+                      </FieldLegend>
+                      <div className="repeat-controls">
+                        <Field
+                          className="choice"
+                          data-disabled={!entryId || undefined}
+                          orientation="horizontal"
+                        >
+                          <Checkbox
+                            id={requiredEntryId}
+                            checked={requiredSkillIds.has(entryId)}
+                            disabled={!entryId}
+                            onCheckedChange={(checked) =>
+                              setRequiredId(
+                                "resume.tailoring_rules.required_skill_category_ids",
+                                entryId,
+                                checked,
+                              )
+                            }
+                          />
+                          <FieldLabel htmlFor={requiredEntryId}>must appear in final resume</FieldLabel>
+                        </Field>
+                        <button
+                          className="tab"
+                          type="button"
+                          onClick={() => removeRepeatItem("resume.skill_categories", index)}
+                        >
+                          remove skill category
+                        </button>
+                      </div>
+                      <AdaptiveFieldGrid>
+                        <AdaptiveFieldSpan span="wide">
+                          {textField(`resume.skill_categories.${index}.label`, "Label")}
+                        </AdaptiveFieldSpan>
+                      </AdaptiveFieldGrid>
+                      <Separator />
+                      <FieldGroup className="skill-list">
+                        {skills.map((skill, skillIndex) => {
+                          const skillId = editorControlId(
+                            "profile",
+                            `skill-category-${index}-skill-${skillIndex}`,
+                          );
+                          const requiredSkillId = `${skillId}-required`;
+                          return (
+                            <Field className="skill-row" key={`${entryId}-${skillIndex}`}>
+                              <Field className="skill-input field">
+                                <FieldLabel htmlFor={skillId}>Skill {skillIndex + 1}</FieldLabel>
+                                <Input
+                                  id={skillId}
+                                  value={skill}
+                                  onChange={(event) =>
+                                    updateProfilePath(
+                                      `resume.skill_categories.${index}.items.${skillIndex}`,
+                                      event.target.value,
+                                    )
+                                  }
+                                />
+                              </Field>
+                              <Field
+                                className="choice skill-choice"
+                                data-disabled={!entryId || !skill || undefined}
+                                orientation="horizontal"
+                              >
+                                <Checkbox
+                                  id={requiredSkillId}
+                                  checked={requiredSkills.has(skill)}
+                                  disabled={!entryId || !skill}
+                                  onCheckedChange={(checked) =>
+                                    setRequiredSkill(entryId, skill, checked)
+                                  }
+                                />
+                                <FieldLabel htmlFor={requiredSkillId}>Required</FieldLabel>
+                              </Field>
+                              <button
+                                className="icon-button"
+                                type="button"
+                                aria-label={`Remove skill ${skillIndex + 1}`}
+                                title="Remove skill"
+                                onClick={() => removeSkill(index, skillIndex)}
+                              >
+                                <IconTrash size={14} aria-hidden="true" />
+                              </button>
+                            </Field>
+                          );
+                        })}
+                        <button className="tab add-bullet" type="button" onClick={() => addSkill(index)}>
+                          <IconPlus size={14} aria-hidden="true" />
+                          add skill
+                        </button>
+                      </FieldGroup>
+                    </FieldSet>
+                  </Fragment>
+                );
+              })}
+              <button
+                className="tab"
+                type="button"
+                onClick={() => addRepeatItem("resume.skill_categories")}
+              >
+                add skill category
+              </button>
+            </FieldGroup>
+          </DisclosureSection>
 
-          <section className="form-section">
-        <h3>Voluntary EEO</h3>
-        <div className="field-grid">
-          {textField("eeo_voluntary.gender", "Gender")}
-          {textField("eeo_voluntary.race_ethnicity", "Race / ethnicity")}
-          {textField("eeo_voluntary.veteran_status", "Veteran status")}
-          {textField("eeo_voluntary.disability_status", "Disability status")}
-        </div>
-          </section>
+          <DisclosureSection
+            className="profile-disclosure profile-disclosure--eeo"
+            collapsedSummary="Gender · race or ethnicity · veteran status · disability status"
+            defaultOpen={false}
+            description="Optional demographic information"
+            headingLevel={3}
+            title="Voluntary EEO"
+          >
+            <AdaptiveFieldGrid>
+              {textField("eeo_voluntary.gender", "Gender")}
+              {textField("eeo_voluntary.race_ethnicity", "Race / ethnicity")}
+              {textField("eeo_voluntary.veteran_status", "Veteran status")}
+              {textField("eeo_voluntary.disability_status", "Disability status")}
+            </AdaptiveFieldGrid>
+          </DisclosureSection>
         </>
       ) : mode === "target-search" ? (
         targetSearchSection()
       ) : (
         <>
-          <section className="form-section">
-            <h3>Application configurations</h3>
-            <div className="field-grid">
+          <DisclosureSection
+            collapsedSummary="Authorization · availability · compensation"
+            defaultOpen
+            description="Availability, work authorization, and compensation defaults"
+            headingLevel={3}
+            title="Application configuration"
+          >
+            <AdaptiveFieldGrid>
               {applicationConfigurationFields}
-              {selectField("work_authorization.legally_authorized_to_work", "Legally authorized to work", [
-                "Yes",
-                "No",
-              ])}
-              {selectField("work_authorization.require_sponsorship", "Requires sponsorship", ["No", "Yes"])}
+              {yesNoCheckboxField(
+                "work_authorization.legally_authorized_to_work",
+                "Legally authorized to work",
+              )}
+              {yesNoCheckboxField("work_authorization.require_sponsorship", "Requires sponsorship")}
               {textField("work_authorization.work_permit_type", "Work permit type")}
               {textField("personal.password", "Job-site login password", "password", {
                 autoComplete: "new-password",
               })}
               {textField("availability.earliest_start_date", "Earliest start date", "date")}
-              {selectField("availability.available_for_full_time", "Available full-time", ["Yes", "No"])}
-              {selectField("availability.available_for_contract", "Available for contract", ["No", "Yes"])}
+              {yesNoCheckboxField("availability.available_for_full_time", "Available full-time")}
+              {yesNoCheckboxField("availability.available_for_contract", "Available for contract")}
               {textField("compensation.salary_expectation", "Salary expectation", "number", {
                 min: 0,
                 step: 1,
@@ -1423,24 +1762,76 @@ export function StructuredProfileEditor({
                 step: 1,
                 valueKind: "text",
               })}
-              {textField("compensation.currency_conversion_note", "Currency note")}
-            </div>
-          </section>
+              {textField(
+                "compensation.currency_conversion_note",
+                "Currency conversion guidance",
+                "text",
+                {
+                  helperText:
+                    "Used for salary questions when a job posting lists compensation in a different currency.",
+                },
+              )}
+            </AdaptiveFieldGrid>
+          </DisclosureSection>
 
-          <section className="form-section">
-            <h3>Tailoring controls</h3>
-            <div className="tailoring-controls-grid">
-              {adjacentExperienceClaimsGroup()}
-              {generationPermissionsGroup()}
-              {writingStyleGroup()}
-              {revisionPolicyGroup()}
-              {additionalGuidanceGroup()}
-            </div>
-          </section>
+          <DisclosureSection
+            className="preferences-disclosure preferences-disclosure--tailoring"
+            collapsedSummary="Content rules · writing style · quality gates"
+            defaultOpen
+            description="Control what JobCtrl may change and how generated resumes are evaluated"
+            headingLevel={3}
+            title="Tailoring controls"
+          >
+            <Tabs className="tailoring-control-tabs" defaultValue="content-rules">
+              <TabsList
+                aria-label="Tailoring control sections"
+                className="tailoring-control-tabs__list"
+              >
+                <TabsTrigger value="content-rules">Content rules</TabsTrigger>
+                <TabsTrigger value="writing-style">Writing style</TabsTrigger>
+                <TabsTrigger value="quality-gates">Quality gates</TabsTrigger>
+              </TabsList>
+              <TabsContent
+                className="tailoring-tab-panel tailoring-tab-panel--content-rules"
+                forceMount
+                value="content-rules"
+              >
+                <FieldGroup className="tailoring-controls-grid tailoring-controls-grid--content">
+                  {adjacentExperienceClaimsGroup()}
+                  {generationPermissionsGroup()}
+                  {bulletStandardsField()}
+                </FieldGroup>
+              </TabsContent>
+              <TabsContent
+                className="tailoring-tab-panel tailoring-tab-panel--writing-style"
+                forceMount
+                value="writing-style"
+              >
+                <FieldGroup className="tailoring-controls-grid tailoring-controls-grid--writing">
+                  {writingStyleGroup()}
+                  {additionalGuidanceGroup()}
+                </FieldGroup>
+              </TabsContent>
+              <TabsContent
+                className="tailoring-tab-panel tailoring-tab-panel--quality-gates"
+                forceMount
+                value="quality-gates"
+              >
+                <FieldGroup className="tailoring-controls-grid tailoring-controls-grid--quality">
+                  {revisionPolicyGroup()}
+                </FieldGroup>
+              </TabsContent>
+            </Tabs>
+          </DisclosureSection>
 
-          <section className="form-section">
-            <h3>Resume style</h3>
-            <div className="field-grid">
+          <DisclosureSection
+            collapsedSummary="Typography · template · page layout"
+            defaultOpen={false}
+            description="Defaults for generated resumes outside the template workspace"
+            headingLevel={3}
+            title="Resume style"
+          >
+            <AdaptiveFieldGrid>
               {styleSelect("document_font_size", "Text size", [
                 ["10pt", "Small"],
                 ["11pt", "Regular"],
@@ -1477,8 +1868,8 @@ export function StructuredProfileEditor({
               ])}
               {styleNumber("page_scale", "Page scale", 0.7, 1, 0.01)}
               {styleNumber("hints_column_width_cm", "Date column width (cm)", 1.5, 5, 0.1)}
-            </div>
-          </section>
+            </AdaptiveFieldGrid>
+          </DisclosureSection>
         </>
       )}
     </div>

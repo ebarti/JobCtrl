@@ -154,6 +154,12 @@ have a narrower owner: apply-run and workflow-run projections are materialized
 on the Python side and read by TypeScript. Shared fixtures and parity tests
 guard the projection families written by both runtimes.
 
+Event coverage is registry-derived. `DOMAIN_EVENT_TYPES`, its Python mirror,
+projection folds, and the frontend invalidation-handler map must agree through
+exhaustiveness and parity tests. Documentation may list event families for
+orientation, but it does not own a numeric total; adding an event updates the
+registries, producer/consumer folds, and tests rather than a prose count.
+
 A projection refresh uses events newer than the watermark to mark dirty
 entities/families, rebuilds their denormalized rows, and advances the watermark
 only after the rebuild path reaches its successful end. First-run and

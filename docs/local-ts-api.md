@@ -27,7 +27,7 @@ when implementing or debugging a specific endpoint.
 | --- | --- |
 | Read or update the candidate profile, preferences, discovery settings, or credentials | [Profile & Settings](api/profile-and-settings.md) |
 | List jobs, inspect score/material evidence, review applications, or work with contacts | [Jobs & Materials](api/jobs-and-materials.md) |
-| Start/cancel workflows, inspect health, or consume realtime events | [Operations & Events](api/operations-and-events.md) |
+| Start/cancel workflows, inspect current pipeline operations, inspect health, or consume realtime events | [Operations & Events](api/operations-and-events.md) |
 | Check every field, status code, precedence rule, and cadence | [Complete Contract](api/complete-contract.md) |
 
 ## API At A Glance
@@ -37,7 +37,7 @@ when implementing or debugging a specific endpoint.
 | Profile and configuration | `/v1/profile`, `/v1/settings`, `/v1/credentials`, `/v1/providers/models`, `/v1/discovery/settings`, `/v1/browser-capabilities`, `/v1/extension/pairing-token` | Synchronous reads and validated patches |
 | Jobs and evidence | `/v1/jobs`, `/v1/jobs/:jobKey`, `/v1/evidence-map`, `/v1/artifacts` | Projection-backed reads |
 | Review and outcomes | `/v1/apply/review-queue`, `/v1/jobs/:jobKey/apply-review/decision`, `/v1/outcomes` | Explicit review commands plus read models |
-| Workflow operations | `/v1/pipeline/actions/run-stage`, `/v1/workflow-runs`, `/v1/health` | `202` for accepted asynchronous work; `200` for reads/sync commands |
+| Workflow operations | `/v1/pipeline/actions/run-stage`, `/v1/pipeline/operations`, `/v1/workflow-runs`, `/v1/health` | `202` for accepted asynchronous work; `200` for projection-backed and runtime-backed reads/sync commands |
 | Realtime | `/v1/events/stream` | Server-Sent Events with replay and reconnect support |
 
 ## Profile And Preferences
@@ -66,6 +66,14 @@ commands. See [Jobs & Materials](api/jobs-and-materials.md).
 `GET /v1/dashboard/summary`, `GET /v1/analytics/outcomes`, `GET /v1/digest`, and
 `GET /v1/debug/activity` expose read-side summaries. Their exact filters and
 shapes live in the [complete contract](api/complete-contract.md#dashboard-analytics-and-operational-metrics).
+
+`GET /v1/pipeline/operations` is the dedicated current-operations read model.
+It selects the active or draining Discover execution, falling back to the
+latest terminal execution, and combines immutable execution membership,
+pipeline-step and per-job stage projections, fresh worker capacity, approximate
+Temporal task-queue statistics, bounded active-work detail, and a conservative
+typed ETA. It is a current snapshot, not a historical reconstruction endpoint.
+See [Operations & Events](api/operations-and-events.md#pipeline-operations-snapshot).
 
 ## Discovery Controls
 

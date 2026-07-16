@@ -1,7 +1,20 @@
-import type { ResumeTemplateSummary, ResumeTemplateState } from "@jobctrl/contracts";
+import type {
+  ResumeTemplateSummary,
+  ResumeTemplateState,
+} from "@jobctrl/contracts";
+import { IconRefresh } from "@tabler/icons-react";
 import type { JSX } from "react";
 import { useId } from "react";
 
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../../shared/ui/select.js";
 import { ResumeTemplateStatusBadge } from "./ResumeTemplateStatusBadge.js";
 
 export interface JobResumeTemplateSelectProps {
@@ -22,6 +35,7 @@ export function JobResumeTemplateSelect({
   templates,
 }: JobResumeTemplateSelectProps): JSX.Element {
   const refreshStatusId = useId();
+  const selectId = useId();
   const selectedValue =
     current?.effective.assignmentSource === "job_override"
       ? current.effective.templateId
@@ -32,31 +46,53 @@ export function JobResumeTemplateSelect({
       : current?.effective.assignmentSource === "built_in"
         ? `Use built-in (${current.effective.templateName})`
         : "Use default";
+  const items = [
+    { label: inheritedName, value: "inherit" },
+    ...templates.map((template) => ({
+      label: template.displayName,
+      value: template.templateId,
+    })),
+  ];
 
   return (
     <div className="resume-template-job-select">
       <label className="field compact">
         <span>{label}</span>
-        <select
-          aria-describedby={refreshing ? refreshStatusId : undefined}
+        <Select
           disabled={disabled}
+          items={items}
           value={selectedValue}
-          onChange={(event) => onTemplateChange(event.target.value === "inherit" ? null : event.target.value)}
+          onValueChange={(nextValue) => {
+            if (nextValue !== null) {
+              onTemplateChange(nextValue === "inherit" ? null : nextValue);
+            }
+          }}
         >
-          <option value="inherit">{inheritedName}</option>
-          {templates.map((template) => (
-            <option key={template.templateId} value={template.templateId}>
-              {template.displayName}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            id={selectId}
+            aria-label={label}
+            aria-describedby={refreshing ? refreshStatusId : undefined}
+            className="w-full"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {items.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </label>
       <div className="resume-template-job-select-status" aria-live="polite">
         <ResumeTemplateStatusBadge state={current} />
         {refreshing ? (
-          <span className="tag info" id={refreshStatusId}>
+          <StatusBadge icon={IconRefresh} id={refreshStatusId} tone="info">
             updating materials
-          </span>
+          </StatusBadge>
         ) : null}
       </div>
     </div>

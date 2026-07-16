@@ -182,6 +182,9 @@ The user-facing guarantees are:
 - live apply requires a current bound approval by default;
 - system-browser apply is disabled until you explicitly enable and adopt the
   `auto-apply-browser` capability;
+- Settings may detect a supported browser for display, but detection is
+  read-only and exposes only an ID/label pair. JobCtrl does not launch, copy,
+  persist, or adopt it until you explicitly select and enable that capability;
 - dry-run has a browser-layer network/submission guard;
 - submit intent is checkpointed so crashes do not cause blind retries;
 - email-only applications use the same reviewed binding; and

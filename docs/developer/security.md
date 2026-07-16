@@ -319,6 +319,15 @@ owned CAPTCHA tool. A job-site login password, if the user provides one,
 remains local profile data consumed by the owned `type_credential` tool; it is
 not interpolated into the apply prompt.
 
+**Keep detection separate from browser adoption.** The browser-capability list
+may inspect known installation locations, but the RPC/API response exposes only
+bounded candidate IDs and labels, never executable paths. Listing must not
+launch, persist, copy, or enable a browser. The enable request is a strict XOR
+between one transient `detectedBrowserId` and one write-only `executablePath`.
+The worker resolves detected IDs again inside the mutation transaction; a
+stale or missing candidate fails closed and must not reuse cached path data.
+Profile copying remains a second, separately versioned affirmative-consent arm.
+
 **The release gate is enforced before release-bound changes land.**
 `scripts/release_check.py` runs automatically on every push to `main` and is
 available as a manual GitHub workflow for maintainer-reviewed branches. Public

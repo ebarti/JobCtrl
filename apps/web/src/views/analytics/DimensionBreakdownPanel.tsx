@@ -85,8 +85,16 @@ export function DimensionBreakdownPanel({
 }: DimensionBreakdownPanelProps) {
   const rows = analytics ? outcomeRows(analytics, dimension) : [];
   return rows.length || loading ? (
-    <OutcomeRateTable rows={rows} loading={loading} />
+    <div className="analytics-breakdown-region">
+      <OutcomeRateTable
+        rows={rows}
+        loading={loading}
+        title={`Outcomes by ${DIMENSION_LABELS[dimension].toLowerCase()}`}
+      />
+    </div>
   ) : (
-    <Empty title={`No ${DIMENSION_LABELS[dimension].toLowerCase()} outcome rows yet.`} />
+    <div className="analytics-breakdown-empty">
+      <Empty title={`No ${DIMENSION_LABELS[dimension].toLowerCase()} outcome rows yet.`} />
+    </div>
   );
 }

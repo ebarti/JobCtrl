@@ -26,7 +26,7 @@ contexts integrate via:
 2. **The SSE event stream + invalidation router** — server-side state
    change in any context fans out invalidations across every affected
    frontend context (§7.4).
-3. **Composition in views** — the jobs detail drawer composes components
+3. **Composition in views** — the Job Detail route workspace composes components
    from `scoring/`, `materials/`, `apply/`, `pipeline/`. Composition is
    the only place contexts "see" each other directly; even there, they
    see only each other's *components*, never each other's hooks or stores.
@@ -114,14 +114,14 @@ via SSE):
 | `ApplyRunEventRecorded` | apply-runs (detail) — patched via `setQueryData`, not invalidated |
 | `ApplicationSubmitted` | jobs (lists, detail), apply-runs (lists, detail), dashboard |
 | `ApplicationFailed` | jobs (lists, detail), apply-runs (lists, detail), dashboard |
-| `StageStarted` | jobs (lists, detail) |
-| `StageCompleted` | jobs (lists, detail), dashboard |
-| `StageFailed` | jobs (lists, detail), dashboard |
-| `StageBlocked` | jobs (lists, detail), dashboard |
-| `StageSkipped` | jobs (lists, detail), dashboard |
-| `StageReset` | jobs (lists, detail) |
-| `StageCanceled` | jobs (lists, detail) |
-| `StageExhausted` | jobs (lists, detail), dashboard |
+| `StageStarted` | jobs (lists, detail), dashboard, pipeline operations |
+| `StageCompleted` | jobs (lists, detail), dashboard, pipeline operations |
+| `StageFailed` | jobs (lists, detail), dashboard, pipeline operations |
+| `StageBlocked` | jobs (lists, detail), dashboard, pipeline operations |
+| `StageSkipped` | jobs (lists, detail), dashboard, pipeline operations |
+| `StageReset` | jobs (lists, detail), pipeline operations |
+| `StageCanceled` | jobs (lists, detail), dashboard, pipeline operations |
+| `StageExhausted` | jobs (lists, detail), dashboard, pipeline operations |
 | `ProfileUpdated` | profile (profile) |
 | `ProfileImported` | profile (profile) |
 | `TailoringPolicyUpdated` | profile (profile), jobs (lists) |
@@ -132,18 +132,29 @@ via SSE):
 | `PostingContentSnapshotCaptured` / `Failed`, `JobActiveStateChanged`, `ContentDuplicateCandidateDetected` | jobs (lists, detail) |
 | `CompensationFactsUpdated` | jobs (lists, detail), compensation reads |
 | `EmployerAnalyzed`, `BulletProvenanceRecorded`, `TailorRetailorRequested`, `TailoredArtifactsSuppressed` | jobs (lists, detail), artifacts (lists) |
-| `PreparationWorkItemQueued` / `Started` / `Completed` / `Failed` | jobs (lists, detail), dashboard |
+| `PreparationWorkItemQueued` / `Started` / `Completed` / `Failed` | jobs (lists, detail), dashboard, pipeline operations |
+| `PipelineStepQueued` / `Started` / `Completed` / `Failed` | workflow-runs (lists, workflow-ID detail), pipeline operations |
 | `ApplySubmitIntended`, `ApplicationEmailFeedbackIngested` | apply-runs, jobs (detail), apply review |
 | `DigestReviewed` | digest read model |
-| `WorkflowStarted` / `Completed` / `Failed` / `Canceled` / `TimedOut` / `Terminated` | workflow-runs (lists, detail), jobs (lists, detail), dashboard |
+| `WorkflowStarted` / `Completed` / `Failed` / `TimedOut` / `Terminated` | workflow-runs (lists, detail), pipeline operations |
+| `WorkflowCanceled` | workflow-runs (lists, detail), pipeline operations, apply review, dashboard |
 
-The `DomainEventUnion` has **69** arms today (grouped above where several
-share an invalidation target). This table is representative; the
+The runtime `DOMAIN_EVENT_TYPES` registry is canonical (grouped above where
+several share an invalidation target). This table is representative; the
 authoritative registry is the set of per-context `handlers.ts` files wired
 through `contexts/operations/invalidation-router.ts`, and the
-`every-event-has-handler.test.ts` parity test (§10.2) guarantees every one
-of the 69 has a handler. A new backend event means a handler in the owning
+`every-event-has-handler.test.ts` parity test (§10.2) guarantees every
+registered type has a handler. The Python registry is separately parity-checked
+against the same ordered tuple. A new backend event means a handler in the owning
 context and a matching row (or grouped entry) here.
+
+`usePipelineOperationsQuery` adds a deliberate polling complement to this
+event path. Durable stage, preparation-item, pipeline-step, and workflow changes
+usually refresh immediately through SSE. Worker heartbeat, active-slot, and
+Temporal task-queue observations do not emit domain events, so the query also
+polls every 15 seconds while the selected execution is `discovering` or
+`draining` and every 60 seconds otherwise, with a 10-second stale time and no
+background polling. This is scoped runtime refresh, not a replacement for SSE.
 
 Beyond the per-event targets above, the router appends
 `activityKeys.lists(tenantId)` (the Debug activity feed) to **every**
@@ -153,38 +164,45 @@ not invalidate the activity list.
 
 ### 8.5 Composition Patterns
 
-The cross-context UI surfaces (jobs drawer, dashboard activity feed,
+The cross-context UI surfaces (Job Detail workspace, dashboard activity feed,
 artifacts grouped by job) follow the same rule: **the composer owns
 layout; each context owns its slice**. Concretely:
 
 ```tsx
-// views/jobs/JobDetailDrawer.tsx — view composer; not a bounded context
+// views/jobs/JobDetailDrawer.tsx — legacy-named route-workspace composer;
+// not a bounded context
 export function JobDetailDrawer({ jobId }: { jobId: JobId }) {
   const { data: job, isLoading } = useJobDetailQuery(jobId);   // operations
-  if (isLoading || !job) return <DrawerSkeleton />;
+  if (isLoading || !job) return <Empty title="Loading job." />;
 
   return (
-    <Sheet open onOpenChange={(open) => !open && navigate({ to: "/jobs" })}>
-      <SheetContent side="right">
-        <JobOverview job={job} />                {/* views/jobs (this view) */}
-        <JobActions jobId={jobId}/>              {/* contexts/pipeline composer */}
-        <CompensationAuditSection job={job}/>    {/* contexts/enrichment */}
-        <StageTimeline stages={job.stages}/>     {/* contexts/pipeline */}
-        <EmployerAnalysisPanel analysis={...}/>  {/* contexts/materials */}
-        <ApplyHistory jobId={jobId}/>            {/* contexts/apply */}
-        <JobOutcomePanel jobId={jobId}/>         {/* contexts/apply */}
-        <JobAuditHistory jobId={jobId}/>         {/* contexts/operations */}
-      </SheetContent>
-    </Sheet>
+    <RouteWorkspace
+      header={
+        <>
+          <JobOverview job={job} />             {/* views/jobs (this view) */}
+          <JobActions jobId={jobId}/>           {/* contexts/pipeline composer */}
+        </>
+      }
+      inspector={
+        <>
+          <StageTimeline stages={job.stages}/>  {/* contexts/pipeline */}
+          <ApplyHistory jobId={jobId}/>         {/* contexts/apply */}
+          <JobOutcomePanel jobId={jobId}/>      {/* contexts/apply */}
+          <JobAuditHistory jobId={jobId}/>      {/* contexts/operations */}
+        </>
+      }
+    >
+      <CompensationAuditSection job={job}/>    {/* contexts/enrichment */}
+      <EmployerAnalysisPanel analysis={...}/>  {/* contexts/materials */}
+    </RouteWorkspace>
   );
 }
 ```
 
-**Constraint:** the drawer file (a view composer) imports *components* from
-contexts. It does not import their hooks, query keys, or stores. The
-components encapsulate their own data dependencies. The drawer's only
-direct hook call is `useJobDetailQuery` from Operations — the view's read
-side.
+**Constraint:** the legacy-named `JobDetailDrawer` file is a route-workspace
+composer. It imports *components* from contexts, not their query keys or stores;
+its direct read hooks remain Operations-owned. The composed UI is a full route
+workspace with header, ruled content, and inspector, never a detached sheet.
 
 ---
 

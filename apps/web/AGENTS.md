@@ -5,9 +5,11 @@ Also follow the root `AGENTS.md`. The canonical frontend contract lives in
 
 Non-negotiable implementation rules:
 
-- Preserve the documented context/view dependency direction. Views compose
-  context components and never call query, mutation, API-client, or query-client
-  APIs directly.
+- Preserve the documented context/view dependency direction. Views may compose
+  public context components and call public context-owned hooks, including the
+  Operations read hooks, but never call the API client or query client directly.
+  Aggregate contexts may consume the Operations read kernel; they do not import
+  another aggregate context's hooks or stores.
 - Keep tenant-first hierarchical query keys, context-owned mutations with
   targeted invalidation, real optimistic patch/rollback behavior, and exhaustive
   SSE invalidation handlers.

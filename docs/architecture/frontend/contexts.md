@@ -6,7 +6,7 @@ dichotomy. Part of the [Frontend Architecture](index.md) reference.
 **Read this if** you need to know which context owns a given hook, component, or
 mutation — or why a user-facing page is not itself a context.
 
-A *bounded context* is a self-contained slice of the domain with its own model
+A _bounded context_ is a self-contained slice of the domain with its own model
 and vocabulary; the backend defines the nine this app mirrors in
 [Strategic Design — Bounded Contexts](../domain-model/strategic.md). This page
 does not redefine them — it shows how each maps to a folder under
@@ -44,15 +44,16 @@ The diagram reads top-down:
 
 - **Routes** translate URL state into the inputs that views and hooks consume.
 - **View composers** (`views/dashboard/`, `views/jobs/`, `views/artifacts/`)
-  are the only place that imports from multiple contexts. They own
-  layout, not data dependencies.
+  own cross-aggregate composition and layout. They may call public
+  context-owned hooks, but never the API client or query client directly.
 - **Frontend bounded contexts** (`contexts/<name>/`) are the canonical
   surface for each backend context; they own their own hooks,
   components, mutations, and (for Operations) read queries.
-- **Operations** is the read-side kernel: the query-key registry, the
-  projection-typed read hooks, the SSE subscription, the invalidation
-  router. Every other context depends on it for read access; no other
-  context owns read queries.
+- **Operations** is the explicit shared read-side kernel: the query-key
+  registry, projection-typed read hooks, SSE subscription, and invalidation
+  router. Views and aggregate contexts may consume that public read surface;
+  no other context owns projection queries, and aggregate contexts do not
+  import one another's hooks or stores.
 - **Shared kernel** holds primitives, layout, providers, stores,
   formatting helpers, and the **frontend ports** (§6) that abstract the
   API client and event stream.
@@ -68,6 +69,7 @@ importing a job by URL; and administering discovery sources, schedules,
 quarantine, the manual-capture queue, and discovery feedback.
 
 **Ubiquitous language** (matches backend):
+
 - **Job** — the `Job` aggregate root identified by `(TenantId, JobId)`.
 - **JobId** — the system-generated stable identifier (per
   backend domain model [§3.1](../domain-model/strategic.md) / [§4.1](../domain-model/tactical.md)).
@@ -76,6 +78,7 @@ quarantine, the manual-capture queue, and discovery feedback.
 - **Employer** — the hiring company (distinct from `Source`).
 
 **Responsibilities:**
+
 - Wrap the discovery-context write-side endpoints in mutation hooks:
   `useDeleteJobMutation`, `useDeleteJobsBulkMutation`,
   `usePermanentlyDeleteJobsBulkMutation`, `useHideJobsBulkMutation`,
@@ -93,6 +96,7 @@ quarantine, the manual-capture queue, and discovery feedback.
   (delete-confirmation copy, restore toast).
 
 **What it does NOT own:**
+
 - Reading the jobs list (that is `operations/`).
 - Stage state transitions beyond delete/restore (that is `pipeline/`).
 - Score, materials, or apply concerns.
@@ -113,12 +117,14 @@ surface compensation evidence; and expose manual re-enrichment and
 compensation-refresh actions.
 
 **Ubiquitous language** (matches backend):
+
 - **JobEnrichment** — the aggregate (one per Job).
 - **EnrichmentAttempt** — child entity, one per try.
 - **ExtractionTier** — `json_ld | css_selectors | llm_assisted`.
 - **FullDescription**, **ApplicationUrl** — value objects.
 
 **Responsibilities:**
+
 - Register invalidation handlers (in `contexts/enrichment/handlers.ts`,
   wired through `operations/invalidation-router.ts`) for `JobEnriched`,
   `EnrichmentFailed`, `PostingContentSnapshotCaptured` /
@@ -130,10 +136,11 @@ compensation-refresh actions.
   `NotImplementedError`) pending its backend endpoint.
 - Own the compensation-evidence UI: `<CompensationSummaryCell>`,
   `<CompensationSummaryStrip>`, `<CompensationAuditSection>`, and
-  `<RefreshAllCompensationButton>` (composed by the Jobs drawer and the
+  `<RefreshAllCompensationButton>` (composed by the Jobs detail workspace and the
   Apply Review view).
 
 **What it does NOT own:**
+
 - Reading the jobs list / detail (that is `operations/`).
 - Scoring, materials, or apply concerns.
 
@@ -150,6 +157,7 @@ application preferences, settings, credentials, and resume template defaults;
 preview the rendered resume PDF.
 
 **Ubiquitous language** (matches Candidate Profile):
+
 - **Profile** — the candidate document.
 - **Preferences** — application defaults, target-role strategy, tailoring
   controls, and resume-rendering preferences that affect how JobCtrl acts
@@ -168,6 +176,7 @@ preview the rendered resume PDF.
 **Backend mirror:** Candidate Profile (backend domain model [§3.3](../domain-model/strategic.md), [§4.3](../domain-model/tactical.md), [§5.3](../domain-model/ports.md)).
 
 **Responsibilities:**
+
 - Render the profile editor with TanStack Form.
 - Drive the resume-import wizard as a **nested route**
   (`/profile/import/upload`, `/profile/import/preview`,
@@ -190,6 +199,7 @@ preview the rendered resume PDF.
   candidate-profile API surface area in `apps/api/`.
 
 **What it does NOT own:**
+
 - Per-job tailored content (that is `materials/`).
 - Score breakdown or correction (that is `scoring/`).
 
@@ -199,6 +209,7 @@ preview the rendered resume PDF.
 staleness, score correction, and rescore actions.
 
 **Ubiquitous language** (matches Scoring):
+
 - **FitScore** — 1–10 integer.
 - **ScoreBreakdown** — structured `technicalFit`, `experienceFit`,
   `reasoning`.
@@ -210,11 +221,12 @@ staleness, score correction, and rescore actions.
 **Backend mirror:** Scoring (backend domain model [§3.4](../domain-model/strategic.md), [§4.4](../domain-model/tactical.md), [§5.4](../domain-model/ports.md)).
 
 **Responsibilities:**
+
 - Provide the scoring render components — `<ScoreBadge>` (jobs table cell
-  + drawer), `<ScoreReasoning>`, and `<ScoreStalenessBadge>`. `<ScoreBreakdown>`
-  is built, tested, and storied but is **not yet composed by any view** (the
-  Jobs drawer surfaces scoring through `<JobAuditTriage>` →
-  `<ScoreCorrectionControl>`); it stays available for wiring.
+  - detail workspace), `<ScoreReasoning>`, and `<ScoreStalenessBadge>`. `<ScoreBreakdown>`
+    is built, tested, and storied but is **not yet composed by any view** (the
+    Jobs detail workspace surfaces scoring through `<JobAuditTriage>` →
+    `<ScoreCorrectionControl>`); it stays available for wiring.
 - Own score-correction and rescore mutations: `useCorrectScoreMutation`
   (shipped) plus `useRescoreJobMutation`, `useRescoreCurrentPolicyMutation`,
   and `useResetStaleScoresForRescoreMutation`, surfaced through
@@ -224,6 +236,7 @@ staleness, score correction, and rescore actions.
   `useCompensationSourcePolicyQuery` from Operations).
 
 **What it does NOT own:**
+
 - The generic per-stage `score` retry (that is a `pipeline/` retry-stage
   action); scoring owns the domain-level rescore/correction actions above.
 - The fit-score column header in the jobs table (that is `views/jobs/`;
@@ -237,6 +250,7 @@ OS default app.
 
 **Ubiquitous language** (matches Materials Generation context in
 backend domain model [§4.5](../domain-model/tactical.md)):
+
 - **MaterialsSet** — the generation set for one job, identified by
   `(TenantId, JobId, generation)`.
 - **Generation** — the version counter on `MaterialsSet`.
@@ -251,17 +265,19 @@ backend domain model [§4.5](../domain-model/tactical.md)):
 **Backend mirror:** Materials Generation (backend domain model [§3.5](../domain-model/strategic.md), [§4.5](../domain-model/tactical.md), [§5.5](../domain-model/ports.md)).
 
 **Responsibilities:**
+
 - Wrap `apiClient.generateMaterials(jobId, ...)` in a mutation hook.
 - Wrap `apiClient.openArtifact(artifactId)` in a mutation hook (artifacts
   are owned by `MaterialsSet`; the OS-open action is materials-context
   surface even though it surfaces in the Artifacts view).
-- On `generate` success, do *not* refetch eagerly — let the SSE stream
+- On `generate` success, do _not_ refetch eagerly — let the SSE stream
   (`ResumeApproved`, `CoverLetterGenerated`, `PdfRendered`,
   `MaterialsExhausted`) drive query-cache invalidation. The mutation
   resolves with `runId`; the UI shows "queued" until the corresponding
   events arrive (§7).
 
 **What it does NOT own:**
+
 - Reading the artifacts list (that is `operations/` —
   `useArtifactsListQuery`, `useArtifactDetailQuery`).
 - Apply submission (that is `apply/`; apply consumes the latest
@@ -273,6 +289,7 @@ backend domain model [§4.5](../domain-model/tactical.md)):
 observe an apply run's live event timeline.
 
 **Ubiquitous language** (matches Apply Automation / `ApplyRunProjection`):
+
 - **ApplyRun** — one apply attempt, identified by `(TenantId, RunId)`.
 - **DryRun** — apply attempt that does not submit.
 - **SubmissionResult** — `applied | failed | captcha | login_issue | expired | manual | dry_run`.
@@ -281,6 +298,7 @@ observe an apply run's live event timeline.
 **Backend mirror:** Apply Automation (backend domain model [§3.6](../domain-model/strategic.md), [§4.6](../domain-model/tactical.md), [§5.6](../domain-model/ports.md)).
 
 **Responsibilities:**
+
 - Mutation hooks: `useApplyJobMutation`, `useDryRunApplyMutation`,
   `useCancelApplyMutation`.
 - Render the apply timeline (events, tokens, cost) for a selected apply
@@ -288,6 +306,7 @@ observe an apply run's live event timeline.
   to `ApplyRunEventRecorded` events scoped to `runId`.
 
 **What it does NOT own:**
+
 - Reading the apply runs list (that is `operations/` —
   `useApplyRunsListQuery`, derived from the dashboard summary; there is no
   `useApplyRunQuery`). The high-frequency `setQueryData` patching for
@@ -303,6 +322,7 @@ observe an apply run's live event timeline.
 detail.
 
 **Ubiquitous language** (matches Pipeline Orchestration):
+
 - **Stage** — `discover | enrich | score | tailor | cover | pdf | apply`.
 - **StageState** — discriminated union (Pending, Queued, Running,
   Succeeded, Failed, Blocked, Skipped, Exhausted, Stale, Canceled).
@@ -312,6 +332,7 @@ detail.
 **Backend mirror:** Pipeline Orchestration (backend domain model [§3.7](../domain-model/strategic.md), [§4.7](../domain-model/tactical.md), [§5.7](../domain-model/ports.md)).
 
 **Responsibilities:**
+
 - Provide `<StageBadge state={...} />` (exhaustive `switch` on
   `state.kind`) and `<StageTimeline stages={...} />`.
 - Provide `<JobActions jobId={...} />` toolbar composer assembling
@@ -325,11 +346,12 @@ detail.
 - Render the **copyable CLI command** for any stage's `nextAction` via
   `<CopyableCommand command={stage.nextAction} />` from `shared/ui/`.
   This preserves the affordance recorded in `docs/decisions.md` (2026-05-03):
-  *"copyable commands stay; buttons use structured actions."* Buttons
+  _"copyable commands stay; buttons use structured actions."_ Buttons
   call mutation hooks (structured); the copyable strip remains for
   transparency and manual debugging.
 
 **What it does NOT own:**
+
 - Apply submission (that is `apply/`; apply is a stage but its UI
   affordance is a domain action, not a stage transition button).
 - Score correction (that is `scoring/`).
@@ -341,6 +363,7 @@ views: the query client, query-key registry, projection-typed hooks, and
 the SSE subscription that fans events out to invalidate query keys.
 
 **Ubiquitous language** (matches Operations / Read-Side):
+
 - **Projection** — denormalized read shape (`JobListProjection`,
   `JobDetailProjection`, `DashboardProjection`, `ArtifactListProjection`,
   `ApplyRunProjection`).
@@ -360,6 +383,7 @@ the SSE subscription that fans events out to invalidate query keys.
 `workers/automation/.../infrastructure/projections/`).
 
 **Responsibilities:**
+
 - Configure the `QueryClient` (defaults: `staleTime`, `gcTime`, retry
   policy, error handler).
 - Mount the `<EventStreamProvider />` that opens the SSE connection on
@@ -367,7 +391,7 @@ the SSE subscription that fans events out to invalidate query keys.
 - Implement the **invalidation router** that consumes events and calls
   `queryClient.invalidateQueries({ queryKey })` (or `setQueryData(...)`
   for high-frequency events).
-- Own *all* projection-typed read hooks. The core set:
+- Own _all_ projection-typed read hooks. The core set:
   `useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`,
   `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`,
   `useActivityListQuery` / `useActivityEventQuery`,
@@ -388,6 +412,7 @@ the SSE subscription that fans events out to invalidate query keys.
   them from one place. (This is the frontend Anti-Corruption Layer — §6.5.)
 
 **What it does NOT own:**
+
 - Any feature UI. Operations is pure infrastructure code: hooks, types,
   router.
 - Any mutation. Mutations are owned by the aggregate context they
@@ -397,7 +422,7 @@ the SSE subscription that fans events out to invalidate query keys.
 
 The `views/` folder holds the sibling composers of `contexts/`, including
 `dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `runs/`,
-`pipelines/`, `discovery/`, `outreach/`, and `debug/`. They are *not* bounded contexts;
+`pipelines/`, `discovery/`, `outreach/`, and `debug/`. They are _not_ bounded contexts;
 they are presentation composers. The dichotomy is intentional and binding:
 
 - A **context** owns a slice of the backend's domain language and the
@@ -414,20 +439,20 @@ another view (cross-view navigation goes through the URL).
 
 **The views:**
 
-| View | Composition |
-|---|---|
-| `views/dashboard/` | `<KpiGrid>`, `<ConversionPanel>`, `<Funnel>`, `<SourceHealthCard>`, `<ApplyRunsCard>` (operations: `useDashboardSummaryQuery`), plus an outcome-suggestions section (operations: `useApplicationOutcomesQuery`; apply: `<OutcomeSuggestionsPanel>`). Funnel/ApplyRunsCard compose pipeline `<StageBadge>` and apply `<ApplyRunBadge>`. |
-| `views/jobs/` | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`; product filters bind to URL state), `<JobBulkActions>` (discovery: delete / hide / restore / permanent-delete bulk mutations), `<JobDetailDrawer>` (composes `<JobOverview>` + `<JobActions>` + `<StageTimeline>` + artifact badges + `<EmployerAnalysisPanel>` + `<ApplyHistory>` + `<JobOutcomePanel>` + `<JobAuditHistory>`). |
-| `views/artifacts/` | `<ArtifactsTable>` (operations: `useArtifactsListQuery`), `<ArtifactFilterBar>` (URL-bound), `<ArtifactDetailPanel>` (operations: `useArtifactDetailQuery`; materials: `useOpenArtifactMutation`, `<TailoringExplanationSection>`). |
-| `views/apply-review/` | `<ApplyReviewView>` — the human apply-approval workstation. Left pane is the review queue (operations: `useApplyReviewQueueQuery`); right pane composes the live Plate resume editor (`<ResumePlateEditor>` from materials, wired to the apply-context draft/comment/reply/render mutations via `useResumeReviewDraftQuery`), grounding-risk + requirement audit panels, `<ApplyReviewDecisionControls>`, and `<CancelApplyButton>`. |
-| `views/runs/` | `<RunsView>` — unified workflow-runs browser. `<RunsTable>` (operations: `useWorkflowRunsListQuery`), `<RunsFilterBar>` (URL-bound), per-row `<CancelWorkflowRunButton>` ("Stop") and a Temporal Web-UI deep link; `<WorkflowRunDrawer>` (operations: `useWorkflowRunDetailQuery`) at `/runs/$runId`. |
-| `views/pipelines/` | `<PipelinesView>` — renders the pipeline context's `<StageTriggerPanel>` (global/batch stage triggers + `<CancelWorkflowRunButton>`). |
-| `views/discovery/` | `<DiscoveryView>` — stacks `<TargetSearchSettingsPanel>` + `<DiscoveryAutomationSettingsPanel>` (profile), `<DiscoveryRuntimeSettingsPanel>` + `<DiscoveryProductControls>` (discovery). |
-| `views/debug/` | `<DebugActivityTable>` (operations: `useActivityListQuery`), `<DebugFilterBar>` (URL-bound), `<ActivityDetailDrawer>` (operations: `useActivityEventQuery`) at `/activity/$eventId`. |
-| `views/outreach/` | `<OutreachView>` — the Contacts page. `<OutreachTable>` (outreach reads; provenance-summary + role-badge cells), `<OutreachDetailDrawer>` (outreach: contact detail; renders provenance for every fact and composes the outreach context's `<OutreachThreadPanel>` for draft review) at `/outreach/$contactId`. The outreach context's `<JobContactsPanel>` also composes into the Jobs drawer. |
+| View                  | Composition                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `views/dashboard/`    | `<KpiGrid>`, `<ConversionPanel>`, `<Funnel>`, `<SourceHealthCard>`, `<ApplyRunsCard>` (operations: `useDashboardSummaryQuery`), plus an outcome-suggestions section (operations: `useApplicationOutcomesQuery`; apply: `<OutcomeSuggestionsPanel>`). Funnel/ApplyRunsCard compose pipeline `<StageBadge>` and apply `<ApplyRunBadge>`.                                                                                                                                                |
+| `views/jobs/`         | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`; product filters bind to URL state), `<JobBulkActions>` (discovery: delete / hide / restore / permanent-delete bulk mutations), legacy-named `<JobDetailDrawer>` rendered as a full `RouteWorkspace` (composes `<JobOverview>` + `<JobActions>` + `<StageTimeline>` + artifact status rows + `<EmployerAnalysisPanel>` + `<ApplyHistory>` + `<JobOutcomePanel>` + `<JobAuditHistory>`). |
+| `views/artifacts/`    | `<ArtifactsTable>` (operations: `useArtifactsListQuery`), `<ArtifactFilterBar>` (URL-bound), `<ArtifactDetailPanel>` (operations: `useArtifactDetailQuery`; materials: `useOpenArtifactMutation`, `<TailoringExplanationSection>`).                                                                                                                                                                                                                                                   |
+| `views/apply-review/` | `<ApplyReviewView>` — the human apply-approval workstation. Left pane is the review queue (operations: `useApplyReviewQueueQuery`); right pane composes the live Plate resume editor (`<ResumePlateEditor>` from materials, wired to the apply-context draft/comment/reply/render mutations via `useResumeReviewDraftQuery`), grounding-risk + requirement audit panels, `<ApplyReviewDecisionControls>`, and `<CancelApplyButton>`.                                                  |
+| `views/runs/`         | `<RunsView>` — unified workflow-runs browser. `<RunsTable>` (operations: `useWorkflowRunsListQuery`), `<RunsFilterBar>` (URL-bound), per-row `<CancelWorkflowRunButton>` ("Stop") and a Temporal Web-UI deep link; legacy-named `<WorkflowRunDrawer>` renders a full detail workspace at `/runs/$runId`.                                                                                                                                                                              |
+| `views/pipelines/`    | `<PipelinesView>` — reads `usePipelineOperationsQuery`, passes the typed snapshot into the pipeline context's `<PipelineOperationsWorkspace>`, and composes `<StageTriggerPanel>` (global/batch stage triggers + `<CancelWorkflowRunButton>`). The workspace renders summary, source/reconciliation progress, worker capacity, the scoped stage ledger, active work, and pipeline actions.                                                                                            |
+| `views/discovery/`    | `<DiscoveryView>` — stacks `<TargetSearchSettingsPanel>` + `<DiscoveryAutomationSettingsPanel>` (profile), `<DiscoveryRuntimeSettingsPanel>` + `<DiscoveryProductControls>` (discovery).                                                                                                                                                                                                                                                                                              |
+| `views/debug/`        | `<DebugActivityTable>` (operations: `useActivityListQuery`), `<DebugFilterBar>` (URL-bound), legacy-named `<ActivityDetailDrawer>` rendered as a full detail workspace at `/activity/$eventId`.                                                                                                                                                                                                                                                                                       |
+| `views/outreach/`     | `<OutreachView>` — the Contacts page. `<OutreachTable>` (outreach reads; provenance-summary + role-status cells), legacy-named `<OutreachDetailDrawer>` rendered as a full detail workspace (renders provenance for every fact and composes the outreach context's `<OutreachThreadPanel>` for draft review) at `/outreach/$contactId`. The outreach context's `<JobContactsPanel>` also composes into the Jobs detail workspace.                                                     |
 
 **The view's only owned components are layout and view-local affordances**
-(filter bar, bulk-action toolbar). All cell renderers, badges, drawers,
+(filter bar, bulk-action toolbar). All cell renderers, status components, detail workspaces,
 forms, and timelines are imported from the contexts that own them.
 
 ## 3.11 Contact & Outreach (Frontend)
@@ -442,24 +467,27 @@ provenance, and import contacts from a CSV file — plus supervised research
 the product never sends.
 
 **Ubiquitous language** (matches backend):
+
 - **Contact** — the `Contact` aggregate identified by `(TenantId, ContactId)`.
 - **ContactAttribute** — one fact (name, title, email, phone, profile URL, note) with mandatory provenance.
 - **ContactFactProvenance** — `sourceKind` / `sourceRef` / `captureMethod` / `capturedAt` / `confidence` / `userConfirmed`.
 - **ContactRole** — `recruiter | hiring_manager | referrer | warm_intro | other`.
 
 **Responsibilities:**
+
 - Contact read hooks, context-owned (mirroring how Profile owns `useProfileQuery`): `useContactsListQuery`, `useContactDetailQuery`.
 - Contact mutation hooks via `createOptimisticMutation` with real patchers + settle sets: `useCreateContactMutation`, `useUpdateContactMutation`, `useDeleteContactMutation`, `useImportContactsMutation`.
 - Query keys: `outreachKeys` (hierarchical, tenant-first), re-exported through `contexts/operations/queryKeys.ts`.
 - Handlers: `contexts/outreach/handlers.ts`, registered in the invalidation router.
 - Forms & store: TanStack Form + Zod `safeParse` (`contact-form`, `contact-import-wizard`); a Zustand `persist` store (`outreach-import-store`, key `jh:outreach-import`) for the multi-step CSV-import wizard.
-- Components: `<ContactRoleBadge>`, `<ContactProvenanceList>` / `<ContactProvenanceSummary>` (render provenance for every fact — INV-2), the create / edit / delete / import buttons, and `<JobContactsPanel>` (composed into the Jobs drawer).
+- Components: `<ContactRoleBadge>` (legacy-named compact role status), `<ContactProvenanceList>` / `<ContactProvenanceSummary>` (render provenance for every fact — INV-2), the create / edit / delete / import buttons, and `<JobContactsPanel>` (composed into the Jobs detail workspace).
 - Outreach draft read + mutation hooks (Phase 3): `useOutreachThreadQuery`; `useGenerateDraftMutation`, `useReviseDraftMutation`, `useApproveDraftMutation`, `useRejectDraftMutation` (via `createOptimisticMutation` with real patchers + settle sets).
 - Draft review components (Phase 3): `<OutreachThreadPanel>` (the review surface), `<DraftGateResultsPanel>`, `<DraftClaimProvenanceList>`, `<DraftStatusBadge>`, the `<GenerateDraftButton>` / `<ApproveDraftButton>` / `<RejectDraftButton>` / `<CopyDraftButton>` actions, and the `revise-draft-form`.
 - Send-log + follow-up hooks (Phase 4): `useDueFollowUpsQuery`; `useLogSendMutation`, `useScheduleFollowUpMutation`, `useCompleteFollowUpMutation`, `useDismissFollowUpMutation` (via `createOptimisticMutation` with real patchers — `markThreadSentInThread` / `setThreadFollowUpInThread` — + settle sets that include `dueFollowUps`).
 - Send-log + follow-up components (Phase 4): the `send-log-form` (records a user-attested send — copy makes clear the user sends externally and this only records the fact), `<OutreachSendLogList>` (send history), `<FollowUpPanel>` (schedule / complete / dismiss), and `<DueFollowUpsPanel>` / `<DueFollowUpsBadge>` (the surfaced due-follow-ups list + count, composed into `<OutreachView>`). There is still no send affordance — logging records a fact (INV-1).
 
 **What it does NOT own:**
+
 - Job / dashboard / artifact / apply-run projections (those stay in `operations/`).
 - Any send/transport affordance — none exists; a thread becomes "sent" only through a user-attested send log the user records (INV-1).
 
@@ -468,7 +496,7 @@ stored fact (INV-2); attribute values reach the UI only through the read DTOs an
 never leave the local machine.
 
 **Outreach draft review (Phase 3):** `<OutreachThreadPanel>` (composed into the
-contact detail drawer, `views/outreach/OutreachDetailDrawer.tsx`) is the draft
+full contact detail workspace by legacy-named `views/outreach/OutreachDetailDrawer.tsx`) is the draft
 review surface. It shows the current **approved** draft prominently, the latest
 **candidate** under review with its `<DraftGateResultsPanel>` (the persisted
 truthfulness-gate outcome) and `<DraftClaimProvenanceList>` (claim → fact

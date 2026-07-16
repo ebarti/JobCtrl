@@ -14,9 +14,9 @@ job-post salary is never presented as crowdsourced market data, or vice versa.
   the posted-salary parse from the reported company-role market estimate and
   exposes parse/estimate state, range, confidence, warnings, attribution,
   source trail, selected evidence, and matching factors when recorded.
-- The job drawer can start a focused compensation refresh. The Jobs toolbar can
-  refresh the current backlog. An optional local observation import can be
-  supplied to an explicit refresh; it is never loaded by a passive read.
+- The Job Detail workspace can start a focused compensation refresh. The Jobs
+  toolbar can refresh the current backlog. An optional local observation import
+  can be supplied to an explicit refresh; it is never loaded by a passive read.
 - `/apply-review` shows the persisted compensation summary as context. It is not
   an Apply readiness or approval gate.
 - `/settings` owns **Compensation sources** policy. Enabling or disabling a

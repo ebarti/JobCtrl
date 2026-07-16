@@ -92,6 +92,7 @@ import type {
   OutcomeSuggestionDecisionResponse,
   OutcomeAnalyticsSummary,
   PaginatedResponse,
+  PipelineOperationsSnapshot,
   ProfileConfigResponse,
   ProfileImportRequest,
   ProfileImportResponse,
@@ -187,6 +188,7 @@ export interface ApiHealthResponse {
 export interface ApiClientPort {
   health(): Promise<ApiHealthResponse>;
   dashboardSummary(): Promise<DashboardSummary>;
+  pipelineOperations(): Promise<PipelineOperationsSnapshot>;
   outcomeAnalytics(): Promise<OutcomeAnalyticsSummary>;
   digest(): Promise<DailyDigest>;
   acknowledgeDigest(body?: DigestAcknowledgeRequest): Promise<DigestAcknowledgeResponse>;

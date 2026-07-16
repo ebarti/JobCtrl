@@ -1,9 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/outreach/")({
-  component: OutreachIndexComponent,
-});
+import { OutreachView } from "../views/outreach/OutreachView.js";
 
-function OutreachIndexComponent() {
-  return null;
-}
+export const Route = createFileRoute("/outreach/")({
+  component: OutreachView,
+});

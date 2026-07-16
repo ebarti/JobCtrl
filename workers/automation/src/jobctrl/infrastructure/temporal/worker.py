@@ -15,12 +15,16 @@ from temporalio.worker.workflow_sandbox import (
     SandboxRestrictions,
 )
 
-from jobctrl.infrastructure.temporal.task_queues import JOBCTRL_TASK_QUEUE
+from jobctrl.infrastructure.temporal.activity_runtime_telemetry import (
+    ActiveActivityInventory,
+    ActivityRuntimeTelemetryInterceptor,
+)
 from jobctrl.infrastructure.temporal.concurrency import (
     activity_executor_max_workers,
     resolve_max_concurrent_activities,
 )
 from jobctrl.infrastructure.temporal.run_in_activity import set_activity_executor
+from jobctrl.infrastructure.temporal.task_queues import JOBCTRL_TASK_QUEUE
 
 
 @workflow.defn(name="JobCtrlBootstrapNoOp")
@@ -59,6 +63,7 @@ def build_worker(
     activities: Sequence[Any],
     task_queue: str = JOBCTRL_TASK_QUEUE,
     max_concurrent_activities: int | None = None,
+    activity_inventory: ActiveActivityInventory | None = None,
 ) -> Worker:
     """Build a ``temporalio.worker.Worker`` bound to the JobCtrl task queue."""
     workflow_list: list[type] = list(workflows)
@@ -74,6 +79,7 @@ def build_worker(
         max_workers=activity_executor_max_workers(active_max_concurrent_activities)
     )
     set_activity_executor(activity_executor)
+    runtime_inventory = activity_inventory or ActiveActivityInventory()
     return Worker(
         client,
         task_queue=task_queue,
@@ -84,7 +90,10 @@ def build_worker(
         workflow_runner=SandboxedWorkflowRunner(
             restrictions=_PASSTHROUGH_RESTRICTIONS,
         ),
-        interceptors=[TracingInterceptor()],
+        interceptors=[
+            TracingInterceptor(),
+            ActivityRuntimeTelemetryInterceptor(runtime_inventory),
+        ],
     )
 
 

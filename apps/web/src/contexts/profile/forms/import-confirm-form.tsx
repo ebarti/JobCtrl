@@ -1,8 +1,11 @@
 import { ProfileImportRequestSchema, type ProfileImportRequest } from "@jobctrl/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useForm } from "@tanstack/react-form";
+import { IconCheck, IconFileTypePdf, IconMinus } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 
+import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
+import { Button, buttonVariants } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { useImportResumeMutation } from "../hooks/useImportResumeMutation.js";
 import { useProfileImportStore } from "../stores/profile-import-store.js";
@@ -46,11 +49,14 @@ export function ImportConfirmForm() {
 
   if (!filename || !pdfBase64) {
     return (
-      <div className="wizard-step">
+      <div className="wizard-step resume-import-step resume-import-empty-step">
         <Empty title="No upload found. Start at step 1." />
-        <div className="form-actions">
-          <Link className="tab" to="/profile/import/upload">
-            back to upload
+        <div className="form-actions resume-import-actions">
+          <Link
+            className={buttonVariants({ variant: "outline" })}
+            to="/profile/import/upload"
+          >
+            Back to upload
           </Link>
         </div>
       </div>
@@ -60,42 +66,112 @@ export function ImportConfirmForm() {
   const errorMessage = importResume.error?.message ?? "";
   const summary =
     importProfile && importStyle
-      ? "profile + style"
+      ? "Profile and style"
       : importProfile
-        ? "profile only"
+        ? "Profile only"
         : importStyle
-          ? "style only"
-          : "no fields";
+          ? "Style only"
+          : "No sections selected";
 
   return (
     <form
-      className="wizard-step"
+      className="wizard-step resume-import-step resume-import-step--confirm"
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
         void form.handleSubmit();
       }}
     >
-      {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
-      {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
-      <p>
-        Importing <b>{filename}</b> with {summary}.
-      </p>
+      <header className="resume-import-step__header">
+        <span className="resume-import-step__eyebrow">Confirm import</span>
+        <h2>Review the final import</h2>
+        <p>Check the source and selected scope once more before applying the import.</p>
+      </header>
+
+      {errorMessage ? (
+        <Alert className="resume-import-alert" variant="destructive">
+          <AlertDescription>{errorMessage}</AlertDescription>
+        </Alert>
+      ) : null}
+      {statusMessage ? (
+        <Alert className="resume-import-status" role="status">
+          <AlertDescription>{statusMessage}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <form.Subscribe selector={(state) => state.errors}>
+        {(errors) => {
+          const message = errors
+            .flat()
+            .find((entry): entry is string => typeof entry === "string" && entry.length > 0);
+          return message ? (
+            <Alert className="resume-import-alert" variant="destructive">
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          ) : null;
+        }}
+      </form.Subscribe>
+
+      <dl className="resume-import-confirmation-summary">
+        <div>
+          <dt>Source PDF</dt>
+          <dd>
+            <IconFileTypePdf size={20} stroke={1.65} aria-hidden="true" />
+            <span>{filename}</span>
+          </dd>
+        </div>
+        <div>
+          <dt>Import scope</dt>
+          <dd>{summary}</dd>
+        </div>
+      </dl>
+
+      <div
+        className="resume-import-scope-review"
+        role="group"
+        aria-label="Selected import sections"
+      >
+        <div data-selected={importProfile || undefined}>
+          {importProfile ? (
+            <IconCheck size={18} stroke={2} aria-hidden="true" />
+          ) : (
+            <IconMinus size={18} stroke={2} aria-hidden="true" />
+          )}
+          <span>
+            <strong>Profile data</strong>
+            <small>{importProfile ? "Included in this import" : "Not selected"}</small>
+          </span>
+        </div>
+        <div data-selected={importStyle || undefined}>
+          {importStyle ? (
+            <IconCheck size={18} stroke={2} aria-hidden="true" />
+          ) : (
+            <IconMinus size={18} stroke={2} aria-hidden="true" />
+          )}
+          <span>
+            <strong>Style data</strong>
+            <small>{importStyle ? "Included in this import" : "Not selected"}</small>
+          </span>
+        </div>
+      </div>
+
       <form.Subscribe
         selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}
       >
         {({ canSubmit, isSubmitting }) => (
-          <div className="form-actions">
-            <button
+          <div className="form-actions resume-import-actions">
+            <Link
+              className={buttonVariants({ variant: "outline" })}
+              to="/profile/import/preview"
+            >
+              Back
+            </Link>
+            <Button
               type="submit"
-              className="tab on"
               disabled={!canSubmit || isSubmitting}
             >
-              {isSubmitting ? "importing..." : "confirm import"}
-            </button>
-            <Link className="tab" to="/profile/import/preview">
-              back
-            </Link>
+              {isSubmitting ? "Importing…" : "Confirm import"}
+            </Button>
           </div>
         )}
       </form.Subscribe>

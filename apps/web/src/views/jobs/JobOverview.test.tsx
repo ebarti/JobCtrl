@@ -21,5 +21,8 @@ describe("<JobOverview>", () => {
     expect(
       screen.getByText("Acme Corp · posting: greenhouse:acme · discovered via: jobspy:linkedin"),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: sampleJob.title }),
+    ).toBeInTheDocument();
   });
 });

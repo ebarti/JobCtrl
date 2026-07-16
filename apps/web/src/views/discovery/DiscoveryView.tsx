@@ -8,7 +8,7 @@ export function DiscoveryView() {
   return (
     <>
       <PageHead eyebrow="Pipeline" title="Discovery" />
-      <div className="discovery-view-stack">
+      <div className="discovery-view-stack discovery-workspace">
         <TargetSearchSettingsPanel />
         <DiscoveryAutomationSettingsPanel />
         <DiscoveryRuntimeSettingsPanel />

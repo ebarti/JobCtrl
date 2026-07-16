@@ -1,4 +1,14 @@
 import type { ApplyReviewDecisionValue, ApplyReviewQueueItem } from "@jobctrl/contracts";
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconClock,
+  IconInfoCircle,
+  IconLock,
+  IconRefresh,
+  IconX,
+  type TablerIcon,
+} from "@tabler/icons-react";
 import { useState } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
@@ -28,12 +38,43 @@ const DECISION_REASONS: Record<ApplyReviewDecisionValue, string> = {
   reset: "Reset review decision from the review queue.",
 };
 
+const DECISION_ICONS: Record<ApplyReviewDecisionValue, TablerIcon> = {
+  approve_submit: IconCheck,
+  approve_dry_run: IconCheck,
+  defer: IconClock,
+  decline: IconX,
+  reset: IconRefresh,
+};
+
 const PRIMARY_DECISIONS: readonly ApplyReviewDecisionValue[] = [
   "approve_submit",
   "approve_dry_run",
   "defer",
   "decline",
 ];
+
+const DECISION_BUTTON_STYLES: Record<
+  ApplyReviewDecisionValue,
+  {
+    readonly variant: "success" | "warning" | "destructive" | "ghost";
+  }
+> = {
+  approve_submit: {
+    variant: "success",
+  },
+  approve_dry_run: {
+    variant: "success",
+  },
+  defer: {
+    variant: "warning",
+  },
+  decline: {
+    variant: "destructive",
+  },
+  reset: {
+    variant: "ghost",
+  },
+};
 
 const GATE_REASON_LABELS: Record<string, string> = {
   awaiting_approval: "approval not recorded",
@@ -81,6 +122,7 @@ export function ApplyReviewDecisionControls({
     approvalDisabledReason ??
     approvalNotice ??
     (gateMessage ? `Submit gate: ${gateMessage}.` : null);
+  const approvalBlocked = approvalDisabledReason !== null || (approvalNotice === null && Boolean(gateMessage));
 
   const submitDecision = async (value: ApplyReviewDecisionValue, partialOverrideRunId?: string) => {
     if (pending) return;
@@ -130,35 +172,59 @@ export function ApplyReviewDecisionControls({
         ) : null}
         <span>Dry-run evidence: {dryRunEvidenceLabel(item)}</span>
       </div>
-      {primaryDecisions.map((value) => (
-        <Button
-          key={value}
-          size="sm"
-          type="button"
-          variant={value === "decline" ? "outline" : value === "defer" ? "secondary" : "default"}
-          disabled={
-            pending ||
-            (approvalDisabledReason !== null && value.startsWith("approve_")) ||
-            (value === "approve_submit" && !fullDryRunEvidence)
-          }
-          aria-label={`${DECISION_LABELS[value]} for ${item.title}`}
-          title={
-            value === "approve_submit" && !fullDryRunEvidence
-              ? "Full dry-run evidence is required before submit approval."
-              : value.startsWith("approve_")
-                ? approvalMessage ?? undefined
-                : undefined
-          }
-          onClick={() => {
-            void submitDecision(value);
-          }}
-        >
-          {preparingDecision === value ? "Rendering" : decision.isPending ? "Saving" : DECISION_LABELS[value]}
-        </Button>
-      ))}
+      <div className="apply-review-decision-buttons">
+        {primaryDecisions.map((value) => {
+          const DecisionIcon = DECISION_ICONS[value];
+          const buttonStyle = DECISION_BUTTON_STYLES[value];
+          return (
+            <Button
+              key={value}
+              size="sm"
+              type="button"
+              variant={buttonStyle.variant}
+              disabled={
+                pending ||
+                (approvalDisabledReason !== null && value.startsWith("approve_")) ||
+                (value === "approve_submit" && !fullDryRunEvidence)
+              }
+              aria-label={`${DECISION_LABELS[value]} for ${item.title}`}
+              title={
+                value === "approve_submit" && !fullDryRunEvidence
+                  ? "Full dry-run evidence is required before submit approval."
+                  : value.startsWith("approve_")
+                    ? approvalMessage ?? undefined
+                    : undefined
+              }
+              onClick={() => {
+                void submitDecision(value);
+              }}
+            >
+              <DecisionIcon aria-hidden="true" data-icon="inline-start" />
+              {preparingDecision === value ? "Rendering" : decision.isPending ? "Saving" : DECISION_LABELS[value]}
+            </Button>
+          );
+        })}
+        {item.review.state !== "pending" ? (
+          <Button
+            size="sm"
+            type="button"
+            variant="ghost"
+            disabled={pending}
+            aria-label={`Reset review for ${item.title}`}
+            onClick={() => submitDecision("reset")}
+          >
+            <IconRefresh aria-hidden="true" data-icon="inline-start" />
+            Reset
+          </Button>
+        ) : null}
+      </div>
       {!fullDryRunEvidence && partialDryRunEvidence ? (
-        <>
-          <span className="apply-review-approval-block" role="alert">
+        <div className="apply-review-partial-approval">
+          <span
+            className="apply-review-approval-block inline-flex items-center justify-end gap-1.5"
+            role="alert"
+          >
+            <IconLock aria-hidden="true" />
             Partial dry-run evidence only. Blocked channels:{" "}
             {partialDryRunEvidence.blockedChannels.length
               ? partialDryRunEvidence.blockedChannels.join(", ")
@@ -168,35 +234,37 @@ export function ApplyReviewDecisionControls({
           <Button
             size="sm"
             type="button"
-            variant="secondary"
+            variant={DECISION_BUTTON_STYLES.approve_submit.variant}
             disabled={pending || approvalDisabledReason !== null}
             aria-label={`Approve with partial dry-run evidence for ${item.title}`}
             onClick={() => {
               void submitDecision("approve_submit", partialDryRunEvidence.runId);
             }}
           >
+            <IconCheck aria-hidden="true" data-icon="inline-start" />
             Approve with partial dry-run evidence
           </Button>
-        </>
+        </div>
       ) : null}
       {approvalMessage ? (
-        <span className="apply-review-approval-block" role="status">
+        <span
+          className="apply-review-approval-block inline-flex items-center justify-end gap-1.5"
+          role="status"
+        >
+          {approvalBlocked ? (
+            <IconLock aria-hidden="true" />
+          ) : (
+            <IconInfoCircle aria-hidden="true" />
+          )}
           {approvalMessage}
         </span>
       ) : null}
-      {item.review.state !== "pending" ? (
-        <Button
-          size="sm"
-          type="button"
-          variant="ghost"
-          disabled={pending}
-          aria-label={`Reset review for ${item.title}`}
-          onClick={() => submitDecision("reset")}
-        >
-          Reset
-        </Button>
+      {decision.isError ? (
+        <span className="danger" role="alert">
+          <IconAlertTriangle aria-hidden="true" />
+          Decision failed
+        </span>
       ) : null}
-      {decision.isError ? <span className="danger">Decision failed</span> : null}
     </div>
   );
 }

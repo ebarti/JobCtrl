@@ -13,9 +13,9 @@ separate primary page or pipeline stage. Its results remain inspectable:
 
 - `/jobs` shows source provenance, durable stage state, and whether a posting is
   active, closed, failed, or awaiting further work.
-- `/jobs/:jobId` opens the job drawer with the full posting, source and
-  enrichment evidence, snapshot confidence or quarantine state, application
-  URL, and allow-listed audit history.
+- `/jobs/:jobId` opens the Job Detail route workspace with the full posting,
+  source and enrichment evidence, snapshot confidence or quarantine state,
+  application URL, and allow-listed audit history.
 - `/discovery` owns source review, quarantined leads, locator candidates, and
   manual-capture decisions.
 - `/runs` shows the durable Discover and preparation workflows. A failed
@@ -23,14 +23,20 @@ separate primary page or pipeline stage. Its results remain inspectable:
   completed stages.
 
 When a useful posting cannot be fetched safely, use manual capture rather than
-bypassing a site's controls. The current capture boundary accepts user-mediated
+evading a site's controls. The current capture boundary accepts user-mediated
 URLs or content, including browser-extension captures, and preserves that
-origin as provenance. Protected or login-walled pages stay on a manual path.
+origin as provenance. Protected or login-walled pages stay on a manual path
+unless they use the explicit owner-authenticated LinkedIn recovery below.
 
-An explicitly enabled authenticated-LinkedIn browser capability may resolve a
-missing external application URL. That pass is bounded to URL resolution and
-stops before any application form or submission; the capability and consent
-rules remain owned by [Apply](apply.md#browser-apply-automation).
+After the authenticated-LinkedIn browser capability is explicitly enabled and
+the user separately consents to copy an existing LinkedIn profile, JobCtrl may
+use that owned session to recover the full posting and external application
+URL. The anonymous `robots.txt` verdict is not applied to this
+owner-authenticated request. Public-destination validation, per-host pacing,
+the shared run request budget, and audit history remain enforced. Recovery
+stops before the application form and cannot submit an application; capability
+and consent ownership remains documented under
+[Apply](apply.md#browser-apply-automation).
 
 ## Source Of Truth And Ownership
 

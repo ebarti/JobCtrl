@@ -16,11 +16,15 @@ from jobctrl.browser_capabilities import (
     BrowserCapabilityDisabledError,
     BrowserCapabilityError,
     BrowserProfileConsentRequiredError,
+    DetectedBrowser,
+    DetectedBrowserUnavailableError,
     browser_capability_status,
     capability_profile_dir,
     browser_capability_config_path,
     copy_authenticated_linkedin_profile,
+    detect_supported_browsers,
     disable_browser_capability,
+    enable_detected_browser_capability,
     enable_system_browser_capability,
     list_browser_capabilities,
     load_browser_capability_state,
@@ -55,6 +59,95 @@ def test_new_install_keeps_optional_authenticated_browsers_disabled(
     assert statuses["core-browser"].status == "ready"
     assert statuses["auto-apply-browser"].status == "disabled"
     assert statuses["authenticated-linkedin-browser"].status == "disabled"
+    assert not browser_capability_config_path(app_dir=tmp_path).exists()
+
+
+def test_detection_is_preference_ordered_and_does_not_adopt_or_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl import browser_capabilities
+
+    google = tmp_path / "Google Chrome"
+    chromium = tmp_path / "Chromium"
+    for executable in (google, chromium):
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o700)
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_browser_candidate_locations",
+        lambda: (
+            DetectedBrowser("google-chrome", "Google Chrome", google),
+            DetectedBrowser("chromium", "Chromium", chromium),
+        ),
+    )
+    monkeypatch.setattr(
+        browser_capabilities.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("detection must not launch a browser")
+        ),
+    )
+
+    detected = detect_supported_browsers()
+
+    assert [(browser.id, browser.label) for browser in detected] == [
+        ("google-chrome", "Google Chrome"),
+        ("chromium", "Chromium"),
+    ]
+    assert not browser_capability_config_path(app_dir=tmp_path).exists()
+
+
+def test_macos_candidate_order_prefers_google_chrome(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jobctrl import browser_capabilities
+
+    monkeypatch.setattr(browser_capabilities.sys, "platform", "darwin")
+
+    candidates = browser_capabilities._browser_candidate_locations()
+    ids = [candidate.id for candidate in candidates]
+
+    assert ids[0] == "google-chrome"
+    assert ids.index("chromium") > max(
+        index for index, browser_id in enumerate(ids) if browser_id == "google-chrome"
+    )
+
+
+def test_explicit_detected_browser_id_is_resolved_and_enabled(
+    tmp_path: Path, browser_executable: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl import browser_capabilities
+
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_browser_candidate_locations",
+        lambda: (DetectedBrowser("google-chrome", "Google Chrome", browser_executable),),
+    )
+
+    status = enable_detected_browser_capability(
+        "auto-apply-browser", "google-chrome", app_dir=tmp_path
+    )
+
+    assert status.status == "ready"
+    assert require_system_browser_capability("auto-apply-browser", app_dir=tmp_path) == browser_executable.resolve()
+
+
+def test_detected_browser_id_fails_closed_when_installation_disappears(
+    tmp_path: Path, browser_executable: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobctrl import browser_capabilities
+
+    monkeypatch.setattr(
+        browser_capabilities,
+        "_browser_candidate_locations",
+        lambda: (DetectedBrowser("google-chrome", "Google Chrome", browser_executable),),
+    )
+    assert detect_supported_browsers()[0].id == "google-chrome"
+    browser_executable.unlink()
+
+    with pytest.raises(DetectedBrowserUnavailableError, match="no longer available"):
+        enable_detected_browser_capability(
+            "auto-apply-browser", "google-chrome", app_dir=tmp_path
+        )
+
     assert not browser_capability_config_path(app_dir=tmp_path).exists()
 
 

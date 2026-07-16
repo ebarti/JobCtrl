@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { useState } from "react";
 
 import { Label } from "./label.js";
 import { Switch } from "./switch.js";
@@ -18,6 +19,20 @@ export const Off: Story = {};
 
 export const On: Story = {
   args: { defaultChecked: true },
+};
+
+export const Controlled: Story = {
+  render: function ControlledSwitch() {
+    const [checked, setChecked] = useState(false);
+
+    return (
+      <Switch
+        aria-label="Controlled switch"
+        checked={checked}
+        onCheckedChange={(nextChecked) => setChecked(nextChecked)}
+      />
+    );
+  },
 };
 
 export const Disabled: Story = {

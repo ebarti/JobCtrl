@@ -7,7 +7,7 @@ import type {
   ResumeReviewDraft,
   ResumeReviewDraftRenderResponse,
 } from "@jobctrl/contracts";
-import { IconExternalLink } from "@tabler/icons-react";
+import { IconAlertTriangle, IconBan, IconChevronDown, IconExternalLink } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
@@ -36,11 +36,28 @@ import { useResumeReviewDraftQuery } from "../../contexts/operations/hooks/useRe
 import { useResumeTemplatesQuery } from "../../contexts/profile/hooks/useResumeTemplatesQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
+import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
+import { Button, buttonVariants } from "../../shared/ui/button.js";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "../../shared/ui/card.js";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "../../shared/ui/collapsible.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../shared/ui/PdfPreviewViewer.js";
-import { JobDetailDrawer } from "../jobs/JobDetailDrawer.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
+import "../../styles/redesign-apply-review.css";
 
 type MaterialStatus = {
   readonly kind: ApplyReviewQueueItem["applyAudit"]["state"];
@@ -76,6 +93,13 @@ function auditTone(state: ApplyReviewQueueItem["applyAudit"]["state"]): Material
   if (state === "ready") return "ok";
   if (state === "preparing") return "info";
   return "warn";
+}
+
+function fitTone(score: number | null): "positive" | "neutral" | "negative" | "unknown" {
+  if (score === null || !Number.isFinite(score)) return "unknown";
+  if (score >= 7) return "positive";
+  if (score >= 5) return "neutral";
+  return "negative";
 }
 
 function selectedItem(
@@ -383,9 +407,13 @@ function ApplyAuditFacts({ item }: { readonly item: ApplyReviewQueueItem }) {
           <dt>{group.label}</dt>
           <dd>
             {group.facts.map((fact) => (
-              <span className={`tag ${factTone(fact)}`} key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}>
+              <StatusBadge
+                {...(group.label === "Blockers" ? { icon: IconBan } : {})}
+                tone={factTone(fact)}
+                key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}
+              >
                 {fact.detail ? `${fact.label}: ${fact.detail}` : fact.label}
-              </span>
+              </StatusBadge>
             ))}
           </dd>
         </div>
@@ -418,33 +446,50 @@ function ApplyReviewQueue({
 }) {
   return (
     <aside className="apply-review-queue" aria-label="Application review queue">
-      <div className="apply-review-queue-head">
-        <span className="eyebrow">Queue</span>
-        <b>{items.length} human decision{items.length === 1 ? "" : "s"}</b>
-      </div>
-      <div className="apply-review-queue-list">
-        {items.map((item) => {
-          const status = materialStatus(item);
-          return (
-            <button
-              key={item.jobKey}
-              type="button"
-              className={`apply-review-queue-item${item.jobKey === selected.jobKey ? " selected" : ""}`}
-              aria-pressed={item.jobKey === selected.jobKey}
-              onClick={() => onSelect(item.jobKey)}
-            >
-              <span className="apply-review-queue-title">
-                <span className="tag ok">{item.fitScore ?? "-"}</span>
-                <b>{item.title}</b>
-              </span>
-              <span className="meta">
-                {item.company} · {item.source}
-              </span>
-              <span className={`tag ${status.tone}`}>{status.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      <Card className="apply-review-queue-card" size="sm">
+        <CardHeader className="apply-review-queue-head border-b">
+          <CardTitle>
+            <h2>Review queue</h2>
+          </CardTitle>
+          <CardDescription>Select the next application decision.</CardDescription>
+          <CardAction className="apply-review-queue-count">
+            {items.length} human decision{items.length === 1 ? "" : "s"}
+          </CardAction>
+        </CardHeader>
+        <CardContent className="apply-review-queue-list">
+          {items.map((item) => {
+            const status = materialStatus(item);
+            return (
+              <button
+                key={item.jobKey}
+                type="button"
+                className={`apply-review-queue-item${item.jobKey === selected.jobKey ? " selected" : ""}`}
+                aria-pressed={item.jobKey === selected.jobKey}
+                onClick={() => onSelect(item.jobKey)}
+              >
+                <span className="apply-review-queue-title">
+                  <span
+                    className="apply-review-queue-fit"
+                    data-score-tone={fitTone(item.fitScore)}
+                    aria-label={
+                      item.fitScore === null
+                        ? "Fit score not recorded"
+                        : `Fit score ${item.fitScore} out of 10`
+                    }
+                  >
+                    {item.fitScore ?? "–"}
+                  </span>
+                  <b>{item.title}</b>
+                </span>
+                <span className="meta">
+                  {item.company} · {item.source}
+                </span>
+                <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+              </button>
+            );
+          })}
+        </CardContent>
+      </Card>
     </aside>
   );
 }
@@ -483,10 +528,10 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                       <div className="apply-review-ideal-requirement-head">
                         <b>{requirement.text}</b>
                         <span>
-                          {tier ? <span className="tag muted">{tier}</span> : null}
+                          {tier ? <span className="apply-review-requirement-meta">{tier}</span> : null}
                           {weight ? (
                             <span
-                              className="tag muted"
+                              className="apply-review-requirement-meta"
                               title="Relative priority from job-post analysis, not a match score"
                             >
                               {weight}
@@ -494,34 +539,40 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                           ) : null}
                         </span>
                       </div>
-                      <div
-                        className="apply-review-requirement-fit-grid"
+                      <dl
+                        className="apply-review-requirement-summary"
                         aria-label={`Requirement audit for ${requirement.text}`}
                       >
                         <div>
-                          <span>Candidate fit</span>
-                          <b className={`tag ${fit.tone}`} title={fit.title}>
-                            {fit.label}
-                          </b>
+                          <dt>Candidate fit</dt>
+                          <dd>
+                            <StatusBadge tone={fit.tone} title={fit.title}>
+                              {fit.label}
+                            </StatusBadge>
+                          </dd>
                         </div>
                         <div>
-                          <span>Tailoring action</span>
-                          <b className={`tag ${tailoring.tone}`} title={tailoring.title}>
-                            {tailoring.label}
-                          </b>
+                          <dt>Tailoring action</dt>
+                          <dd>
+                            <StatusBadge tone={tailoring.tone} title={tailoring.title}>
+                              {tailoring.label}
+                            </StatusBadge>
+                          </dd>
                         </div>
                         <div>
-                          <span>Resume coverage</span>
-                          <b className={`tag ${coverage.tone}`} title={coverage.title}>
-                            {coverage.label}
-                          </b>
-                          {requirement.coverage.state === "covered" ? (
-                            <b className="tag muted">
-                              {formatBulletCount(requirement.coverage.bulletCount)}
-                            </b>
-                          ) : null}
+                          <dt>Resume coverage</dt>
+                          <dd>
+                            <StatusBadge tone={coverage.tone} title={coverage.title}>
+                              {coverage.label}
+                            </StatusBadge>
+                            {requirement.coverage.state === "covered" ? (
+                              <StatusBadge tone="muted">
+                                {formatBulletCount(requirement.coverage.bulletCount)}
+                              </StatusBadge>
+                            ) : null}
+                          </dd>
                         </div>
-                      </div>
+                      </dl>
                       {requirement.evidence ? (
                         <p className="apply-review-requirement-evidence">
                           <span>Job post evidence:</span> {requirement.evidence}
@@ -577,7 +628,7 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                 <dt>{group.label}</dt>
                 <dd>
                   {group.values.map((value) => (
-                    <span className="tag muted" key={value}>
+                    <span className="apply-review-evidence-token" key={value}>
                       {value}
                     </span>
                   ))}
@@ -589,7 +640,7 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
               <dd>
                 {item.position.missing.length ? (
                   item.position.missing.map((value) => (
-                    <span className="tag muted" key={value}>
+                    <span className="apply-review-evidence-token" key={value}>
                       {value}
                     </span>
                   ))
@@ -668,8 +719,8 @@ function RequirementLedAuditPanel({
     >
       <h3>Requirement-led tailoring audit</h3>
       <div className="apply-review-audit-summary" aria-label="Requirement-led audit summary">
-        <span className={`tag ${audit.uncoveredRequirements.length ? "warn" : "ok"}`}>{coveredLabel}</span>
-        {audit.reviewBlockers.length ? <span className="tag warn">{reviewBlockerLabel}</span> : null}
+        <StatusBadge tone={audit.uncoveredRequirements.length ? "warn" : "ok"}>{coveredLabel}</StatusBadge>
+        {audit.reviewBlockers.length ? <StatusBadge tone="warn">{reviewBlockerLabel}</StatusBadge> : null}
       </div>
       <BulletOverflowAudit overflows={audit.bulletLimitOverflows} />
       <RevisionAudit
@@ -700,9 +751,9 @@ function AuditTagGroup({
       <span>{label}</span>
       <span>
         {values.map((value) => (
-          <span className={`tag ${tone}`} key={`${label}:${value}`}>
+          <StatusBadge tone={tone} key={`${label}:${value}`}>
             {formatValue(value)}
-          </span>
+          </StatusBadge>
         ))}
       </span>
     </div>
@@ -767,21 +818,21 @@ function RevisionAudit({
       {shippedFit ? (
         <div className="apply-review-audit-shipped-fit" aria-label="Shipped grounded fit">
           {shippedFit.mustHaveCoverage !== null ? (
-            <span className="tag muted">
+            <StatusBadge tone="muted">
               Must-have coverage: {Math.round(shippedFit.mustHaveCoverage * 100)}%
-            </span>
+            </StatusBadge>
           ) : null}
-          <span className={`tag ${shippedFit.coverageBasis === "grounded_shipped_text_v1" ? "ok" : "warn"}`}>
+          <StatusBadge tone={shippedFit.coverageBasis === "grounded_shipped_text_v1" ? "ok" : "warn"}>
             {shippedFit.coverageBasis === "grounded_shipped_text_v1"
               ? "grounded (shipped text)"
               : "judge-claimed (legacy)"}
-          </span>
+          </StatusBadge>
           {shippedFit.score !== null ? (
-            <span className="tag muted">Shipped fit: {formatScoreValue(shippedFit.score)}/10</span>
+            <StatusBadge tone="muted">Shipped fit: {formatScoreValue(shippedFit.score)}/10</StatusBadge>
           ) : null}
-          <span className={`tag ${shippedFit.passed ? "ok" : "warn"}`}>
+          <StatusBadge tone={shippedFit.passed ? "ok" : "warn"}>
             {shippedFit.passed ? "meets revision gate" : "below revision gate"}
-          </span>
+          </StatusBadge>
           <AuditTagGroup
             label={shippedFitFindingsLabel(shippedFit)}
             values={shippedFit.warnings}
@@ -792,22 +843,22 @@ function RevisionAudit({
       ) : null}
       {revision ? (
         <div className="apply-review-audit-revision">
-          <span className={`tag ${revision.thresholdFailed || revision.reviewBlocked ? "warn" : "ok"}`}>
+          <StatusBadge tone={revision.thresholdFailed || revision.reviewBlocked ? "warn" : "ok"}>
             Fit gate: {formatScoreValue(revision.score)}/10
-          </span>
-          <span className={`tag ${revision.coverageBasis === "grounded_shipped_text_v1" ? "ok" : "warn"}`}>
+          </StatusBadge>
+          <StatusBadge tone={revision.coverageBasis === "grounded_shipped_text_v1" ? "ok" : "warn"}>
             {revision.coverageBasis === "grounded_shipped_text_v1" ? "grounded" : "judge-claimed (legacy)"}
-          </span>
+          </StatusBadge>
           {revision.mustHaveCoverage !== null ? (
-            <span className="tag muted">
+            <StatusBadge tone="muted">
               {shippedFit ? "Gate-recorded coverage" : "Must-have coverage"}:{" "}
               {Math.round(revision.mustHaveCoverage * 100)}%
-            </span>
+            </StatusBadge>
           ) : null}
           {revision.revisionsUsed !== null && revision.maxRevisionAttempts !== null ? (
-            <span className="tag muted">
+            <StatusBadge tone="muted">
               Revisions used: {revision.revisionsUsed} of {revision.maxRevisionAttempts}
-            </span>
+            </StatusBadge>
           ) : null}
           {revision.reason ? <p className="meta">{formatAuditMessage(revision.reason)}</p> : null}
           <AuditTagGroup label="Prioritized fixes" values={revision.prioritizedFixes} tone="muted" />
@@ -1101,12 +1152,13 @@ function ResumeReviewSurface({
 function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const reviewState = reviewStateLabel(item);
   const activeRun = activeApplyRun(item);
+  const status = materialStatus(item);
   const resumeAuditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
   const templatesQuery = useResumeTemplatesQuery();
   const setJobTemplate = useSetJobResumeTemplateMutation();
   const ensureCurrentMaterials = useEnsureCurrentResumeMaterialsMutation();
   const prepareApprovalRef = useRef<(() => Promise<boolean>) | null>(null);
-  const [detailJobKey, setDetailJobKey] = useState<string | null>(null);
+  const [positionOpen, setPositionOpen] = useState(true);
   const [comparisonDraft, setComparisonDraft] = useState<ArtifactComparisonDraftTarget | null>(null);
   const [draftGate, setDraftGate] = useState<ResumeDraftGateState>({
     draftId: null,
@@ -1141,7 +1193,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
     );
   }, []);
   useEffect(() => {
-    setDetailJobKey(null);
+    setPositionOpen(true);
     setComparisonDraft(null);
     setDraftGate({
       draftId: null,
@@ -1180,17 +1232,57 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
 
   return (
     <main className="apply-review-selected">
-      <header className="apply-review-selected-head">
-        <div
-          className="apply-review-selected-context"
+      <Card className="apply-review-decision-card">
+        <CardHeader
+          className="apply-review-selected-head border-b"
           aria-label={`Review controls and material facts for ${item.title}`}
         >
-          {reviewState ? <span className="tag muted">Current decision: {reviewState}.</span> : null}
+          <div className="apply-review-selected-context">
+            <div className="apply-review-selected-identity">
+              <span className="apply-review-selected-label">Decision workspace</span>
+              <CardTitle>
+                <h2>{item.title}</h2>
+              </CardTitle>
+              <CardDescription>
+                {item.company} · discovered via {item.source}
+              </CardDescription>
+            </div>
+          </div>
+          <CardAction className="apply-review-selected-card-action">
+            <div className="apply-review-selected-summary" aria-label="Selected job status">
+              <span className="apply-review-selected-score" data-score-tone={fitTone(item.fitScore)}>
+                <b>{item.fitScore ?? "–"}</b>
+                <span>fit</span>
+              </span>
+              <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+              {reviewState ? <StatusBadge tone="muted">{reviewState}</StatusBadge> : null}
+            </div>
+            <div className="apply-review-selected-utilities">
+              <a
+                aria-label={`Open job detail for ${item.title}`}
+                className={buttonVariants({ size: "sm", variant: "outline" })}
+                href={`/jobs/${encodeURIComponent(item.jobKey)}`}
+              >
+                <IconExternalLink aria-hidden="true" data-icon="inline-start" />
+                open job detail
+              </a>
+              {activeRun ? (
+                <CancelApplyButton
+                  jobId={item.jobKey}
+                  runId={activeRun.runId}
+                  className={buttonVariants({ variant: "destructive", size: "sm" })}
+                  label="stop apply"
+                  ariaLabel={`Stop apply run for ${item.title}`}
+                />
+              ) : null}
+            </div>
+          </CardAction>
+        </CardHeader>
+        <CardContent className="apply-review-selected-facts">
           <CompensationSummaryStrip
             summary={item.compensationSummary}
             label="Compensation"
           />
-          <ApplyAuditFacts item={item} />
           <JobResumeTemplateSelect
             current={item.materialsPreview.resumeTemplate}
             disabled={templatesQuery.isLoading || setJobTemplate.isPending || ensureCurrentMaterials.isPending}
@@ -1198,27 +1290,16 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             refreshing={setJobTemplate.isPending || ensureCurrentMaterials.isPending}
             templates={templatesQuery.data?.templates ?? []}
           />
-          {templateMutationError ? <span className="tag warn">{templateMutationError}</span> : null}
-        </div>
-        <div className="apply-review-selected-actions">
-          <button
-            aria-label={`Open job detail for ${item.title}`}
-            className="tab"
-            type="button"
-            onClick={() => setDetailJobKey(item.jobKey)}
-          >
-            <IconExternalLink size={14} aria-hidden="true" />
-            open job detail
-          </button>
-          {activeRun ? (
-            <CancelApplyButton
-              jobId={item.jobKey}
-              runId={activeRun.runId}
-              className="tab danger-action"
-              label="stop apply"
-              ariaLabel={`Stop apply run for ${item.title}`}
-            />
+          <ApplyAuditFacts item={item} />
+          {templateMutationError ? (
+            <Alert variant="destructive" className="apply-review-inline-alert">
+              <IconAlertTriangle aria-hidden="true" />
+              <AlertTitle>Resume template could not be updated</AlertTitle>
+              <AlertDescription>{templateMutationError}</AlertDescription>
+            </Alert>
           ) : null}
+        </CardContent>
+        <CardFooter className="apply-review-selected-actions border-t">
           <ApplyReviewDecisionControls
             item={item}
             approvalDisabledReason={draftGate.reason}
@@ -1226,49 +1307,86 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             approvalPreparing={draftGate.preparing}
             onPrepareApproval={draftGate.notice ? handlePrepareApproval : null}
           />
-        </div>
-      </header>
-
-      {detailJobKey ? (
-        <JobDetailDrawer
-          jobId={detailJobKey}
-          onClose={() => setDetailJobKey(null)}
-        />
-      ) : null}
+        </CardFooter>
+      </Card>
 
       <section className="apply-review-workspace" aria-label={`Review evidence for ${item.title}`}>
-        <article className="apply-review-pane">
-          <header>
-            <span className="eyebrow">Job Position</span>
-            <h2>Requirements and original post</h2>
-          </header>
-          <div className="apply-review-pane-scroll">
-            <section className="apply-review-preview-block">
-              <h3>Requirement evidence</h3>
-              <RequirementEvidence item={item} />
-            </section>
-            <section className="apply-review-preview-block">
-              <h3>Verbatim job post</h3>
-              {item.position.descriptionPreview ? (
-                <div className="apply-review-document">
-                  <MarkdownDocument
-                    emptyTitle="No captured job post text."
-                    text={item.position.descriptionPreview}
-                  />
-                </div>
-              ) : (
-                <Empty title="No captured job post text." />
-              )}
-            </section>
-          </div>
-        </article>
+        <Collapsible
+          className="apply-review-position-disclosure"
+          data-open={positionOpen ? "true" : "false"}
+          open={positionOpen}
+          onOpenChange={setPositionOpen}
+        >
+          <Card
+            className="apply-review-pane apply-review-evidence-pane"
+            role="region"
+            aria-labelledby="apply-review-position-heading"
+          >
+            <CardHeader className="apply-review-pane-heading border-b">
+              <CardDescription className="eyebrow">Job Position</CardDescription>
+              <CardTitle>
+                <h2 id="apply-review-position-heading">Requirements and original post</h2>
+              </CardTitle>
+              <CardAction>
+                <CollapsibleTrigger
+                  render={
+                    <Button
+                      aria-label={`${positionOpen ? "Collapse" : "Expand"} job position`}
+                      className="apply-review-position-toggle"
+                      data-open={positionOpen ? "true" : "false"}
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                    />
+                  }
+                >
+                  {positionOpen ? "Collapse" : "Expand"}
+                  <IconChevronDown aria-hidden="true" data-icon="inline-end" />
+                </CollapsibleTrigger>
+              </CardAction>
+            </CardHeader>
+            <CollapsibleContent>
+              <CardContent className="apply-review-pane-scroll">
+                <section className="apply-review-preview-block">
+                  <h3>Requirement evidence</h3>
+                  <RequirementEvidence item={item} />
+                </section>
+                <section className="apply-review-preview-block">
+                  <h3>Verbatim job post</h3>
+                  {item.position.descriptionPreview ? (
+                    <div className="apply-review-document">
+                      <MarkdownDocument
+                        emptyTitle="No captured job post text."
+                        text={item.position.descriptionPreview}
+                      />
+                    </div>
+                  ) : (
+                    <Empty title="No captured job post text." />
+                  )}
+                </section>
+                <RequirementLedAuditPanel audit={item.materialsPreview.requirementLedAudit} />
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
 
-        <article className="apply-review-pane">
-          <header>
-            <span className="eyebrow">Application Materials</span>
-            <h2>Tailored resume and cover</h2>
-          </header>
-          <div className="apply-review-pane-scroll apply-review-materials-scroll">
+        <Card
+          className="apply-review-pane apply-review-materials-pane"
+          role="region"
+          aria-labelledby="apply-review-materials-heading"
+        >
+          <CardHeader className="apply-review-pane-heading border-b">
+            <CardDescription className="eyebrow">Application Materials</CardDescription>
+            <CardTitle>
+              <h2 id="apply-review-materials-heading">Tailored resume and cover</h2>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="apply-review-pane-scroll apply-review-materials-scroll">
+            <ResumeReviewSurface
+              item={item}
+              onComparisonTargetChange={handleComparisonTargetChange}
+              onDraftGateChange={handleDraftGateChange}
+            />
             {resumeAuditArtifactId ? <ArtifactGroundingRiskPanel artifactId={resumeAuditArtifactId} /> : null}
             <ArtifactComparison
               emptyRightMessage="Render a saved draft to compare it with the accepted artifact."
@@ -1278,20 +1396,14 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
               rightLabel="Rendered draft"
               rightRiskLabels={comparisonDraft?.riskLabels ?? []}
             />
-            <RequirementLedAuditPanel audit={item.materialsPreview.requirementLedAudit} />
-            <ResumeReviewSurface
-              item={item}
-              onComparisonTargetChange={handleComparisonTargetChange}
-              onDraftGateChange={handleDraftGateChange}
-            />
             <EmailApplicationPreview item={item} />
             <TextPreview
               title="Cover letter"
               text={item.materialsPreview.coverLetterText}
               emptyTitle="No cover letter is required or available for this job."
             />
-          </div>
-        </article>
+          </CardContent>
+        </Card>
       </section>
     </main>
   );
@@ -1344,8 +1456,14 @@ export function ApplyReviewView({
         title="Application review"
         subtitle={`${readyCount} ready · ${preparingCount} preparing · ${repairCount} need repair`}
       />
-      <section className="card full">
-        {queueError ? <div className="banner inline">{queueError}</div> : null}
+      <section className="apply-review-surface">
+        {queueError ? (
+          <Alert variant="destructive" className="apply-review-queue-alert">
+            <IconAlertTriangle aria-hidden="true" />
+            <AlertTitle>Application review queue could not be loaded</AlertTitle>
+            <AlertDescription>{queueError}</AlertDescription>
+          </Alert>
+        ) : null}
         {queue.isFetching && !queue.data ? <Empty title="Loading review queue." /> : null}
         {queue.data && selected ? (
           <div className="apply-review-shell">

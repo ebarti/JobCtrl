@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { axe } from "jest-axe";
 import { describe, expect, it } from "vitest";
 
@@ -18,6 +18,10 @@ describe("<AnalyticsView> a11y", () => {
         />
       </main>,
     );
+
+    expect(
+      screen.getByLabelText("Analytics interpretation note").querySelector("svg.tabler-icon-info-circle"),
+    ).toHaveClass("tabler-icon-info-circle");
 
     expect(await axe(container)).toHaveNoViolations();
   });

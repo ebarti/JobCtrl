@@ -8,6 +8,15 @@ import { JobCtrlApiError } from "@jobctrl/api-client";
 import { useForm } from "@tanstack/react-form";
 import { useEffect, useState } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import { useDeleteCredentialMutation } from "../hooks/useDeleteCredentialMutation.js";
 import { useUpdateCredentialMutation } from "../hooks/useUpdateCredentialMutation.js";
 
@@ -122,7 +131,10 @@ export function CredentialForm({
         void form.handleSubmit();
       }}
     >
-      <span className={`tag ${configured === true ? "ok" : "muted"}`}>
+      <span
+        aria-label={`${label} status`}
+        className={`credential-row-status tag ${configured === true ? "ok" : "muted"}`}
+      >
         {environmentManaged
           ? "managed by environment"
           : unsupportedPlatform
@@ -133,38 +145,51 @@ export function CredentialForm({
               ? "stored in Keychain"
               : "not in Keychain"}
       </span>
-      <label className="title-stack" htmlFor={inputId}>
-        <b>{label}</b>
-      </label>
-      <span id={credentialDescriptionId}>{credentialKey}</span>
-      <form.Field name="value">
-        {(field) => (
-          <input
-            id={inputId}
-            name={credentialKey}
-            aria-describedby={describedBy}
-            disabled={!canEditKeychain}
-            placeholder={
-              environmentManaged
-                ? "Managed by launch environment"
-                : unsupportedPlatform
-                ? "Use environment configuration on this platform"
-                : inspectionUnknown
-                  ? "Keychain inspection unavailable"
-                  : !available
-                    ? "Keychain edits paused until inspection succeeds"
-                    : configured === true
-                      ? "Stored in Keychain"
-                      : "Paste value to store in Keychain"
-            }
-            type="password"
-            value={field.state.value}
-            onBlur={field.handleBlur}
-            onChange={(event) => field.handleChange(event.target.value)}
-          />
-        )}
-      </form.Field>
-      <span className="row-actions">
+      <FieldGroup className="credential-row-field-group">
+        <Field
+          className="credential-row-field"
+          data-disabled={!canEditKeychain ? true : undefined}
+          orientation="horizontal"
+        >
+          <FieldContent className="credential-row-identity">
+            <FieldLabel htmlFor={inputId}>{label}</FieldLabel>
+            <FieldDescription
+              className="credential-row-key"
+              id={credentialDescriptionId}
+            >
+              {credentialKey}
+            </FieldDescription>
+          </FieldContent>
+          <form.Field name="value">
+            {(field) => (
+              <Input
+                aria-describedby={describedBy}
+                disabled={!canEditKeychain}
+                id={inputId}
+                name={credentialKey}
+                placeholder={
+                  environmentManaged
+                    ? "Managed by launch environment"
+                    : unsupportedPlatform
+                    ? "Use environment configuration on this platform"
+                    : inspectionUnknown
+                      ? "Keychain inspection unavailable"
+                      : !available
+                        ? "Keychain edits paused until inspection succeeds"
+                        : configured === true
+                          ? "Stored in Keychain"
+                          : "Paste value to store in Keychain"
+                }
+                type="password"
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(event) => field.handleChange(event.target.value)}
+              />
+            )}
+          </form.Field>
+        </Field>
+      </FieldGroup>
+      <div className="credential-row-actions">
         <form.Subscribe
           selector={(state) => ({
             canSubmit: state.canSubmit,
@@ -173,8 +198,9 @@ export function CredentialForm({
           })}
         >
           {({ canSubmit, isSubmitting, isDirty }) => (
-            <button
-              className="tab on"
+            <Button
+              aria-label={`Save ${label}`}
+              size="sm"
               type="submit"
               disabled={
                 !canEditKeychain ||
@@ -184,19 +210,21 @@ export function CredentialForm({
                 removing
               }
             >
-              {isSubmitting ? "saving" : "save"}
-            </button>
+              {isSubmitting ? "Saving…" : "Save"}
+            </Button>
           )}
         </form.Subscribe>
-        <button
-          className="tab"
+        <Button
+          aria-label={`Remove ${label}`}
+          size="sm"
           type="button"
+          variant="outline"
           disabled={!canEditKeychain || configured !== true || removing}
           onClick={removeCredential}
         >
-          {removing ? "removing" : "remove"}
-        </button>
-      </span>
+          {removing ? "Removing…" : "Remove"}
+        </Button>
+      </div>
       {statusMessage ? (
         <span className="status-line" role="status">
           {statusMessage}

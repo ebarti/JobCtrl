@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import type { StageState } from "../../operations/types.js";
 import { StageBadge } from "./StageBadge.js";
 
-const TONE_PATTERN = /(ok|warn|danger|muted|info)/;
+const TONE_PATTERN = /^(ok|warn|danger|muted|info)$/;
 
 function serializedFor(kind: StageStateKind): SerializedStageState {
   return serializeStageState({ kind } as { kind: StageStateKind } as Parameters<
@@ -34,12 +34,10 @@ describe("stage-state parity (the second-most important test in the app)", () =>
   for (const kind of STAGE_STATE_KINDS) {
     it(`<StageBadge state> renders a non-default tone for kind=${kind}`, () => {
       const state = serializedFor(kind) as StageState;
-      const { container } = render(<StageBadge state={state} />);
-      const span = container.querySelector("span");
-      expect(span, `expected a <span> in <StageBadge state="${state}">`).toBeTruthy();
-      expect(span?.className).toMatch(/tag /);
-      expect(span?.className).toMatch(TONE_PATTERN);
-      expect(screen.getByText(state)).toBeInTheDocument();
+      render(<StageBadge state={state} />);
+      const badge = screen.getByText(state);
+      expect(badge).toHaveAttribute("data-slot", "status-badge");
+      expect(badge.getAttribute("data-status-tone")).toMatch(TONE_PATTERN);
     });
   }
 });

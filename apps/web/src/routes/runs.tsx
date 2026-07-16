@@ -1,7 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 import { workflowRunsKeys } from "../contexts/operations/workflowRunsKeys.js";
-import { RunsView } from "../views/runs/RunsView.js";
 import { runsSearchSchema, type RunsSearch } from "./-runs.search.js";
 
 function workflowRunsInput(search: RunsSearch) {
@@ -22,5 +21,5 @@ export const Route = createFileRoute("/runs")({
       queryFn: () => context.ports.api.workflowRuns(input),
     });
   },
-  component: RunsView,
+  component: Outlet,
 });

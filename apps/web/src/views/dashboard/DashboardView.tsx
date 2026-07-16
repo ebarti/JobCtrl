@@ -1,7 +1,10 @@
+import { IconAlertTriangle } from "@tabler/icons-react";
+
 import { OutcomeSuggestionsPanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
 import { useApplicationOutcomesQuery } from "../../contexts/operations/hooks/useApplicationOutcomesQuery.js";
 import { useDashboardSummaryQuery } from "../../contexts/operations/hooks/useDashboardSummaryQuery.js";
 import { useWorkflowRunsListQuery } from "../../contexts/operations/hooks/useWorkflowRunsListQuery.js";
+import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { PageHead } from "../../shared/ui/page-head.js";
@@ -37,11 +40,27 @@ export function DashboardView() {
     (suggestion) => suggestion.status === "pending",
   );
   return (
-    <>
-      <PageHead eyebrow="Overview" title="Dashboard" />
+    <div className="dashboard-view">
+      <PageHead
+        eyebrow="Overview"
+        title="Dashboard"
+        subtitle="Pipeline health, outcomes, active work, and the decisions that need attention."
+      />
       {summary ? <KpiGrid summary={summary} /> : <KpiSkeleton />}
-      {message ? <div className="banner">{message}</div> : null}
-      {outcomesError ? <div className="banner">{outcomesError}</div> : null}
+      {message ? (
+        <Alert variant="destructive" className="dashboard-error-alert">
+          <IconAlertTriangle aria-hidden="true" />
+          <AlertTitle>Dashboard unavailable</AlertTitle>
+          <AlertDescription>{message}</AlertDescription>
+        </Alert>
+      ) : null}
+      {outcomesError ? (
+        <Alert variant="destructive" className="dashboard-error-alert">
+          <IconAlertTriangle aria-hidden="true" />
+          <AlertTitle>Outcome suggestions unavailable</AlertTitle>
+          <AlertDescription>{outcomesError}</AlertDescription>
+        </Alert>
+      ) : null}
       {summary ? (
         <div className="dashboard-stack">
           <div className="dashboard-ops">
@@ -74,6 +93,6 @@ export function DashboardView() {
       ) : (
         <Empty title={isLoading ? "Loading dashboard." : "No dashboard data."} />
       )}
-    </>
+    </div>
   );
 }

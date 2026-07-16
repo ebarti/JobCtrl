@@ -115,6 +115,7 @@ scan API response.
 | `evidence_usage_projections` | Profile evidence inverted into resume, requirement, and coverage usage/gaps. |
 | `apply_run_projections` | Apply-run context and event timeline. |
 | `workflow_run_projections` | Status, input summary, failure cause, and lifecycle timeline for every Temporal workflow type. |
+| `pipeline_step_projections` | Attempt-aware execution-owned source planning/family, reconciliation, fan-out, backlog-sweep, and PDF lifecycle. |
 | `source_quality_stats` | Rolling source-health facts used by discovery and the dashboard. |
 | `contact_projections` | Contact references, counts, and provenance metadata—never attribute values. |
 | `contact_research_task_projections` | Research status, counts, source outcomes, and candidate provenance/kinds—never candidate values. |
@@ -134,6 +135,44 @@ Both runtimes emit the same JSON shapes. Shared parity fixtures guard the
 dual-written job, contact, research, outreach, follow-up, compensation, and
 audit projections. That makes a one-sided column or shape change a test failure
 instead of a client surprise.
+
+## Pipeline Operations Read Model
+
+`GET /v1/pipeline/operations` composes durable read state with current runtime
+telemetry; it is not one more aggregate projection table. The durable half is:
+
+1. `workflow_run_projections` selects the newest Discover execution that is
+   active/draining, otherwise the latest terminal execution;
+2. `discovery_execution_jobs` supplies exact `(workflow ID, Temporal run ID)`
+   membership in `observed_this_run` and `existing_backlog`;
+3. `pipeline_step_projections` supplies attempt-aware execution-owned
+   orchestration lifecycle;
+4. `job_stage_states` supplies canonical per-job enrich/score/tailor/cover
+   lifecycle.
+
+The request-time half derives the expected app directory from the configured
+database path, filters `worker_runtime_heartbeats` to that resolved
+database/app-dir identity, selects the task queue named by the newest matching
+heartbeat, and aggregates fresh schema-valid workers from that queue. It then
+selects the freshest typed task-queue observation, resolves the bounded safe
+active inventory, and computes the conservative ETA. This overlay is why the
+endpoint is a **current snapshot**, not a historical run reconstruction. No API
+claim is made about what capacity or queue pressure existed at an earlier
+timestamp.
+
+The read model keeps three scopes explicit: current execution, that execution's
+pre-existing-backlog sweep, and global work outside both cohorts. Source-family
+progress and reconciliation are separate summaries rather than a shared
+denominator. Per-job stage counts use domain-job units; task-queue backlog uses
+approximate infrastructure units and is never relabeled as jobs.
+
+Projection failure and telemetry uncertainty degrade independently. Durable
+step rows can be rebuilt from `job_events`; stale, invalid, unsupported, or
+unavailable runtime observations remain typed states. The ETA union likewise
+returns `calibrating`, `paused`, `stale`, or `unavailable` instead of fabricating
+a number when samples, worker freshness, or contention is unknown. Open
+membership gates the overall ETA only; scoped per-stage and source-family
+estimates can use already-known backlog.
 
 ## Sensitive Projection Families
 

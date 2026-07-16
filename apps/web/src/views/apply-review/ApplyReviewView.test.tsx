@@ -186,6 +186,18 @@ function shadowElementWithText(shadow: HTMLElement, text: string): HTMLElement {
   return element;
 }
 
+async function chooseSelectOption(
+  comboboxName: string,
+  optionName: string,
+): Promise<void> {
+  await userEvent.click(
+    await screen.findByRole("combobox", { name: comboboxName }),
+  );
+  await userEvent.click(
+    await screen.findByRole("option", { name: optionName }),
+  );
+}
+
 async function selectResumeLine(shadow: HTMLElement, text: string): Promise<void> {
   await userEvent.click(shadowElementWithText(shadow, text));
   await waitFor(() => expect(shadowElementWithText(shadow, text).className).toContain("jobctrl-selected-line"));
@@ -594,22 +606,6 @@ vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
   },
 }));
 
-vi.mock("../jobs/JobDetailDrawer.js", () => ({
-  JobDetailDrawer: ({
-    jobId,
-    onClose,
-  }: {
-    readonly jobId: string;
-    readonly onClose: () => void;
-  }) => (
-    <div aria-label={`Job details for ${jobId}`} role="dialog">
-      <button type="button" onClick={onClose}>
-        close details
-      </button>
-    </div>
-  ),
-}));
-
 const sampleTailoringExplanation: ArtifactTailoringExplanation = {
   targetSeniority: "principal",
   claimMode: "evidence_reframing",
@@ -813,6 +809,26 @@ const pinnedTailoringExplanation: ArtifactTailoringExplanation = {
 };
 
 describe("<ApplyReviewView>", () => {
+  it("renders queue failures as destructive alerts with a semantic icon", async () => {
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => {
+            throw new Error("review queue unavailable");
+          }),
+        },
+      }),
+    });
+
+    const alertTitle = await screen.findByText("Application review queue could not be loaded");
+    const alert = alertTitle.closest('[role="alert"]');
+    const icon = alert?.querySelector("svg.tabler-icon-alert-triangle");
+
+    expect(alert).toHaveTextContent("review queue unavailable");
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+    expect(icon).toHaveClass("tabler-icon-alert-triangle");
+  });
+
   it("preserves an explicit job target that is absent from the review queue", async () => {
     const onTargetJobKeyChange = vi.fn();
     const northwindOnlyQueue = {
@@ -851,20 +867,55 @@ describe("<ApplyReviewView>", () => {
   it("renders the review workspace with job evidence and tailored materials", async () => {
     renderWithProviders(<ApplyReviewView />);
 
-    expect(await screen.findByText("Principal Platform Engineer")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Principal Platform Engineer" }),
+    ).toBeInTheDocument();
     const selectedHeader = document.querySelector(".apply-review-selected-head");
     expect(selectedHeader).toBeInstanceOf(HTMLElement);
     const header = within(selectedHeader as HTMLElement);
+    const decisionCard = selectedHeader?.closest('[data-slot="card"]');
+    const selectedFacts = decisionCard?.querySelector(".apply-review-selected-facts");
+    expect(decisionCard).toHaveClass("apply-review-decision-card");
+    expect(selectedFacts?.parentElement).toBe(decisionCard);
     expect(header.queryByText("Selected application")).not.toBeInTheDocument();
-    expect(header.queryByText("Principal Platform Engineer")).not.toBeInTheDocument();
+    expect(header.getByText("Decision workspace")).toBeInTheDocument();
+    expect(header.getByRole("heading", { name: "Principal Platform Engineer" })).toBeInTheDocument();
+    expect(header.getByText("Globex · discovered via Lever")).toBeInTheDocument();
     expect(header.queryByText(/Globex · score 9/i)).not.toBeInTheDocument();
-    expect(header.queryByText("materials ready")).not.toBeInTheDocument();
+    expect(header.getByText("materials ready")).toBeInTheDocument();
     expect(document.querySelector(".apply-review-status-note")).not.toBeInTheDocument();
-    expect(header.getByRole("region", { name: "Compensation" })).toBeInTheDocument();
-    expect(header.getByLabelText("Resume template")).toBeInTheDocument();
-    expect(header.queryByRole("button", { name: /Refresh resume materials/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Requirements and original post" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Tailored resume and cover" })).toBeInTheDocument();
+    const decision = within(decisionCard as HTMLElement);
+    expect(decision.getByRole("region", { name: "Compensation" })).toBeInTheDocument();
+    expect(decision.getByLabelText("Resume template")).toBeInTheDocument();
+    expect(decision.queryByRole("button", { name: /Refresh resume materials/i })).not.toBeInTheDocument();
+    expect(
+      screen
+        .getByRole("link", { name: /Open job detail for Principal Platform Engineer/i })
+        .querySelector('svg[data-icon="inline-start"]'),
+    ).toHaveAttribute("aria-hidden", "true");
+    for (const name of ["Approve submit", "Approve dry run", "Defer", "Decline"]) {
+      const button = screen.getByRole("button", { name: new RegExp(`${name} for Principal Platform Engineer`, "i") });
+      const icon = button.querySelector('svg[data-icon="inline-start"]');
+      expect(icon).toHaveAttribute("aria-hidden", "true");
+    }
+    const submitGateStatus = screen.getByText("Submit gate: approval not recorded.").closest('[role="status"]');
+    expect(submitGateStatus).toHaveClass("inline-flex", "items-center", "justify-end", "gap-1.5");
+    expect(submitGateStatus?.querySelector(".tabler-icon-lock")).toHaveAttribute("aria-hidden", "true");
+    const reviewWorkspace = screen.getByRole("region", {
+      name: /Review evidence for Principal Platform Engineer/i,
+    });
+    const positionCard = within(reviewWorkspace).getByRole("region", {
+      name: "Requirements and original post",
+    });
+    const materialsCard = within(reviewWorkspace).getByRole("region", {
+      name: "Tailored resume and cover",
+    });
+    expect(positionCard).toHaveAttribute("data-slot", "card");
+    expect(materialsCard).toHaveAttribute("data-slot", "card");
+    expect(positionCard.parentElement).toHaveAttribute("data-slot", "collapsible");
+    expect(positionCard.parentElement?.parentElement).toBe(reviewWorkspace);
+    expect(materialsCard.parentElement).toBe(reviewWorkspace);
+    expect(positionCard.compareDocumentPosition(materialsCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getAllByText("materials ready").length).toBeGreaterThan(0);
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
     expect(screen.getByText("public company scale")).toBeInTheDocument();
@@ -882,6 +933,8 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText("covered in tailored resume")).toBeInTheDocument();
     expect(screen.getByText("missing from tailored resume")).toBeInTheDocument();
     expect(screen.getByText("2 resume bullets")).toBeInTheDocument();
+    const firstRequirementSummary = screen.getAllByRole("definition")[0]?.closest("dl");
+    expect(firstRequirementSummary).toHaveClass("apply-review-requirement-summary");
     expect(
       screen.getByText((_, element) =>
         Boolean(
@@ -920,6 +973,18 @@ describe("<ApplyReviewView>", () => {
         /mandatory_requirement_coverage|requirement_coverage|review_blocked_claims|draft_requires_confirmation/,
       ),
     ).not.toBeInTheDocument();
+    const collapsePosition = within(positionCard).getByRole("button", { name: "Collapse job position" });
+    expect(collapsePosition).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(collapsePosition);
+    expect(within(positionCard).getByRole("button", { name: "Expand job position" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(
+      within(positionCard).queryByRole("heading", { name: "Requirement evidence" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(within(positionCard).getByRole("button", { name: "Expand job position" }));
+    expect(within(positionCard).getByRole("heading", { name: "Requirement evidence" })).toBeVisible();
     expect(screen.getByText("Why fit score is 9/10")).toBeInTheDocument();
     expect(screen.getByText("Strong fit on platform reliability.")).toBeInTheDocument();
     expect(screen.getByText("Technical fit")).toBeInTheDocument();
@@ -944,11 +1009,13 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText(/7 samples/i)).toBeInTheDocument();
     expect(screen.queryByText(/dry_run/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Globex needs a principal engineer/i)).toBeInTheDocument();
-    const detailButton = screen.getByRole("button", {
+    const detailLink = screen.getByRole("link", {
       name: /Open job detail for Principal Platform Engineer/i,
     });
-    expect(detailButton).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Open job detail/i })).not.toBeInTheDocument();
+    expect(detailLink).toHaveAttribute(
+      "href",
+      `/jobs/${encodeURIComponent(sampleApplyReviewQueue.items[0]!.jobKey)}`,
+    );
     expect(screen.queryByRole("img", { name: "Tailored resume preview" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument();
@@ -1305,7 +1372,7 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    await userEvent.selectOptions(await screen.findByLabelText("Resume template"), "built_in:modern-html");
+    await chooseSelectOption("Resume template", "Modern HTML");
 
     await waitFor(() =>
       expect(setJobResumeTemplate).toHaveBeenCalledWith(jobKey, {
@@ -1319,6 +1386,28 @@ describe("<ApplyReviewView>", () => {
       }),
     );
     expect(screen.queryByRole("button", { name: /Refresh resume materials/i })).not.toBeInTheDocument();
+  });
+
+  it("renders resume template failures as destructive alerts with a semantic icon", async () => {
+    const setJobResumeTemplate = vi.fn(async () => {
+      throw new Error("template service unavailable");
+    });
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: { setJobResumeTemplate },
+      }),
+    });
+
+    await chooseSelectOption("Resume template", "Modern HTML");
+
+    const alertTitle = await screen.findByText("Resume template could not be updated");
+    const alert = alertTitle.closest('[role="alert"]');
+    const icon = alert?.querySelector("svg.tabler-icon-alert-triangle");
+
+    expect(alert).toHaveTextContent("template service unavailable");
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+    expect(icon).toHaveClass("tabler-icon-alert-triangle");
   });
 
   it("restores the latest saved resume review draft in the Plate editor", async () => {
@@ -1337,9 +1426,6 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    const shadow = await findResumeShadowRoot();
-    expect(shadowText(shadow)).toContain("Restored human rewrite for incident response.");
-    expect(shadowText(shadow)).not.toContain("Owned platform reliability improvements for incident response.");
     await waitFor(() =>
       expect(createResumeReviewDraft).toHaveBeenCalledWith(
         sampleApplyReviewQueue.items[0]!.jobKey,
@@ -1350,8 +1436,16 @@ describe("<ApplyReviewView>", () => {
         }),
       ),
     );
+    expect(await screen.findByText("saved revision 1")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        shadowText(document.querySelector(".resume-plate-document") as HTMLElement),
+      ).toContain("Restored human rewrite for incident response."),
+    );
+    const shadow = await findResumeShadowRoot();
+    expect(shadowText(shadow)).toContain("Restored human rewrite for incident response.");
+    expect(shadowText(shadow)).not.toContain("Owned platform reliability improvements for incident response.");
     expect(screen.getByRole("button", { name: "save draft" })).toBeDisabled();
-    expect(screen.getByText("saved revision 1")).toBeInTheDocument();
   });
 
   it("renders promoted draft HTML through the same page classes as the profile preview", async () => {
@@ -1417,6 +1511,12 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
+    expect(await screen.findByText("saved revision 1")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        shadowText(document.querySelector(".resume-plate-document") as HTMLElement),
+      ).toContain("Northstar Labs"),
+    );
     const shadow = await findResumeShadowRoot();
     const heading = shadowElementWithText(shadow, "Northstar Labs");
     const rows = Array.from(heading.querySelectorAll<HTMLElement>(".resume-entry-row"));
@@ -1510,12 +1610,12 @@ describe("<ApplyReviewView>", () => {
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(nameLine.className).not.toContain("jobctrl-selected-line"));
 
-    await userEvent.selectOptions(screen.getByLabelText("Font"), "garamond");
+    await chooseSelectOption("Font", "Garamond");
     await waitFor(() => expect(nameLine.style.fontFamily).toContain("Garamond"));
     expect(bodyLine.style.fontFamily).toContain("Garamond");
 
     await selectResumeLine(shadow, "Owned platform reliability improvements for incident response.");
-    await userEvent.selectOptions(screen.getByLabelText("Font"), "helvetica");
+    await chooseSelectOption("Font", "Helvetica");
     await waitFor(() => expect(bodyLine.style.fontFamily).toContain("Helvetica"));
     expect(nameLine.style.fontFamily).toContain("Garamond");
 
@@ -2067,7 +2167,7 @@ describe("<ApplyReviewView>", () => {
     );
     const artifactRisk = screen.getByRole("region", { name: "Artifact-level grounding and claim risk" });
     const resumeAudit = screen.getByRole("region", { name: "Resume audit" });
-    expect(artifactRisk.compareDocumentPosition(resumeAudit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(resumeAudit.compareDocumentPosition(artifactRisk) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("region", { name: "Tailored resume preview" })).not.toContainElement(artifactRisk);
     expect(screen.queryByText("Annotated resume changes")).not.toBeInTheDocument();
     expect(screen.queryByText("Tailoring rationale")).not.toBeInTheDocument();
@@ -2526,29 +2626,17 @@ describe("<ApplyReviewView>", () => {
     );
   });
 
-  it("opens job detail as an in-place overlay", async () => {
-    const user = userEvent.setup();
+  it("links to the route-level job detail workspace", async () => {
     renderWithProviders(<ApplyReviewView />);
 
-    await user.click(
-      await screen.findByRole("button", {
+    expect(
+      await screen.findByRole("link", {
         name: /Open job detail for Principal Platform Engineer/i,
       }),
+    ).toHaveAttribute(
+      "href",
+      `/jobs/${encodeURIComponent(sampleApplyReviewQueue.items[0]!.jobKey)}`,
     );
-
-    expect(
-      screen.getByRole("dialog", {
-        name: `Job details for ${sampleApplyReviewQueue.items[0]!.jobKey}`,
-      }),
-    ).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "close details" }));
-
-    expect(
-      screen.queryByRole("dialog", {
-        name: `Job details for ${sampleApplyReviewQueue.items[0]!.jobKey}`,
-      }),
-    ).not.toBeInTheDocument();
   });
 
   it("renders non-pending review decisions as user-facing copy", async () => {
@@ -2576,7 +2664,9 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByText(/Current decision: Approved for submit/i)).toBeInTheDocument();
+    const selectedHeading = await screen.findByRole("heading", { name: "Principal Platform Engineer" });
+    const decisionCard = selectedHeading.closest('[data-slot="card"]');
+    expect(within(decisionCard as HTMLElement).getByText(/Approved for submit/i)).toBeInTheDocument();
     expect(screen.queryByText(/approved_submit/i)).not.toBeInTheDocument();
   });
 
@@ -2742,6 +2832,8 @@ describe("<ApplyReviewView>", () => {
     expect((await screen.findAllByText(/Submit failed: process killed by signal/i)).length).toBeGreaterThan(0);
     expect(screen.getAllByText("submit failed").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Last submit failed: process killed by signal/i).length).toBeGreaterThan(0);
+    const blockerGroup = screen.getByText("Blockers").closest("div");
+    expect(blockerGroup?.querySelector(".tabler-icon-ban")).toHaveAttribute("aria-hidden", "true");
     expect(screen.queryByText("needs repair")).not.toBeInTheDocument();
   });
 
@@ -3033,13 +3125,19 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Partial dry-run evidence only/i);
+    const partialEvidenceAlert = await screen.findByRole("alert");
+    expect(partialEvidenceAlert).toHaveTextContent(/Partial dry-run evidence only/i);
+    expect(partialEvidenceAlert).toHaveClass("inline-flex", "items-center", "justify-end", "gap-1.5");
+    expect(partialEvidenceAlert.querySelector(".tabler-icon-lock")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByRole("button", { name: /Approve submit for Principal Platform Engineer/i })).toBeDisabled();
-    await user.click(
-      screen.getByRole("button", {
-        name: /Approve with partial dry-run evidence for Principal Platform Engineer/i,
-      }),
+    const partialApprovalButton = screen.getByRole("button", {
+      name: /Approve with partial dry-run evidence for Principal Platform Engineer/i,
+    });
+    expect(partialApprovalButton.querySelector('svg[data-icon="inline-start"]')).toHaveAttribute(
+      "aria-hidden",
+      "true",
     );
+    await user.click(partialApprovalButton);
 
     await waitFor(() => expect(decideApplyReview).toHaveBeenCalledTimes(1));
 	    expect(decideApplyReview).toHaveBeenCalledWith(
@@ -3073,7 +3171,9 @@ describe("<ApplyReviewView>", () => {
 
     render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
 
-    expect(await screen.findByText("Principal Platform Engineer")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Principal Platform Engineer" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("outcomes unavailable")).not.toBeInTheDocument();
     expect(applicationOutcomes).not.toHaveBeenCalled();
   });

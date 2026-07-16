@@ -16,6 +16,7 @@ import { ArtifactDetailPanel } from "./ArtifactDetailPanel.js";
 const meta = {
   title: "Views/Artifacts/ArtifactDetailPanel",
   component: ArtifactDetailPanel,
+  tags: ["a11y-regression"],
   args: { artifactId: "artifact-1" },
 } satisfies Meta<typeof ArtifactDetailPanel>;
 

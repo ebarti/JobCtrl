@@ -1,9 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/runs/")({
-  component: RunsIndexComponent,
-});
+import { RunsView } from "../views/runs/RunsView.js";
 
-function RunsIndexComponent() {
-  return null;
-}
+export const Route = createFileRoute("/runs/")({
+  component: RunsView,
+});

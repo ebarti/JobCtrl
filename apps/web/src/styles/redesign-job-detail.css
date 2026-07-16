@@ -1,0 +1,852 @@
+/*
+ * Job detail is an editorial workspace, not a dashboard of independent
+ * status cards. It uses a single reading column, a narrow operational rail,
+ * and dividers to keep the dense audit record legible.
+ */
+
+.job-detail-drawer {
+  width: min(1440px, calc(100dvw - 304px));
+  margin: 0 auto;
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: 0 24px 72px color-mix(in srgb, #000 22%, transparent);
+}
+
+.job-detail-drawer .drawer-head {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr);
+  gap: 18px;
+  padding: 30px 72px 24px 34px;
+  border-bottom: 1px solid var(--border);
+}
+
+.job-overview-score {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding-top: 3px;
+}
+
+.job-overview-score-label,
+.job-overview-provenance,
+.job-overview-readiness-label,
+.job-detail-section-heading > span,
+.job-audit-triage-kicker,
+.job-audit-metrics dt,
+.job-audit-tag-group > span,
+.job-audit-fact-list dt,
+.job-detail-sidebar .section > h3,
+.compensation-detail-grid dt,
+.compensation-panel .eyebrow {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 680;
+  letter-spacing: 0.075em;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.job-detail-drawer .drawer-head .fit {
+  display: block;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 34px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 690;
+  letter-spacing: -0.075em;
+  line-height: 0.95;
+}
+
+.job-detail-drawer .drawer-head .fit[data-score-tone="positive"] {
+  color: var(--success);
+}
+
+.job-detail-drawer .drawer-head .fit[data-score-tone="negative"] {
+  color: var(--destructive);
+}
+
+.job-detail-drawer .drawer-head .fit[data-score-tone="neutral"],
+.job-detail-drawer .drawer-head .fit[data-score-tone="unknown"] {
+  color: var(--muted-foreground);
+}
+
+.job-overview-copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.job-overview-provenance {
+  overflow-wrap: anywhere;
+}
+
+.job-detail-drawer .drawer-head h2 {
+  margin: 0;
+  color: var(--foreground);
+  font-family: var(--jh-font-heading);
+  font-size: clamp(24px, 2.1vw, 34px);
+  font-weight: 670;
+  letter-spacing: -0.055em;
+  line-height: 1.04;
+}
+
+.job-overview-location {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.job-overview-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.job-detail-drawer .external-link {
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 610;
+  text-decoration: underline;
+  text-decoration-color: color-mix(
+    in oklch,
+    var(--muted-foreground) 55%,
+    transparent
+  );
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+.job-detail-drawer .external-link:hover {
+  text-decoration-color: currentColor;
+}
+
+.job-detail-drawer .job-overview-readiness {
+  gap: 7px;
+  margin: 0;
+}
+
+.job-detail-drawer .job-detail-top-actions {
+  gap: 12px 20px;
+  padding: 14px 34px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--muted) 36%, var(--card));
+}
+
+.job-detail-drawer .job-detail-top-actions .action-panel {
+  flex: 1 1 620px;
+  gap: 5px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.job-detail-drawer .job-detail-top-actions > .tab,
+.job-detail-drawer .action-panel .tab {
+  min-height: 30px;
+  border-radius: 5px;
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.job-detail-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.33fr);
+  min-width: 0;
+  align-items: start;
+  border-top: 0;
+}
+
+.job-detail-primary,
+.job-detail-sidebar,
+.job-detail-follow-up {
+  min-width: 0;
+}
+
+.job-detail-sidebar {
+  position: sticky;
+  top: 0;
+  max-height: calc(100dvh - 176px);
+  overflow: auto;
+  border-left: 1px solid var(--border);
+  scrollbar-gutter: stable;
+}
+
+.job-detail-drawer .section {
+  padding: 24px 34px;
+  border-bottom: 1px solid var(--border);
+}
+
+.job-detail-drawer .section h3 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.018em;
+}
+
+.job-detail-sidebar .section {
+  padding: 21px 22px;
+}
+
+.job-detail-sidebar .section > h3 {
+  margin-bottom: 14px;
+}
+
+.job-detail-section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.job-detail-description .description-text {
+  max-width: 82ch;
+  gap: 14px;
+  color: color-mix(in oklch, var(--foreground) 88%, var(--muted-foreground));
+  font-size: 14px;
+  line-height: 1.63;
+}
+
+.job-detail-description .description-text h4 {
+  margin-top: 6px;
+  color: var(--foreground);
+  font-size: 14px;
+}
+
+.job-detail-description .description-text li {
+  margin-block: 4px;
+}
+
+.job-audit-triage {
+  background: color-mix(in oklch, var(--muted) 28%, var(--card));
+}
+
+.job-audit-triage-grid,
+.job-audit-triage-column {
+  gap: 16px;
+}
+
+.job-audit-triage-heading {
+  display: grid;
+  gap: 5px;
+}
+
+.job-audit-triage-heading h3 {
+  font-size: 17px !important;
+}
+
+.job-detail-drawer .job-audit-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.job-detail-drawer .job-audit-metrics > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 14px 12px 0;
+  border-right: 1px solid var(--border);
+}
+
+.job-detail-drawer .job-audit-metrics > div:not(:first-child) {
+  padding-left: 14px;
+}
+
+.job-detail-drawer .job-audit-metrics > div:nth-child(3n) {
+  border-right: 0;
+}
+
+.job-detail-drawer .job-audit-metrics dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--foreground);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 640;
+  overflow-wrap: anywhere;
+}
+
+.job-audit-rationale {
+  max-width: 88ch;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.job-detail-drawer .job-audit-tag-group {
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.job-detail-drawer .job-audit-tag-group > div,
+.job-detail-drawer .job-audit-fact-list dd {
+  gap: 6px 14px;
+}
+
+.job-detail-drawer .job-audit-tag-group .tag,
+.job-detail-drawer .job-audit-fact-list .tag,
+.job-detail-drawer .job-overview-readiness .tag,
+.job-detail-drawer .job-detail-sidebar .tag,
+.job-detail-drawer .compensation-audit-section .tag,
+.job-detail-drawer .job-detail-role-analysis .tag,
+.job-detail-drawer .interview-prep-panel .tag,
+.job-detail-drawer .job-detail-follow-up .tag,
+.job-detail-drawer .stage-pill {
+  display: inline-flex;
+  min-height: 0;
+  gap: 5px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 590;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-transform: none;
+}
+
+.job-detail-drawer .tag::before,
+.job-detail-drawer .stage-pill::before {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  align-self: center;
+  border-radius: 999px;
+  background: currentColor;
+  content: "";
+}
+
+.job-detail-drawer .tag.ok,
+.job-detail-drawer .stage-pill.succeeded {
+  color: var(--success);
+}
+
+.job-detail-drawer .tag.warn,
+.job-detail-drawer .stage-pill.failed,
+.job-detail-drawer .stage-pill.exhausted,
+.job-detail-drawer .stage-pill.blocked {
+  color: var(--warning);
+}
+
+.job-detail-drawer .tag.danger {
+  color: var(--destructive);
+}
+
+.job-detail-drawer .tag.info,
+.job-detail-drawer .stage-pill.running,
+.job-detail-drawer .stage-pill.queued {
+  color: var(--status-info);
+}
+
+.job-detail-drawer .score-policy-row {
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding: 13px 0 0;
+}
+
+.job-detail-drawer .job-audit-score-correction {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.job-detail-drawer .score-correction {
+  display: grid;
+  grid-template-columns: 104px minmax(190px, 1fr) 34px;
+  gap: 8px 10px;
+  align-items: end;
+}
+
+.job-detail-drawer .score-correction label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.job-detail-drawer .score-correction label > span {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.job-detail-drawer .score-correction input {
+  min-width: 0;
+  height: 34px;
+  border-radius: 5px;
+  background: var(--card);
+  font-size: 12px;
+}
+
+.job-detail-drawer .score-correction button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--primary);
+  border-radius: 5px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.job-detail-drawer .score-correction button:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--primary) 90%, var(--card));
+}
+
+.job-detail-drawer .score-correction small {
+  grid-column: 1 / -1;
+  font-size: 11px;
+}
+
+.job-detail-drawer .job-audit-concerns {
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.job-detail-drawer .job-audit-fact-list > div {
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 10px;
+  padding-block: 7px;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 75%, transparent);
+}
+
+.job-detail-drawer .job-audit-fact-list > div:last-child {
+  border-bottom: 0;
+}
+
+.job-detail-drawer .compensation-audit-section {
+  gap: 16px;
+}
+
+.job-detail-drawer .compensation-audit-heading {
+  gap: 12px 18px;
+}
+
+.job-detail-drawer .compensation-refresh-control {
+  gap: 7px;
+}
+
+.job-detail-drawer .compensation-refresh-path {
+  min-width: min(248px, 100%);
+}
+
+.job-detail-drawer .compensation-strip {
+  gap: 8px 16px;
+  padding: 11px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.job-detail-drawer .compensation-strip-label {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 680;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+}
+
+.job-detail-drawer .compensation-panels {
+  gap: 0;
+}
+
+.job-detail-drawer .compensation-panel {
+  gap: 13px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.job-detail-drawer .compensation-panel + .compensation-panel {
+  margin-left: 28px;
+  border-left: 1px solid var(--border);
+  padding-left: 28px;
+}
+
+.job-detail-drawer .compensation-panel header {
+  display: grid;
+  gap: 4px;
+  align-items: start;
+}
+
+.job-detail-drawer .compensation-panel header b {
+  color: var(--foreground);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.job-detail-drawer .compensation-detail-grid {
+  gap: 9px 16px;
+}
+
+.job-detail-drawer .compensation-detail-grid > div {
+  gap: 4px;
+}
+
+.job-detail-drawer .compensation-detail-grid dd {
+  font-size: 12px;
+}
+
+.job-detail-drawer .compensation-evidence-row {
+  border: 0;
+  border-left: 2px solid var(--border);
+  border-radius: 0;
+  padding: 3px 0 3px 12px;
+}
+
+.job-detail-drawer .compensation-evidence-rows > summary b,
+.job-detail-drawer .compensation-warning-list code {
+  border-radius: 3px;
+}
+
+.job-detail-drawer .requirement-fit-missing {
+  margin: 0;
+  border-right: 0;
+  border-left: 3px solid var(--warning);
+  background: color-mix(in oklch, var(--warning) 7%, var(--card));
+}
+
+.job-detail-drawer .job-detail-role-analysis .employer-analysis {
+  gap: 12px;
+}
+
+.job-detail-drawer .job-detail-role-analysis .employer-analysis-requirement,
+.job-detail-drawer .job-detail-role-analysis .employer-analysis-keyword,
+.job-detail-drawer .job-detail-role-analysis .employer-analysis-sub {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0 0 14px;
+}
+
+.job-detail-drawer .job-detail-role-analysis .employer-analysis-match-side {
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0 0 0 14px;
+}
+
+.job-detail-drawer .interview-prep-item {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0 0 14px;
+}
+
+.job-detail-drawer .timeline {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  border-top: 1px solid var(--border);
+}
+
+.job-detail-drawer .timeline-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 11px 0;
+}
+
+.job-detail-drawer .timeline-row-head {
+  gap: 7px;
+}
+
+.job-detail-drawer .timeline-row > .tag {
+  justify-self: end;
+}
+
+.job-detail-drawer .timeline-diagnostics {
+  grid-column: 1 / -1;
+  gap: 5px;
+  border-left: 1px solid var(--border);
+  padding-left: 11px;
+}
+
+.job-detail-drawer .timeline-action {
+  grid-column: 1 / -1;
+  width: fit-content;
+  min-height: 29px;
+}
+
+.job-detail-drawer .section .mini-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  min-height: 0;
+  padding: 10px 0;
+}
+
+.job-detail-drawer .section .mini-row > .tag,
+.job-detail-drawer .section .mini-row > span:not(.tag) {
+  grid-row: 1;
+}
+
+.job-detail-drawer .section .mini-row > .tag {
+  grid-column: 2;
+  justify-self: end;
+}
+
+.job-detail-drawer .section .mini-row > span:not(.tag) {
+  grid-column: 1;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 610;
+}
+
+.job-detail-drawer .section .mini-row > code {
+  grid-column: 1;
+  grid-row: 2;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+
+.job-detail-drawer .section .mini-row > button,
+.job-detail-drawer .section .mini-row > a {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
+}
+
+.job-detail-drawer .job-audit-disclosure > summary {
+  justify-content: space-between;
+}
+
+.job-detail-drawer .job-audit-summary-title {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.job-detail-drawer .job-audit-timeline {
+  gap: 0;
+  border-top: 1px solid var(--border);
+}
+
+.job-detail-drawer .job-audit-entry {
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.job-detail-drawer .job-audit-entry:last-child {
+  border-bottom: 0;
+}
+
+.job-detail-drawer .job-audit-marker {
+  width: 6px;
+  height: 6px;
+  margin-top: 7px;
+}
+
+.job-detail-drawer .job-audit-head {
+  gap: 4px 9px;
+}
+
+.job-detail-drawer .job-audit-head .tag {
+  color: var(--muted-foreground);
+}
+
+.job-detail-drawer .job-audit-head strong {
+  font-size: 12px;
+  font-weight: 630;
+}
+
+.job-detail-drawer .job-audit-description,
+.job-detail-drawer .job-audit-head time,
+.job-detail-drawer .job-audit-actor {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.job-detail-drawer .job-audit-details div {
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 9px;
+}
+
+.job-detail-follow-up {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--border);
+}
+
+.job-detail-follow-up > .section {
+  min-height: 100%;
+  border-right: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.job-detail-follow-up > .section:last-child {
+  border-right: 0;
+}
+
+.job-detail-drawer .apply-history,
+.job-detail-drawer .outcome-timeline {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  margin: 0;
+}
+
+.job-detail-drawer .apply-history-row,
+.job-detail-drawer .outcome-timeline .timeline-row {
+  border-radius: 0;
+  background: transparent;
+}
+
+@media (max-width: 1180px) and (min-width: 821px) {
+  .job-detail-drawer {
+    width: calc(100dvw - 116px);
+    margin: 0;
+  }
+}
+
+@media (max-width: 1040px) {
+  .job-detail-drawer .drawer-head {
+    padding-right: 60px;
+  }
+
+  .job-detail-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .job-detail-sidebar {
+    position: static;
+    max-height: none;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .job-detail-follow-up {
+    grid-template-columns: 1fr;
+  }
+
+  .job-detail-follow-up > .section {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 820px) {
+  .job-detail-drawer {
+    width: 100dvw;
+    block-size: 100dvh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .job-detail-drawer .drawer-head {
+    grid-template-columns: 45px minmax(0, 1fr);
+    gap: 12px;
+    padding: 24px 48px 20px 20px;
+  }
+
+  .job-detail-drawer .drawer-head .fit {
+    font-size: 27px;
+  }
+
+  .job-detail-drawer .drawer-head h2 {
+    font-size: 24px;
+  }
+
+  .job-detail-drawer .job-detail-top-actions,
+  .job-detail-drawer .section {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .job-detail-drawer .job-audit-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .job-detail-drawer .job-audit-metrics > div:nth-child(3n) {
+    border-right: 1px solid var(--border);
+  }
+
+  .job-detail-drawer .job-audit-metrics > div:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .job-detail-drawer .job-audit-metrics > div:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
+  }
+
+  .job-detail-drawer .score-correction {
+    grid-template-columns: 84px minmax(0, 1fr) 34px;
+  }
+
+  .job-detail-drawer .compensation-panels {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .job-detail-drawer .compensation-panel + .compensation-panel {
+    margin-left: 0;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+    padding-top: 18px;
+    padding-left: 0;
+  }
+
+  .job-detail-drawer .job-audit-fact-list > div {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .job-detail-drawer .job-detail-role-analysis .employer-analysis-requirement {
+    grid-template-columns: 1fr;
+  }
+
+  .job-detail-drawer .job-detail-role-analysis .employer-analysis-match-side {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+    padding: 12px 0 0;
+  }
+}
+
+@media (max-width: 460px) {
+  .job-detail-drawer .job-audit-metrics,
+  .job-detail-drawer .score-correction {
+    grid-template-columns: 1fr;
+  }
+
+  .job-detail-drawer .job-audit-metrics > div,
+  .job-detail-drawer .job-audit-metrics > div:not(:first-child) {
+    border-right: 0;
+    border-top: 1px solid var(--border);
+    padding: 10px 0;
+  }
+
+  .job-detail-drawer .job-audit-metrics > div:first-child {
+    border-top: 0;
+  }
+
+  .job-detail-drawer .score-correction button {
+    width: 100%;
+  }
+}

@@ -175,7 +175,7 @@ describe("<CompensationSourcePolicyPanel>", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("combobox", { name: "Levels.fyi access mode" }),
-    ).toBeInTheDocument();
+    ).toHaveTextContent("public markdown");
     expect(
       screen.queryByRole("switch", { name: "Confirm Levels.fyi Europe coverage" }),
     ).not.toBeInTheDocument();
@@ -209,6 +209,36 @@ describe("<CompensationSourcePolicyPanel>", () => {
         enabled: true,
         accessMode: "public_markdown",
         europeCoverageConfirmed: false,
+      }),
+    );
+  });
+
+  it("saves the formatted access-mode selection through the API port", async () => {
+    const user = userEvent.setup();
+    const updateCompensationSourcePolicy = vi.fn(async () => policyResponse());
+    renderWithProviders(<CompensationSourcePolicyPanel />, {
+      ports: buildTestPorts({
+        api: {
+          compensationSources: vi.fn(async () => policyResponse()),
+          updateCompensationSourcePolicy,
+        },
+      }),
+    });
+
+    await user.click(
+      await screen.findByRole("combobox", {
+        name: "Glassdoor access mode",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "partner api" }),
+    );
+
+    await waitFor(() =>
+      expect(updateCompensationSourcePolicy).toHaveBeenCalledWith({
+        sourceId: "glassdoor",
+        enabled: false,
+        accessMode: "partner_api",
       }),
     );
   });

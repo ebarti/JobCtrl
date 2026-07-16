@@ -77,6 +77,24 @@ describe("<Funnel>", () => {
     expect(screen.queryByText(/^cover$/i)).not.toBeInTheDocument();
   });
 
+  it("distinguishes blocked work from failures with a ban icon", async () => {
+    const summary: DashboardSummary = {
+      ...sampleDashboardSummary,
+      funnel: sampleDashboardSummary.funnel.map((stage) =>
+        stage.stage === "score" ? { ...stage, blocked: 1 } : stage,
+      ),
+    };
+    const router = buildRouter(summary);
+
+    render(<RouterProvider router={router} />);
+
+    const blocked = await screen.findByText("1 blocked");
+    expect(blocked.querySelector("svg")).toHaveClass("tabler-icon-ban");
+    expect(screen.getByText("1 failed").querySelector("svg")).toHaveClass(
+      "tabler-icon-circle-x",
+    );
+  });
+
   it("routes product-stage rows to the preserved jobs list search", async () => {
     const user = userEvent.setup();
     const router = buildRouter();

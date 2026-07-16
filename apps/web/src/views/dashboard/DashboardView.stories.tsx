@@ -7,6 +7,7 @@ import { DashboardView } from "./DashboardView.js";
 const meta = {
   title: "Views/Dashboard/DashboardView",
   component: DashboardView,
+  tags: ["a11y-regression"],
   parameters: {
     withRouter: true,
     initialPath: "/dashboard",

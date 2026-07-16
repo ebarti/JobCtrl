@@ -1,0 +1,211 @@
+/* Shared visual language for legacy page composers while they move onto the
+ * Base UI/shadcn primitive layer. Keep this file semantic: page-specific
+ * layouts live in their own redesign stylesheets. */
+
+.main {
+  padding: clamp(24px, 3vw, 40px) clamp(20px, 3.5vw, 48px) 88px;
+}
+
+.page-head {
+  align-items: flex-start;
+  margin-bottom: 28px;
+}
+
+.page-head-text {
+  gap: 7px;
+}
+
+.eyebrow {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+}
+
+.page-head h1 {
+  font-size: clamp(28px, 2.4vw, 36px);
+  font-weight: 680;
+  letter-spacing: -0.045em;
+  line-height: 1.05;
+}
+
+.page-head-subtitle {
+  max-width: 76ch;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.page-head-actions {
+  gap: 10px;
+}
+
+.card {
+  border-color: color-mix(in oklch, var(--border) 88%, var(--foreground));
+  border-radius: calc(var(--radius) * 1.25);
+  box-shadow:
+    0 1px 2px color-mix(in oklch, var(--foreground) 5%, transparent),
+    0 8px 24px color-mix(in oklch, var(--foreground) 3%, transparent);
+}
+
+.card-hd {
+  align-items: flex-start;
+  min-height: 0;
+  padding: 19px 20px 15px;
+  background: transparent;
+}
+
+.card-hd h2 {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.toolbar {
+  gap: 10px;
+  padding: 12px 20px;
+  background: color-mix(in oklch, var(--muted) 45%, var(--card));
+}
+
+.tab {
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) * 0.8);
+  padding: 7px 12px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.tab:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.tab.on {
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: none;
+  color: var(--primary-foreground);
+}
+
+.tab.on:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--primary) 90%, var(--card));
+  background: color-mix(in oklch, var(--primary) 90%, var(--card));
+  color: var(--primary-foreground);
+}
+
+.tab:disabled {
+  opacity: 0.4;
+}
+
+.icon-button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  box-shadow: none;
+}
+
+.icon-button:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.select,
+select,
+input,
+textarea {
+  min-height: 38px;
+  border-color: var(--input);
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--card);
+  padding: 8px 11px;
+  box-shadow: 0 1px 1px color-mix(in oklch, var(--foreground) 3%, transparent);
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+select:hover:not(:disabled),
+input:hover:not(:disabled),
+textarea:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--foreground) 28%, var(--border));
+}
+
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 18%, transparent);
+  outline: none;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: 16px;
+  min-height: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--primary);
+  box-shadow: none;
+}
+
+.field {
+  gap: 7px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.field-hint,
+.field .meta {
+  color: var(--muted-foreground);
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.settings-tabs {
+  gap: 2px;
+  padding: 3px;
+  border-radius: calc(var(--radius) * 0.9);
+  background: var(--muted);
+}
+
+.settings-tabs .tab {
+  min-height: 32px;
+  border-radius: calc(var(--radius) * 0.65);
+  padding-inline: 14px;
+}
+
+.settings-tabs .tab.on {
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 8%, transparent);
+}
+
+.section {
+  border-color: var(--border);
+  border-radius: calc(var(--radius) * 1.1);
+  box-shadow: none;
+}
+
+.section h3 {
+  letter-spacing: -0.015em;
+}
+
+@media (max-width: 720px) {
+  .main {
+    padding: 20px 16px 72px;
+  }
+
+  .page-head {
+    margin-bottom: 22px;
+  }
+}

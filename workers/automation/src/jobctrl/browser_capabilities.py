@@ -11,8 +11,10 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
 import stat
 import subprocess
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -68,6 +70,10 @@ class BrowserCapabilityStateError(BrowserCapabilityError):
     """Raised when install-scoped state is missing required integrity fields."""
 
 
+class DetectedBrowserUnavailableError(BrowserCapabilityError):
+    """Raised when an explicitly selected transient browser is no longer installed."""
+
+
 class BrowserProfileConsentRequiredError(BrowserCapabilityError):
     """Raised when a caller tries to copy a profile without affirmative consent."""
 
@@ -102,6 +108,15 @@ class BrowserCapabilityStatus:
     status: Literal["ready", "disabled", "missing", "failed", "unavailable"]
     detail: str
     executable: Path | None = None
+
+
+@dataclass(frozen=True)
+class DetectedBrowser:
+    """One transient supported browser installation; paths stay worker-local."""
+
+    id: Literal["google-chrome", "chromium"]
+    label: str
+    executable: Path
 
 
 def browser_capability_config_path(*, app_dir: Path | None = None) -> Path:
@@ -387,6 +402,90 @@ def _executable_status(executable: str) -> tuple[Literal["ready", "failed"], Pat
     return "ready", resolved, "Explicitly adopted system browser is ready."
 
 
+def _browser_candidate_locations() -> tuple[DetectedBrowser, ...]:
+    """Return known installation locations in user-facing preference order."""
+
+    if sys.platform == "darwin":
+        application_roots = (Path("/Applications"), Path.home() / "Applications")
+        return tuple(
+            [
+                DetectedBrowser(
+                    id="google-chrome",
+                    label="Google Chrome",
+                    executable=root / "Google Chrome.app" / "Contents" / "MacOS" / "Google Chrome",
+                )
+                for root in application_roots
+            ]
+            + [
+                DetectedBrowser(
+                    id="chromium",
+                    label="Chromium",
+                    executable=root / "Chromium.app" / "Contents" / "MacOS" / "Chromium",
+                )
+                for root in application_roots
+            ]
+        )
+    if sys.platform == "win32":
+        roots = tuple(
+            Path(value)
+            for name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")
+            if (value := os.environ.get(name))
+        )
+        return tuple(
+            [
+                DetectedBrowser(
+                    id="google-chrome",
+                    label="Google Chrome",
+                    executable=root / "Google" / "Chrome" / "Application" / "chrome.exe",
+                )
+                for root in roots
+            ]
+            + [
+                DetectedBrowser(
+                    id="chromium",
+                    label="Chromium",
+                    executable=root / "Chromium" / "Application" / "chrome.exe",
+                )
+                for root in roots
+            ]
+        )
+
+    candidates: list[DetectedBrowser] = []
+    for browser_id, label, command_names in (
+        ("google-chrome", "Google Chrome", ("google-chrome", "google-chrome-stable")),
+        ("chromium", "Chromium", ("chromium", "chromium-browser")),
+    ):
+        for command_name in command_names:
+            if executable := shutil.which(command_name):
+                candidates.append(
+                    DetectedBrowser(id=browser_id, label=label, executable=Path(executable))
+                )
+    return tuple(candidates)
+
+
+def detect_supported_browsers() -> tuple[DetectedBrowser, ...]:
+    """Discover supported installations without adopting, launching, or persisting them."""
+
+    detected: list[DetectedBrowser] = []
+    seen_ids: set[str] = set()
+    seen_paths: set[Path] = set()
+    for candidate in _browser_candidate_locations():
+        if candidate.id in seen_ids:
+            continue
+        try:
+            executable = candidate.executable.expanduser().resolve(strict=True)
+        except OSError:
+            continue
+        if executable in seen_paths or not executable.is_file() or not os.access(executable, os.X_OK):
+            continue
+        detected.append(
+            DetectedBrowser(id=candidate.id, label=candidate.label, executable=executable)
+        )
+        seen_ids.add(candidate.id)
+        seen_paths.add(executable)
+    return tuple(detected)
+
+
 def browser_capability_status(
     capability_id: str,
     *,
@@ -492,6 +591,29 @@ def enable_system_browser_capability(
             "profileCopyConsent": previous.get("profileCopyConsent") if previous else None,
         }
     return browser_capability_status(capability_id, app_dir=app_dir, catalog=resolved_catalog)
+
+
+def enable_detected_browser_capability(
+    capability_id: str,
+    detected_browser_id: str,
+    *,
+    app_dir: Path | None = None,
+    catalog: BrowserCapabilityCatalog | None = None,
+) -> BrowserCapabilityStatus:
+    """Resolve a transient candidate ID at enable time, then explicitly adopt it."""
+
+    candidate = next(
+        (browser for browser in detect_supported_browsers() if browser.id == detected_browser_id),
+        None,
+    )
+    if candidate is None:
+        raise DetectedBrowserUnavailableError("the selected detected browser is no longer available")
+    return enable_system_browser_capability(
+        capability_id,
+        candidate.executable,
+        app_dir=app_dir,
+        catalog=catalog,
+    )
 
 
 def disable_browser_capability(
@@ -878,13 +1000,17 @@ __all__ = [
     "BrowserCapabilityStatus",
     "BrowserCapabilityUnavailableError",
     "BrowserProfileConsentRequiredError",
+    "DetectedBrowser",
+    "DetectedBrowserUnavailableError",
     "BROWSER_CAPABILITIES_CONFIG_KEY",
     "browser_capability_status",
     "capability_policy_path",
     "capability_profile_dir",
     "browser_capability_config_path",
     "copy_authenticated_linkedin_profile",
+    "detect_supported_browsers",
     "disable_browser_capability",
+    "enable_detected_browser_capability",
     "enable_system_browser_capability",
     "list_browser_capabilities",
     "load_browser_capability_catalog",
