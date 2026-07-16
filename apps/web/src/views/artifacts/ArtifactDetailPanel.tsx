@@ -4,17 +4,24 @@ import {
   IconArchive,
   IconArrowLeft,
 } from "@tabler/icons-react";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ArtifactComparison } from "../../contexts/materials/components/ArtifactComparison.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
 import { useOpenArtifactMutation } from "../../contexts/materials/hooks/useOpenArtifactMutation.js";
-import { TailoringExplanationSection } from "../../contexts/materials/components/TailoringExplanationSection.js";
+import {
+  TailoringExplanationSection,
+  type TailoringEvidenceReference,
+} from "../../contexts/materials/components/TailoringExplanationSection.js";
 import { artifactStatusDescription } from "../../contexts/materials/lib/artifact-status-copy.js";
 import { useArtifactDetailQuery } from "../../contexts/operations/hooks/useArtifactDetailQuery.js";
 import { useArtifactsListQuery } from "../../contexts/operations/hooks/useArtifactsListQuery.js";
-import type { ArtifactsListInput } from "../../contexts/operations/types.js";
+import { useEvidenceMapQuery } from "../../contexts/operations/hooks/useEvidenceMapQuery.js";
+import type {
+  ArtifactsListInput,
+  EvidenceMapEntry,
+} from "../../contexts/operations/types.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
@@ -89,6 +96,12 @@ function artifactOptionLabel(artifact: ArtifactSummary): string {
   return [artifact.status, template, created].filter(Boolean).join(" / ");
 }
 
+function evidenceReferenceExcerpt(entry: EvidenceMapEntry): string | null {
+  const excerpt =
+    entry.story?.outcome ?? entry.story?.action ?? entry.story?.scope ?? null;
+  return excerpt && excerpt !== entry.title ? excerpt : null;
+}
+
 export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
   const navigate = useNavigate();
   const search = useSearch({ from: "/artifacts" });
@@ -100,6 +113,47 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
 
   const { data: detail, error: queryError } =
     useArtifactDetailQuery(artifactId);
+  const evidenceMap = useEvidenceMapQuery();
+  const evidenceEntriesById = useMemo(() => {
+    const entries = new Map<string, EvidenceMapEntry>();
+    for (const entry of evidenceMap.data?.entries ?? []) {
+      entries.set(entry.entryId, entry);
+      if (entry.evidenceId) entries.set(entry.evidenceId, entry);
+    }
+    return entries;
+  }, [evidenceMap.data?.entries]);
+  const resolveEvidenceReference = useCallback(
+    (evidenceId: string): TailoringEvidenceReference | null | undefined => {
+      if (evidenceMap.isPending) return undefined;
+      const entry = evidenceEntriesById.get(evidenceId);
+      if (!entry) return null;
+      return {
+        entryId: entry.entryId,
+        title: entry.title,
+        excerpt: evidenceReferenceExcerpt(entry),
+      };
+    },
+    [evidenceEntriesById, evidenceMap.isPending],
+  );
+  const renderEvidenceReference = useCallback(
+    (reference: TailoringEvidenceReference) => (
+      <Link
+        className="tailoring-evidence-reference__link"
+        search={{
+          q: "",
+          entry: reference.entryId,
+          job: detail?.artifact.jobKey ?? "",
+        }}
+        to="/evidence-map"
+      >
+        <span className="tailoring-evidence-reference__content">
+          <strong>{reference.title}</strong>
+          {reference.excerpt ? <span>{reference.excerpt}</span> : null}
+        </span>
+      </Link>
+    ),
+    [detail?.artifact.jobKey],
+  );
   const comparisonListInput = useMemo(
     () => artifactComparisonListInput(detail?.artifact.type),
     [detail?.artifact.type],
@@ -256,6 +310,8 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                 </Section>
                 <TailoringExplanationSection
                   explanation={detail.tailoringExplanation}
+                  renderEvidenceReference={renderEvidenceReference}
+                  resolveEvidenceReference={resolveEvidenceReference}
                 />
                 <Section title="Artifact comparison">
                   {comparisonList.isFetching && !comparisonList.data ? (

@@ -159,13 +159,16 @@
   line-height: 1.5;
 }
 
-/* Artifact details use one settings rail and one dominant preview surface. */
+/* Artifact details read as one audit flow; the document preview follows it. */
 .artifact-detail-layout {
-  grid-template-columns: minmax(330px, 380px) minmax(540px, 1fr);
-  min-height: calc(100dvh - 126px);
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
 }
 
 .artifact-detail-sidebar {
+  min-width: 0;
+  border-right: 0;
+  border-bottom: 1px solid var(--border);
   background: color-mix(in oklch, var(--muted) 30%, var(--card));
 }
 
@@ -188,8 +191,59 @@
 
 .artifact-preview-panel {
   display: grid;
+  width: 100%;
+  min-width: 0;
   min-height: 760px;
   background: oklch(0.18 0 0);
+}
+
+.artifact-detail-sidebar .tailoring-evidence-reference-list {
+  display: grid;
+  gap: 8px;
+}
+
+.artifact-detail-sidebar .tailoring-evidence-reference {
+  min-width: 0;
+}
+
+.artifact-detail-sidebar .tailoring-evidence-reference__link,
+.artifact-detail-sidebar .tailoring-evidence-reference__content {
+  display: grid;
+  gap: 2px;
+}
+
+.artifact-detail-sidebar .tailoring-evidence-reference__link {
+  color: var(--foreground);
+  text-decoration: none;
+}
+
+.artifact-detail-sidebar .tailoring-evidence-reference__link:hover strong {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.artifact-detail-sidebar .tailoring-evidence-reference__content > span {
+  color: var(--muted-foreground);
+  line-height: 1.45;
+}
+
+.artifact-detail-sidebar .tailoring-evidence-reference__trigger {
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.artifact-detail-sidebar .tailoring-evidence-reference__technical {
+  margin-top: 6px;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
 }
 
 .artifact-preview-panel .pdf-preview-viewer {

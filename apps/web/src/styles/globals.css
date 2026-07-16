@@ -2804,6 +2804,37 @@ input[type="radio"] {
   border-color: #111;
 }
 
+.resume-plate-thread-bubble {
+  inline-size: 300px;
+  gap: 8px;
+}
+
+.resume-plate-thread-bubble.collapsed {
+  inline-size: 32px;
+  min-block-size: 30px;
+  place-content: center;
+  padding: 5px;
+  cursor: pointer;
+}
+
+.resume-plate-thread-bubble.collapsed .resume-plate-comment-head {
+  justify-content: center;
+}
+
+.resume-plate-thread-bubble.collapsed .resume-plate-comment-head b,
+.resume-plate-thread-bubble.collapsed .resume-plate-thread-list {
+  display: none;
+}
+
+.resume-plate-thread-bubble.collapsed .resume-plate-comment-head span {
+  font-weight: 700;
+}
+
+.resume-plate-thread-list {
+  display: grid;
+  gap: 8px;
+}
+
 .resume-render-warnings {
   display: flex;
   flex-wrap: wrap;
@@ -2861,9 +2892,40 @@ input[type="radio"] {
   background: rgb(255 255 255 / 5%);
 }
 
-.resume-comment-thread p {
-  margin: 0;
+.resume-comment-thread-body {
+  display: block;
   color: #f5f5f5;
+}
+
+.resume-plate-thread-bubble .resume-comment-thread {
+  border-color: color-mix(in oklab, var(--primary) 30%, #d4d4d4);
+  background: color-mix(in oklab, var(--primary) 4%, #fff);
+  color: #111;
+}
+
+.resume-plate-thread-bubble .resume-comment-thread-body,
+.resume-plate-thread-bubble .resume-comment-reply-form label {
+  color: #111;
+}
+
+.resume-plate-thread-bubble .resume-comment-thread-source,
+.resume-plate-thread-bubble .resume-comment-replies [role="listitem"] {
+  color: #555;
+}
+
+.resume-comment-thread-state,
+.resume-comment-thread-risk {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.resume-comment-thread-state {
+  color: var(--primary);
+}
+
+.resume-comment-thread-risk {
+  color: var(--warning);
 }
 
 .resume-comment-replies {
@@ -2874,7 +2936,7 @@ input[type="radio"] {
   list-style: none;
 }
 
-.resume-comment-replies li {
+.resume-comment-replies [role="listitem"] {
   display: grid;
   gap: 2px;
   color: #d8d8d8;
@@ -2893,7 +2955,7 @@ input[type="radio"] {
 }
 
 .resume-comment-reply-form textarea,
-.resume-comment-reply-form select {
+.resume-comment-reply-form [role="combobox"] {
   min-width: 0;
   border: 1px solid rgb(255 255 255 / 22%);
   border-radius: 6px;
@@ -2901,12 +2963,19 @@ input[type="radio"] {
   color: #f5f5f5;
 }
 
+.resume-plate-thread-bubble .resume-comment-reply-form textarea,
+.resume-plate-thread-bubble .resume-comment-reply-form [role="combobox"] {
+  border-color: #c7c7c7;
+  background: #fff;
+  color: #111;
+}
+
 .resume-comment-reply-form textarea {
   resize: vertical;
   padding: 8px;
 }
 
-.resume-comment-reply-form select {
+.resume-comment-reply-form [role="combobox"] {
   min-height: 30px;
   padding: 4px 6px;
 }
@@ -2945,6 +3014,10 @@ input[type="radio"] {
     position: static;
     inline-size: auto;
     margin-block-start: 6px;
+  }
+
+  .resume-plate-thread-bubble.collapsed {
+    inline-size: 32px;
   }
 
   .resume-plate-comment::before {

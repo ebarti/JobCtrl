@@ -1,5 +1,6 @@
 import type { ArtifactTailoringExplanation } from "@jobctrl/contracts";
 import { render, screen, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { TailoringExplanationSection } from "./TailoringExplanationSection.js";
@@ -47,7 +48,9 @@ const keywordOnlyExplanation: ArtifactTailoringExplanation = {
   },
   quality: {
     passed: null,
-    errors: ["Tailoring audit metadata incomplete: missing target seniority, claim mode"],
+    errors: [
+      "Tailoring audit metadata incomplete: missing target seniority, claim mode",
+    ],
     warnings: [],
     notes: [],
     metricClaims: [],
@@ -85,14 +88,22 @@ const keywordOnlyExplanation: ArtifactTailoringExplanation = {
 
 describe("<TailoringExplanationSection>", () => {
   it("flags keyword-only explanations as incomplete audit metadata", () => {
-    render(<TailoringExplanationSection explanation={keywordOnlyExplanation} />);
+    render(
+      <TailoringExplanationSection explanation={keywordOnlyExplanation} />,
+    );
 
     expect(screen.getByText("Tailoring rationale")).toBeInTheDocument();
     expect(screen.getByText("2/3 demonstrated in resume")).toBeInTheDocument();
     expect(screen.getByText("Generation audit")).toBeInTheDocument();
-    expect(screen.getByText("audit metadata incomplete for this artifact")).toBeInTheDocument();
+    expect(
+      screen.getByText("audit metadata incomplete for this artifact"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Blocking repair feedback")).toBeInTheDocument();
-    expect(screen.getByText("Tailoring audit metadata incomplete: missing target seniority, claim mode")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Tailoring audit metadata incomplete: missing target seniority, claim mode",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Target seniority")).not.toBeInTheDocument();
     expect(screen.queryByText("Safety checks")).not.toBeInTheDocument();
     expect(screen.queryByText("Generation context")).not.toBeInTheDocument();
@@ -124,31 +135,118 @@ describe("<TailoringExplanationSection>", () => {
     };
     render(<TailoringExplanationSection explanation={explanation} />);
 
-    const declaredRow = screen.getByText("Declared in skills (not demonstrated)").closest("div");
+    const declaredRow = screen
+      .getByText("Declared in skills (not demonstrated)")
+      .closest("div");
     expect(declaredRow).not.toBeNull();
-    expect(within(declaredRow as HTMLElement).getByText("Terraform")).toBeInTheDocument();
+    expect(
+      within(declaredRow as HTMLElement).getByText("Terraform"),
+    ).toBeInTheDocument();
 
-    const missingRow = screen.getByText("No resume keyword match found").closest("div");
-    expect(within(missingRow as HTMLElement).queryByText("Terraform")).not.toBeInTheDocument();
-    expect(within(missingRow as HTMLElement).getByText("AWS")).toBeInTheDocument();
+    const missingRow = screen
+      .getByText("No resume keyword match found")
+      .closest("div");
+    expect(
+      within(missingRow as HTMLElement).queryByText("Terraform"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(missingRow as HTMLElement).getByText("AWS"),
+    ).toBeInTheDocument();
   });
 
   it("omits the declared bucket entirely when no keyword is declared-only", () => {
-    render(<TailoringExplanationSection explanation={keywordOnlyExplanation} />);
+    render(
+      <TailoringExplanationSection explanation={keywordOnlyExplanation} />,
+    );
 
     expect(
       screen.queryByText("Declared in skills (not demonstrated)"),
     ).not.toBeInTheDocument();
   });
 
+  it("renders human evidence references and keeps unresolved storage keys behind technical details", async () => {
+    const user = userEvent.setup();
+    const explanation: ArtifactTailoringExplanation = {
+      ...keywordOnlyExplanation,
+      evidence: {
+        ...keywordOnlyExplanation.evidence,
+        representedIds: ["ev-platform", "legacy-storage-key"],
+      },
+    };
+
+    render(
+      <TailoringExplanationSection
+        explanation={explanation}
+        renderEvidenceReference={(reference) => (
+          <a href={`/evidence-map?entry=${reference.entryId}`}>
+            <strong>{reference.title}</strong>
+            {reference.excerpt ? <span>{reference.excerpt}</span> : null}
+          </a>
+        )}
+        resolveEvidenceReference={(evidenceId) =>
+          evidenceId === "ev-platform"
+            ? {
+                entryId: "ev-platform",
+                title: "Led a platform reliability transformation",
+                excerpt: "Reduced incident response time by 42%.",
+              }
+            : null
+        }
+      />,
+    );
+
+    expect(
+      screen.getByRole("link", {
+        name: /Led a platform reliability transformation/i,
+      }),
+    ).toHaveAttribute("href", "/evidence-map?entry=ev-platform");
+    expect(
+      screen.getByText("Reduced incident response time by 42%.", {
+        selector: "span",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("ev-platform")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Evidence reference unavailable."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("legacy-storage-key")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Technical details" }));
+
+    expect(screen.getByText("legacy-storage-key")).toBeInTheDocument();
+  });
+
+  it("preserves raw audit references for consumers that do not provide a resolver", () => {
+    const explanation: ArtifactTailoringExplanation = {
+      ...keywordOnlyExplanation,
+      evidence: {
+        ...keywordOnlyExplanation.evidence,
+        representedIds: ["legacy-audit-key"],
+      },
+    };
+
+    render(<TailoringExplanationSection explanation={explanation} />);
+
+    expect(screen.getByText("legacy-audit-key")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Evidence reference unavailable."),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders an honest not-recorded voice pass and empty provenance (INSPECT-05)", () => {
-    render(<TailoringExplanationSection explanation={keywordOnlyExplanation} />);
+    render(
+      <TailoringExplanationSection explanation={keywordOnlyExplanation} />,
+    );
 
     expect(screen.getByText("Voice pass")).toBeInTheDocument();
-    expect(screen.getByText("No voice pass was recorded for this artifact.")).toBeInTheDocument();
+    expect(
+      screen.getByText("No voice pass was recorded for this artifact."),
+    ).toBeInTheDocument();
     expect(screen.getByText("Per-bullet provenance")).toBeInTheDocument();
     expect(
-      screen.getByText(/No per-bullet provenance was recorded for this artifact/i),
+      screen.getByText(
+        /No per-bullet provenance was recorded for this artifact/i,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -168,7 +266,9 @@ describe("<TailoringExplanationSection>", () => {
 
     expect(screen.getByText("not accepted")).toBeInTheDocument();
     expect(
-      screen.getByText("Voice edit introduced an unsourced metric and was rejected."),
+      screen.getByText(
+        "Voice edit introduced an unsourced metric and was rejected.",
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText(/Buzzword Density: -0.2/)).toBeInTheDocument();
   });

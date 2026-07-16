@@ -1,14 +1,38 @@
 import type { ArtifactTailoringExplanation } from "@jobctrl/contracts";
 import type { ReactNode } from "react";
 
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "../../../shared/ui/collapsible.js";
 import { BulletProvenanceList } from "./BulletProvenanceList.js";
+
+export interface TailoringEvidenceReference {
+  readonly entryId: string;
+  readonly title: string;
+  readonly excerpt: string | null;
+}
 
 export interface TailoringExplanationSectionProps {
   readonly explanation: ArtifactTailoringExplanation | null;
   readonly className?: string;
+  /**
+   * Resolves canonical profile-evidence foreign keys at the view boundary.
+   * `undefined` means the lookup is still loading; `null` means the key is not
+   * present in the current evidence projection.
+   */
+  readonly resolveEvidenceReference?: (
+    evidenceId: string,
+  ) => TailoringEvidenceReference | null | undefined;
+  readonly renderEvidenceReference?: (
+    reference: TailoringEvidenceReference,
+  ) => ReactNode;
 }
 
-type AdversarialReview = NonNullable<ArtifactTailoringExplanation["adversarialReview"]>;
+type AdversarialReview = NonNullable<
+  ArtifactTailoringExplanation["adversarialReview"]
+>;
 type PersonaAudit = AdversarialReview["personas"][number];
 type AdversarialAudit = AdversarialReview["audit"];
 type ResponseSummaryValue = {
@@ -96,6 +120,123 @@ function EvidenceRow({
   );
 }
 
+function EvidenceReferenceItem({
+  evidenceId,
+  resolveEvidenceReference,
+  renderEvidenceReference,
+}: {
+  readonly evidenceId: string;
+  readonly resolveEvidenceReference:
+    | TailoringExplanationSectionProps["resolveEvidenceReference"]
+    | undefined;
+  readonly renderEvidenceReference:
+    | TailoringExplanationSectionProps["renderEvidenceReference"]
+    | undefined;
+}) {
+  if (!resolveEvidenceReference) {
+    return <li>{evidenceId}</li>;
+  }
+  const reference = resolveEvidenceReference(evidenceId);
+  if (reference === undefined) {
+    return (
+      <li className="tailoring-evidence-reference muted">
+        Loading evidence details.
+      </li>
+    );
+  }
+  if (reference) {
+    return (
+      <li className="tailoring-evidence-reference">
+        {renderEvidenceReference ? (
+          renderEvidenceReference(reference)
+        ) : (
+          <span className="tailoring-evidence-reference__content">
+            <strong>{reference.title}</strong>
+            {reference.excerpt ? <span>{reference.excerpt}</span> : null}
+          </span>
+        )}
+      </li>
+    );
+  }
+  return (
+    <li className="tailoring-evidence-reference tailoring-evidence-reference--unresolved">
+      <span>Evidence reference unavailable.</span>
+      <Collapsible>
+        <CollapsibleTrigger className="tailoring-evidence-reference__trigger">
+          Technical details
+        </CollapsibleTrigger>
+        <CollapsibleContent className="tailoring-evidence-reference__technical">
+          <code>{evidenceId}</code>
+        </CollapsibleContent>
+      </Collapsible>
+    </li>
+  );
+}
+
+function EvidenceReferenceRow({
+  label,
+  items,
+  resolveEvidenceReference,
+  renderEvidenceReference,
+}: {
+  readonly label: string;
+  readonly items: readonly string[];
+  readonly resolveEvidenceReference:
+    | TailoringExplanationSectionProps["resolveEvidenceReference"]
+    | undefined;
+  readonly renderEvidenceReference:
+    | TailoringExplanationSectionProps["renderEvidenceReference"]
+    | undefined;
+}) {
+  if (!items.length) return null;
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>
+        <ul className="compact-list tailoring-evidence-reference-list">
+          {items.map((evidenceId) => (
+            <EvidenceReferenceItem
+              evidenceId={evidenceId}
+              key={evidenceId}
+              renderEvidenceReference={renderEvidenceReference}
+              resolveEvidenceReference={resolveEvidenceReference}
+            />
+          ))}
+        </ul>
+      </dd>
+    </div>
+  );
+}
+
+function evidenceReferenceLabel(
+  evidenceId: string,
+  resolveEvidenceReference:
+    | TailoringExplanationSectionProps["resolveEvidenceReference"]
+    | undefined,
+): string {
+  if (!resolveEvidenceReference) return evidenceId;
+  const reference = resolveEvidenceReference(evidenceId);
+  if (reference === undefined) {
+    return "Loading evidence details";
+  }
+  return reference?.title ?? "Evidence reference unavailable";
+}
+
+function evidenceNoteLabel(
+  note: string,
+  evidenceIds: readonly string[],
+  resolveEvidenceReference:
+    | TailoringExplanationSectionProps["resolveEvidenceReference"]
+    | undefined,
+): string {
+  const matchedId = evidenceIds.find(
+    (evidenceId) => note === evidenceId || note.startsWith(`${evidenceId}:`),
+  );
+  if (!matchedId) return note;
+  const label = evidenceReferenceLabel(matchedId, resolveEvidenceReference);
+  return `${label}${note.slice(matchedId.length)}`;
+}
+
 function TextEvidence({
   title,
   children,
@@ -152,7 +293,11 @@ function AuditResponseList({
   );
 }
 
-function ResponseSummary({ response }: { readonly response: ResponseSummaryValue }) {
+function ResponseSummary({
+  response,
+}: {
+  readonly response: ResponseSummaryValue;
+}) {
   return (
     <div className="audit-response">
       <div className="audit-response-summary">
@@ -178,13 +323,17 @@ function PersonaAuditDetails({
       <summary>Show LLM audit trail</summary>
       <div className="persona-audit-detail-body">
         {persona.promptRubric ? (
-          <TextEvidence title="Persona rubric">{persona.promptRubric}</TextEvidence>
+          <TextEvidence title="Persona rubric">
+            {persona.promptRubric}
+          </TextEvidence>
         ) : null}
         <TextEvidence title="Exact LLM request">
           {audit?.promptMessages.length ? (
             <PromptMessageList messages={audit.promptMessages} />
           ) : (
-            <p className="muted">Exact LLM request was not captured for this artifact.</p>
+            <p className="muted">
+              Exact LLM request was not captured for this artifact.
+            </p>
           )}
         </TextEvidence>
         {persona.response ? (
@@ -196,7 +345,9 @@ function PersonaAuditDetails({
           {audit?.response ? (
             <ResponseSummary response={audit.response} />
           ) : (
-            <p className="muted">Structured LLM response was not captured for this artifact.</p>
+            <p className="muted">
+              Structured LLM response was not captured for this artifact.
+            </p>
           )}
         </TextEvidence>
       </div>
@@ -225,8 +376,12 @@ function PersonaAuditList({
           <div className="persona-audit-body">
             {persona.scoreRationale || persona.scoreBasis.length ? (
               <TextEvidence title="Why it scored this way">
-                {persona.scoreRationale ? <p>{persona.scoreRationale}</p> : null}
-                {persona.scoreBasis.length ? <EvidenceList items={persona.scoreBasis} /> : null}
+                {persona.scoreRationale ? (
+                  <p>{persona.scoreRationale}</p>
+                ) : null}
+                {persona.scoreBasis.length ? (
+                  <EvidenceList items={persona.scoreBasis} />
+                ) : null}
               </TextEvidence>
             ) : null}
             {persona.response ? (
@@ -245,7 +400,10 @@ function PersonaAuditList({
 function PromptMessageList({
   messages,
 }: {
-  readonly messages: readonly { readonly role: string; readonly content: string }[];
+  readonly messages: readonly {
+    readonly role: string;
+    readonly content: string;
+  }[];
 }) {
   return (
     <div className="prompt-audit-list">
@@ -327,6 +485,8 @@ function VoicePassBlock({
 export function TailoringExplanationSection({
   explanation,
   className = "section",
+  resolveEvidenceReference,
+  renderEvidenceReference,
 }: TailoringExplanationSectionProps) {
   if (!explanation) return null;
 
@@ -342,12 +502,16 @@ export function TailoringExplanationSection({
     ...explanation.quality.warnings,
     ...(explanation.adversarialReview?.warnings ?? []),
   ];
-  const warningRepairAttempted = explanation.reviewFeedback.warningRepairAttempted;
+  const warningRepairAttempted =
+    explanation.reviewFeedback.warningRepairAttempted;
   const showReviewOutcome =
-    hasItems(blockingIssues) || hasItems(warnings) || warningRepairAttempted === true;
+    hasItems(blockingIssues) ||
+    hasItems(warnings) ||
+    warningRepairAttempted === true;
   const showAdversarial =
     explanation.adversarialReview &&
-    (explanation.adversarialReview.ran || explanation.adversarialReview.skippedReason);
+    (explanation.adversarialReview.ran ||
+      explanation.adversarialReview.skippedReason);
   const hasChangeEvidence = [
     explanation.keywords.planned,
     explanation.keywords.covered,
@@ -381,7 +545,22 @@ export function TailoringExplanationSection({
     explanation.models.candidateModels.length > 0 ||
     Boolean(explanation.models.selectedCandidate) ||
     explanation.models.attempts !== null;
-  const hasGenerationAuditData = hasSummaryData || hasSafetyData || hasGenerationContext;
+  const hasGenerationAuditData =
+    hasSummaryData || hasSafetyData || hasGenerationContext;
+  const evidenceIdsAlreadyExplained = new Set([
+    ...explanation.evidence.representedIds,
+    ...explanation.evidence.requiredIds,
+    ...explanation.evidence.missingIds,
+    ...explanation.evidence.seniorityIds,
+    ...explanation.annotatedChanges.flatMap((change) => change.evidenceIds),
+  ]);
+  const additionalBulletEvidenceIds = resolveEvidenceReference
+    ? Array.from(
+        new Set(
+          explanation.bulletProvenance.flatMap((entry) => entry.evidenceIds),
+        ),
+      ).filter((evidenceId) => !evidenceIdsAlreadyExplained.has(evidenceId))
+    : [];
 
   return (
     <section className={className}>
@@ -399,11 +578,18 @@ export function TailoringExplanationSection({
             </div>
             <div>
               <dt>Quality gate</dt>
-              <dd>{yesNo(explanation.quality.passed ?? explanation.safety.qualityPassed)}</dd>
+              <dd>
+                {yesNo(
+                  explanation.quality.passed ??
+                    explanation.safety.qualityPassed,
+                )}
+              </dd>
             </div>
             <div>
               <dt>Judge score</dt>
-              <dd>{scoreText(explanation.judge.score, explanation.judge.minScore)}</dd>
+              <dd>
+                {scoreText(explanation.judge.score, explanation.judge.minScore)}
+              </dd>
             </div>
           </dl>
         ) : null}
@@ -422,8 +608,16 @@ export function TailoringExplanationSection({
                     <span>{formatToken(change.changeType)}</span>
                   </header>
                   <dl className="detail-list compact">
-                    <EvidenceRow label="Job signals" items={change.jobSignals} />
-                    <EvidenceRow label="Evidence" items={change.evidenceIds} />
+                    <EvidenceRow
+                      label="Job signals"
+                      items={change.jobSignals}
+                    />
+                    <EvidenceReferenceRow
+                      label="Evidence"
+                      items={change.evidenceIds}
+                      renderEvidenceReference={renderEvidenceReference}
+                      resolveEvidenceReference={resolveEvidenceReference}
+                    />
                     <EvidenceRow label="Controls" items={change.controls} />
                     {change.rationale ? (
                       <div>
@@ -447,7 +641,16 @@ export function TailoringExplanationSection({
                         </dd>
                       </div>
                     ) : null}
-                    <EvidenceRow label="Evidence notes" items={change.evidenceNotes} />
+                    <EvidenceRow
+                      label="Evidence notes"
+                      items={change.evidenceNotes.map((note) =>
+                        evidenceNoteLabel(
+                          note,
+                          change.evidenceIds,
+                          resolveEvidenceReference,
+                        ),
+                      )}
+                    />
                   </dl>
                 </article>
               ))}
@@ -480,30 +683,89 @@ export function TailoringExplanationSection({
                   </dd>
                 </div>
               ) : null}
-              <EvidenceRow label="Target job keywords" items={explanation.keywords.planned} />
+              <EvidenceRow
+                label="Target job keywords"
+                items={explanation.keywords.planned}
+              />
               {hasResumeKeywordAudit ? (
                 <>
-                  <EvidenceRow label="Found in tailored resume" items={explanation.keywords.covered} />
+                  <EvidenceRow
+                    label="Found in tailored resume"
+                    items={explanation.keywords.covered}
+                  />
                   <EvidenceRow
                     label="Declared in skills (not demonstrated)"
                     items={explanation.keywords.declared}
                   />
-                  <EvidenceRow label="No resume keyword match found" items={explanation.keywords.missing} />
+                  <EvidenceRow
+                    label="No resume keyword match found"
+                    items={explanation.keywords.missing}
+                  />
                 </>
               ) : null}
-              <EvidenceRow label="Represented evidence" items={explanation.evidence.representedIds} />
-              <EvidenceRow label="Required evidence" items={explanation.evidence.requiredIds} />
-              <EvidenceRow label="Missing evidence" items={explanation.evidence.missingIds} />
-              <EvidenceRow label="Seniority evidence" items={explanation.evidence.seniorityIds} />
+              <EvidenceReferenceRow
+                label="Represented evidence"
+                items={explanation.evidence.representedIds}
+                renderEvidenceReference={renderEvidenceReference}
+                resolveEvidenceReference={resolveEvidenceReference}
+              />
+              <EvidenceReferenceRow
+                label="Required evidence"
+                items={explanation.evidence.requiredIds}
+                renderEvidenceReference={renderEvidenceReference}
+                resolveEvidenceReference={resolveEvidenceReference}
+              />
+              <EvidenceReferenceRow
+                label="Missing evidence"
+                items={explanation.evidence.missingIds}
+                renderEvidenceReference={renderEvidenceReference}
+                resolveEvidenceReference={resolveEvidenceReference}
+              />
+              <EvidenceReferenceRow
+                label="Seniority evidence"
+                items={explanation.evidence.seniorityIds}
+                renderEvidenceReference={renderEvidenceReference}
+                resolveEvidenceReference={resolveEvidenceReference}
+              />
             </dl>
           </div>
         ) : null}
 
         <VoicePassBlock voicePass={explanation.voicePass} />
 
+        {additionalBulletEvidenceIds.length ? (
+          <div className="evidence-block">
+            <h4>Additional per-bullet evidence</h4>
+            <dl className="detail-list compact">
+              <EvidenceReferenceRow
+                label="Profile evidence"
+                items={additionalBulletEvidenceIds}
+                renderEvidenceReference={renderEvidenceReference}
+                resolveEvidenceReference={resolveEvidenceReference}
+              />
+            </dl>
+          </div>
+        ) : null}
+
         <BulletProvenanceList
           className="evidence-block"
-          provenance={explanation.bulletProvenance}
+          provenance={
+            resolveEvidenceReference
+              ? explanation.bulletProvenance.map((entry) => ({
+                  ...entry,
+                  evidenceIds: Array.from(
+                    new Set(
+                      entry.evidenceIds.map((evidenceId) =>
+                        evidenceReferenceLabel(
+                          evidenceId,
+                          resolveEvidenceReference,
+                        ),
+                      ),
+                    ),
+                  ),
+                }))
+              : explanation.bulletProvenance
+          }
           annotatedChanges={explanation.annotatedChanges}
         />
 
@@ -521,14 +783,20 @@ export function TailoringExplanationSection({
                 <div>
                   <dt>Auto-approvable claims</dt>
                   <dd>
-                    <EvidenceList items={explanation.safety.autoApprovableClaimModes.map(formatToken)} />
+                    <EvidenceList
+                      items={explanation.safety.autoApprovableClaimModes.map(
+                        formatToken,
+                      )}
+                    />
                   </dd>
                 </div>
               ) : null}
               {explanation.safety.allowAdjacentAchievementDrafts !== null ? (
                 <div>
                   <dt>Adjacent drafts allowed</dt>
-                  <dd>{yesNo(explanation.safety.allowAdjacentAchievementDrafts)}</dd>
+                  <dd>
+                    {yesNo(explanation.safety.allowAdjacentAchievementDrafts)}
+                  </dd>
                 </div>
               ) : null}
               {explanation.evidence.verifiedMetricCount !== null ? (
@@ -564,7 +832,9 @@ export function TailoringExplanationSection({
                 <dl className="detail-list compact">
                   <div>
                     <dt>Warning decision source</dt>
-                    <dd>Material generation workflow; no human approver recorded.</dd>
+                    <dd>
+                      Material generation workflow; no human approver recorded.
+                    </dd>
                   </div>
                   <div>
                     <dt>Warning handling</dt>
@@ -614,7 +884,9 @@ export function TailoringExplanationSection({
                 </TextEvidence>
               </div>
             ) : (
-              <p className="muted">{explanation.adversarialReview?.skippedReason}</p>
+              <p className="muted">
+                {explanation.adversarialReview?.skippedReason}
+              </p>
             )}
           </div>
         ) : null}

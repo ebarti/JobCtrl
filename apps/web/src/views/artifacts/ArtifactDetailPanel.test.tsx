@@ -2,6 +2,7 @@ import type {
   ArtifactOpenResponse,
   ArtifactSummary,
   ArtifactTailoringExplanation,
+  EvidenceMapResponse,
 } from "@jobctrl/contracts";
 import {
   createMemoryHistory,
@@ -23,6 +24,7 @@ import { buildProviderHarness } from "../../test/render.js";
 import {
   makeArtifactsPage,
   sampleArtifact,
+  sampleEvidenceMapResponse,
 } from "../../test/fixtures/projections.js";
 import { ArtifactDetailPanel } from "./ArtifactDetailPanel.js";
 
@@ -37,8 +39,35 @@ vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
 
 interface RenderArtifactRouteOptions {
   readonly demo?: boolean;
+  readonly evidenceMap?: EvidenceMapResponse;
   readonly openArtifact?: (artifactId: string) => Promise<ArtifactOpenResponse>;
 }
+
+const artifactEvidenceMap: EvidenceMapResponse = {
+  ...sampleEvidenceMapResponse,
+  entries: [
+    {
+      ...sampleEvidenceMapResponse.entries[0]!,
+      entryId: "ev_latency",
+      evidenceId: "ev_latency",
+      title: "Reduced platform latency through reliability automation",
+      story: {
+        ...sampleEvidenceMapResponse.entries[0]!.story!,
+        outcome: "Improved response time across critical services.",
+      },
+    },
+    {
+      ...sampleEvidenceMapResponse.entries[0]!,
+      entryId: "ev_scope",
+      evidenceId: "ev_scope",
+      title: "Led reliability programs across the platform",
+      story: {
+        ...sampleEvidenceMapResponse.entries[0]!.story!,
+        outcome: "Expanded technical ownership across multiple teams.",
+      },
+    },
+  ],
+};
 
 function renderArtifactRoute(
   children: ReactNode,
@@ -77,6 +106,9 @@ function renderArtifactRoute(
             layoutBoxes: [],
             tailoringExplanation,
           })),
+          evidenceMap: vi.fn(
+            async () => options.evidenceMap ?? artifactEvidenceMap,
+          ),
           artifactPreviewPdfUrl,
         },
       ),
@@ -184,6 +216,12 @@ describe("<ArtifactDetailPanel>", () => {
     );
     expect(screen.getByLabelText("Artifact PDF preview")).toHaveTextContent(
       "/v1/artifacts/artifact-preview/preview.pdf?v=test",
+    );
+    const audit = screen
+      .getByRole("heading", { level: 2, name: "Artifact audit" })
+      .closest(".artifact-detail-sidebar");
+    expect(audit?.nextElementSibling).toBe(
+      screen.getByLabelText("Artifact PDF preview"),
     );
     expect(artifactPreviewPdfUrl).toHaveBeenCalledWith(
       "artifact-preview",
@@ -403,8 +441,28 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(
       0,
     );
-    expect(screen.getAllByText("ev_latency")).toHaveLength(2);
-    expect(screen.getAllByText("ev_scope").length).toBeGreaterThan(0);
+    const latencyEvidence = screen.getAllByRole("link", {
+      name: /Reduced platform latency through reliability automation/i,
+    });
+    expect(latencyEvidence).toHaveLength(2);
+    expect(latencyEvidence[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("/evidence-map"),
+    );
+    expect(latencyEvidence[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("entry=ev_latency"),
+    );
+    expect(latencyEvidence[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("job=job-1"),
+    );
+    expect(
+      screen.getAllByText("Led reliability programs across the platform")
+        .length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("ev_latency")).not.toBeInTheDocument();
+    expect(screen.queryByText("ev_scope")).not.toBeInTheDocument();
     expect(screen.queryByText("Missing evidence")).not.toBeInTheDocument();
     expect(screen.queryByText("Metric claims")).not.toBeInTheDocument();
     expect(screen.queryByText("none recorded")).not.toBeInTheDocument();
