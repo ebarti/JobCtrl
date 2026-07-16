@@ -59,7 +59,7 @@ export function CompensationSourcePolicyPanel() {
 
   return (
     <section className="card full compensation-source-policy-panel">
-      <CardHeader title="Compensation sources" meta="editable source policy" />
+      <CardHeader title="Compensation sources" />
       {query.error ? <div className="banner inline">{query.error.message}</div> : null}
       {statusMessage ? (
         <div className="status-line" aria-live="polite">

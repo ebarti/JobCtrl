@@ -130,6 +130,17 @@ function policyResponse(): CompensationSourceRegistryResponse {
 }
 
 describe("<CompensationSourcePolicyPanel>", () => {
+  it("does not expose internal policy metadata in the card header", async () => {
+    renderWithProviders(<CompensationSourcePolicyPanel />, {
+      ports: buildTestPorts({
+        api: { compensationSources: vi.fn(async () => policyResponse()) },
+      }),
+    });
+
+    await screen.findByRole("table", { name: "Compensation source policy" });
+    expect(screen.queryByText("editable source policy")).not.toBeInTheDocument();
+  });
+
   it("keeps stacked source-status labels visually separated", async () => {
     renderWithProviders(<CompensationSourcePolicyPanel />, {
       ports: buildTestPorts({
