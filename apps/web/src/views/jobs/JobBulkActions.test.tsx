@@ -62,15 +62,15 @@ describe("<JobBulkActions>", () => {
       />,
     );
 
-    const viewSwitcher = screen.getByRole("radiogroup", { name: "Job views" });
+    const viewSwitcher = screen.getByRole("group", { name: "Job views" });
     expect(viewSwitcher).toHaveClass("job-view-switcher");
     expect(viewSwitcher).toHaveAttribute("data-variant", "outline");
-    expect(within(viewSwitcher).getByRole("radio", { name: "deleted" })).toHaveAttribute(
-      "aria-checked",
+    expect(within(viewSwitcher).getByRole("button", { name: "deleted" })).toHaveAttribute(
+      "aria-pressed",
       "true",
     );
-    expect(within(viewSwitcher).getByRole("radio", { name: "active" })).toHaveAttribute(
-      "aria-checked",
+    expect(within(viewSwitcher).getByRole("button", { name: "active" })).toHaveAttribute(
+      "aria-pressed",
       "false",
     );
     expect(screen.getByRole("button", { name: "hide selected" })).toHaveTextContent(/^hide$/);
@@ -387,11 +387,11 @@ describe("<JobBulkActions>", () => {
         onPermanentlyDeleteSelected={() => {}}
       />,
     );
-    await user.click(screen.getByRole("radio", { name: /^closed$/i }));
+    await user.click(screen.getByRole("button", { name: /^closed$/i }));
     expect(onSet).toHaveBeenCalledWith("closed");
-    await user.click(screen.getByRole("radio", { name: /^deleted$/i }));
+    await user.click(screen.getByRole("button", { name: /^deleted$/i }));
     expect(onSet).toHaveBeenCalledWith("deleted");
-    await user.click(screen.getByRole("radio", { name: /^hidden$/i }));
+    await user.click(screen.getByRole("button", { name: /^hidden$/i }));
     expect(onSet).toHaveBeenCalledWith("hidden");
   });
 

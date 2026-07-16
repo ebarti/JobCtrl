@@ -95,19 +95,34 @@ described in [Security](security.md#apply-approval-is-required-by-default).
 Use **Settings → Browser & extension** to inspect the managed core browser,
 enable or disable auto-apply and authenticated LinkedIn capabilities, copy a
 LinkedIn profile with explicit consent, and pair or rotate the extension token.
-System browsers are never auto-detected: enabling either optional capability
-requires an explicit Chrome/Chromium executable path. The path is write-only
-and is not shown again. A source profile path is cleared after the copy request
-and is never returned, logged, or persisted. Rotating the pairing token takes
-effect immediately. Existing extensions are disconnected; the UI never exposes
-the token's file path. The CLI commands below remain an equivalent operator
-surface.
+The screen may passively detect supported Chrome/Chromium installations, but
+the safe list exposes only an opaque browser kind and display label—never a
+local executable path. Detection does not launch, adopt, or persist a browser.
+Choose a detected browser and select **Enable** to adopt it explicitly. JobCtrl
+resolves the selection again at enable time and fails closed if the installation
+has disappeared. **Advanced: enter executable path** is the explicit manual
+fallback; an adopted path remains write-only and is not shown again.
+
+A source profile path is cleared after the copy request and is never returned,
+logged, or persisted. Profile copying retains its separate affirmative consent;
+selecting or enabling a browser does not grant that consent. Rotating the
+pairing token takes effect immediately. Existing extensions are disconnected;
+the UI never exposes the token's file path. The CLI commands below remain an
+equivalent manual-path operator surface.
+
+The same explicitly enabled and separately consented authenticated LinkedIn
+profile can recover a full LinkedIn posting and its external application URL.
+Because this is the user's owned authenticated session, JobCtrl does not apply
+the anonymous `robots.txt` verdict to that recovery. Public-destination checks,
+per-host pacing, run request budgets, and audit history remain enforced. This
+recovery cannot fill or submit an application; apply still requires the normal
+dry-run, approval, and submission gates.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `JOBCTRL_CLAUDE_BIN` | unset | Explicit apply-agent Claude runtime override. By default apply uses a system `claude` when present, then the pinned Claude Agent SDK bundled binary. |
 | `CAPSOLVER_API_KEY` | unset | Configure from **Settings → Credentials** on macOS or the environment elsewhere. It explicitly opts a started apply run into sending a supported widget's site key and page URL to CapSolver. Restart the relevant Python worker after a Keychain edit. The owned solver keeps keys and tokens out of the model prompt; unsupported, unconfigured, or failed solves stop the apply path. |
-| `JOBCTRL_LINKEDIN_APPLY_RESOLVER` | capability-controlled | Set to `0` to disable authenticated LinkedIn outbound apply URL resolution after it has been explicitly enabled. It cannot enable the feature by itself. |
+| `JOBCTRL_LINKEDIN_APPLY_RESOLVER` | capability-controlled | Set to `0` to disable authenticated LinkedIn posting and outbound apply-URL recovery after it has been explicitly enabled. It cannot enable the feature or grant profile-copy consent by itself. |
 | `JOBCTRL_LINKEDIN_APPLY_CHROME_PROFILE` | browser default | Chrome profile name inside the resolver user-data directory. |
 | `JOBCTRL_LINKEDIN_APPLY_HEADLESS` | visible Chrome | Set to `1` to run the resolver headless. |
 
@@ -115,9 +130,10 @@ The source checkout installs managed Playwright Chromium for discovery,
 enrichment, and PDF rendering. The bundled release contains exactly one managed
 Playwright Chromium headless shell for those core paths and no full
 Chrome/Chromium application. System Chrome/Chromium is optional in both modes
-and is never auto-detected or adopted for authenticated operations. Non-secret
-desired capability choices, including the adopted executable configuration,
-saved under **Settings → Browser & extension** are stored in `config.json`:
+and may be passively detected for display, but is never automatically adopted
+for authenticated operations. Non-secret desired capability choices, including
+the explicitly adopted executable configuration, saved under
+**Settings → Browser & extension** are stored in `config.json`:
 
 ```bash
 jobctrl capability list

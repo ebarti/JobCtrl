@@ -171,6 +171,13 @@ affirmative profile-copy consent; `--yes` is not consent. The copied profile
 lives only in JobCtrl-owned storage, and JobCtrl records consent metadata but
 never the source-profile path.
 
+The Settings read path may detect supported Chrome/Chromium installations, but
+it returns only a bounded ID and label. Detection never launches, adopts,
+copies, or persists a browser and never returns its path. Adoption is a
+separate explicit mutation selecting either the current detected ID or a
+write-only executable path. Detected IDs are revalidated at adoption time; a
+stale ID fails closed rather than silently selecting another installation.
+
 ### Applications Submit At Most Once
 
 An apply run cannot claim a job already running, succeeded, or awaiting
@@ -198,7 +205,8 @@ challenges, the apply path stops.
 
 ### Crawl Politeness
 
-Discovery/enrichment uses one gateway for controlled HTTP and Playwright fetches:
+Anonymous discovery/enrichment uses one gateway for controlled HTTP and
+Playwright fetches:
 
 - `robots.txt` is enforced for page rendering: `2xx` parses the file, `4xx`
   means absent, `5xx`/timeout is inconclusive and fails closed, and definitive
@@ -211,8 +219,12 @@ Discovery/enrichment uses one gateway for controlled HTTP and Playwright fetches
   generic scrape errors.
 
 `python-jobspy` owns its internal board transport, so JobCtrl can apply only
-invocation-level pacing/budget there. Authenticated LinkedIn uses the user's real
-browser session but remains rate/budget limited. See
+invocation-level pacing/budget there. Authenticated LinkedIn is an explicit
+owner-session carve-out: only after browser capability enablement and separate
+profile-copy consent may it recover the full posting and external application
+URL without applying the anonymous robots verdict. Public-destination checks,
+per-host pacing, the shared run budget, and audit history still apply, and the
+recovery path cannot submit an application. See
 [Discovery → Crawl Politeness](discovery.md#crawl-politeness).
 
 ## Credentials

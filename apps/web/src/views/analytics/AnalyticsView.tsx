@@ -1,3 +1,4 @@
+import { IconAlertTriangle } from "@tabler/icons-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 
 import { useOutcomeAnalyticsQuery } from "../../contexts/operations/hooks/useOutcomeAnalyticsQuery.js";
@@ -131,6 +132,7 @@ export function AnalyticsView() {
         <CardContent className="analytics-content">
           {message ? (
             <Alert variant="destructive" className="analytics-error">
+              <IconAlertTriangle aria-hidden="true" />
               <AlertTitle>Outcome analytics could not be loaded</AlertTitle>
               <AlertDescription>{message}</AlertDescription>
             </Alert>

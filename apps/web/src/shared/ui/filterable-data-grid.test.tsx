@@ -257,10 +257,8 @@ describe("FilterableDataGrid", () => {
     await user.click(screen.getByRole("checkbox", { name: "Workday ATS" }));
     await user.click(screen.getByRole("button", { name: /close/i }));
     await user.click(screen.getByRole("button", { name: /sort by observed/i }));
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Page size" }),
-      "1",
-    );
+    await user.click(screen.getByRole("combobox", { name: "Page size" }));
+    await user.click(await screen.findByRole("option", { name: "1/page" }));
     await user.click(screen.getByRole("button", { name: "next" }));
 
     expect(screen.queryByText("Salesforce")).not.toBeInTheDocument();

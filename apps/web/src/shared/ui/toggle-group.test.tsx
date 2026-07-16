@@ -21,22 +21,24 @@ describe("ToggleGroup", () => {
     const user = userEvent.setup();
     const { rerender } = render(controlledJobViews("active"));
     const beforeViews = screen.getByRole("button", { name: "Before views" });
-    const active = screen.getByRole("radio", { name: "Active" });
-    const deleted = screen.getByRole("radio", { name: "Deleted" });
+    const active = screen.getByRole("button", { name: "Active" });
+    const deleted = screen.getByRole("button", { name: "Deleted" });
 
-    expect(active).toHaveAttribute("aria-checked", "true");
-    expect(deleted).toHaveAttribute("aria-checked", "false");
+    expect(active).toHaveAttribute("aria-pressed", "true");
+    expect(deleted).toHaveAttribute("aria-pressed", "false");
     beforeViews.focus();
 
     rerender(controlledJobViews("deleted"));
 
-    expect(active).toHaveAttribute("aria-checked", "false");
-    expect(deleted).toHaveAttribute("aria-checked", "true");
+    const updatedActive = screen.getByRole("button", { name: "Active" });
+    const updatedDeleted = screen.getByRole("button", { name: "Deleted" });
+    expect(updatedActive).toHaveAttribute("aria-pressed", "false");
+    expect(updatedDeleted).toHaveAttribute("aria-pressed", "true");
 
     await user.tab();
 
-    expect(deleted).toHaveFocus();
-    expect(active).toHaveAttribute("tabindex", "-1");
-    expect(deleted).toHaveAttribute("tabindex", "0");
+    expect(updatedDeleted).toHaveFocus();
+    expect(updatedActive).toHaveAttribute("tabindex", "-1");
+    expect(updatedDeleted).toHaveAttribute("tabindex", "0");
   });
 });

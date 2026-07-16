@@ -41,9 +41,7 @@ describe("DiscoveryProductControls", () => {
     expect(screen.getByText("rate limited")).toBeInTheDocument();
 
     const user = userEvent.setup();
-    await user.click(
-      screen.getByRole("button", { name: /preview linkedin/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /preview linkedin/i }));
     expect(await screen.findByText("Product Engineer")).toBeInTheDocument();
   });
 
@@ -405,7 +403,9 @@ describe("DiscoveryProductControls", () => {
 
     const user = userEvent.setup();
     await user.click(await screen.findByRole("tab", { name: "Role matching" }));
-    expect(await screen.findByText(/Exclude .Manager, Test Engineering./i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Exclude .Manager, Test Engineering./i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Role fit is 1\/10/i)).toBeInTheDocument();
 
     await user.click(
@@ -448,9 +448,9 @@ describe("DiscoveryProductControls", () => {
 
     await screen.findByText("https://example.com/protected/job");
     const user = userEvent.setup();
-    await user.selectOptions(
-      screen.getByLabelText("Capture mode"),
-      "pasted_text",
+    await user.click(screen.getByRole("combobox", { name: "Capture mode" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Pasted text" }),
     );
     await user.type(
       screen.getByLabelText("Pasted text"),

@@ -1,5 +1,14 @@
 import type { JSX } from "react";
 
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./select.js";
+
 export interface TablePagerProps {
   page: number;
   pageSize: number;
@@ -22,6 +31,10 @@ export function TablePager({
   onPageSizeChange,
 }: TablePagerProps): JSX.Element {
   const pages = Math.max(totalPages, 1);
+  const pageSizeItems = pageSizeOptions.map((option) => ({
+    value: option,
+    label: `${option}/page`,
+  }));
   return (
     <div className="pager data-table-pager">
       <button
@@ -44,17 +57,26 @@ export function TablePager({
       >
         next
       </button>
-      <select
-        aria-label="Page size"
+      <Select
+        items={pageSizeItems}
         value={pageSize}
-        onChange={(event) => onPageSizeChange(Number(event.target.value))}
+        onValueChange={(nextPageSize) => {
+          if (nextPageSize !== null) onPageSizeChange(nextPageSize);
+        }}
       >
-        {pageSizeOptions.map((option) => (
-          <option key={option} value={option}>
-            {option}/page
-          </option>
-        ))}
-      </select>
+        <SelectTrigger aria-label="Page size" className="min-w-24" size="sm">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent alignItemWithTrigger={false}>
+          <SelectGroup>
+            {pageSizeItems.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
     </div>
   );
 }

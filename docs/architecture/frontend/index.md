@@ -14,7 +14,7 @@ Three ideas carry the whole design:
   same nine bounded contexts the backend uses, one-for-one, so a feature and
   the backend contract behind it share a single vocabulary (§2.2).
 - **Views compose; contexts own.** The pages you see (the dashboard, the jobs
-  table) are *views* that only arrange the pieces; the *contexts* own the data,
+  table) are _views_ that only arrange the pieces; the _contexts_ own the data,
   hooks, and behaviour — and the two never blur (§3.10).
 
 **Reading path.** Read top to bottom for the first pass; each page answers one
@@ -49,7 +49,7 @@ API, this doc models the React/TypeScript single-page application that sits
 in front of them.
 
 The frontend is organized around TanStack Router, TanStack Query, TanStack
-Table, TanStack Form, shadcn/Radix primitives, context-owned hooks/components,
+Table, TanStack Form, the shadcn Rhea preset over Base UI, context-owned hooks/components,
 and an SSE-fed invalidation router. This document describes the implemented
 architecture and the hosted-future extension points that must stay intact as the
 web app evolves.
@@ -98,25 +98,25 @@ it is the target deployment model.
 - **Delivery sequencing.** This document models the architecture, not branch
   order, rollout sequencing, or dual-mount compatibility paths.
 - **Visual design / copy / iconography choices.** This doc constrains the
-  *primitives* (shadcn/ui + Radix) and the *layout system* (Tailwind), not
+  _primitives_ (owned shadcn/Rhea wrappers over Base UI) and the _layout system_ (Tailwind), not
   the visual identity, design tokens, or copy.
-- **Accessibility audits beyond Radix defaults.** shadcn/ui copies Radix
-  primitives that ship with WAI-ARIA semantics, focus management, and
-  keyboard navigation. Beyond that, accessibility is an explicit out-of-scope
+- **Accessibility audits beyond primitive defaults.** Base UI supplies the
+  low-level semantics, focus management, and keyboard behavior, while JobCtrl
+  owns every copied wrapper and its composition tests. Broader audits remain out of scope
   in this doc — though the testing strategy (§10) names where accessibility
   assertions live when they are added.
 - **Internationalization (i18n).** Single-user, English-only. The doc does
   not name a string-extraction library or a locale provider. The
   `@jobctrl/contracts` boundary is where translation would later wrap.
 - **Native / mobile / desktop wrappers.** The architecture targets a browser
-  SPA. A Tauri / Electron wrapper is *not* an architectural decision this
+  SPA. A Tauri / Electron wrapper is _not_ an architectural decision this
   doc preempts: every I/O path goes through a port (§6), and `OpenInOsPort`
   already absorbs the OS-integration concern, so a future Tauri wrap is
   unblocked by construction. No fitness function is documented because the
   architecture's only "Tauri" obligation is "do not preempt it" — and that
   obligation is already discharged by the port discipline.
 - **Deployment topology.** CDN choice, asset hosting, build pipeline — these
-  are infrastructure concerns. The doc names what the frontend *needs* from
+  are infrastructure concerns. The doc names what the frontend _needs_ from
   hosting (cache headers for chunks, presigned-URL access to artifacts) but
   does not specify the hosting platform.
 - **Performance budgets.** Bundle-size targets, TTI thresholds, and
@@ -132,11 +132,11 @@ Every piece of state in the application lives in **exactly one** of three
 layers. Mixing layers is the single largest source of complexity in the
 current `App.tsx`. The target architecture enforces strict separation.
 
-| Layer | Owner | Lifetime | What lives here |
-|---|---|---|---|
-| **Server state** | TanStack Query cache | Until invalidated or GC'd | Anything fetched from `apps/api/` — projections, profile, settings, credentials, dashboard summary. |
-| **URL state** | TanStack Router (typed search params) | The current URL | Anything bookmarkable / shareable / restorable on refresh — current view, filters, sort order, page index, page size, selected job key, drawer open/close. |
-| **Client state** | Zustand stores + React context | Process lifetime (with `localStorage` persist where appropriate) | Theme, density, tenant context, transient UI like toast queue, ephemeral form drafts that do not survive navigation. |
+| Layer            | Owner                                 | Lifetime                                                         | What lives here                                                                                                                                   |
+| ---------------- | ------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Server state** | TanStack Query cache                  | Until invalidated or GC'd                                        | Anything fetched from `apps/api/` — projections, profile, settings, credentials, dashboard summary.                                               |
+| **URL state**    | TanStack Router (typed search params) | The current URL                                                  | Anything bookmarkable / shareable / restorable on refresh — current view, filters, sort order, page index, page size, and selected detail record. |
+| **Client state** | Zustand stores + React context        | Process lifetime (with `localStorage` persist where appropriate) | Theme, density, tenant context, transient UI like toast queue, ephemeral form drafts that do not survive navigation.                              |
 
 ```mermaid
 graph TB
@@ -185,7 +185,7 @@ graph TB
 
 1. **No server data in `useState`.** If it came from the API, it lives in
    the Query cache. Period.
-2. **No filter / pagination / sort / drawer state in `useState`.** If
+2. **No filter / pagination / sort / detail-route state in `useState`.** If
    refreshing the page should preserve it, it lives in a typed search param.
 3. **No durable user preferences in component-local state.** Theme, density,
    and similar belong in Zustand with `persist` middleware.
@@ -208,25 +208,25 @@ factories **mirror the backend's nine bounded contexts** defined in
 backend domain model [§3](../domain-model/strategic.md) — one frontend folder per backend context, no
 substitutions, no inventions:
 
-| Backend context | Frontend folder | Hooks / components owned by the context | View surfaces (composers) where it appears |
-|---|---|---|---|
-| Job Discovery | `contexts/discovery/` | Job lifecycle mutations (delete / hide / unhide / restore / permanent-delete, bulk), `useImportJobMutation` (stub — throws `NotImplementedError` until the backend endpoint lands), discovery-settings + source-registry / quarantine / manual-capture / feedback mutations; `<DiscoveryProductControls>` | Jobs view (bulk controls), Discovery view (source + schedule admin) |
-| Job Enrichment | `contexts/enrichment/` | `useEnrichmentRetryMutation` (stub — throws `NotImplementedError` until the backend endpoint lands), `useRefreshCompensationMutation` / `useRefreshAllCompensationMutation`; compensation-evidence components; enrichment/compensation invalidation handlers | Jobs view + Apply Review (compensation audit) |
-| Candidate Profile | `contexts/profile/` | `useProfileQuery`, `useUpdateProfileMutation`, `useImportResumeMutation`, settings + credentials hooks, profile-import wizard store | `/profile`, `/settings` routes |
-| Scoring | `contexts/scoring/` | `<ScoreBadge>`, `<ScoreStalenessBadge>` (plus `<ScoreBreakdown>`, built/tested but not yet composed by a view); `useCorrectScoreMutation` (shipped), `useRescoreJobMutation` / `useRescoreCurrentPolicyMutation`, `useResetStaleScoresForRescoreMutation` | Jobs view (score column + audit-triage drawer + rescore/correct) |
-| Materials Generation | `contexts/materials/` | `useGenerateMaterialsMutation`, `useOpenArtifactMutation` (artifacts are owned by `MaterialsSet`) | Jobs view (Generate button), Artifacts view (open in OS) |
-| Apply Automation | `contexts/apply/` | `useApplyJobMutation`, `useDryRunApplyMutation`, `useCancelApplyMutation`, `<ApplyRunTimeline>`, `<ApplyButton>`, `<ApplyHistory>` | Jobs view (per-row + drawer), Dashboard view (apply-runs card) |
-| Pipeline Orchestration | `contexts/pipeline/` | `useRetryStageMutation`, `useCancelStageMutation`, `useMarkAppliedMutation`, `useMarkSkippedMutation`; `<StageBadge>`, `<StageTimeline>`, `<JobActions>` | Jobs view, Dashboard view (funnel) |
-| Operations / Read-Side | `contexts/operations/` | All projection-typed read hooks (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useWorkflowRunsListQuery`, `useApplyReviewQueueQuery`, activity/outcomes/health reads, …); query-key registry; SSE subscription; invalidation router | Every view (provider of all read data) |
-| Contact & Outreach | `contexts/outreach/` | `useContactsListQuery`, `useContactDetailQuery`, create / update / delete / import-contact optimistic mutations, `outreachKeys`, contact provenance + role components, `<JobContactsPanel>`, contact event handlers | Contacts view (`/outreach`) + Jobs drawer contacts panel |
+| Backend context        | Frontend folder        | Hooks / components owned by the context                                                                                                                                                                                                                                                                                                 | View surfaces (composers) where it appears                                                 |
+| ---------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Job Discovery          | `contexts/discovery/`  | Job lifecycle mutations (delete / hide / unhide / restore / permanent-delete, bulk), `useImportJobMutation` (stub — throws `NotImplementedError` until the backend endpoint lands), discovery-settings + source-registry / quarantine / manual-capture / feedback mutations; `<DiscoveryProductControls>`                               | Jobs view (bulk controls), Discovery view (source + schedule admin)                        |
+| Job Enrichment         | `contexts/enrichment/` | `useEnrichmentRetryMutation` (stub — throws `NotImplementedError` until the backend endpoint lands), `useRefreshCompensationMutation` / `useRefreshAllCompensationMutation`; compensation-evidence components; enrichment/compensation invalidation handlers                                                                            | Jobs view + Apply Review (compensation audit)                                              |
+| Candidate Profile      | `contexts/profile/`    | `useProfileQuery`, `useUpdateProfileMutation`, `useImportResumeMutation`, settings + credentials hooks, profile-import wizard store                                                                                                                                                                                                     | `/profile`, `/settings` routes                                                             |
+| Scoring                | `contexts/scoring/`    | `<ScoreBadge>`, `<ScoreStalenessBadge>` (plus `<ScoreBreakdown>`, built/tested but not yet composed by a view); `useCorrectScoreMutation` (shipped), `useRescoreJobMutation` / `useRescoreCurrentPolicyMutation`, `useResetStaleScoresForRescoreMutation`                                                                               | Jobs view (score column + audit-triage detail workspace + rescore/correct)                 |
+| Materials Generation   | `contexts/materials/`  | `useGenerateMaterialsMutation`, `useOpenArtifactMutation` (artifacts are owned by `MaterialsSet`)                                                                                                                                                                                                                                       | Jobs view (Generate button), Artifacts view (open in OS)                                   |
+| Apply Automation       | `contexts/apply/`      | `useApplyJobMutation`, `useDryRunApplyMutation`, `useCancelApplyMutation`, `<ApplyRunTimeline>`, `<ApplyButton>`, `<ApplyHistory>`                                                                                                                                                                                                      | Jobs view (per-row + run detail workspace), Dashboard view (continuous apply-runs section) |
+| Pipeline Orchestration | `contexts/pipeline/`   | `useRetryStageMutation`, `useCancelStageMutation`, `useMarkAppliedMutation`, `useMarkSkippedMutation`; `<StageBadge>`, `<StageTimeline>`, `<JobActions>`                                                                                                                                                                                | Jobs view, Dashboard view (funnel)                                                         |
+| Operations / Read-Side | `contexts/operations/` | All projection-typed read hooks (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useWorkflowRunsListQuery`, `useApplyReviewQueueQuery`, activity/outcomes/health reads, …); query-key registry; SSE subscription; invalidation router | Every view (provider of all read data)                                                     |
+| Contact & Outreach     | `contexts/outreach/`   | `useContactsListQuery`, `useContactDetailQuery`, create / update / delete / import-contact optimistic mutations, `outreachKeys`, contact provenance + role components, `<JobContactsPanel>`, contact event handlers                                                                                                                     | Contacts view (`/outreach`) + Job Detail workspace contacts section                        |
 
-**Views are NOT bounded contexts.** The user-facing surfaces are *view
-composers* under `views/` (sibling of `contexts/`, see §11), including
+**Views are NOT bounded contexts.** The user-facing surfaces are _view
+composers_ under `views/` (sibling of `contexts/`, see §11), including
 `dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `runs/`, `pipelines/`,
 `discovery/`, `outreach/`, and `debug/`. Each consumes read hooks
 from `contexts/operations/` plus mutation hooks from the appropriate
-aggregate contexts. Naming the table-and-drawer
-surface "Jobs" matches user vocabulary; the *bounded contexts* it spans
+aggregate contexts. Naming the list-and-route-workspace
+surface "Jobs" matches user vocabulary; the _bounded contexts_ it spans
 are Discovery, Enrichment, Scoring, Materials, Apply, Pipeline, and
 Operations — every one of which already exists as its own folder. The
 backend's `JobListView`, `JobDetailView`, `ArtifactListView`, and
@@ -245,8 +245,8 @@ end-to-end ubiquitous language and a one-to-one mapping between every UI
 feature and the backend contract that powers it.
 
 **The frontend invents no new domain language.** A "tab" or "view" is a
-*presentation* concept; it never replaces a domain term. The Jobs tab
-*displays* `JobListProjection` rows produced by the Operations context
+_presentation_ concept; it never replaces a domain term. The Jobs tab
+_displays_ `JobListProjection` rows produced by the Operations context
 on top of the canonical aggregates owned by Discovery, Enrichment,
 Scoring, Materials, Apply, and Pipeline. The view file lives at
 `views/jobs/JobsView.tsx`; its data hook is
@@ -256,13 +256,15 @@ score badge is `<ScoreBadge>` from `contexts/scoring/`; its stage badge
 is `<StageBadge>` from `contexts/pipeline/`. The composition is in the
 view; the language stays domain.
 
-**View composition pattern.** A view file imports *components* and *hooks*
-from contexts and assembles them. It does not own its own query keys, it
-does not own mutations, it does not own state stores beyond ephemeral UI
-(bulk-selection set, etc.). A context never imports another context's
-hooks or stores; cross-context coordination happens in either (a) the
-view that composes them or (b) the invalidation router (§7.4) for cache
-fan-out.
+**View composition pattern.** A view file imports public _components_ and
+_hooks_ from contexts and assembles them. It does not own query keys, mutations,
+or state stores beyond ephemeral UI (bulk-selection set, etc.), and it never
+calls the API client or query client directly. Operations is the explicit
+read-side kernel exception: aggregate contexts may consume its projection
+types, keys, and read hooks for context-owned presentation. They do not import
+another aggregate context's hooks or stores. Cross-aggregate coordination
+happens in either (a) the view that composes them or (b) the invalidation router
+(§7.4) for cache fan-out.
 
 ### 2.3 Evolutionary Architecture (Frontend Edition)
 
@@ -270,18 +272,18 @@ The same meta-principle that governs the backend (see the backend domain model [
 governs the frontend: **cloud-mode adapters are named-not-built; local-mode
 stays simple but every choice has a clear seam.**
 
-> Evolutionary architecture means the next adapter is *named* (so the team
-> knows what swap is coming and the seam is shaped for it), not *built*
+> Evolutionary architecture means the next adapter is _named_ (so the team
+> knows what swap is coming and the seam is shaped for it), not _built_
 > (so the codebase carries no speculative complexity). Adapter swaps keep one
 > active implementation per seam unless an explicit compatibility path is part
 > of the product contract.
 
-| Principle | How the frontend applies it |
-|---|---|
+| Principle                                   | How the frontend applies it                                                                                                                                                                                                                                                      |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Name the evolution, do not pre-build it** | Every frontend port (§6) names a hosted adapter with concrete technology (e.g., `EventStreamPort` → `SseEventStreamAdapter` today, `WebSocketEventStreamAdapter` if SSE proves limiting). The hosted adapter is documented but not implemented until its fitness function fires. |
-| **Local-mode adapters stay simple** | The local `ApiClientAdapter` does not carry tenant-resolution-from-JWT logic, retry-with-backoff with circuit breaking, or distributed tracing. It accepts `TenantId` as input, calls fetch, and returns the parsed body. Cloud machinery is absent until needed. |
-| **Fitness functions trigger evolution** | Every cloud claim in §9 has a concrete, testable trigger ("when the dashboard load latency exceeds 200 ms p50 with cold cache" → SSR / TanStack Start; "when more than one user can sign in" → AuthProvider). Calendar dates do not trigger evolution. |
-| **Independent context evolution** | Each frontend context can swap its query-cache strategy, its primitives, or its event subscription without touching the others. A spike on virtualized tables in `views/jobs/` does not affect `contexts/profile/`. |
+| **Local-mode adapters stay simple**         | The local `ApiClientAdapter` does not carry tenant-resolution-from-JWT logic, retry-with-backoff with circuit breaking, or distributed tracing. It accepts `TenantId` as input, calls fetch, and returns the parsed body. Cloud machinery is absent until needed.                |
+| **Fitness functions trigger evolution**     | Every cloud claim in §9 has a concrete, testable trigger ("when the dashboard load latency exceeds 200 ms p50 with cold cache" → SSR / TanStack Start; "when more than one user can sign in" → AuthProvider). Calendar dates do not trigger evolution.                           |
+| **Independent context evolution**           | Each frontend context can swap its query-cache strategy, its primitives, or its event subscription without touching the others. A spike on virtualized tables in `views/jobs/` does not affect `contexts/profile/`.                                                              |
 
 ### 2.4 Data-Orientation (Hickey / Wlaschin)
 
@@ -322,7 +324,7 @@ extends the workspace base). The target frontend goes further:
   `fetch` before parsing) are `unknown`; everything inside a context is
   fully typed.
 - **Route-level Zod schemas.** Every route's typed search params are
-  declared with a Zod schema; the search-param type is *inferred* from the
+  declared with a Zod schema; the search-param type is _inferred_ from the
   schema, never declared by hand. (Resolves §6 question 13.)
 - **`@jobctrl/domain-types` is the source of truth.** No domain shape is
   re-declared in `apps/web/`. If `JobListProjection` changes, the frontend

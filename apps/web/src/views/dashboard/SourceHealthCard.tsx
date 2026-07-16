@@ -1,21 +1,28 @@
+import { IconBan, type TablerIcon } from "@tabler/icons-react";
+
 import { SourcePolitenessBadges } from "../../contexts/discovery/components/SourcePolitenessBadges.js";
 import type { DashboardSummary } from "../../contexts/operations/types.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
-import { StatusDot } from "../../shared/ui/status-dot.js";
-import type { StatusDotState } from "../../shared/ui/status-tokens.js";
+import type { StatusTagTone } from "../../shared/ui/status-tokens.js";
 
 type SourceHealth = DashboardSummary["sourceHealth"][number];
 
-function dotState(state: SourceHealth["recommendedState"]): StatusDotState {
+function sourceHealthTone(state: SourceHealth["recommendedState"]): StatusTagTone {
   if (state === "disabled" || state === "quarantined") {
-    return "failed";
+    return "danger";
   }
   if (state === "experimental") {
-    return "running";
+    return "info";
   }
-  return "succeeded";
+  return "ok";
+}
+
+function sourceHealthIcon(
+  state: SourceHealth["recommendedState"],
+): TablerIcon | undefined {
+  return state === "disabled" || state === "quarantined" ? IconBan : undefined;
 }
 
 function pct(value: number | null): string {
@@ -35,7 +42,12 @@ export function SourceHealthCard({ summary }: SourceHealthCardProps) {
         {sources.length ? (
           sources.map((source: SourceHealth) => (
             <div key={source.sourceId} className="mini-row">
-              <StatusDot state={dotState(source.recommendedState)} />
+              <StatusBadge
+                icon={sourceHealthIcon(source.recommendedState)}
+                tone={sourceHealthTone(source.recommendedState)}
+              >
+                {source.recommendedState}
+              </StatusBadge>
               <span className="title-stack">
                 <b>{source.sourceId}</b>
                 <span>

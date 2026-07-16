@@ -350,9 +350,11 @@ def test_parallel_limited_workday_scrape_enforces_global_limit(monkeypatch: pyte
         *,
         limit: int = 0,
         run_id: str | None = None,
+        discovery_execution: workday.DiscoveryExecutionRef | None = None,
     ) -> tuple[int, int]:
         assert limit == 2
         assert run_id == "run-1"
+        assert discovery_execution is None
         stored_jobs.extend(jobs)
         return len(jobs), 0
 

@@ -1619,9 +1619,9 @@ async function collectTopLevelLicenseEvidence(payloadRoot, root, contracts) {
     path.join(root, "apps", "web", "node_modules", "@fontsource-variable", "jetbrains-mono", "LICENSE"),
     path.join(root, "node_modules", "@fontsource-variable", "jetbrains-mono", "LICENSE"),
   ]);
-  await add("font-plus-jakarta-sans", [
-    path.join(root, "apps", "web", "node_modules", "@fontsource-variable", "plus-jakarta-sans", "LICENSE"),
-    path.join(root, "node_modules", "@fontsource-variable", "plus-jakarta-sans", "LICENSE"),
+  await add("font-geist", [
+    path.join(root, "apps", "web", "node_modules", "@fontsource-variable", "geist", "LICENSE"),
+    path.join(root, "node_modules", "@fontsource-variable", "geist", "LICENSE"),
   ]);
   await add("playwright-mcp", [path.join(mcpRoot, "node_modules", "@playwright", "mcp", "LICENSE")]);
   await add("playwright-core-node", [path.join(mcpRoot, "node_modules", "playwright-core", "LICENSE")]);

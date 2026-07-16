@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -72,7 +73,87 @@ function StatefulEditor({
   );
 }
 
+function storedValueAt(profileText: string, path: string) {
+  return path.split(".").reduce<unknown>((value, key) => {
+    if (typeof value !== "object" || value === null) {
+      return undefined;
+    }
+    return (value as Record<string, unknown>)[key];
+  }, JSON.parse(profileText));
+}
+
 describe("<StructuredProfileEditor>", () => {
+  it("round-trips persisted Yes/No preferences through accessible checkboxes", async () => {
+    const user = userEvent.setup();
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.work_authorization = {
+      legally_authorized_to_work: "Yes",
+      require_sponsorship: "No",
+    };
+    initialProfile.availability = {
+      available_for_full_time: "Yes",
+      available_for_contract: "No",
+    };
+    let latestProfile = JSON.stringify(initialProfile, null, 2);
+
+    render(
+      <StatefulEditor
+        mode="preferences"
+        initialProfile={initialProfile}
+        onLatestProfile={(value) => { latestProfile = value; }}
+      />,
+    );
+
+    const cases = [
+      ["Legally authorized to work", "work_authorization.legally_authorized_to_work", "Yes"],
+      ["Requires sponsorship", "work_authorization.require_sponsorship", "No"],
+      ["Available full-time", "availability.available_for_full_time", "Yes"],
+      ["Available for contract", "availability.available_for_contract", "No"],
+    ] as const;
+
+    for (const [label, path, initialValue] of cases) {
+      const checkbox = screen.getByRole("checkbox", { name: label });
+      expect(screen.queryByRole("combobox", { name: label })).not.toBeInTheDocument();
+      expect(checkbox).toHaveAttribute("aria-checked", initialValue === "Yes" ? "true" : "false");
+
+      await user.click(checkbox);
+      expect(storedValueAt(latestProfile, path)).toBe(initialValue === "Yes" ? "No" : "Yes");
+
+      checkbox.focus();
+      await user.keyboard(" ");
+      expect(storedValueAt(latestProfile, path)).toBe(initialValue);
+    }
+  });
+
+  it("explains currency conversion guidance without changing its stored field", () => {
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.compensation = {
+      currency_conversion_note: "Convert the posted midpoint to EUR.",
+    };
+    let latestProfile = JSON.stringify(initialProfile, null, 2);
+
+    render(
+      <StatefulEditor
+        mode="preferences"
+        initialProfile={initialProfile}
+        onLatestProfile={(value) => { latestProfile = value; }}
+      />,
+    );
+
+    const input = screen.getByLabelText("Currency conversion guidance");
+    expect(input).toHaveValue("Convert the posted midpoint to EUR.");
+    expect(input).toHaveAccessibleDescription(
+      "Used for salary questions when a job posting lists compensation in a different currency.",
+    );
+    expect(screen.queryByLabelText("Currency note")).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "Use the ECB rate for the posted midpoint." } });
+
+    expect(storedValueAt(latestProfile, "compensation.currency_conversion_note")).toBe(
+      "Use the ECB rate for the posted midpoint.",
+    );
+  });
+
   it("exposes only invented adjacent experience as the editable claim control", () => {
     let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
     render(<StatefulEditor mode="preferences" onLatestProfile={(value) => { latestProfile = value; }} />);
@@ -162,9 +243,10 @@ describe("<StructuredProfileEditor>", () => {
     render(<StatefulEditor mode="preferences" />);
 
     expect(screen.queryByLabelText("AI may reframe experience titles")).not.toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Change experience titles" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
+    const changeTitles = screen.getByRole("checkbox", { name: "Change experience titles" });
+    expect(changeTitles).toHaveAttribute("aria-disabled", "true");
+    expect(changeTitles).toHaveAccessibleDescription(
+      "Experience titles remain fixed to profile evidence during tailoring.",
     );
   });
 
@@ -214,9 +296,132 @@ describe("<StructuredProfileEditor>", () => {
     expect(screen.queryByLabelText("Bullet style")).not.toBeInTheDocument();
     const bulletStandards = screen.getByRole("group", { name: "Bullet standards" });
     expect(within(bulletStandards).getByRole("link", { name: "Guide" })).toBeInTheDocument();
-    expect(within(bulletStandards).getByRole("checkbox", { name: "Impact" })).toBeChecked();
-    expect(within(bulletStandards).getByRole("checkbox", { name: "Technical depth" })).toBeChecked();
-    expect(within(bulletStandards).getByRole("checkbox", { name: "Leadership" })).toBeChecked();
+    for (const name of ["Impact", "Technical depth", "Leadership"]) {
+      const standard = within(bulletStandards).getByRole("checkbox", { name });
+      expect(standard).toBeChecked();
+      expect(standard).toHaveAttribute("aria-disabled", "true");
+      expect(standard).toHaveAccessibleDescription(
+        "Required for evidence-quality resumes and cannot be disabled.",
+      );
+    }
+  });
+
+  it("uses adaptive property grids for profile fields", () => {
+    render(<StatefulEditor />);
+
+    const fullNameGrid = screen
+      .getByLabelText("Full name")
+      .closest('[data-slot="adaptive-field-grid"]');
+    const experienceGrid = screen
+      .getByLabelText("Current job title")
+      .closest('[data-slot="adaptive-field-grid"]');
+    const eeoGrid = screen.getByLabelText("Gender").closest('[data-slot="adaptive-field-grid"]');
+
+    expect(fullNameGrid).not.toBeNull();
+    expect(experienceGrid).not.toBeNull();
+    expect(eeoGrid).not.toBeNull();
+    expect(document.querySelector(".profile-sections .field-grid")).not.toBeInTheDocument();
+  });
+
+  it("uses adaptive property grids for application and resume preferences", () => {
+    render(<StatefulEditor mode="preferences" />);
+
+    const applicationGrid = screen
+      .getByLabelText("Salary currency")
+      .closest('[data-slot="adaptive-field-grid"]');
+    const styleGrid = screen
+      .getByLabelText("Page scale")
+      .closest('[data-slot="adaptive-field-grid"]');
+
+    expect(applicationGrid).not.toBeNull();
+    expect(styleGrid).not.toBeNull();
+    expect(applicationGrid).not.toBe(styleGrid);
+    expect(document.querySelector(".profile-sections .field-grid")).not.toBeInTheDocument();
+  });
+
+  it("keeps the tailoring field contract grouped behind semantic keyboard tabs", async () => {
+    const user = userEvent.setup();
+    render(<StatefulEditor mode="preferences" />);
+
+    const tablist = screen.getByRole("tablist", { name: "Tailoring control sections" });
+    const contentTab = within(tablist).getByRole("tab", { name: "Content rules" });
+    const writingTab = within(tablist).getByRole("tab", { name: "Writing style" });
+    const qualityTab = within(tablist).getByRole("tab", { name: "Quality gates" });
+    const panelFor = (tab: HTMLElement) => {
+      const panelId = tab.getAttribute("aria-controls");
+      if (!panelId) throw new Error("Tailoring tab did not identify its panel");
+      const panel = document.getElementById(panelId);
+      if (!panel) throw new Error(`Missing tailoring panel ${panelId}`);
+      return within(panel);
+    };
+
+    expect(contentTab).toHaveAttribute("aria-selected", "true");
+    for (const label of [
+      "Enable profile enhancement",
+      "Rewrite executive summary",
+      "Rewrite achievement bullets",
+      "Select and order existing skills",
+      "Change experience titles",
+      "Impact",
+      "Technical depth",
+      "Leadership",
+    ]) {
+      expect(panelFor(contentTab).getByText(label, { selector: "label" })).toBeInTheDocument();
+      expect(panelFor(writingTab).queryByText(label, { selector: "label" })).not.toBeInTheDocument();
+      expect(panelFor(qualityTab).queryByText(label, { selector: "label" })).not.toBeInTheDocument();
+    }
+    for (const label of [
+      "Writing tone",
+      "Verbosity",
+      "Keyword emphasis",
+      "Avoid first-person language",
+      "Additional guidance",
+    ]) {
+      expect(panelFor(writingTab).getByText(label, { selector: "label" })).toBeInTheDocument();
+      expect(panelFor(contentTab).queryByText(label, { selector: "label" })).not.toBeInTheDocument();
+      expect(panelFor(qualityTab).queryByText(label, { selector: "label" })).not.toBeInTheDocument();
+    }
+    for (const label of ["Minimum fit score", "Must-have coverage (%)", "Revision attempts"]) {
+      expect(panelFor(qualityTab).getByText(label, { selector: "label" })).toBeInTheDocument();
+      expect(panelFor(contentTab).queryByText(label, { selector: "label" })).not.toBeInTheDocument();
+      expect(panelFor(writingTab).queryByText(label, { selector: "label" })).not.toBeInTheDocument();
+    }
+
+    await user.click(contentTab);
+    await user.keyboard("{ArrowRight}");
+    expect(writingTab).toHaveFocus();
+    expect(writingTab).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{End}");
+    expect(qualityTab).toHaveFocus();
+    expect(qualityTab).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{Home}");
+    expect(contentTab).toHaveFocus();
+    expect(contentTab).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("preserves a tailoring draft while switching tabs and collapsing the section", async () => {
+    const user = userEvent.setup();
+    render(<StatefulEditor mode="preferences" />);
+
+    await user.click(screen.getByRole("tab", { name: "Writing style" }));
+    const guidance = screen.getByLabelText("Additional guidance");
+    await user.clear(guidance);
+    await user.type(guidance, "Keep the executive summary concise.");
+
+    await user.click(screen.getByRole("tab", { name: "Quality gates" }));
+    expect(guidance).toBeInTheDocument();
+    expect(guidance).toHaveValue("Keep the executive summary concise.");
+
+    const disclosure = screen.getByRole("button", { name: /^Tailoring controls\b/i });
+    await user.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(guidance).toBeInTheDocument();
+    expect(guidance).toHaveValue("Keep the executive summary concise.");
+
+    await user.click(disclosure);
+    await user.click(screen.getByRole("tab", { name: "Writing style" }));
+    expect(screen.getByLabelText("Additional guidance")).toBe(guidance);
+    expect(guidance).toHaveValue("Keep the executive summary concise.");
   });
 
   it("preserves extracted achievement evidence without exposing it as profile input", () => {

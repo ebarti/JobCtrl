@@ -272,7 +272,7 @@
   text-transform: uppercase;
 }
 
-.dashboard-view .work-status-metric dd {
+.dashboard-view .work-status-metric-value {
   margin: 0;
   color: var(--foreground);
   font-size: 28px;
@@ -282,11 +282,14 @@
   line-height: 1;
 }
 
-.dashboard-view .work-status-metric[data-attention="true"] dd {
+.dashboard-view
+  .work-status-metric[data-attention="true"]
+  .work-status-metric-value {
   color: var(--destructive);
 }
 
-.dashboard-view .work-status-metric > span {
+.dashboard-view .work-status-metric-description {
+  margin: 0;
   color: var(--muted-foreground);
   font-size: 11px;
   line-height: 1.45;

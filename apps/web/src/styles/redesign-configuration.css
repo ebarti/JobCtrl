@@ -12,6 +12,55 @@
   --configuration-rule: color-mix(in oklch, var(--border) 88%, var(--foreground));
 }
 
+/* Shared profile/preferences property grids query the width they actually
+ * receive. The wrapper is the query container so its inner FieldGroup can
+ * move through the required 4/2/1 layouts without viewport assumptions. */
+.adaptive-field-grid {
+  container-name: adaptive-field-grid;
+  container-type: inline-size;
+  min-width: 0;
+  width: 100%;
+}
+
+.adaptive-field-grid__fields {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 15px 18px;
+}
+
+.adaptive-field-span {
+  min-width: 0;
+}
+
+.adaptive-field-span > [data-slot="field"] {
+  height: 100%;
+}
+
+.adaptive-field-span[data-span="wide"] {
+  grid-column: span 2;
+}
+
+.adaptive-field-span[data-span="full"] {
+  grid-column: 1 / -1;
+}
+
+@container adaptive-field-grid (max-width: 56rem) {
+  .adaptive-field-grid__fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container adaptive-field-grid (max-width: 32rem) {
+  .adaptive-field-grid__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adaptive-field-span[data-span] {
+    grid-column: 1 / -1;
+  }
+}
+
 /* Profile and preferences -------------------------------------------------- */
 
 .profile-layout > .card,
@@ -87,11 +136,13 @@
 }
 
 .profile-layout .profile-sections > .form-section .field-grid,
+.profile-layout .profile-sections > .form-section > .configuration-section__body > .adaptive-field-grid,
 .profile-layout .profile-sections > .form-section .target-preferences-grid {
   padding: 16px 20px 20px;
 }
 
 .profile-layout .profile-sections > .form-section:not(:first-child) > .field-grid,
+.profile-layout .profile-sections > .form-section:not(:first-child) > .configuration-section__body > .adaptive-field-grid,
 .profile-layout .profile-sections > .form-section:not(:first-child) > .target-preferences-grid {
   padding-inline: 0;
 }
@@ -129,6 +180,7 @@
 }
 
 .profile-layout .repeat-section > .field-grid,
+.profile-layout .repeat-section > .adaptive-field-grid,
 .profile-layout .repeat-section > .bullet-list,
 .profile-layout .repeat-section > .skill-list,
 .profile-layout .repeat-section > [data-slot="separator"] {
@@ -144,7 +196,8 @@
   margin-top: 4px;
 }
 
-.profile-layout .repeat-section .field-grid {
+.profile-layout .repeat-section .field-grid,
+.profile-layout .repeat-section .adaptive-field-grid {
   padding: 0;
 }
 
@@ -179,8 +232,9 @@
   color: var(--foreground);
 }
 
-/* Preferences are disclosure bands rather than a stack of decorative cards. */
-.profile-layout-single .configuration-section {
+/* Configuration disclosures share one Base UI-backed hierarchy across
+ * Profile, Preferences, Discovery, and Settings. */
+.configuration-section {
   overflow: hidden;
   border: 0;
   border-top: 1px solid var(--configuration-rule);
@@ -192,9 +246,16 @@
   border-bottom: 1px solid var(--configuration-rule);
 }
 
-.configuration-section > .configuration-section__trigger {
+.configuration-section__header {
   display: flex;
-  width: 100%;
+  min-width: 0;
+  align-items: center;
+}
+
+.configuration-section__trigger {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
   min-height: 70px;
   align-items: center;
   justify-content: space-between;
@@ -204,7 +265,7 @@
   color: inherit;
   cursor: pointer;
   font: inherit;
-  padding: 16px 0;
+  padding: 16px 20px;
   text-align: left;
 }
 
@@ -227,19 +288,33 @@
   line-height: 1.45;
 }
 
+.configuration-section__summary {
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 1.4;
+}
+
+.configuration-section__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding-right: 20px;
+}
+
 .configuration-section__indicator {
   flex: 0 0 auto;
   color: var(--muted-foreground);
   transition: transform 150ms ease, color 150ms ease;
 }
 
-.configuration-section > .configuration-section__trigger[data-panel-open] .configuration-section__indicator {
+.configuration-section__trigger[data-panel-open] .configuration-section__indicator {
   color: var(--foreground);
   transform: rotate(180deg);
 }
 
-.configuration-section > .configuration-section__trigger:hover .configuration-section__title,
-.configuration-section > .configuration-section__trigger:focus-visible .configuration-section__title {
+.configuration-section__trigger:hover .configuration-section__title,
+.configuration-section__trigger:focus-visible .configuration-section__title {
   text-decoration: underline;
   text-decoration-color: color-mix(in oklch, var(--foreground) 28%, transparent);
   text-underline-offset: 4px;
@@ -265,6 +340,37 @@
   padding: 0;
 }
 
+.configuration-section .tailoring-control-tabs {
+  min-width: 0;
+}
+
+.configuration-section .tailoring-control-tabs__list {
+  display: flex;
+  width: 100%;
+  height: auto;
+  overflow-x: auto;
+  border-color: var(--configuration-rule);
+}
+
+.configuration-section .tailoring-control-tabs__list [role="tab"] {
+  flex: 0 0 auto;
+}
+
+.configuration-section .tailoring-tab-panel {
+  margin-top: 0;
+  padding-top: 16px;
+}
+
+.configuration-section .tailoring-tab-panel[hidden] {
+  display: none;
+}
+
+.configuration-section .tailoring-controls-grid--content > .bullet-standards-group,
+.configuration-section .tailoring-controls-grid--writing > .tailoring-control-group,
+.configuration-section .tailoring-controls-grid--quality > .tailoring-control-group {
+  grid-column: 1 / -1;
+}
+
 .configuration-section .tailoring-control-group {
   min-width: 0;
   align-self: stretch;
@@ -287,7 +393,8 @@
   grid-column: span 6;
 }
 
-.configuration-section .tailoring-controls-grid > .field-grid {
+.configuration-section .tailoring-controls-grid > .field-grid,
+.configuration-section .tailoring-controls-grid > .adaptive-field-grid {
   grid-column: 1 / -1;
   border-top: 1px solid var(--configuration-rule);
   padding-top: 16px;
@@ -322,7 +429,8 @@
   text-underline-offset: 3px;
 }
 
-.configuration-section .tailoring-control-group .field-grid {
+.configuration-section .tailoring-control-group .field-grid,
+.configuration-section .tailoring-control-group .adaptive-field-grid__fields {
   gap: 12px 14px;
   padding: 0;
 }
@@ -342,6 +450,24 @@
 .profile-layout .checkbox-options,
 .discovery-workspace .checkbox-options {
   flex-direction: row;
+  gap: 8px 14px;
+}
+
+/* FieldSet legends do not participate as ordinary grid children. Keep the
+ * semantic group vertical and place the full-width shadcn Fields into an
+ * explicit responsive options grid instead of the legacy label/options grid. */
+.profile-layout .checkbox-option-group,
+.discovery-workspace .checkbox-option-group {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.profile-layout .checkbox-option-group > .checkbox-options,
+.discovery-workspace .checkbox-option-group > .checkbox-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
   gap: 8px 14px;
 }
 
@@ -379,6 +505,21 @@
 
 .configuration-section .required-choice > [data-disabled] {
   opacity: 1;
+}
+
+.configuration-section .locked-choice [data-slot="field-content"] {
+  gap: 2px;
+}
+
+.configuration-section .locked-choice [data-slot="field-label"] {
+  color: var(--foreground);
+}
+
+.configuration-section .locked-choice [data-slot="field-description"] {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 430;
+  line-height: 1.4;
 }
 
 .configuration-section .bullet-standards-group > [data-slot="field-description"] {
@@ -526,13 +667,14 @@
 }
 
 .config-layout .settings-tabs .tab.on {
-  border-color: var(--foreground);
+  border-color: var(--primary);
   background: transparent;
   color: var(--foreground);
   box-shadow: none;
 }
 
-.config-layout > .card {
+.config-layout > .card,
+.config-layout > .configuration-section {
   overflow: hidden;
   border-color: var(--configuration-rule);
   border-radius: 8px;
@@ -555,7 +697,20 @@
   border-top: 1px solid var(--configuration-rule);
   border-radius: 0;
   background: transparent;
-  padding: 18px 20px;
+  padding: 0;
+}
+
+.config-layout .provider-disclosure {
+  border-top: 0;
+}
+
+.config-layout .provider-disclosure .configuration-section__body {
+  padding: 0 20px 18px;
+}
+
+.config-layout .provider-setup-disclosure > .configuration-section__body,
+.config-layout .model-selection-settings > .configuration-section__body {
+  padding-bottom: 20px;
 }
 
 .config-layout .provider-card-header {
@@ -566,6 +721,67 @@
 .profile-layout .tag {
   border-radius: 4px;
   box-shadow: none;
+}
+
+/* A credential is one responsive form row: status, field, and actions. The
+ * label/key pair stays with its input so the grid never creates implicit rows. */
+.config-layout .credential-row-form {
+  grid-template-columns: minmax(118px, max-content) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 16px;
+  border-color: var(--configuration-rule);
+}
+
+.config-layout .credential-row-status {
+  min-width: 0;
+  max-width: 100%;
+  border-radius: 4px;
+  justify-self: start;
+  white-space: normal;
+}
+
+.config-layout .credential-row-field-group {
+  min-width: 0;
+  gap: 0;
+}
+
+.config-layout .credential-row-field {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(176px, 0.65fr) minmax(240px, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.config-layout .credential-row-identity,
+.config-layout .credential-row-field input {
+  min-width: 0;
+}
+
+.config-layout .credential-row-identity {
+  gap: 3px;
+}
+
+.config-layout .credential-row-key {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.config-layout .credential-row-actions {
+  display: flex;
+  min-width: 144px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.config-layout .credential-row-actions > button {
+  min-width: 68px;
+}
+
+.config-layout .credential-row-form .status-line {
+  grid-column: 2 / -1;
 }
 
 .config-layout .model-selection-list {
@@ -597,9 +813,9 @@
 }
 
 .config-layout .provider-choice:has(input:checked) {
-  border-color: var(--foreground);
+  border-color: var(--primary);
   background: var(--configuration-surface);
-  box-shadow: inset 2px 0 0 var(--foreground);
+  box-shadow: inset 2px 0 0 var(--primary);
 }
 
 /* Discovery ---------------------------------------------------------------- */
@@ -608,7 +824,8 @@
   gap: 22px;
 }
 
-.discovery-workspace > .card {
+.discovery-workspace > .card,
+.discovery-workspace > .configuration-section {
   overflow: hidden;
   margin: 0;
   border-color: var(--configuration-rule);
@@ -693,7 +910,7 @@
 }
 
 .discovery-workspace .discovery-tab-list [role="tab"][data-active] {
-  border-color: var(--foreground);
+  border-color: var(--primary);
   background: transparent;
   color: var(--foreground);
 }
@@ -811,6 +1028,20 @@
   box-shadow: none;
 }
 
+.profile-layout input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+.profile-layout select:focus-visible,
+.profile-layout textarea:focus-visible,
+.config-layout input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+.config-layout select:focus-visible,
+.config-layout textarea:focus-visible,
+.discovery-workspace input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+.discovery-workspace select:focus-visible,
+.discovery-workspace textarea:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 18%, transparent);
+  outline: none;
+}
+
 .profile-layout select,
 .config-layout select,
 .discovery-workspace select {
@@ -830,7 +1061,7 @@
 .config-layout input[type="radio"],
 .discovery-workspace input[type="checkbox"],
 .discovery-workspace input[type="radio"] {
-  accent-color: var(--foreground);
+  accent-color: var(--primary);
 }
 
 @media (max-width: 1080px) {
@@ -861,6 +1092,16 @@
 
   .config-layout .model-selection-list .provider-card:first-child {
     border-top: 0;
+  }
+
+  .config-layout .credential-row-form {
+    grid-template-columns: minmax(118px, max-content) minmax(0, 1fr);
+  }
+
+  .config-layout .credential-row-actions {
+    grid-column: 2;
+    min-width: 0;
+    justify-content: flex-start;
   }
 }
 
@@ -897,9 +1138,13 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .configuration-section > .configuration-section__trigger {
+  .configuration-section__trigger {
     min-height: 0;
-    padding-block: 14px;
+    padding: 14px 16px;
+  }
+
+  .configuration-section__actions {
+    padding-right: 16px;
   }
 
   .resume-template-controls {
@@ -915,12 +1160,37 @@
   }
 
   .config-layout .settings-tabs {
-    overflow-x: auto;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
   }
 
   .config-layout .settings-tabs .tab {
-    flex: 0 0 auto;
+    min-width: min(140px, 100%);
+    flex: 1 1 140px;
+    text-align: center;
+  }
+
+  .config-layout .credential-row-form {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .config-layout .credential-row-field {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .config-layout .credential-row-actions,
+  .config-layout .credential-row-form .status-line {
+    grid-column: 1;
+  }
+
+  .config-layout .credential-row-actions {
+    width: 100%;
+  }
+
+  .config-layout .credential-row-actions > button {
+    flex: 1 1 96px;
   }
 
   .discovery-workspace > .card > .card-hd,

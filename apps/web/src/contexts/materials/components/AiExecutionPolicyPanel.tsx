@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
 import {
   useProviderModelCatalogQuery,
   useSettingsPolicyQuery,
@@ -83,7 +84,9 @@ export function AiExecutionPolicyPanel() {
 function ModelSelectControl({ name, label, models, value, readOnly, help, onChange }: { name: "generatorPrimary" | "generatorFallback" | "tailoringJudgeModel"; label: string; models: Array<{ value: string; label: string }>; value: string; readOnly: boolean; help: string; onChange: (value: string) => void }) {
   const options = value && !models.some((model) => model.value === value) ? [{ value, label: `${value} — saved` }, ...models] : models;
   const helpId = `ai-policy-${name}-help`;
-  return <div className="field"><label htmlFor={`ai-policy-${name}`}>{label}</label><select id={`ai-policy-${name}`} name={name} disabled={readOnly} aria-describedby={helpId} value={value} onChange={(event) => onChange(event.target.value)}><option value="">Provider/default policy</option>{options.map((model) => <option key={model.value} value={model.value}>{model.label}</option>)}</select><small id={helpId}>{help}</small></div>;
+  const defaultValue = `__${name}-default__`;
+  const items = [{ value: defaultValue, label: "Provider/default policy" }, ...options];
+  return <div className="field"><label htmlFor={`ai-policy-${name}`}>{label}</label><Select name={name} disabled={readOnly} items={items} value={value || defaultValue} onValueChange={(nextValue) => { if (nextValue !== null) onChange(nextValue === defaultValue ? "" : nextValue); }}><SelectTrigger id={`ai-policy-${name}`} aria-label={label} aria-describedby={helpId} className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{items.map((model) => <SelectItem key={model.value} value={model.value}>{model.label}</SelectItem>)}</SelectGroup></SelectContent></Select><small id={helpId}>{help}</small></div>;
 }
 
 function context(source: "persisted" | "default", activation: string): string {

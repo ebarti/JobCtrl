@@ -24,8 +24,8 @@
   width: 38px;
   height: 38px;
   border-radius: 6px;
-  background: var(--foreground);
-  color: var(--card);
+  background: var(--primary);
+  color: var(--primary-foreground);
   font-size: 13px;
   font-weight: 760;
   letter-spacing: -0.04em;
@@ -79,15 +79,15 @@
 }
 
 .demo-consent-links a {
-  color: var(--foreground);
+  color: var(--primary);
   font-weight: 620;
-  text-decoration-color: color-mix(in oklch, var(--foreground) 35%, transparent);
+  text-decoration-color: color-mix(in oklch, var(--primary) 35%, transparent);
   text-underline-offset: 3px;
 }
 
 .demo-consent-links a:hover,
 .demo-consent-links a:focus-visible {
-  text-decoration-color: var(--foreground);
+  text-decoration-color: var(--primary);
 }
 
 .demo-consent-actions {
@@ -110,13 +110,13 @@
 }
 
 .demo-consent-accept {
-  border-color: var(--foreground);
-  background: var(--foreground);
-  color: var(--card);
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
 .demo-consent-accept:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--foreground) 88%, var(--card));
+  background: color-mix(in oklch, var(--primary) 90%, var(--card));
 }
 
 .demo-consent-decline {

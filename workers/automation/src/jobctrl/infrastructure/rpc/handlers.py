@@ -311,30 +311,55 @@ def _browser_status_payload(status: Any) -> dict[str, object]:
     }
 
 
+def _browser_capabilities_payload() -> dict[str, object]:
+    """Serialize capability state and transient candidates without local paths."""
+
+    from jobctrl.browser_capabilities import detect_supported_browsers, list_browser_capabilities
+
+    return {
+        "capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()],
+        "detectedBrowsers": [
+            {"id": browser.id, "label": browser.label}
+            for browser in detect_supported_browsers()
+        ],
+    }
+
+
 def browser_capabilities_list(params: dict[str, Any]) -> dict[str, object]:
-    """List safe capability status without probing for or adopting host browsers."""
+    """List safe capability status and candidates without adopting host browsers."""
 
     if params:
         raise invalid_params("browser_capabilities_list does not accept parameters")
-    from jobctrl.browser_capabilities import list_browser_capabilities
-
-    return {"capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()]}
+    return _browser_capabilities_payload()
 
 
 def browser_capability_enable(params: dict[str, Any]) -> dict[str, object]:
-    """Adopt only the executable explicitly supplied for one optional capability."""
+    """Adopt one explicitly selected manual path or transient detected candidate."""
 
     capability_id = str(_require(params, "capabilityId"))
-    executable_path = str(_require(params, "executablePath"))
-    from jobctrl.browser_capabilities import BrowserCapabilityError, enable_system_browser_capability
+    has_executable_path = "executablePath" in params
+    has_detected_browser_id = "detectedBrowserId" in params
+    if has_executable_path == has_detected_browser_id:
+        raise invalid_params("Select exactly one browser executable or detected browser.")
+    from jobctrl.browser_capabilities import (
+        BrowserCapabilityError,
+        DetectedBrowserUnavailableError,
+        enable_detected_browser_capability,
+        enable_system_browser_capability,
+    )
 
     try:
-        enable_system_browser_capability(capability_id, executable_path)
+        if has_detected_browser_id:
+            detected_browser_id = str(_require(params, "detectedBrowserId"))
+            enable_detected_browser_capability(capability_id, detected_browser_id)
+        else:
+            executable_path = str(_require(params, "executablePath"))
+            enable_system_browser_capability(capability_id, executable_path)
+    except DetectedBrowserUnavailableError as exc:
+        raise invalid_params("The selected detected browser is no longer available.") from exc
     except BrowserCapabilityError as exc:
         raise invalid_params("The selected browser capability could not be enabled.") from exc
-    from jobctrl.browser_capabilities import list_browser_capabilities
-
-    return {"capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()]}
+    return _browser_capabilities_payload()
 
 
 def browser_capability_disable(params: dict[str, Any]) -> dict[str, object]:
@@ -347,9 +372,7 @@ def browser_capability_disable(params: dict[str, Any]) -> dict[str, object]:
         disable_browser_capability(capability_id)
     except BrowserCapabilityError as exc:
         raise invalid_params("The selected browser capability could not be disabled.") from exc
-    from jobctrl.browser_capabilities import list_browser_capabilities
-
-    return {"capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()]}
+    return _browser_capabilities_payload()
 
 
 def browser_profile_copy(params: dict[str, Any]) -> dict[str, object]:
@@ -370,9 +393,7 @@ def browser_profile_copy(params: dict[str, Any]) -> dict[str, object]:
         )
     except BrowserCapabilityError as exc:
         raise invalid_params("The selected browser profile could not be copied.") from exc
-    from jobctrl.browser_capabilities import list_browser_capabilities
-
-    return {"capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()]}
+    return _browser_capabilities_payload()
 
 
 def refresh_compensation(params: dict[str, Any]) -> WorkflowStartSpec:

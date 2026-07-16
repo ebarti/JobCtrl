@@ -273,9 +273,9 @@ orchestration (see Section 9.4).
 
 **Shared contract:** Both sides import the same domain event definitions. The
 authority is a **plain TypeScript discriminated union** in
-`packages/domain-types/src/events/index.ts` (`DomainEventUnion`, currently 68
-event types enumerated in `DOMAIN_EVENT_TYPES`, guarded by a compile-time
-exhaustiveness check), mirrored byte-for-byte by the Python registry in
+`packages/domain-types/src/events/index.ts` (`DomainEventUnion`, enumerated in
+the canonical `DOMAIN_EVENT_TYPES` runtime registry and guarded by a
+compile-time exhaustiveness check), mirrored byte-for-byte by the Python registry in
 `workers/automation/src/jobctrl/domain/events/__init__.py`. This is **not**
 Zod and does **not** live in `packages/contracts`. At the SSE boundary the
 frontend validates each frame by set-membership on the known event types plus

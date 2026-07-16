@@ -9,6 +9,15 @@ import { buildTestPorts } from "../../../test/testPorts.js";
 import { renderWithProviders } from "../../../test/render.js";
 import { ProfileForm } from "./profile-form.js";
 
+async function openExperienceEntries(user: ReturnType<typeof userEvent.setup>) {
+  const disclosure = await screen.findByRole("button", {
+    name: /^Experience entries\b/i,
+  });
+  if (disclosure.getAttribute("aria-expanded") === "false") {
+    await user.click(disclosure);
+  }
+}
+
 describe("<ProfileForm>", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -61,6 +70,7 @@ describe("<ProfileForm>", () => {
       withRouter: true,
     });
 
+    await openExperienceEntries(user);
     await user.click(await screen.findByRole("button", { name: /add bullet/i }));
 
     expect(screen.getByLabelText("Bullet 3")).toBeInTheDocument();
@@ -72,7 +82,8 @@ describe("<ProfileForm>", () => {
       withRouter: true,
     });
 
-    await user.click(await screen.findByLabelText("Present"));
+    await openExperienceEntries(user);
+    await user.click(await screen.findByRole("checkbox", { name: "Present" }));
 
     expect(screen.queryByLabelText("End month")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("End year")).not.toBeInTheDocument();
@@ -86,7 +97,11 @@ describe("<ProfileForm>", () => {
       withRouter: true,
     });
 
-    await user.selectOptions(await screen.findByLabelText("End year"), "2021");
+    await openExperienceEntries(user);
+    await user.click(
+      await screen.findByRole("combobox", { name: "End year" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "2021" }));
     await user.click(screen.getByRole("button", { name: /^save all$/i }));
 
     expect(await screen.findAllByText(/End date must be after start date/i)).not.toHaveLength(0);
@@ -142,8 +157,8 @@ describe("<ProfileForm>", () => {
     expect(screen.getByLabelText("Target location 1")).toBeInTheDocument();
     expect(screen.getByText("Locations and work models")).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Target work model 1" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Remote")).toBeInTheDocument();
-    expect(screen.getByLabelText("Hybrid")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Remote" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Hybrid" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Application configuration" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
   });
@@ -329,11 +344,11 @@ describe("<ProfileForm>", () => {
     const user = userEvent.setup();
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />);
 
-    await user.click(await screen.findByLabelText("Remote"));
-    await user.click(screen.getByLabelText("Hybrid"));
+    await user.click(await screen.findByRole("checkbox", { name: "Remote" }));
+    await user.click(screen.getByRole("checkbox", { name: "Hybrid" }));
 
-    expect(screen.getByLabelText("Remote")).toBeChecked();
-    expect(screen.getByLabelText("Hybrid")).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Remote" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Hybrid" })).toBeChecked();
   });
 
   it("saves edited compensation number fields as profile strings", async () => {

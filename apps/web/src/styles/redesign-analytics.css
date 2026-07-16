@@ -115,7 +115,7 @@
 }
 
 .analytics-view .analytics-dimension-toggle [data-slot="toggle-group-item"][data-state="on"]::after {
-  background: var(--foreground);
+  background: var(--primary);
 }
 
 .analytics-dimension-select {

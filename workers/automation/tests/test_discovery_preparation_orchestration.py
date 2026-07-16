@@ -196,14 +196,18 @@ def test_per_job_handoff_id_converges_with_fanout_and_forks_on_reenrichment(
     monkeypatch.setattr(preparation, "_latest_source_event_id", lambda _conn, _url: "event-A")
 
     requested: list[str] = []
+    requested_payloads: list[JobPreparationInput] = []
 
     async def fake_starter(spec):
         requested.append(spec.workflow_id)
+        requested_payloads.append(spec.args[0])
         return SimpleNamespace(id=spec.workflow_id)
 
     job_url = "https://example.com/job/x"
     preparation.start_job_preparation_workflow(job_url, workflow_starter=fake_starter)
     handoff_id = requested[-1]
+    assert requested_payloads[-1].discovery_execution is None
+    assert requested_payloads[-1].discovery_cohort_kind is None
 
     # Identical to what a SCORE_JOB fan-out derive produces for the same job.
     fanout_spec = preparation.build_preparation_workflow_spec(

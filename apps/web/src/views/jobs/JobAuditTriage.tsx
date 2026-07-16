@@ -23,7 +23,7 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
         <div className="job-audit-triage-column">
           <header className="job-audit-triage-heading">
             <span className="job-audit-triage-kicker">Assessment</span>
-            <h3>Fit & evidence</h3>
+            <h2>Fit & evidence</h2>
           </header>
           <dl className="job-audit-metrics" aria-label="Ranking summary">
             <Metric label="Fit score" value={`${job.fitScore ?? "-"}/10`} />
@@ -162,7 +162,7 @@ function TagGroup({
       <span>{label}</span>
       <div>
         {values.map((value) => (
-          <StatusBadge tone={tone} key={value}>
+          <StatusBadge icon={false} tone={tone} key={value}>
             {value}
           </StatusBadge>
         ))}

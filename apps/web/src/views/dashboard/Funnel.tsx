@@ -1,3 +1,4 @@
+import { IconBan } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 
 import type { DashboardSummary, Stage } from "../../contexts/operations/types.js";
@@ -118,7 +119,9 @@ export function Funnel({ summary }: FunnelProps) {
                 <StatusBadge tone="danger">{stage.failed} failed</StatusBadge>
               ) : null}
               {stage.blocked ? (
-                <StatusBadge tone="warn">{stage.blocked} blocked</StatusBadge>
+                <StatusBadge icon={IconBan} tone="warn">
+                  {stage.blocked} blocked
+                </StatusBadge>
               ) : null}
               {stage.running ? <span>{stage.running} running</span> : null}
               <span>{stage.pending} pending</span>

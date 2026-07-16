@@ -8,10 +8,10 @@ accessibility (a11y), and Playwright end-to-end (E2E). Part of the
 in, or which checks run in CI versus locally.
 
 The frontend ships a pyramid that matches the architecture's seams. Today
-it comprises **220 colocated `*.test.ts(x)`** under `apps/web/src`
-(100 `.test.ts` + 120 `.test.tsx`, of which **29** are colocated
+it comprises **294 colocated `*.test.ts(x)`** under `apps/web/src`
+(124 `.test.ts` + 170 `.test.tsx`, of which **37** are colocated
 `*.a11y.test.tsx`), **11 type-level `*.test-d.ts`** under `apps/web/test/types`,
-**18 Playwright `*.spec.ts`** under `apps/web/e2e/tests`, and **112
+**19 Playwright `*.spec.ts`** under `apps/web/e2e/tests`, and **119
 `*.stories.tsx`** Storybook story files.
 
 ## 10.1 The Pyramid
@@ -77,7 +77,7 @@ These tests do not mount React components.
   this layer by asserting URL-owned deep links and the explicit
   "mark reviewed" acknowledge action.
 - **Playwright E2E:** **smoke flows only** — navigate the dashboard,
-  filter a jobs list, open a drawer, trigger a dry-run apply. Run against
+  filter a jobs list, open a detail workspace, trigger a dry-run apply. Run against
   a real `apps/api` + a seeded SQLite DB.
 
 **Why both:** hook tests with MSW are fast (sub-second) and run on every
@@ -106,8 +106,8 @@ critical flows:
 
 1. **Dashboard load** → KPIs render → click a KPI → navigate to filtered
    jobs view → row count matches.
-2. **Job detail drawer** → click a row → drawer opens with score, stages,
-   artifacts → close → drawer closes; URL preserves the filter.
+2. **Job Detail workspace** → click a row → the full route workspace opens with
+   score, stages, artifacts, and a back action; returning preserves the URL filter.
 3. **Soft-delete + restore** → bulk-select 3 jobs → delete → confirm
    removal from active list → switch to "deleted" tab → restore → confirm
    re-appearance.
@@ -116,10 +116,10 @@ critical flows:
    rendered in the Profile Plate editor.
 5. **Resume import wizard** → upload a PDF → preview parsed draft → confirm
    → wizard exits to profile editor; profile reflects imported sections.
-6. **Generate materials** → click "Generate" on a job → drawer shows
-   "queued" → simulate `ResumeApproved` event in the seed → drawer shows
-   approved status.
-7. **Dry-run apply** → click "Dry run" → apply-run drawer opens with live
+6. **Generate materials** → click "Generate" on a job → its detail workspace
+   shows "queued" → simulate `ResumeApproved` event in the seed → the workspace
+   shows approved status.
+7. **Dry-run apply** → click "Dry run" → the apply-run route workspace opens with live
    timeline → simulated `DryRunComplete` event closes the run.
 8. **Settings update** → change a setting → confirm persistence.
 
@@ -170,9 +170,16 @@ pre-existing production defect may set `parameters.a11y.test = "off"` only
 with a matching entry in the "Frontend Accessibility Backlog" in
 `docs/backlog.md`, which owns the live deferral inventory.
 
-## 10.8 What We Do NOT Test
+## 10.8 Primitive Ownership And Non-Goals
 
-- **shadcn/ui primitive internals** — those are upstream-tested.
+- **Base UI internals** are upstream-tested, but the copied shadcn/Rhea
+  wrappers are JobCtrl-owned code and are not exempt. Focused wrapper tests
+  cover the public interaction, keyboard, accessibility, styling, and
+  composition contracts used by the product.
+- **Primitive-boundary drift** is covered by
+  `shared/ui/base-ui-migration-boundary.test.ts`: no direct `@radix-ui/*`
+  imports, no raw `<select>` bypasses, and the Base UI portal root keeps its
+  isolated stacking context. The empty Radix allowlist is intentional.
 - **TanStack library internals** — same.
 - **Visual pixel-perfectness** beyond Storybook snapshots.
 - **Performance** — bundle-size and runtime perf budgets are CI gates,

@@ -6,6 +6,14 @@ import {
 import { useForm } from "@tanstack/react-form";
 import type { JSX } from "react";
 
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../../shared/ui/select.js";
 import { useLogSendMutation } from "../hooks/useLogSendMutation.js";
 
 export interface SendLogFormProps {
@@ -41,9 +49,13 @@ export function SendLogForm({
   onLogged,
 }: SendLogFormProps): JSX.Element {
   const mutation = useLogSendMutation(threadId, contactId, jobId);
-  const mutationError = mutation.error instanceof Error ? mutation.error.message : "";
+  const mutationError =
+    mutation.error instanceof Error ? mutation.error.message : "";
   const form = useForm({
-    defaultValues: { channel: "email" as OutreachSendChannel, sentAt: todayIsoDate() },
+    defaultValues: {
+      channel: "email" as OutreachSendChannel,
+      sentAt: todayIsoDate(),
+    },
     validators: {
       onSubmit: ({ value }) => {
         const result = LogOutreachSendRequestSchema.safeParse({
@@ -51,7 +63,9 @@ export function SendLogForm({
           channel: value.channel,
           sentAt: value.sentAt,
         });
-        return result.success ? undefined : (result.error.issues[0]?.message ?? "Invalid send log.");
+        return result.success
+          ? undefined
+          : (result.error.issues[0]?.message ?? "Invalid send log.");
       },
     },
     onSubmit: async ({ value }) => {
@@ -78,24 +92,42 @@ export function SendLogForm({
       }}
     >
       <p className="muted send-log-note">
-        You send this yourself through your own channel; JobCtrl only records that you sent it.
+        You send this yourself through your own channel; JobCtrl only records
+        that you sent it.
       </p>
       <form.Field name="channel">
         {(field) => (
           <label className="field">
             <span>Channel</span>
-            <select
+            <Select
+              items={OUTREACH_SEND_CHANNELS.map((channel) => ({
+                label: SEND_CHANNEL_LABELS[channel],
+                value: channel,
+              }))}
               name={field.name}
               value={field.state.value}
-              onBlur={field.handleBlur}
-              onChange={(event) => field.handleChange(event.target.value as OutreachSendChannel)}
+              onValueChange={(value) => {
+                if (value !== null)
+                  field.handleChange(value as OutreachSendChannel);
+              }}
             >
-              {OUTREACH_SEND_CHANNELS.map((channel) => (
-                <option key={channel} value={channel}>
-                  {SEND_CHANNEL_LABELS[channel]}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger
+                aria-label="Channel"
+                className="w-full"
+                onBlur={field.handleBlur}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {OUTREACH_SEND_CHANNELS.map((channel) => (
+                    <SelectItem key={channel} value={channel}>
+                      {SEND_CHANNEL_LABELS[channel]}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </label>
         )}
       </form.Field>
@@ -112,21 +144,31 @@ export function SendLogForm({
           </label>
         )}
       </form.Field>
-      {mutationError ? <div className="banner inline">{mutationError}</div> : null}
+      {mutationError ? (
+        <div className="banner inline">{mutationError}</div>
+      ) : null}
       <form.Subscribe selector={(state) => state.errors}>
         {(errors) => {
           const message = errors
             .flat()
             .filter((entry): entry is string => typeof entry === "string")
             .at(0);
-          return message ? <div className="banner inline">{message}</div> : null;
+          return message ? (
+            <div className="banner inline">{message}</div>
+          ) : null;
         }}
       </form.Subscribe>
       <form.Subscribe selector={(state) => state.isSubmitting}>
         {(isSubmitting) => (
           <div className="form-actions">
-            <button type="submit" className="tab on" disabled={mutation.isPending || isSubmitting}>
-              {mutation.isPending || isSubmitting ? "recording…" : "record send"}
+            <button
+              type="submit"
+              className="tab on"
+              disabled={mutation.isPending || isSubmitting}
+            >
+              {mutation.isPending || isSubmitting
+                ? "recording…"
+                : "record send"}
             </button>
           </div>
         )}

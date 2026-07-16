@@ -109,7 +109,6 @@ async function replaceJobs(
 const READ_CASES = [
   ["health", (api: ApiClientPort) => api.health()],
   ["dashboardSummary", (api: ApiClientPort) => api.dashboardSummary()],
-  ["pipelineOperations", (api: ApiClientPort) => api.pipelineOperations()],
   ["outcomeAnalytics", (api: ApiClientPort) => api.outcomeAnalytics()],
   ["digest", (api: ApiClientPort) => api.digest()],
   ["activity", (api: ApiClientPort) => api.activity()],

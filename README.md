@@ -16,7 +16,7 @@ on your machine.
 ![Source Python 3.11+](https://img.shields.io/badge/source-Python%203.11%2B-3776AB)
 ![Source Node 20.19+](https://img.shields.io/badge/source-Node%2020.19%2B-339933)
 
-<img src="docs/assets/screenshots/dashboard.png" alt="JobCtrl dashboard with pipeline, spend, and review queues (synthetic data)" width="880" />
+<img src="docs/assets/screenshots/dashboard.png" alt="JobCtrl dashboard with pipeline health, active work, review queues, and recent activity (synthetic data)" width="880" />
 
 *Every screenshot in this repo is generated from synthetic sample data —
 no real people, resumes, or applications.*
@@ -119,15 +119,15 @@ Full first-run guide: [jobctrl.dev/user/getting-started](https://jobctrl.dev/use
 
 | | |
 | --- | --- |
-| [<img src="docs/assets/screenshots/jobs.png" alt="Jobs table with fit scores, stages, and filters (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) | [<img src="docs/assets/screenshots/apply-review.png" alt="Apply Review editing a tailored resume with audit evidence (synthetic data)" width="440" />](docs/assets/screenshots/apply-review.png) |
-| **Jobs** — scored, filterable, every score inspectable | **Apply Review** — rich-text edit and approve the exact resume that ships |
-| [<img src="docs/assets/screenshots/job-detail.png" alt="Job detail with requirement-level fit evidence (synthetic data)" width="440" />](docs/assets/screenshots/job-detail.png) | [<img src="docs/assets/screenshots/runs.png" alt="Runs page with durable workflow history (synthetic data)" width="440" />](docs/assets/screenshots/runs.png) |
-| **Job detail** — requirement-by-requirement fit evidence | **Runs** — durable workflows you can watch, retry, and audit |
+| [<img src="docs/assets/screenshots/pipelines.png" alt="Pipelines workspace with launch controls and an operational stage ledger (synthetic data)" width="440" />](docs/assets/screenshots/pipelines.png) | [<img src="docs/assets/screenshots/jobs.png" alt="Jobs table with fit scores, stages, and filters (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) |
+| **Pipelines** — launch bounded work and inspect cohorts, backlog, capacity, ETA, and active tasks | **Jobs** — scored, filterable, and ready for bulk or individual triage |
+| [<img src="docs/assets/screenshots/job-detail.png" alt="Route-level Job Detail workspace with requirement evidence and audit history (synthetic data)" width="440" />](docs/assets/screenshots/job-detail.png) | [<img src="docs/assets/screenshots/apply-review.png" alt="Application Review workspace editing a tailored resume with audit evidence (synthetic data)" width="440" />](docs/assets/screenshots/apply-review.png) |
+| **Job detail** — one bookmarkable workspace for fit, provenance, materials, progress, and history | **Apply Review** — edit and approve the exact resume and evidence binding that ships |
 
 Full tour with captions: [Product Tour](https://jobctrl.dev/user/screenshots).
 Documentation screenshots must be generated from synthetic data — refresh
 them with `pnpm docs:screenshots`
-([how it works](https://jobctrl.dev/local-development)).
+([how it works](https://jobctrl.dev/local-development#documentation-screenshots)).
 
 ## How It Compares
 
@@ -154,10 +154,14 @@ evidence, qualifications, and the complete capability matrix.
   by default and uses the configured cron only after you enable it.
 - Enrich postings with full descriptions, canonical posting URLs, and apply
   URLs.
-- Fetch politely: every discovery/enrichment request routes through one
+- Fetch politely: anonymous discovery/enrichment requests route through one
   gateway that honors `robots.txt`, paces each host, bounds each run's request
-  budget, and sends an honest `User-Agent` that never impersonates a browser
-  (details in [Local Data And Safety](#local-data-and-safety)).
+  budget, and sends an honest `User-Agent` that never impersonates a browser.
+  A separately enabled, explicitly consented authenticated LinkedIn profile may
+  recover the full posting and external application URL without applying the
+  anonymous robots verdict; public-destination checks, host pacing, run budgets,
+  audit history, and the no-submission boundary still apply (details in
+  [Local Data And Safety](#local-data-and-safety)).
 - Capture a current browser job page through the optional local browser
   extension, which feeds the existing manual-capture import path.
 - Score jobs as an applicant-side triage aid with auditable evidence — never
@@ -174,8 +178,13 @@ evidence, qualifications, and the complete capability matrix.
   been validated through real-user usage.
 - Edit resume PDF style templates in Preferences, choose a default template,
   and override the template per job without modifying candidate profile data.
-- Track pipeline state, failures, retries, workflow runs, artifacts, and apply
-  history in a local web UI.
+- Launch bounded Discover and Apply work from Pipelines, then inspect the same
+  workspace's operational ledger: current-execution and execution-sweep cohorts,
+  unrelated global backlog, source-family intake versus reconciliation,
+  per-stage outcomes, ETA, worker capacity, approximate task-queue pressure,
+  read-model freshness, and active work. Runs keeps the durable workflow
+  history; Jobs and route-level detail workspaces keep record-specific evidence
+  and actions adjacent.
 - Keep recruiter, hiring-manager, and referrer contact records per company or
   application, each fact carrying its provenance, with CSV import. Draft
   truthful, reviewable outreach messages under the same anti-fabrication gates
@@ -369,8 +378,8 @@ not make a manually copied or force-added private file safe to publish. Use
 [Data, Privacy & Safety](https://jobctrl.dev/user/data-and-safety) and
 [SECURITY.md](SECURITY.md).
 
-Discovery and enrichment fetch politely: every request runs through one
-gateway that honors `robots.txt` — failing closed on an inconclusive fetch
+Anonymous discovery and enrichment fetch politely: each request runs through
+one gateway that honors `robots.txt` — failing closed on an inconclusive fetch
 (`5xx` or timeout) but failing open with a warning when the host has no
 robots endpoint at all (DNS failure or refused connection) — paces each host,
 bounds each run's request budget, and sends an honest `User-Agent`
@@ -379,8 +388,13 @@ review or change that identity in **Discovery → Runtime**; the saved policy is
 held in SQLite and `jobctrl doctor` prints the effective value. Direct targets,
 redirects, and Playwright subrequests must also be public HTTP(S) destinations;
 loopback, private, link-local, metadata-service, and file URLs are blocked
-before content extraction or LLM enrichment. JobCtrl never bypasses login,
-paywall, CAPTCHA, rate-limit, or bot-control gates.
+before content extraction or LLM enrichment. JobCtrl does not evade login,
+paywall, CAPTCHA, rate-limit, or bot-control gates. The one explicit carve-out
+is owner-authenticated LinkedIn recovery: after the capability is enabled and a
+profile copy is separately consented, JobCtrl may use that existing session to
+recover the full posting and external application URL without applying the
+anonymous robots verdict. It retains public-route validation, pacing, request
+budgets, and audit history, and it cannot submit an application.
 
 ### Back Up And Restore
 
@@ -434,10 +448,12 @@ fixtures are never a production upgrade path.
    preferences. In Settings, opt into tokenless public Levels.fyi salary pages,
    a licensed Levels.fyi feed, or Glassdoor only when you have the matching
    permitted access.
-3. Run Discover from the UI or CLI, optionally targeting a single source from
-   the Pipelines tab when you want a lighter retry.
+3. Run Discover from Pipelines, optionally targeting one source for a lighter
+   run. Keep the same workspace open to distinguish the selected execution,
+   its execution sweep, and unrelated global backlog while watching capacity,
+   task-queue pressure, freshness, active work, and ETA.
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
-5. Open Evidence from the main nav, Profile, or a job detail drawer to
+5. Open Evidence from the main nav, Profile, or the Job Detail workspace to
    inspect which profile evidence backs generated materials and
    requirement-fit gaps.
 6. Generate or inspect materials and Beta stored interview prep for promising
@@ -451,8 +467,10 @@ fixtures are never a production upgrade path.
    the standing loop; with approval still required it parks unapproved jobs
    for review, and with approval disabled it may submit eligible jobs
    autonomously.
-9. Track progress in Dashboard, Analytics, Jobs, Runs, Artifacts, Evidence,
-   Apply Review, and Debug.
+9. Track progress in Dashboard, Pipelines, Analytics, Jobs, Runs, Artifacts,
+   Evidence, Apply Review, and Debug; open their route-level detail
+   workspaces when you need the complete timeline, payload, provenance, or
+   comparison.
 
 Commands and expected state transitions:
 [Daily Workflow](https://jobctrl.dev/user/normal-flows).
@@ -579,9 +597,12 @@ in `config.json`, defaults to `25`
 surface shows today's estimated spend.
 
 Optional system-browser capabilities and extension pairing are also available
-from **Settings → Browser & extension**. Enabling an authenticated or auto-apply
-browser requires an explicit Chrome/Chromium path; JobCtrl does not auto-detect
-or adopt it. Browser enable/disable and pairing-token rotation are live.
+from **Settings → Browser & extension**. JobCtrl can list supported local
+Chrome/Chromium installations by label, but detection is read-only: it does not
+launch, enable, or persist a browser. Choosing a detected browser and clicking
+Enable explicitly adopts it; an advanced manual executable path remains
+available. Browser enable/disable and pairing-token rotation are live, and
+extension pairing remains separate from browser adoption.
 
 ## Development
 

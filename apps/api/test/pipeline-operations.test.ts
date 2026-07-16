@@ -353,6 +353,7 @@ describe("pipeline operations read model", () => {
     const fixture = createFixture();
     insertExecution(fixture, { status: "succeeded" });
     insertMember(fixture, { key: "eta-current", requiredSteps: ["score"] });
+    insertStageState(fixture, "eta-current", "enrich", "succeeded");
     insertStageState(fixture, "eta-current", "score", "pending");
     insertStep(fixture, { stepKind: "preparation_fanout", itemKey: "terminal", state: "succeeded" });
     insertHeartbeat(fixture, {
@@ -500,6 +501,8 @@ describe("pipeline operations read model", () => {
     insertExecution(fixture, { status: "succeeded" });
     insertMember(fixture, { key: "eta-current-scope", requiredSteps: ["score"] });
     insertMember(fixture, { key: "eta-sweep-scope", cohort: "existing_backlog", requiredSteps: ["score"] });
+    insertStageState(fixture, "eta-current-scope", "enrich", "succeeded");
+    insertStageState(fixture, "eta-sweep-scope", "enrich", "succeeded");
     insertStageState(fixture, "eta-current-scope", "score", "pending");
     insertStageState(fixture, "eta-sweep-scope", "score", "failed", null, null, 1);
     insertStageState(fixture, "eta-global-scope", "score", "pending");

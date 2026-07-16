@@ -7,6 +7,7 @@ import { createJobCtrlApiClient } from "@jobctrl/api-client";
 import {
   CREDENTIAL_VALUE_MAX_LENGTH,
   CredentialKeys,
+  JsonRpcErrorCodes,
   PipelineOperationsSnapshotSchema,
   ProviderConfigurationKeys,
   SecretCredentialKeys,
@@ -6010,6 +6011,48 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("does not reset a retry stage when run-after requires an unavailable worker", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-ignored" }));
+    const jobUrl = "https://example.com/jobs/blocked-tailor";
+    const jobKey = encodeURIComponent(jobUrl);
+    const readPersistedRetryState = () => {
+      const db = new Database(options.dbPath);
+      const stage = db
+        .prepare(
+          `SELECT state, attempt_count, updated_at, error_code, error_message,
+                  retryable, blocked_by_json
+             FROM job_stage_states
+            WHERE job_url = ? AND stage = 'tailor'`,
+        )
+        .get(jobUrl);
+      const eventCount = db
+        .prepare("SELECT COUNT(*) AS count FROM job_events WHERE job_url = ? AND stage = 'tailor'")
+        .get(jobUrl) as { count: number };
+      db.close();
+      return { stage, eventCount: eventCount.count };
+    };
+    const before = readPersistedRetryState();
+    const app = buildApp({
+      ...options,
+      actionDispatcher: dispatch,
+      requireHealthyWorkerForActions: true,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/retry-stage`,
+      payload: { stage: "tailor", runAfter: true, resetAttempts: true, dryRun: true },
+    });
+
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toMatchObject({ ok: false, error: "worker_runtime_unavailable" });
+    expect(readPersistedRetryState()).toEqual(before);
+    expect(before.stage).toMatchObject({ state: "blocked", error_code: "MIN_SCORE" });
+    expect(dispatch).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
   it("resets selected failed jobs through the bulk retry action", async () => {
     const app = buildApp(options);
     const response = await app.inject({
@@ -8776,6 +8819,107 @@ describe("local TypeScript API", () => {
     expect(call).toHaveBeenNthCalledWith(1, "provider_status", {});
     expect(call).toHaveBeenNthCalledWith(2, "provider_verify", { provider: "codex" });
 
+    await app.close();
+  });
+
+  it("lists detected browsers and forwards an explicit detected-browser enable selection", async () => {
+    const browserResult = {
+      capabilities: [
+        {
+          id: "core-browser",
+          status: "ready",
+          detail: "Managed browser is ready.",
+          mutable: false,
+          enabled: true,
+          profileCopyReady: false,
+        },
+        {
+          id: "auto-apply-browser",
+          status: "disabled",
+          detail: "Disabled by default.",
+          mutable: true,
+          enabled: false,
+          profileCopyReady: false,
+        },
+        {
+          id: "authenticated-linkedin-browser",
+          status: "disabled",
+          detail: "Disabled by default.",
+          mutable: true,
+          enabled: false,
+          profileCopyReady: false,
+        },
+      ],
+      detectedBrowsers: [
+        { id: "google-chrome", label: "Google Chrome" },
+        { id: "chromium", label: "Chromium" },
+      ],
+    };
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      result: browserResult,
+    }));
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call, close: vi.fn(async () => undefined) },
+    });
+
+    const listed = await app.inject({ method: "GET", url: "/v1/browser-capabilities" });
+    const enabled = await app.inject({
+      method: "POST",
+      url: "/v1/browser-capabilities/auto-apply-browser/enable",
+      payload: { detectedBrowserId: "google-chrome" },
+    });
+    const manuallyEnabled = await app.inject({
+      method: "POST",
+      url: "/v1/browser-capabilities/auto-apply-browser/enable",
+      payload: { executablePath: "/Applications/Chromium" },
+    });
+
+    expect(listed.statusCode, listed.body).toBe(200);
+    expect(listed.json()).toMatchObject({ ok: true, detectedBrowsers: browserResult.detectedBrowsers });
+    expect(enabled.statusCode, enabled.body).toBe(200);
+    expect(manuallyEnabled.statusCode, manuallyEnabled.body).toBe(200);
+    expect(call).toHaveBeenNthCalledWith(1, "browser_capabilities_list", {});
+    expect(call).toHaveBeenNthCalledWith(2, "browser_capability_enable", {
+      capabilityId: "auto-apply-browser",
+      detectedBrowserId: "google-chrome",
+    });
+    expect(call).toHaveBeenNthCalledWith(3, "browser_capability_enable", {
+      capabilityId: "auto-apply-browser",
+      executablePath: "/Applications/Chromium",
+    });
+
+    await app.close();
+  });
+
+  it("returns the worker's sanitized detected-browser validation reason", async () => {
+    const call = vi.fn<JsonRpcDispatcher["call"]>(async () => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      error: {
+        code: JsonRpcErrorCodes.InvalidParams,
+        message: "The selected detected browser is no longer available.",
+      },
+    }));
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call, close: vi.fn(async () => undefined) },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/browser-capabilities/auto-apply-browser/enable",
+      payload: { detectedBrowserId: "google-chrome" },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toEqual({
+      ok: false,
+      error: "browser_capability_failed",
+      message: "The selected detected browser is no longer available.",
+    });
     await app.close();
   });
 

@@ -391,16 +391,31 @@
 }
 
 .evidence-entry-meta {
+  align-items: center;
+  gap: 8px;
   justify-content: flex-end;
 }
 
-.evidence-entry-meta .tag,
-.evidence-tags .tag,
-.evidence-chip-list .tag {
-  border: 0;
-  border-radius: 3px;
-  padding: 2px 5px;
-  font-size: 9px;
+.evidence-tags {
+  align-items: center;
+  gap: 10px;
+}
+
+.evidence-meta-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 560;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.evidence-meta-label svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
 }
 
 .evidence-detail {
@@ -418,6 +433,46 @@
 .evidence-story {
   padding: 18px 24px;
   border-bottom: 1px solid var(--border);
+}
+
+.evidence-attribute-list {
+  display: grid;
+  gap: 8px;
+}
+
+.evidence-attribute-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.evidence-attribute-row > span {
+  color: var(--muted-foreground);
+  font-size: 9px;
+  font-weight: 680;
+  letter-spacing: 0.04em;
+  line-height: 1.55;
+  text-transform: uppercase;
+}
+
+.evidence-map-view .evidence-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+}
+
+.evidence-inline-value {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 520;
+  line-height: 1.5;
+}
+
+.evidence-inline-value + .evidence-inline-value::before {
+  margin: 0 7px;
+  color: var(--border);
+  content: "·";
 }
 
 .evidence-detail > section:last-child {
@@ -490,10 +545,8 @@
   background: color-mix(in oklch, var(--muted) 60%, var(--card));
 }
 
-.evidence-gap-list .tag {
+.evidence-gap-list [data-slot="status-badge"] {
   width: fit-content;
-  border: 0;
-  border-radius: 3px;
 }
 
 /* Run timeline route uses the same dense event grammar as run drawers. */

@@ -7,7 +7,7 @@ import { useForm } from "@tanstack/react-form";
 import { useEffect, useRef, useState } from "react";
 
 import { AutosaveUndoController } from "../../../shared/ui/autosave-undo-controller.js";
-import { CardHeader } from "../../../shared/ui/card-header.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { useDiscoverySettingsQuery } from "../../operations/hooks/useDiscoverySettingsQuery.js";
 import { useUpdateDiscoverySettingsMutation } from "../hooks/useUpdateDiscoverySettingsMutation.js";
@@ -29,15 +29,19 @@ export function DiscoveryAutomationSettingsPanel() {
   const settingsQuery = useDiscoverySettingsQuery();
 
   return (
-    <section className="card full discovery-automation-settings">
-      <CardHeader title="Automation settings" meta="supervision, scoring, and apply" />
+    <DisclosureSection
+      className="discovery-automation-settings"
+      collapsedSummary="SQLite-backed scoring and apply controls"
+      description="Scoring threshold and supervised apply policy"
+      title="Automation settings"
+    >
       {settingsQuery.error ? <div className="banner inline">{settingsQuery.error.message}</div> : null}
       {settingsQuery.data ? (
         <DiscoveryAutomationSettingsForm initial={settingsQuery.data} />
       ) : (
         <Empty title="Loading automation settings." />
       )}
-    </section>
+    </DisclosureSection>
   );
 }
 

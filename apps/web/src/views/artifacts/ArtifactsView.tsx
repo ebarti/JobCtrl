@@ -1,5 +1,6 @@
 import type { ArtifactSortField } from "@jobctrl/contracts";
-import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
+import { IconAlertTriangle } from "@tabler/icons-react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
 
@@ -8,6 +9,11 @@ import {
   ARTIFACT_SORT_FIELDS_TUPLE,
   type ArtifactsSearch,
 } from "../../routes/-artifacts.search.js";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "../../shared/ui/alert.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 import { ArtifactFilterBar } from "./ArtifactFilterBar.js";
 import { ArtifactsTable } from "./ArtifactsTable.js";
@@ -73,7 +79,13 @@ export function ArtifactsView() {
         subtitle={data ? `${data.pagination.total} total` : "loading"}
       />
       <section className="card full data-list-card">
-        {message ? <div className="banner inline">{message}</div> : null}
+        {message ? (
+          <Alert variant="destructive">
+            <IconAlertTriangle aria-hidden="true" />
+            <AlertTitle>Artifacts could not be loaded</AlertTitle>
+            <AlertDescription>{message}</AlertDescription>
+          </Alert>
+        ) : null}
         <ArtifactFilterBar search={search} />
         <ArtifactsTable
           data={data ?? null}
@@ -91,7 +103,6 @@ export function ArtifactsView() {
           }
         />
       </section>
-      <Outlet />
     </>
   );
 }

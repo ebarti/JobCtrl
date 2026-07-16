@@ -48,4 +48,26 @@ describe("DiscoveryView", () => {
     );
     expect(screen.getByLabelText("State filter text")).toBeInTheDocument();
   });
+
+  it("preserves an in-progress automation value across disclosure toggles", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<DiscoveryView />);
+
+    const minimumFitScore = await screen.findByLabelText("Minimum fit score");
+    await user.clear(minimumFitScore);
+    await user.type(minimumFitScore, "9");
+
+    const trigger = screen.getByRole("button", { name: /^Automation settings\b/i });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(minimumFitScore).toBeInTheDocument();
+    expect(minimumFitScore).toHaveValue(9);
+
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Minimum fit score")).toBe(minimumFitScore);
+    expect(minimumFitScore).toHaveValue(9);
+  });
 });

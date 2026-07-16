@@ -36,7 +36,24 @@ describe("<InterviewPrepPanel>", () => {
 
     const region = screen.getByRole("region", { name: "Interview preparation" });
     expect(within(region).getByText("Platform reliability story")).toBeInTheDocument();
-    expect(within(region).getByText("STAR draft")).toBeInTheDocument();
+    expect(within(region).getByText("STAR draft")).toHaveClass("tag", "info");
+    expect(within(region).getByText("STAR draft")).not.toHaveAttribute(
+      "data-slot",
+      "status-badge",
+    );
+    expect(within(region).getByText("gate passed")).toHaveAttribute(
+      "data-status-tone",
+      "ok",
+    );
+    expect(within(region).getByText("gate passed").querySelector("svg")).toHaveClass(
+      "tabler-icon-circle-check",
+    );
+    expect(within(region).getByText("grounded")).toHaveAttribute(
+      "data-slot",
+      "status-badge",
+    );
+    expect(within(region).getByText("generation 1")).toHaveClass("tag", "muted");
+    expect(within(region).getByText("gpt-test")).toHaveClass("tag", "muted");
     const evidenceLink = within(region).getByRole("link", { name: "ev-api-latency" });
     expect(evidenceLink).toHaveAttribute(
       "href",
@@ -51,5 +68,34 @@ describe("<InterviewPrepPanel>", () => {
 
     expect(screen.getByText("No interview prep generated.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "generate interview prep" })).toBeEnabled();
+  });
+
+  it("renders accepted residual warnings as semantic alerts", () => {
+    const prep = {
+      ...sampleInterviewPrep,
+      gateAudit: {
+        ...sampleInterviewPrep.gateAudit,
+        warnings: ["Review the overall framing."],
+      },
+      items: sampleInterviewPrep.items.map((item) => ({
+        ...item,
+        warnings: ["Keep the metric tied to its source."],
+      })),
+    };
+
+    renderWithProviders(<InterviewPrepPanel jobId="job-1" prep={prep} />);
+
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(2);
+    for (const alert of alerts) {
+      expect(alert).toHaveTextContent("Accepted residual warnings");
+      expect(alert.querySelector("svg")).toHaveClass(
+        "tabler-icon-alert-triangle",
+      );
+    }
+    expect(screen.getByText("Review the overall framing.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Keep the metric tied to its source."),
+    ).toBeInTheDocument();
   });
 });

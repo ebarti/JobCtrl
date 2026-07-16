@@ -21,6 +21,103 @@ An asynchronous start returns `202 Accepted` with run/workflow identity after
 Temporal accepts the workflow. Eligibility no-ops and synchronous commands use
 `200`; invalid input or a failed start returns an error.
 
+`POST /v1/jobs/:jobKey/actions/retry-stage` has two distinct commands. A plain
+reset (`runAfter: false`) is local and synchronous. A reset-and-run
+(`runAfter: true`) checks worker readiness before the reset; on
+`503 worker_runtime_unavailable`, the failed/blocked stage and its event history
+are preserved exactly so a dispatch precondition cannot erase retry evidence.
+
+## Pipeline Operations Snapshot
+
+`GET /v1/pipeline/operations` returns the current local operations read model.
+It takes no query parameters. The API selects the newest Discover execution
+that is active or still draining; when none exists it selects the latest
+terminal execution. If no execution can be selected, the response still
+reports global job-stage backlog and runtime capacity, but its execution,
+source-family, and reconciliation summaries are `null`.
+
+The execution identity is the immutable tuple exposed as `discoverWorkflowId`
+and `discoverRunId` (the Temporal run ID). A deterministic Temporal workflow ID can be reused, so the run
+ID is required to distinguish executions. Membership is split into two
+execution-owned cohorts:
+
+- `observed_this_run`: jobs first linked to this run by a source observation;
+- `existing_backlog`: eligible work swept into this execution from before the
+  run. If a swept job is later observed by a source in the same run, the one
+  membership row is promoted to `observed_this_run`; it is never duplicated.
+
+The response exposes three non-overlapping operational scopes:
+
+| Scope | Meaning |
+| --- | --- |
+| `current_execution` | Work for jobs in `observed_this_run`, plus execution-owned orchestration steps. |
+| `execution_sweep` | Per-job stage work for this execution's `existing_backlog` cohort. Stages without a separately attributable sweep queue report `not_separate`. |
+| `global_outside_execution` | Canonical per-job stage backlog not linked to either selected-execution cohort. It does not invent global orchestration or PDF queues. |
+
+`sourceFamilies` and `reconciliation` are separate from downstream stage
+backlog. Source-family progress counts the planned family crawls only;
+reconciliation reports enrichment passes and preparation fan-out. Neither is
+presented as whole-pipeline completion. The selected execution phase is one of
+`discovering`, `draining`, `completed`, `completed_with_issues`, `failed`, or
+`canceled`. Both execution cohorts participate in the delivered phase
+calculation: unresolved current jobs or swept backlog can keep a successful
+Discover workflow in `draining`, while a closed membership with failed or
+inconsistent planning/terminal steps produces `completed_with_issues`.
+
+Per-job `enrich`, `score`, `tailor`, and `cover` counts come from canonical
+`job_stage_states`. Execution-owned planning, source-family, reconciliation,
+fan-out, backlog-sweep, and PDF lifecycle comes from attempt-aware
+`pipeline_step_projections`. Pipeline-step rows fill orchestration visibility
+gaps; they do not replace the per-job stage source of truth.
+
+### Capacity, Active Work, And Task Queue
+
+The operations reader derives the expected application directory from the
+configured database path, filters heartbeats to that resolved database/app-dir
+identity, selects the Temporal task queue named by the newest matching
+heartbeat, and aggregates fresh schema-valid rows from that queue.
+`configuredSlots`, `activeSlots`, and `availableSlots` count every activity
+slot. The active-item inventory is a separate, bounded diagnostic view: only
+allowlisted activity kinds are displayed, the oldest 20 items are returned, and
+`activeItemsTotal` / `activeItemsTruncated` distinguish exact allowlisted
+cardinality from the bounded list. A worker may therefore have more active
+slots than visible items.
+
+The worker interceptor does not inspect activity arguments. Displayed
+identifiers are either validated safe workflow/run references or non-reversible
+local `op_...` hashes; URLs, job descriptions, profiles, prompts, provider
+outputs, artifact paths, payloads, credentials, and exception text do not enter
+the heartbeat detail boundary.
+
+Temporal task-queue statistics are a separate infrastructure signal. Workflow
+and activity poller counts, approximate backlog count/age, and add/dispatch
+rates are observations, not domain-job totals. Unsupported, unavailable, and
+stale observations remain typed states instead of being converted to zero.
+
+### Freshness And ETA
+
+The snapshot has explicit freshness/capacity/task-queue variants, so callers
+must render stale, unsupported, and unavailable data honestly. Its estimator
+version is `pipeline-eta-v1`. Every numeric ETA requires fresh capacity, at
+least five successful duration samples for each relevant remaining stage, and
+bounded shared-queue contention. The overall ETA additionally waits for
+execution membership to close; per-stage and source-family ETAs can estimate
+their already-known scoped backlog while membership remains open. The estimator
+uses recent canonical stage/projection durations, reports a low/high range,
+confidence, basis, sample size, timestamp, and caveat, and rounds outward.
+Otherwise the response returns a typed `calibrating`, `paused`, `stale`, or
+`unavailable` reason such as `membership_open` (overall ETA only),
+`worker_unavailable`, `budget_exceeded`, `telemetry_stale`, or
+`contention_unbounded`. The range is an operational estimate, not a completion
+promise.
+
+The web query treats the endpoint as a live snapshot: it is stale after 10
+seconds, polls every 15 seconds while the selected execution is discovering or
+draining and every 60 seconds otherwise, and does not poll in the background.
+Durable workflow, stage, preparation-item, and pipeline-step events also
+invalidate it through SSE. Polling remains necessary because worker heartbeats
+and task-queue observations are runtime telemetry, not domain events.
+
 ## Workflow Runs
 
 `GET /v1/workflow-runs` lists all workflow types. `GET
@@ -60,6 +157,6 @@ for framing and precedence rules.
 | --- | --- |
 | Shared request/response types | `packages/contracts` |
 | Typed browser client | `packages/api-client` |
-| HTTP, JSON-RPC, and SSE transport | `apps/api` |
+| HTTP, operations snapshot, JSON-RPC, and SSE transport | `apps/api` |
 | Durable workflows and activities | `workers/automation` |
 | Browser cache and invalidation | `apps/web/src/contexts/operations` |

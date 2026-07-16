@@ -1,6 +1,12 @@
+import { IconClock } from "@tabler/icons-react";
 import type { JSX } from "react";
 
-import { applyRunResultTone, type ApplyRunResult, type ApplyRunTone } from "../lib/apply-run-tone.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
+import {
+  applyRunResultTone,
+  type ApplyRunResult,
+  type ApplyRunTone,
+} from "../lib/apply-run-tone.js";
 
 export interface ApplyRunBadgeProps {
   result: ApplyRunResult;
@@ -8,5 +14,11 @@ export interface ApplyRunBadgeProps {
 
 export function ApplyRunBadge({ result }: ApplyRunBadgeProps): JSX.Element {
   const tone: ApplyRunTone = applyRunResultTone(result);
-  return <span className={`tag ${tone}`}>{result}</span>;
+  const icon =
+    result === "starting" || result === "in_progress" ? IconClock : undefined;
+  return (
+    <StatusBadge icon={icon} tone={tone}>
+      {result}
+    </StatusBadge>
+  );
 }

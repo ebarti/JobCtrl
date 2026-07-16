@@ -7,10 +7,23 @@ import { ApplyRunBadge } from "./ApplyRunBadge.js";
 describe("<ApplyRunBadge>", () => {
   for (const status of APPLY_RUN_STATUSES) {
     it(`renders the ${status} status with a non-default tone`, () => {
-      const { container } = render(<ApplyRunBadge result={status} />);
-      const span = container.querySelector("span");
-      expect(span?.className).toMatch(/tag (ok|info|warn|danger|muted)/);
-      expect(screen.getByText(status)).toBeInTheDocument();
+      render(<ApplyRunBadge result={status} />);
+      const badge = screen.getByText(status);
+      expect(badge).toHaveAttribute("data-slot", "status-badge");
+      expect(badge.getAttribute("data-status-tone")).toMatch(
+        /^(ok|info|warn|danger|muted)$/,
+      );
     });
   }
+
+  it.each(["starting", "in_progress"] as const)(
+    "uses a clock icon for %s",
+    (status) => {
+      render(<ApplyRunBadge result={status} />);
+
+      expect(screen.getByText(status).querySelector("svg")).toHaveClass(
+        "tabler-icon-clock",
+      );
+    },
+  );
 });

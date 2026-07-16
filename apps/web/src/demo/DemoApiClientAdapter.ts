@@ -81,8 +81,7 @@ export class DemoResourceNotFoundError extends JobCtrlApiError {
   }
 }
 
-export interface DemoApiClientAdapterOptions
-  extends DemoLocalCommandExecutorOptions {
+export interface DemoApiClientAdapterOptions extends DemoLocalCommandExecutorOptions {
   readonly scenario?: DemoScenarioEngineOptions;
   readonly external?: DemoExternalRehearsalExecutorOptions;
   readonly telemetry?: TelemetryPort;
@@ -101,10 +100,13 @@ export class DemoApiClientAdapter implements ApiClientPort {
   ) {
     this.localCommands = new DemoLocalCommandExecutor(workspace, options);
     this.telemetry = options.telemetry;
-    this.scenarios = new DemoScenarioEngine(workspace, options.scenario ?? {
-      ...(options.clock ? { clock: options.clock } : {}),
-      ...(options.createId ? { createId: options.createId } : {}),
-    });
+    this.scenarios = new DemoScenarioEngine(
+      workspace,
+      options.scenario ?? {
+        ...(options.clock ? { clock: options.clock } : {}),
+        ...(options.createId ? { createId: options.createId } : {}),
+      },
+    );
     this.externalRehearsals = new DemoExternalRehearsalExecutor(
       workspace,
       options.external ?? {
@@ -437,9 +439,12 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return this.read((model) => model.profile.credentials);
   }
 
-  async browserCapabilities(): Promise<ApiClientResponse<"browserCapabilities">> {
+  async browserCapabilities(): Promise<
+    ApiClientResponse<"browserCapabilities">
+  > {
     return {
       ok: true,
+      detectedBrowsers: [],
       capabilities: [
         {
           id: "core-browser",
@@ -502,7 +507,11 @@ export class DemoApiClientAdapter implements ApiClientPort {
           ready: true,
           source: "live",
           models: [
-            { id: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro", isDefault: true },
+            {
+              id: "gemini-2.5-pro",
+              displayName: "Gemini 2.5 Pro",
+              isDefault: true,
+            },
             { id: "gemini-2.5-flash", displayName: "Gemini 2.5 Flash" },
           ],
           message: "Synthetic preview catalog; no Google account is connected.",
@@ -606,15 +615,9 @@ export class DemoApiClientAdapter implements ApiClientPort {
   updateDiscoverySettings = this.local("updateDiscoverySettings");
   upsertDiscoverySource = this.local("upsertDiscoverySource");
   patchDiscoverySourceState = this.local("patchDiscoverySourceState");
-  updateCompensationSourcePolicy = this.local(
-    "updateCompensationSourcePolicy",
-  );
-  promoteSourceLocatorCandidate = this.local(
-    "promoteSourceLocatorCandidate",
-  );
-  rejectSourceLocatorCandidate = this.local(
-    "rejectSourceLocatorCandidate",
-  );
+  updateCompensationSourcePolicy = this.local("updateCompensationSourcePolicy");
+  promoteSourceLocatorCandidate = this.local("promoteSourceLocatorCandidate");
+  rejectSourceLocatorCandidate = this.local("rejectSourceLocatorCandidate");
   decideDiscoveryQuarantine = this.local("decideDiscoveryQuarantine");
   importManualCapture = this.local("importManualCapture");
   dismissManualCapture = this.local("dismissManualCapture");
@@ -624,12 +627,8 @@ export class DemoApiClientAdapter implements ApiClientPort {
   );
   decideApplyReview = this.local("decideApplyReview");
   createResumeReviewDraft = this.local("createResumeReviewDraft");
-  saveResumeReviewDraftRevision = this.local(
-    "saveResumeReviewDraftRevision",
-  );
-  seedResumeReviewCommentThreads = this.local(
-    "seedResumeReviewCommentThreads",
-  );
+  saveResumeReviewDraftRevision = this.local("saveResumeReviewDraftRevision");
+  seedResumeReviewCommentThreads = this.local("seedResumeReviewCommentThreads");
   renderResumeReviewDraft = this.unsupported("renderResumeReviewDraft");
   replyToResumeReviewComment = this.local("replyToResumeReviewComment");
   saveResumeTemplate = this.local("saveResumeTemplate");
@@ -638,9 +637,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
   ensureCurrentResumeMaterials = this.unsupported(
     "ensureCurrentResumeMaterials",
   );
-  recordManualApplicationOutcome = this.local(
-    "recordManualApplicationOutcome",
-  );
+  recordManualApplicationOutcome = this.local("recordManualApplicationOutcome");
   decideOutcomeSuggestion = this.local("decideOutcomeSuggestion");
   deleteJob = this.local("deleteJob");
   deleteJobs = this.local("deleteJobs");
@@ -741,18 +738,22 @@ export class DemoApiClientAdapter implements ApiClientPort {
       this.localCommands.execute(method, args)) as ApiClientPort[TMethod];
   }
 
-  private simulated<TMethod extends import("./contracts.js").DemoSimulatedAsyncOperation>(
-    method: TMethod,
-  ): ApiClientPort[TMethod] {
+  private simulated<
+    TMethod extends import("./contracts.js").DemoSimulatedAsyncOperation,
+  >(method: TMethod): ApiClientPort[TMethod] {
     return ((...args: Parameters<ApiClientPort[TMethod]>) =>
-      this.trackDemoAction(method, () => this.scenarios.execute(method, args))) as ApiClientPort[TMethod];
+      this.trackDemoAction(method, () =>
+        this.scenarios.execute(method, args),
+      )) as ApiClientPort[TMethod];
   }
 
   private rehearsed<TMethod extends DemoInitialExternalRehearsalOperation>(
     method: TMethod,
   ): ApiClientPort[TMethod] {
     return ((...args: Parameters<ApiClientPort[TMethod]>) =>
-      this.trackDemoAction(method, () => this.externalRehearsals.execute(method, args))) as ApiClientPort[TMethod];
+      this.trackDemoAction(method, () =>
+        this.externalRehearsals.execute(method, args),
+      )) as ApiClientPort[TMethod];
   }
 
   private async trackDemoAction<TResult>(
@@ -766,15 +767,22 @@ export class DemoApiClientAdapter implements ApiClientPort {
     try {
       const result = await execute();
       const status = actionStatus(result);
-      const durationBucket = telemetryDurationBucket(monotonicNow() - startedAt);
-      if (status === "queued" || status === "starting" || status === "in_progress") {
+      const durationBucket = telemetryDurationBucket(
+        monotonicNow() - startedAt,
+      );
+      if (
+        status === "queued" ||
+        status === "starting" ||
+        status === "in_progress"
+      ) {
         return result;
       }
       if (status === "failed" || status === "blocked") {
         this.emitTelemetry("demo_action_failed", {
           ...metadata,
           result: "failed",
-          errorCode: status === "blocked" ? "validation_rejected" : "scenario_failed",
+          errorCode:
+            status === "blocked" ? "validation_rejected" : "scenario_failed",
           durationBucket,
         });
       } else if (status === "canceled" || status === "cancelled") {
@@ -814,18 +822,33 @@ export class DemoApiClientAdapter implements ApiClientPort {
   }
 }
 
-const DEMO_ACTION_TELEMETRY: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+const DEMO_ACTION_TELEMETRY: Readonly<
+  Record<string, Readonly<Record<string, string>>>
+> = {
   rescoreJob: { feature: "scoring", action: "rescore", scenario: "success" },
   retailorJob: { feature: "materials", action: "retailor", scenario: "retry" },
   retryStage: { feature: "pipeline", action: "retry_stage", scenario: "retry" },
-  runJobStage: { feature: "pipeline", action: "run_stage", scenario: "success" },
-  openArtifact: { feature: "artifacts", action: "open_artifact", scenario: "success" },
+  runJobStage: {
+    feature: "pipeline",
+    action: "run_stage",
+    scenario: "success",
+  },
+  openArtifact: {
+    feature: "artifacts",
+    action: "open_artifact",
+    scenario: "success",
+  },
   applyJob: { feature: "apply", action: "apply_dry_run", scenario: "success" },
-  markApplied: { feature: "apply", action: "mark_applied", scenario: "success" },
+  markApplied: {
+    feature: "apply",
+    action: "mark_applied",
+    scenario: "success",
+  },
 };
 
 function actionStatus(result: unknown): string | undefined {
-  if (typeof result !== "object" || result === null || !("status" in result)) return undefined;
+  if (typeof result !== "object" || result === null || !("status" in result))
+    return undefined;
   return typeof result.status === "string" ? result.status : undefined;
 }
 

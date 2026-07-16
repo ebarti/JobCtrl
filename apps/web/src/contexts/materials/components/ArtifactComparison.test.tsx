@@ -99,7 +99,23 @@ describe("<ArtifactComparison>", () => {
     expect(screen.getByText("gcp")).toBeInTheDocument();
     expect(screen.getByText("missing")).toBeInTheDocument();
     expect(screen.getByText("claim risk")).toBeInTheDocument();
-    expect(screen.getByText("REVIEW; score 72% / minimum 82%; 1 issues")).toBeInTheDocument();
+    expect(screen.getByText("approved")).toHaveAttribute(
+      "data-slot",
+      "status-badge",
+    );
+    expect(screen.getByText("approved").querySelector("svg")).toHaveClass(
+      "tabler-icon-circle-check",
+    );
+    expect(screen.getByText("REVIEW")).toHaveAttribute(
+      "data-status-tone",
+      "danger",
+    );
+    expect(screen.getByText("REVIEW").querySelector("svg")).toHaveClass(
+      "tabler-icon-circle-x",
+    );
+    expect(
+      screen.getByText(/score 72% \/ minimum 82%; 1 issues/),
+    ).toBeInTheDocument();
   });
 
   it("shows coverage not recorded instead of zero coverage", async () => {
@@ -117,8 +133,24 @@ describe("<ArtifactComparison>", () => {
     expect(
       await screen.findByText("coverage not recorded for the comparison artifact"),
     ).toBeInTheDocument();
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Coverage comparison unavailable");
+    expect(alert.querySelector("svg")).toHaveClass("tabler-icon-info-circle");
     expect(screen.getByText("coverage not recorded")).toBeInTheDocument();
     expect(screen.queryByText("0/3 covered; 3 missing")).not.toBeInTheDocument();
+  });
+
+  it("renders load failures through the destructive alert primitive", async () => {
+    renderComparison({});
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Artifact comparison unavailable");
+    expect(alert).toHaveTextContent(
+      `missing test artifact ${sampleAcceptedResumeArtifact.artifactId}`,
+    );
+    expect(alert.querySelector("svg")).toHaveClass(
+      "tabler-icon-alert-triangle",
+    );
   });
 
   it("does not request a right artifact before one is selected", async () => {

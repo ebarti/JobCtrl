@@ -7,6 +7,7 @@ import { IconDeviceFloppy, IconStar } from "@tabler/icons-react";
 import { useEffect, useMemo, useState, type CSSProperties, type JSX } from "react";
 
 import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAuditPins.js";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
 import {
   useSaveResumeTemplateMutation,
   useSetDefaultResumeTemplateMutation,
@@ -56,6 +57,12 @@ const FONT_LABELS: Record<ResumeTemplateTheme["fontFamily"], string> = {
 };
 
 const FONT_OPTIONS = Object.entries(FONT_LABELS) as Array<[ResumeTemplateTheme["fontFamily"], string]>;
+const FONT_SELECT_ITEMS = FONT_OPTIONS.map(([value, label]) => ({ label, value }));
+const DENSITY_SELECT_ITEMS: Array<{ label: string; value: ResumeTemplateTheme["density"] }> = [{ label: "Compact", value: "compact" }, { label: "Balanced", value: "balanced" }, { label: "Spacious", value: "spacious" }];
+const HEADER_SELECT_ITEMS: Array<{ label: string; value: ResumeTemplateTheme["headerLayout"] }> = [{ label: "Centered", value: "centered" }, { label: "Left", value: "left" }, { label: "Split", value: "split" }];
+const HEADING_SELECT_ITEMS: Array<{ label: string; value: ResumeTemplateTheme["sectionHeadingStyle"] }> = [{ label: "Rule", value: "rule" }, { label: "Plain", value: "plain" }, { label: "Boxed", value: "boxed" }];
+const ALIGNMENT_SELECT_ITEMS: Array<{ label: string; value: ResumeTemplateTheme["alignment"] }> = [{ label: "Justified", value: "justified" }, { label: "Left", value: "left" }];
+const BULLET_SELECT_ITEMS: Array<{ label: string; value: ResumeTemplateTheme["bulletSpacing"] }> = [{ label: "Tight", value: "tight" }, { label: "Normal", value: "normal" }, { label: "Loose", value: "loose" }];
 
 const DENSITY_TOKENS: Record<
   ResumeTemplateTheme["density"],
@@ -129,6 +136,7 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
   const selectedTemplateIsDefault =
     activeTemplate && templatesQuery.data?.defaultTemplate?.templateId === activeTemplate.templateId;
   const isSaving = saveTemplate.isPending || setDefaultTemplate.isPending;
+  const templateSelectItems = templates.map((template) => ({ label: template.displayName, value: template.templateId }));
 
   const updateTheme = <K extends keyof ResumeTemplateTheme>(key: K, value: ResumeTemplateTheme[K]) => {
     setTheme((current) => (current ? { ...current, [key]: value } : current));
@@ -178,17 +186,15 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
           <div className="field-grid">
             <label className="field">
               <span>Template</span>
-              <select
+              <Select
                 disabled={!templates.length || isSaving}
-                value={activeTemplate?.templateId ?? ""}
-                onChange={(event) => setActiveTemplateId(event.target.value)}
+                items={templateSelectItems}
+                value={activeTemplate?.templateId ?? null}
+                onValueChange={(nextValue) => { if (nextValue !== null) setActiveTemplateId(nextValue); }}
               >
-                {templates.map((template) => (
-                  <option key={template.templateId} value={template.templateId}>
-                    {template.displayName}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger aria-label="Template" className="w-full"><SelectValue placeholder="No templates available" /></SelectTrigger>
+                <SelectContent><SelectGroup>{templateSelectItems.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+              </Select>
             </label>
             <label className="field">
               <span>Name</span>
@@ -200,82 +206,75 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
             </label>
             <label className="field">
               <span>Font</span>
-              <select
+              <Select
                 disabled={!theme || isSaving}
+                items={FONT_SELECT_ITEMS}
                 value={theme?.fontFamily ?? "sans"}
-                onChange={(event) => updateTheme("fontFamily", event.target.value as ResumeTemplateTheme["fontFamily"])}
+                onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("fontFamily", nextValue); }}
               >
-                {FONT_OPTIONS.map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger aria-label="Font" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup>{FONT_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+              </Select>
             </label>
             <label className="field">
               <span>Density</span>
-              <select
+              <Select
                 disabled={!theme || isSaving}
+                items={DENSITY_SELECT_ITEMS}
                 value={theme?.density ?? "balanced"}
-                onChange={(event) => updateTheme("density", event.target.value as ResumeTemplateTheme["density"])}
+                onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("density", nextValue); }}
               >
-                <option value="compact">Compact</option>
-                <option value="balanced">Balanced</option>
-                <option value="spacious">Spacious</option>
-              </select>
+                <SelectTrigger aria-label="Density" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup>{DENSITY_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+              </Select>
             </label>
             <label className="field">
               <span>Header</span>
-              <select
+              <Select
                 disabled={!theme || isSaving}
+                items={HEADER_SELECT_ITEMS}
                 value={theme?.headerLayout ?? "centered"}
-                onChange={(event) =>
-                  updateTheme("headerLayout", event.target.value as ResumeTemplateTheme["headerLayout"])
-                }
+                onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("headerLayout", nextValue); }}
               >
-                <option value="centered">Centered</option>
-                <option value="left">Left</option>
-                <option value="split">Split</option>
-              </select>
+                <SelectTrigger aria-label="Header" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup>{HEADER_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+              </Select>
             </label>
             <label className="field">
               <span>Headings</span>
-              <select
+              <Select
                 disabled={!theme || isSaving}
+                items={HEADING_SELECT_ITEMS}
                 value={theme?.sectionHeadingStyle ?? "rule"}
-                onChange={(event) =>
-                  updateTheme("sectionHeadingStyle", event.target.value as ResumeTemplateTheme["sectionHeadingStyle"])
-                }
+                onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("sectionHeadingStyle", nextValue); }}
               >
-                <option value="rule">Rule</option>
-                <option value="plain">Plain</option>
-                <option value="boxed">Boxed</option>
-              </select>
+                <SelectTrigger aria-label="Headings" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup>{HEADING_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+              </Select>
             </label>
             <label className="field">
               <span>Alignment</span>
-              <select
+              <Select
                 disabled={!theme || isSaving}
+                items={ALIGNMENT_SELECT_ITEMS}
                 value={theme?.alignment ?? "justified"}
-                onChange={(event) => updateTheme("alignment", event.target.value as ResumeTemplateTheme["alignment"])}
+                onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("alignment", nextValue); }}
               >
-                <option value="justified">Justified</option>
-                <option value="left">Left</option>
-              </select>
+                <SelectTrigger aria-label="Alignment" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup>{ALIGNMENT_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+              </Select>
             </label>
             <label className="field">
               <span>Bullets</span>
-              <select
+              <Select
                 disabled={!theme || isSaving}
+                items={BULLET_SELECT_ITEMS}
                 value={theme?.bulletSpacing ?? "normal"}
-                onChange={(event) =>
-                  updateTheme("bulletSpacing", event.target.value as ResumeTemplateTheme["bulletSpacing"])
-                }
+                onValueChange={(nextValue) => { if (nextValue !== null) updateTheme("bulletSpacing", nextValue); }}
               >
-                <option value="tight">Tight</option>
-                <option value="normal">Normal</option>
-                <option value="loose">Loose</option>
-              </select>
+                <SelectTrigger aria-label="Bullets" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup>{BULLET_SELECT_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+              </Select>
             </label>
             <label className="field">
               <span>Font scale</span>

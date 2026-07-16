@@ -1,3 +1,5 @@
+import { IconAlertTriangle } from "@tabler/icons-react";
+
 import { OutcomeSuggestionsPanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
 import { useApplicationOutcomesQuery } from "../../contexts/operations/hooks/useApplicationOutcomesQuery.js";
 import { useDashboardSummaryQuery } from "../../contexts/operations/hooks/useDashboardSummaryQuery.js";
@@ -47,12 +49,14 @@ export function DashboardView() {
       {summary ? <KpiGrid summary={summary} /> : <KpiSkeleton />}
       {message ? (
         <Alert variant="destructive" className="dashboard-error-alert">
+          <IconAlertTriangle aria-hidden="true" />
           <AlertTitle>Dashboard unavailable</AlertTitle>
           <AlertDescription>{message}</AlertDescription>
         </Alert>
       ) : null}
       {outcomesError ? (
         <Alert variant="destructive" className="dashboard-error-alert">
+          <IconAlertTriangle aria-hidden="true" />
           <AlertTitle>Outcome suggestions unavailable</AlertTitle>
           <AlertDescription>{outcomesError}</AlertDescription>
         </Alert>

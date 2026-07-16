@@ -110,7 +110,7 @@
 }
 
 .resume-import-step-link[data-active]::after {
-  background: var(--foreground);
+  background: var(--primary);
 }
 
 .resume-import-step-link[data-complete] {

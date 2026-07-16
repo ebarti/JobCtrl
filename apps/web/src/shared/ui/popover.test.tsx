@@ -66,13 +66,14 @@ describe("Popover", () => {
     expect(content).toHaveClass(
       "z-50",
       "w-72",
-      "rounded-lg",
+      "rounded-[10px]",
       "border",
       "border-border",
       "bg-popover",
       "p-4",
+      "text-sm",
       "text-popover-foreground",
-      "shadow-[var(--shadow-panel)]",
+      "shadow-xl",
       "outline-none",
       "custom-popover",
     );

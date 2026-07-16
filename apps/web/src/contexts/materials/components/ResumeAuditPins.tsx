@@ -54,6 +54,7 @@ import {
 
 import { Empty } from "../../../shared/ui/empty.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../../shared/ui/PdfPreviewViewer.js";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
 import { useArtifactDetailQuery } from "../../operations/hooks/useArtifactDetailQuery.js";
 import { formatToken, scorePercent } from "../lib/audit-format.js";
 
@@ -1640,6 +1641,7 @@ const COMMENT_REPLY_DECISIONS: readonly ResumeCommentReplyDecision[] = [
   "rejected",
   "rewrite_requested",
 ];
+const COMMENT_REPLY_DECISION_ITEMS = COMMENT_REPLY_DECISIONS.map((value) => ({ label: formatToken(value), value }));
 
 function commentThreadStateLabel(thread: ResumeCommentThread): string {
   return formatToken(thread.state.replaceAll("_", " "));
@@ -1680,18 +1682,15 @@ function ResumeCommentReplyForm({
       />
       <div className="resume-comment-reply-controls">
         <label htmlFor={`${formId}-decision`}>Decision</label>
-        <select
-          id={`${formId}-decision`}
+        <Select
+          items={COMMENT_REPLY_DECISION_ITEMS}
           value={decision}
           disabled={disabled}
-          onChange={(event) => setDecision(event.currentTarget.value as ResumeCommentReplyDecision)}
+          onValueChange={(nextValue) => { if (nextValue !== null) setDecision(nextValue); }}
         >
-          {COMMENT_REPLY_DECISIONS.map((value) => (
-            <option key={value} value={value}>
-              {formatToken(value)}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger id={`${formId}-decision`} aria-label="Decision" className="min-w-40"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectGroup>{COMMENT_REPLY_DECISION_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+        </Select>
         <button className="tab" type="submit" disabled={disabled || !body.trim()}>
           reply
         </button>
@@ -2312,21 +2311,15 @@ function ResumeEditorToolbarControls({
       </div>
       <label className="resume-format-select" htmlFor={fontFamilyId}>
         <span>Font</span>
-        <select
-          aria-label="Font"
+        <Select<ResumeEditorFontFamily>
+          items={[...RESUME_EDITOR_FONT_FAMILIES]}
           defaultValue="resume"
           disabled={disabled}
-          id={fontFamilyId}
-          onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-            onFontFamily(event.currentTarget.value as ResumeEditorFontFamily)
-          }
+          onValueChange={(nextValue) => { if (nextValue !== null) onFontFamily(nextValue); }}
         >
-          {RESUME_EDITOR_FONT_FAMILIES.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger aria-label="Font" id={fontFamilyId} className="min-w-32"><SelectValue /></SelectTrigger>
+          <SelectContent data-resume-editor-chrome="true"><SelectGroup>{RESUME_EDITOR_FONT_FAMILIES.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectGroup></SelectContent>
+        </Select>
       </label>
       <label className="resume-format-select" htmlFor={fontSizeId}>
         <span>Size</span>
@@ -2783,6 +2776,7 @@ export function ResumePlateEditor({
   const initializedSelectionDocumentKey = useRef<string | null>(null);
   const [formattingApiReady, setFormattingApiReady] = useState(false);
   const [editorVersion, setEditorVersion] = useState(0);
+  const [draftSourceVersion, setDraftSourceVersion] = useState(0);
   const initialPlateValue = useMemo<Value | null>(() => {
     const savedValue = draft?.latestRevision?.plateDocument;
     if (isPlateValue(savedValue)) {
@@ -2794,6 +2788,7 @@ export function ResumePlateEditor({
 
   useEffect(() => {
     setCurrentPlateValue(initialPlateValue);
+    setDraftSourceVersion((currentVersion) => currentVersion + 1);
   }, [initialPlateValue]);
 
   const currentDraftText = useMemo(
@@ -2808,7 +2803,7 @@ export function ResumePlateEditor({
     () => resumePlateValueSignature(currentPlateValue),
     [currentPlateValue],
   );
-  const documentKey = `${artifactId}:${draft?.draftId ?? "no-draft"}:${htmlUrl ?? "no-html"}:${editorVersion}`;
+  const documentKey = `${artifactId}:${draft?.draftId ?? "no-draft"}:${htmlUrl ?? "no-html"}:${draftSourceVersion}:${editorVersion}`;
   const canFormat = formattingApiReady && Boolean(currentPlateValue);
   const draftDirty = Boolean(currentPlateValue && currentDraftSignature !== initialDraftSignature);
   const hasSavedRevision = Boolean(draft?.latestRevision);

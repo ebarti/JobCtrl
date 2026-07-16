@@ -25,7 +25,7 @@ is the canonical decision matrix.
 | Jobs list filters (`stage`, `state`, `q`, `deleted`) | **URL** | Bookmarkable; survives refresh; copy-paste shareable. |
 | Sort field & direction | **URL** | Same reasons. |
 | Page index, page size | **URL** | Same. |
-| Selected job (drawer open) | **URL** | Refresh restores the drawer. |
+| Selected job (detail workspace active) | **URL** | Refresh restores the bookmarkable detail route. |
 | Currently active route | **URL** (path) | Trivially. |
 | Global text search ("Filter jobs, errors, companies...") | **URL** | Bookmarkable searches. |
 | Bulk-selection set (checked job keys) | **Component** (`useState`) | Intentionally ephemeral; selecting 50 jobs and refreshing should not preserve the selection. Documented exception. |
@@ -44,7 +44,7 @@ is the canonical decision matrix.
 | Apply run live timeline | **Server** (Query) — appended via `setQueryData` from SSE | High-frequency; see §7.5. |
 | Resume import wizard step state (uploaded file metadata, parsed draft) | **Client** (Zustand+persist) | Cross-step, refresh-safe, but not URL-bound (the URL identifies *which step*, not *the data*). |
 | Form drafts (profile, settings) | **Form library state** (TanStack Form) | Owned by the form until submit; mutates the server via the mutation hook. |
-| Connection status to API (the "live"/"offline" pill) | **Server** (Query: `useHealthQuery({ refetchInterval: ... })`) | Polling the health endpoint, not a manual `useState`. |
+| Connection status to API (the inline "live"/"offline" status) | **Server** (Query: `useHealthQuery({ refetchInterval: ... })`) | Polling the health endpoint, not a manual `useState`. |
 
 ### 5.2 URL ↔ Query Cache Binding
 
@@ -243,8 +243,9 @@ export interface EventStreamPort {
 The `SseEventStreamAdapter` (`shared/adapters/local/`) opens an
 `EventSource` against `GET /v1/events/stream`. It dispatches each parsed
 `DomainEventEnvelope` to all subscribed handlers and exposes connection
-status, which `<ConnectionStatusPill>` (in `shared/layout/`, rendered in
-the Topbar) renders as a "live"/"reconnecting" indicator.
+status, which the legacy-named `<ConnectionStatusPill>` component (in
+`shared/layout/`, rendered in the Topbar) presents as a compact dot/glyph plus
+"live"/"reconnecting" text, not a colored capsule.
 
 The hosted-mode `WebSocketEventStreamAdapter` (if the SSE adapter proves
 limiting under cross-region or CDN-buffered conditions, see fitness
@@ -288,7 +289,8 @@ This is the canonical anti-pattern the target eliminates. Cross-component
 coordination goes through:
 
 - **The URL** (`navigate({ to: "/jobs", search: { state: "failed" } })`) for
-  filters, sort, drawers — anything that should be shareable / reflectable.
+  filters, sort, and detail-route selection — anything that should be shareable
+  or restorable.
 - **Zustand stores** for ephemeral cross-cutting state (toasts).
 - **The query cache and its invalidations** for data dependencies.
 - **Ports** for browser APIs (clipboard, notifications, OS-open).

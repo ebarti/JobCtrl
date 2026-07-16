@@ -1,9 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/jobs/")({
-  component: JobsIndexComponent,
-});
+import { JobsView } from "../views/jobs/JobsView.js";
 
-function JobsIndexComponent() {
-  return null;
-}
+export const Route = createFileRoute("/jobs/")({
+  component: JobsView,
+});

@@ -1,0 +1,360 @@
+/* Route-level detail pages stay in normal document flow. These selectors are
+ * intentionally loaded after the former drawer styles so legacy class names
+ * cannot reintroduce fixed positioning or viewport-sized floating cards. */
+
+.route-page--job-detail,
+.route-page--artifact-detail,
+.route-page--contact-detail,
+.route-page--workflow-run-detail,
+.route-page--activity-detail,
+.route-page--job-run-detail {
+  min-width: 0;
+}
+
+.route-workspace {
+  position: static;
+  inset: auto;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 1.2);
+  background: var(--card);
+  box-shadow: none;
+}
+
+.route-workspace__header {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.route-workspace__grid {
+  display: grid;
+  grid-template-columns:
+    minmax(180px, 0.24fr) minmax(420px, 1fr)
+    minmax(240px, 0.32fr);
+  min-width: 0;
+}
+
+.route-workspace__grid[data-has-navigation="false"][data-has-inspector="true"] {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.34fr);
+}
+
+.route-workspace__grid[data-has-navigation="true"][data-has-inspector="false"] {
+  grid-template-columns: minmax(190px, 0.25fr) minmax(0, 1fr);
+}
+
+.route-workspace__grid[data-has-navigation="false"][data-has-inspector="false"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.route-workspace__navigation,
+.route-workspace__content,
+.route-workspace__inspector {
+  min-width: 0;
+  padding: 16px;
+}
+
+.route-workspace__navigation {
+  border-right: 1px solid var(--border);
+}
+
+.route-workspace__inspector {
+  border-left: 1px solid var(--border);
+  background: color-mix(in oklch, var(--muted) 38%, var(--card));
+}
+
+.workspace-back {
+  width: max-content;
+  color: var(--muted-foreground);
+}
+
+.job-detail-workspace__header,
+.artifact-detail-workspace__header,
+.contact-detail-workspace__header,
+.activity-detail-workspace__header,
+.workflow-run-workspace__header,
+.job-run-workspace__header {
+  display: grid;
+  min-width: 0;
+  gap: 12px 16px;
+  align-items: start;
+}
+
+.job-detail-workspace__header {
+  grid-template-columns: minmax(300px, 1fr) minmax(320px, auto);
+}
+
+.job-detail-workspace__header > .workspace-back,
+.artifact-detail-workspace__header > .workspace-back,
+.contact-detail-workspace__header > .workspace-back,
+.activity-detail-workspace__header > .workspace-back,
+.workflow-run-workspace__header > .workspace-back,
+.job-run-workspace__header > .workspace-back {
+  grid-column: 1 / -1;
+}
+
+.job-overview {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.job-overview > span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.job-overview h1,
+.artifact-detail-workspace__title h1,
+.contact-detail-workspace__title h1,
+.activity-detail-workspace__title h1,
+.workflow-run-workspace__title h1,
+.job-run-workspace__title h1 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: clamp(20px, 2vw, 27px);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+.job-overview p,
+.artifact-detail-workspace__title p,
+.contact-detail-workspace__title p,
+.activity-detail-workspace__title p,
+.workflow-run-workspace__title p,
+.job-run-workspace__title p {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.job-detail-top-actions {
+  align-self: end;
+  justify-content: flex-end;
+  border: 0;
+  padding: 0;
+}
+
+.job-detail-top-actions .action-panel {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.job-detail-workspace > .route-workspace__grid,
+.artifact-detail-workspace > .route-workspace__grid,
+.contact-detail-workspace > .route-workspace__grid,
+.activity-detail-workspace > .route-workspace__grid,
+.workflow-run-workspace > .route-workspace__grid,
+.job-run-workspace > .route-workspace__grid {
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+}
+
+.job-detail-workspace > .route-workspace__grid > *,
+.artifact-detail-workspace > .route-workspace__grid > *,
+.contact-detail-workspace > .route-workspace__grid > *,
+.activity-detail-workspace > .route-workspace__grid > *,
+.workflow-run-workspace > .route-workspace__grid > *,
+.job-run-workspace > .route-workspace__grid > * {
+  padding: 0;
+}
+
+.job-detail-workspace__content,
+.job-detail-workspace__inspector,
+.artifact-detail-workspace__inspector,
+.activity-detail-workspace__content,
+.activity-detail-workspace__inspector,
+.workflow-run-workspace__inspector,
+.job-run-workspace__inspector {
+  display: grid;
+  min-width: 0;
+}
+
+.job-detail-workspace__content > .section,
+.job-detail-workspace__inspector > .section,
+.job-detail-workspace__inspector > .job-contacts-panel,
+.artifact-detail-workspace__inspector > .section,
+.artifact-detail-workspace__inspector > .tailoring-explanation-section,
+.contact-detail-workspace .section,
+.activity-detail-workspace__content > .section,
+.workflow-run-workspace__inspector > .section,
+.workflow-run-workspace__timeline,
+.job-run-workspace__inspector > .section,
+.job-run-workspace__timeline {
+  padding: 16px 18px;
+}
+
+.artifact-detail-workspace__header,
+.contact-detail-workspace__header,
+.activity-detail-workspace__header {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.workflow-run-workspace__header,
+.job-run-workspace__header {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.artifact-detail-workspace__title,
+.contact-detail-workspace__title,
+.activity-detail-workspace__title,
+.workflow-run-workspace__title,
+.job-run-workspace__title {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.artifact-detail-workspace__actions,
+.contact-detail-actions,
+.activity-detail-workspace__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.artifact-detail-workspace .route-workspace__content {
+  min-height: min(76dvh, 900px);
+}
+
+.artifact-detail-workspace .artifact-preview-panel,
+.artifact-detail-workspace .pdf-preview-viewer {
+  min-height: inherit;
+}
+
+.artifact-detail-workspace .empty {
+  background: var(--card);
+}
+
+.artifact-comparison-picker {
+  margin-bottom: 12px;
+}
+
+.contact-detail-workspace .route-workspace__content {
+  min-height: 460px;
+}
+
+.activity-detail-workspace__inspector {
+  gap: 12px;
+  padding: 16px;
+}
+
+.activity-detail-workspace__inspector h2 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.activity-detail-workspace__payload {
+  max-width: 100%;
+  max-height: 52dvh;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--muted) 42%, var(--card));
+  padding: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.activity-detail-workspace__timeline-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.inspector-ledger {
+  display: grid;
+  margin: 0;
+}
+
+.inspector-ledger__item {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.35fr) minmax(0, 1fr);
+  gap: 4px 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.inspector-ledger__item dt,
+.inspector-ledger__source,
+.inspector-ledger__missing {
+  color: var(--muted-foreground);
+}
+
+.inspector-ledger__item dd {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.inspector-ledger__source,
+.inspector-ledger__status {
+  font-size: 10px;
+}
+
+@media (max-width: 1000px) {
+  .route-workspace__grid,
+  .route-workspace__grid[data-has-navigation][data-has-inspector],
+  .job-detail-workspace > .route-workspace__grid,
+  .artifact-detail-workspace > .route-workspace__grid,
+  .contact-detail-workspace > .route-workspace__grid,
+  .activity-detail-workspace > .route-workspace__grid,
+  .workflow-run-workspace > .route-workspace__grid,
+  .job-run-workspace > .route-workspace__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .route-workspace__navigation,
+  .route-workspace__inspector {
+    border: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .route-workspace__inspector {
+    border-top: 1px solid var(--border);
+    border-bottom: 0;
+  }
+
+  .job-detail-workspace__header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .job-detail-top-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .artifact-detail-workspace__header,
+  .contact-detail-workspace__header,
+  .activity-detail-workspace__header {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .artifact-detail-workspace__header > .workspace-back,
+  .contact-detail-workspace__header > .workspace-back,
+  .activity-detail-workspace__header > .workspace-back {
+    grid-column: 1;
+  }
+
+  .artifact-detail-workspace__actions,
+  .contact-detail-actions,
+  .activity-detail-workspace__actions {
+    justify-content: flex-start;
+  }
+}

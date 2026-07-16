@@ -10,24 +10,58 @@ import { useDisableBrowserCapabilityMutation } from "./useBrowserCapabilityMutat
 
 const initial = {
   ok: true as const,
+  detectedBrowsers: [{ id: "google-chrome" as const, label: "Google Chrome" }],
   capabilities: [
-    { id: "core-browser" as const, status: "ready" as const, detail: "Ready.", mutable: false, enabled: true, profileCopyReady: false },
-    { id: "auto-apply-browser" as const, status: "ready" as const, detail: "Ready.", mutable: true, enabled: true, profileCopyReady: false },
-    { id: "authenticated-linkedin-browser" as const, status: "disabled" as const, detail: "Disabled.", mutable: true, enabled: false, profileCopyReady: false },
+    {
+      id: "core-browser" as const,
+      status: "ready" as const,
+      detail: "Ready.",
+      mutable: false,
+      enabled: true,
+      profileCopyReady: false,
+    },
+    {
+      id: "auto-apply-browser" as const,
+      status: "ready" as const,
+      detail: "Ready.",
+      mutable: true,
+      enabled: true,
+      profileCopyReady: false,
+    },
+    {
+      id: "authenticated-linkedin-browser" as const,
+      status: "disabled" as const,
+      detail: "Disabled.",
+      mutable: true,
+      enabled: false,
+      profileCopyReady: false,
+    },
   ],
 };
 
 describe("browser capability mutations", () => {
   it("rolls back hot-disable optimistic state on failure", async () => {
-    const disableBrowserCapability = vi.fn().mockRejectedValue(new Error("failed"));
-    const { result, queryClient } = renderHookWithProviders(() => useDisableBrowserCapabilityMutation(), {
-      ports: buildTestPorts({ api: { disableBrowserCapability } }),
-    });
-    queryClient.setQueryData(browserCapabilityKeys.capabilities(LOCAL_TENANT), initial);
+    const disableBrowserCapability = vi
+      .fn()
+      .mockRejectedValue(new Error("failed"));
+    const { result, queryClient } = renderHookWithProviders(
+      () => useDisableBrowserCapabilityMutation(),
+      {
+        ports: buildTestPorts({ api: { disableBrowserCapability } }),
+      },
+    );
+    queryClient.setQueryData(
+      browserCapabilityKeys.capabilities(LOCAL_TENANT),
+      initial,
+    );
 
     await act(async () => result.current.mutate("auto-apply-browser"));
 
     await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(queryClient.getQueryData(browserCapabilityKeys.capabilities(LOCAL_TENANT))).toEqual(initial);
+    expect(
+      queryClient.getQueryData(
+        browserCapabilityKeys.capabilities(LOCAL_TENANT),
+      ),
+    ).toEqual(initial);
   });
 });

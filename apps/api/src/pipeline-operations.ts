@@ -915,7 +915,8 @@ function loadUniqueGlobalPreparationOwners(
   for (const jobUrl of jobUrls) {
     const workflowIds = candidates.get(jobUrl);
     if (!ambiguous.has(jobUrl) && workflowIds?.size === 1) {
-      owners.set(jobUrl, [...workflowIds][0]);
+      const workflowId = workflowIds.values().next().value;
+      if (workflowId !== undefined) owners.set(jobUrl, workflowId);
     }
   }
   return owners;
@@ -1225,8 +1226,9 @@ function buildActiveItems(
     // Fresh runtime telemetry is the active-work authority. Projection rows
     // only enrich a runtime item whose safe workflow identity proves the pair.
     if (runtimeIndex < 0) continue;
-    consumedRuntimeItemIndexes.add(runtimeIndex);
     const runtimeItem = runtimeItems[runtimeIndex];
+    if (runtimeItem === undefined) continue;
+    consumedRuntimeItemIndexes.add(runtimeIndex);
     const base = {
       activityType,
       workflowId: runtimeItem.workflowId,

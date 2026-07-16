@@ -157,8 +157,10 @@ export class JobCtrlApiError extends Error {
   readonly status: number;
   readonly statusText: string;
 
-  constructor(status: number, statusText: string) {
-    super(`JobCtrl API request failed: ${status} ${statusText}`);
+  constructor(status: number, statusText: string, detail?: string) {
+    super(
+      detail?.trim() || `JobCtrl API request failed: ${status} ${statusText}`,
+    );
     this.name = "JobCtrlApiError";
     this.status = status;
     this.statusText = statusText;
@@ -210,7 +212,10 @@ export class JobCtrlApiClient {
   readonly baseUrl: string;
   private readonly requestTimeoutMs: number;
 
-  constructor(baseUrl = defaultBaseUrl(), requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+  constructor(
+    baseUrl = defaultBaseUrl(),
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  ) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.requestTimeoutMs = requestTimeoutMs;
   }
@@ -235,11 +240,15 @@ export class JobCtrlApiClient {
     return this.get("/v1/digest");
   }
 
-  acknowledgeDigest(body: DigestAcknowledgeRequest = {}): Promise<DigestAcknowledgeResponse> {
+  acknowledgeDigest(
+    body: DigestAcknowledgeRequest = {},
+  ): Promise<DigestAcknowledgeResponse> {
     return this.post("/v1/digest/acknowledge", body);
   }
 
-  activity(query: Partial<ActivityListQuery> = {}): Promise<PaginatedResponse<ActivityEventSummary>> {
+  activity(
+    query: Partial<ActivityListQuery> = {},
+  ): Promise<PaginatedResponse<ActivityEventSummary>> {
     return this.get("/v1/debug/activity", query);
   }
 
@@ -255,11 +264,15 @@ export class JobCtrlApiClient {
     return this.get("/v1/discovery/settings");
   }
 
-  updateDiscoverySettings(body: DiscoverySettingsUpdateRequest): Promise<DiscoverySettingsResponse> {
+  updateDiscoverySettings(
+    body: DiscoverySettingsUpdateRequest,
+  ): Promise<DiscoverySettingsResponse> {
     return this.patch("/v1/discovery/settings", body);
   }
 
-  upsertDiscoverySource(body: SourceUpsertRequest): Promise<SourceRegistryMutationResponse> {
+  upsertDiscoverySource(
+    body: SourceUpsertRequest,
+  ): Promise<SourceRegistryMutationResponse> {
     return this.post("/v1/discovery/sources", body);
   }
 
@@ -267,11 +280,16 @@ export class JobCtrlApiClient {
     sourceId: string,
     body: SourceStatePatch,
   ): Promise<SourceRegistryMutationResponse> {
-    return this.patch(`/v1/discovery/sources/${encodeURIComponent(sourceId)}/state`, body);
+    return this.patch(
+      `/v1/discovery/sources/${encodeURIComponent(sourceId)}/state`,
+      body,
+    );
   }
 
   discoverySourcePreview(sourceId: string): Promise<DiscoveryPreviewResponse> {
-    return this.get(`/v1/discovery/sources/${encodeURIComponent(sourceId)}/preview`);
+    return this.get(
+      `/v1/discovery/sources/${encodeURIComponent(sourceId)}/preview`,
+    );
   }
 
   compensationSources(): Promise<CompensationSourceRegistryResponse> {
@@ -284,19 +302,35 @@ export class JobCtrlApiClient {
     return this.patch("/v1/compensation/sources", body);
   }
 
-  postedCompensationFact(jobKey: string): Promise<PostedCompensationFactResponse> {
-    return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/compensation/posted`);
+  postedCompensationFact(
+    jobKey: string,
+  ): Promise<PostedCompensationFactResponse> {
+    return this.get(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/compensation/posted`,
+    );
   }
 
-  marketCompensationEstimate(jobKey: string): Promise<MarketCompensationEstimateResponse> {
-    return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/compensation/market`);
+  marketCompensationEstimate(
+    jobKey: string,
+  ): Promise<MarketCompensationEstimateResponse> {
+    return this.get(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/compensation/market`,
+    );
   }
 
-  refreshCompensation(jobKey: string, body: RefreshCompensationRequest = {}): Promise<ActionRunResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/refresh-compensation`, body);
+  refreshCompensation(
+    jobKey: string,
+    body: RefreshCompensationRequest = {},
+  ): Promise<ActionRunResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/actions/refresh-compensation`,
+      body,
+    );
   }
 
-  refreshAllCompensation(body: RefreshCompensationRequest = {}): Promise<ActionRunResponse> {
+  refreshAllCompensation(
+    body: RefreshCompensationRequest = {},
+  ): Promise<ActionRunResponse> {
     return this.post("/v1/jobs/actions/refresh-compensation", body);
   }
 
@@ -332,7 +366,10 @@ export class JobCtrlApiClient {
     jobKey: string,
     body: QuarantineDecision,
   ): Promise<QuarantineDecisionResponse> {
-    return this.post(`/v1/discovery/quarantine/${encodeURIComponent(jobKey)}/decision`, body);
+    return this.post(
+      `/v1/discovery/quarantine/${encodeURIComponent(jobKey)}/decision`,
+      body,
+    );
   }
 
   manualCaptureQueue(): Promise<ManualCaptureListResponse> {
@@ -343,17 +380,25 @@ export class JobCtrlApiClient {
     itemId: string,
     body: ManualCaptureImportRequest,
   ): Promise<ManualCaptureImportResponse> {
-    return this.post(`/v1/discovery/manual-capture/${encodeURIComponent(itemId)}/import`, body);
+    return this.post(
+      `/v1/discovery/manual-capture/${encodeURIComponent(itemId)}/import`,
+      body,
+    );
   }
 
   dismissManualCapture(
     itemId: string,
     body: ManualCaptureDismissRequest = {},
   ): Promise<ManualCaptureDismissResponse> {
-    return this.post(`/v1/discovery/manual-capture/${encodeURIComponent(itemId)}/dismiss`, body);
+    return this.post(
+      `/v1/discovery/manual-capture/${encodeURIComponent(itemId)}/dismiss`,
+      body,
+    );
   }
 
-  recordDiscoveryFeedback(body: DiscoveryFeedbackRequest): Promise<DiscoveryFeedbackResponse> {
+  recordDiscoveryFeedback(
+    body: DiscoveryFeedbackRequest,
+  ): Promise<DiscoveryFeedbackResponse> {
     return this.post("/v1/discovery/feedback", body);
   }
 
@@ -379,50 +424,74 @@ export class JobCtrlApiClient {
     jobKey: string,
     body: ApplyReviewDecisionRequest,
   ): Promise<ApplyReviewDecisionResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/apply-review/decision`, body);
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/apply-review/decision`,
+      body,
+    );
   }
 
   resumeReviewDraft(jobKey: string): Promise<ResumeReviewDraftResponse> {
-    return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/resume-review/draft`);
+    return this.get(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/resume-review/draft`,
+    );
   }
 
   createResumeReviewDraft(
     jobKey: string,
     body: ResumeReviewDraftCreateRequest = {},
   ): Promise<ResumeReviewDraftResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/resume-review/draft`, body);
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/resume-review/draft`,
+      body,
+    );
   }
 
   saveResumeReviewDraftRevision(
     draftId: string,
     body: ResumeReviewDraftRevisionSaveRequest,
   ): Promise<ResumeReviewDraftRevisionResponse> {
-    return this.post(`/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`, body);
+    return this.post(
+      `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/revisions`,
+      body,
+    );
   }
 
   seedResumeReviewCommentThreads(
     draftId: string,
     body: ResumeReviewCommentThreadSeedRequest,
   ): Promise<ResumeReviewCommentThreadSeedResponse> {
-    return this.post(`/v1/resume-review/drafts/${encodeURIComponent(draftId)}/comment-threads`, body);
+    return this.post(
+      `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/comment-threads`,
+      body,
+    );
   }
 
   renderResumeReviewDraft(
     draftId: string,
     body: ResumeReviewDraftRenderRequest = {},
   ): Promise<ResumeReviewDraftRenderResponse> {
-    return this.post(`/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`, body);
+    return this.post(
+      `/v1/resume-review/drafts/${encodeURIComponent(draftId)}/render`,
+      body,
+    );
   }
 
   replyToResumeReviewComment(
     threadId: string,
     body: ResumeCommentReplyRequest,
   ): Promise<ResumeCommentReplyResponse> {
-    return this.post(`/v1/resume-review/comment-threads/${encodeURIComponent(threadId)}/replies`, body);
+    return this.post(
+      `/v1/resume-review/comment-threads/${encodeURIComponent(threadId)}/replies`,
+      body,
+    );
   }
 
-  resumeReviewFeedback(jobKey: string): Promise<ResumeReviewFeedbackListResponse> {
-    return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/resume-review/feedback`);
+  resumeReviewFeedback(
+    jobKey: string,
+  ): Promise<ResumeReviewFeedbackListResponse> {
+    return this.get(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/resume-review/feedback`,
+    );
   }
 
   resumeTemplates(): Promise<ResumeTemplateListResponse> {
@@ -449,21 +518,29 @@ export class JobCtrlApiClient {
     jobKey: string,
     body: JobResumeTemplateAssignmentRequest,
   ): Promise<JobResumeTemplateAssignmentResponse> {
-    return this.patch(`/v1/jobs/${encodeURIComponent(jobKey)}/resume-template`, body);
+    return this.patch(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/resume-template`,
+      body,
+    );
   }
 
   ensureCurrentResumeMaterials(
     jobKey: string,
     body: Partial<EnsureCurrentResumeMaterialsRequest> = {},
   ): Promise<EnsureCurrentResumeMaterialsResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/resume-template/ensure-current`, body);
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/resume-template/ensure-current`,
+      body,
+    );
   }
 
   applicationOutcomes(): Promise<ApplicationOutcomeListResponse> {
     return this.get("/v1/outcomes");
   }
 
-  jobApplicationOutcomes(jobKey: string): Promise<JobApplicationOutcomeListResponse> {
+  jobApplicationOutcomes(
+    jobKey: string,
+  ): Promise<JobApplicationOutcomeListResponse> {
     return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/outcomes`);
   }
 
@@ -478,7 +555,10 @@ export class JobCtrlApiClient {
     suggestionId: string,
     body: OutcomeSuggestionDecisionRequest,
   ): Promise<OutcomeSuggestionDecisionResponse> {
-    return this.post(`/v1/outcome-suggestions/${encodeURIComponent(suggestionId)}/decision`, body);
+    return this.post(
+      `/v1/outcome-suggestions/${encodeURIComponent(suggestionId)}/decision`,
+      body,
+    );
   }
 
   scanGmailApplicationOutcomes(
@@ -487,7 +567,9 @@ export class JobCtrlApiClient {
     return this.post("/v1/outcomes/gmail/scan", body);
   }
 
-  jobs(query: Partial<JobListQuery> = {}): Promise<PaginatedResponse<JobSummary>> {
+  jobs(
+    query: Partial<JobListQuery> = {},
+  ): Promise<PaginatedResponse<JobSummary>> {
     return this.get("/v1/jobs", query);
   }
 
@@ -499,7 +581,9 @@ export class JobCtrlApiClient {
     return this.get("/v1/evidence-map");
   }
 
-  listContacts(query: Partial<ContactListQuery> = {}): Promise<ContactListResponse> {
+  listContacts(
+    query: Partial<ContactListQuery> = {},
+  ): Promise<ContactListResponse> {
     return this.get("/v1/contacts", query);
   }
 
@@ -511,11 +595,17 @@ export class JobCtrlApiClient {
     return this.post("/v1/contacts", body);
   }
 
-  updateContact(contactId: string, body: ContactUpdateRequest): Promise<ContactMutationResponse> {
+  updateContact(
+    contactId: string,
+    body: ContactUpdateRequest,
+  ): Promise<ContactMutationResponse> {
     return this.patch(`/v1/contacts/${encodeURIComponent(contactId)}`, body);
   }
 
-  deleteContact(contactId: string, body: ContactDeleteRequest = {}): Promise<ContactDeleteResponse> {
+  deleteContact(
+    contactId: string,
+    body: ContactDeleteRequest = {},
+  ): Promise<ContactDeleteResponse> {
     return this.delete(`/v1/contacts/${encodeURIComponent(contactId)}`, body);
   }
 
@@ -533,7 +623,9 @@ export class JobCtrlApiClient {
     return this.get(`/v1/contacts/research/${encodeURIComponent(taskId)}`);
   }
 
-  runContactResearch(body: RunContactResearchRequest): Promise<ContactResearchStartResponse> {
+  runContactResearch(
+    body: RunContactResearchRequest,
+  ): Promise<ContactResearchStartResponse> {
     return this.post("/v1/contacts/research", body);
   }
 
@@ -554,24 +646,36 @@ export class JobCtrlApiClient {
     contactId: string,
     query: { jobId?: string } = {},
   ): Promise<OutreachThreadResponse> {
-    return this.get(`/v1/contacts/${encodeURIComponent(contactId)}/outreach`, query);
+    return this.get(
+      `/v1/contacts/${encodeURIComponent(contactId)}/outreach`,
+      query,
+    );
   }
 
   generateOutreachDraft(
     contactId: string,
     body: GenerateOutreachDraftRequest = {},
   ): Promise<OutreachThreadResponse> {
-    return this.post(`/v1/contacts/${encodeURIComponent(contactId)}/outreach/drafts`, body);
+    return this.post(
+      `/v1/contacts/${encodeURIComponent(contactId)}/outreach/drafts`,
+      body,
+    );
   }
 
   reviseOutreachDraft(
     threadId: string,
     body: ReviseOutreachDraftRequest,
   ): Promise<OutreachThreadResponse> {
-    return this.post(`/v1/outreach/threads/${encodeURIComponent(threadId)}/drafts`, body);
+    return this.post(
+      `/v1/outreach/threads/${encodeURIComponent(threadId)}/drafts`,
+      body,
+    );
   }
 
-  approveOutreachDraft(threadId: string, draftId: string): Promise<OutreachThreadResponse> {
+  approveOutreachDraft(
+    threadId: string,
+    draftId: string,
+  ): Promise<OutreachThreadResponse> {
     return this.post(
       `/v1/outreach/threads/${encodeURIComponent(threadId)}/drafts/${encodeURIComponent(draftId)}/approve`,
       {},
@@ -631,7 +735,10 @@ export class JobCtrlApiClient {
     return this.get("/v1/outreach/follow-ups/due");
   }
 
-  deleteJob(jobKey: string, body: DeleteJobRequest = {}): Promise<JobMutationResponse> {
+  deleteJob(
+    jobKey: string,
+    body: DeleteJobRequest = {},
+  ): Promise<JobMutationResponse> {
     return this.delete(`/v1/jobs/${encodeURIComponent(jobKey)}`, body);
   }
 
@@ -643,7 +750,9 @@ export class JobCtrlApiClient {
     return this.delete(`/v1/jobs/${encodeURIComponent(jobKey)}/permanent`);
   }
 
-  permanentlyDeleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
+  permanentlyDeleteJobs(
+    body: BulkJobMutationRequest,
+  ): Promise<JobMutationResponse> {
     return this.post("/v1/jobs/bulk-delete-permanent", body);
   }
 
@@ -655,7 +764,10 @@ export class JobCtrlApiClient {
     return this.post("/v1/jobs/bulk-restore", body);
   }
 
-  hideJob(jobKey: string, body: DeleteJobRequest = {}): Promise<JobMutationResponse> {
+  hideJob(
+    jobKey: string,
+    body: DeleteJobRequest = {},
+  ): Promise<JobMutationResponse> {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/hide`, body);
   }
 
@@ -671,26 +783,45 @@ export class JobCtrlApiClient {
     return this.post("/v1/jobs/bulk-unhide", body);
   }
 
-  retryFailedJobs(body: BulkRetryFailedRequest): Promise<BulkRetryFailedResponse> {
+  retryFailedJobs(
+    body: BulkRetryFailedRequest,
+  ): Promise<BulkRetryFailedResponse> {
     return this.post("/v1/jobs/bulk-retry-failed", body);
   }
 
-  runPendingPreparation(body: BulkRunPendingPreparationRequest): Promise<BulkRunPendingPreparationResponse> {
+  runPendingPreparation(
+    body: BulkRunPendingPreparationRequest,
+  ): Promise<BulkRunPendingPreparationResponse> {
     return this.post("/v1/jobs/bulk-run-pending-preparation", body);
   }
 
-  correctScore(jobKey: string, body: CorrectScoreRequest): Promise<CorrectScoreResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/score-correction`, body);
+  correctScore(
+    jobKey: string,
+    body: CorrectScoreRequest,
+  ): Promise<CorrectScoreResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/score-correction`,
+      body,
+    );
   }
 
   resetStaleScoresForRescore(
     body: ResetStaleScoresForRescoreRequest = { limit: 0, jobKeys: [] },
   ): Promise<ResetStaleScoresForRescoreResponse> {
-    return this.post("/v1/scoring/stale-scores/actions/reset-for-rescore", body);
+    return this.post(
+      "/v1/scoring/stale-scores/actions/reset-for-rescore",
+      body,
+    );
   }
 
-  rescoreJob(jobKey: string, body: Partial<RescoreJobRequest> = {}): Promise<ActionRunResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/rescore-current-policy`, body);
+  rescoreJob(
+    jobKey: string,
+    body: Partial<RescoreJobRequest> = {},
+  ): Promise<ActionRunResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/actions/rescore-current-policy`,
+      body,
+    );
   }
 
   rescoreJobsNotOnCurrentScoringPolicy(
@@ -699,15 +830,29 @@ export class JobCtrlApiClient {
     return this.post("/v1/scoring/actions/rescore-current-policy", body);
   }
 
-  retailorJob(jobKey: string, body: Partial<RetailorJobRequest> = {}): Promise<ActionRunResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/retailor-current-policy`, body);
+  retailorJob(
+    jobKey: string,
+    body: Partial<RetailorJobRequest> = {},
+  ): Promise<ActionRunResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/actions/retailor-current-policy`,
+      body,
+    );
   }
 
-  tailorJob(jobKey: string, body: Partial<TailorJobRequest> = {}): Promise<ActionRunResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/tailor`, body);
+  tailorJob(
+    jobKey: string,
+    body: Partial<TailorJobRequest> = {},
+  ): Promise<ActionRunResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/actions/tailor`,
+      body,
+    );
   }
 
-  retailorCurrentPolicy(body: BulkRetailorCurrentPolicyRequest): Promise<ActionRunResponse> {
+  retailorCurrentPolicy(
+    body: BulkRetailorCurrentPolicyRequest,
+  ): Promise<ActionRunResponse> {
     return this.post("/v1/materials/actions/retailor-current-policy", body);
   }
 
@@ -722,10 +867,14 @@ export class JobCtrlApiClient {
   }
 
   cancelWorkflowRun(runId: string): Promise<ActionRunResponse> {
-    return this.post(`/v1/workflow-runs/${encodeURIComponent(runId)}/actions/cancel`);
+    return this.post(
+      `/v1/workflow-runs/${encodeURIComponent(runId)}/actions/cancel`,
+    );
   }
 
-  artifacts(query: Partial<ArtifactListQuery> = {}): Promise<PaginatedResponse<ArtifactSummary>> {
+  artifacts(
+    query: Partial<ArtifactListQuery> = {},
+  ): Promise<PaginatedResponse<ArtifactSummary>> {
     return this.get("/v1/artifacts", query);
   }
 
@@ -735,7 +884,10 @@ export class JobCtrlApiClient {
 
   artifactPreviewPdfUrl(artifactId: string, cacheKey?: QueryValue): string {
     const path = `/v1/artifacts/${encodeURIComponent(artifactId)}/preview.pdf`;
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctrl.local");
+    const url = new URL(
+      `${this.baseUrl}${path}`,
+      this.baseUrl ? undefined : "http://jobctrl.local",
+    );
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));
     }
@@ -744,7 +896,10 @@ export class JobCtrlApiClient {
 
   artifactPreviewHtmlUrl(artifactId: string, cacheKey?: QueryValue): string {
     const path = `/v1/artifacts/${encodeURIComponent(artifactId)}/preview.html`;
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctrl.local");
+    const url = new URL(
+      `${this.baseUrl}${path}`,
+      this.baseUrl ? undefined : "http://jobctrl.local",
+    );
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));
     }
@@ -761,7 +916,10 @@ export class JobCtrlApiClient {
 
   profilePreviewPdfUrl(cacheKey?: QueryValue): string {
     const path = "/v1/profile/preview.pdf";
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctrl.local");
+    const url = new URL(
+      `${this.baseUrl}${path}`,
+      this.baseUrl ? undefined : "http://jobctrl.local",
+    );
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));
     }
@@ -770,7 +928,10 @@ export class JobCtrlApiClient {
 
   profilePreviewHtmlUrl(cacheKey?: QueryValue): string {
     const path = "/v1/profile/preview.html";
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctrl.local");
+    const url = new URL(
+      `${this.baseUrl}${path}`,
+      this.baseUrl ? undefined : "http://jobctrl.local",
+    );
     if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
       url.searchParams.set("v", String(cacheKey));
     }
@@ -801,7 +962,9 @@ export class JobCtrlApiClient {
     return this.post("/v1/extension/pairing-token/rotate", {});
   }
 
-  runPipelineStages(body: RunPipelineStagesRequest): Promise<PipelineStageRunResponse> {
+  runPipelineStages(
+    body: RunPipelineStagesRequest,
+  ): Promise<PipelineStageRunResponse> {
     return this.post("/v1/pipeline/actions/run-stage", body);
   }
 
@@ -809,7 +972,9 @@ export class JobCtrlApiClient {
     return this.get("/v1/credentials");
   }
 
-  updateCredential(body: CredentialUpdateRequest): Promise<CredentialsResponse> {
+  updateCredential(
+    body: CredentialUpdateRequest,
+  ): Promise<CredentialsResponse> {
     return this.patch("/v1/credentials", body);
   }
 
@@ -831,14 +996,24 @@ export class JobCtrlApiClient {
     capabilityId: BrowserCapabilityId,
     body: BrowserCapabilityEnableRequest,
   ): Promise<BrowserCapabilitiesResponse> {
-    return this.post(`/v1/browser-capabilities/${encodeURIComponent(capabilityId)}/enable`, body);
+    return this.post(
+      `/v1/browser-capabilities/${encodeURIComponent(capabilityId)}/enable`,
+      body,
+    );
   }
 
-  disableBrowserCapability(capabilityId: BrowserCapabilityId): Promise<BrowserCapabilitiesResponse> {
-    return this.post(`/v1/browser-capabilities/${encodeURIComponent(capabilityId)}/disable`, {});
+  disableBrowserCapability(
+    capabilityId: BrowserCapabilityId,
+  ): Promise<BrowserCapabilitiesResponse> {
+    return this.post(
+      `/v1/browser-capabilities/${encodeURIComponent(capabilityId)}/disable`,
+      {},
+    );
   }
 
-  copyLinkedInBrowserProfile(body: BrowserProfileCopyRequest): Promise<BrowserCapabilitiesResponse> {
+  copyLinkedInBrowserProfile(
+    body: BrowserProfileCopyRequest,
+  ): Promise<BrowserCapabilitiesResponse> {
     return this.post(
       "/v1/browser-capabilities/authenticated-linkedin-browser/profile-copy",
       body,
@@ -857,42 +1032,90 @@ export class JobCtrlApiClient {
     return this.post("/v1/providers/codex/verify", {});
   }
 
-  retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/retry-stage`, body);
+  retryStage(
+    jobKey: string,
+    body: RetryStageRequest,
+  ): Promise<ActionRunResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/actions/retry-stage`,
+      body,
+    );
   }
 
-  runJobStage(jobKey: string, body: RunJobStageRequest): Promise<ActionRunResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/run-stage`, body);
+  runJobStage(
+    jobKey: string,
+    body: RunJobStageRequest,
+  ): Promise<ActionRunResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/actions/run-stage`,
+      body,
+    );
   }
 
-  generateMaterials(jobKey: string, body: Partial<GenerateMaterialsRequest> = {}): Promise<ActionRunResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/generate-materials`, body);
+  generateMaterials(
+    jobKey: string,
+    body: Partial<GenerateMaterialsRequest> = {},
+  ): Promise<ActionRunResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/actions/generate-materials`,
+      body,
+    );
   }
 
   generateInterviewPrep(
     jobKey: string,
     body: Partial<GenerateInterviewPrepRequest> = {},
   ): Promise<ActionRunResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/generate-interview-prep`, body);
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/actions/generate-interview-prep`,
+      body,
+    );
   }
 
-  applyJob(jobKey: string, body: Partial<ApplyJobRequest> = {}): Promise<ActionRunResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/apply`, body);
+  applyJob(
+    jobKey: string,
+    body: Partial<ApplyJobRequest> = {},
+  ): Promise<ActionRunResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/actions/apply`,
+      body,
+    );
   }
 
-  cancelJobAction(jobKey: string, body: CancelJobActionRequest = {}): Promise<ActionRunResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/cancel`, body);
+  cancelJobAction(
+    jobKey: string,
+    body: CancelJobActionRequest = {},
+  ): Promise<ActionRunResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/actions/cancel`,
+      body,
+    );
   }
 
-  markApplied(jobKey: string, body: MarkJobActionRequest = {}): Promise<ActionRunResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/mark-applied`, body);
+  markApplied(
+    jobKey: string,
+    body: MarkJobActionRequest = {},
+  ): Promise<ActionRunResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/actions/mark-applied`,
+      body,
+    );
   }
 
-  markSkipped(jobKey: string, body: MarkJobActionRequest = {}): Promise<ActionRunResponse> {
-    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/mark-skipped`, body);
+  markSkipped(
+    jobKey: string,
+    body: MarkJobActionRequest = {},
+  ): Promise<ActionRunResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/actions/mark-skipped`,
+      body,
+    );
   }
 
-  private async get<T>(path: string, query?: Record<string, QueryValue>): Promise<T> {
+  private async get<T>(
+    path: string,
+    query?: Record<string, QueryValue>,
+  ): Promise<T> {
     return this.request("GET", path, query ? { query } : {});
   }
 
@@ -913,7 +1136,10 @@ export class JobCtrlApiClient {
     path: string,
     options: { body?: unknown; query?: Record<string, QueryValue> } = {},
   ): Promise<T> {
-    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobctrl.local");
+    const url = new URL(
+      `${this.baseUrl}${path}`,
+      this.baseUrl ? undefined : "http://jobctrl.local",
+    );
     for (const [key, value] of Object.entries(options.query ?? {})) {
       if (value !== undefined && value !== null && value !== "") {
         url.searchParams.set(key, String(value));
@@ -934,14 +1160,23 @@ export class JobCtrlApiClient {
       response = await fetch(href, { ...init, signal: controller.signal });
     } catch (error) {
       if (controller.signal.aborted) {
-        throw new Error(`JobCtrl API request timed out after ${this.requestTimeoutMs}ms: ${method} ${path}`);
+        throw new Error(
+          `JobCtrl API request timed out after ${this.requestTimeoutMs}ms: ${method} ${path}`,
+        );
       }
       throw error;
     } finally {
       clearTimeout(timeout);
     }
     if (!response.ok) {
-      throw new JobCtrlApiError(response.status, response.statusText);
+      let detail: string | undefined;
+      try {
+        const payload = (await response.json()) as { message?: unknown };
+        if (typeof payload.message === "string") detail = payload.message;
+      } catch {
+        // Preserve the status-only fallback for non-JSON error responses.
+      }
+      throw new JobCtrlApiError(response.status, response.statusText, detail);
     }
     return (await response.json()) as T;
   }

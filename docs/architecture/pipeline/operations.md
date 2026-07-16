@@ -111,6 +111,108 @@ is scored the moment it is individually enriched — but the progress payload is
 unchanged. No new `discovery_runs` progress columns are added, so both
 projection builders stay in parity.
 
+## Pipeline Operations Snapshot
+
+The legacy Runs progress bar answers one narrow question: how far the source
+family plus terminal-reconciliation spine has advanced. It is not whole-pipeline
+progress. `GET /v1/pipeline/operations` is the separate operational read model
+for answering which execution owns work, what remains in each scope, what the
+worker can currently execute, and whether an ETA can be defended.
+
+### Immutable execution lineage
+
+At the beginning of `DiscoverWorkflow.run`, the workflow reads its Temporal
+identity once and creates an immutable `DiscoveryExecutionRef`:
+
+```text
+(tenant_id, discover_workflow_id, discover_run_id)
+```
+
+The run ID is required because the deterministic workflow ID can be started
+again. Source-run IDs are observation details, not execution identity. Every
+linked job is persisted in `discovery_execution_jobs`, keyed by that exact
+execution plus canonical job URL, with one of two cohorts:
+
+- `observed_this_run` — a source in this execution observed the job;
+- `existing_backlog` — the execution deliberately swept pre-existing eligible
+  work. A later observation promotes this one row to `observed_this_run`; it
+  cannot create a second membership or demote a current one.
+
+Planning is explicit. `pending` and `failed` plan states do not mean that a job
+needs no work. `planned` records the immutable required-step list and child
+preparation workflow ID; `not_eligible` records a bounded safe reason. The
+terminal `preparation_fanout` step closes membership for operational phase and
+overall-ETA purposes.
+
+### Scoped work, not one denominator
+
+The response keeps three scopes distinct:
+
+| Scope | Ownership |
+| --- | --- |
+| `current_execution` | This run's observed-job cohort and execution-owned orchestration. |
+| `execution_sweep` | This run's explicit pre-existing-backlog cohort. Only separately attributable per-job queues are counted. |
+| `global_outside_execution` | Canonical per-job backlog outside both selected-execution cohorts. |
+
+Source-family progress and reconciliation are also separate. The former counts
+planned family crawls; the latter counts enrichment passes and preparation
+fan-out. Source completion therefore never implies that downstream scoring,
+materials, or PDF work is complete.
+
+The API prefers an active or draining Discover execution and otherwise shows
+the latest terminal execution. The phase vocabulary is `discovering`,
+`draining`, `completed`, `completed_with_issues`, `failed`, and `canceled`.
+Both execution cohorts participate in the delivered phase calculation:
+unresolved observed jobs or swept backlog can keep an otherwise successful
+workflow in `draining`.
+
+### Two durable progress authorities
+
+Canonical `job_stage_states` remains the source of truth for per-job `enrich`,
+`score`, `tailor`, and `cover` work. Orchestration gaps use the four
+`PipelineStep*` lifecycle events, folded into `pipeline_step_projections` for
+`source_planning`, `source_family`, `enrichment_pass`,
+`preparation_fanout`, `existing_backlog_sweep`, and `pdf_render`.
+
+The fold is keyed by execution, step kind, and bounded item key. A higher
+attempt replaces an older attempt; a late lower attempt is ignored; within one
+attempt, the first terminal result wins. Details contain only allowlisted codes
+and counts, and failures persist bounded error codes rather than exception text.
+The Python and TypeScript projection builders fold the same events and share the
+normal operations-projection watermark/rebuild path.
+
+### Runtime capacity and conservative ETA
+
+Worker heartbeats add runtime facts that cannot be reconstructed from durable
+events: exact activity slots in use, configured capacity, bounded allowlisted
+active-work detail, completed-activity duration summaries, and approximate
+Temporal task-queue observations. The operations reader derives the expected
+app directory from the configured database path, filters heartbeats to that
+resolved database/app-dir identity, selects the task queue named by the newest
+matching heartbeat, and aggregates fresh schema-valid workers from that queue.
+Active slots count every activity; active-item detail is a separate
+oldest-first list capped at 20 with an exact allowlisted total and truncation
+marker.
+
+This boundary is deliberately privacy-safe. The interceptor never reads
+activity arguments. It retains only allowlisted activity kinds, validated safe
+workflow/run references, and non-reversible local opaque identifiers. URLs,
+descriptions, profiles, prompts, provider responses, artifact paths, payloads,
+credentials, and exception text cannot enter heartbeat detail. Task-queue
+pollers, backlog count/age, and add/dispatch rates are separately labeled as
+approximate infrastructure observations, never as job counts.
+
+`pipeline-eta-v1` uses successful canonical stage or pipeline-step durations
+(operational-attempt metrics are fallback evidence only), a 14-day window, at
+most 50 recent samples, and a minimum of five samples for every remaining
+stage. The overall numeric range is withheld while membership is open;
+per-stage and source-family ranges can price their already-known scoped backlog
+before closure. Every estimate still withholds a number when telemetry is stale,
+a worker is unavailable, work is budget-blocked, or shared contention is
+unbounded. Non-numeric `calibrating`, `paused`, `stale`, and `unavailable`
+states are part of the contract. An available low/high range is a current
+projection estimate, not a completion promise.
+
 ## Persistence Map
 
 The Python worker writes to a single local SQLite database. Tables group by context;
@@ -119,15 +221,15 @@ spine.
 
 | Group | Representative tables |
 | --- | --- |
-| Discovery | `jobs`, source observations, `source_registry_entries`, source locator / manual-capture / review queue, quarantine, `discovery_runs`, `discovery_settings`, plus target search overlaid from `candidate_profiles` |
+| Discovery | `jobs`, source observations, `source_registry_entries`, source locator / manual-capture / review queue, quarantine, `discovery_runs`, `discovery_execution_jobs`, `discovery_settings`, plus target search overlaid from `candidate_profiles` |
 | Enrichment | enrichment fields / rows on jobs, posting content snapshots |
 | Scoring | `job_scores`, `scoring_policies`, `job_score_staleness`, employer analysis |
 | Materials | materials sets / tailored resumes, cover letters, rendered PDFs, `tailoring_policies` |
 | Apply | apply stage state + apply lifecycle in `job_events` (see note) |
 | Contact & Outreach | `contacts`, `contact_attributes`, `contact_research_tasks` (+ `source_attempts_json`), `contact_candidates`; projected into `contact_projections` + `contact_research_task_projections` |
-| Orchestration / read model | `job_events` (append-only), `operational_attempt_metrics`, `job_stage_states`, `workflow_run_projections`, `job_list_projections`, `job_detail_projections`, `dashboard_projections`, artifact projections, `apply_run_projections` |
+| Orchestration / read model | `job_events` (append-only), `operational_attempt_metrics`, `job_stage_states`, `pipeline_step_projections`, `workflow_run_projections`, `job_list_projections`, `job_detail_projections`, `dashboard_projections`, artifact projections, `apply_run_projections` |
 | Spend | `llm_spend` |
-| Runtime | worker heartbeat / runtime identity |
+| Runtime | `worker_runtime_heartbeats` with runtime identity, exact slot totals, bounded safe activity detail, duration summaries, and task-queue observation |
 
 Note: the legacy `apply_runs` / `apply_run_events` tables were dropped at boot.
 Apply lifecycle now lives entirely in `job_events` and is projected into
@@ -141,28 +243,37 @@ unrelated failure causes.
 
 ## Domain Events, Projections, and SSE
 
-The authoritative event catalog is the TypeScript `DomainEventType` union in
-`packages/domain-types/src/events/` — **68 event types**, guarded by an
-exhaustiveness assertion and by the frontend's `every-event-has-handler` parity
-test. The Python worker emits 55 of them through `create_domain_event` factories
-in `workers/automation/src/jobctrl/domain/events/`; the remaining types
-(preparation work-item, resume-template, `TailorRetailorRequested`,
-`TailoredArtifactsSuppressed`, `TailoringPolicyUpdated`,
-`CompensationFactsUpdated`) originate on other code paths. Both sides fold the
-same camelCase payloads, including the six `Workflow*` lifecycle events.
+Retry-and-run preserves the same audit boundary: the API verifies worker
+readiness before resetting a stage or appending the reset event. A
+`503 worker_runtime_unavailable` leaves the durable failed/blocked stage and
+its events unchanged. The reset happens first only after dispatch prerequisites
+are satisfied; a reset-only command remains a deliberate local transition.
+
+The authoritative TypeScript runtime registry lives in
+`packages/domain-types/src/events/`. The
+frontend's `every-event-has-handler` test requires an invalidation handler for
+every member, and `test_domain_event_parity.py` requires the Python registry to
+match the same ordered tuple exactly. Both projection builders fold the same
+camelCase payloads, including the `Workflow*` and `PipelineStep*`
+lifecycle events.
 
 Three catalog corrections, because the old doc drifted:
 
 - **There is no `CoverLetterFailed` event.** Cover success is
   `CoverLetterGenerated`; cover failure surfaces as `StageFailed` +
   `WorkflowFailed`.
-- **`StageQueued` is not a typed domain event.** It is not in the 68-type union.
+- **`StageQueued` is not a typed domain event.** It is not in the canonical registry.
   The TS bulk routes tag reset/queued rows with a `StageQueued` marker string
   (`source: "bulk_retry_failed"` / `"bulk_run_pending_preparation"`), but it is
   not folded like a domain event.
 - **`DiscoveryRunProgress` is not a domain event.** It is the heartbeat progress
   payload persisted onto the `discovery_runs` aggregate; the typed discovery-run
   events are `DiscoveryRunStarted` / `Completed` / `Failed`.
+- **Pipeline-step lifecycle is typed and execution-scoped.**
+  `PipelineStepQueued`, `PipelineStepStarted`, `PipelineStepCompleted`, and
+  `PipelineStepFailed` carry the exact Discover workflow/run identity plus
+  bounded step kind, item key, codes, counts, and timing; raw activity payloads
+  and exception text are excluded.
 
 The read path is projection-backed, and there are **two projection builders**:
 the Python `ProjectionBuilder` (in the worker, bus-subscribed and also refreshed
@@ -177,7 +288,7 @@ flowchart TB
     Agg@{ shape: cyl, label: "aggregate tables" }
     PB@{ icon: "tabler:brand-python", form: "rounded", h: 64, label: "ProjectionBuilder<br/>Python worker" }
     RP@{ icon: "tabler:refresh", form: "rounded", h: 64, label: "refreshProjections<br/>TypeScript API" }
-    Proj@{ shape: cyl, label: "projection tables<br/>jobs · dashboard · artifacts<br/>apply runs · workflow runs" }
+    Proj@{ shape: cyl, label: "projection tables<br/>jobs · dashboard · pipeline steps<br/>apply runs · workflow runs" }
     Api@{ icon: "tabler:api", form: "rounded", h: 64, label: "TypeScript API<br/>read endpoints" }
     SSE@{ icon: "tabler:radio", form: "rounded", h: 64, label: "Event stream<br/>250 ms poll" }
     UI@{ icon: "tabler:layout-dashboard", form: "rounded", h: 64, label: "React views<br/>TanStack Query" }
@@ -222,6 +333,9 @@ defensive dashboard read keep them truthful on existing databases:
   from the event log instead of staying silently empty.
 - Dashboard pipeline progress consults terminal workflow-run state, so a stale
   `StageStarted` row can no longer present a dead workflow as running.
+- `pipeline_step_projections` uses the shared operations watermark and can be
+  rebuilt from the append-only lifecycle events; projection refresh is
+  attempt-aware and idempotent in both languages.
 
 ## Failure Behavior Summary
 

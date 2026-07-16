@@ -84,7 +84,7 @@ describe("<StatCard>", () => {
     expect(link).toHaveTextContent("42");
     expect(link).toHaveTextContent("+2 today");
     expect(link).toHaveClass(
-      "rounded-lg",
+      "rounded-[min(var(--radius-4xl),24px)]",
       "stat-card-target",
       "stat-card-link",
     );

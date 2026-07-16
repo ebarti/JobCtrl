@@ -15,7 +15,7 @@ Unless overridden by `JOBCTRL_DIR`, the local authority root is
 | --- | --- |
 | `jobctrl.db` plus WAL/SHM | Canonical profile, jobs, discovery settings, events, projections, materials metadata, reviews, contacts, outcomes, and workflow rows. |
 | `temporal.db` plus WAL/SHM | Bundled Temporal history; native lifecycle treats it and `jobctrl.db` as one restore pair. |
-| `config.json` | Non-secret Settings values including spend/capacity, scoring guidance, provider metadata, provider-scoped model IDs, AI execution policy, compensation source policy, and browser-adoption metadata. |
+| `config.json` | Non-secret Settings values including spend/capacity, scoring guidance, provider metadata, provider-scoped model IDs, AI execution policy, compensation source policy, and explicitly adopted browser metadata. Transient detected-browser candidates are not persisted. |
 | `.env`, `gmail/` | Plaintext environment credentials and Gmail OAuth client/token state. |
 | `codex_home/` | Stable JobCtrl-owned Codex state; auth is outside the prompt-readable `workspace/` subtree. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated and separately acquired provider runtime state. |
@@ -65,9 +65,9 @@ The remaining tables group by owner:
 | Candidate Profile | `candidate_profiles` plus 12 `candidate_profile_*` child tables (experience, bullets, skills, education, achievement evidence, required-content sets, resume constraint metrics) |
 | Resume templates | `resume_templates`, `resume_template_versions`, `resume_template_defaults`, `resume_template_refresh_attempts`, `job_resume_template_assignments` |
 | Compensation | `job_posted_compensation_facts`, `job_market_compensation_estimates` |
-| Read-model projections | `job_list_projections`, `job_detail_projections`, `dashboard_projections`, `apply_run_projections`, `artifact_list_projections`, `event_watermarks`, `digest_state` |
-| Discovery & preparation | `discovery_runs`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
-| Policies & operations | `tailoring_policies`, `llm_spend`, `job_score_staleness`, `jobctrl_deleted_jobs` |
+| Read-model projections | `job_list_projections`, `job_detail_projections`, `dashboard_projections`, `apply_run_projections`, `workflow_run_projections`, `pipeline_step_projections`, `artifact_list_projections`, `event_watermarks`, `digest_state` |
+| Discovery & preparation | `discovery_runs`, `discovery_execution_jobs`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, legacy `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
+| Policies & operations | `tailoring_policies`, `llm_spend`, `job_score_staleness`, `worker_runtime_heartbeats`, `jobctrl_deleted_jobs` |
 
 SQLite in `~/.jobctrl/jobctrl.db` is the local source of truth for jobs,
 stage states, events, artifacts, normalized Candidate Profile data, profile
@@ -122,6 +122,40 @@ tables into `job_list_projections.compensation_summary_json`,
 projection builders own the same JSON shape. The list/detail API deserializes
 those projection columns only; it does not parse raw salary text on read.
 `JobSummary.salary` remains the compatibility raw string.
+
+### Discovery lineage and operations state
+
+`discovery_execution_jobs` is the durable execution-membership authority. Its
+primary identity is tenant + Discover workflow ID + Temporal run ID + canonical
+job URL. It stores `observed_this_run` or `existing_backlog`, the first safe
+source metadata, explicit work-plan state, immutable required steps when
+planned, a bounded reason for not-eligible/failed plans, and the preparation
+workflow ID. Link writes are idempotent; a swept job can be promoted when this
+run later observes it, but cannot be duplicated or demoted.
+
+`pipeline_step_projections` is rebuildable read state keyed by that exact
+execution, bounded step kind, and item key. It folds the four `PipelineStep*`
+events into attempt, state, queue/start/finish timestamps, duration, safe
+detail/error code, retryability, and last-event metadata. The attempt-aware fold
+ignores late lower attempts and preserves the first terminal result within an
+attempt. Canonical `job_stage_states`, not this projection, remains the owner of
+per-job enrich/score/tailor/cover lifecycle.
+
+`worker_runtime_heartbeats` is current runtime telemetry rather than durable
+domain history. A row identifies the worker/runtime boundary, configured and
+active slots, executor threads, bounded allowlisted active detail and duration
+summaries, and one typed Temporal task-queue observation. The operations reader
+derives the expected application directory from the configured database path,
+filters rows to that resolved database/app-dir identity, selects the queue from
+the newest matching heartbeat, and aggregates fresh schema-valid rows on that
+queue. It never treats stale/invalid rows as zero capacity.
+
+The heartbeat interceptor does not read activity arguments. Detail is capped,
+unsafe identifiers are stored only as non-reversible local opaque references,
+and raw URLs, descriptions, profile data, prompts, provider output, artifact
+paths, payloads, credentials, and exception text are excluded. Runtime rows are
+still local operational metadata and belong inside the same sensitive
+`jobctrl.db` backup boundary.
 
 ## Files And Registration Flow
 

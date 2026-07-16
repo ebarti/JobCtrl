@@ -13,6 +13,7 @@ import { ToastList } from "./toaster.js";
 const meta = {
   title: "Shared/UI/Toast",
   component: ToastList,
+  tags: ["a11y-regression"],
 } satisfies Meta<typeof ToastList>;
 
 export default meta;
@@ -42,7 +43,6 @@ function ToastSeed({
       description,
       type: variant,
       timeout: 0,
-      priority: "high",
       data: {
         ...(closeLabel ? { closeLabel } : {}),
         variant,

@@ -417,6 +417,55 @@ def test_terminal_fanout_decides_every_unselected_observed_membership(
     )
 
 
+def test_terminal_fanout_honors_deleted_job_tombstone_when_table_exists(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution = _execution("temporal-run-terminal-deleted")
+    repository = SqliteDiscoveryExecutionRepository(conn)
+    job_url = _insert_job(conn, "deleted")
+    conn.execute(
+        """
+        CREATE TABLE jobctrl_deleted_jobs (
+            job_url TEXT PRIMARY KEY,
+            deleted_at TEXT NOT NULL,
+            reason TEXT,
+            restored_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO jobctrl_deleted_jobs (job_url, deleted_at) VALUES (?, ?)",
+        (job_url, "2026-07-14T09:00:00+00:00"),
+    )
+    conn.commit()
+    repository.link_job(
+        execution,
+        job_url,
+        cohort_kind="observed_this_run",
+        source_family="jobspy",
+        source_run_id="source-terminal",
+    )
+
+    monkeypatch.setattr(preparation_pipeline, "get_connection", lambda: conn)
+    monkeypatch.setattr(
+        preparation_pipeline,
+        "derive_preparation_targets",
+        lambda _payload: [],
+    )
+
+    preparation_pipeline.start_discovery_preparation_workflows(
+        tenant_id=LOCAL_TENANT,
+        discovery_execution=execution,
+        finalize_observed_work_plans=True,
+    )
+
+    membership = repository.get(execution, job_url)
+    assert membership is not None
+    assert membership.work_plan_state == "not_eligible"
+    assert membership.work_plan_reason == "job_not_actionable"
+
+
 def test_terminal_fanout_keeps_unobserved_pending_score_in_existing_backlog(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,

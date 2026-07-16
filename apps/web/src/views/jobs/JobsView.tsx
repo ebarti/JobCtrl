@@ -9,7 +9,7 @@ import {
   type SavedTableView,
   STAGE_STATES,
 } from "@jobctrl/contracts";
-import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { UseMutationResult } from "@tanstack/react-query";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -725,7 +725,6 @@ export function JobsView() {
           toolbarActions={renderSavedTableActions}
         />
       </section>
-      <Outlet />
     </>
   );
 }

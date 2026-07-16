@@ -1,5 +1,16 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
+
+import { e2eStateFilePath } from "./e2e-state.js";
+
+interface DocsScreenshotWorkspaceGuard {
+  assertOwnedDocsScreenshotDirectory(appDir: string): Promise<string>;
+}
+
+const { assertOwnedDocsScreenshotDirectory } = createRequire(import.meta.url)(
+  "./docs-screenshot-workspace.cjs",
+) as DocsScreenshotWorkspaceGuard;
 
 function findRepoRoot(start: string): string | null {
   let current = path.resolve(start);
@@ -25,16 +36,27 @@ export default async function globalTeardown(): Promise<void> {
   if (!repoRoot) {
     return;
   }
-  const stateFile = path.join(repoRoot, ".jobctrl-e2e-state.json");
+  const stateFile = e2eStateFilePath();
+  let state: State;
   try {
-    const raw = fs.readFileSync(stateFile, "utf-8");
-    const state = JSON.parse(raw) as State;
-    const dir = state.workspace?.appDir;
-    if (dir && fs.existsSync(dir)) {
-      fs.rmSync(dir, { force: true, recursive: true });
+    state = JSON.parse(fs.readFileSync(stateFile, "utf-8")) as State;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return;
     }
-    fs.rmSync(stateFile, { force: true });
-  } catch {
-    // No state file or already cleaned up.
+    throw error;
   }
+  const dir = state.workspace?.appDir;
+  if (dir && fs.existsSync(dir)) {
+    const deletionTarget =
+      process.env["JOBCTRL_DOCS_SCREENSHOTS"] === "1"
+        ? await assertOwnedDocsScreenshotDirectory(dir)
+        : dir;
+    fs.rmSync(deletionTarget, { force: true, recursive: true });
+  }
+  fs.rmSync(stateFile, { force: true });
 }

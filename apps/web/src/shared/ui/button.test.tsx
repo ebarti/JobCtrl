@@ -26,6 +26,26 @@ describe("<Button>", () => {
     const linkButton = screen.getByRole("link", { name: "Open jobs" });
     expect(linkButton.tagName).toBe("A");
     expect(linkButton).toHaveAttribute("href", "/jobs");
-    expect(linkButton).toHaveClass("inline-flex", "rounded-lg");
+    expect(linkButton).toHaveClass("inline-flex", "rounded-md");
+  });
+
+  it("provides semantic success and warning variants", () => {
+    render(
+      <>
+        <Button variant="success">Approve</Button>
+        <Button variant="warning">Defer</Button>
+      </>,
+    );
+
+    expect(screen.getByRole("button", { name: "Approve" })).toHaveClass(
+      "bg-success",
+      "text-success-foreground",
+      "focus-visible:ring-success",
+    );
+    expect(screen.getByRole("button", { name: "Defer" })).toHaveClass(
+      "bg-warning",
+      "text-warning-foreground",
+      "focus-visible:ring-warning",
+    );
   });
 });

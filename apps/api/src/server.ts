@@ -1461,6 +1461,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return { ok: false, error: "unsupported_retry_run_after_stage", stage: body.stage };
     }
     return withWritableDb(reply, options.dbPath, async (db) => {
+      if (body.runAfter) {
+        const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+        if (!workerReady) {
+          return undefined;
+        }
+      }
       const reset = resetJobStage(db, decodeRouteParam(request.params.jobKey), body.stage, {
         resetAttempts: body.resetAttempts,
       });
@@ -1475,12 +1481,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       };
       if (continuationStages.length > 0 && body.stage !== "apply") {
         command.stages = continuationStages;
-      }
-      if (body.runAfter) {
-        const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
-        if (!workerReady) {
-          return undefined;
-        }
       }
       const dispatch = body.runAfter ? await actionDispatcher(command, actionContext) : { status: "reset" };
       void reply.code(body.runAfter ? 202 : 200);
@@ -2275,7 +2275,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) return undefined;
       return dispatchBrowserCapabilities(reply, providerDispatcher, "browser_capability_enable", {
         capabilityId,
-        executablePath: body.executablePath,
+        ...body,
       });
     },
   );
@@ -3103,7 +3103,10 @@ async function dispatchBrowserCapabilities(
     return {
       ok: false as const,
       error: "browser_capability_failed" as const,
-      message: "The browser capability request could not be completed.",
+      message:
+        response.error.code === JsonRpcErrorCodes.InvalidParams
+          ? response.error.message
+          : "The browser capability request could not be completed.",
     };
   }
   const parsed = BrowserCapabilitiesResultSchema.safeParse(response.result);

@@ -1,4 +1,10 @@
-import { IconCheck, IconExternalLink } from "@tabler/icons-react";
+import {
+  IconAlertTriangle,
+  IconBan,
+  IconCheck,
+  IconExternalLink,
+  type TablerIcon,
+} from "@tabler/icons-react";
 
 import {
   useAcknowledgeDigestMutation,
@@ -9,6 +15,7 @@ import { formatDateTime } from "../../shared/lib/formatters.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
 
 interface DigestRow {
   readonly key: string;
@@ -16,6 +23,7 @@ interface DigestRow {
   readonly value: string;
   readonly detail: string;
   readonly href: string;
+  readonly icon?: TablerIcon | undefined;
   readonly tone?: "warn" | "ok" | undefined;
 }
 
@@ -55,6 +63,7 @@ function digestRows(digest: DailyDigest): readonly DigestRow[] {
       value: String(digest.blockedSources.count),
       detail: blockedSourceNames || "sources normal",
       href: digest.deepLinks.blockedSources,
+      icon: digest.blockedSources.count > 0 ? IconBan : undefined,
       tone: digest.blockedSources.count > 0 ? "warn" : undefined,
     },
     {
@@ -102,12 +111,20 @@ function digestRows(digest: DailyDigest): readonly DigestRow[] {
 
 function DigestRowLink({ row }: { readonly row: DigestRow }) {
   return (
-    <a className={`digest-row${row.tone ? ` tone-${row.tone}` : ""}`} href={row.href}>
+    <a className="digest-row" href={row.href}>
       <span className="digest-main">
         <span className="digest-label">{row.label}</span>
         <span className="digest-detail">{row.detail}</span>
       </span>
-      <span className="digest-value">{row.value}</span>
+      <span className="digest-value">
+        {row.tone ? (
+          <StatusBadge icon={row.icon} tone={row.tone}>
+            {row.value}
+          </StatusBadge>
+        ) : (
+          row.value
+        )}
+      </span>
       <IconExternalLink size={14} aria-hidden="true" />
     </a>
   );
@@ -125,12 +142,14 @@ export function DigestPanel() {
       <CardHeader title="Daily digest" meta={meta} />
       {digest.error instanceof Error ? (
         <Alert variant="destructive" className="dashboard-inline-alert">
+          <IconAlertTriangle aria-hidden="true" />
           <AlertTitle>Daily digest unavailable</AlertTitle>
           <AlertDescription>{digest.error.message}</AlertDescription>
         </Alert>
       ) : null}
       {acknowledgeError ? (
         <Alert variant="destructive" className="dashboard-inline-alert">
+          <IconAlertTriangle aria-hidden="true" />
           <AlertTitle>Could not mark the digest reviewed</AlertTitle>
           <AlertDescription>{acknowledgeError}</AlertDescription>
         </Alert>

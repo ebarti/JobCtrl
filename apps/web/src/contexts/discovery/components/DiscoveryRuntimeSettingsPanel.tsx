@@ -9,7 +9,7 @@ import {
 import { useForm } from "@tanstack/react-form";
 import { useCallback, useEffect, useState } from "react";
 
-import { CardHeader } from "../../../shared/ui/card-header.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { useDiscoverySettingsQuery } from "../../operations/hooks/useDiscoverySettingsQuery.js";
 import { useUpdateDiscoverySettingsMutation } from "../hooks/useUpdateDiscoverySettingsMutation.js";
@@ -58,15 +58,19 @@ export function DiscoveryRuntimeSettingsPanel() {
   const settingsQuery = useDiscoverySettingsQuery();
 
   return (
-    <section className="card full discovery-runtime-settings">
-      <CardHeader title="Runtime settings" meta="sources, timing, and filtering" />
+    <DisclosureSection
+      className="discovery-runtime-settings"
+      collapsedSummary="Discovery runtime configuration"
+      description="Source execution, lookback, filtering, and schedule"
+      title="Runtime settings"
+    >
       {settingsQuery.error ? <div className="banner inline">{settingsQuery.error.message}</div> : null}
       {settingsQuery.data ? (
         <DiscoveryRuntimeSettingsForm initial={settingsQuery.data} />
       ) : (
         <Empty title="Loading runtime settings." />
       )}
-    </section>
+    </DisclosureSection>
   );
 }
 

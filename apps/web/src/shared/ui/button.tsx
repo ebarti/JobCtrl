@@ -11,6 +11,10 @@ const buttonVariants = cva(
       variant: {
         default:
           "bg-primary text-primary-foreground shadow-[0_1px_2px_rgb(0_0_0_/_0.14)] hover:bg-primary/90 active:translate-y-px",
+        success:
+          "bg-success text-success-foreground shadow-[0_1px_2px_rgb(0_0_0_/_0.14)] hover:bg-success/90 focus-visible:ring-success active:translate-y-px",
+        warning:
+          "bg-warning text-warning-foreground shadow-[0_1px_2px_rgb(0_0_0_/_0.1)] hover:bg-warning/90 focus-visible:ring-warning active:translate-y-px",
         destructive: "bg-destructive text-white hover:bg-destructive/90 active:translate-y-px",
         outline:
           "border-border bg-card text-foreground hover:bg-muted",

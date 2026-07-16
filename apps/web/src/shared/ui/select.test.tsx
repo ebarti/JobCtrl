@@ -165,7 +165,7 @@ describe("<Select>", () => {
     const popup = screen.getByTestId("select-popup");
     expect(popup).toHaveAttribute("data-align-trigger", "false");
     expect(popup).toHaveAttribute("data-align", "end");
-    expect(popup.parentElement).toHaveStyle({ position: "fixed" });
+    expect(popup.parentElement).toHaveStyle({ position: "absolute" });
     expect(
       screen.getByRole("group", { name: "Density choices" }),
     ).toBeInTheDocument();

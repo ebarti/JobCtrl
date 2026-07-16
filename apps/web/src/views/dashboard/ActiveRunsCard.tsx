@@ -1,3 +1,4 @@
+import { IconAlertTriangle, IconBan, IconClock, type TablerIcon } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 
 import type { WorkflowRunSummary } from "../../contexts/operations/types.js";
@@ -32,6 +33,14 @@ function activeRunStatusLabel(status: WorkflowRunSummary["status"]): string {
   return status.replaceAll("_", " ");
 }
 
+function activeRunStatusIcon(
+  status: WorkflowRunSummary["status"],
+): TablerIcon | undefined {
+  if (status === "starting" || status === "in_progress") return IconClock;
+  if (status === "canceled" || status === "terminated") return IconBan;
+  return undefined;
+}
+
 export interface ActiveRunsCardProps {
   runs: readonly WorkflowRunSummary[];
   loading: boolean;
@@ -46,6 +55,7 @@ export function ActiveRunsCard({ runs, loading, error }: ActiveRunsCardProps) {
       <CardHeader title="Active runs" meta={`${visibleRuns.length} shown`} />
       {error ? (
         <Alert variant="destructive" className="dashboard-inline-alert">
+          <IconAlertTriangle aria-hidden="true" />
           <AlertTitle>Active runs unavailable</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
@@ -64,7 +74,10 @@ export function ActiveRunsCard({ runs, loading, error }: ActiveRunsCardProps) {
                 })
               }
             >
-              <StatusBadge tone={ACTIVE_RUN_TONE[run.status]}>
+              <StatusBadge
+                icon={activeRunStatusIcon(run.status)}
+                tone={ACTIVE_RUN_TONE[run.status]}
+              >
                 {activeRunStatusLabel(run.status)}
               </StatusBadge>
               <span className="title-stack">

@@ -1,5 +1,16 @@
-import { WORKFLOW_RUN_STATUS_FILTERS, type WorkflowRunStatusFilter } from "@jobctrl/contracts";
-import type { ChangeEvent } from "react";
+import {
+  WORKFLOW_RUN_STATUS_FILTERS,
+  type WorkflowRunStatusFilter,
+} from "@jobctrl/contracts";
+
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../shared/ui/select.js";
 
 export interface RunsFilterBarProps {
   status: WorkflowRunStatusFilter;
@@ -12,26 +23,37 @@ function statusLabel(value: WorkflowRunStatusFilter): string {
 }
 
 export function RunsFilterBar({ status, onStatusChange }: RunsFilterBarProps) {
-  const handleChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const next = event.target.value as WorkflowRunStatusFilter;
-    onStatusChange(next);
-  };
+  const statusItems = WORKFLOW_RUN_STATUS_FILTERS.map((value) => ({
+    value,
+    label: statusLabel(value),
+  }));
   return (
     <div className="filter-bar">
       <label className="field">
         <span>Status</span>
-        <select
-          aria-label="Filter workflow runs by status"
-          className="select"
+        <Select
+          items={statusItems}
           value={status}
-          onChange={handleChange}
+          onValueChange={(next) => {
+            if (next !== null) onStatusChange(next);
+          }}
         >
-          {WORKFLOW_RUN_STATUS_FILTERS.map((value) => (
-            <option key={value} value={value}>
-              {statusLabel(value)}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            aria-label="Filter workflow runs by status"
+            className="w-full min-w-40"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            <SelectGroup>
+              {statusItems.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </label>
     </div>
   );

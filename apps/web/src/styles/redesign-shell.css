@@ -109,18 +109,19 @@
 }
 
 .side-rail__link:hover {
-  background: var(--muted);
-  color: var(--foreground);
+  background: color-mix(in oklch, var(--sidebar-accent) 55%, transparent);
+  color: var(--sidebar-accent-foreground);
 }
 
 .side-rail__link.on {
-  background: var(--foreground);
-  color: var(--card);
+  background: transparent;
+  color: var(--sidebar-foreground);
   font-weight: 650;
 }
 
 .side-rail__link.on::before {
-  display: none;
+  display: block;
+  background: var(--sidebar-primary);
 }
 
 .side-rail__icon {
@@ -181,7 +182,7 @@
 }
 
 .topbar__search:focus-within {
-  border-bottom-color: var(--foreground);
+  border-bottom-color: var(--primary);
   color: var(--foreground);
 }
 
@@ -328,6 +329,10 @@
 }
 
 @media (max-width: 820px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .topbar {
     gap: 8px 12px;
     min-height: 58px;
@@ -355,6 +360,11 @@
 
   .connection-pill-group {
     order: 4;
+  }
+
+  .connection-pill-group:has(.connection-banner) {
+    min-width: 0;
+    flex: 1 1 100%;
   }
 
   .main {

@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { axe } from "jest-axe";
 import { useEffect } from "react";
 import { describe, expect, it } from "vitest";
@@ -33,7 +34,6 @@ function ToastSeed({
         : "The synthetic report is ready for review.",
       type: destructive ? "error" : "info",
       timeout: 0,
-      priority: "high",
       data: {
         ...(closeLabel ? { closeLabel } : {}),
         variant: destructive ? "error" : "info",
@@ -93,11 +93,13 @@ describe("Toast accessibility", () => {
   });
 
   it("keeps action and caller-provided close names accessible", async () => {
+    const user = userEvent.setup();
     const view = renderToast({
       action: true,
       closeLabel: "Dismiss sync notice",
     });
     const close = screen.getByLabelText("Dismiss sync notice");
+    await user.keyboard("{F6}");
 
     expect(
       screen.getByRole("button", { name: "Undo sync" }),

@@ -1,36 +1,7 @@
 import { test, expect } from "@playwright/test";
 import Database from "better-sqlite3";
-import fs from "node:fs";
-import path from "node:path";
 
-interface State {
-  workspace?: { dbPath?: string };
-}
-
-function findRepoRoot(start: string): string {
-  let current = path.resolve(start);
-  for (let i = 0; i < 10; i += 1) {
-    if (fs.existsSync(path.join(current, "pnpm-workspace.yaml"))) {
-      return current;
-    }
-    const next = path.dirname(current);
-    if (next === current) {
-      throw new Error(`Could not find repo root above ${start}`);
-    }
-    current = next;
-  }
-  throw new Error(`Could not find repo root within 10 ancestors of ${start}`);
-}
-
-function loadDbPath(): string {
-  const stateFile = path.join(findRepoRoot(process.cwd()), ".jobctrl-e2e-state.json");
-  const raw = fs.readFileSync(stateFile, "utf-8");
-  const state = JSON.parse(raw) as State;
-  if (!state.workspace?.dbPath) {
-    throw new Error("E2E state file is missing workspace.dbPath; global-setup did not run.");
-  }
-  return state.workspace.dbPath;
-}
+import { loadE2eDbPath } from "../fixtures/e2e-state.js";
 
 const JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
 
@@ -56,7 +27,7 @@ function refreshWorkerHeartbeat(dbPath: string): void {
 test("Generate materials: button enabled → dispatch queued → ResumeApproved surfaces in audit history", async ({
   page,
 }) => {
-  const dbPath = loadDbPath();
+  const dbPath = loadE2eDbPath();
   refreshWorkerHeartbeat(dbPath);
   page.on("dialog", (dialog) => void dialog.accept());
 

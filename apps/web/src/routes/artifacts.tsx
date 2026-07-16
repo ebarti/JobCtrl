@@ -1,7 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 import { artifactsKeys } from "../contexts/operations/artifactsKeys.js";
-import { ArtifactsView } from "../views/artifacts/ArtifactsView.js";
 import { artifactsSearchSchema, type ArtifactsSearch } from "./-artifacts.search.js";
 
 function artifactsListInput(search: ArtifactsSearch) {
@@ -25,5 +24,5 @@ export const Route = createFileRoute("/artifacts")({
       queryFn: () => context.ports.api.artifacts(input),
     });
   },
-  component: ArtifactsView,
+  component: Outlet,
 });

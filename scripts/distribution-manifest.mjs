@@ -49,12 +49,7 @@ const EXPECTED_PYTHON_LICENSE_EVIDENCE = new Map([
 ]);
 const EXPECTED_NODE_LICENSE_EVIDENCE = new Map([
   ["@napi-rs/canvas-darwin-arm64@0.1.100", { license: "MIT", evidenceKind: "license-text" }],
-  ["@radix-ui/number@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
   ["@radix-ui/react-use-escape-keydown@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
-  ["@radix-ui/react-use-previous@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
-  ["@radix-ui/react-use-rect@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
-  ["@radix-ui/react-use-size@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
-  ["@radix-ui/rect@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
   ["@udecode/react-hotkeys@52.0.11", { license: "MIT", evidenceKind: "license-text" }],
   ["abstract-logging@2.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],
   ["data-uri-to-buffer@4.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],

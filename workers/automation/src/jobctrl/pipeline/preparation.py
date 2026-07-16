@@ -232,7 +232,9 @@ def start_job_preparation_workflow(
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
             discovery_execution=discovery_execution,
-            discovery_cohort_kind=discovery_cohort_kind,
+            discovery_cohort_kind=(
+                discovery_cohort_kind if discovery_execution is not None else None
+            ),
         )
         if discovery_execution is not None:
             preparation_payload = spec.args[0]
@@ -604,6 +606,19 @@ def _unselected_work_plan_outcome(
     job_url: str,
     min_score: int,
 ) -> tuple[DiscoveryExecutionWorkPlanState, str]:
+    is_deleted = "0"
+    if _table_exists(conn, "jobctrl_deleted_jobs"):
+        is_deleted = """
+            CASE WHEN EXISTS (
+                SELECT 1
+                  FROM jobctrl_deleted_jobs deleted
+                 WHERE deleted.job_url = jobs.url
+                   AND (
+                       deleted.restored_at IS NULL
+                       OR julianday(deleted.restored_at) <= julianday(deleted.deleted_at)
+                   )
+            ) THEN 1 ELSE 0 END
+        """
     row = conn.execute(
         f"""
         SELECT {db_module._EFFECTIVE_FIT_SCORE} AS effective_score,
@@ -612,15 +627,7 @@ def _unselected_work_plan_outcome(
                pss.latest_active_state AS active_state,
                jm.jm_resume_pdf_path AS resume_pdf_path,
                jm.jm_cover_pdf_path AS cover_pdf_path,
-               CASE WHEN EXISTS (
-                   SELECT 1
-                     FROM jobctrl_deleted_jobs deleted
-                    WHERE deleted.job_url = jobs.url
-                      AND (
-                          deleted.restored_at IS NULL
-                          OR julianday(deleted.restored_at) <= julianday(deleted.deleted_at)
-                      )
-               ) THEN 1 ELSE 0 END AS is_deleted
+               {is_deleted} AS is_deleted
           FROM jobs
           {db_module._LATEST_SCORE_JOIN}
           {db_module._LATEST_MATERIALS_JOIN}
@@ -663,6 +670,16 @@ def _unselected_work_plan_outcome(
     ):
         return ("not_eligible", "preparation_explicitly_skipped")
     return ("failed", "preparation_target_not_selected")
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone()
+        is not None
+    )
 
 
 def _run_start_batch(specs: list[WorkflowStartSpec], starter: WorkflowStarter) -> list[WorkflowHandle]:

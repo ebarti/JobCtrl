@@ -14,6 +14,7 @@ import { sampleHealthResponse } from "../../test/fixtures/projections.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { FakeEventStreamPort, buildTestPorts } from "../../test/testPorts.js";
 import { useUiPreferencesStore } from "../stores/ui-preferences.js";
+import { AppShell } from "./AppShell.js";
 import { Topbar } from "./Topbar.js";
 
 const ROUTES = [
@@ -59,6 +60,32 @@ function renderTopbar(initialEntry?: string) {
   const router = buildTopbarRouter(initialEntry);
   render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
   return { eventStream, router };
+}
+
+function renderAppShell(initialEntry = "/dashboard") {
+  const eventStream = new FakeEventStreamPort();
+  const ports = buildTestPorts({
+    eventStream,
+    api: { health: vi.fn(async () => sampleHealthResponse) },
+  });
+  const harness = buildProviderHarness({ ports, withEventStream: true });
+  const rootRoute = createRootRoute({ component: AppShell });
+  const childRoutes = ROUTES.map((path) =>
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path,
+      ...(path === "/jobs" ? { validateSearch: jobsSearchSchema } : {}),
+      component: () => null,
+    }),
+  );
+  const router = createRouter({
+    routeTree: rootRoute.addChildren(childRoutes),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
+  });
+  const result = render(<RouterProvider router={router} />, {
+    wrapper: harness.Wrapper,
+  });
+  return { ...result, eventStream, router };
 }
 
 describe("<Topbar>", () => {
@@ -151,10 +178,30 @@ describe("<Topbar>", () => {
   it("updates the persisted density store from the row density control", async () => {
     const user = userEvent.setup();
     renderTopbar();
-    await user.click(screen.getByRole("button", { name: "compact" }));
+    await user.click(await screen.findByRole("button", { name: "compact" }));
     expect(useUiPreferencesStore.getState().density).toBe("compact");
 
     await user.click(screen.getByRole("button", { name: "comfy" }));
     expect(useUiPreferencesStore.getState().density).toBe("comfy");
+  });
+
+  it("projects every density selection onto the app shell", async () => {
+    const user = userEvent.setup();
+    const { container } = renderAppShell();
+    const appShell = await waitFor(() => {
+      const element = container.querySelector(".app-shell");
+      expect(element).toHaveAttribute("data-density", "regular");
+      return element;
+    });
+
+    for (const density of ["compact", "comfy", "regular"] as const) {
+      const control = screen.getByRole("button", { name: density });
+      await user.click(control);
+
+      await waitFor(() => {
+        expect(control).toHaveAttribute("aria-pressed", "true");
+        expect(appShell).toHaveAttribute("data-density", density);
+      });
+    }
   });
 });

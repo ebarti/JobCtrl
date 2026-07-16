@@ -126,16 +126,16 @@ describe("Tooltip", () => {
     expect(content).toHaveAttribute("data-testid", "positioned-content");
     expect(content).toHaveClass(
       "z-50",
+      "max-w-xs",
       "overflow-hidden",
       "rounded-md",
-      "border",
-      "border-border",
-      "bg-popover",
-      "px-3",
+      "bg-foreground",
+      "px-2.5",
       "py-1.5",
       "text-xs",
-      "text-popover-foreground",
-      "shadow-md",
+      "leading-4",
+      "text-background",
+      "shadow-lg",
       "custom-tooltip",
     );
     expect(positioner).toHaveClass("isolate", "z-50");

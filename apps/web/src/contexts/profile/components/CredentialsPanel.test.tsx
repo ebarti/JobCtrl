@@ -12,7 +12,6 @@ import {
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import {
-  CODEX_LOGIN_COMMANDS,
   removeClaudeProviderBatch,
   removeGoogleProviderBatch,
 } from "../lib/provider-credential-plans.js";
@@ -22,20 +21,131 @@ describe("<CredentialsPanel>", () => {
   it("renders three guided provider cards and no raw Codex secret field", async () => {
     renderPanel();
 
-    expect(await screen.findByRole("heading", { name: "Codex" })).toBeInTheDocument();
+    const codex = await providerCard("Codex");
+    expect(screen.queryByRole("note", { name: "Provider settings storage" })).not.toBeInTheDocument();
+    expect(within(codex).getByText("Ready")).toBeInTheDocument();
+    expect(within(codex).getByRole("link", { name: "JobCtrl Codex guide" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/configuration#codex",
+    );
+    expect(within(codex).queryByText(/Detected mode:/i)).not.toBeInTheDocument();
+    expect(within(codex).queryByText(/Effective ownership:/i)).not.toBeInTheDocument();
+    expect(within(codex).queryByText(/Use an existing Codex CLI login first/i)).not.toBeInTheDocument();
+    expect(within(codex).queryByText(/Fallback: ChatGPT subscription/i)).not.toBeInTheDocument();
+    expect(within(codex).queryByText(/Fallback: OpenAI API key enrollment/i)).not.toBeInTheDocument();
+    expect(within(codex).queryByText(/prompt-readable/i)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Claude" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Google" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Apply CAPTCHA solver" })).toBeInTheDocument();
     expect(screen.getByLabelText("CapSolver API key")).toBeEnabled();
-    expect(screen.getByText(CODEX_LOGIN_COMMANDS.subscription)).toBeInTheDocument();
-    expect(screen.getByText(CODEX_LOGIN_COMMANDS.apiKey)).toBeInTheDocument();
     expect(screen.queryByLabelText(/OpenAI API key/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/Restart JobCtrl after a change/i)).toBeInTheDocument();
   });
+
+  it("shows provider storage guidance only while a provider edit is unsaved", async () => {
+    const user = userEvent.setup();
+    const updateCredentialsBatch = vi.fn(async () => sampleCredentialsResponse);
+    renderPanel({ updateCredentialsBatch });
+    const google = await providerCard("Google");
+
+    expect(screen.queryByRole("note", { name: "Provider settings storage" })).not.toBeInTheDocument();
+
+    await user.click(within(google).getByRole("radio", { name: /Vertex AI/i }));
+    const storagePanel = screen.getByRole("note", { name: "Provider settings storage" });
+    expect(storagePanel).toHaveAttribute("data-slot", "alert");
+    expect(within(storagePanel).getByText("Provider settings storage")).toHaveAttribute(
+      "data-slot",
+      "alert-title",
+    );
+    expect(storagePanel.querySelector("svg")).toHaveClass("tabler-icon-info-circle");
+
+    await user.type(
+      within(google).getByLabelText(/Google Cloud project ID/i),
+      "jobctrl-test-project",
+    );
+    await user.click(within(google).getByRole("button", { name: "Save Google setup" }));
+
+    await waitFor(() => expect(updateCredentialsBatch).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(screen.queryByRole("note", { name: "Provider settings storage" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("preserves an unsaved provider draft across disclosure toggles", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    const google = await providerCard("Google");
+
+    await user.click(within(google).getByRole("radio", { name: /Vertex AI/i }));
+    const projectId = within(google).getByLabelText(/Google Cloud project ID/i);
+    await user.type(projectId, "jobctrl-draft-project");
+
+    const trigger = within(google).getByRole("button", { name: /^Google\b/i });
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(projectId).toBeInTheDocument();
+    expect(projectId).toHaveValue("jobctrl-draft-project");
+
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(within(google).getByLabelText(/Google Cloud project ID/i)).toBe(projectId);
+    expect(projectId).toHaveValue("jobctrl-draft-project");
+  });
+
+  it("keeps provider storage guidance after an unsuccessful save", async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      updateCredentialsBatch: vi.fn(async () => {
+        throw new Error("save unavailable");
+      }),
+    });
+    const google = await providerCard("Google");
+
+    await user.click(within(google).getByRole("radio", { name: /Vertex AI/i }));
+    await user.type(
+      within(google).getByLabelText(/Google Cloud project ID/i),
+      "jobctrl-test-project",
+    );
+    await user.click(within(google).getByRole("button", { name: "Save Google setup" }));
+
+    expect(await within(google).findByText(/Could not save provider settings/i)).toBeInTheDocument();
+    expect(screen.getByRole("note", { name: "Provider settings storage" })).toBeInTheDocument();
+  });
+
+  it("preserves provider-status warnings without showing storage guidance by default", async () => {
+    renderPanel({
+      providerStatus: vi.fn(async () => {
+        throw new Error("status unavailable");
+      }),
+    });
+
+    expect(await screen.findByText(/Live provider status is unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByRole("note", { name: "Provider settings storage" })).not.toBeInTheDocument();
+  });
+
+  it.each(["Claude", "Google"])(
+    "renders the %s unconfigured state once without an empty ownership fact",
+    async (title) => {
+      renderPanel({
+        credentials: vi.fn(async () => ({
+          ...sampleCredentialsResponse,
+          credentials: sampleCredentialsResponse.credentials.map((credential) => ({
+            ...credential,
+            configured: false,
+            effectiveSource: "absent" as const,
+          })),
+        })),
+        providerStatus: vi.fn(async () => ({ ok: true as const, providers: [] })),
+      });
+
+      const card = await providerCard(title);
+      expect(within(card).getAllByText("Not configured")).toHaveLength(1);
+      expect(within(card).queryByText("Effective ownership: not configured")).not.toBeInTheDocument();
+    },
+  );
 
   it.each([
     ["Anthropic API key", /Anthropic API key \(required\)/i],
-    ["Google Cloud Agent Platform", /Google Cloud project ID/i],
+    ["Google Vertex AI", /Google Cloud project ID/i],
     ["Amazon Bedrock", /AWS profile \(optional\)/i],
     ["Claude Platform on AWS", /Workspace ID/i],
     ["Microsoft Foundry", /Microsoft Foundry resource name/i],
@@ -88,6 +198,35 @@ describe("<CredentialsPanel>", () => {
     expect(screen.queryByDisplayValue(/secret/i)).not.toBeInTheDocument();
   });
 
+  it("uses the selected authentication labels for detected provider modes", async () => {
+    renderPanel({
+      credentials: vi.fn(async () => ({
+        ...sampleCredentialsResponse,
+        credentials: sampleCredentialsResponse.credentials.map((credential) => ({
+          ...credential,
+          configured: false,
+          effectiveSource: "absent" as const,
+        })),
+      })),
+      providerStatus: vi.fn(async () => ({
+        ok: true as const,
+        providers: [
+          { provider: "claude" as const, configured: true, ready: true, mode: "vertex" },
+          { provider: "google" as const, configured: true, ready: true, mode: "api_key" },
+        ],
+      })),
+    });
+
+    const claude = await providerCard("Claude");
+    const google = await providerCard("Google");
+
+    expect(within(claude).getByText("Detected mode: Google Vertex AI")).toBeInTheDocument();
+    expect(within(claude).getByRole("radio", { name: /Google Vertex AI/i })).toBeChecked();
+    expect(within(google).getByText("Detected mode: Gemini API key")).toBeInTheDocument();
+    expect(within(claude).queryByText("Detected mode: vertex")).not.toBeInTheDocument();
+    expect(within(google).queryByText("Detected mode: api_key")).not.toBeInTheDocument();
+  });
+
   it("prefers exactly one fresh Keychain mode over stale live status until restart", async () => {
     renderPanel({
       credentials: vi.fn(async () => ({
@@ -116,7 +255,7 @@ describe("<CredentialsPanel>", () => {
     const claude = await providerCard("Claude");
     const google = await providerCard("Google");
     await waitFor(() =>
-      expect(within(claude).getByRole("radio", { name: /Google Cloud Agent Platform/i })).toBeChecked(),
+      expect(within(claude).getByRole("radio", { name: /Google Vertex AI/i })).toBeChecked(),
     );
     expect(within(google).getByRole("radio", { name: /Vertex AI/i })).toBeChecked();
     expect(within(claude).getAllByText("Configured · restart or verify").length).toBeGreaterThan(0);
@@ -139,6 +278,65 @@ describe("<CredentialsPanel>", () => {
     expect(input).toHaveAttribute("type", "password");
   });
 
+  it.each([
+    {
+      title: "Codex",
+      provider: "codex" as const,
+      mode: "cli_auth",
+      message: "Codex CLI authentication is ready",
+    },
+    {
+      title: "Claude",
+      provider: "claude" as const,
+      mode: "api_key",
+      message: "Claude provider is ready",
+    },
+    {
+      title: "Google",
+      provider: "google" as const,
+      mode: "api_key",
+      message: "Google provider is ready",
+    },
+  ])("suppresses the $title ready boilerplate beside its Ready badge", async ({
+    title,
+    provider,
+    mode,
+    message,
+  }) => {
+    renderPanel({
+      providerStatus: vi.fn(async () => ({
+        ok: true as const,
+        providers: [{ provider, configured: true, ready: true, mode, message }],
+      })),
+    });
+
+    const card = await providerCard(title);
+    expect(within(card).getByText("Ready")).toBeInTheDocument();
+    expect(within(card).queryByText(message)).not.toBeInTheDocument();
+  });
+
+  it("preserves a meaningful ready-provider status message", async () => {
+    const message = "Claude provider is ready, but the fallback region could not be verified.";
+    renderPanel({
+      providerStatus: vi.fn(async () => ({
+        ok: true as const,
+        providers: [
+          {
+            provider: "claude" as const,
+            configured: true,
+            ready: true,
+            mode: "bedrock",
+            message,
+          },
+        ],
+      })),
+    });
+
+    const card = await providerCard("Claude");
+    expect(within(card).getByText("Ready")).toBeInTheDocument();
+    expect(within(card).getByText(message)).toBeInTheDocument();
+  });
+
   it("announces Codex verification success and failure without account details", async () => {
     const user = userEvent.setup();
     const verifyCodexProvider = vi
@@ -153,12 +351,28 @@ describe("<CredentialsPanel>", () => {
         },
       })
       .mockRejectedValueOnce(new Error("private-token-must-not-render"));
-    renderPanel({ verifyCodexProvider });
+    renderPanel({
+      providerStatus: vi.fn(async () => ({
+        ok: true as const,
+        providers: [
+          {
+            provider: "codex" as const,
+            configured: true,
+            ready: true,
+            mode: "subscription",
+            message: "Codex CLI authentication is ready.",
+          },
+        ],
+      })),
+      verifyCodexProvider,
+    });
     const card = await providerCard("Codex");
     const button = within(card).getByRole("button", { name: "Reuse existing login or verify" });
 
+    expect(within(card).getByText("Ready")).toBeInTheDocument();
+    expect(within(card).queryByText("Codex CLI authentication is ready.")).not.toBeInTheDocument();
     await user.click(button);
-    expect(await within(card).findByText("Codex CLI authentication is ready.")).toBeInTheDocument();
+    expect(await within(card).findAllByText("Codex CLI authentication is ready.")).toHaveLength(1);
     await user.click(button);
     expect(await within(card).findByText(/verification could not be completed/i)).toBeInTheDocument();
     expect(card).not.toHaveTextContent("private-token-must-not-render");
@@ -196,16 +410,17 @@ describe("<CredentialsPanel>", () => {
     expect(screen.queryByRole("dialog", { name: "Remove Claude provider setup?" })).not.toBeInTheDocument();
   });
 
-  it("keeps an environment-owned provider visibly read-only and never reports removal", async () => {
+  it("protects an environment-owned active credential while allowing another auth mode", async () => {
+    const user = userEvent.setup();
     const updateCredentialsBatch = vi.fn(async () => sampleCredentialsResponse);
     renderPanel({
       credentials: vi.fn(async () => ({
         ...sampleCredentialsResponse,
         credentials: sampleCredentialsResponse.credentials.map((credential) =>
-          credential.key === "GOOGLE_GENAI_USE_VERTEXAI"
+          credential.key === "GEMINI_API_KEY"
             ? {
                 ...credential,
-                configured: false,
+                configured: true,
                 effectiveSource: "environment" as const,
                 editable: false,
               }
@@ -215,17 +430,27 @@ describe("<CredentialsPanel>", () => {
       providerStatus: vi.fn(async () => ({
         ok: true as const,
         providers: [
-          { provider: "google" as const, configured: true, ready: true, mode: "vertex" },
+          { provider: "google" as const, configured: true, ready: true, mode: "api_key" },
         ],
       })),
       updateCredentialsBatch,
     });
 
     const card = await providerCard("Google");
-    expect(within(card).getByText(/effective mode is owned by the launch environment/i)).toBeInTheDocument();
+    const gemini = within(card).getByRole("radio", { name: /Gemini API key/i });
+    const vertex = within(card).getByRole("radio", { name: /Vertex AI/i });
+    expect(gemini).toBeChecked();
+    expect(gemini).toBeDisabled();
+    expect(within(card).getByLabelText(/Gemini API key \(required\)/i)).toBeDisabled();
+    expect(vertex).toBeEnabled();
     expect(within(card).getByRole("button", { name: "Save Google setup" })).toBeDisabled();
     expect(within(card).queryByRole("button", { name: "Remove Google setup" })).not.toBeInTheDocument();
-    expect(within(card).getAllByRole("radio").every((radio) => radio.hasAttribute("disabled"))).toBe(true);
+    expect(within(card).getByText(/active setup includes values owned by the launch environment/i)).toBeInTheDocument();
+
+    await user.click(vertex.closest("label")!);
+    expect(vertex).toBeChecked();
+    expect(within(card).getByLabelText(/Google Cloud project ID/i)).toBeEnabled();
+    expect(within(card).getByRole("button", { name: "Save Google setup" })).toBeEnabled();
     expect(updateCredentialsBatch).not.toHaveBeenCalled();
     expect(card).not.toHaveTextContent(/provider settings removed/i);
   });
@@ -315,7 +540,7 @@ describe("<CredentialsPanel>", () => {
     expect(within(google).getByRole("radio", { name: /Gemini API key/i })).toBeDisabled();
     expect(within(claude).queryByLabelText(/Anthropic API key \(required\)/i)).not.toBeInTheDocument();
     expect(within(google).queryByLabelText(/Gemini API key \(required\)/i)).not.toBeInTheDocument();
-    expect(within(claude).getByRole("radio", { name: /Google Cloud Agent Platform/i })).toBeEnabled();
+    expect(within(claude).getByRole("radio", { name: /Google Vertex AI/i })).toBeEnabled();
     await user.click(within(google).getByRole("radio", { name: /Vertex AI/i }));
 
     await user.type(within(google).getByLabelText(/Google Cloud project ID/i), "jobctrl-test-project");
@@ -371,7 +596,7 @@ describe("<CredentialsPanel>", () => {
     const privacy = within(screen.getByRole("region", { name: "Credential privacy" }));
     expect(screen.getByText(/guided Claude and Google editing/i)).toBeInTheDocument();
     expect(screen.getByText(/Codex verification remains available/i)).toBeInTheDocument();
-    expect(privacy.getByText("Keychain status unavailable")).toBeInTheDocument();
+    expect(privacy.getAllByText("Keychain status unavailable")).toHaveLength(2);
   });
 
   it("labels isolated auth accurately when the managed SDK is unavailable", async () => {
@@ -392,6 +617,9 @@ describe("<CredentialsPanel>", () => {
 
     const codex = await providerCard("Codex");
     expect(within(codex).getByText("Authenticated · runtime unavailable")).toBeInTheDocument();
+    expect(
+      within(codex).getByText(/managed SDK runtime is unavailable/i),
+    ).toBeInTheDocument();
     expect(within(codex).getByRole("button", { name: "Verify isolated login" })).toBeEnabled();
     expect(within(codex).queryByRole("button", { name: /Use existing login/i })).not.toBeInTheDocument();
   });
@@ -401,7 +629,11 @@ describe("<CredentialsPanel>", () => {
 
     expect(await screen.findByText(/public demo never accepts/i)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Codex" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /login|verify/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: /^(Reuse existing login or verify|Verify isolated login)$/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -464,5 +696,9 @@ async function providerCard(name: string): Promise<HTMLElement> {
   const heading = await screen.findByRole("heading", { name });
   const card = heading.closest("article");
   if (!card) throw new Error(`Missing ${name} provider card`);
+  const trigger = within(card).getByRole("button", { name: new RegExp(`^${name}\\b`, "i") });
+  if (trigger.getAttribute("aria-expanded") === "false") {
+    await userEvent.setup().click(trigger);
+  }
   return card;
 }

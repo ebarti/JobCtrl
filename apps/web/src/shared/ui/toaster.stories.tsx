@@ -8,6 +8,7 @@ import { Button } from "./button.js";
 const meta = {
   title: "Shared/UI/Toaster",
   component: Toaster,
+  tags: ["a11y-regression"],
 } satisfies Meta<typeof Toaster>;
 
 export default meta;
@@ -21,7 +22,11 @@ function ToastSeed({ kind }: { kind: "info" | "error" | "both" | "trigger" }) {
     if (kind === "trigger") return;
     clear();
     if (kind === "info" || kind === "both") {
-      toast({ title: "Apply queued", message: "run-1 · Staff SWE at Acme Corp", variant: "info" });
+      toast({
+        title: "Apply queued",
+        message: "run-1 · Staff SWE at Acme Corp",
+        variant: "info",
+      });
     }
     if (kind === "error" || kind === "both") {
       toast({
@@ -38,10 +43,20 @@ function ToastSeed({ kind }: { kind: "info" | "error" | "both" | "trigger" }) {
   if (kind !== "trigger") return null;
   return (
     <div className="flex gap-2">
-      <Button onClick={() => toast({ message: "Job restored.", variant: "info" })}>Push info</Button>
+      <Button
+        onClick={() => toast({ message: "Job restored.", variant: "info" })}
+      >
+        Push info
+      </Button>
       <Button
         variant="destructive"
-        onClick={() => toast({ title: "Apply failed", message: "Network error.", variant: "error" })}
+        onClick={() =>
+          toast({
+            title: "Apply failed",
+            message: "Network error.",
+            variant: "error",
+          })
+        }
       >
         Push error
       </Button>

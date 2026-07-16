@@ -40,6 +40,7 @@ need:
 | [Artifacts and tailoring audit](#artifacts-and-tailoring-audit) | Read-model projections, artifact preview/open routes, resume templates, and canonical tailoring evidence. |
 | [Jobs read model and lifecycle](#jobs-read-model-and-lifecycle) | Score evidence, requirement-fit, career evidence map, audit history, list filters, and delete / hide / restore routes. |
 | [Dashboard, analytics, and operational metrics](#dashboard-analytics-and-operational-metrics) | `GET /v1/dashboard/summary`, `GET /v1/analytics/outcomes`, source health, and operational attempt counters. |
+| [Pipeline operations snapshot](#pipeline-operations-snapshot) | `GET /v1/pipeline/operations`: immutable Discover execution lineage, scoped backlog, orchestration steps, runtime capacity, active work, task-queue observations, and typed ETA. |
 | [Discovery controls](#discovery-controls) | Source registry, locator / quarantine / manual-capture queues, and feedback endpoints. |
 | [Compensation](#compensation) | Posted-salary and reported-market inspection routes plus the refresh triggers. |
 | [Workflow runs](#workflow-runs) | `/v1/workflow-runs` list, detail, and cancel across every workflow type. |
@@ -315,6 +316,132 @@ response-time minutes come from `applied_at` and response-kind
 `application_outcome_suggestions` rows. The endpoint is read-only and stays
 outside scoring, ranking, thresholds, and apply eligibility.
 
+## Pipeline operations snapshot
+
+`GET /v1/pipeline/operations` takes no query parameters and returns a
+`PipelineOperationsSnapshot` with `generatedAt` and
+`etaEstimatorVersion: "pipeline-eta-v1"`. It is the current operational view,
+not a historical reconstruction API. Selection prefers the newest Discover
+workflow projection that is active or still draining, then falls back to the
+latest terminal execution. On the wire, exact identity is
+`{ discoverWorkflowId, discoverRunId }`; the latter is the Temporal run ID,
+and workflow ID alone is not unique across later
+starts of the deterministic Discover workflow.
+
+When selected, `execution` includes workflow status, derived phase, membership
+closure, timestamps/error code, and two cohort summaries: `currentExecution`
+for `observed_this_run` and `sweptExistingBacklog` for `existing_backlog`.
+Each membership has one immutable `(tenant, workflow, run, job)` row. A swept
+job later observed in the same execution is promoted to the current cohort
+rather than counted twice. `sourceFamilies` reports only planned source-family
+crawls; `reconciliation` separately reports `enrichment_pass` and
+`preparation_fanout` steps.
+
+The root wire shape is strict; unknown fields are rejected by the shared
+schema:
+
+| Field | Contract |
+| --- | --- |
+| `generatedAt` | ISO timestamp for this request-time snapshot. |
+| `etaEstimatorVersion` | Literal `pipeline-eta-v1`. |
+| `freshness` | Discriminated `fresh`, `stale`, `unsupported`, or `unavailable`; every arm carries `asOf` and `staleAfterSeconds`, and non-fresh arms carry a bounded reason. |
+| `execution` | `null` or exact Discover identity/status/phase/membership closure, timestamps/error code, and `currentExecution` / `sweptExistingBacklog` cohort summaries. Each cohort has `members`, `planned`, `notEligible`, `pending`, `failedPlan`, `terminal`, and `remaining`. |
+| `capacity` | Discriminated `available`, `stale`, or `unavailable`; see below. |
+| `sourceFamilies` | `null` or `{ planned, counts, eta, asOf }`. |
+| `reconciliation` | `null` or `{ enrichment, preparationFanout, asOf }`, where both values use the canonical stage-count shape. |
+| `stages` | Ordered `PipelineOperationalStage[]`; each has `stage`, `label`, `scope`, `currentExecution`, `existingBacklog`, `capacity`, `eta`, and `asOf`. |
+| `activeItems` | Oldest-first `PipelineActiveItem[]`, maximum 20. |
+| `activeItemsTotal` | Exact allowlisted active-detail count, or `null` when inventory cannot make an exact statement. |
+| `activeItemsTruncated` | Whether safe detail was omitted, or `null` when inventory is unavailable/stale. |
+| `overallEta` | The ETA discriminated union below. |
+
+The canonical stage-count object contains non-negative integers for
+`eligible`, `waiting`, `processing`, `succeeded`, `skipped`, `blocked`,
+`failed`, `exhausted`, `canceled`, `needsVerification`, `stale`, and
+`unknown`. `existingBacklog` is either `{ kind: "domain_jobs", counts }` or
+`{ kind: "not_separate", reason }`; it is never an unlabeled zero.
+
+`stages[]` uses the fixed operational order `source_planning`, `source_family`,
+`reconciliation`, `pdf_render`, `enrich`, `score`, `tailor`, `cover`. Each row
+has one of three scopes:
+
+- `current_execution`: the selected run's observed-job cohort plus its
+  orchestration steps;
+- `execution_sweep`: the selected run's swept pre-existing jobs; stages without
+  separately attributable sweep work return
+  `existingBacklog.kind = "not_separate"`;
+- `global_outside_execution`: canonical job-stage backlog outside both selected
+  cohorts. Orchestration and PDF work are not synthesized as global queues.
+
+Stage counts distinguish `eligible`, `waiting`, `processing`, `succeeded`,
+`skipped`, `blocked`, `failed`, `exhausted`, `canceled`,
+`needsVerification`, `stale`, and `unknown`. Job-stage counts come from
+`job_stage_states`; orchestration and PDF counts come from attempt-aware
+`pipeline_step_projections` keyed by the exact execution identity. The
+execution phase is one of `discovering`, `draining`, `completed`,
+`completed_with_issues`, `failed`, or `canceled`; unresolved members in either
+execution cohort can keep an otherwise successful workflow in `draining`.
+
+`capacity` is a typed available/stale/unavailable state aggregated from worker
+heartbeats. The operations reader derives the expected app directory from the
+configured database path, filters rows to that resolved database/app-directory
+identity, selects the task queue named by the newest matching heartbeat, and
+aggregates fresh schema-valid rows from that queue. Available capacity reports
+configured, active, and available activity slots, executor threads, worker
+validity/freshness counts, saturation, and its nested task-queue observation.
+Its `kind` is `shared_activity_pool` or
+`shared_activity_pool_with_internal_parallelism`; the latter additionally
+includes positive `internalParallelism`. All available arms include `asOf`,
+`staleAfterSeconds`, nullable `taskQueue`, `freshWorkerCount`,
+`staleWorkerCount`, `invalidWorkerCount`, `configuredSlots`, `activeSlots`,
+`availableSlots`, `executorThreads`, nullable `slotSaturation`, and
+`approximateTaskQueue`. Stale/unavailable capacity carries `asOf`,
+`staleAfterSeconds`, nullable `taskQueue`, a bounded `reason`, and the typed
+task-queue observation; it does not expose misleading slot zeros.
+The task-queue observation separately reports workflow/activity pollers and
+approximate backlog count/age plus add/dispatch rates, or a typed `unsupported`,
+`unavailable`, or `stale` state; these are infrastructure units, not domain
+jobs.
+
+`activeItems[]` is the oldest-first bounded view of allowlisted active activity
+kinds, with at most 20 entries. `activeItemsTotal` is the exact allowlisted
+count when available and `activeItemsTruncated` says whether detail was omitted;
+`activeSlots` still counts every activity. Active items are either resolved
+jobs, source families, orchestration, or unresolved runtime activities. The
+worker never reads activity arguments for telemetry. It returns only validated
+safe workflow/run references and non-reversible local opaque identifiers; raw
+job URLs, descriptions, profile data, prompts, provider output, artifact paths,
+payloads, credentials, and exception text are excluded.
+
+Every active item carries `activityType`, nullable `workflowId` and
+`executionId`, positive `attempt`, and `startedAt`. Variant fields are:
+`resolved_job` (`jobKey`, nullable `title`/`company`, `stage`),
+`source_family` (`sourceFamily`), `orchestration` (`operation`), or
+`unresolved_runtime_activity` (`opaqueId`). `jobKey` and `opaqueId` are local
+non-reversible operational identifiers, never filesystem paths or raw job URLs.
+
+`overallEta` and each estimable row use a discriminated union. `available`
+returns low/high seconds, `low`/`medium`/`high` confidence, basis
+(`source_rate`, `stage_throughput`, or `cohort_throughput`), sample size,
+timestamp, and caveat. Non-numeric states are `calibrating` (insufficient
+samples or, for `overallEta`, open membership), `paused`
+(worker/budget/blocking/dispatch reason), `stale`, or `unavailable` (including
+no work, unsupported telemetry, unknown scope, or unbounded contention). Every
+numeric estimate requires at least five recent successful samples for each
+relevant remaining stage and fresh usable capacity. `overallEta` additionally
+requires closed execution membership; per-stage and source-family rows can
+estimate their already-known scoped backlog while membership remains open. The
+estimator uses canonical job-stage and pipeline-step durations, falling back to
+operational attempt metrics only when the primary source is empty; it never
+blends the two. Any unbounded shared-queue contention suppresses a numeric
+estimate.
+
+The Operations query polls every 15 seconds while phase is `discovering` or
+`draining`, every 60 seconds otherwise, and never in the background. SSE
+invalidates it after durable `Stage*`, `PreparationWorkItem*`, `PipelineStep*`,
+and `Workflow*` events; polling remains the freshness path for heartbeat and
+task-queue changes.
+
 ## Discovery controls
 
 Discovery product-control endpoints are local-first and share DTOs from
@@ -537,8 +664,8 @@ summary and detail audit fields, separate from posted facts. The compact
 summary carries range, market confidence band/score, source count, sample count,
 and warning count for list surfaces; detail audit carries the source trail,
 selected evidence rows with safe source URLs, confidence factors, warnings, and
-reasons. The web Jobs
-table, expanded job drawer, and Apply Review render these persisted fields
+reasons. The web Jobs table, selected-job detail workspace, and Apply Review
+render these persisted fields
 without parsing salary text in React. This projection and rendering do not change fit score, apply
 readiness, apply-review handoff, or apply mutation behavior.
 
@@ -564,14 +691,14 @@ view at `/runs` deep-links each row to the local Temporal Web UI
 `GET /v1/workflow-runs/:runId` returns a `WorkflowRunDetail` for one run — its
 status, input summary, failure cause (`errorCode` / `errorMessage` /
 `retryable`), Temporal run id, and the folded lifecycle timeline — or `404`
-(`{ ok: false, error: "workflow_run_not_found" }`) for an unknown id. The `/runs`
-detail drawer renders it for every workflow type.
+(`{ ok: false, error: "workflow_run_not_found" }`) for an unknown id. The
+`/runs/$runId` detail workspace renders it for every workflow type.
 `POST /v1/workflow-runs/:runId/actions/cancel` dispatches a worker-backed
 `cancel_run` request for in-flight workflow IDs that are not tied to a concrete
 job row, such as global Discover or Apply runs started from the Pipelines tab.
 `GET /v1/dashboard/summary` also carries recent apply-run timeline summaries
 from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
-the Run details drawer renders persisted history without exposing raw event
+the run detail workspace renders persisted history without exposing raw event
 payloads.
 
 ## Profile resume preview
@@ -637,7 +764,7 @@ verification-code MCP server:
   single page. If that render fails the promotion is aborted and the previous
   approved generation is left intact.
 - `GET /v1/jobs/:jobKey` returns the same `applyAudit` DTO on job detail
-  payloads so the Jobs drawer and Apply Review consume the same readiness
+  payloads so the Jobs detail workspace and Apply Review consume the same readiness
   facts. The DTO includes state, label, summary, missing prerequisites, hard
   blockers, eligibility concerns, source metadata, and whether review evidence
   remains available.
@@ -903,25 +1030,37 @@ fanout.
   preparation backlogs are not dependent on page-local pickup.
 
 The `limit` field is forwarded to every selected stage. For `discover`, the
-Python runner passes it into JobSpy, Workday, Smart Extract, Discovery's
-internal detail-enrichment queue drain, and the preparation work-item drains.
-Bounded source crawls run sequentially, skipping remaining selected sources once
-the cap is reached so `limit: 1` is usable for local debugging. If `sourceIds`
-is provided, unselected provider groups are not executed or recorded as skipped;
-selected sources that the scheduler disables or quarantines still emit skipped
-source-run telemetry. Detail enrichment uses the same `limit` and `workers`
-values as Discovery; `enrich` remains an internal retry/diagnostic stage, not a
-top-level product `run-stage` value.
+Python runner passes it into JobSpy, Workday, Smart Extract, Discovery's detail
+enrichment, and preparation derivation. Source families run in deterministic
+batches bounded by the saved `max_parallel_families` setting (default `1`);
+families inside one batch may crawl concurrently, while the batch's enrichment
+and preparation fan-out run once afterward. The source limit still skips
+remaining work when the cap has been consumed, so `limit: 1` remains useful for
+local debugging. If `sourceIds` is provided, unselected provider groups are not
+executed or recorded as skipped; selected sources that the scheduler disables
+or quarantines still emit skipped source-run telemetry. `workers` is internal
+activity concurrency, not the source-family batch cap. `enrich` remains an
+internal retry/diagnostic stage, not a top-level product `run-stage` value.
 
-Discovery preparation uses `preparation_work_items` to keep internal subwork
-durable and idempotent. The work item kinds are `score_job`, `tailor_resume`,
-and `suppress_tailored_artifacts`. The queue emits
-`PreparationWorkItemQueued`, `PreparationWorkItemStarted`,
-`PreparationWorkItemCompleted`, and `PreparationWorkItemFailed`; the owning
-contexts still emit their own events such as `JobScored`,
-`TailorRetailorRequested`, `TailoredArtifactsSuppressed`, and
-`TailoringPolicyUpdated`. These events are part of the SSE catalog and drive
-dashboard, jobs, artifacts, and activity invalidation.
+Discovery creates an immutable `DiscoveryExecutionRef` from the running
+Discover workflow ID and Temporal run ID, and threads it through source,
+enrichment, preparation, and PDF work. `discovery_execution_jobs` records each
+execution's one membership row per job with cohort (`observed_this_run` or
+`existing_backlog`), safe work-plan state, required steps, and the child
+preparation workflow ID when planned. Pending/failed plans do not mean "no
+work"; only an explicit planned or not-eligible decision is terminal planning
+evidence. The active path starts one durable `JobPreparationWorkflow` per
+planned job. The legacy `preparation_work_items` table and its
+`PreparationWorkItem*` events remain compatibility/read-model inputs, but they
+are not the ownership boundary for current Discover execution membership.
+
+Execution-owned orchestration emits `PipelineStepQueued`,
+`PipelineStepStarted`, `PipelineStepCompleted`, and `PipelineStepFailed` for
+source planning, source families, enrichment passes, preparation fan-out,
+existing-backlog sweep, and PDF rendering. These events fold into
+`pipeline_step_projections`; owning contexts still emit their events such as
+`JobScored`, `TailorRetailorRequested`, `TailoredArtifactsSuppressed`, and
+`TailoringPolicyUpdated`.
 
 Current-version preparation maintenance actions are separate endpoints:
 
@@ -941,7 +1080,13 @@ Current-version preparation maintenance actions are separate endpoints:
   for the remaining preparation stages (`enrich` -> `score` -> `tailor` ->
   `cover`, starting at the retried stage). `apply` retry still dispatches the
   explicit apply action; retries do not auto-submit applications unless the
-  requested stage is `apply`.
+  requested stage is `apply`. Because `runAfter: true` requires dispatch, the
+  route checks worker readiness **before** changing stage state. If the worker
+  is missing, stale, or mismatched, it returns
+  `503 { ok: false, error: "worker_runtime_unavailable", worker }`; the prior
+  stage row, attempt/error metadata, and event history remain unchanged and no
+  dispatcher call occurs. With `runAfter: false`, the route is an intentional
+  local-only reset and does not require a worker.
 - `POST /v1/jobs/bulk-retry-failed` accepts selected jobs or all matching jobs.
   With the default `runAfter: false` it only resets each retryable failed stage
   to `pending`. With `runAfter: true`, the API groups reset preparation stages
@@ -1204,14 +1349,21 @@ table; this keeps Dashboard lightweight without imposing an event-history cap.
   extension-origin CORS cannot mint or rotate the token.
 - `GET /v1/browser-capabilities` returns `core-browser`,
   `auto-apply-browser`, and `authenticated-linkedin-browser` state without
-  returning a saved executable or source-profile path. The core browser is
-  managed and read-only. `POST /v1/browser-capabilities/:capabilityId/enable`
-  requires an explicit Chrome/Chromium executable path for optional
-  capabilities. The path is write-only. The matching `/disable` route applies
+  returning a saved executable or source-profile path. It also returns
+  `detectedBrowsers: Array<{ id: "google-chrome" | "chromium", label: string }>`
+  for currently detected supported installations. Detection is read-only: it
+  does not launch, adopt, copy, or persist the browser, and no filesystem path
+  crosses the RPC/API boundary. The core browser is managed and read-only.
+  `POST /v1/browser-capabilities/:capabilityId/enable` accepts exactly one of
+  `{ detectedBrowserId }` or `{ executablePath }`; the strict union rejects
+  both/neither. The path is write-only. The detected-ID arm resolves the
+  transient candidate again at mutation time, and a stale/missing ID fails
+  closed with sanitized `400 browser_capability_failed` without adopting any
+  fallback. The matching `/disable` route applies
   immediately. `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy`
   requires explicit consent, clears the source path after the request, and
-  never returns, logs, or persists it. JobCtrl does not auto-detect or adopt a
-  system browser.
+  never returns, logs, or persists it. A detected candidate becomes adopted
+  only through this explicit enable mutation.
 - Authenticated extension routes under `/v1/extension/*` require `Authorization:
   Bearer <token>`. A valid token allows a `chrome-extension://` origin through
   the route-scoped CORS and unsafe-mutation guards, but only after the loopback
@@ -1339,8 +1491,10 @@ Each frame:
 
 - `id: <event_id>` — the row's `event_id` from `job_events`. The browser
   echoes this as `Last-Event-ID` on auto-reconnect.
-- `event: <event_type>` — the discriminator from the `DomainEvent` Zod
-  schema (e.g., `JobScored`, `ResumeApproved`, `ApplyRunStarted`).
+- `event: <event_type>` — a discriminator accepted by the shared runtime
+  `DOMAIN_EVENT_TYPES` registry (e.g., `JobScored`, `ResumeApproved`,
+  `PipelineStepStarted`, `ApplyRunStarted`). The parser also requires `data` to
+  decode to a JSON object before dispatch.
 - `data: <payload_json>` — the payload, ready for `JSON.parse`.
 
 ### Tenant filtering (COALESCE on the row, not the request)

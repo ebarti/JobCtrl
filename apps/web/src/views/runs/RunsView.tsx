@@ -2,7 +2,7 @@ import {
   WORKFLOW_RUN_SORT_FIELDS,
   type WorkflowRunSortField,
 } from "@jobctrl/contracts";
-import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { SortingState } from "@tanstack/react-table";
 import { useMemo } from "react";
 
@@ -94,7 +94,6 @@ export function RunsView() {
           onOpenRun={openRun}
         />
       </section>
-      <Outlet />
     </>
   );
 }

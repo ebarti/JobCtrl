@@ -598,7 +598,7 @@ test("fixture builds are bytewise reproducible in different directories", async 
   assert.equal(first.sizeReport.comparison.providerPacks.status, "unavailable-fixture");
   assert.deepEqual(
     first.sizeReport.components.filter((component) => component.accounting === "fixture-unmaterialized").map((component) => component.id),
-    ["better-sqlite3-native", "font-jetbrains-mono", "font-plus-jakarta-sans", "system-browser-adapter"],
+    ["better-sqlite3-native", "font-geist", "font-jetbrains-mono", "system-browser-adapter"],
   );
   assert.ok(first.manifest.files.some((file) => file.path === "release/sbom.cdx.json"));
   assert.ok(first.manifest.files.some((file) => file.path === "release/capability-policy.json"));

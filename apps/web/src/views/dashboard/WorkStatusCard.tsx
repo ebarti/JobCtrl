@@ -1,3 +1,4 @@
+import { IconBan } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 
 import type { DashboardSummary } from "../../contexts/operations/types.js";
@@ -37,23 +38,33 @@ export function WorkStatusCard({ summary }: { summary: DashboardSummary }) {
         </CardAction>
       </CardHeader>
       <CardContent className="work-status-content">
-        <dl className="work-status-metrics" aria-label="Work status summary">
-          <div className="work-status-metric">
+        <div
+          className="work-status-metrics"
+          role="group"
+          aria-label="Work status summary"
+        >
+          <dl className="work-status-metric">
             <dt>Active work</dt>
-            <dd>{work.active}</dd>
-            <span>queued or moving</span>
-          </div>
-          <Separator orientation="vertical" className="work-status-metric-separator" />
-          <div className="work-status-metric" data-attention={work.stuck ? "true" : "false"}>
+            <dd className="work-status-metric-value">{work.active}</dd>
+            <dd className="work-status-metric-description">queued or moving</dd>
+          </dl>
+          <Separator
+            orientation="vertical"
+            className="work-status-metric-separator"
+          />
+          <dl
+            className="work-status-metric"
+            data-attention={work.stuck ? "true" : "false"}
+          >
             <dt>Stuck work</dt>
-            <dd>{work.stuck}</dd>
-            <span>
+            <dd className="work-status-metric-value">{work.stuck}</dd>
+            <dd className="work-status-metric-description">
               {work.stuck
                 ? `worker unavailable · stale over ${formatThreshold(work.stuckAfterSeconds)}`
                 : `no stuck work over ${formatThreshold(work.stuckAfterSeconds)}`}
-            </span>
-          </div>
-        </dl>
+            </dd>
+          </dl>
+        </div>
         <Separator />
         <div className="rows">
           {work.stuckItems.length ? (
@@ -70,7 +81,9 @@ export function WorkStatusCard({ summary }: { summary: DashboardSummary }) {
                   })
                 }
               >
-                <StatusBadge tone="danger">stuck</StatusBadge>
+                <StatusBadge icon={IconBan} tone="danger">
+                  stuck
+                </StatusBadge>
                 <span className="title-stack">
                   <b>{item.title}</b>
                   <span>

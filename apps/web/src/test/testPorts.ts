@@ -84,7 +84,9 @@ export class FakeEventStreamPort implements EventStreamPort {
 
 class FakeSubscription implements EventStreamSubscription {
   private readonly handlers = new Set<(event: DomainEventEnvelope) => void>();
-  private readonly statusHandlers = new Set<(status: EventStreamStatus) => void>();
+  private readonly statusHandlers = new Set<
+    (status: EventStreamStatus) => void
+  >();
   private current: EventStreamStatus = "open";
 
   on(handler: (event: DomainEventEnvelope) => void): () => void {
@@ -135,7 +137,12 @@ export class InMemoryStoragePort implements StoragePort {
 }
 
 export class FakeSessionPort implements SessionPort {
-  constructor(private readonly session: Session = { tenantId: LOCAL_TENANT, userId: null }) {}
+  constructor(
+    private readonly session: Session = {
+      tenantId: LOCAL_TENANT,
+      userId: null,
+    },
+  ) {}
   getSession(): Session {
     return this.session;
   }
@@ -218,7 +225,9 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
       defaultTemplate: {
         ...sampleResumeTemplateListResponse.builtInDefault,
         templateId: body.templateId,
-        templateVersionId: body.versionId ?? sampleResumeTemplateListResponse.builtInDefault.templateVersionId,
+        templateVersionId:
+          body.versionId ??
+          sampleResumeTemplateListResponse.builtInDefault.templateVersionId,
         assignmentSource: "profile_default" as const,
       },
     })),
@@ -227,15 +236,23 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
       jobKey,
       effectiveTemplate: {
         ...sampleResumeTemplateListResponse.builtInDefault,
-        templateId: body.templateId ?? sampleResumeTemplateListResponse.builtInDefault.templateId,
-        templateVersionId: body.versionId ?? sampleResumeTemplateListResponse.builtInDefault.templateVersionId,
-        assignmentSource: body.templateId ? ("job_override" as const) : ("built_in" as const),
+        templateId:
+          body.templateId ??
+          sampleResumeTemplateListResponse.builtInDefault.templateId,
+        templateVersionId:
+          body.versionId ??
+          sampleResumeTemplateListResponse.builtInDefault.templateVersionId,
+        assignmentSource: body.templateId
+          ? ("job_override" as const)
+          : ("built_in" as const),
       },
       overrideTemplate: body.templateId
         ? {
             ...sampleResumeTemplateListResponse.builtInDefault,
             templateId: body.templateId,
-            templateVersionId: body.versionId ?? sampleResumeTemplateListResponse.builtInDefault.templateVersionId,
+            templateVersionId:
+              body.versionId ??
+              sampleResumeTemplateListResponse.builtInDefault.templateVersionId,
             assignmentSource: "job_override" as const,
           }
         : null,
@@ -250,7 +267,9 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
       generation: null,
       message: "Resume materials already use the effective template.",
     })),
-    extensionCapabilityToken: vi.fn(async () => sampleExtensionCapabilityTokenResponse),
+    extensionCapabilityToken: vi.fn(
+      async () => sampleExtensionCapabilityTokenResponse,
+    ),
     rotateExtensionCapabilityToken: vi.fn(async () => ({
       ...sampleExtensionCapabilityTokenResponse,
       token: "jh_ext_rotated_token_123456789012345678901234567",
@@ -258,10 +277,34 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
     })),
     browserCapabilities: vi.fn(async () => ({
       ok: true as const,
+      detectedBrowsers: [
+        { id: "google-chrome" as const, label: "Google Chrome" },
+      ],
       capabilities: [
-        { id: "core-browser" as const, status: "ready" as const, detail: "Managed browser ready.", mutable: false, enabled: true, profileCopyReady: false },
-        { id: "auto-apply-browser" as const, status: "disabled" as const, detail: "Disabled.", mutable: true, enabled: false, profileCopyReady: false },
-        { id: "authenticated-linkedin-browser" as const, status: "disabled" as const, detail: "Disabled.", mutable: true, enabled: false, profileCopyReady: false },
+        {
+          id: "core-browser" as const,
+          status: "ready" as const,
+          detail: "Managed browser ready.",
+          mutable: false,
+          enabled: true,
+          profileCopyReady: false,
+        },
+        {
+          id: "auto-apply-browser" as const,
+          status: "disabled" as const,
+          detail: "Disabled.",
+          mutable: true,
+          enabled: false,
+          profileCopyReady: false,
+        },
+        {
+          id: "authenticated-linkedin-browser" as const,
+          status: "disabled" as const,
+          detail: "Disabled.",
+          mutable: true,
+          enabled: false,
+          profileCopyReady: false,
+        },
       ],
     })),
     enableBrowserCapability: vi.fn(),
@@ -269,8 +312,17 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
     copyLinkedInBrowserProfile: vi.fn(),
   };
   const api = overrides.api
-    ? Object.assign(Object.create(Object.getPrototypeOf(baseApi)), baseApi, templateApiDefaults, overrides.api)
-    : Object.assign(Object.create(Object.getPrototypeOf(baseApi)), baseApi, templateApiDefaults);
+    ? Object.assign(
+        Object.create(Object.getPrototypeOf(baseApi)),
+        baseApi,
+        templateApiDefaults,
+        overrides.api,
+      )
+    : Object.assign(
+        Object.create(Object.getPrototypeOf(baseApi)),
+        baseApi,
+        templateApiDefaults,
+      );
   return {
     api,
     eventStream: overrides.eventStream ?? new FakeEventStreamPort(),

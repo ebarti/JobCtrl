@@ -921,7 +921,7 @@ API blocked.
 **Scope**
 
 - Implement every read member of `DemoApiClientAdapter`.
-- Preserve filtering, sorting, pagination, URL state, detail drawers, deep links,
+- Preserve filtering, sorting, pagination, URL state, full-page detail workspaces, deep links,
   analytics, evidence, runs, artifacts, contacts, and settings.
 - Serve bundled synthetic HTML/PDF previews and browser downloads.
 

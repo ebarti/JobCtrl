@@ -34,7 +34,6 @@ function ToastStoreBridge() {
         description: entry.message,
         type: entry.variant,
         timeout: entry.durationMs,
-        priority: "high",
         data: {
           source: "jobctrl-store",
           variant: entry.variant,

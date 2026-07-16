@@ -8,7 +8,18 @@ import {
 import { CONTACT_ROLES } from "@jobctrl/domain-types";
 import { useForm } from "@tanstack/react-form";
 
-import { contactAttributeKindLabel, contactRoleLabel } from "../lib/contact-copy.js";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../../shared/ui/select.js";
+import {
+  contactAttributeKindLabel,
+  contactRoleLabel,
+} from "../lib/contact-copy.js";
 
 export interface ContactAttributeRow {
   kind: ContactAttributeKind;
@@ -56,7 +67,10 @@ function assembleCandidate(values: ContactFormValues) {
     employer: employer ? employer : undefined,
     jobId: jobId ? jobId : undefined,
     attributes: values.attributes
-      .map((attribute) => ({ kind: attribute.kind, value: attribute.value.trim() }))
+      .map((attribute) => ({
+        kind: attribute.kind,
+        value: attribute.value.trim(),
+      }))
       .filter((attribute) => attribute.value.length > 0),
   };
 }
@@ -74,12 +88,18 @@ export function ContactForm({
     defaultValues: defaultFormValues(initialValues, lockedJobId),
     validators: {
       onSubmit: ({ value }) => {
-        const result = ContactCreateRequestSchema.safeParse(assembleCandidate(value));
-        return result.success ? undefined : (result.error.issues[0]?.message ?? "Invalid contact.");
+        const result = ContactCreateRequestSchema.safeParse(
+          assembleCandidate(value),
+        );
+        return result.success
+          ? undefined
+          : (result.error.issues[0]?.message ?? "Invalid contact.");
       },
     },
     onSubmit: async ({ value }) => {
-      const result = ContactCreateRequestSchema.safeParse(assembleCandidate(value));
+      const result = ContactCreateRequestSchema.safeParse(
+        assembleCandidate(value),
+      );
       if (!result.success) {
         return;
       }
@@ -96,22 +116,40 @@ export function ContactForm({
         void form.handleSubmit();
       }}
     >
-      {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
+      {errorMessage ? (
+        <div className="banner inline">{errorMessage}</div>
+      ) : null}
       <form.Field name="role">
         {(field) => (
           <label className="field">
             <span>Role</span>
-            <select
+            <Select
+              items={CONTACT_ROLES.map((role) => ({
+                label: contactRoleLabel(role),
+                value: role,
+              }))}
               value={field.state.value}
-              onBlur={field.handleBlur}
-              onChange={(event) => field.handleChange(event.target.value as ContactRole)}
+              onValueChange={(value) => {
+                if (value !== null) field.handleChange(value as ContactRole);
+              }}
             >
-              {CONTACT_ROLES.map((role) => (
-                <option key={role} value={role}>
-                  {contactRoleLabel(role)}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger
+                aria-label="Role"
+                className="w-full"
+                onBlur={field.handleBlur}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {CONTACT_ROLES.map((role) => (
+                    <SelectItem key={role} value={role}>
+                      {contactRoleLabel(role)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </label>
         )}
       </form.Field>
@@ -151,19 +189,37 @@ export function ContactForm({
                     {(kindField) => (
                       <label className="field compact">
                         <span>Kind</span>
-                        <select
+                        <Select
+                          items={CONTACT_ATTRIBUTE_KINDS.map((kind) => ({
+                            label: contactAttributeKindLabel(kind),
+                            value: kind,
+                          }))}
                           value={kindField.state.value}
-                          onBlur={kindField.handleBlur}
-                          onChange={(event) =>
-                            kindField.handleChange(event.target.value as ContactAttributeKind)
-                          }
+                          onValueChange={(value) => {
+                            if (value !== null) {
+                              kindField.handleChange(
+                                value as ContactAttributeKind,
+                              );
+                            }
+                          }}
                         >
-                          {CONTACT_ATTRIBUTE_KINDS.map((kind) => (
-                            <option key={kind} value={kind}>
-                              {contactAttributeKindLabel(kind)}
-                            </option>
-                          ))}
-                        </select>
+                          <SelectTrigger
+                            aria-label="Kind"
+                            className="w-full"
+                            onBlur={kindField.handleBlur}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              {CONTACT_ATTRIBUTE_KINDS.map((kind) => (
+                                <SelectItem key={kind} value={kind}>
+                                  {contactAttributeKindLabel(kind)}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
                       </label>
                     )}
                   </form.Field>
@@ -174,7 +230,9 @@ export function ContactForm({
                         <input
                           value={valueField.state.value}
                           onBlur={valueField.handleBlur}
-                          onChange={(event) => valueField.handleChange(event.target.value)}
+                          onChange={(event) =>
+                            valueField.handleChange(event.target.value)
+                          }
                         />
                       </label>
                     )}
@@ -192,7 +250,9 @@ export function ContactForm({
               <button
                 type="button"
                 className="tab"
-                onClick={() => attributesField.pushValue({ kind: "email", value: "" })}
+                onClick={() =>
+                  attributesField.pushValue({ kind: "email", value: "" })
+                }
               >
                 add fact
               </button>
@@ -206,13 +266,19 @@ export function ContactForm({
             .flat()
             .filter((entry): entry is string => typeof entry === "string")
             .at(0);
-          return message ? <div className="banner inline">{message}</div> : null;
+          return message ? (
+            <div className="banner inline">{message}</div>
+          ) : null;
         }}
       </form.Subscribe>
       <form.Subscribe selector={(state) => state.isSubmitting}>
         {(isSubmitting) => (
           <div className="form-actions">
-            <button type="submit" className="tab on" disabled={pending || isSubmitting}>
+            <button
+              type="submit"
+              className="tab on"
+              disabled={pending || isSubmitting}
+            >
               {pending || isSubmitting ? "saving" : submitLabel}
             </button>
             {onCancel ? (

@@ -16,10 +16,18 @@ describe("application outcome components", () => {
   it("renders the job outcome timeline and manual outcome form", async () => {
     renderWithProviders(<JobOutcomePanel jobId="job-2" />);
 
-    const timeline = await screen.findByLabelText("Application outcome timeline");
-    expect(within(timeline).getByText("Applied confirmation")).toBeInTheDocument();
-    expect(screen.getByText("Confirmed in the ATS portal.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /record outcome/i })).toBeInTheDocument();
+    const timeline = await screen.findByLabelText(
+      "Application outcome timeline",
+    );
+    expect(
+      within(timeline).getByText("Applied confirmation"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Confirmed in the ATS portal."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /record outcome/i }),
+    ).toBeInTheDocument();
   });
 
   it("records a manual outcome with a canonical timestamp payload", async () => {
@@ -44,12 +52,18 @@ describe("application outcome components", () => {
       ports: buildTestPorts({ api: { recordManualApplicationOutcome } }),
     });
 
-    await user.selectOptions(screen.getByLabelText(/outcome/i), "interview");
+    await user.click(screen.getByRole("combobox", { name: /outcome/i }));
+    await user.click(await screen.findByRole("option", { name: "Interview" }));
     await user.type(screen.getByLabelText(/occurred at/i), "2026-05-06T08:35");
-    await user.type(screen.getByLabelText(/local note/i), "Talked to recruiting.");
+    await user.type(
+      screen.getByLabelText(/local note/i),
+      "Talked to recruiting.",
+    );
     await user.click(screen.getByRole("button", { name: /record outcome/i }));
 
-    await waitFor(() => expect(recordManualApplicationOutcome).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(recordManualApplicationOutcome).toHaveBeenCalledTimes(1),
+    );
     expect(recordManualApplicationOutcome).toHaveBeenCalledWith(
       "job-2",
       expect.objectContaining({
@@ -78,18 +92,28 @@ describe("application outcome components", () => {
       },
     }));
 
-    renderWithProviders(<InterviewReflectionForm jobId="job-2" prepGeneration={2} />, {
-      ports: buildTestPorts({ api: { recordManualApplicationOutcome } }),
-    });
+    renderWithProviders(
+      <InterviewReflectionForm jobId="job-2" prepGeneration={2} />,
+      {
+        ports: buildTestPorts({ api: { recordManualApplicationOutcome } }),
+      },
+    );
 
-    await user.type(screen.getByLabelText(/interview date/i), "2026-05-06T09:35");
+    await user.type(
+      screen.getByLabelText(/interview date/i),
+      "2026-05-06T09:35",
+    );
     await user.type(
       screen.getByLabelText(/reflection note/i),
       "Asked about platform migration tradeoffs.",
     );
-    await user.click(screen.getByRole("button", { name: /record reflection/i }));
+    await user.click(
+      screen.getByRole("button", { name: /record reflection/i }),
+    );
 
-    await waitFor(() => expect(recordManualApplicationOutcome).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(recordManualApplicationOutcome).toHaveBeenCalledTimes(1),
+    );
     expect(recordManualApplicationOutcome).toHaveBeenCalledWith(
       "job-2",
       expect.objectContaining({
@@ -103,20 +127,28 @@ describe("application outcome components", () => {
 
   it("accepts and ignores pending outcome suggestions", async () => {
     const user = userEvent.setup();
-    const decideOutcomeSuggestion = vi.fn(async (_suggestionId: string, body: { decision: string }) => ({
-      ok: true as const,
-      suggestion: {
-        ...sampleApplicationOutcomes.suggestions[0]!,
-        status: body.decision === "ignore" ? ("ignored" as const) : ("accepted" as const),
-        decidedAt: "2026-05-06T08:40:00Z",
-        decisionReason: null,
-        decidedOutcomeId: body.decision === "ignore" ? null : "outcome-suggestion-1",
-      },
-      outcome: null,
-    }));
+    const decideOutcomeSuggestion = vi.fn(
+      async (_suggestionId: string, body: { decision: string }) => ({
+        ok: true as const,
+        suggestion: {
+          ...sampleApplicationOutcomes.suggestions[0]!,
+          status:
+            body.decision === "ignore"
+              ? ("ignored" as const)
+              : ("accepted" as const),
+          decidedAt: "2026-05-06T08:40:00Z",
+          decisionReason: null,
+          decidedOutcomeId:
+            body.decision === "ignore" ? null : "outcome-suggestion-1",
+        },
+        outcome: null,
+      }),
+    );
 
     renderWithProviders(
-      <OutcomeSuggestionsPanel suggestions={sampleApplicationOutcomes.suggestions} />,
+      <OutcomeSuggestionsPanel
+        suggestions={sampleApplicationOutcomes.suggestions}
+      />,
       {
         ports: buildTestPorts({ api: { decideOutcomeSuggestion } }),
       },
@@ -157,13 +189,19 @@ describe("application outcome components", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /accept suggestion suggestion-1 \(interview\) for job-2/i }),
+      screen.getByRole("button", {
+        name: /accept suggestion suggestion-1 \(interview\) for job-2/i,
+      }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /ignore suggestion suggestion-2 \(rejection\) for job-7/i }),
+      screen.getByRole("button", {
+        name: /ignore suggestion suggestion-2 \(rejection\) for job-7/i,
+      }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("group", { name: /correct suggestion suggestion-2 \(rejection\) for job-7/i }),
+      screen.getByRole("group", {
+        name: /correct suggestion suggestion-2 \(rejection\) for job-7/i,
+      }),
     ).toBeInTheDocument();
   });
 
@@ -193,17 +231,25 @@ describe("application outcome components", () => {
     }));
 
     renderWithProviders(
-      <OutcomeSuggestionsPanel suggestions={sampleApplicationOutcomes.suggestions} />,
+      <OutcomeSuggestionsPanel
+        suggestions={sampleApplicationOutcomes.suggestions}
+      />,
       {
         ports: buildTestPorts({ api: { decideOutcomeSuggestion } }),
       },
     );
 
-    const suggestion = screen.getByText("Recruiter reply indicates an interview request.").closest("article");
+    const suggestion = screen
+      .getByText("Recruiter reply indicates an interview request.")
+      .closest("article");
     expect(suggestion).not.toBeNull();
     const scope = within(suggestion as HTMLElement);
-    await user.selectOptions(scope.getByLabelText(/correct to/i), "assessment");
-    await user.type(scope.getByLabelText(/reason/i), "Assessment, not interview.");
+    await user.click(scope.getByRole("combobox", { name: /correct to/i }));
+    await user.click(await screen.findByRole("option", { name: "Assessment" }));
+    await user.type(
+      scope.getByLabelText(/reason/i),
+      "Assessment, not interview.",
+    );
     await user.click(scope.getByRole("button", { name: /correct/i }));
 
     await waitFor(() =>

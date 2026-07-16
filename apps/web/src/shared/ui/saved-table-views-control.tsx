@@ -27,6 +27,14 @@ import {
   DialogTrigger,
 } from "./dialog.js";
 import { Input } from "./input.js";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./select.js";
 
 export interface SavedTableColumnOption {
   id: string;
@@ -127,6 +135,22 @@ export function SavedTableViewsControl({
         .map((column) => column.id)
         .filter((columnId) => !snapshot.columns.hidden.includes(columnId)),
     [columnOptions, snapshot.columns.hidden],
+  );
+  const viewItems = useMemo(
+    () => views.map((view) => ({ value: view.id, label: view.name })),
+    [views],
+  );
+  const columnItems = useMemo(
+    () =>
+      columnOptions.map((column) => ({
+        value: column.id,
+        label: column.label,
+      })),
+    [columnOptions],
+  );
+  const groupingItems = useMemo(
+    () => [{ value: null, label: "No grouping" }, ...columnItems],
+    [columnItems],
   );
 
   const setPresentation = (presentation: SavedTablePresentation) => {
@@ -249,7 +273,9 @@ export function SavedTableViewsControl({
       columns: snapshot.columns,
       density: snapshot.density,
       grouping: snapshot.grouping,
-      colorRules: snapshot.colorRules.filter((_, ruleIndex) => ruleIndex !== index),
+      colorRules: snapshot.colorRules.filter(
+        (_, ruleIndex) => ruleIndex !== index,
+      ),
     });
   };
 
@@ -257,17 +283,30 @@ export function SavedTableViewsControl({
     <div className="saved-table-views-control data-table-views">
       <label className="saved-table-views-select">
         <span>View</span>
-        <select
-          aria-label="Saved table view"
+        <Select
+          items={viewItems}
           value={activeView?.id ?? DEFAULT_SAVED_TABLE_VIEW_ID}
-          onChange={(event) => applySelectedView(event.target.value)}
+          onValueChange={(viewId) => {
+            if (viewId !== null) applySelectedView(viewId);
+          }}
         >
-          {views.map((view) => (
-            <option key={view.id} value={view.id}>
-              {view.name}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            aria-label="Saved table view"
+            className="max-w-40"
+            size="sm"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            <SelectGroup>
+              {viewItems.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </label>
       <button
         type="button"
@@ -329,7 +368,9 @@ export function SavedTableViewsControl({
         <DialogContent className="saved-table-view-dialog">
           <DialogHeader>
             <DialogTitle>Rename view</DialogTitle>
-            <DialogDescription>Rename the selected saved view.</DialogDescription>
+            <DialogDescription>
+              Rename the selected saved view.
+            </DialogDescription>
           </DialogHeader>
           <form className="saved-table-view-form" onSubmit={submitRename}>
             <label className="field">
@@ -386,7 +427,9 @@ export function SavedTableViewsControl({
                 key={option.label}
                 type="button"
                 aria-pressed={snapshot.density === option.value}
-                onClick={() => setDensity(option.value as SavedTablePresentation["density"])}
+                onClick={() =>
+                  setDensity(option.value as SavedTablePresentation["density"])
+                }
               >
                 {option.label}
               </button>
@@ -394,52 +437,76 @@ export function SavedTableViewsControl({
           </section>
           <label className="saved-table-rule-field">
             <span>Group by</span>
-            <select
-              aria-label="Group table rows"
-              value={snapshot.grouping?.columnId ?? ""}
-              onChange={(event) => setGrouping(event.target.value)}
+            <Select
+              items={groupingItems}
+              value={snapshot.grouping?.columnId ?? null}
+              onValueChange={(columnId) => setGrouping(columnId ?? "")}
             >
-              <option value="">No grouping</option>
-              {columnOptions.map((column) => (
-                <option key={column.id} value={column.id}>
-                  {column.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger aria-label="Group table rows" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false}>
+                <SelectGroup>
+                  {groupingItems.map((item) => (
+                    <SelectItem key={item.value ?? "none"} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </label>
           <section className="saved-table-rules" aria-label="Color rules">
             <div className="saved-table-rule-editor">
               <label>
                 <span>Column</span>
-                <select
-                  aria-label="Color rule column"
-                  value={ruleColumnId || columnOptions[0]?.id || ""}
-                  onChange={(event) => setRuleColumnId(event.target.value)}
+                <Select
+                  items={columnItems}
+                  value={ruleColumnId || columnOptions[0]?.id || null}
+                  onValueChange={(columnId) => setRuleColumnId(columnId ?? "")}
                 >
-                  {columnOptions.map((column) => (
-                    <option key={column.id} value={column.id}>
-                      {column.label}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    aria-label="Color rule column"
+                    className="w-full"
+                  >
+                    <SelectValue placeholder="Select column" />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {columnItems.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
               </label>
               <label>
                 <span>Predicate</span>
-                <select
-                  aria-label="Color rule predicate"
+                <Select
+                  items={COLOR_RULE_OPERATORS}
                   value={ruleOperator}
-                  onChange={(event) =>
-                    setRuleOperator(
-                      event.target.value as typeof ruleOperator,
-                    )
+                  onValueChange={(operator) =>
+                    operator !== null && setRuleOperator(operator)
                   }
                 >
-                  {COLOR_RULE_OPERATORS.map((operator) => (
-                    <option key={operator.value} value={operator.value}>
-                      {operator.label}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    aria-label="Color rule predicate"
+                    className="w-full"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {COLOR_RULE_OPERATORS.map((operator) => (
+                        <SelectItem key={operator.value} value={operator.value}>
+                          {operator.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
               </label>
               <label>
                 <span>Value</span>
@@ -451,19 +518,27 @@ export function SavedTableViewsControl({
               </label>
               <label>
                 <span>Tone</span>
-                <select
-                  aria-label="Color rule tone"
+                <Select
+                  items={COLOR_RULE_TONES}
                   value={ruleTone}
-                  onChange={(event) =>
-                    setRuleTone(event.target.value as typeof ruleTone)
-                  }
+                  onValueChange={(tone) => tone !== null && setRuleTone(tone)}
                 >
-                  {COLOR_RULE_TONES.map((tone) => (
-                    <option key={tone.value} value={tone.value}>
-                      {tone.label}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    aria-label="Color rule tone"
+                    className="w-full"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {COLOR_RULE_TONES.map((tone) => (
+                        <SelectItem key={tone.value} value={tone.value}>
+                          {tone.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
               </label>
               <button
                 type="button"
@@ -500,10 +575,13 @@ export function SavedTableViewsControl({
           </section>
           <div className="saved-table-column-list">
             {snapshot.columns.order.map((columnId, index) => {
-              const column = columnOptions.find((option) => option.id === columnId);
+              const column = columnOptions.find(
+                (option) => option.id === columnId,
+              );
               if (!column) return null;
               const visible = !snapshot.columns.hidden.includes(columnId);
-              const canHide = !column.locked && (visibleIds.length > 1 || !visible);
+              const canHide =
+                !column.locked && (visibleIds.length > 1 || !visible);
               return (
                 <div key={column.id} className="saved-table-column-row">
                   <label>

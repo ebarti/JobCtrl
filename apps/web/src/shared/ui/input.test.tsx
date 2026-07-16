@@ -5,19 +5,23 @@ import { Input } from "./input.js";
 import { Textarea } from "./textarea.js";
 
 describe("shared form focus contract", () => {
-  it("keeps the global focus-visible outline available for inputs", () => {
+  it("keeps a visible focus ring available for inputs", () => {
     render(<Input aria-label="Example input" />);
 
-    expect(screen.getByLabelText("Example input")).not.toHaveClass(
-      "focus-visible:outline-none",
+    expect(screen.getByLabelText("Example input")).toHaveClass(
+      "focus-visible:border-foreground",
+      "focus-visible:ring-2",
+      "focus-visible:ring-ring",
     );
   });
 
-  it("keeps the global focus-visible outline available for textareas", () => {
+  it("keeps a visible focus ring available for textareas", () => {
     render(<Textarea aria-label="Example textarea" />);
 
-    expect(screen.getByLabelText("Example textarea")).not.toHaveClass(
-      "focus-visible:outline-none",
+    expect(screen.getByLabelText("Example textarea")).toHaveClass(
+      "focus-visible:border-foreground",
+      "focus-visible:ring-2",
+      "focus-visible:ring-ring",
     );
   });
 });

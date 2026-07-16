@@ -1,6 +1,8 @@
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { IconCalendar, IconFileText, IconLink } from "@tabler/icons-react";
 import { useMemo } from "react";
 
+import { EvidenceStatusBadge } from "../../contexts/operations/components/EvidenceStatusBadge.js";
 import {
   useEvidenceMapEntryQuery,
   useEvidenceMapQuery,
@@ -16,28 +18,6 @@ import { PageHead } from "../../shared/ui/page-head.js";
 
 function entryKindLabel(entry: EvidenceMapEntry): string {
   return entry.kind === "skill" ? "Skill" : "Achievement";
-}
-
-function gapKindLabel(gap: EvidenceGap): string {
-  switch (gap.kind) {
-    case "blocked_requirement":
-      return "Blocked requirement";
-    case "transferable_requirement":
-      return "Transferable requirement";
-    case "missing_skill":
-      return "Missing skill";
-    case "missing_requirement":
-    default:
-      return "Missing requirement";
-  }
-}
-
-function tagTone(value: string | null | undefined): "danger" | "info" | "muted" | "ok" | "warn" {
-  if (!value) return "muted";
-  if (["covered", "matched", "verified", "declared"].includes(value)) return "ok";
-  if (["missing", "missing_from_profile", "blocked"].includes(value)) return "danger";
-  if (["transferable", "declared_only"].includes(value)) return "warn";
-  return "info";
 }
 
 function compactDate(value: string | null): string {
@@ -102,16 +82,25 @@ function UsageLink({ usage }: { readonly usage: EvidenceUsageRef }) {
         to="/artifacts/$artifactId"
       >
         <span>{resumeLinkLabel(usage)}</span>
-        <span className="tag muted">artifact</span>
+        <span className="evidence-meta-label">
+          <IconFileText aria-hidden="true" />
+          artifact
+        </span>
       </Link>
     );
   }
+  const statusType = usage.requirementFitKind ? "fit" : "coverage";
   return (
     <Link className="evidence-usage-link" params={{ jobId: usage.jobKey }} to="/jobs/$jobId">
       <span>{requirementLinkLabel(usage) || usage.jobKey}</span>
-      <span className={`tag ${tagTone(usage.requirementFitKind ?? usage.coverageState)}`}>
-        {usage.requirementFitKind ?? usage.coverageState ?? "job"}
-      </span>
+      {statusType === "fit" ? (
+        <EvidenceStatusBadge type="fit" value={usage.requirementFitKind} />
+      ) : (
+        <EvidenceStatusBadge
+          type="coverage"
+          value={usage.coverageState ?? usage.artifactCoverageState}
+        />
+      )}
     </Link>
   );
 }
@@ -164,10 +153,11 @@ function EvidenceEntryButton({
           <span className="muted">{entryKindLabel(entry)}</span>
         </span>
         <span className="evidence-entry-meta">
-          <span className={`tag ${tagTone(entry.freshness.evidenceStrength)}`}>
-            {entry.freshness.evidenceStrength ?? "unrated"}
+          <EvidenceStatusBadge type="strength" value={entry.freshness.evidenceStrength} />
+          <span className="evidence-meta-label">
+            <IconLink aria-hidden="true" />
+            {usageCount} uses
           </span>
-          <span className="tag muted">{usageCount} uses</span>
         </span>
       </Link>
     </li>
@@ -185,13 +175,12 @@ function EvidenceDetail({ entry }: { readonly entry: EvidenceMapEntry | null }) 
         <p className="meta">{entryKindLabel(entry)}</p>
         <h2 id="evidence-detail-title">{entry.title}</h2>
         <div className="evidence-tags">
-          <span className={`tag ${tagTone(freshness.evidenceStrength)}`}>
-            {freshness.evidenceStrength ?? "unrated"}
+          <EvidenceStatusBadge type="strength" value={freshness.evidenceStrength} />
+          <EvidenceStatusBadge type="confirmation" value={freshness.userConfirmed} />
+          <span className="evidence-meta-label">
+            <IconCalendar aria-hidden="true" />
+            {compactDate(freshness.evidenceDateRange)}
           </span>
-          <span className={freshness.userConfirmed ? "tag ok" : "tag warn"}>
-            {freshness.userConfirmed ? "confirmed" : "unconfirmed"}
-          </span>
-          <span className="tag muted">{compactDate(freshness.evidenceDateRange)}</span>
         </div>
       </header>
 
@@ -215,7 +204,7 @@ function EvidenceDetail({ entry }: { readonly entry: EvidenceMapEntry | null }) 
           {entry.story.metrics.length ? (
             <ul className="evidence-chip-list" aria-label="Story metrics">
               {entry.story.metrics.map((metric) => (
-                <li className="tag info" key={metric}>{metric}</li>
+                <li className="evidence-inline-value" key={metric}>{metric}</li>
               ))}
             </ul>
           ) : null}
@@ -224,11 +213,24 @@ function EvidenceDetail({ entry }: { readonly entry: EvidenceMapEntry | null }) 
 
       <section className="evidence-detail-group">
         <h3>Skills and tags</h3>
-        <ul className="evidence-chip-list">
-          {[...entry.skills, ...entry.tags].map((value) => (
-            <li className="tag muted" key={value}>{value}</li>
-          ))}
-        </ul>
+        <div className="evidence-attribute-list">
+          <div className="evidence-attribute-row">
+            <span>Skills</span>
+            <ul className="evidence-chip-list" aria-label="Skills">
+              {entry.skills.map((value) => (
+                <li className="evidence-inline-value" key={value}>{value}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="evidence-attribute-row">
+            <span>Tags</span>
+            <ul className="evidence-chip-list" aria-label="Tags">
+              {entry.tags.map((value) => (
+                <li className="evidence-inline-value" key={value}>{value}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
       </section>
 
       <UsageGroup title="Used in resumes" usages={entry.resumeUsages} />
@@ -247,7 +249,7 @@ function GapList({ gaps }: { readonly gaps: readonly EvidenceGap[] }) {
       {gaps.map((gap) => (
         <li key={gap.gapId}>
           <div>
-            <span className={`tag ${tagTone(gap.fitKind ?? gap.kind)}`}>{gapKindLabel(gap)}</span>
+            <EvidenceStatusBadge type="gap" value={gap.kind} />
             <strong>{gap.requirementText}</strong>
             <p className="muted">{gap.reason}</p>
           </div>

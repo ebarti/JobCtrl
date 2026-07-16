@@ -59,7 +59,7 @@ feature off, but cannot turn it on.
 | Surface | Storage | API | When a saved change applies |
 | --- | --- | --- | --- |
 | Settings → General | [`config.json`](../api/profile-and-settings.md#config-json-field-reference) | `/v1/settings` | Live, next poll/run/workflow, or restart, as labeled; worker activity slots show desired versus active values |
-| Settings → Credentials | Non-secret desired values in `config.json`; secrets in macOS Keychain or native provider stores | `/v1/credentials` | Claude and Google Keychain edits require the relevant Python process to restart; Codex verification is immediate |
+| Settings → Credentials | Non-secret desired values in `config.json`; secrets in macOS Keychain, the launch environment, or native provider stores | `/v1/credentials` | Claude and Google Keychain edits require the relevant Python process to restart; an environment-owned active route remains authoritative until its value is removed and the process restarts; Codex verification is immediate |
 | Settings → Model selection | [`config.json`](../api/profile-and-settings.md#config-json-field-reference) | `/v1/settings`; `/v1/providers/models` | Newly started work; no worker restart |
 | Settings → Browser & extension | Non-secret capability choices and adopted executable configuration in `config.json`; pairing token and copied profile contents remain separate | `/v1/browser-capabilities`; `/v1/extension/pairing-token` | Capability changes and token rotation are live |
 
@@ -92,7 +92,16 @@ only when the corresponding environment value is missing or empty; any
 non-empty environment value wins. Saving or removing a value is therefore
 **restart-to-activate** for Python consumers: restart the relevant worker or
 provider process before Claude or Google work. Preferred-model changes do not
-require that restart. Native Windows
+require that restart.
+
+Environment ownership is scoped to the active secret or auth route, not to the
+whole provider card. While an environment-owned route is active, its secret
+field and provider-removal control remain read-only, but Settings still lets you
+prepare another supported auth route. Saving that alternative does not override
+the active environment value. Remove the environment value and restart the
+relevant process before expecting the saved route to become effective.
+
+Native Windows
 and Linux credential-store adapters are planned; use `.env` or the shell on
 those platforms today. `jobctrl doctor` reports the effective source without
 printing secrets. **Status unknown** (`inspection_failed`) is distinct from

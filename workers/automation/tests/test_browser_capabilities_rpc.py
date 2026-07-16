@@ -31,11 +31,73 @@ def test_capability_list_never_returns_executable_paths(monkeypatch: pytest.Monk
             _status("authenticated-linkedin-browser"),
         ),
     )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "detect_supported_browsers",
+        lambda: (
+            SimpleNamespace(
+                id="google-chrome",
+                label="Google Chrome",
+                executable="/secret/detected/browser/path",
+            ),
+        ),
+    )
 
     result = handlers.browser_capabilities_list({})
 
+    assert result["detectedBrowsers"] == [{"id": "google-chrome", "label": "Google Chrome"}]
     assert "executable" not in json.dumps(result)
     assert "/secret/host/path" not in json.dumps(result)
+    assert "/secret/detected/browser/path" not in json.dumps(result)
+
+
+def test_enable_accepts_an_explicit_detected_browser_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jobctrl import browser_capabilities
+
+    enabled: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        browser_capabilities,
+        "enable_detected_browser_capability",
+        lambda capability_id, browser_id: enabled.append((capability_id, browser_id)),
+    )
+    monkeypatch.setattr(
+        browser_capabilities,
+        "list_browser_capabilities",
+        lambda: (
+            _status("core-browser", "ready"),
+            _status("auto-apply-browser", "ready"),
+            _status("authenticated-linkedin-browser"),
+        ),
+    )
+    monkeypatch.setattr(browser_capabilities, "detect_supported_browsers", lambda: ())
+
+    response = handlers.browser_capability_enable(
+        {"capabilityId": "auto-apply-browser", "detectedBrowserId": "google-chrome"}
+    )
+
+    assert enabled == [("auto-apply-browser", "google-chrome")]
+    assert response["capabilities"][1]["enabled"] is True
+
+
+def test_stale_detected_browser_returns_a_sanitized_validation_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobctrl import browser_capabilities
+
+    def reject(_capability_id: str, _browser_id: str) -> None:
+        raise browser_capabilities.DetectedBrowserUnavailableError(
+            "private candidate details must not cross RPC"
+        )
+
+    monkeypatch.setattr(browser_capabilities, "enable_detected_browser_capability", reject)
+
+    with pytest.raises(Exception) as error:
+        handlers.browser_capability_enable(
+            {"capabilityId": "auto-apply-browser", "detectedBrowserId": "google-chrome"}
+        )
+
+    assert str(error.value) == "The selected detected browser is no longer available."
+    assert "private candidate details" not in str(error.value)
 
 
 def test_enable_rejects_invalid_executable_without_echo(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -3393,15 +3393,11 @@ input[type="radio"] {
   font-size: 12px;
 }
 
-.apply-review-ideal-profile section {
-  border-left: 2px solid var(--border);
-  padding-left: 10px;
-}
-
 .apply-review-ideal-requirements {
   display: grid;
   gap: 8px;
-  padding-left: 22px;
+  padding-left: 0;
+  list-style: none;
 }
 
 .apply-review-ideal-requirements li {
@@ -3443,34 +3439,41 @@ input[type="radio"] {
   gap: 5px;
 }
 
-.apply-review-requirement-fit-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 6px;
-  margin-top: 6px;
+.apply-review-requirement-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin: 9px 0 0;
 }
 
-.apply-review-requirement-fit-grid > div {
-  display: grid;
+.apply-review-requirement-summary > div {
+  display: flex;
   min-width: 0;
-  align-content: start;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
 }
 
-.apply-review-requirement-fit-grid > div > span {
+.apply-review-requirement-summary dt {
   color: var(--muted-foreground);
   font-size: 11px;
 }
 
-.apply-review-requirement-fit-grid .tag {
+.apply-review-requirement-summary dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+.apply-review-requirement-summary .tag {
   max-width: 100%;
   white-space: normal;
-  justify-self: start;
 }
 
 @media (max-width: 720px) {
-  .apply-review-requirement-fit-grid {
-    grid-template-columns: minmax(0, 1fr);
+  .apply-review-requirement-summary {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
@@ -3900,8 +3903,8 @@ input[type="radio"] {
 }
 
 .saved-table-density button[aria-pressed="true"] {
-  background: var(--foreground);
-  color: var(--card);
+  background: var(--primary);
+  color: var(--primary-foreground);
   font-weight: 650;
 }
 
@@ -4104,8 +4107,8 @@ input[type="radio"] {
 }
 
 .data-grid-filter-operator button.active {
-  background: var(--foreground);
-  color: var(--card);
+  background: var(--primary);
+  color: var(--primary-foreground);
   font-weight: 650;
 }
 
@@ -6830,7 +6833,7 @@ input[type="radio"] {
 
 .profile-resizer:hover span,
 .profile-resizer:focus-visible span {
-  background: var(--foreground);
+  background: var(--primary);
 }
 
 .profile-evidence-toolbar {

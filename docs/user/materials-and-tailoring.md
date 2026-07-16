@@ -16,8 +16,9 @@ The user-visible surfaces divide the work:
 - `/jobs/:jobId` shows material readiness, accepted artifacts, employer and
   requirement evidence, stage failures, and the per-job generation/re-tailor
   controls.
-- `/artifacts` lists registered generations and opens an artifact inspector with
-  stored validation, provenance, coverage, voice, template, and risk metadata.
+- `/artifacts` lists registered generations; `/artifacts/:artifactId` opens a
+  route-level inspector with the real preview when supported, stored validation,
+  provenance, coverage, voice, template, risk metadata, and same-job comparison.
 - `/apply-review` consumes the accepted generation. The editor, revision,
   replacement-render, and submission-approval lifecycle is owned by
   [Apply](apply.md#materials-and-resume-rendering).
@@ -32,10 +33,10 @@ Generating materials, choosing a default template, revising a resume in Apply
 Review, and approving a live submission are separate decisions. Materials
 hands accepted generations to Apply; it does not own submission approval.
 
-Interview prep is an explicit, job-scoped generation from the job drawer. It is
-not an automatic pipeline stage or live interview assistant. Review its linked
-profile and requirement evidence before relying on it; the current maturity
-boundary is described in
+Interview prep is an explicit, job-scoped generation from the Job Detail
+workspace. It is not an automatic pipeline stage or live interview assistant.
+Review its linked profile and requirement evidence before relying on it; the
+current maturity boundary is described in
 [Daily Workflow → Generate Interview Prep](normal-flows.md).
 
 ## Source Of Truth And Ownership

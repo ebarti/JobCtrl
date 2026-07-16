@@ -403,14 +403,14 @@
   width: 34px;
   height: 34px;
   place-items: center;
-  border: 1px solid var(--foreground);
+  border: 1px solid var(--primary);
   border-radius: 5px;
-  background: var(--foreground);
-  color: var(--background);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
 .job-detail-drawer .score-correction button:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--foreground) 88%, var(--background));
+  background: color-mix(in oklch, var(--primary) 90%, var(--card));
 }
 
 .job-detail-drawer .score-correction small {

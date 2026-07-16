@@ -2,22 +2,22 @@ import {
   Fragment,
   useEffect,
   useRef,
-  useState,
   type InputHTMLAttributes,
   type ReactNode,
   type TextareaHTMLAttributes,
 } from "react";
-import { IconChevronDown, IconExternalLink, IconPlus, IconTrash } from "@tabler/icons-react";
+import { IconExternalLink, IconPlus, IconTrash } from "@tabler/icons-react";
 
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
-import { Checkbox } from "../../../shared/ui/checkbox.js";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "../../../shared/ui/collapsible.js";
+  AdaptiveFieldGrid,
+  AdaptiveFieldSpan,
+} from "../../../shared/ui/adaptive-field-grid.js";
+import { Checkbox } from "../../../shared/ui/checkbox.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import {
   Field,
+  FieldContent,
   FieldDescription,
   FieldError,
   FieldGroup,
@@ -36,6 +36,12 @@ import {
   SelectValue,
 } from "../../../shared/ui/select.js";
 import { Separator } from "../../../shared/ui/separator.js";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "../../../shared/ui/tabs.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
 
 import {
@@ -170,6 +176,7 @@ type StructuredInputAttributes = Omit<
   InputHTMLAttributes<HTMLInputElement>,
   "onChange" | "type" | "value"
 > & {
+  helperText?: ReactNode;
   valueKind?: "text";
 };
 
@@ -190,41 +197,6 @@ export interface StructuredProfileEditorProps {
   styleText: string;
   onProfileTextChange: (value: string) => void;
   onStyleTextChange: (value: string) => void;
-}
-
-function ConfigurationSection({
-  children,
-  defaultOpen,
-  description,
-  title,
-}: {
-  readonly children: ReactNode;
-  readonly defaultOpen?: boolean;
-  readonly description: string;
-  readonly title: string;
-}) {
-  const [open, setOpen] = useState(defaultOpen ?? false);
-
-  return (
-    <Collapsible
-      className="form-section configuration-section"
-      open={open}
-      onOpenChange={setOpen}
-    >
-      <CollapsibleTrigger className="configuration-section__trigger">
-        <span className="configuration-section__title-group">
-          <span aria-level={3} className="configuration-section__title" role="heading">
-            {title}
-          </span>
-          <span className="configuration-section__description">{description}</span>
-        </span>
-        <IconChevronDown aria-hidden="true" className="configuration-section__indicator" size={16} />
-      </CollapsibleTrigger>
-      <CollapsibleContent className="configuration-section__body" keepMounted>
-        {children}
-      </CollapsibleContent>
-    </Collapsible>
-  );
 }
 
 export function StructuredProfileEditor({
@@ -438,13 +410,16 @@ export function StructuredProfileEditor({
     type: InputHTMLAttributes<HTMLInputElement>["type"] = "text",
     attrs: StructuredInputAttributes = {},
   ) => {
-    const { valueKind, ...inputAttrs } = attrs;
+    const { helperText, valueKind, ...inputAttrs } = attrs;
     const id = inputAttrs.id ?? editorControlId("profile", path);
+    const descriptionId = helperText ? `${id}-description` : undefined;
+    const describedBy = [inputAttrs["aria-describedby"], descriptionId].filter(Boolean).join(" ") || undefined;
     return (
       <Field className="field">
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
         <Input
           {...inputAttrs}
+          aria-describedby={describedBy}
           id={id}
           type={type}
           value={textAt(profile, path)}
@@ -457,6 +432,7 @@ export function StructuredProfileEditor({
             )
           }
         />
+        {helperText ? <FieldDescription id={descriptionId}>{helperText}</FieldDescription> : null}
       </Field>
     );
   };
@@ -527,7 +503,10 @@ export function StructuredProfileEditor({
           items={monthItems}
           value={value.month || emptyMonthValue}
           onValueChange={(month) =>
-            onChange({ ...value, month: month === emptyMonthValue ? "" : month })
+            onChange({
+              ...value,
+              month: month === null || month === emptyMonthValue ? "" : month,
+            })
           }
         >
           <SelectTrigger aria-label={`${label} month`} className="configuration-select-trigger">
@@ -548,7 +527,10 @@ export function StructuredProfileEditor({
           items={yearItems}
           value={value.year || emptyYearValue}
           onValueChange={(year) =>
-            onChange({ ...value, year: year === emptyYearValue ? "" : year })
+            onChange({
+              ...value,
+              year: year === null || year === emptyYearValue ? "" : year,
+            })
           }
         >
           <SelectTrigger aria-label={`${label} year`} className="configuration-select-trigger">
@@ -700,6 +682,20 @@ export function StructuredProfileEditor({
     );
   };
 
+  const yesNoCheckboxField = (path: string, label: string) => {
+    const id = editorControlId("profile", path);
+    return (
+    <Field className="field check" orientation="horizontal">
+      <Checkbox
+        id={id}
+        checked={textAt(profile, path) === "Yes"}
+        onCheckedChange={(checked) => updateProfilePath(path, checked ? "Yes" : "No")}
+      />
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+    </Field>
+    );
+  };
+
   const numberField = (
     path: string,
     label: string,
@@ -755,13 +751,21 @@ export function StructuredProfileEditor({
     );
   };
 
-  const disabledCheckboxField = (label: string) => {
+  const disabledCheckboxField = (label: string, reason: string) => {
     const id = editorControlId("profile", label, "disabled");
+    const descriptionId = `${id}-description`;
     return (
-    <Field className="field check disabled" data-disabled orientation="horizontal">
-      <Checkbox id={id} checked={false} disabled />
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-    </Field>
+      <Field
+        className="field check disabled locked-choice"
+        data-disabled
+        orientation="horizontal"
+      >
+        <Checkbox aria-describedby={descriptionId} id={id} checked={false} disabled />
+        <FieldContent>
+          <FieldLabel htmlFor={id}>{label}</FieldLabel>
+          <FieldDescription id={descriptionId}>{reason}</FieldDescription>
+        </FieldContent>
+      </Field>
     );
   };
 
@@ -1090,36 +1094,48 @@ export function StructuredProfileEditor({
         <IconExternalLink aria-hidden="true" size={12} />
       </a>
       <FieldGroup className="checkbox-options">
-        {BULLET_STANDARD_OPTIONS.map(([value, label]) => (
-          <Field
-            className="choice target-choice required-choice"
-            data-disabled
-            key={value}
-            orientation="horizontal"
-          >
-            <Checkbox
-              id={editorControlId("profile", "bullet-standard", value)}
-              checked
-              disabled
-              name="bullet-standard"
-              value={value}
-            />
-            <FieldLabel htmlFor={editorControlId("profile", "bullet-standard", value)}>
-              {label}
-            </FieldLabel>
-          </Field>
-        ))}
+        {BULLET_STANDARD_OPTIONS.map(([value, label]) => {
+          const id = editorControlId("profile", "bullet-standard", value);
+          const descriptionId = `${id}-description`;
+          return (
+            <Field
+              className="choice target-choice required-choice locked-choice"
+              data-disabled
+              key={value}
+              orientation="horizontal"
+            >
+              <Checkbox
+                aria-describedby={descriptionId}
+                id={id}
+                checked
+                disabled
+                name="bullet-standard"
+                value={value}
+              />
+              <FieldContent>
+                <FieldLabel htmlFor={id}>{label}</FieldLabel>
+                <FieldDescription id={descriptionId}>
+                  Required for evidence-quality resumes and cannot be disabled.
+                </FieldDescription>
+              </FieldContent>
+            </Field>
+          );
+        })}
       </FieldGroup>
-      <FieldDescription>Required evidence-quality standards; these cannot be disabled.</FieldDescription>
+      <FieldDescription>
+        Required evidence-quality standards; these cannot be disabled.
+      </FieldDescription>
     </FieldSet>
   );
 
   const adjacentExperienceClaimsGroup = () => (
     <FieldSet className="field wide checkbox-group-field tailoring-control-group">
       <FieldLegend>Adjacent experience claims</FieldLegend>
-      <FieldGroup className="field-grid one">
-        {inventedAdjacentExperienceField()}
-      </FieldGroup>
+      <AdaptiveFieldGrid>
+        <AdaptiveFieldSpan span="wide">
+          {inventedAdjacentExperienceField()}
+        </AdaptiveFieldSpan>
+      </AdaptiveFieldGrid>
     </FieldSet>
   );
 
@@ -1139,7 +1155,10 @@ export function StructuredProfileEditor({
           "resume.tailoring_rules.tailoring_policy.allow_skill_reordering",
           "Select and order existing skills",
         )}
-        {disabledCheckboxField("Change experience titles")}
+        {disabledCheckboxField(
+          "Change experience titles",
+          "Experience titles remain fixed to profile evidence during tailoring.",
+        )}
       </FieldGroup>
     </FieldSet>
   );
@@ -1147,7 +1166,7 @@ export function StructuredProfileEditor({
   const writingStyleGroup = () => (
     <FieldSet className="field wide checkbox-group-field tailoring-control-group">
       <FieldLegend>Writing style</FieldLegend>
-      <FieldGroup className="field-grid">
+      <AdaptiveFieldGrid>
         {selectField("resume.tailoring_rules.writing_style.tone", "Writing tone", [
           ["direct", "Direct"],
           ["executive", "Executive"],
@@ -1165,15 +1184,14 @@ export function StructuredProfileEditor({
           "resume.tailoring_rules.writing_style.avoid_first_person",
           "Avoid first-person language",
         )}
-        {bulletStandardsField()}
-      </FieldGroup>
+      </AdaptiveFieldGrid>
     </FieldSet>
   );
 
   const revisionPolicyGroup = () => (
     <FieldSet className="field wide checkbox-group-field tailoring-control-group revision-policy-group">
       <FieldLegend>Revision policy</FieldLegend>
-      <FieldGroup className="field-grid">
+      <AdaptiveFieldGrid>
         {numberField("resume.tailoring_rules.revision_gates.min_fit_score", "Minimum fit score", {
           min: 1,
           max: 10,
@@ -1192,19 +1210,21 @@ export function StructuredProfileEditor({
           step: 1,
           defaultValue: 1,
         })}
-      </FieldGroup>
+      </AdaptiveFieldGrid>
     </FieldSet>
   );
 
   const additionalGuidanceGroup = () => (
-    <FieldGroup className="field-grid one">
-      {textareaField(
-        "resume.tailoring_rules.custom_tailoring_prompt",
-        "Additional guidance",
-        "Writing and positioning guidance; evidence rules still apply.",
-        { maxLength: 1200 },
-      )}
-    </FieldGroup>
+    <AdaptiveFieldGrid>
+      <AdaptiveFieldSpan span="full">
+        {textareaField(
+          "resume.tailoring_rules.custom_tailoring_prompt",
+          "Additional guidance",
+          "Writing and positioning guidance; evidence rules still apply.",
+          { maxLength: 1200 },
+        )}
+      </AdaptiveFieldSpan>
+    </AdaptiveFieldGrid>
   );
 
   const targetSearchSection = () => (
@@ -1294,9 +1314,15 @@ export function StructuredProfileEditor({
     <div className="profile-sections">
       {mode === "profile" ? (
         <>
-          <section className="form-section">
-            <h3>Personal information</h3>
-            <FieldGroup className="field-grid">
+          <DisclosureSection
+            className="profile-disclosure profile-disclosure--personal"
+            collapsedSummary="Contact · address · professional links"
+            defaultOpen
+            description="Contact, address, and professional links"
+            headingLevel={3}
+            title="Personal information"
+          >
+            <AdaptiveFieldGrid>
               {textField("personal.full_name", "Full name", "text", { required: true })}
               {textField("personal.preferred_name", "Preferred name")}
               {textField("personal.email", "Email", "email", { required: true })}
@@ -1314,12 +1340,18 @@ export function StructuredProfileEditor({
               {textField("personal.github_url", "GitHub URL", "url")}
               {textField("personal.portfolio_url", "Portfolio URL", "url")}
               {textField("personal.website_url", "Website URL", "url")}
-            </FieldGroup>
-          </section>
+            </AdaptiveFieldGrid>
+          </DisclosureSection>
 
-          <section className="form-section">
-            <h3>Resume baseline</h3>
-            <FieldGroup className="field-grid">
+          <DisclosureSection
+            className="profile-disclosure profile-disclosure--baseline"
+            collapsedSummary="Experience · executive profile · verified metrics"
+            defaultOpen
+            description="Default experience summary and verified evidence"
+            headingLevel={3}
+            title="Resume baseline"
+          >
+            <AdaptiveFieldGrid>
               {textField("experience.years_of_experience_total", "Total years of experience", "number", {
                 min: 0,
                 step: 1,
@@ -1334,15 +1366,27 @@ export function StructuredProfileEditor({
                 "number",
                 { min: 1, max: 99, step: 1 },
               )}
-            </FieldGroup>
-            <FieldGroup className="field-grid one">
-              {textareaField("resume.executive_profile.baseline_text", "Executive profile baseline")}
-              {listField("resume_constraints.real_metrics", "Verified resume metrics")}
-            </FieldGroup>
-          </section>
+            </AdaptiveFieldGrid>
+            <AdaptiveFieldGrid>
+              <AdaptiveFieldSpan span="full">
+                {textareaField("resume.executive_profile.baseline_text", "Executive profile baseline")}
+              </AdaptiveFieldSpan>
+              <AdaptiveFieldSpan span="full">
+                {listField("resume_constraints.real_metrics", "Verified resume metrics")}
+              </AdaptiveFieldSpan>
+            </AdaptiveFieldGrid>
+          </DisclosureSection>
 
-          <section className="form-section">
-            <h3>Experience entries</h3>
+          <DisclosureSection
+            className="profile-disclosure profile-disclosure--experience"
+            collapsedSummary={`${experienceEntries.length} ${
+              experienceEntries.length === 1 ? "entry" : "entries"
+            }`}
+            defaultOpen={false}
+            description="Roles, dates, bullets, and required content"
+            headingLevel={3}
+            title="Experience entries"
+          >
             <FieldGroup className="repeat-list">
               {experienceEntries.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
@@ -1388,12 +1432,12 @@ export function StructuredProfileEditor({
                           remove experience
                         </button>
                       </div>
-                      <FieldGroup className="field-grid">
+                      <AdaptiveFieldGrid>
                         {dateRangeField(`resume.experience_entries.${index}.date_range`, "Date range")}
                         {textField(`resume.experience_entries.${index}.title`, "Title")}
                         {textField(`resume.experience_entries.${index}.company`, "Company")}
                         {textField(`resume.experience_entries.${index}.location`, "Location")}
-                      </FieldGroup>
+                      </AdaptiveFieldGrid>
                       <Separator />
                       <FieldGroup className="bullet-list">
                         {bullets.map((bullet, bulletIndex) => {
@@ -1461,10 +1505,18 @@ export function StructuredProfileEditor({
                 add experience
               </button>
             </FieldGroup>
-          </section>
+          </DisclosureSection>
 
-          <section className="form-section">
-            <h3>Education</h3>
+          <DisclosureSection
+            className="profile-disclosure profile-disclosure--education"
+            collapsedSummary={`${educationEntries.length} ${
+              educationEntries.length === 1 ? "entry" : "entries"
+            }`}
+            defaultOpen={false}
+            description="Degrees, institutions, completion dates, and required content"
+            headingLevel={3}
+            title="Education"
+          >
             <FieldGroup className="repeat-list">
               {educationEntries.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
@@ -1504,12 +1556,12 @@ export function StructuredProfileEditor({
                           remove education
                         </button>
                       </div>
-                      <FieldGroup className="field-grid">
+                      <AdaptiveFieldGrid>
                         {monthField(`resume.education_entries.${index}.date`, "Completion month")}
                         {textField(`resume.education_entries.${index}.degree`, "Degree")}
                         {textField(`resume.education_entries.${index}.institution`, "Institution")}
                         {textField(`resume.education_entries.${index}.location`, "Location")}
-                      </FieldGroup>
+                      </AdaptiveFieldGrid>
                     </FieldSet>
                   </Fragment>
                 );
@@ -1522,10 +1574,18 @@ export function StructuredProfileEditor({
                 add education
               </button>
             </FieldGroup>
-          </section>
+          </DisclosureSection>
 
-          <section className="form-section">
-            <h3>Skill categories</h3>
+          <DisclosureSection
+            className="profile-disclosure profile-disclosure--skills"
+            collapsedSummary={`${skillCategories.length} ${
+              skillCategories.length === 1 ? "category" : "categories"
+            }`}
+            defaultOpen={false}
+            description="Skill groups, individual skills, and required content"
+            headingLevel={3}
+            title="Skill categories"
+          >
             <FieldGroup className="repeat-list">
               {skillCategories.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
@@ -1571,9 +1631,11 @@ export function StructuredProfileEditor({
                           remove skill category
                         </button>
                       </div>
-                      <FieldGroup className="field-grid">
-                        {textField(`resume.skill_categories.${index}.label`, "Label")}
-                      </FieldGroup>
+                      <AdaptiveFieldGrid>
+                        <AdaptiveFieldSpan span="wide">
+                          {textField(`resume.skill_categories.${index}.label`, "Label")}
+                        </AdaptiveFieldSpan>
+                      </AdaptiveFieldGrid>
                       <Separator />
                       <FieldGroup className="skill-list">
                         {skills.map((skill, skillIndex) => {
@@ -1641,41 +1703,49 @@ export function StructuredProfileEditor({
                 add skill category
               </button>
             </FieldGroup>
-          </section>
+          </DisclosureSection>
 
-          <section className="form-section">
-            <h3>Voluntary EEO</h3>
-            <FieldGroup className="field-grid">
+          <DisclosureSection
+            className="profile-disclosure profile-disclosure--eeo"
+            collapsedSummary="Gender · race or ethnicity · veteran status · disability status"
+            defaultOpen={false}
+            description="Optional demographic information"
+            headingLevel={3}
+            title="Voluntary EEO"
+          >
+            <AdaptiveFieldGrid>
               {textField("eeo_voluntary.gender", "Gender")}
               {textField("eeo_voluntary.race_ethnicity", "Race / ethnicity")}
               {textField("eeo_voluntary.veteran_status", "Veteran status")}
               {textField("eeo_voluntary.disability_status", "Disability status")}
-            </FieldGroup>
-          </section>
+            </AdaptiveFieldGrid>
+          </DisclosureSection>
         </>
       ) : mode === "target-search" ? (
         targetSearchSection()
       ) : (
         <>
-          <ConfigurationSection
+          <DisclosureSection
+            collapsedSummary="Authorization · availability · compensation"
             defaultOpen
-            description="Availability, work authorization, and compensation defaults."
+            description="Availability, work authorization, and compensation defaults"
+            headingLevel={3}
             title="Application configuration"
           >
-            <FieldGroup className="field-grid">
+            <AdaptiveFieldGrid>
               {applicationConfigurationFields}
-              {selectField("work_authorization.legally_authorized_to_work", "Legally authorized to work", [
-                "Yes",
-                "No",
-              ])}
-              {selectField("work_authorization.require_sponsorship", "Requires sponsorship", ["No", "Yes"])}
+              {yesNoCheckboxField(
+                "work_authorization.legally_authorized_to_work",
+                "Legally authorized to work",
+              )}
+              {yesNoCheckboxField("work_authorization.require_sponsorship", "Requires sponsorship")}
               {textField("work_authorization.work_permit_type", "Work permit type")}
               {textField("personal.password", "Job-site login password", "password", {
                 autoComplete: "new-password",
               })}
               {textField("availability.earliest_start_date", "Earliest start date", "date")}
-              {selectField("availability.available_for_full_time", "Available full-time", ["Yes", "No"])}
-              {selectField("availability.available_for_contract", "Available for contract", ["No", "Yes"])}
+              {yesNoCheckboxField("availability.available_for_full_time", "Available full-time")}
+              {yesNoCheckboxField("availability.available_for_contract", "Available for contract")}
               {textField("compensation.salary_expectation", "Salary expectation", "number", {
                 min: 0,
                 step: 1,
@@ -1692,29 +1762,76 @@ export function StructuredProfileEditor({
                 step: 1,
                 valueKind: "text",
               })}
-              {textField("compensation.currency_conversion_note", "Currency note")}
-            </FieldGroup>
-          </ConfigurationSection>
+              {textField(
+                "compensation.currency_conversion_note",
+                "Currency conversion guidance",
+                "text",
+                {
+                  helperText:
+                    "Used for salary questions when a job posting lists compensation in a different currency.",
+                },
+              )}
+            </AdaptiveFieldGrid>
+          </DisclosureSection>
 
-          <ConfigurationSection
+          <DisclosureSection
+            className="preferences-disclosure preferences-disclosure--tailoring"
+            collapsedSummary="Content rules · writing style · quality gates"
             defaultOpen
-            description="Evidence-safe writing rules and generation thresholds."
+            description="Control what JobCtrl may change and how generated resumes are evaluated"
+            headingLevel={3}
             title="Tailoring controls"
           >
-            <FieldGroup className="tailoring-controls-grid">
-              {adjacentExperienceClaimsGroup()}
-              {generationPermissionsGroup()}
-              {writingStyleGroup()}
-              {revisionPolicyGroup()}
-              {additionalGuidanceGroup()}
-            </FieldGroup>
-          </ConfigurationSection>
+            <Tabs className="tailoring-control-tabs" defaultValue="content-rules">
+              <TabsList
+                aria-label="Tailoring control sections"
+                className="tailoring-control-tabs__list"
+              >
+                <TabsTrigger value="content-rules">Content rules</TabsTrigger>
+                <TabsTrigger value="writing-style">Writing style</TabsTrigger>
+                <TabsTrigger value="quality-gates">Quality gates</TabsTrigger>
+              </TabsList>
+              <TabsContent
+                className="tailoring-tab-panel tailoring-tab-panel--content-rules"
+                forceMount
+                value="content-rules"
+              >
+                <FieldGroup className="tailoring-controls-grid tailoring-controls-grid--content">
+                  {adjacentExperienceClaimsGroup()}
+                  {generationPermissionsGroup()}
+                  {bulletStandardsField()}
+                </FieldGroup>
+              </TabsContent>
+              <TabsContent
+                className="tailoring-tab-panel tailoring-tab-panel--writing-style"
+                forceMount
+                value="writing-style"
+              >
+                <FieldGroup className="tailoring-controls-grid tailoring-controls-grid--writing">
+                  {writingStyleGroup()}
+                  {additionalGuidanceGroup()}
+                </FieldGroup>
+              </TabsContent>
+              <TabsContent
+                className="tailoring-tab-panel tailoring-tab-panel--quality-gates"
+                forceMount
+                value="quality-gates"
+              >
+                <FieldGroup className="tailoring-controls-grid tailoring-controls-grid--quality">
+                  {revisionPolicyGroup()}
+                </FieldGroup>
+              </TabsContent>
+            </Tabs>
+          </DisclosureSection>
 
-          <ConfigurationSection
-            description="Defaults for generated resumes outside the template workspace."
+          <DisclosureSection
+            collapsedSummary="Typography · template · page layout"
+            defaultOpen={false}
+            description="Defaults for generated resumes outside the template workspace"
+            headingLevel={3}
             title="Resume style"
           >
-            <FieldGroup className="field-grid">
+            <AdaptiveFieldGrid>
               {styleSelect("document_font_size", "Text size", [
                 ["10pt", "Small"],
                 ["11pt", "Regular"],
@@ -1751,8 +1868,8 @@ export function StructuredProfileEditor({
               ])}
               {styleNumber("page_scale", "Page scale", 0.7, 1, 0.01)}
               {styleNumber("hints_column_width_cm", "Date column width (cm)", 1.5, 5, 0.1)}
-            </FieldGroup>
-          </ConfigurationSection>
+            </AdaptiveFieldGrid>
+          </DisclosureSection>
         </>
       )}
     </div>

@@ -6,7 +6,8 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { outreachSearchSchema } from "../../routes/-outreach.search.js";
@@ -42,9 +43,53 @@ describe("<OutreachView>", () => {
   });
 
   it("exposes contact create and CSV import actions", async () => {
-    renderOutreachView();
+    const user = userEvent.setup();
+    const { container } = renderOutreachView();
     await waitFor(() => expect(screen.getByText("Dana Reyes")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "add contact" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "import CSV" })).toBeInTheDocument();
+
+    const pageActions = container.querySelector<HTMLElement>(
+      '[data-slot="page-head-actions"]',
+    );
+    expect(pageActions).not.toBeNull();
+    expect(
+      within(pageActions!).getByRole("button", { name: "New contact" }),
+    ).toBeInTheDocument();
+    expect(
+      within(pageActions!).getByRole("button", { name: "Import CSV" }),
+    ).toBeInTheDocument();
+
+    const filters = screen.getByRole("group", { name: "Contact filters" });
+    expect(
+      within(filters).getByRole("textbox", { name: "Employer" }),
+    ).toBeInTheDocument();
+    expect(
+      within(filters).getByRole("textbox", { name: "Job" }),
+    ).toBeInTheDocument();
+    expect(
+      within(filters).queryByRole("button", { name: "New contact" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(filters).queryByRole("button", { name: "Import CSV" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(pageActions!).getByRole("button", { name: "New contact" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Add contact" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", { name: "Add contact" }),
+      ).not.toBeInTheDocument(),
+    );
+
+    await user.click(
+      within(pageActions!).getByRole("button", { name: "Import CSV" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Import contacts from CSV" }),
+    ).toBeInTheDocument();
   });
 });

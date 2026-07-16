@@ -48,8 +48,8 @@ enter the system. They do not hold provider credentials or raw feed contents.
 | `POST /v1/providers/codex/verify` | Explicitly validate and import a reusable normal Codex CLI `auth.json` once when isolated auth is absent, then verify isolated auth without a model call. |
 | `GET /v1/extension/pairing-token` | Read the local extension pairing state. |
 | `POST /v1/extension/pairing-token/rotate` | Rotate the token immediately and disconnect existing extension clients. |
-| `GET /v1/browser-capabilities` | Read the managed and optional browser capability states. |
-| `POST /v1/browser-capabilities/:capabilityId/enable` | Enable an optional capability with an explicit, write-only browser executable path. |
+| `GET /v1/browser-capabilities` | Read managed/optional capability states plus transient supported-browser candidates as ID/label pairs; no local path is returned or adopted. |
+| `POST /v1/browser-capabilities/:capabilityId/enable` | Explicitly adopt exactly one transient `detectedBrowserId` or one write-only `executablePath` for an optional capability. |
 | `POST /v1/browser-capabilities/:capabilityId/disable` | Disable an optional capability immediately. |
 | `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy` | Copy a profile only with explicit consent; the source path is request-only. |
 
@@ -63,6 +63,15 @@ The Codex verify response remains secret-free: it reports only provider,
 boolean result, bounded status, and a bounded message. The explicit import
 never overwrites JobCtrl's existing isolated auth or changes the normal Codex
 home. It invokes the same copy-once behavior retained by setup and generation.
+
+Browser detection is read-only discovery, not consent. The list response may
+offer supported Chrome/Chromium candidates as bounded `{ id, label }` values;
+the executable path stays inside the worker and nothing is launched, copied,
+or persisted. Enablement is a strict XOR input: send either
+`{ detectedBrowserId }` or `{ executablePath }`, never both or neither. A
+detected ID is resolved again at mutation time. If it is stale or no longer
+available, enablement fails closed with `400 browser_capability_failed` and
+does not retain or fall back to an earlier path.
 
 `PATCH /v1/settings` stores provider-scoped model choices as
 `preferred_models` in `config.json` and returns them as `preferredModels`.

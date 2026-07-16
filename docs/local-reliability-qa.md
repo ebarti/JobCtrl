@@ -86,7 +86,22 @@ generate-content filtering, Claude runtime-catalog normalization, stable dedupli
 sanitized failures. Prove settings reject an unready provider or unoffered ID,
 allow a clear while unready, persist no credential data, and exercise precedence
 for explicit workflow, selected-provider preference, and provider default
-without executing a live provider request.
+without executing a live provider request. When an active provider route is
+environment-owned, prove its secret and removal controls stay read-only while
+another supported route remains editable. Saving that alternative must not
+displace the active environment route before the environment value is removed
+and the relevant process restarts.
+
+### Browser capability adoption gate
+
+When browser detection, adoption, profile copying, or Settings browser UI
+changes, prove that listing capabilities only performs passive detection and
+returns opaque browser kinds plus labels—never executable paths. Listing must
+not launch, adopt, or persist a browser. Enabling requires an explicit detected
+selection or one advanced manual path, re-resolves a detected selection at
+mutation time, and fails closed when the installation disappeared. Profile-copy
+consent remains a separate affirmative action; capability enablement must not
+imply it.
 
 <a id="scoring-policy-eval-gate"></a>
 <a id="saved-views-smoke"></a>
@@ -151,6 +166,58 @@ the full suite also proves the gate does not regress admitted sessions.
 <a id="browser-extension-qa"></a>
 <a id="accessibility-bar"></a>
 <a id="storybook-gate"></a>
+
+## Cumulative Rhea/Base UI Final Gate
+
+Run this gate after the cumulative redesign branch has its canonical docs and
+synthetic fixtures. It complements focused phase checks; it is not a substitute
+for the security, apply, or workflow matrices above.
+
+```bash
+corepack pnpm --filter @jobctrl/web exec vitest run \
+  src/styles/token-contract.test.ts \
+  src/styles/token-contrast.test.ts \
+  src/shared/ui/base-ui-migration-boundary.test.ts \
+  src/contexts/operations/components/BrowserCapabilitiesPanel.test.tsx \
+  src/contexts/profile/components/CredentialsPanel.test.tsx \
+  src/views/pipelines/PipelinesView.test.tsx \
+  src/contexts/operations/hooks/usePipelineOperationsQuery.test.ts \
+  src/contexts/operations/invalidation-router.test.ts
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/pipeline-operations.test.ts \
+  test/pipeline-eta.test.ts \
+  test/worker-runtime-telemetry.test.ts \
+  test/server.test.ts
+uv --project workers/automation run --extra dev pytest -q \
+  workers/automation/tests/test_browser_capabilities.py \
+  workers/automation/tests/test_browser_capabilities_rpc.py
+JOBCTRL_E2E_APP_DIR=/tmp/jobctrl-route-qa \
+JOBCTRL_E2E_API_PORT=8878 \
+JOBCTRL_E2E_WEB_PORT=5275 \
+corepack pnpm --filter @jobctrl/web e2e -- tests/route-visual-qa.spec.ts
+git diff --check
+```
+
+The gate passes only when:
+
+- `base-rhea`, Geist, the semantic token mappings, light/dark contrast, all
+  three densities, and the shared card/status rules remain intact;
+- direct Radix imports and raw native selects are absent, Base UI overlays keep
+  their focus/dismissal/portal contract, and route visuals show no clipping or
+  document-level overflow at desktop and 390×844;
+- Pipelines keeps source families separate from the two reconciliation steps,
+  preserves execution/sweep/global-backlog scope, masks sensitive identifiers,
+  and reports honest ETA, freshness, capacity, queue, and active-inventory
+  states without invented numbers;
+- passive browser detection exposes no paths or side effects, stale detected
+  IDs fail closed, manual path entry remains an advanced explicit fallback, and
+  profile copying still requires separate consent;
+- an environment-owned active provider route stays authoritative and read-only
+  while alternative supported routes remain editable but inactive; and
+- a retry with `runAfter: true` preflights worker readiness before resetting
+  the failed stage. If the worker is unavailable, the API returns the readiness
+  failure and preserves the stage state, attempt count, diagnostics, and audit
+  evidence unchanged.
 
 ## Safe QA Data
 

@@ -18,9 +18,9 @@ Use the current web routes according to the kind of change you are making:
 
 | Route | What it owns |
 | --- | --- |
-| `/profile` | Personal and application information, baseline resume content, experience, education, skills, achievement evidence, and voluntary EEO data. The same page renders the baseline resume beside the editor. |
+| `/profile` | Personal information, baseline resume content, experience, education, skills, achievement evidence, and voluntary EEO data. The same page renders the real editable baseline resume beside the editor. |
 | `/profile/import/upload` | The start of the three-step PDF import flow. You choose whether to import profile data, resume style, or both before confirming. |
-| `/preferences` | Writing and tailoring controls plus resume-template selection and editing. |
+| `/preferences` | Application defaults, writing and tailoring controls, resume style, and resume-template selection and editing. |
 | `/evidence-map` | A read-only map from canonical achievements and skills to their uses in scores, requirement fit, generated bullets, and coverage gaps. |
 | `/discovery` | Target search and Discovery controls. These are composed near the workflow that uses them rather than treated as general profile editing. |
 

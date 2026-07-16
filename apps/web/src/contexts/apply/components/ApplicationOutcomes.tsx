@@ -16,6 +16,14 @@ import type { JobId } from "../../operations/types.js";
 import { formatDateTime } from "../../../shared/lib/formatters.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../../shared/ui/select.js";
 import { StatusDot } from "../../../shared/ui/status-dot.js";
 import type { StatusDotState } from "../../../shared/ui/status-tokens.js";
 import {
@@ -63,7 +71,9 @@ function isoTimestampFromLocalInput(value: string): string | undefined {
   return Number.isNaN(date.getTime()) ? trimmed : date.toISOString();
 }
 
-function manualOutcomePayload(values: ManualOutcomeFormValues): ManualApplicationOutcomeRequest {
+function manualOutcomePayload(
+  values: ManualOutcomeFormValues,
+): ManualApplicationOutcomeRequest {
   return {
     kind: values.kind,
     occurredAt: isoTimestampFromLocalInput(values.occurredAt),
@@ -95,7 +105,9 @@ function suggestionPayload(
   };
 }
 
-function sortOutcomes(outcomes: readonly ApplicationOutcome[]): ApplicationOutcome[] {
+function sortOutcomes(
+  outcomes: readonly ApplicationOutcome[],
+): ApplicationOutcome[] {
   return [...outcomes].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
 }
 
@@ -136,7 +148,9 @@ export function JobOutcomePanel({ jobId }: JobOutcomePanelProps) {
   return (
     <div className="outcome-panel">
       {message ? <div className="banner inline">{message}</div> : null}
-      {!data && !message ? <Empty title={isFetching ? "Loading outcomes." : "No outcomes."} /> : null}
+      {!data && !message ? (
+        <Empty title={isFetching ? "Loading outcomes." : "No outcomes."} />
+      ) : null}
       {data ? (
         <>
           <ManualOutcomeForm jobId={jobId} />
@@ -166,7 +180,9 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
         const result = ManualApplicationOutcomeRequestSchema.safeParse(
           manualOutcomePayload(value),
         );
-        return result.success ? undefined : (result.error.issues[0]?.message ?? "Invalid outcome");
+        return result.success
+          ? undefined
+          : (result.error.issues[0]?.message ?? "Invalid outcome");
       },
     },
     onSubmit: async ({ value, formApi }) => {
@@ -201,17 +217,34 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
         {(field) => (
           <label className="field">
             <span>Outcome</span>
-            <select
+            <Select
+              items={APPLICATION_OUTCOME_KINDS.map((kind) => ({
+                label: outcomeLabel(kind),
+                value: kind,
+              }))}
               value={field.state.value}
-              onBlur={field.handleBlur}
-              onChange={(event) => field.handleChange(event.target.value as ApplicationOutcomeKind)}
+              onValueChange={(value) => {
+                if (value !== null)
+                  field.handleChange(value as ApplicationOutcomeKind);
+              }}
             >
-              {APPLICATION_OUTCOME_KINDS.map((kind) => (
-                <option key={kind} value={kind}>
-                  {outcomeLabel(kind)}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger
+                aria-label="Outcome"
+                className="w-full"
+                onBlur={field.handleBlur}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {APPLICATION_OUTCOME_KINDS.map((kind) => (
+                    <SelectItem key={kind} value={kind}>
+                      {outcomeLabel(kind)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </label>
         )}
       </form.Field>
@@ -240,9 +273,18 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
           </label>
         )}
       </form.Field>
-      {recordOutcome.isError ? <div className="danger">Outcome save failed</div> : null}
-      {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
-      <form.Subscribe selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}>
+      {recordOutcome.isError ? (
+        <div className="danger">Outcome save failed</div>
+      ) : null}
+      {statusMessage ? (
+        <div className="status-line">{statusMessage}</div>
+      ) : null}
+      <form.Subscribe
+        selector={(state) => ({
+          canSubmit: state.canSubmit,
+          isSubmitting: state.isSubmitting,
+        })}
+      >
         {({ canSubmit, isSubmitting }) => (
           <Button
             className="outcome-submit"
@@ -250,7 +292,9 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
             size="sm"
             disabled={!canSubmit || isSubmitting || recordOutcome.isPending}
           >
-            {isSubmitting || recordOutcome.isPending ? "Recording" : "Record outcome"}
+            {isSubmitting || recordOutcome.isPending
+              ? "Recording"
+              : "Record outcome"}
           </Button>
         )}
       </form.Subscribe>
@@ -263,19 +307,29 @@ export interface InterviewReflectionPanelProps {
   readonly prepGeneration: number;
 }
 
-export function InterviewReflectionPanel({ jobId, prepGeneration }: InterviewReflectionPanelProps) {
+export function InterviewReflectionPanel({
+  jobId,
+  prepGeneration,
+}: InterviewReflectionPanelProps) {
   const { data, error, isFetching } = useJobApplicationOutcomesQuery(jobId);
   const message = error instanceof Error ? error.message : null;
   const reflections = (data?.outcomes ?? []).filter(
-    (outcome) => outcome.kind === "interview" && outcome.interviewPrepGeneration === prepGeneration,
+    (outcome) =>
+      outcome.kind === "interview" &&
+      outcome.interviewPrepGeneration === prepGeneration,
   );
 
   return (
-    <div className="interview-reflection-panel" aria-label="Post-interview reflections">
+    <div
+      className="interview-reflection-panel"
+      aria-label="Post-interview reflections"
+    >
       <InterviewReflectionForm jobId={jobId} prepGeneration={prepGeneration} />
       {message ? <div className="banner inline">{message}</div> : null}
       {!data && !message ? (
-        <Empty title={isFetching ? "Loading reflections." : "No reflections."} />
+        <Empty
+          title={isFetching ? "Loading reflections." : "No reflections."}
+        />
       ) : null}
       {data ? <OutcomeTimeline outcomes={reflections} /> : null}
     </div>
@@ -287,7 +341,10 @@ export interface InterviewReflectionFormProps {
   readonly prepGeneration: number;
 }
 
-export function InterviewReflectionForm({ jobId, prepGeneration }: InterviewReflectionFormProps) {
+export function InterviewReflectionForm({
+  jobId,
+  prepGeneration,
+}: InterviewReflectionFormProps) {
   const recordOutcome = useRecordManualApplicationOutcomeMutation();
   const [statusMessage, setStatusMessage] = useState("");
   const form = useForm({
@@ -300,7 +357,9 @@ export function InterviewReflectionForm({ jobId, prepGeneration }: InterviewRefl
         const result = ManualApplicationOutcomeRequestSchema.safeParse(
           interviewReflectionPayload(value, prepGeneration),
         );
-        return result.success ? undefined : (result.error.issues[0]?.message ?? "Invalid reflection");
+        return result.success
+          ? undefined
+          : (result.error.issues[0]?.message ?? "Invalid reflection");
       },
     },
     onSubmit: async ({ value, formApi }) => {
@@ -309,7 +368,9 @@ export function InterviewReflectionForm({ jobId, prepGeneration }: InterviewRefl
         interviewReflectionPayload(value, prepGeneration),
       );
       if (!result.success) {
-        setStatusMessage(result.error.issues[0]?.message ?? "Invalid reflection");
+        setStatusMessage(
+          result.error.issues[0]?.message ?? "Invalid reflection",
+        );
         return;
       }
       await recordOutcome.mutateAsync({ jobId, body: result.data });
@@ -331,7 +392,12 @@ export function InterviewReflectionForm({ jobId, prepGeneration }: InterviewRefl
       }}
     >
       <input name="kind" readOnly type="hidden" value="interview" />
-      <input name="interviewPrepGeneration" readOnly type="hidden" value={prepGeneration} />
+      <input
+        name="interviewPrepGeneration"
+        readOnly
+        type="hidden"
+        value={prepGeneration}
+      />
       <form.Field name="occurredAt">
         {(field) => (
           <label className="field">
@@ -359,9 +425,18 @@ export function InterviewReflectionForm({ jobId, prepGeneration }: InterviewRefl
           </label>
         )}
       </form.Field>
-      {recordOutcome.isError ? <div className="danger">Reflection save failed</div> : null}
-      {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
-      <form.Subscribe selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}>
+      {recordOutcome.isError ? (
+        <div className="danger">Reflection save failed</div>
+      ) : null}
+      {statusMessage ? (
+        <div className="status-line">{statusMessage}</div>
+      ) : null}
+      <form.Subscribe
+        selector={(state) => ({
+          canSubmit: state.canSubmit,
+          isSubmitting: state.isSubmitting,
+        })}
+      >
         {({ canSubmit, isSubmitting }) => (
           <Button
             className="outcome-submit"
@@ -369,7 +444,9 @@ export function InterviewReflectionForm({ jobId, prepGeneration }: InterviewRefl
             size="sm"
             disabled={!canSubmit || isSubmitting || recordOutcome.isPending}
           >
-            {isSubmitting || recordOutcome.isPending ? "Recording" : "Record reflection"}
+            {isSubmitting || recordOutcome.isPending
+              ? "Recording"
+              : "Record reflection"}
           </Button>
         )}
       </form.Subscribe>
@@ -394,10 +471,18 @@ export function OutcomeTimeline({ outcomes }: OutcomeTimelineProps) {
             <StatusDot state={outcomeDotState(outcome.kind)} />
             <b>{outcomeLabel(outcome.kind)}</b>
           </span>
-          <time dateTime={outcome.occurredAt}>{formatDateTime(outcome.occurredAt)}</time>
-          <span className="meta">{outcome.source === "email_suggestion" ? "email suggestion" : "manual"}</span>
+          <time dateTime={outcome.occurredAt}>
+            {formatDateTime(outcome.occurredAt)}
+          </time>
+          <span className="meta">
+            {outcome.source === "email_suggestion"
+              ? "email suggestion"
+              : "manual"}
+          </span>
           {outcome.interviewPrepGeneration !== null ? (
-            <span className="meta">prep generation {outcome.interviewPrepGeneration}</span>
+            <span className="meta">
+              prep generation {outcome.interviewPrepGeneration}
+            </span>
           ) : null}
           {outcome.note ? <p className="outcome-note">{outcome.note}</p> : null}
         </li>
@@ -410,20 +495,32 @@ export interface OutcomeSuggestionsPanelProps {
   readonly suggestions: readonly OutcomeSuggestion[];
 }
 
-export function OutcomeSuggestionsPanel({ suggestions }: OutcomeSuggestionsPanelProps) {
+export function OutcomeSuggestionsPanel({
+  suggestions,
+}: OutcomeSuggestionsPanelProps) {
   if (!suggestions.length) {
     return <Empty title="No pending outcome suggestions." />;
   }
   return (
-    <div className="outcome-suggestions" aria-label="Pending outcome suggestions">
+    <div
+      className="outcome-suggestions"
+      aria-label="Pending outcome suggestions"
+    >
       {suggestions.map((suggestion) => (
-        <OutcomeSuggestionCard key={suggestion.suggestionId} suggestion={suggestion} />
+        <OutcomeSuggestionCard
+          key={suggestion.suggestionId}
+          suggestion={suggestion}
+        />
       ))}
     </div>
   );
 }
 
-function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSuggestion }) {
+function OutcomeSuggestionCard({
+  suggestion,
+}: {
+  readonly suggestion: OutcomeSuggestion;
+}) {
   const decideSuggestion = useOutcomeSuggestionDecisionMutation();
   const [statusMessage, setStatusMessage] = useState("");
   const suggestionTitleId = `outcome-suggestion-${suggestion.suggestionId}-title`;
@@ -442,7 +539,9 @@ function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSug
         const result = OutcomeSuggestionDecisionRequestSchema.safeParse(
           suggestionPayload(value),
         );
-        return result.success ? undefined : (result.error.issues[0]?.message ?? "Invalid correction");
+        return result.success
+          ? undefined
+          : (result.error.issues[0]?.message ?? "Invalid correction");
       },
     },
     onSubmit: async ({ value }) => {
@@ -451,7 +550,9 @@ function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSug
         suggestionPayload(value),
       );
       if (!result.success) {
-        setStatusMessage(result.error.issues[0]?.message ?? "Invalid correction");
+        setStatusMessage(
+          result.error.issues[0]?.message ?? "Invalid correction",
+        );
         return;
       }
       await decideSuggestion.mutateAsync({
@@ -473,19 +574,29 @@ function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSug
       },
       {
         onSuccess: () => {
-          setStatusMessage(body.decision === "ignore" ? "Suggestion ignored" : "Suggestion accepted");
+          setStatusMessage(
+            body.decision === "ignore"
+              ? "Suggestion ignored"
+              : "Suggestion accepted",
+          );
         },
       },
     );
   };
 
   return (
-    <article className="outcome-suggestion-card" aria-labelledby={suggestionTitleId}>
+    <article
+      className="outcome-suggestion-card"
+      aria-labelledby={suggestionTitleId}
+    >
       <header className="outcome-suggestion-head">
         <span>
-          <b id={suggestionTitleId}>{outcomeLabel(suggestion.suggestedKind)} suggestion</b>
+          <b id={suggestionTitleId}>
+            {outcomeLabel(suggestion.suggestedKind)} suggestion
+          </b>
           <span className="meta">
-            {Math.round(suggestion.confidence * 100)}% confidence · {formatDateTime(suggestion.createdAt)}
+            {Math.round(suggestion.confidence * 100)}% confidence ·{" "}
+            {formatDateTime(suggestion.createdAt)}
           </span>
           <span className="meta">{suggestion.jobKey}</span>
         </span>
@@ -498,7 +609,9 @@ function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSug
           size="sm"
           disabled={decideSuggestion.isPending}
           aria-label={`Accept ${suggestionContext}`}
-          onClick={() => decide({ decision: "accept", reason: "Accepted from review UI." })}
+          onClick={() =>
+            decide({ decision: "accept", reason: "Accepted from review UI." })
+          }
         >
           Accept
         </Button>
@@ -508,7 +621,9 @@ function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSug
           variant="outline"
           disabled={decideSuggestion.isPending}
           aria-label={`Ignore ${suggestionContext}`}
-          onClick={() => decide({ decision: "ignore", reason: "Ignored from review UI." })}
+          onClick={() =>
+            decide({ decision: "ignore", reason: "Ignored from review UI." })
+          }
         >
           Ignore
         </Button>
@@ -527,17 +642,34 @@ function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSug
             {(field) => (
               <label className="field">
                 <span>Correct to</span>
-                <select
+                <Select
+                  items={APPLICATION_OUTCOME_KINDS.map((kind) => ({
+                    label: outcomeLabel(kind),
+                    value: kind,
+                  }))}
                   value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value as ApplicationOutcomeKind)}
+                  onValueChange={(value) => {
+                    if (value !== null)
+                      field.handleChange(value as ApplicationOutcomeKind);
+                  }}
                 >
-                  {APPLICATION_OUTCOME_KINDS.map((kind) => (
-                    <option key={kind} value={kind}>
-                      {outcomeLabel(kind)}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    aria-label="Correct to"
+                    className="w-full"
+                    onBlur={field.handleBlur}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {APPLICATION_OUTCOME_KINDS.map((kind) => (
+                        <SelectItem key={kind} value={kind}>
+                          {outcomeLabel(kind)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
               </label>
             )}
           </form.Field>
@@ -578,19 +710,32 @@ function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSug
               </label>
             )}
           </form.Field>
-          {decideSuggestion.isError ? <div className="danger">Suggestion decision failed</div> : null}
-          {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
-          <form.Subscribe selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}>
+          {decideSuggestion.isError ? (
+            <div className="danger">Suggestion decision failed</div>
+          ) : null}
+          {statusMessage ? (
+            <div className="status-line">{statusMessage}</div>
+          ) : null}
+          <form.Subscribe
+            selector={(state) => ({
+              canSubmit: state.canSubmit,
+              isSubmitting: state.isSubmitting,
+            })}
+          >
             {({ canSubmit, isSubmitting }) => (
               <Button
                 className="outcome-submit"
                 type="submit"
                 size="sm"
                 variant="secondary"
-                disabled={!canSubmit || isSubmitting || decideSuggestion.isPending}
+                disabled={
+                  !canSubmit || isSubmitting || decideSuggestion.isPending
+                }
                 aria-label={`Correct ${suggestionContext}`}
               >
-                {isSubmitting || decideSuggestion.isPending ? "Saving" : "Correct"}
+                {isSubmitting || decideSuggestion.isPending
+                  ? "Saving"
+                  : "Correct"}
               </Button>
             )}
           </form.Subscribe>

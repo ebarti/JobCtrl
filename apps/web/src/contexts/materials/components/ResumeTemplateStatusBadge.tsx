@@ -1,5 +1,11 @@
-import type { ResumeTemplateState, ResumeTemplateStaleState } from "@jobctrl/contracts";
+import type {
+  ResumeTemplateState,
+  ResumeTemplateStaleState,
+} from "@jobctrl/contracts";
+import { IconBan, IconClock, type TablerIcon } from "@tabler/icons-react";
 import type { JSX } from "react";
+
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 
 export interface ResumeTemplateStatusBadgeProps {
   readonly state?: ResumeTemplateState | null | undefined;
@@ -13,16 +19,30 @@ const STATUS_LABELS: Record<ResumeTemplateStaleState, string> = {
   refresh_unavailable: "template refresh unavailable",
 };
 
-export function ResumeTemplateStatusBadge({ state }: ResumeTemplateStatusBadgeProps): JSX.Element | null {
+export function ResumeTemplateStatusBadge({
+  state,
+}: ResumeTemplateStatusBadgeProps): JSX.Element | null {
   if (!state) return null;
   return (
-    <span className={`tag ${toneForState(state.state)}`} title={templateTitle(state)}>
+    <StatusBadge
+      icon={iconForState(state.state)}
+      tone={toneForState(state.state)}
+      title={templateTitle(state)}
+    >
       {STATUS_LABELS[state.state]}
-    </span>
+    </StatusBadge>
   );
 }
 
-function toneForState(state: ResumeTemplateStaleState): "muted" | "info" | "ok" | "warn" {
+function iconForState(state: ResumeTemplateStaleState): TablerIcon | undefined {
+  if (state === "refresh_queued") return IconClock;
+  if (state === "refresh_unavailable") return IconBan;
+  return undefined;
+}
+
+function toneForState(
+  state: ResumeTemplateStaleState,
+): "muted" | "info" | "ok" | "warn" {
   if (state === "template_current") return "ok";
   if (state === "refresh_queued") return "info";
   if (state === "template_stale") return "warn";
@@ -36,6 +56,8 @@ function templateTitle(state: ResumeTemplateState): string {
       : state.effective.assignmentSource === "profile_default"
         ? "default template"
         : "built-in template";
-  const refresh = state.lastRefreshAttempt?.errorMessage ? ` Last refresh: ${state.lastRefreshAttempt.errorMessage}` : "";
+  const refresh = state.lastRefreshAttempt?.errorMessage
+    ? ` Last refresh: ${state.lastRefreshAttempt.errorMessage}`
+    : "";
   return `${state.effective.templateName} from ${source}.${refresh}`;
 }

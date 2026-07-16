@@ -26,7 +26,7 @@ export function JobOverview({ detail }: JobOverviewProps) {
           {job.postingSource ? ` · posting: ${job.postingSource}` : ""}
           {job.discoverySource ? ` · discovered via: ${job.discoverySource}` : ""}
         </small>
-        <h2>{job.title}</h2>
+        <h1>{job.title}</h1>
         <p className="job-overview-location">
           {job.location || "-"} · {job.salary || "-"}
         </p>

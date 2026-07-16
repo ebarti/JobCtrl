@@ -336,22 +336,22 @@ describe("<JobsView> bulk delete integration", () => {
     const columnsDialog = screen.getByRole("dialog", { name: "Columns" });
     await user.click(within(columnsDialog).getByRole("checkbox", { name: "Company" }));
     await user.click(within(columnsDialog).getByRole("button", { name: "Compact" }));
-    await user.selectOptions(
+    await user.click(
       within(columnsDialog).getByRole("combobox", { name: "Group table rows" }),
-      "current_stage",
     );
-    await user.selectOptions(
+    await user.click(await screen.findByRole("option", { name: "Stage" }));
+    await user.click(
       within(columnsDialog).getByRole("combobox", { name: "Color rule column" }),
-      "title",
     );
+    await user.click(await screen.findByRole("option", { name: "Title" }));
     await user.type(
       within(columnsDialog).getByRole("textbox", { name: "Color rule value" }),
       "Apply",
     );
-    await user.selectOptions(
+    await user.click(
       within(columnsDialog).getByRole("combobox", { name: "Color rule tone" }),
-      "warning",
     );
+    await user.click(await screen.findByRole("option", { name: "Warning" }));
     await user.click(within(columnsDialog).getByRole("button", { name: "Add" }));
     await user.click(within(columnsDialog).getByRole("button", { name: /close/i }));
     expect(screen.queryByRole("columnheader", { name: /Company/ })).not.toBeInTheDocument();
@@ -362,7 +362,8 @@ describe("<JobsView> bulk delete integration", () => {
     await user.click(within(saveDialog).getByRole("button", { name: "Save" }));
 
     const viewSelect = screen.getByRole("combobox", { name: "Saved table view" });
-    await user.selectOptions(viewSelect, "default");
+    await user.click(viewSelect);
+    await user.click(await screen.findByRole("option", { name: "Default" }));
     await waitFor(() =>
       expect(router.state.location.search).toMatchObject({ stage: "all" }),
     );
@@ -370,9 +371,9 @@ describe("<JobsView> bulk delete integration", () => {
     expect(router.state.location.search).toMatchObject({ stage: "all" });
     expect(screen.getByRole("columnheader", { name: /Company/ })).toBeInTheDocument();
 
-    await user.selectOptions(
-      viewSelect,
-      screen.getByRole("option", { name: "Apply compact" }),
+    await user.click(viewSelect);
+    await user.click(
+      await screen.findByRole("option", { name: "Apply compact" }),
     );
     await waitFor(() =>
       expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ stage: "apply" })),
@@ -494,16 +495,17 @@ describe("<JobsView> bulk delete integration", () => {
     await user.click(within(saveDialog).getByRole("button", { name: "Save" }));
 
     const viewSelect = screen.getByRole("combobox", { name: "Saved table view" });
-    await user.selectOptions(viewSelect, "default");
+    await user.click(viewSelect);
+    await user.click(await screen.findByRole("option", { name: "Default" }));
     await waitFor(() => {
       expect(router.state.location.search.discoveredSince).toBeUndefined();
       expect(router.state.location.search.scoredSince).toBeUndefined();
     });
     expect(screen.queryByText(newMatchJob.title)).not.toBeInTheDocument();
 
-    await user.selectOptions(
-      viewSelect,
-      screen.getByRole("option", { name: "Digest new" }),
+    await user.click(viewSelect);
+    await user.click(
+      await screen.findByRole("option", { name: "Digest new" }),
     );
     await waitFor(() =>
       expect(router.state.location.search).toMatchObject({
@@ -1036,13 +1038,13 @@ describe("<JobsView> bulk delete integration", () => {
     await waitFor(
       () =>
         expect(
-          screen.getByRole("radio", { name: /^hidden$/i }),
+          screen.getByRole("button", { name: /^hidden$/i }),
         ).toBeInTheDocument(),
       {
         timeout: 5_000,
       },
     );
-    await user.click(screen.getByRole("radio", { name: /^hidden$/i }));
+    await user.click(screen.getByRole("button", { name: /^hidden$/i }));
     await waitFor(
       () => expect(screen.getByText(/Acme Corp/i)).toBeInTheDocument(),
       {
@@ -1093,13 +1095,13 @@ describe("<JobsView> bulk delete integration", () => {
     await waitFor(
       () =>
         expect(
-          screen.getByRole("radio", { name: /^deleted$/i }),
+          screen.getByRole("button", { name: /^deleted$/i }),
         ).toBeInTheDocument(),
       {
         timeout: 5_000,
       },
     );
-    await user.click(screen.getByRole("radio", { name: /^deleted$/i }));
+    await user.click(screen.getByRole("button", { name: /^deleted$/i }));
     await waitFor(
       () => expect(screen.getByText(/Acme Corp/i)).toBeInTheDocument(),
       {

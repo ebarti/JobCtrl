@@ -14,7 +14,7 @@ flowchart TB
     RETRIEVE@{ icon: "tabler:filter", form: "rounded", label: "Retrieve<br/>top-N pool", h: 64 }
     SCORE@{ icon: "tabler:scale", form: "rounded", label: "Score<br/>profile + policy", h: 64 }
     RESULT@{ shape: "docs", label: "Fit score<br/>evidence + trace" }
-    REVIEW@{ icon: "tabler:browser", form: "rounded", label: "API +<br/>jobs drawer", h: 64 }
+    REVIEW@{ icon: "tabler:browser", form: "rounded", label: "API +<br/>Job Detail", h: 64 }
     POLICY@{ icon: "tabler:adjustments", form: "rounded", label: "Next policy version<br/>+ calibration anchor", h: 64 }
 
     subgraph DECISION["Candidate decision"]
@@ -65,7 +65,7 @@ warnings, and correction history.
 
 The score breakdown separates soft fit from hard eligibility. `fit_band`,
 `confidence`, matched/missing/transferable signals, warnings, and hard blockers
-are exposed through the TypeScript API and jobs drawer. User corrections create a new
+are exposed through the TypeScript API and Job Detail route workspace. User corrections create a new
 score version, preserve the correction rationale, publish `ScoreCorrected`, and
 can be read back as transparent feedback signals alongside existing job actions.
 They also create a non-sensitive correction signal that is persisted as a

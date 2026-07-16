@@ -16,7 +16,12 @@ async function providerCard(name: "Claude" | "Codex" | "Google") {
   const heading = await screen.findByRole("heading", { name });
   const card = heading.closest("article");
   if (!card) throw new Error(`${name} provider card was not rendered`);
-  return within(card);
+  const queries = within(card);
+  const trigger = queries.getByRole("button", { name: new RegExp(`^${name}\\b`, "i") });
+  if (trigger.getAttribute("aria-expanded") === "false") {
+    await userEvent.setup().click(trigger);
+  }
+  return queries;
 }
 
 class DemoFeatureFlags implements FeatureFlagPort {
@@ -73,8 +78,9 @@ describe("<ModelSelectionPanel>", () => {
 
     const claude = await providerCard("Claude");
     const select = await claude.findByRole("combobox", { name: /Preferred model/ });
-    expect(select).toHaveValue("claude-sonnet-5");
-    await user.selectOptions(select, "claude-opus-4-8");
+    expect(select).toHaveTextContent("Sonnet 5");
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: /Opus 4\.8/ }));
     await user.click(claude.getByRole("button", { name: "save model" }));
 
     expect(updateSettings).toHaveBeenCalledWith({ preferredModels: { claude: "claude-opus-4-8" } });
@@ -102,9 +108,9 @@ describe("<ModelSelectionPanel>", () => {
 
     const claude = await providerCard("Claude");
     const select = await claude.findByRole("combobox", { name: /Preferred model/ });
-    expect(select).toHaveValue("");
+    expect(select).toHaveTextContent("Provider default");
     await act(async () => resolveSettings(sampleSettingsResponse));
-    await waitFor(() => expect(select).toHaveValue("claude-sonnet-5"));
+    await waitFor(() => expect(select).toHaveTextContent("Sonnet 5"));
   });
 
   it("clears a saved choice back to the provider default", async () => {
@@ -125,7 +131,8 @@ describe("<ModelSelectionPanel>", () => {
     });
 
     const claude = await providerCard("Claude");
-    await user.selectOptions(await claude.findByRole("combobox", { name: /Preferred model/ }), "");
+    await user.click(await claude.findByRole("combobox", { name: /Preferred model/ }));
+    await user.click(await screen.findByRole("option", { name: "Provider default" }));
     await user.click(claude.getByRole("button", { name: "save model" }));
 
     expect(updateSettings).toHaveBeenCalledWith({ preferredModels: { claude: null } });
@@ -220,8 +227,11 @@ describe("<ModelSelectionPanel>", () => {
     });
 
     const codex = await providerCard("Codex");
-    expect(await codex.findByRole("option", {
+    const select = await codex.findByRole("combobox", { name: /Preferred model/ });
+    expect(select).toHaveTextContent("retired-codex-model (no longer available)");
+    await userEvent.setup().click(select);
+    expect(await screen.findByRole("option", {
       name: "retired-codex-model (no longer available)",
-    })).toBeDisabled();
+    })).toHaveAttribute("aria-disabled", "true");
   });
 });

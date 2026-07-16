@@ -10,6 +10,7 @@ const sourceExtensions = new Set([".ts", ".tsx"]);
 
 // Remove entries from this list as their wrappers migrate to Base UI.
 const radixWrapperAllowlist = new Set<string>();
+const nativeSelectAllowlist = new Set<string>();
 
 const sourceFilesIn = (directory: string): string[] =>
   readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -70,7 +71,48 @@ const radixModuleSpecifiersInSource = (
 const radixModuleSpecifiersIn = (path: string): string[] =>
   radixModuleSpecifiersInSource(path, readFileSync(path, "utf8"));
 
+const nativeSelectLocationsInSource = (
+  path: string,
+  sourceText: string,
+): string[] => {
+  const source = ts.createSourceFile(
+    path,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    false,
+    ts.ScriptKind.TSX,
+  );
+  const locations: string[] = [];
+
+  const visit = (node: ts.Node) => {
+    if (
+      (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
+      ts.isIdentifier(node.tagName) &&
+      node.tagName.text === "select"
+    ) {
+      const { line, character } = source.getLineAndCharacterOfPosition(
+        node.getStart(source),
+      );
+      locations.push(`${line + 1}:${character + 1}`);
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(source);
+  return locations;
+};
+
 describe("Base UI migration boundary", () => {
+  it("distinguishes native select elements from the shared Select component", () => {
+    expect(
+      nativeSelectLocationsInSource(
+        "fixture.tsx",
+        "const fixture = <><select><option /></select><Select /></>;",
+      ),
+    ).toEqual(["1:19"]);
+  });
+
   it("detects direct Radix import forms", () => {
     const fixtures = [
       [
@@ -129,6 +171,25 @@ describe("Base UI migration boundary", () => {
     expect(
       violations,
       "Direct @radix-ui/* imports must remain in an explicitly allowlisted migration wrapper.",
+    ).toEqual([]);
+  });
+
+  it("uses the shared Base UI Select instead of raw native select elements", () => {
+    const violations = sourceFilesIn(sourceRoot).flatMap((path) => {
+      const sourcePath = relative(sourceRoot, path).replaceAll("\\", "/");
+      if (nativeSelectAllowlist.has(sourcePath)) {
+        return [];
+      }
+
+      return nativeSelectLocationsInSource(
+        path,
+        readFileSync(path, "utf8"),
+      ).map((location) => `${sourcePath}:${location}`);
+    });
+
+    expect(
+      violations,
+      "Raw <select> elements bypass the shared shadcn/Base UI Select contract.",
     ).toEqual([]);
   });
 

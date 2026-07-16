@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
 import {
   Dialog,
   DialogContent,
@@ -15,14 +16,23 @@ export interface ContactImportButtonProps {
   className?: string;
 }
 
-export function ContactImportButton({ label = "import CSV", className }: ContactImportButtonProps) {
+export function ContactImportButton({
+  label = "Import CSV",
+  className,
+}: ContactImportButtonProps) {
   const [open, setOpen] = useState(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <button type="button" className={className ?? "tab"}>
-          {label}
-        </button>
+      <DialogTrigger
+        render={
+          <Button
+            size="sm"
+            variant="outline"
+            {...(className ? { className } : {})}
+          />
+        }
+      >
+        {label}
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>

@@ -31,9 +31,9 @@
       "prefixes": ["web/assets/jetbrains-mono-"]
     },
     {
-      "id": "font-plus-jakarta-sans",
+      "id": "font-geist",
       "includedIn": "jobctrl-web",
-      "prefixes": ["web/assets/plus-jakarta-sans-"]
+      "prefixes": ["web/assets/geist-"]
     },
     {
       "id": "system-browser-adapter",

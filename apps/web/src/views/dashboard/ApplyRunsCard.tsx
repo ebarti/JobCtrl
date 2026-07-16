@@ -35,7 +35,11 @@ export function ApplyRunsCard({ summary }: ApplyRunsCardProps) {
                   {run.company} · {formatDateTime(run.startedAt)}
                 </span>
               </span>
-              {run.dryRun ? <StatusBadge tone="info">dry-run</StatusBadge> : null}
+              {run.dryRun ? (
+                <StatusBadge icon={false} tone="info">
+                  dry-run
+                </StatusBadge>
+              ) : null}
             </button>
           ))
         ) : (

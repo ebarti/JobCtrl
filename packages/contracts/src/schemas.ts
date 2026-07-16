@@ -4355,25 +4355,43 @@ export const BrowserCapabilityItemSchema = z
   .strict();
 export type BrowserCapabilityItem = z.infer<typeof BrowserCapabilityItemSchema>;
 
+export const DetectedBrowserIds = ["google-chrome", "chromium"] as const;
+export type DetectedBrowserId = (typeof DetectedBrowserIds)[number];
+
+export const DetectedBrowserSchema = z
+  .object({
+    id: z.enum(DetectedBrowserIds),
+    label: z.string().trim().min(1).max(80),
+  })
+  .strict();
+export type DetectedBrowser = z.infer<typeof DetectedBrowserSchema>;
+
 export const BrowserCapabilitiesResultSchema = z
-  .object({ capabilities: z.array(BrowserCapabilityItemSchema).length(BrowserCapabilityIds.length) })
+  .object({
+    capabilities: z.array(BrowserCapabilityItemSchema).length(BrowserCapabilityIds.length),
+    detectedBrowsers: z.array(DetectedBrowserSchema).max(DetectedBrowserIds.length),
+  })
   .strict();
 
 export const BrowserCapabilitiesResponseSchema = z
   .object({
     ok: z.literal(true),
     capabilities: z.array(BrowserCapabilityItemSchema).length(BrowserCapabilityIds.length),
+    detectedBrowsers: z.array(DetectedBrowserSchema).max(DetectedBrowserIds.length),
   })
   .strict();
 
 export interface BrowserCapabilitiesResponse {
   ok: true;
   capabilities: BrowserCapabilityItem[];
+  detectedBrowsers: DetectedBrowser[];
 }
 
 export const BrowserCapabilityEnableRequestSchema = z
-  .object({ executablePath: z.string().trim().min(1).max(4096) })
-  .strict();
+  .union([
+    z.object({ detectedBrowserId: z.enum(DetectedBrowserIds) }).strict(),
+    z.object({ executablePath: z.string().trim().min(1).max(4096) }).strict(),
+  ]);
 export type BrowserCapabilityEnableRequest = z.infer<typeof BrowserCapabilityEnableRequestSchema>;
 
 export const BrowserProfileCopyRequestSchema = z

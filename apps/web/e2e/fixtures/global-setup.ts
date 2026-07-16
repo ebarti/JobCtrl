@@ -1,6 +1,17 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
+
+import { e2eStateFilePath } from "./e2e-state.js";
+
+interface DocsScreenshotWorkspaceGuard {
+  prepareOwnedDocsScreenshotDirectory(appDir: string): Promise<string>;
+}
+
+const { prepareOwnedDocsScreenshotDirectory } = createRequire(import.meta.url)(
+  "./docs-screenshot-workspace.cjs",
+) as DocsScreenshotWorkspaceGuard;
 
 interface SeedReport {
   appDir: string;
@@ -25,22 +36,37 @@ function findRepoRoot(start: string): string {
 
 export default async function globalSetup(): Promise<void> {
   const repoRoot = findRepoRoot(process.cwd());
-  const stateFile = path.join(repoRoot, ".jobctrl-e2e-state.json");
+  const stateFile = e2eStateFilePath();
   const targetDir = process.env["JOBCTRL_E2E_APP_DIR"];
   if (!targetDir) {
     throw new Error(
       "JOBCTRL_E2E_APP_DIR is not set; playwright.config.ts should populate it before globalSetup runs.",
     );
   }
-  fs.rmSync(targetDir, { force: true, recursive: true });
-  fs.mkdirSync(targetDir, { recursive: true });
+  const docsScreenshots = process.env["JOBCTRL_DOCS_SCREENSHOTS"] === "1";
+  const preparedTargetDir = docsScreenshots
+    ? await prepareOwnedDocsScreenshotDirectory(targetDir)
+    : targetDir;
+  if (!docsScreenshots) {
+    fs.rmSync(targetDir, { force: true, recursive: true });
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
 
   const stdout = execFileSync(
     "corepack",
-    ["pnpm", "--filter", "@jobctrl/api", "exec", "tsx", "test/qa-seed.ts", targetDir],
+    [
+      "pnpm",
+      "--filter",
+      "@jobctrl/api",
+      "exec",
+      "tsx",
+      "test/qa-seed.ts",
+      preparedTargetDir,
+    ],
     { cwd: repoRoot, stdio: ["ignore", "pipe", "inherit"], encoding: "utf-8" },
   );
   const report = JSON.parse(stdout.trim()) as SeedReport;
 
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
   fs.writeFileSync(stateFile, JSON.stringify({ workspace: report, stateFile }, null, 2));
 }

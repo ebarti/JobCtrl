@@ -1,4 +1,5 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -54,6 +55,7 @@ describe("<ProfileEditor>", () => {
   });
 
   it("renders preferences without the PDF preview pane", async () => {
+    const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -88,6 +90,7 @@ describe("<ProfileEditor>", () => {
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Location filter")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Target search" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Quality gates" }));
     expect(screen.getByRole("group", { name: "Revision policy" })).toBeInTheDocument();
     expect(screen.getByLabelText("Minimum fit score")).toHaveValue(8);
     expect(screen.getByLabelText("Must-have coverage (%)")).toHaveValue(85);
@@ -96,18 +99,24 @@ describe("<ProfileEditor>", () => {
     expect(await screen.findByText("Resume template preview")).toBeInTheDocument();
     const templatePreview = document.querySelector<HTMLElement>(".resume-template-plate-editor");
     expect(templatePreview).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Density"), { target: { value: "spacious" } });
+    await user.click(screen.getByLabelText("Density"));
+    await user.click(await screen.findByRole("option", { name: "Spacious" }));
     expect(templatePreview?.style.getPropertyValue("--resume-template-line-height")).toBe("1.48");
     expect(templatePreview?.style.getPropertyValue("--resume-template-section-gap")).toBe("7.2mm");
     expect(templatePreview?.style.getPropertyValue("--resume-template-entry-gap")).toBe("5.8mm");
     expect(templatePreview?.style.getPropertyValue("--resume-template-list-gap")).toBe("2.4mm");
-    fireEvent.change(screen.getByLabelText("Bullets"), { target: { value: "loose" } });
+    await user.click(screen.getByLabelText("Bullets"));
+    await user.click(await screen.findByRole("option", { name: "Loose" }));
     expect(templatePreview?.style.getPropertyValue("--resume-template-bullet-gap")).toBe("2.4mm");
     const fontSelects = screen.getAllByLabelText("Font");
     expect(fontSelects).toHaveLength(2);
-    expect(within(fontSelects[0]!).getByRole("option", { name: "Garamond" })).toHaveValue("garamond");
-    expect(within(fontSelects[1]!).getByRole("option", { name: "Garamond" })).toHaveValue("garamond");
-    expect(within(fontSelects[1]!).getByRole("option", { name: "Resume" })).toHaveValue("resume");
+    await user.click(fontSelects[0]!);
+    expect(await screen.findByRole("option", { name: "Garamond" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.click(fontSelects[1]!);
+    expect(await screen.findByRole("option", { name: "Garamond" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Resume" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
     expect(screen.getByLabelText("Size")).toHaveAttribute("type", "number");
     expect(screen.queryByLabelText("Resize profile and resume editor panes")).not.toBeInTheDocument();
   });

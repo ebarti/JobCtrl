@@ -22,6 +22,22 @@
   background: transparent;
 }
 
+.contacts-filter-toolbar {
+  display: flex;
+  width: 100%;
+  flex-flow: row wrap;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 12px 16px;
+  background: transparent;
+}
+
+.contacts-filter-field {
+  width: min(240px, 100%);
+  flex: 0 1 240px;
+  gap: 6px;
+}
+
 .data-surface {
   border-top: 1px solid var(--border);
   background: transparent;
@@ -400,8 +416,8 @@
 }
 
 .data-grid-filter-operator button.active {
-  background: var(--foreground);
-  color: var(--background);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
 .data-grid-value-list {
@@ -486,8 +502,8 @@
 }
 
 .analytics-view .segmented.active {
-  background: var(--foreground);
-  color: var(--background);
+  background: var(--primary);
+  color: var(--primary-foreground);
   font-weight: 650;
 }
 
@@ -516,6 +532,14 @@
 }
 
 @media (max-width: 720px) {
+  .contacts-filter-toolbar {
+    padding-inline: 12px;
+  }
+
+  .contacts-filter-field {
+    flex-basis: 100%;
+  }
+
   .data-grid-toolbar {
     gap: 8px;
     padding-inline: 12px;

@@ -1,8 +1,15 @@
 import type { InterviewPrep, InterviewPrepItem, InterviewPrepItemKind } from "@jobctrl/contracts";
+import { IconAlertTriangle } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "../../../shared/ui/alert.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { GenerateInterviewPrepButton } from "./GenerateInterviewPrepButton.js";
 
 export interface InterviewPrepPanelProps {
@@ -76,14 +83,7 @@ function PrepItemCard({ item, jobId }: { readonly item: InterviewPrepItem; reado
         </details>
       ) : null}
       {item.warnings.length ? (
-        <div className="interview-prep-warning-group">
-          <span className="tag warn">accepted residual warnings</span>
-          <ul>
-            {item.warnings.map((warning) => (
-              <li key={warning}>{warning}</li>
-            ))}
-          </ul>
-        </div>
+        <ResidualWarnings warnings={item.warnings} />
       ) : null}
     </article>
   );
@@ -93,23 +93,40 @@ function GateAudit({ prep }: { readonly prep: InterviewPrep }) {
   const warnings = prep.gateAudit.warnings;
   return (
     <div className="interview-prep-gate">
-      <span className={prep.gateAudit.status === "passed" ? "tag ok" : "tag danger"}>
+      <StatusBadge tone={prep.gateAudit.status === "passed" ? "ok" : "danger"}>
         gate {prep.gateAudit.status}
-      </span>
-      {prep.gateAudit.judgeVerdict ? <span className="tag muted">{prep.gateAudit.judgeVerdict}</span> : null}
+      </StatusBadge>
+      {prep.gateAudit.judgeVerdict ? (
+        <StatusBadge
+          tone={prep.gateAudit.status === "passed" ? "ok" : "danger"}
+        >
+          {prep.gateAudit.judgeVerdict}
+        </StatusBadge>
+      ) : null}
       <span className="tag muted">generation {prep.generation}</span>
       {prep.model ? <span className="tag muted">{prep.model}</span> : null}
-      {warnings.length ? (
-        <div className="interview-prep-warning-group">
-          <span className="tag warn">accepted residual warnings</span>
-          <ul>
-            {warnings.map((warning) => (
-              <li key={warning}>{warning}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      {warnings.length ? <ResidualWarnings warnings={warnings} /> : null}
     </div>
+  );
+}
+
+function ResidualWarnings({
+  warnings,
+}: {
+  readonly warnings: readonly string[];
+}) {
+  return (
+    <Alert className="interview-prep-warning-group">
+      <IconAlertTriangle aria-hidden="true" />
+      <AlertTitle>Accepted residual warnings</AlertTitle>
+      <AlertDescription>
+        <ul>
+          {warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      </AlertDescription>
+    </Alert>
   );
 }
 

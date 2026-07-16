@@ -7261,12 +7261,7 @@ var EXPECTED_PYTHON_LICENSE_EVIDENCE = /* @__PURE__ */ new Map([
 ]);
 var EXPECTED_NODE_LICENSE_EVIDENCE = /* @__PURE__ */ new Map([
   ["@napi-rs/canvas-darwin-arm64@0.1.100", { license: "MIT", evidenceKind: "license-text" }],
-  ["@radix-ui/number@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
   ["@radix-ui/react-use-escape-keydown@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
-  ["@radix-ui/react-use-previous@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
-  ["@radix-ui/react-use-rect@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
-  ["@radix-ui/react-use-size@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
-  ["@radix-ui/rect@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
   ["@udecode/react-hotkeys@52.0.11", { license: "MIT", evidenceKind: "license-text" }],
   ["abstract-logging@2.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],
   ["data-uri-to-buffer@4.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],
@@ -10244,9 +10239,9 @@ async function collectTopLevelLicenseEvidence(payloadRoot, root, contracts) {
     path3.join(root, "apps", "web", "node_modules", "@fontsource-variable", "jetbrains-mono", "LICENSE"),
     path3.join(root, "node_modules", "@fontsource-variable", "jetbrains-mono", "LICENSE")
   ]);
-  await add("font-plus-jakarta-sans", [
-    path3.join(root, "apps", "web", "node_modules", "@fontsource-variable", "plus-jakarta-sans", "LICENSE"),
-    path3.join(root, "node_modules", "@fontsource-variable", "plus-jakarta-sans", "LICENSE")
+  await add("font-geist", [
+    path3.join(root, "apps", "web", "node_modules", "@fontsource-variable", "geist", "LICENSE"),
+    path3.join(root, "node_modules", "@fontsource-variable", "geist", "LICENSE")
   ]);
   await add("playwright-mcp", [path3.join(mcpRoot, "node_modules", "@playwright", "mcp", "LICENSE")]);
   await add("playwright-core-node", [path3.join(mcpRoot, "node_modules", "playwright-core", "LICENSE")]);
