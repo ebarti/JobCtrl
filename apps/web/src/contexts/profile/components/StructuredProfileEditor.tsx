@@ -1164,7 +1164,7 @@ export function StructuredProfileEditor({
   );
 
   const writingStyleGroup = () => (
-    <FieldSet className="field wide checkbox-group-field tailoring-control-group">
+    <FieldSet className="field wide checkbox-group-field tailoring-control-group tailoring-writing-style-group">
       <FieldLegend>Writing style</FieldLegend>
       <AdaptiveFieldGrid>
         {selectField("resume.tailoring_rules.writing_style.tone", "Writing tone", [
@@ -1215,7 +1215,7 @@ export function StructuredProfileEditor({
   );
 
   const additionalGuidanceGroup = () => (
-    <AdaptiveFieldGrid>
+    <AdaptiveFieldGrid className="tailoring-additional-guidance-group">
       <AdaptiveFieldSpan span="full">
         {textareaField(
           "resume.tailoring_rules.custom_tailoring_prompt",

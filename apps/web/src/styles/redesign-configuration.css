@@ -400,6 +400,11 @@
   padding-top: 16px;
 }
 
+.configuration-section .tailoring-controls-grid--writing > .tailoring-writing-style-group,
+.configuration-section .tailoring-controls-grid--writing > .tailoring-additional-guidance-group {
+  grid-column: span 6;
+}
+
 .configuration-section .tailoring-control-group legend,
 .configuration-section .bullet-standards-group legend {
   margin-bottom: 10px;
@@ -1132,6 +1137,11 @@
 
   .configuration-section .tailoring-control-group:nth-child(n) {
     grid-column: auto;
+  }
+
+  .configuration-section .tailoring-controls-grid--writing > .tailoring-writing-style-group,
+  .configuration-section .tailoring-controls-grid--writing > .tailoring-additional-guidance-group {
+    grid-column: 1 / -1;
   }
 
   .configuration-section .checkbox-options.vertical {

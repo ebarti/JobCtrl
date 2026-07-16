@@ -34,8 +34,60 @@ test("preferences property grids reflow against their container and explain lock
   await expect(applicationGrid).toBeVisible();
   await expect.poll(() => columnCount(applicationGrid)).toBe(4);
 
+  await page.getByRole("tab", { name: "Writing style" }).click();
+  const writingStyleGroup = page.locator(
+    ".tailoring-controls-grid--writing > .tailoring-writing-style-group",
+  );
+  const additionalGuidanceGroup = page.locator(
+    ".tailoring-controls-grid--writing > .tailoring-additional-guidance-group",
+  );
+  const writingLayout = page.locator(".tailoring-controls-grid--writing");
+  const measureWritingLayout = async () => {
+    const [writing, guidance, layout] = await Promise.all([
+      writingStyleGroup.boundingBox(),
+      additionalGuidanceGroup.boundingBox(),
+      writingLayout.boundingBox(),
+    ]);
+    if (!writing || !guidance || !layout) {
+      throw new Error("Writing-style layout did not produce measurable boxes");
+    }
+    return { guidance, layout, writing };
+  };
+
+  await expect(writingStyleGroup).toBeVisible();
+  await expect(additionalGuidanceGroup).toBeVisible();
+
+  const desktopLayout = await measureWritingLayout();
+  expect(Math.abs(desktopLayout.writing.y - desktopLayout.guidance.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(desktopLayout.writing.width - desktopLayout.guidance.width)).toBeLessThanOrEqual(2);
+  expect(desktopLayout.writing.x + desktopLayout.writing.width).toBeLessThan(
+    desktopLayout.guidance.x,
+  );
+  expect(desktopLayout.writing.width / desktopLayout.layout.width).toBeGreaterThan(0.45);
+
   await page.setViewportSize({ width: 900, height: 1000 });
   await expect.poll(() => columnCount(applicationGrid)).toBe(2);
+  const tabletLayout = await measureWritingLayout();
+  expect(Math.abs(tabletLayout.writing.y - tabletLayout.guidance.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(tabletLayout.writing.width - tabletLayout.guidance.width)).toBeLessThanOrEqual(2);
+  expect(tabletLayout.writing.x + tabletLayout.writing.width).toBeLessThan(
+    tabletLayout.guidance.x,
+  );
+
+  await page.setViewportSize({ width: 761, height: 900 });
+  const aboveBreakpointLayout = await measureWritingLayout();
+  expect(
+    Math.abs(aboveBreakpointLayout.writing.y - aboveBreakpointLayout.guidance.y),
+  ).toBeLessThanOrEqual(1);
+
+  await page.setViewportSize({ width: 760, height: 900 });
+  const atBreakpointLayout = await measureWritingLayout();
+  expect(atBreakpointLayout.guidance.y).toBeGreaterThanOrEqual(
+    atBreakpointLayout.writing.y + atBreakpointLayout.writing.height,
+  );
+  expect(
+    Math.abs(atBreakpointLayout.writing.width - atBreakpointLayout.layout.width),
+  ).toBeLessThanOrEqual(1);
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => columnCount(applicationGrid)).toBe(1);
@@ -45,6 +97,14 @@ test("preferences property grids reflow against their container and explain lock
     await page.evaluate(() => document.documentElement.clientWidth + 1),
   );
 
+  const mobileLayout = await measureWritingLayout();
+  expect(mobileLayout.guidance.y).toBeGreaterThanOrEqual(
+    mobileLayout.writing.y + mobileLayout.writing.height,
+  );
+  expect(Math.abs(mobileLayout.writing.width - mobileLayout.guidance.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(mobileLayout.writing.width - mobileLayout.layout.width)).toBeLessThanOrEqual(1);
+
+  await page.getByRole("tab", { name: "Content rules" }).click();
   const changeTitles = page.getByRole("checkbox", {
     name: "Change experience titles",
   });
