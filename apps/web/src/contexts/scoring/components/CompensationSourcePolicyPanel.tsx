@@ -142,17 +142,15 @@ function CompensationSourcePolicyRow({
         <span className="tag muted">{formatLabel(source.accessMode)}</span>
       </td>
       <td>
-        <div>
+        <div className="flex flex-col items-start gap-1">
           <span className={availabilityClass(source.availability)}>
             {formatLabel(source.availability)}
           </span>
-        </div>
-        <div>
           <span className={licenseClass(source.licenseStatus)}>
             {formatLabel(source.licenseStatus)}
           </span>
+          <div className="meta">{source.configured ? "configured" : "not configured"}</div>
         </div>
-        <div className="meta">{source.configured ? "configured" : "not configured"}</div>
       </td>
       <td>{source.freshnessPolicy}</td>
       <td>{source.attributionRequirement}</td>

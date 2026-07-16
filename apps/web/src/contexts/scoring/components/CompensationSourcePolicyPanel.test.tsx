@@ -130,6 +130,19 @@ function policyResponse(): CompensationSourceRegistryResponse {
 }
 
 describe("<CompensationSourcePolicyPanel>", () => {
+  it("keeps stacked source-status labels visually separated", async () => {
+    renderWithProviders(<CompensationSourcePolicyPanel />, {
+      ports: buildTestPorts({
+        api: { compensationSources: vi.fn(async () => policyResponse()) },
+      }),
+    });
+
+    const permitted = await screen.findByText("permitted");
+    const statusStack = permitted.closest("td")?.firstElementChild;
+    expect(statusStack).toContainElement(permitted);
+    expect(statusStack).toHaveClass("flex", "flex-col", "items-start", "gap-1");
+  });
+
   it("renders reported compensation sources with required policy fields", async () => {
     renderWithProviders(<CompensationSourcePolicyPanel />, {
       ports: buildTestPorts({
