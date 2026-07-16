@@ -509,7 +509,7 @@ export function StructuredProfileEditor({
             })
           }
         >
-          <SelectTrigger aria-label={`${label} month`} className="configuration-select-trigger">
+          <SelectTrigger aria-label={`${label} month`} className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -533,7 +533,7 @@ export function StructuredProfileEditor({
             })
           }
         >
-          <SelectTrigger aria-label={`${label} year`} className="configuration-select-trigger">
+          <SelectTrigger aria-label={`${label} year`} className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -637,7 +637,7 @@ export function StructuredProfileEditor({
         value={textAt(profile, path)}
         onValueChange={(value) => updateProfilePath(path, value)}
       >
-        <SelectTrigger id={id} aria-label={label} className="configuration-select-trigger">
+        <SelectTrigger id={id} aria-label={label} className="w-full">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -1261,7 +1261,7 @@ export function StructuredProfileEditor({
         value={textAt(style, path)}
         onValueChange={(value) => updateStylePath(path, value)}
       >
-        <SelectTrigger id={id} aria-label={label} className="configuration-select-trigger">
+        <SelectTrigger id={id} aria-label={label} className="w-full">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

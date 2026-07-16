@@ -57,6 +57,34 @@ test("preferences property grids reflow against their container and explain lock
   await expect(writingStyleGroup).toBeVisible();
   await expect(additionalGuidanceGroup).toBeVisible();
 
+  const writingTone = page.getByRole("combobox", { name: "Writing tone" });
+  const templateFont = page
+    .getByRole("group", { name: "Template settings" })
+    .getByRole("combobox", { name: "Font" });
+  const readSelectStyle = (control: Locator) =>
+    control.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        borderRadius: style.borderRadius,
+        dataSlot: element.getAttribute("data-slot"),
+        height: style.height,
+        legacyOverride: element.classList.contains(
+          "configuration-select-trigger",
+        ),
+      };
+    });
+  const [writingToneStyle, templateFontStyle] = await Promise.all([
+    readSelectStyle(writingTone),
+    readSelectStyle(templateFont),
+  ]);
+
+  expect(writingToneStyle).toMatchObject({
+    dataSlot: "select-trigger",
+    legacyOverride: false,
+  });
+  expect(writingToneStyle.height).toBe(templateFontStyle.height);
+  expect(writingToneStyle.borderRadius).toBe(templateFontStyle.borderRadius);
+
   const desktopLayout = await measureWritingLayout();
   expect(Math.abs(desktopLayout.writing.y - desktopLayout.guidance.y)).toBeLessThanOrEqual(1);
   expect(Math.abs(desktopLayout.writing.width - desktopLayout.guidance.width)).toBeLessThanOrEqual(2);

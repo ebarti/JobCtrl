@@ -558,14 +558,6 @@
   flex: 1 1 96px;
 }
 
-.configuration-select-trigger {
-  min-height: 40px;
-  border-color: var(--input);
-  border-radius: 6px;
-  background: var(--configuration-surface);
-  box-shadow: none;
-}
-
 /* The template editor is a full-width tool, not a small preview card. */
 .profile-layout-single .resume-template-workspace {
   overflow: hidden;
