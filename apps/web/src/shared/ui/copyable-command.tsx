@@ -11,7 +11,11 @@ export interface CopyableCommandProps {
   label?: string;
 }
 
-export function CopyableCommand({ command, className, label = "Copy command" }: CopyableCommandProps) {
+export function CopyableCommand({
+  command,
+  className,
+  label = "Copy command",
+}: CopyableCommandProps) {
   const ports = usePorts();
   const [copied, setCopied] = useState(false);
 
@@ -25,7 +29,7 @@ export function CopyableCommand({ command, className, label = "Copy command" }: 
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 font-mono text-xs",
+        "flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 font-mono text-[13px]",
         className,
       )}
     >
@@ -38,7 +42,11 @@ export function CopyableCommand({ command, className, label = "Copy command" }: 
         onClick={onCopy}
         className="h-7 w-7"
       >
-        {copied ? <IconCheck className="h-4 w-4" /> : <IconCopy className="h-4 w-4" />}
+        {copied ? (
+          <IconCheck className="h-4 w-4" />
+        ) : (
+          <IconCopy className="h-4 w-4" />
+        )}
       </Button>
     </div>
   );

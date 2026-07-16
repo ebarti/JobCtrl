@@ -80,7 +80,9 @@ export const Command = forwardRef<
 ));
 Command.displayName = CommandPrimitive.displayName;
 
-export interface CommandDialogProps extends ComponentPropsWithoutRef<typeof Dialog> {}
+export interface CommandDialogProps extends ComponentPropsWithoutRef<
+  typeof Dialog
+> {}
 
 export function CommandDialog({ children, ...props }: CommandDialogProps) {
   return (
@@ -128,13 +130,21 @@ export const CommandList = forwardRef<
   ComponentRef<typeof CommandPrimitive.List>,
   ComponentPropsWithoutRef<typeof CommandPrimitive.List>
 >(({ className, ...props }, ref) => {
-  const listRef = useRef<ComponentRef<typeof CommandPrimitive.List> | null>(null);
+  const listRef = useRef<ComponentRef<typeof CommandPrimitive.List> | null>(
+    null,
+  );
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
     normalizeCommandListRoles(list);
-    const observer = new MutationObserver(() => normalizeCommandListRoles(list));
-    observer.observe(list, { attributes: true, childList: true, subtree: true });
+    const observer = new MutationObserver(() =>
+      normalizeCommandListRoles(list),
+    );
+    observer.observe(list, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
     return () => observer.disconnect();
   }, []);
   return (
@@ -144,7 +154,10 @@ export const CommandList = forwardRef<
         assignForwardedRef(ref, node);
       }}
       data-slot="command-list"
-      className={cn("max-h-[300px] overflow-y-auto overflow-x-hidden", className)}
+      className={cn(
+        "max-h-[300px] overflow-y-auto overflow-x-hidden",
+        className,
+      )}
       {...props}
     />
   );
@@ -158,7 +171,7 @@ export const CommandEmpty = forwardRef<
   <CommandPrimitive.Empty
     ref={ref}
     data-slot="command-empty"
-    className={cn("py-8 text-center text-[13px] text-muted-foreground", className)}
+    className={cn("py-8 text-center text-sm text-muted-foreground", className)}
     {...props}
   />
 ));
@@ -172,7 +185,7 @@ export const CommandGroup = forwardRef<
     ref={ref}
     data-slot="command-group"
     className={cn(
-      "overflow-hidden p-1.5 text-popover-foreground [&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.08em] [&_[cmdk-group-heading]]:text-muted-foreground",
+      "overflow-hidden p-1.5 text-popover-foreground [&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[13px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.08em] [&_[cmdk-group-heading]]:text-muted-foreground",
       className,
     )}
     {...props}
@@ -201,7 +214,7 @@ export const CommandItem = forwardRef<
     ref={ref}
     data-slot="command-item"
     className={cn(
-      "relative flex min-h-8 cursor-default select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] outline-none aria-selected:bg-muted aria-selected:text-foreground data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 [&_svg]:shrink-0",
+      "relative flex min-h-8 cursor-default select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none aria-selected:bg-muted aria-selected:text-foreground data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 [&_svg]:shrink-0",
       className,
     )}
     {...props}
@@ -209,11 +222,17 @@ export const CommandItem = forwardRef<
 ));
 CommandItem.displayName = CommandPrimitive.Item.displayName;
 
-export function CommandShortcut({ className, ...props }: HTMLAttributes<HTMLSpanElement>) {
+export function CommandShortcut({
+  className,
+  ...props
+}: HTMLAttributes<HTMLSpanElement>) {
   return (
     <span
       data-slot="command-shortcut"
-      className={cn("ml-auto text-[11px] tracking-wider text-muted-foreground", className)}
+      className={cn(
+        "ml-auto text-[13px] tracking-wider text-muted-foreground",
+        className,
+      )}
       {...props}
     />
   );

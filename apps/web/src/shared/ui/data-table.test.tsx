@@ -115,6 +115,7 @@ describe("DataTable", () => {
     const openAcme = within(dataRows[0]!).getByRole("button", {
       name: "Open Acme Studio",
     });
+    expect(openAcme).toHaveClass("sr-only", "focus:not-sr-only");
     await user.click(openAcme);
     openAcme.focus();
     await user.keyboard("{Enter}");

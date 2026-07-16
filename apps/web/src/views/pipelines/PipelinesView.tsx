@@ -12,6 +12,7 @@ import type {
 } from "@jobctrl/contracts";
 import { Fragment, type ReactNode } from "react";
 
+import { CancelWorkflowRunButton } from "../../contexts/pipeline/components/CancelWorkflowRunButton.js";
 import { StageTriggerPanel } from "../../contexts/pipeline/components/StageTriggerPanel.js";
 import {
   etaLabel,
@@ -19,15 +20,27 @@ import {
   safeOperationalIdentifier,
   sentenceCase,
 } from "../../contexts/pipeline/components/pipelineOperationsDisplay.js";
+import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
 import { usePipelineOperationsQuery } from "../../contexts/operations/hooks/usePipelineOperationsQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import {
   Alert,
+  AlertAction,
   AlertDescription,
   AlertTitle,
 } from "../../shared/ui/alert.js";
+import { buttonVariants } from "../../shared/ui/button.js";
 import { DisclosureSection } from "../../shared/ui/disclosure-section.js";
 import { Empty } from "../../shared/ui/empty.js";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "../../shared/ui/card.js";
 import {
   InspectorLedger,
   InspectorLedgerItem,
@@ -135,6 +148,32 @@ function issueCount(counts: PipelineStageCounts): number {
     counts.stale +
     counts.unknown
   );
+}
+
+function activeCount(counts: PipelineStageCounts): number {
+  return counts.waiting + counts.processing;
+}
+
+function trackedCount(counts: PipelineStageCounts): number {
+  return Math.max(
+    counts.eligible,
+    activeCount(counts) + completedCount(counts) + counts.stale + counts.unknown,
+  );
+}
+
+function stageProgress(counts: PipelineStageCounts): number {
+  const total = trackedCount(counts);
+  return total === 0 ? 0 : Math.min(100, Math.round((completedCount(counts) / total) * 100));
+}
+
+function stageStatus(counts: PipelineStageCounts): string {
+  if (issueCount(counts) > 0) return "blocked";
+  if (counts.processing > 0) return "processing";
+  if (counts.waiting > 0) return "pending";
+  if (trackedCount(counts) > 0 && completedCount(counts) >= trackedCount(counts)) {
+    return "completed";
+  }
+  return "idle";
 }
 
 function CountSummary({ counts }: { readonly counts: PipelineStageCounts }) {
@@ -514,25 +553,324 @@ function StageRows({
   );
 }
 
-function PipelineStageLedger({
+function SharedCapacityCopy({ capacity }: { readonly capacity: PipelineCapacity }) {
+  if (capacity.status !== "available") {
+    return <span>Shared worker capacity is {sentenceCase(capacity.status)}.</span>;
+  }
+
+  return (
+    <span>
+      Shared pool · {capacity.availableSlots} of {capacity.configuredSlots} slots available
+    </span>
+  );
+}
+
+function PipelineStageCard({ stage }: { readonly stage: PipelineOperationalStage }) {
+  const counts = stage.currentExecution;
+  const progress = stageProgress(counts);
+  const status = stageStatus(counts);
+
+  return (
+    <Card
+      aria-label={`${stage.label} stage`}
+      className="pipeline-stage-card"
+      role="region"
+      size="sm"
+    >
+      <CardHeader>
+        <CardTitle>{stage.label}</CardTitle>
+        <CardDescription>{sentenceCase(stage.stage)}</CardDescription>
+        <CardAction>
+          <PipelineStatus status={status} />
+        </CardAction>
+      </CardHeader>
+      <CardContent className="pipeline-stage-card__content">
+        <dl
+          aria-label={`${stage.label} stage summary`}
+          className="pipeline-stage-card__facts"
+        >
+          <div>
+            <dt>Active</dt>
+            <dd>{activeCount(counts)}</dd>
+          </div>
+          <div>
+            <dt>Waiting</dt>
+            <dd>{counts.waiting}</dd>
+          </div>
+          <div>
+            <dt>Processing</dt>
+            <dd>{counts.processing}</dd>
+          </div>
+          <div>
+            <dt>Terminal</dt>
+            <dd>{completedCount(counts)}</dd>
+          </div>
+          <div>
+            <dt>Attention</dt>
+            <dd>{issueCount(counts)}</dd>
+          </div>
+        </dl>
+        <Progress value={progress}>
+          <ProgressLabel>Stage progress</ProgressLabel>
+          <ProgressValue>{progress}% terminal</ProgressValue>
+        </Progress>
+        <div className="pipeline-stage-card__eta">
+          <span>ETA</span>
+          <strong>{etaLabel(stage.eta)}</strong>
+        </div>
+        <DisclosureSection
+          className="pipeline-stage-state-details"
+          collapsedSummary="All recorded outcome states"
+          defaultOpen={false}
+          description="Exact counts from the current-execution read model, including failures and cancellations."
+          headingLevel={4}
+          title="All stage outcomes"
+        >
+          <CountLedger
+            counts={counts}
+            label={`${stage.label} current-execution outcome counts`}
+          />
+        </DisclosureSection>
+      </CardContent>
+      <CardFooter className="pipeline-stage-card__footer">
+        <SharedCapacityCopy capacity={stage.capacity} />
+      </CardFooter>
+    </Card>
+  );
+}
+
+interface ExecutionFailureCopy {
+  readonly description: string;
+  readonly title: string;
+}
+
+function executionFailureCopy(
+  phase: "completed_with_issues" | "failed",
+  errorCode: string | null,
+): ExecutionFailureCopy {
+  if (phase === "completed_with_issues") {
+    if (errorCode === "source_retry_exhausted") {
+      return {
+        title: "Discovery completed with source issues",
+        description:
+          "One or more source tasks exhausted their automatic retries. Review the exact stage outcomes below to see what completed and what needs another pass. Once active-work status confirms nothing is running, use Set up a new Discover run to retry unfinished source work.",
+      };
+    }
+
+    const reportedReason = errorCode
+      ? `Reported reason: ${sentenceCase(errorCode)}. `
+      : "";
+    return {
+      title: "Discovery completed with issues",
+      description: `${reportedReason}Review the exact stage outcomes below. Once active-work status confirms nothing is running, use Set up a new Discover run to retry unfinished work.`,
+    };
+  }
+
+  if (errorCode === "reconciled_not_found") {
+    return {
+      title: "Previous discovery history is unavailable",
+      description:
+        "The previous Temporal workflow history can no longer be found, so that run cannot resume. Start Discover again below to create a new run when no active work remains. New runs use persistent local history and survive normal app restarts.",
+    };
+  }
+
+  const reportedReason = errorCode
+    ? `Reported reason: ${sentenceCase(errorCode)}. `
+    : "";
+  return {
+    title: "Discovery stopped before completion",
+    description: `${reportedReason}Review the active-work status and technical details, then start Discover again below when it is safe to do so.`,
+  };
+}
+
+function failedExecutionActivityCopy(activeItemsTotal: number | null): string {
+  if (activeItemsTotal === 0) return "No work is running.";
+  if (activeItemsTotal === null) {
+    return "The runtime inventory is unavailable, so JobCtrl cannot confirm whether work remains active.";
+  }
+  return `${activeItemsTotal} active work ${activeItemsTotal === 1 ? "item remains" : "items remain"}. Review active work before restarting discovery.`;
+}
+
+function PipelineExecutionNotice({
+  onPrepareNewDiscoverRun,
+  snapshot,
+}: {
+  readonly onPrepareNewDiscoverRun: () => void;
+  readonly snapshot: PipelineOperationsSnapshot;
+}) {
+  const execution = snapshot.execution;
+  if (
+    !execution ||
+    (execution.phase !== "failed" &&
+      execution.phase !== "completed_with_issues")
+  ) {
+    return null;
+  }
+
+  const copy = executionFailureCopy(execution.phase, execution.errorCode);
+  const activityCopy = failedExecutionActivityCopy(snapshot.activeItemsTotal);
+  const canStartNewRun = snapshot.activeItemsTotal === 0;
+  return (
+    <div className="pipeline-recovery-notice">
+      <Alert
+        className="pipeline-recovery-alert"
+        variant={execution.phase === "failed" ? "destructive" : "default"}
+      >
+        <AlertTitle>{copy.title}</AlertTitle>
+        <AlertDescription>
+          {activityCopy} {copy.description}
+        </AlertDescription>
+        {canStartNewRun ? (
+          <AlertAction>
+            <a
+              className={buttonVariants({ size: "sm" })}
+              href="#pipeline-actions"
+              onClick={onPrepareNewDiscoverRun}
+            >
+              Set up a new Discover run
+            </a>
+          </AlertAction>
+        ) : null}
+      </Alert>
+      <DisclosureSection
+        collapsedSummary="Workflow status and reason code"
+        defaultOpen={false}
+        description="Raw execution identifiers are kept here for troubleshooting."
+        headingLevel={3}
+        title="Technical details"
+      >
+        <InspectorLedger>
+          <InspectorLedgerItem label="Workflow status" value={sentenceCase(execution.workflowStatus)} />
+          <InspectorLedgerItem label="Reason code" value={execution.errorCode ?? "Not reported"} />
+          <InspectorLedgerItem label="Workflow id" value={execution.discoverWorkflowId} />
+          <InspectorLedgerItem label="Temporal run id" value={execution.discoverRunId} />
+        </InspectorLedger>
+      </DisclosureSection>
+    </div>
+  );
+}
+
+function PipelineOverviewFact({
+  description,
+  label,
+  value,
+}: {
+  readonly description: string;
+  readonly label: string;
+  readonly value: ReactNode;
+}) {
+  return (
+    <Card aria-label={label} className="pipeline-overview-fact" role="region" size="sm">
+      <CardHeader>
+        <CardDescription>{label}</CardDescription>
+        <CardTitle>{value}</CardTitle>
+      </CardHeader>
+      <CardContent>{description}</CardContent>
+    </Card>
+  );
+}
+
+function PipelineLiveFlow({
+  onPrepareNewDiscoverRun,
+  snapshot,
+}: {
+  readonly onPrepareNewDiscoverRun: () => void;
+  readonly snapshot: PipelineOperationsSnapshot;
+}) {
+  const currentStages = snapshot.stages.filter(
+    (stage) => stage.scope === "current_execution",
+  );
+  const capacity = snapshot.capacity;
+  const isActive =
+    snapshot.execution?.workflowStatus === "in_progress" &&
+    (snapshot.execution.phase === "discovering" ||
+      snapshot.execution.phase === "draining");
+  const activeInventory = snapshot.activeItemsTotal;
+
+  return (
+    <section className="pipeline-live-flow" aria-labelledby="pipeline-live-flow-title">
+      <div className="pipeline-live-flow__heading">
+        <div>
+          <h2 id="pipeline-live-flow-title">Live pipeline</h2>
+          <p>Current discovery stages, shared workers, and work that needs attention.</p>
+        </div>
+        {isActive && snapshot.execution?.discoverWorkflowId ? (
+          <CancelWorkflowRunButton
+            ariaLabel="Stop discovery"
+            className="pipeline-stop-action"
+            label="Stop discovery"
+            runId={snapshot.execution.discoverWorkflowId}
+          />
+        ) : null}
+      </div>
+      <PipelineExecutionNotice
+        onPrepareNewDiscoverRun={onPrepareNewDiscoverRun}
+        snapshot={snapshot}
+      />
+      <div className="pipeline-overview-grid">
+        <PipelineOverviewFact
+          description={
+            capacity.status === "available"
+              ? `${capacity.staleWorkerCount} stale · ${capacity.invalidWorkerCount} invalid`
+              : capacity.reason
+          }
+          label="Workers online"
+          value={capacity.status === "available" ? capacity.freshWorkerCount : "Unavailable"}
+        />
+        <PipelineOverviewFact
+          description={
+            capacity.status === "available"
+              ? `${capacity.availableSlots} available in the shared activity pool`
+              : "Runtime capacity has not been reported"
+          }
+          label="Worker slots in use"
+          value={
+            capacity.status === "available"
+              ? `${capacity.activeSlots} of ${capacity.configuredSlots}`
+              : "Unavailable"
+          }
+        />
+        <PipelineOverviewFact
+          description={snapshot.activeItemsTruncated ? "Showing a partial runtime inventory" : "Current runtime inventory"}
+          label="Active work"
+          value={activeInventory === 0 ? "No active work" : activeInventory ?? "Unknown"}
+        />
+      </div>
+      {currentStages.length > 0 ? (
+        <div className="pipeline-stage-card-grid">
+          {currentStages.map((stage, index) => (
+            <PipelineStageCard
+              key={`${stage.scope}-${stage.stage}-${index}`}
+              stage={stage}
+            />
+          ))}
+        </div>
+      ) : (
+        <Empty title="No current-execution stages are available." />
+      )}
+    </section>
+  );
+}
+
+function PipelineBacklogDiagnostics({
   snapshot,
 }: {
   readonly snapshot: PipelineOperationsSnapshot;
 }) {
-  const scopes = [
-    "current_execution",
-    "execution_sweep",
-    "global_outside_execution",
-  ] as const;
+  const scopes = ["execution_sweep", "global_outside_execution"] as const;
+  const secondaryRows = snapshot.stages.filter(
+    (stage) => stage.scope !== "current_execution",
+  );
 
   return (
     <DisclosureSection
       className="pipeline-stage-ledger"
-      collapsedSummary={`${snapshot.stages.length} operational rows`}
-      description="Current execution and sweep work stay separate from backlog outside this run."
-      title="Operational stage ledger"
+      collapsedSummary={`${secondaryRows.length} detailed rows`}
+      defaultOpen={false}
+      description="Execution sweep, backlog outside this run, detailed worker capacity, queue pressure, and ETA provenance."
+      title="Backlog and diagnostics"
     >
-      {snapshot.stages.length > 0 ? (
+      {secondaryRows.length > 0 ? (
         <div className="pipeline-scope-ledgers">
           {scopes.map((scope) => {
             const rows = snapshot.stages.filter((stage) => stage.scope === scope);
@@ -579,7 +917,7 @@ function PipelineStageLedger({
           })}
         </div>
       ) : (
-        <Empty title="No operational stage rows are available." />
+        <Empty title="No sweep or global backlog rows are available." />
       )}
     </DisclosureSection>
   );
@@ -770,9 +1108,10 @@ function PipelineInspector({
     <div className="pipeline-operations-inspector">
       <h2>Execution inspector</h2>
       <DisclosureSection
+        defaultOpen={false}
         description="Selected workflow identity and separately reconciled execution cohorts."
         headingLevel={3}
-        title="Execution and cohorts"
+        title="Technical execution details"
       >
         <InspectorLedger>
           <InspectorLedgerItem
@@ -933,16 +1272,22 @@ function PipelineWorkspace({
 }: {
   readonly snapshot: PipelineOperationsSnapshot;
 }) {
+  const setActiveStage = useStageTriggerStore((state) => state.setActiveStage);
+
   return (
     <RouteWorkspace
       className="pipeline-operations-workspace"
-      contentLabel="Pipeline operations ledger and controls"
+      contentLabel="Live pipeline, backlog diagnostics, and controls"
       header={<PipelineHeader snapshot={snapshot} />}
       inspector={<PipelineInspector snapshot={snapshot} />}
       inspectorLabel="Pipeline execution, capacity, queue, and active-work provenance"
     >
       <div className="pipeline-operations-workspace__content">
-        <PipelineStageLedger snapshot={snapshot} />
+        <PipelineLiveFlow
+          onPrepareNewDiscoverRun={() => setActiveStage("discover")}
+          snapshot={snapshot}
+        />
+        <PipelineBacklogDiagnostics snapshot={snapshot} />
         <PipelineSources snapshot={snapshot} />
         <DisclosureSection
           className="pipeline-overall-eta"
@@ -961,6 +1306,7 @@ function PipelineWorkspace({
         <ToolRow
           aria-label="Pipeline action tools"
           className="pipelines-workspace__controls"
+          id="pipeline-actions"
           primary={<StageTriggerPanel />}
           role="group"
         />

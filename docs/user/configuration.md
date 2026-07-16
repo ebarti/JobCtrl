@@ -101,6 +101,14 @@ prepare another supported auth route. Saving that alternative does not override
 the active environment value. Remove the environment value and restart the
 relevant process before expecting the saved route to become effective.
 
+The Credentials screen groups readiness, ownership, secret input, and actions
+as one responsive row for each supported route. At narrow widths those actions
+move below the field instead of squeezing it. Stored secret values are never
+rendered; the screen shows a human-readable configured/readiness state and a
+sanitized error when inspection fails. Settings section headers likewise use
+their product names and explanations rather than internal context tags or raw
+configuration keys as decorative metadata.
+
 Native Windows
 and Linux credential-store adapters are planned; use `.env` or the shell on
 those platforms today. `jobctrl doctor` reports the effective source without

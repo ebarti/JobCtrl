@@ -56,6 +56,12 @@ loads the generated HTML source into a rich-text editor so text, formatting, and
 hyperlink edits, comments, validation, final PDF rendering, and layout boxes stay
 tied to the same material generation.
 
+Apply Review keeps its pending queue to the left at working desktop widths. The
+selected application's decision, evidence, and materials then occupy one
+full-width sequence rather than competing columns. When the surface becomes
+narrow, the queue moves above the review and the approval/defer/decline actions
+wrap below their binding explanation; no decision or audit section is removed.
+
 ## Approval And Automation Modes
 
 Apply automation can submit applications. Use dry runs and narrow targets before

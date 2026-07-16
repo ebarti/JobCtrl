@@ -67,6 +67,7 @@ export function ArtifactsTable({
       loadingMessage="Loading artifacts."
       emptyMessage="No artifacts match."
       initialSort={{ columnId: "created_at", direction: "desc" }}
+      mobileLayout="cards"
       sort={gridSort}
       onSortChange={handleSortChange}
       manualSorting

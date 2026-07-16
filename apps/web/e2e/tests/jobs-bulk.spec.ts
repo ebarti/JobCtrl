@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 const ROW_CHECKBOX_SELECTOR =
   "input[type='checkbox'][aria-label^='Select ']:not([aria-label='Select all rows on this page'])";
 
-test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to deleted tab → restore", async ({
+test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to Deleted tab → restore", async ({
   page,
 }) => {
   page.on("dialog", (dialog) => void dialog.accept());
@@ -12,9 +12,11 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
   await expect(page.getByRole("button", { name: /select page/i })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByText(/Director of Platform Engineering/i)).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(page.getByText(/Director of Platform Engineering/i)).toBeVisible(
+    {
+      timeout: 30_000,
+    },
+  );
   await expect(page.getByText(/select jobs to manage/i)).toHaveCount(0);
 
   const rowCheckboxes = page.locator(ROW_CHECKBOX_SELECTOR);
@@ -26,25 +28,40 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
   for (let i = 0; i < rowsToSelect; i += 1) {
     await rowCheckboxes.nth(i).check();
   }
-  await expect(page.getByText(new RegExp(`${rowsToSelect} selected`))).toBeVisible();
+  await expect(
+    page.getByText(new RegExp(`${rowsToSelect} selected`)),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: /delete selected/i }).click();
-  await expect(page.getByRole("button", { name: /delete selected/i })).toBeDisabled({
+  await expect(
+    page.getByRole("button", { name: /delete selected/i }),
+  ).toBeDisabled({
     timeout: 15_000,
   });
 
-  await page.getByRole("radio", { name: /^deleted$/i }).click();
+  const queueTabs = page.getByRole("tablist", { name: "Job queues" });
+  const deletedTab = queueTabs.getByRole("tab", { name: "Deleted" });
+  await expect(queueTabs.getByRole("tab", { name: "Active" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await deletedTab.click();
+  await expect(deletedTab).toHaveAttribute("aria-selected", "true");
   await expect(page).toHaveURL(/deleted=deleted/);
 
   const deletedRowCheckboxes = page.locator(ROW_CHECKBOX_SELECTOR);
   await expect(deletedRowCheckboxes.first()).toBeVisible({ timeout: 30_000 });
-  await expect.poll(async () => deletedRowCheckboxes.count()).toBeGreaterThanOrEqual(rowsToSelect);
+  await expect
+    .poll(async () => deletedRowCheckboxes.count())
+    .toBeGreaterThanOrEqual(rowsToSelect);
 
   for (let i = 0; i < rowsToSelect; i += 1) {
     await deletedRowCheckboxes.nth(i).check();
   }
   await page.getByRole("button", { name: /restore selected/i }).click();
-  await expect(page.getByRole("button", { name: /restore selected/i })).toBeDisabled({
+  await expect(
+    page.getByRole("button", { name: /restore selected/i }),
+  ).toBeDisabled({
     timeout: 15_000,
   });
 });

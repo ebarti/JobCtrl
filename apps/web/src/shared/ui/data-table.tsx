@@ -29,6 +29,7 @@ export interface DataTableProps<TData> {
   rowKeyAttribute?: (row: TData) => string;
   onRowActivate?: (row: TData) => void;
   rowActivationLabel?: (row: TData) => string;
+  rowActivationAppearance?: "visible" | "focus-only";
   rowAriaSelected?: (row: TData) => boolean;
   cellClassName?: (columnId: string) => string | undefined;
   footer?: ReactNode;
@@ -51,6 +52,7 @@ export function DataTable<TData>({
   enableRowSelection = true,
   onRowActivate,
   rowActivationLabel,
+  rowActivationAppearance = "focus-only",
   rowAriaSelected,
   cellClassName,
   footer,
@@ -145,7 +147,11 @@ export function DataTable<TData>({
                       {isActivationCell ? (
                         <button
                           type="button"
-                          className="table-row-activation-button"
+                          className={
+                            rowActivationAppearance === "focus-only"
+                              ? "table-row-activation-button sr-only focus:not-sr-only"
+                              : "table-row-activation-button"
+                          }
                           aria-label={activationLabel}
                           onClick={(event) => {
                             event.stopPropagation();

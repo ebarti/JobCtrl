@@ -125,7 +125,7 @@ export const ToastAction = forwardRef<
     data-slot="toast-action"
     aria-label={ariaLabel ?? altText}
     className={cn(
-      "inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-border bg-transparent px-3 text-[12px] font-medium transition-colors hover:bg-muted hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+      "inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-border bg-transparent px-3 text-sm font-medium transition-colors hover:bg-muted hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
       className,
     )}
     {...props}
@@ -160,7 +160,7 @@ export const ToastTitle = forwardRef<
   <ToastPrimitive.Title
     ref={ref}
     data-slot="toast-title"
-    className={cn("text-[13px] font-semibold leading-5", className)}
+    className={cn("text-base font-semibold leading-5", className)}
     {...props}
   />
 ));
@@ -173,7 +173,7 @@ export const ToastDescription = forwardRef<
   <ToastPrimitive.Description
     ref={ref}
     data-slot="toast-description"
-    className={cn("text-[12px] leading-5 text-muted-foreground", className)}
+    className={cn("text-sm leading-5 text-muted-foreground", className)}
     {...props}
   />
 ));

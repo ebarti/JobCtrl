@@ -304,6 +304,11 @@ describe("application feedback API", () => {
       applyAudit: {
         state: "repair",
         label: "apply failed",
+        hardBlockers: expect.arrayContaining([
+          expect.objectContaining({
+            detail: "required profile answers missing: Age 18+",
+          }),
+        ]),
       },
     });
 
@@ -347,7 +352,7 @@ describe("application feedback API", () => {
           code: "missing_profile_attestations",
           label: "Profile attestations incomplete",
           detail:
-            "Application attestations missing: background_check_consent, previously_worked_at_employer.",
+            "Application attestations missing: Background check consent, Previously worked at employer.",
         }),
       ],
       sources: expect.arrayContaining([

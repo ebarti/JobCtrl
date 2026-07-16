@@ -3,7 +3,6 @@ import type {
   BrowserCapabilityItem,
   DetectedBrowserId,
 } from "@jobctrl/contracts";
-import { IconInfoCircle } from "@tabler/icons-react";
 import { Fragment, useState } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
@@ -405,7 +404,8 @@ export function BrowserCapabilitiesPanel() {
           <h2 id="browser-capabilities-title">Browser capabilities</h2>
         </CardTitle>
         <CardDescription>
-          Detect, adopt, and revoke optional local browser access.
+          Installed browsers are detected locally. Nothing is enabled,
+          launched, or adopted until you confirm.
         </CardDescription>
         <CardAction>
           <Badge variant="secondary">
@@ -414,15 +414,6 @@ export function BrowserCapabilitiesPanel() {
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
-        <Alert role="note">
-          <IconInfoCircle aria-hidden="true" />
-          <AlertTitle>Confirmation is always required</AlertTitle>
-          <AlertDescription>
-            JobCtrl detects supported installed browsers but never enables,
-            launches, or adopts one without your explicit confirmation. Optional
-            access is fail-closed and can be revoked immediately.
-          </AlertDescription>
-        </Alert>
         {query.error ? (
           <Alert variant="destructive">
             <AlertTitle>Browser capability status is unavailable</AlertTitle>

@@ -130,6 +130,7 @@ export function JobsTable({
       loadingMessage="Loading jobs."
       emptyMessage="No jobs match."
       initialSort={{ columnId: "discovered_at", direction: "desc" }}
+      mobileLayout="cards"
       sort={gridSort}
       onSortChange={handleSortChange}
       manualSorting
@@ -151,6 +152,7 @@ export function JobsTable({
       rowActivationLabel={(row) =>
         `Open job ${row.title} at ${row.company || "unknown company"}`
       }
+      rowActivationAppearance="focus-only"
       onPageRowsChange={onVisiblePageRowsChange}
       pagination={{
         page,

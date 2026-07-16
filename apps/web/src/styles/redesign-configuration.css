@@ -9,7 +9,11 @@
 .discovery-workspace {
   --configuration-surface: var(--card);
   --configuration-subtle: color-mix(in oklch, var(--muted) 62%, var(--card));
-  --configuration-rule: color-mix(in oklch, var(--border) 88%, var(--foreground));
+  --configuration-rule: color-mix(
+    in oklch,
+    var(--border) 88%,
+    var(--foreground)
+  );
 }
 
 /* Shared profile/preferences property grids query the width they actually
@@ -62,6 +66,27 @@
 }
 
 /* Profile and preferences -------------------------------------------------- */
+
+/* The baseline resume is an A4 editing surface, not a thumbnail. Keep enough
+ * space for the 794px document plus its scroll gutter; the form's container
+ * queries intentionally collapse its fields before the document is squeezed. */
+.profile-layout:not(.profile-layout-single) {
+  grid-template-columns:
+    minmax(280px, min(var(--profile-editor-width, 62%), calc(100% - 850px)))
+    12px
+    minmax(818px, 1fr);
+}
+
+.profile-layout:not(.profile-layout-single) > .card,
+.profile-layout:not(.profile-layout-single) > .resume-editor-preview {
+  min-width: 0;
+}
+
+.profile-layout:not(.profile-layout-single)
+  .profile-resume-plate-editor
+  .resume-plate-scroll {
+  padding: 8px;
+}
 
 .profile-layout > .card,
 .profile-layout-single > .card {
@@ -136,14 +161,28 @@
 }
 
 .profile-layout .profile-sections > .form-section .field-grid,
-.profile-layout .profile-sections > .form-section > .configuration-section__body > .adaptive-field-grid,
+.profile-layout
+  .profile-sections
+  > .form-section
+  > .configuration-section__body
+  > .adaptive-field-grid,
 .profile-layout .profile-sections > .form-section .target-preferences-grid {
   padding: 16px 20px 20px;
 }
 
-.profile-layout .profile-sections > .form-section:not(:first-child) > .field-grid,
-.profile-layout .profile-sections > .form-section:not(:first-child) > .configuration-section__body > .adaptive-field-grid,
-.profile-layout .profile-sections > .form-section:not(:first-child) > .target-preferences-grid {
+.profile-layout
+  .profile-sections
+  > .form-section:not(:first-child)
+  > .field-grid,
+.profile-layout
+  .profile-sections
+  > .form-section:not(:first-child)
+  > .configuration-section__body
+  > .adaptive-field-grid,
+.profile-layout
+  .profile-sections
+  > .form-section:not(:first-child)
+  > .target-preferences-grid {
   padding-inline: 0;
 }
 
@@ -169,7 +208,7 @@
   margin: 0;
   align-self: center;
   color: var(--foreground);
-  font-size: 13px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 650;
 }
 
@@ -204,7 +243,8 @@
 .profile-layout .bullet-row,
 .profile-layout .skill-row {
   border: 0;
-  border-bottom: 1px solid color-mix(in oklch, var(--configuration-rule) 72%, transparent);
+  border-bottom: 1px solid
+    color-mix(in oklch, var(--configuration-rule) 72%, transparent);
   border-radius: 0;
   background: transparent;
   padding: 11px 0;
@@ -284,13 +324,13 @@
 
 .configuration-section__description {
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.45;
 }
 
 .configuration-section__summary {
   color: var(--foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 560;
   line-height: 1.4;
 }
@@ -305,10 +345,13 @@
 .configuration-section__indicator {
   flex: 0 0 auto;
   color: var(--muted-foreground);
-  transition: transform 150ms ease, color 150ms ease;
+  transition:
+    transform 150ms ease,
+    color 150ms ease;
 }
 
-.configuration-section__trigger[data-panel-open] .configuration-section__indicator {
+.configuration-section__trigger[data-panel-open]
+  .configuration-section__indicator {
   color: var(--foreground);
   transform: rotate(180deg);
 }
@@ -316,7 +359,11 @@
 .configuration-section__trigger:hover .configuration-section__title,
 .configuration-section__trigger:focus-visible .configuration-section__title {
   text-decoration: underline;
-  text-decoration-color: color-mix(in oklch, var(--foreground) 28%, transparent);
+  text-decoration-color: color-mix(
+    in oklch,
+    var(--foreground) 28%,
+    transparent
+  );
   text-underline-offset: 4px;
 }
 
@@ -365,9 +412,15 @@
   display: none;
 }
 
-.configuration-section .tailoring-controls-grid--content > .bullet-standards-group,
-.configuration-section .tailoring-controls-grid--writing > .tailoring-control-group,
-.configuration-section .tailoring-controls-grid--quality > .tailoring-control-group {
+.configuration-section
+  .tailoring-controls-grid--content
+  > .bullet-standards-group,
+.configuration-section
+  .tailoring-controls-grid--writing
+  > .tailoring-control-group,
+.configuration-section
+  .tailoring-controls-grid--quality
+  > .tailoring-control-group {
   grid-column: 1 / -1;
 }
 
@@ -400,8 +453,12 @@
   padding-top: 16px;
 }
 
-.configuration-section .tailoring-controls-grid--writing > .tailoring-writing-style-group,
-.configuration-section .tailoring-controls-grid--writing > .tailoring-additional-guidance-group {
+.configuration-section
+  .tailoring-controls-grid--writing
+  > .tailoring-writing-style-group,
+.configuration-section
+  .tailoring-controls-grid--writing
+  > .tailoring-additional-guidance-group {
   grid-column: span 6;
 }
 
@@ -409,7 +466,7 @@
 .configuration-section .bullet-standards-group legend {
   margin-bottom: 10px;
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 650;
 }
 
@@ -422,7 +479,7 @@
   align-items: center;
   gap: 4px;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 560;
   text-decoration: none;
 }
@@ -486,7 +543,7 @@
 .profile-layout .choice,
 .discovery-workspace .choice {
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body);
 }
 
 .configuration-section .target-choice,
@@ -522,16 +579,18 @@
 
 .configuration-section .locked-choice [data-slot="field-description"] {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 430;
   line-height: 1.4;
 }
 
-.configuration-section .bullet-standards-group > [data-slot="field-description"] {
+.configuration-section
+  .bullet-standards-group
+  > [data-slot="field-description"] {
   display: block;
   margin-top: 8px;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 430;
   line-height: 1.4;
 }
@@ -546,7 +605,7 @@
 .profile-layout .month-selector > [data-slot="field-legend"] {
   margin: 0;
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 600;
 }
 
@@ -607,13 +666,13 @@
 }
 
 .resume-template-controls-title strong {
-  font-size: 13px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 650;
 }
 
 .resume-template-controls-title span {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .resume-template-controls .field-grid {
@@ -639,7 +698,7 @@
   align-items: center;
   gap: 5px;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .resume-template-default-status svg {
@@ -673,7 +732,10 @@
   border-bottom: 1px solid var(--border);
 }
 
-.profile-layout .resume-template-plate-editor .resume-template-controls input:not([type="checkbox"]):not([type="radio"]) {
+.profile-layout
+  .resume-template-plate-editor
+  .resume-template-controls
+  input:not([type="checkbox"]):not([type="radio"]) {
   background: var(--card);
   color: var(--card-foreground);
 }
@@ -708,7 +770,7 @@
   background: transparent;
   color: var(--muted-foreground);
   box-shadow: none;
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 600;
 }
 
@@ -816,7 +878,7 @@
 .config-layout .credential-row-key {
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--jh-font-size-code);
 }
 
 .config-layout .credential-row-actions {
@@ -956,7 +1018,7 @@
   border-radius: 0;
   background: transparent;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 600;
 }
 
@@ -982,7 +1044,7 @@
 }
 
 .discovery-workspace .discovery-panel-head h3 {
-  font-size: 14px;
+  font-size: var(--jh-font-size-heading-sm);
   letter-spacing: -0.015em;
 }
 
@@ -1013,7 +1075,9 @@
 }
 
 .discovery-workspace .source-upsert-form {
-  grid-template-columns: minmax(150px, 0.6fr) minmax(180px, 0.8fr) minmax(132px, 0.45fr) minmax(260px, 1.2fr) auto;
+  grid-template-columns:
+    minmax(150px, 0.6fr) minmax(180px, 0.8fr) minmax(132px, 0.45fr)
+    minmax(260px, 1.2fr) auto;
   align-items: end;
   gap: 10px;
   border-color: var(--configuration-rule);
@@ -1047,7 +1111,7 @@
 .discovery-workspace .field {
   gap: 6px;
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 550;
 }
 
@@ -1085,7 +1149,8 @@
 .config-layout input:not([type="checkbox"]):not([type="radio"]):focus-visible,
 .config-layout select:focus-visible,
 .config-layout textarea:focus-visible,
-.discovery-workspace input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+.discovery-workspace
+  input:not([type="checkbox"]):not([type="radio"]):focus-visible,
 .discovery-workspace select:focus-visible,
 .discovery-workspace textarea:focus-visible {
   border-color: var(--ring);
@@ -1113,6 +1178,24 @@
 .discovery-workspace input[type="checkbox"],
 .discovery-workspace input[type="radio"] {
   accent-color: var(--primary);
+}
+
+@media (max-width: 1433px) {
+  .profile-layout:not(.profile-layout-single) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .profile-layout:not(.profile-layout-single) > .profile-resizer {
+    display: none;
+  }
+
+  .profile-layout:not(.profile-layout-single) > .resume-editor-preview {
+    position: static;
+    top: auto;
+    width: 100%;
+    align-self: stretch;
+    scroll-margin-top: calc(var(--topbar-height) + 32px);
+  }
 }
 
 @media (max-width: 1080px) {
@@ -1185,8 +1268,12 @@
     grid-column: auto;
   }
 
-  .configuration-section .tailoring-controls-grid--writing > .tailoring-writing-style-group,
-  .configuration-section .tailoring-controls-grid--writing > .tailoring-additional-guidance-group {
+  .configuration-section
+    .tailoring-controls-grid--writing
+    > .tailoring-writing-style-group,
+  .configuration-section
+    .tailoring-controls-grid--writing
+    > .tailoring-additional-guidance-group {
     grid-column: 1 / -1;
   }
 

@@ -16,6 +16,10 @@ interface RouteSurface {
   readonly surface: (page: Page) => Locator;
 }
 
+interface MobileRouteSurface extends RouteSurface {
+  readonly primaryControl: (page: Page) => Locator;
+}
+
 const DENSITY_TOKENS: Record<Density, string> = {
   compact: "32px",
   regular: "40px",
@@ -86,6 +90,63 @@ const ROUTE_SURFACES: readonly RouteSurface[] = [
   },
 ];
 
+const MOBILE_ROUTE_SURFACES: readonly MobileRouteSurface[] = [
+  {
+    ...ROUTE_SURFACES[0]!,
+    primaryControl: (page) =>
+      page
+        .locator(".kpis")
+        .getByRole("link", { name: /^Jobs\b/i })
+        .first(),
+  },
+  {
+    ...ROUTE_SURFACES[1]!,
+    primaryControl: (page) =>
+      page
+        .locator("table.jobs-data-grid-table tbody tr")
+        .filter({ hasText: "Director of Platform Engineering" })
+        .locator('[data-slot="title-stack-primary"]')
+        .filter({ hasText: /^Director of Platform Engineering$/ }),
+  },
+  {
+    ...ROUTE_SURFACES[2]!,
+    primaryControl: (page) =>
+      page.getByRole("button", { name: /Open artifact/i }).first(),
+  },
+  {
+    ...ROUTE_SURFACES[3]!,
+    primaryControl: (page) => page.getByRole("button", { name: /^Defer for / }),
+  },
+  {
+    ...ROUTE_SURFACES[4]!,
+    primaryControl: (page) => page.getByLabel("Minimum fit score"),
+  },
+  {
+    ...ROUTE_SURFACES[5]!,
+    primaryControl: (page) => page.getByLabel("Full name"),
+  },
+  {
+    ...ROUTE_SURFACES[6]!,
+    primaryControl: (page) =>
+      page.getByRole("link", { name: "Browser & extension", exact: true }),
+  },
+  {
+    ...ROUTE_SURFACES[7]!,
+    primaryControl: (page) =>
+      page.getByRole("button", { name: /Open run/i }).first(),
+  },
+  {
+    ...ROUTE_SURFACES[8]!,
+    primaryControl: (page) =>
+      page.getByRole("tab", { name: "Discover", selected: true }),
+  },
+  {
+    ...ROUTE_SURFACES[9]!,
+    primaryControl: (page) =>
+      page.getByRole("button", { name: /Open activity/i }).first(),
+  },
+];
+
 const DENSITY_ROUTES = [
   { path: "/jobs", table: "table.jobs-data-grid-table" },
   { path: "/artifacts", table: "table.artifacts-data-grid-table" },
@@ -93,9 +154,12 @@ const DENSITY_ROUTES = [
   { path: "/debug", table: "table.activity-data-grid-table" },
 ] as const;
 
-const REQUIREMENT_FIT_JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
-const JOB_FILTER_PARAMS = "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
-const PRIMARY_REQUIREMENT_TEXT = "Lead platform reliability improvements across critical services.";
+const REQUIREMENT_FIT_JOB_URL =
+  "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
+const JOB_FILTER_PARAMS =
+  "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
+const PRIMARY_REQUIREMENT_TEXT =
+  "Lead platform reliability improvements across critical services.";
 
 function failedTailoringQueue(): ApplyReviewQueueResponse {
   const base = sampleApplyReviewQueue.items[0]!;
@@ -120,7 +184,8 @@ function failedTailoringQueue(): ApplyReviewQueueResponse {
         applyAudit: makeApplyAudit({
           state: "repair",
           label: "tailor failed",
-          summary: "tailoring ended with status failed validation Review evidence is still available.",
+          summary:
+            "tailoring ended with status failed validation Review evidence is still available.",
           reviewEvidenceAvailable: true,
           missingPrerequisites: [
             {
@@ -133,7 +198,8 @@ function failedTailoringQueue(): ApplyReviewQueueResponse {
             {
               code: "missing_resume_pdf",
               label: "Submit-ready PDF missing",
-              detail: "The submit-ready PDF cannot exist until a tailored resume is available.",
+              detail:
+                "The submit-ready PDF cannot exist until a tailored resume is available.",
               severity: "warning",
               source: "materials.pdf",
             },
@@ -197,7 +263,9 @@ function failedTailoringQueue(): ApplyReviewQueueResponse {
   };
 }
 
-async function installFailedTailoringApplyReviewRoutes(page: Page): Promise<void> {
+async function installFailedTailoringApplyReviewRoutes(
+  page: Page,
+): Promise<void> {
   await page.route("**/v1/apply/review-queue", async (route) => {
     await route.fulfill({
       contentType: "application/json",
@@ -253,6 +321,7 @@ async function expectRenderedSurface(
   await expect(locator, `${label} should be visible`).toBeVisible({
     timeout: 30_000,
   });
+  await expect(locator, `${label} should be enabled`).toBeEnabled();
   const styles = await readSurfaceStyles(locator);
   expect(styles.display, `${label} should be rendered`).not.toBe("none");
   expect(styles.visibility, `${label} should be visible`).not.toBe("hidden");
@@ -268,10 +337,10 @@ async function expectActiveNavigation(
   await expect(locator, `${label} should be visible`).toBeVisible({
     timeout: 30_000,
   });
-  await expect(locator, `${label} should identify the current route`).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
+  await expect(
+    locator,
+    `${label} should identify the current route`,
+  ).toHaveAttribute("aria-current", "page");
   const styles = await locator.evaluate((element) => {
     const style = getComputedStyle(element);
     const marker = getComputedStyle(element, "::before");
@@ -293,7 +362,10 @@ async function expectActiveNavigation(
   expect(styles.height, `${label} height`).toBeGreaterThan(0);
   expectPainted(styles.color, `${label} foreground`);
   expect(styles.markerDisplay, `${label} selection rule`).not.toBe("none");
-  expect(styles.markerWidth, `${label} selection rule width`).toBeGreaterThanOrEqual(2);
+  expect(
+    styles.markerWidth,
+    `${label} selection rule width`,
+  ).toBeGreaterThanOrEqual(2);
   expectPainted(styles.markerBackground, `${label} selection rule`);
 }
 
@@ -322,11 +394,14 @@ async function expectVisualSnapshot(
   expect(box?.width ?? 0, `${label} width`).toBeGreaterThan(0);
   expect(box?.height ?? 0, `${label} height`).toBeGreaterThan(0);
   await locator.scrollIntoViewIfNeeded();
-  await expect(locator, `${label} visual snapshot`).toHaveScreenshot(snapshotName, {
-    animations: "disabled",
-    caret: "hide",
-    maxDiffPixelRatio: 0.01,
-  });
+  await expect(locator, `${label} visual snapshot`).toHaveScreenshot(
+    snapshotName,
+    {
+      animations: "disabled",
+      caret: "hide",
+      maxDiffPixelRatio: 0.01,
+    },
+  );
 }
 
 async function expectNoDocumentInlineOverflow(page: Page): Promise<void> {
@@ -340,19 +415,93 @@ async function expectNoDocumentInlineOverflow(page: Page): Promise<void> {
   ).toBeLessThanOrEqual(layout.clientWidth + 1);
 }
 
+async function expectControlInsideViewport(
+  page: Page,
+  locator: Locator,
+  label: string,
+): Promise<void> {
+  await expect(locator, `${label} should be visible`).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(locator, `${label} should be enabled`).toBeEnabled();
+  await locator.scrollIntoViewIfNeeded();
+  const layout = await locator.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      bottom: rect.bottom,
+      height: rect.height,
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      viewportHeight: document.documentElement.clientHeight,
+      viewportWidth: document.documentElement.clientWidth,
+      width: rect.width,
+    };
+  });
+
+  expect(layout.width, `${label} should have usable width`).toBeGreaterThan(0);
+  expect(layout.height, `${label} should have usable height`).toBeGreaterThan(
+    0,
+  );
+  expect(
+    layout.left,
+    `${label} should not be clipped on the left`,
+  ).toBeGreaterThanOrEqual(-1);
+  expect(
+    layout.right,
+    `${label} should not be clipped on the right`,
+  ).toBeLessThanOrEqual(layout.viewportWidth + 1);
+  expect(
+    layout.top,
+    `${label} should be scrolled into view`,
+  ).toBeGreaterThanOrEqual(-1);
+  expect(
+    layout.bottom,
+    `${label} should be scrolled into view`,
+  ).toBeLessThanOrEqual(layout.viewportHeight + 1);
+}
+
+async function installDeterministicRequirementFitScrollbars(
+  page: Page,
+): Promise<void> {
+  // macOS overlay scrollbars reserve 0 layout space, so a scroll container's
+  // inner content width flips by the ~15px scrollbar gutter run-to-run. Force
+  // classic scrollbars for the two snapshotted cards so their committed
+  // baselines remain deterministic across local and Linux CI runs.
+  await page.addInitScript(() => {
+    const style = document.createElement("style");
+    style.textContent =
+      ".job-detail-drawer::-webkit-scrollbar,.apply-review-pane-scroll::-webkit-scrollbar{width:15px;height:15px}";
+    const attach = () =>
+      (document.head ?? document.documentElement).append(style);
+    if (document.head) attach();
+    else document.addEventListener("DOMContentLoaded", attach, { once: true });
+  });
+}
+
 async function expectArtifactPdfPreviewRendered(page: Page): Promise<void> {
   const preview = page.getByRole("region", { name: "Artifact PDF preview" });
   await expect(preview).toBeVisible({ timeout: 30_000 });
-  await expect(preview.getByText("1 page", { exact: true })).toBeVisible({ timeout: 30_000 });
-  await expect(preview.getByText("Preview failed", { exact: true })).toHaveCount(0);
+  await expect(preview.getByText("1 page", { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(
+    preview.getByText("Preview failed", { exact: true }),
+  ).toHaveCount(0);
 
   const pageImage = preview.locator(".pdf-preview-page img");
   await expect(pageImage).toHaveCount(1);
   await expect(pageImage).toBeVisible();
   await expect
-    .poll(() => pageImage.evaluate((element) => (element as HTMLImageElement).naturalWidth), {
-      message: "artifact PDF preview page should load real image pixels",
-    })
+    .poll(
+      () =>
+        pageImage.evaluate(
+          (element) => (element as HTMLImageElement).naturalWidth,
+        ),
+      {
+        message: "artifact PDF preview page should load real image pixels",
+      },
+    )
     .toBeGreaterThan(0);
 }
 
@@ -444,13 +593,14 @@ async function expectShellForRoute(
     page.getByRole("link", { name: route.activeLink }),
     `${route.path} active nav`,
   );
-  await expectRenderedSurface(route.surface(page), `${route.path} route surface`);
+  await expectRenderedSurface(
+    route.surface(page),
+    `${route.path} route surface`,
+  );
   await expect(
     page.getByRole("textbox", { name: "Global search" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("group", { name: "Row density" }),
-  ).toBeVisible();
+  await expect(page.getByRole("group", { name: "Row density" })).toBeVisible();
   await expect(
     page.getByRole("button", { name: /Switch to (dark|light) theme/i }),
   ).toBeVisible();
@@ -515,17 +665,23 @@ async function expectDashboardFunnelContained(page: Page): Promise<void> {
   });
 
   for (const [index, row] of layout.rows.entries()) {
-    expect(row.rowRight, `Pipeline row ${index + 1} should fit in card`).toBeLessThanOrEqual(
-      layout.cardRight + 1,
-    );
-    expect(row.legendRight, `Pipeline legend ${index + 1} should fit in card`).toBeLessThanOrEqual(
-      layout.cardRight + 1,
-    );
-    expect(row.legendHeight, `Pipeline legend ${index + 1} should remain compact`).toBeLessThan(48);
+    expect(
+      row.rowRight,
+      `Pipeline row ${index + 1} should fit in card`,
+    ).toBeLessThanOrEqual(layout.cardRight + 1);
+    expect(
+      row.legendRight,
+      `Pipeline legend ${index + 1} should fit in card`,
+    ).toBeLessThanOrEqual(layout.cardRight + 1);
+    expect(
+      row.legendHeight,
+      `Pipeline legend ${index + 1} should remain compact`,
+    ).toBeLessThan(48);
   }
-  expect(layout.scrollWidth, "Dashboard should not create horizontal overflow").toBeLessThanOrEqual(
-    layout.viewportWidth + 1,
-  );
+  expect(
+    layout.scrollWidth,
+    "Dashboard should not create horizontal overflow",
+  ).toBeLessThanOrEqual(layout.viewportWidth + 1);
 }
 
 test("representative routes stay legible in light and dark themes", async ({
@@ -548,6 +704,56 @@ test("representative routes stay legible in light and dark themes", async ({
       page.locator("html"),
       `${route.path} should remain in dark theme`,
     ).toHaveAttribute("data-theme", "dark");
+  }
+});
+
+test("@mobile key product routes keep navigation, content, and primary controls usable", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  for (const route of MOBILE_ROUTE_SURFACES) {
+    await page.goto(route.path);
+    await expect(route.proof(page), `${route.path} proof surface`).toBeVisible({
+      timeout: 30_000,
+    });
+    await expectRenderedSurface(
+      route.surface(page),
+      `${route.path} route surface`,
+    );
+    await expectNoDocumentInlineOverflow(page);
+    await expectControlInsideViewport(
+      page,
+      route.primaryControl(page),
+      `${route.path} primary control`,
+    );
+    await expectNoDocumentInlineOverflow(page);
+
+    const navigationTrigger = page.getByRole("button", {
+      name: "Open navigation",
+    });
+    await expectControlInsideViewport(
+      page,
+      navigationTrigger,
+      `${route.path} navigation trigger`,
+    );
+    await navigationTrigger.click();
+
+    const navigation = page.getByRole("dialog");
+    await expect(navigation).toBeVisible();
+    const activeLink = navigation.getByRole("link", {
+      name: route.activeLink,
+      exact: true,
+    });
+    await expect(activeLink).toHaveAttribute("aria-current", "page");
+    await expectControlInsideViewport(
+      page,
+      activeLink,
+      `${route.path} mobile navigation link`,
+    );
+    await activeLink.click();
+    await expect(navigation).toBeHidden();
+    await expectNoDocumentInlineOverflow(page);
   }
 });
 
@@ -618,7 +824,9 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
   await expect(deleteSelected).toBeVisible();
 
   await page.goto("/settings");
-  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible({
+  await expect(
+    page.getByRole("heading", { name: "Settings", level: 1 }),
+  ).toBeVisible({
     timeout: 30_000,
   });
   await expectKeyboardFocusIndicator(
@@ -647,7 +855,9 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
   await expect(page.getByRole("checkbox", { name: "LinkedIn" })).toBeVisible();
 
   await page.goto("/profile");
-  await expect(page.getByRole("heading", { name: "Profile", level: 1 })).toBeVisible({
+  await expect(
+    page.getByRole("heading", { name: "Profile", level: 1 }),
+  ).toBeVisible({
     timeout: 30_000,
   });
   await expectKeyboardFocusIndicator(
@@ -675,9 +885,14 @@ test("detail workspaces open with seeded data and preserve route navigation", as
   await expect(page.locator("table.jobs-data-grid-table")).toBeVisible({
     timeout: 30_000,
   });
-  await page
-    .getByRole("button", { name: /Open job Director of Platform Engineering/i })
-    .click();
+  const jobRow = page
+    .locator("table.jobs-data-grid-table tbody tr")
+    .filter({ hasText: "Director of Platform Engineering" });
+  const visibleJobTitle = jobRow
+    .locator('[data-slot="title-stack-primary"]')
+    .filter({ hasText: /^Director of Platform Engineering$/ });
+  await expect(visibleJobTitle).toBeVisible();
+  await visibleJobTitle.click();
   const jobWorkspace = page.getByRole("article", { name: "Job details" });
   await expect(jobWorkspace).toBeVisible({ timeout: 30_000 });
   await expectKeyboardFocusIndicator(
@@ -689,8 +904,23 @@ test("detail workspaces open with seeded data and preserve route navigation", as
   await expect(page).toHaveURL(/\/jobs(?:\?|$)/);
   await expect(jobWorkspace).toHaveCount(0);
 
+  const keyboardJobActivation = jobRow.getByRole("button", {
+    name: /Open job Director of Platform Engineering/i,
+  });
+  await keyboardJobActivation.focus();
+  await expectFocusedVisibleIndicator(
+    keyboardJobActivation,
+    "job row keyboard activation",
+  );
+  await keyboardJobActivation.press("Enter");
+  await expect(jobWorkspace).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Back to jobs" }).click();
+  await expect(jobWorkspace).toHaveCount(0);
+
   await page.goto("/artifacts/2");
-  const artifactWorkspace = page.getByRole("article", { name: "Artifact details" });
+  const artifactWorkspace = page.getByRole("article", {
+    name: "Artifact details",
+  });
   await expect(artifactWorkspace).toBeVisible({ timeout: 30_000 });
   await expectArtifactPdfPreviewRendered(page);
   await expectKeyboardFocusIndicator(
@@ -706,11 +936,15 @@ test("detail workspaces open with seeded data and preserve route navigation", as
   await expect(page.locator("table.runs-data-grid-table")).toBeVisible({
     timeout: 30_000,
   });
-  await page
-    .getByRole("button", { name: /Open run/i })
-    .first()
-    .click();
-  const runWorkspace = page.getByRole("article", { name: "Workflow run details" });
+  const runRow = page.locator("table.runs-data-grid-table tbody tr").first();
+  const visibleRunTitle = runRow
+    .locator('[data-slot="title-stack-primary"]')
+    .first();
+  await expect(visibleRunTitle).toBeVisible();
+  await visibleRunTitle.click();
+  const runWorkspace = page.getByRole("article", {
+    name: "Workflow run details",
+  });
   await expect(runWorkspace).toBeVisible({ timeout: 30_000 });
   await expectKeyboardFocusIndicator(
     page,
@@ -747,18 +981,19 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
   const layout = await decisionCard.evaluate((element) => {
     const context = element.querySelector(".apply-review-selected-facts");
     const actions = element.querySelector(".apply-review-selected-actions");
-    const decisionButtons = [...element.querySelectorAll(".apply-review-decision-buttons button")].map((node) =>
-      node.getBoundingClientRect(),
-    );
-    const factValues = [...element.querySelectorAll(".apply-review-audit-facts dd")].map((node) =>
-      node.getBoundingClientRect(),
-    );
-    const tags = [...element.querySelectorAll(".apply-review-audit-facts .tag")].map((node) =>
-      node.getBoundingClientRect(),
-    );
+    const decisionButtons = [
+      ...element.querySelectorAll(".apply-review-decision-buttons button"),
+    ].map((node) => node.getBoundingClientRect());
+    const factValues = [
+      ...element.querySelectorAll(".apply-review-audit-facts dd"),
+    ].map((node) => node.getBoundingClientRect());
+    const tags = [
+      ...element.querySelectorAll(".apply-review-audit-facts .tag"),
+    ].map((node) => node.getBoundingClientRect());
     return {
       actionWidth: actions?.getBoundingClientRect().width ?? 0,
-      buttonTopSpread: Math.max(...decisionButtons.map((rect) => rect.top)) -
+      buttonTopSpread:
+        Math.max(...decisionButtons.map((rect) => rect.top)) -
         Math.min(...decisionButtons.map((rect) => rect.top)),
       contextWidth: context?.getBoundingClientRect().width ?? 0,
       cardHeight: element.getBoundingClientRect().height,
@@ -770,38 +1005,46 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
     };
   });
 
-  expect(layout.contextWidth, "audit context should have real horizontal space").toBeGreaterThan(600);
-  expect(layout.actionWidth, "approval controls should use the card width").toBeGreaterThan(600);
-  expect(layout.buttonTopSpread, "decision buttons should remain on one row").toBeLessThanOrEqual(1);
-  expect(layout.minFactValueWidth, "audit fact values should not collapse").toBeGreaterThan(500);
-  expect(layout.minTagWidth, "audit chips should not wrap letter-by-letter").toBeGreaterThan(250);
-  expect(layout.maxTagHeight, "audit chips should remain compact").toBeLessThan(60);
-  expect(layout.cardHeight, "decision card should remain a compact summary").toBeLessThan(720);
-  expect(layout.scrollWidth, "route should not create horizontal overflow").toBeLessThanOrEqual(
-    layout.viewportWidth + 1,
+  expect(
+    layout.contextWidth,
+    "audit context should have real horizontal space",
+  ).toBeGreaterThan(600);
+  expect(
+    layout.actionWidth,
+    "approval controls should use the card width",
+  ).toBeGreaterThan(600);
+  expect(
+    layout.buttonTopSpread,
+    "decision buttons should remain on one row",
+  ).toBeLessThanOrEqual(1);
+  expect(
+    layout.minFactValueWidth,
+    "audit fact values should not collapse",
+  ).toBeGreaterThan(500);
+  expect(
+    layout.minTagWidth,
+    "audit chips should not wrap letter-by-letter",
+  ).toBeGreaterThan(250);
+  expect(layout.maxTagHeight, "audit chips should remain compact").toBeLessThan(
+    60,
   );
+  expect(
+    layout.cardHeight,
+    "decision card should remain a compact summary",
+  ).toBeLessThan(720);
+  expect(
+    layout.scrollWidth,
+    "route should not create horizontal overflow",
+  ).toBeLessThanOrEqual(layout.viewportWidth + 1);
 });
 
-test("requirement-fit drawer and Apply Review cards have visual regression coverage", async ({
+test("Job Detail requirement-fit card has visual regression coverage", async ({
   page,
 }) => {
-  // macOS overlay scrollbars reserve 0 layout space, so a scroll container's
-  // inner content width flips by the ~15px scrollbar gutter run-to-run,
-  // breaking the pixel-exact requirement-fit snapshots below. Force classic
-  // (space-taking) scrollbars on the two snapshotted cards' scroll containers
-  // so `scrollbar-gutter: stable` reserves a deterministic gutter matching the
-  // committed baselines (Linux CI already renders classic scrollbars).
-  // Test-only: production keeps the native overlay scrollbar, which causes no
-  // user-facing content shift.
-  await page.addInitScript(() => {
-    const style = document.createElement("style");
-    style.textContent =
-      ".job-detail-drawer::-webkit-scrollbar,.apply-review-pane-scroll::-webkit-scrollbar{width:15px;height:15px}";
-    const attach = () => (document.head ?? document.documentElement).append(style);
-    if (document.head) attach();
-    else document.addEventListener("DOMContentLoaded", attach, { once: true });
-  });
-  await page.goto(`/jobs/${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}?${JOB_FILTER_PARAMS}`);
+  await installDeterministicRequirementFitScrollbars(page);
+  await page.goto(
+    `/jobs/${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}?${JOB_FILTER_PARAMS}`,
+  );
   const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 30_000 });
 
@@ -813,13 +1056,32 @@ test("requirement-fit drawer and Apply Review cards have visual regression cover
   await expect(drawerRequirement).toContainText("matched");
   await expect(drawerRequirement).toContainText("Score contribution");
   await expect(drawerRequirement).toContainText("Double Down");
+  await expect(
+    drawerRequirement.locator('[data-slot="requirement-fit-summary"]'),
+  ).toBeVisible();
+  await expect(
+    drawerRequirement.locator('[data-slot="requirement-fit-metric"]'),
+  ).toHaveCount(2);
+  await expect(
+    drawerRequirement.locator('[data-slot="requirement-profile-evidence"]'),
+  ).toBeVisible();
+  await expect(
+    drawerRequirement.getByRole("button", { name: "Additional audit details" }),
+  ).toHaveAttribute("aria-expanded", "false");
   await expectVisualSnapshot(
     drawerRequirement,
     "job-drawer-requirement-fit-card.png",
     "job drawer requirement-fit card",
   );
+});
 
-  await page.goto(`/apply-review?jobKey=${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}`);
+test("Apply Review requirement-fit card has visual regression coverage", async ({
+  page,
+}) => {
+  await installDeterministicRequirementFitScrollbars(page);
+  await page.goto(
+    `/apply-review?jobKey=${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}`,
+  );
   const selectedApplication = page.locator(".apply-review-selected");
   await expect(selectedApplication).toBeVisible({ timeout: 30_000 });
 
@@ -831,7 +1093,9 @@ test("requirement-fit drawer and Apply Review cards have visual regression cover
   await expect(applyReviewRequirement).toContainText("matched direct");
   await expect(applyReviewRequirement).toContainText("Tailoring action");
   await expect(applyReviewRequirement).toContainText("Resume coverage");
-  await expect(applyReviewRequirement).toContainText("covered in tailored resume");
+  await expect(applyReviewRequirement).toContainText(
+    "covered in tailored resume",
+  );
   await expectVisualSnapshot(
     applyReviewRequirement,
     "apply-review-requirement-fit-card.png",

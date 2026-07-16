@@ -119,7 +119,7 @@ Full first-run guide: [jobctrl.dev/user/getting-started](https://jobctrl.dev/use
 
 | | |
 | --- | --- |
-| [<img src="docs/assets/screenshots/pipelines.png" alt="Pipelines workspace with launch controls and an operational stage ledger (synthetic data)" width="440" />](docs/assets/screenshots/pipelines.png) | [<img src="docs/assets/screenshots/jobs.png" alt="Jobs table with fit scores, stages, and filters (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) |
+| [<img src="docs/assets/screenshots/pipelines.png" alt="Pipelines workspace with launch controls, a visual stage flow, and diagnostics (synthetic data)" width="440" />](docs/assets/screenshots/pipelines.png) | [<img src="docs/assets/screenshots/jobs.png" alt="Jobs table with fit scores, stages, and filters (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) |
 | **Pipelines** — launch bounded work and inspect cohorts, backlog, capacity, ETA, and active tasks | **Jobs** — scored, filterable, and ready for bulk or individual triage |
 | [<img src="docs/assets/screenshots/job-detail.png" alt="Route-level Job Detail workspace with requirement evidence and audit history (synthetic data)" width="440" />](docs/assets/screenshots/job-detail.png) | [<img src="docs/assets/screenshots/apply-review.png" alt="Application Review workspace editing a tailored resume with audit evidence (synthetic data)" width="440" />](docs/assets/screenshots/apply-review.png) |
 | **Job detail** — one bookmarkable workspace for fit, provenance, materials, progress, and history | **Apply Review** — edit and approve the exact resume and evidence binding that ships |
@@ -164,14 +164,24 @@ evidence, qualifications, and the complete capability matrix.
   [Local Data And Safety](#local-data-and-safety)).
 - Capture a current browser job page through the optional local browser
   extension, which feeds the existing manual-capture import path.
+- Work through one compact route hierarchy with 16px body copy in every density.
+  Compact, regular, and comfy modes change row/control spacing, while
+  record-heavy Jobs, Artifacts, Contacts, Discovery, and Settings surfaces
+  reflow into labelled cards at narrower widths.
 - Score jobs as an applicant-side triage aid with auditable evidence — never
   employer-side screening.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts.
+- Triage jobs through the real **Active**, **Deleted**, and **Hidden** queues.
+  The default Active view keeps source and warning columns available but hidden,
+  uses destructive styling for deletion, and opens a row through its focused
+  activation control instead of adding a competing always-visible action.
 - Review generated resumes in Apply Review as editable rich-text documents:
   change text and formatting, add hyperlinks, save a draft, render the
   replacement PDF, and approve only the exact reviewed artifact.
 - Inspect the evidence map to see which profile achievements and skills are
   reused in generated materials, requirement-fit decisions, and recorded gaps.
+  Job and artifact audit surfaces show those references as human-readable
+  evidence; storage identifiers remain under technical details.
 - Generate stored interview prep **(Beta)** for a selected job from grounded
   JobCtrl data, with evidence links and gap drills kept inspectable before the
   interview. Its truthfulness gates are shipped, but output quality has not yet
@@ -179,12 +189,14 @@ evidence, qualifications, and the complete capability matrix.
 - Edit resume PDF style templates in Preferences, choose a default template,
   and override the template per job without modifying candidate profile data.
 - Launch bounded Discover and Apply work from Pipelines, then inspect the same
-  workspace's operational ledger: current-execution and execution-sweep cohorts,
-  unrelated global backlog, source-family intake versus reconciliation,
-  per-stage outcomes, ETA, worker capacity, approximate task-queue pressure,
-  read-model freshness, and active work. Runs keeps the durable workflow
-  history; Jobs and route-level detail workspaces keep record-specific evidence
-  and actions adjacent.
+  workspace's live stage cards and diagnostics: current-execution and
+  execution-sweep cohorts, unrelated global backlog, source-family intake versus
+  reconciliation, exact terminal and attention outcomes, ETA, worker capacity,
+  approximate task-queue pressure, read-model freshness, and active work. An
+  active Discover run can be stopped there. A failed run reports whether work
+  remains before offering to set up a replacement run; setup never starts work
+  by itself. Runs keeps the durable workflow history; Jobs and route-level
+  detail workspaces keep record-specific evidence and actions adjacent.
 - Keep recruiter, hiring-manager, and referrer contact records per company or
   application, each fact carrying its provenance, with CSV import. Draft
   truthful, reviewable outreach messages under the same anti-fabrication gates
@@ -455,7 +467,9 @@ fixtures are never a production upgrade path.
 3. Run Discover from Pipelines, optionally targeting one source for a lighter
    run. Keep the same workspace open to distinguish the selected execution,
    its execution sweep, and unrelated global backlog while watching capacity,
-   task-queue pressure, freshness, active work, and ETA.
+   task-queue pressure, freshness, active work, and ETA. Stop the active run
+   there when needed; after a failure, start over only when the runtime
+   inventory confirms no work is still active.
 4. Review jobs, scores, blockers, compensation evidence, and audit history.
 5. Open Evidence from the main nav, Profile, or the Job Detail workspace to
    inspect which profile evidence backs generated materials and
@@ -464,7 +478,9 @@ fixtures are never a production upgrade path.
    jobs; review it carefully because output quality lacks real-user validation.
 7. Use Apply Review's rich-text resume editor to edit text, formatting, and
    hyperlinks, review comments, and compare a rendered draft against the
-   accepted artifact before approval.
+   accepted artifact before approval. The desktop queue stays beside a
+   full-width, top-to-bottom review flow; narrow screens move the queue above it
+   and wrap decision actions without dropping evidence.
 8. Run apply dry-runs before approving any real browser submission; the
    default live path requires an `approve_submit` decision in Apply Review
    before the backend claim can proceed. If you enable Auto apply, Runs shows

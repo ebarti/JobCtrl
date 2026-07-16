@@ -12,8 +12,10 @@ import {
 import { cn } from "../lib/cn.js";
 import { Button } from "./button.js";
 
-export interface DialogProps
-  extends Omit<DialogPrimitive.Root.Props, "children"> {
+export interface DialogProps extends Omit<
+  DialogPrimitive.Root.Props,
+  "children"
+> {
   children?: ReactNode;
 }
 
@@ -168,10 +170,7 @@ export function DialogHeader({
   return (
     <div
       data-slot="dialog-header"
-      className={cn(
-        "flex flex-col gap-1.5 pr-8 text-left",
-        className,
-      )}
+      className={cn("flex flex-col gap-1.5 pr-8 text-left", className)}
       {...props}
     />
   );
@@ -219,7 +218,7 @@ export const DialogDescription = forwardRef<
     ref={ref}
     data-slot="dialog-description"
     className={cn(
-      "text-[13px] leading-5 text-muted-foreground *:[a]:underline *:[a]:underline-offset-4 *:[a]:hover:text-foreground",
+      "text-sm leading-5 text-muted-foreground *:[a]:underline *:[a]:underline-offset-4 *:[a]:hover:text-foreground",
       className,
     )}
     {...props}

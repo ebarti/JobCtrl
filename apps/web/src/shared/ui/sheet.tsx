@@ -13,7 +13,10 @@ import {
 import { cn } from "../lib/cn.js";
 import { Button } from "./button.js";
 
-export interface SheetProps extends Omit<DialogPrimitive.Root.Props, "children"> {
+export interface SheetProps extends Omit<
+  DialogPrimitive.Root.Props,
+  "children"
+> {
   children?: ReactNode;
 }
 
@@ -142,8 +145,7 @@ const sheetVariants = cva(
 );
 
 export interface SheetContentProps
-  extends DialogPrimitive.Popup.Props,
-    VariantProps<typeof sheetVariants> {
+  extends DialogPrimitive.Popup.Props, VariantProps<typeof sheetVariants> {
   /** @deprecated Base UI keeps the Portal mounted with `keepMounted`. */
   forceMount?: boolean | undefined;
 }
@@ -187,10 +189,7 @@ export function SheetHeader({
   return (
     <div
       data-slot="sheet-header"
-      className={cn(
-        "flex flex-col gap-1.5 pr-8 text-left",
-        className,
-      )}
+      className={cn("flex flex-col gap-1.5 pr-8 text-left", className)}
       {...props}
     />
   );
@@ -237,7 +236,7 @@ export const SheetDescription = forwardRef<
   <DialogPrimitive.Description
     ref={ref}
     data-slot="sheet-description"
-    className={cn("text-[13px] leading-5 text-muted-foreground", className)}
+    className={cn("text-sm leading-5 text-muted-foreground", className)}
     {...props}
   />
 ));

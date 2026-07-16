@@ -1,8 +1,17 @@
-import type { ArtifactTailoringExplanation, BulletProvenanceEntry } from "@jobctrl/contracts";
-import type { JSX } from "react";
+import type {
+  ArtifactTailoringExplanation,
+  BulletProvenanceEntry,
+} from "@jobctrl/contracts";
+import type { JSX, ReactNode } from "react";
 
 import type { StatusTagTone } from "../../../shared/ui/status-tokens.js";
 import { formatToken } from "../lib/audit-format.js";
+import {
+  type AuditEvidenceReference,
+  type AuditReferenceLabel,
+  AuditTechnicalDetails,
+  type ResolveAuditEvidenceReference,
+} from "./AuditTechnicalDetails.js";
 
 type AnnotatedChange = ArtifactTailoringExplanation["annotatedChanges"][number];
 
@@ -15,6 +24,18 @@ export interface BulletProvenanceListProps {
    * isn't recorded for a bullet the diff shows an explicit "not recorded" state.
    */
   readonly annotatedChanges?: readonly AnnotatedChange[];
+  /**
+   * Resolves requirement foreign keys through the canonical job requirement
+   * projection. `undefined` means the projection is still loading; `null`
+   * means the key is not present in the current projection.
+   */
+  readonly resolveRequirementReference?: (
+    requirementId: string,
+  ) => string | null | undefined;
+  readonly resolveEvidenceReference?: ResolveAuditEvidenceReference;
+  readonly renderEvidenceReference?: (
+    reference: AuditEvidenceReference,
+  ) => ReactNode;
   readonly className?: string;
 }
 
@@ -26,7 +47,8 @@ function originalTextFor(
     return [...entry.sourceText];
   }
   const match = annotatedChanges.find(
-    (change) => change.section === entry.section && change.sourceId === entry.sourceId,
+    (change) =>
+      change.section === entry.section && change.sourceId === entry.sourceId,
   );
   if (!match) {
     return null;
@@ -61,6 +83,134 @@ function TagList({
   );
 }
 
+interface StructuredEvidenceReference extends AuditReferenceLabel {
+  readonly reference: AuditEvidenceReference | null | undefined;
+}
+
+function structuredEvidenceReferences(
+  evidenceIds: readonly string[],
+  resolveEvidenceReference:
+    | BulletProvenanceListProps["resolveEvidenceReference"]
+    | undefined,
+): StructuredEvidenceReference[] {
+  const uniqueIds = new Set(evidenceIds);
+  return Array.from(uniqueIds, (id) => {
+    const reference = resolveEvidenceReference?.(id);
+    return {
+      id,
+      label: reference
+        ? reference.title
+        : resolveEvidenceReference && reference === undefined
+          ? "Loading evidence details"
+          : "Evidence reference unavailable",
+      reference,
+    };
+  });
+}
+
+function EvidenceReferenceList({
+  evidenceIds,
+  resolveEvidenceReference,
+  renderEvidenceReference,
+}: {
+  readonly evidenceIds: readonly string[];
+  readonly resolveEvidenceReference:
+    | BulletProvenanceListProps["resolveEvidenceReference"]
+    | undefined;
+  readonly renderEvidenceReference:
+    | BulletProvenanceListProps["renderEvidenceReference"]
+    | undefined;
+}): JSX.Element {
+  const references = structuredEvidenceReferences(
+    evidenceIds,
+    resolveEvidenceReference,
+  );
+  return (
+    <div className="bullet-provenance-tags">
+      <dt>Profile evidence</dt>
+      <dd>
+        {references.length ? (
+          references.map(({ id, label, reference }) => (
+            <span className="tag muted" key={id}>
+              {reference && renderEvidenceReference
+                ? renderEvidenceReference(reference)
+                : label}
+            </span>
+          ))
+        ) : (
+          <span className="muted">none recorded</span>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+function RequirementReferenceList({
+  requirementIds,
+  resolveRequirementReference,
+}: {
+  readonly requirementIds: readonly string[];
+  readonly resolveRequirementReference:
+    | BulletProvenanceListProps["resolveRequirementReference"]
+    | undefined;
+}): JSX.Element {
+  if (!requirementIds.length) {
+    return (
+      <div className="bullet-provenance-tags">
+        <dt>Serves requirement</dt>
+        <dd>
+          <span className="muted">none recorded</span>
+        </dd>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bullet-provenance-tags">
+      <dt>Serves requirement</dt>
+      <dd>
+        {requirementIds.map((requirementId) => {
+          const reference = resolveRequirementReference?.(requirementId);
+          const label = reference?.trim();
+          return (
+            <span className="tag muted" key={requirementId}>
+              {label ||
+                (resolveRequirementReference && reference === undefined
+                  ? "Loading requirement details"
+                  : "Requirement reference unavailable")}
+            </span>
+          );
+        })}
+      </dd>
+    </div>
+  );
+}
+
+function TechnicalIdList({
+  label,
+  ids,
+}: {
+  readonly label: string;
+  readonly ids: readonly string[];
+}): JSX.Element | null {
+  const uniqueIds = Array.from(new Set(ids));
+  if (!uniqueIds.length) return null;
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>
+        <ul className="compact-list">
+          {uniqueIds.map((id) => (
+            <li key={id}>
+              <code>{id}</code>
+            </li>
+          ))}
+        </ul>
+      </dd>
+    </div>
+  );
+}
+
 function BulletDiff({
   original,
   tailored,
@@ -71,9 +221,13 @@ function BulletDiff({
   return (
     <div className="bullet-provenance-diff">
       <div className="bullet-provenance-diff-side">
-        <span className="bullet-provenance-diff-label">Original profile bullet</span>
+        <span className="bullet-provenance-diff-label">
+          Original profile bullet
+        </span>
         {original === null ? (
-          <p className="muted">Original profile bullet not recorded for this line.</p>
+          <p className="muted">
+            Original profile bullet not recorded for this line.
+          </p>
         ) : original.length ? (
           <ul className="annotation-line-list">
             {original.map((line) => (
@@ -81,7 +235,9 @@ function BulletDiff({
             ))}
           </ul>
         ) : (
-          <p className="muted">Drafted from related evidence (no single source bullet).</p>
+          <p className="muted">
+            Drafted from related evidence (no single source bullet).
+          </p>
         )}
       </div>
       <div className="bullet-provenance-diff-side">
@@ -99,9 +255,21 @@ function BulletDiff({
 function BulletProvenanceCard({
   entry,
   annotatedChanges,
+  resolveEvidenceReference,
+  renderEvidenceReference,
+  resolveRequirementReference,
 }: {
   readonly entry: BulletProvenanceEntry;
   readonly annotatedChanges: readonly AnnotatedChange[];
+  readonly resolveEvidenceReference:
+    | BulletProvenanceListProps["resolveEvidenceReference"]
+    | undefined;
+  readonly renderEvidenceReference:
+    | BulletProvenanceListProps["renderEvidenceReference"]
+    | undefined;
+  readonly resolveRequirementReference:
+    | BulletProvenanceListProps["resolveRequirementReference"]
+    | undefined;
 }): JSX.Element {
   return (
     <article className="bullet-provenance">
@@ -117,12 +285,26 @@ function BulletProvenanceCard({
         ) : null}
       </header>
 
-      <BulletDiff original={originalTextFor(entry, annotatedChanges)} tailored={entry.generatedText} />
+      <BulletDiff
+        original={originalTextFor(entry, annotatedChanges)}
+        tailored={entry.generatedText}
+      />
 
       <dl className="detail-list compact">
-        <TagList label="Profile evidence" items={entry.evidenceIds} />
-        <TagList label="Serves requirement" items={entry.requirementIds} />
-        <TagList label="Keywords demonstrated" items={entry.matchedKeywords} tone="ok" />
+        <EvidenceReferenceList
+          evidenceIds={entry.evidenceIds}
+          renderEvidenceReference={renderEvidenceReference}
+          resolveEvidenceReference={resolveEvidenceReference}
+        />
+        <RequirementReferenceList
+          requirementIds={entry.requirementIds}
+          resolveRequirementReference={resolveRequirementReference}
+        />
+        <TagList
+          label="Keywords demonstrated"
+          items={entry.matchedKeywords}
+          tone="ok"
+        />
         {entry.rationale ? (
           <div>
             <dt>Why</dt>
@@ -135,6 +317,17 @@ function BulletProvenanceCard({
           </div>
         )}
       </dl>
+      {entry.evidenceIds.length || entry.requirementIds.length ? (
+        <AuditTechnicalDetails>
+          <dl className="detail-list compact">
+            <TechnicalIdList label="Evidence IDs" ids={entry.evidenceIds} />
+            <TechnicalIdList
+              label="Requirement IDs"
+              ids={entry.requirementIds}
+            />
+          </dl>
+        </AuditTechnicalDetails>
+      ) : null}
     </article>
   );
 }
@@ -152,6 +345,9 @@ function BulletProvenanceCard({
 export function BulletProvenanceList({
   provenance,
   annotatedChanges = [],
+  resolveEvidenceReference,
+  renderEvidenceReference,
+  resolveRequirementReference,
   className = "section",
 }: BulletProvenanceListProps): JSX.Element {
   if (!provenance.length) {
@@ -159,7 +355,8 @@ export function BulletProvenanceList({
       <section className={className} aria-label="Per-bullet provenance">
         <h3>Per-bullet provenance</h3>
         <p className="muted">
-          No per-bullet provenance was recorded for this artifact&apos;s generation.
+          No per-bullet provenance was recorded for this artifact&apos;s
+          generation.
         </p>
       </section>
     );
@@ -170,7 +367,14 @@ export function BulletProvenanceList({
       <h3>Per-bullet provenance ({provenance.length})</h3>
       <div className="bullet-provenance-list">
         {provenance.map((entry) => (
-          <BulletProvenanceCard key={entry.bulletId} entry={entry} annotatedChanges={annotatedChanges} />
+          <BulletProvenanceCard
+            key={entry.bulletId}
+            entry={entry}
+            annotatedChanges={annotatedChanges}
+            renderEvidenceReference={renderEvidenceReference}
+            resolveEvidenceReference={resolveEvidenceReference}
+            resolveRequirementReference={resolveRequirementReference}
+          />
         ))}
       </div>
     </section>

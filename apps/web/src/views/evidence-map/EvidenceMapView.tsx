@@ -1,5 +1,10 @@
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { IconCalendar, IconFileText, IconLink } from "@tabler/icons-react";
+import {
+  IconCalendar,
+  IconChevronDown,
+  IconFileText,
+  IconLink,
+} from "@tabler/icons-react";
 import { useMemo } from "react";
 
 import { EvidenceStatusBadge } from "../../contexts/operations/components/EvidenceStatusBadge.js";
@@ -13,6 +18,12 @@ import type {
   EvidenceUsageRef,
 } from "../../contexts/operations/types.js";
 import type { EvidenceMapSearch } from "../../routes/-evidence-map.search.js";
+import { Button } from "../../shared/ui/button.js";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "../../shared/ui/collapsible.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 
@@ -58,50 +69,128 @@ function entryMatchesQuery(entry: EvidenceMapEntry, q: string): boolean {
   ].some((value) => includesText(value, q));
 }
 
+function displayText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized || null;
+}
+
+function jobLinkLabel(usage: EvidenceUsageRef): string {
+  const title = displayText(usage.jobTitle);
+  if (title) return title;
+  const employer = displayText(usage.employer);
+  return employer ? `Role at ${employer}` : "Job";
+}
+
+function usageSubjectLabel(usage: EvidenceUsageRef): string {
+  if (usage.kind === "resume_bullet") {
+    return displayText(usage.generatedTextPreview) || "Resume bullet";
+  }
+  if (usage.kind === "requirement_fit") {
+    return displayText(usage.requirementText) || "Requirement";
+  }
+  const keyword = displayText(usage.keyword);
+  return keyword ? `${keyword} coverage` : "Skill coverage";
+}
+
 function requirementLinkLabel(usage: EvidenceUsageRef): string {
   return [
-    usage.jobTitle || usage.jobKey,
-    usage.requirementText,
+    jobLinkLabel(usage),
+    usageSubjectLabel(usage),
     usage.requirementFitKind,
   ].filter(Boolean).join(" · ");
 }
 
 function resumeLinkLabel(usage: EvidenceUsageRef): string {
-  return [
-    usage.jobTitle || usage.jobKey,
-    usage.generatedTextPreview || usage.bulletId,
-  ].filter(Boolean).join(" · ");
+  return [jobLinkLabel(usage), usageSubjectLabel(usage)].join(" · ");
+}
+
+function hasSparseUsageLabel(usage: EvidenceUsageRef): boolean {
+  if (!displayText(usage.jobTitle)) return true;
+  if (usage.kind === "resume_bullet") {
+    return !displayText(usage.generatedTextPreview);
+  }
+  if (usage.kind === "requirement_fit") {
+    return !displayText(usage.requirementText);
+  }
+  return !displayText(usage.keyword);
+}
+
+function UsageTechnicalDetails({ usage }: { readonly usage: EvidenceUsageRef }) {
+  const identifiers = [
+    ["Job record key", usage.jobKey],
+    ["Artifact ID", usage.artifactId],
+    ["Bullet ID", usage.bulletId],
+    ["Requirement ID", usage.requirementId],
+  ].filter((item): item is [string, string] => Boolean(item[1]));
+  return (
+    <Collapsible className="flex flex-col items-start">
+      <CollapsibleTrigger
+        render={
+          <Button
+            className="h-auto min-h-0 px-0 py-0"
+            size="sm"
+            type="button"
+            variant="link"
+          />
+        }
+      >
+        Technical details
+        <IconChevronDown aria-hidden="true" data-icon="inline-end" />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="pt-1">
+        <dl className="m-0 grid gap-1">
+          {identifiers.map(([label, value]) => (
+            <div className="grid gap-0.5" key={label}>
+              <dt className="text-xs text-muted-foreground">{label}</dt>
+              <dd className="m-0">
+                <code className="break-all text-[13px]">{value}</code>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </CollapsibleContent>
+    </Collapsible>
+  );
 }
 
 function UsageLink({ usage }: { readonly usage: EvidenceUsageRef }) {
+  const technicalDetails = hasSparseUsageLabel(usage) ? (
+    <UsageTechnicalDetails usage={usage} />
+  ) : null;
   if (usage.kind === "resume_bullet" && usage.artifactId) {
     return (
-      <Link
-        className="evidence-usage-link"
-        params={{ artifactId: usage.artifactId }}
-        to="/artifacts/$artifactId"
-      >
-        <span>{resumeLinkLabel(usage)}</span>
-        <span className="evidence-meta-label">
-          <IconFileText aria-hidden="true" />
-          artifact
-        </span>
-      </Link>
+      <div className="flex flex-col">
+        <Link
+          className="evidence-usage-link"
+          params={{ artifactId: usage.artifactId }}
+          to="/artifacts/$artifactId"
+        >
+          <span>{resumeLinkLabel(usage)}</span>
+          <span className="evidence-meta-label">
+            <IconFileText aria-hidden="true" />
+            artifact
+          </span>
+        </Link>
+        {technicalDetails}
+      </div>
     );
   }
   const statusType = usage.requirementFitKind ? "fit" : "coverage";
   return (
-    <Link className="evidence-usage-link" params={{ jobId: usage.jobKey }} to="/jobs/$jobId">
-      <span>{requirementLinkLabel(usage) || usage.jobKey}</span>
-      {statusType === "fit" ? (
-        <EvidenceStatusBadge type="fit" value={usage.requirementFitKind} />
-      ) : (
-        <EvidenceStatusBadge
-          type="coverage"
-          value={usage.coverageState ?? usage.artifactCoverageState}
-        />
-      )}
-    </Link>
+    <div className="flex flex-col">
+      <Link className="evidence-usage-link" params={{ jobId: usage.jobKey }} to="/jobs/$jobId">
+        <span>{requirementLinkLabel(usage)}</span>
+        {statusType === "fit" ? (
+          <EvidenceStatusBadge type="fit" value={usage.requirementFitKind} />
+        ) : (
+          <EvidenceStatusBadge
+            type="coverage"
+            value={usage.coverageState ?? usage.artifactCoverageState}
+          />
+        )}
+      </Link>
+      {technicalDetails}
+    </div>
   );
 }
 

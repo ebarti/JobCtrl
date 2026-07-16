@@ -3,40 +3,55 @@
  * layouts live in their own redesign stylesheets. */
 
 .main {
-  padding: clamp(24px, 3vw, 40px) clamp(20px, 3.5vw, 48px) 88px;
+  width: 100%;
+  min-width: 0;
+  padding: clamp(14px, 1.5vw, 20px) clamp(20px, 3.5vw, 40px) 64px;
 }
 
 .page-head {
-  align-items: flex-start;
-  margin-bottom: 28px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  margin-bottom: 12px;
 }
 
 .page-head-text {
-  gap: 7px;
+  flex: 1 1 24rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 2px 12px;
 }
 
 .eyebrow {
+  grid-column: 1 / -1;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 650;
   letter-spacing: 0.08em;
 }
 
 .page-head h1 {
-  font-size: clamp(28px, 2.4vw, 36px);
+  grid-column: 1;
+  overflow-wrap: anywhere;
+  font-size: var(--jh-font-size-page-title);
   font-weight: 680;
-  letter-spacing: -0.045em;
-  line-height: 1.05;
+  letter-spacing: -0.04em;
+  line-height: var(--jh-line-height-tight);
 }
 
 .page-head-subtitle {
+  grid-column: 2;
   max-width: 76ch;
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: var(--jh-font-size-body);
+  line-height: var(--jh-line-height-body);
 }
 
 .page-head-actions {
-  gap: 10px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  gap: 8px;
 }
 
 .card {
@@ -55,7 +70,7 @@
 }
 
 .card-hd h2 {
-  font-size: 15px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 650;
   letter-spacing: -0.02em;
 }
@@ -72,7 +87,7 @@
   border-radius: calc(var(--radius) * 0.8);
   padding: 7px 12px;
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 600;
   line-height: 1;
   transition:
@@ -159,12 +174,13 @@ input[type="radio"] {
 .field {
   gap: 7px;
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 550;
 }
 
 .field-hint,
-.field .meta {
+.field .meta,
+.field small {
   color: var(--muted-foreground);
   font-weight: 400;
   line-height: 1.45;
@@ -202,10 +218,27 @@ input[type="radio"] {
 
 @media (max-width: 720px) {
   .main {
-    padding: 20px 16px 72px;
+    padding: 14px 16px 48px;
   }
 
   .page-head {
-    margin-bottom: 22px;
+    align-items: stretch;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .page-head-text,
+  .page-head-actions {
+    width: 100%;
+    flex-basis: 100%;
+  }
+
+  .page-head-text {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-head h1,
+  .page-head-subtitle {
+    grid-column: 1;
   }
 }

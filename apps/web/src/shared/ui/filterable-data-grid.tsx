@@ -12,6 +12,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -68,6 +69,7 @@ export interface DataGridSortState {
 }
 
 export type DataGridDensity = "compact" | "regular" | "comfy";
+export type DataGridMobileLayout = "table" | "cards";
 export type DataGridColumnVisibilityState = Record<string, boolean>;
 export type DataGridColumnWidthsState = Record<string, number>;
 export type DataGridColorTone = "success" | "warning" | "danger" | "info";
@@ -136,12 +138,14 @@ export interface FilterableDataGridProps<TData> {
   columnWidths?: DataGridColumnWidthsState;
   onColumnWidthsChange?: (next: DataGridColumnWidthsState) => void;
   density?: DataGridDensity | null;
+  mobileLayout?: DataGridMobileLayout;
   grouping?: DataGridGroupingState | null;
   colorRules?: readonly DataGridColorRule[];
   rowClassName?: (row: TData) => string | undefined;
   rowAriaSelected?: (row: TData) => boolean;
   onRowActivate?: (row: TData) => void;
   rowActivationLabel?: (row: TData) => string;
+  rowActivationAppearance?: "visible" | "focus-only";
   onPageRowsChange?: (rows: readonly TData[]) => void;
 }
 
@@ -200,10 +204,15 @@ function shouldIgnoreRowActivation(event: MouseEvent<HTMLElement>): boolean {
   ) {
     return true;
   }
-  return event.target instanceof Element && Boolean(event.target.closest(ROW_ACTIVATION_IGNORE_SELECTOR));
+  return (
+    event.target instanceof Element &&
+    Boolean(event.target.closest(ROW_ACTIVATION_IGNORE_SELECTOR))
+  );
 }
 
-function classNames(...values: Array<string | undefined | false>): string | undefined {
+function classNames(
+  ...values: Array<string | undefined | false>
+): string | undefined {
   const joined = values.filter(Boolean).join(" ");
   return joined || undefined;
 }
@@ -242,7 +251,10 @@ function filterVisibleColumns<TData>(
   return columns.filter((column) => visibility[column.id] !== false);
 }
 
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+function sameStrings(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
   return (
     left.length === right.length &&
     left.every((value, index) => value === right[index])
@@ -321,7 +333,9 @@ export function isActiveDataGridFilter(
   return Boolean(filter?.text.trim() || filter?.selectedValues.length);
 }
 
-export function hasActiveDataGridFilters(filters: DataGridFilterState): boolean {
+export function hasActiveDataGridFilters(
+  filters: DataGridFilterState,
+): boolean {
   return Object.values(filters).some(isActiveDataGridFilter);
 }
 
@@ -493,12 +507,14 @@ export function FilterableDataGrid<TData>({
   columnWidths: controlledColumnWidths,
   onColumnWidthsChange,
   density,
+  mobileLayout = "table",
   grouping,
   colorRules = [],
   rowClassName,
   rowAriaSelected,
   onRowActivate,
   rowActivationLabel,
+  rowActivationAppearance = "focus-only",
   onPageRowsChange,
 }: FilterableDataGridProps<TData>) {
   const [localSort, setLocalSort] = useState<DataGridSortState>(initialSort);
@@ -507,6 +523,8 @@ export function FilterableDataGrid<TData>({
   const [localPage, setLocalPage] = useState(1);
   const [localPageSize, setLocalPageSize] = useState(initialPageSize);
   const [valueQueries, setValueQueries] = useState<Record<string, string>>({});
+  const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
+  const tableInstanceId = useId();
   const [localColumnWidths, setLocalColumnWidths] =
     useState<DataGridColumnWidthsState>({});
   const tableRef = useRef<HTMLTableElement | null>(null);
@@ -536,7 +554,9 @@ export function FilterableDataGrid<TData>({
     ? columnsById.get(grouping.columnId)
     : undefined;
   const activationColumnIndex = useMemo(() => {
-    const rowHeaderIndex = displayColumns.findIndex((column) => column.rowHeader);
+    const rowHeaderIndex = displayColumns.findIndex(
+      (column) => column.rowHeader,
+    );
     return rowHeaderIndex >= 0 ? rowHeaderIndex : 0;
   }, [displayColumns]);
 
@@ -670,7 +690,9 @@ export function FilterableDataGrid<TData>({
       const next = Object.fromEntries(
         Object.entries(current).filter(([columnId]) => columnIds.has(columnId)),
       );
-      return Object.keys(next).length === Object.keys(current).length ? current : next;
+      return Object.keys(next).length === Object.keys(current).length
+        ? current
+        : next;
     });
   }, [columns]);
 
@@ -682,9 +704,7 @@ export function FilterableDataGrid<TData>({
   );
 
   function setColumnWidths(
-    updater: (
-      current: DataGridColumnWidthsState,
-    ) => DataGridColumnWidthsState,
+    updater: (current: DataGridColumnWidthsState) => DataGridColumnWidthsState,
   ) {
     const next = updater(columnWidths);
     if (next === columnWidths) {
@@ -816,7 +836,11 @@ export function FilterableDataGrid<TData>({
     const minWidth = column.minWidth ?? 56;
     const maxWidth = column.maxWidth ?? 1600;
     const startingWidths = measuredColumnWidths();
-    const startWidth = columnWidths[column.id] ?? startingWidths[column.id] ?? column.width ?? minWidth;
+    const startWidth =
+      columnWidths[column.id] ??
+      startingWidths[column.id] ??
+      column.width ??
+      minWidth;
     const startX = event.clientX;
 
     setColumnWidths((current) => ({ ...startingWidths, ...current }));
@@ -867,16 +891,96 @@ export function FilterableDataGrid<TData>({
       ? `${pageRows.length} shown / ${visibleRows.length} filtered / ${data.length} loaded`
       : `${visibleRows.length} shown / ${data.length} loaded`;
   const columnWidthTotal = resizableColumns
-    ? displayColumns.reduce((total, column) => total + (columnWidths[column.id] ?? column.width ?? 0), 0)
+    ? displayColumns.reduce(
+        (total, column) =>
+          total + (columnWidths[column.id] ?? column.width ?? 0),
+        0,
+      )
     : 0;
   const tableStyle = columnWidthTotal
     ? { width: `max(100%, ${columnWidthTotal}px)` }
     : undefined;
 
+  const renderColumnControls = (column: DataGridColumn<TData>) => {
+    const active = sort.columnId === column.id;
+    const SortIcon =
+      sort.direction === "desc" ? IconSortDescending : IconSortAscending;
+    const sortable = column.sortable ?? Boolean(column.getSortValue);
+    const filterable = Boolean(column.getFilterValue);
+    const filter = filters[column.id] ?? emptyFilter();
+    const filterActive = isActiveDataGridFilter(filter);
+    const header =
+      typeof column.header === "function"
+        ? column.header(headerContext)
+        : (column.header ?? column.label);
+
+    return (
+      <>
+        {sortable ? (
+          <button
+            type="button"
+            className="data-grid-sort-button"
+            aria-label={sortButtonLabel(
+              column.label,
+              active ? sort.direction : null,
+            )}
+            onClick={() => toggleSort(column)}
+          >
+            <span>{header}</span>
+            {active ? (
+              <SortIcon size={13} aria-hidden="true" />
+            ) : (
+              <span aria-hidden="true">↕</span>
+            )}
+          </button>
+        ) : (
+          <span className="data-grid-column-title">{header}</span>
+        )}
+        {filterable ? (
+          <ColumnFilterDialog
+            column={column}
+            filter={filter}
+            values={distinctValues.get(column.id) ?? []}
+            valueQuery={valueQueries[column.id] ?? ""}
+            active={filterActive}
+            onClear={() => clearFilter(column.id)}
+            onOperatorChange={(operator) =>
+              updateFilter(column.id, (current) => ({
+                ...current,
+                operator,
+              }))
+            }
+            onTextChange={(text) =>
+              updateFilter(column.id, (current) => ({
+                ...current,
+                text,
+              }))
+            }
+            onValueQueryChange={(text) =>
+              setValueQueries((current) => ({
+                ...current,
+                [column.id]: text,
+              }))
+            }
+            onToggleValue={(value) => toggleFilterValue(column.id, value)}
+          />
+        ) : null}
+      </>
+    );
+  };
+
+  const mobileControlColumns = displayColumns.filter(
+    (column) =>
+      typeof column.header === "function" ||
+      (column.sortable ?? Boolean(column.getSortValue)) ||
+      Boolean(column.getFilterValue),
+  );
+
   return (
     <div
       className="filterable-data-grid data-surface"
       data-density={density ?? undefined}
+      data-mobile-layout={mobileLayout}
     >
       <div className="data-grid-toolbar">
         <div className="data-grid-view-title">
@@ -911,9 +1015,36 @@ export function FilterableDataGrid<TData>({
           ))}
         </div>
       ) : null}
+      {mobileLayout === "cards" && mobileControlColumns.length ? (
+        <details
+          className="data-grid-mobile-controls"
+          open={mobileControlsOpen}
+          onToggle={(event) => setMobileControlsOpen(event.currentTarget.open)}
+        >
+          <summary>Sort and filter columns</summary>
+          {mobileControlsOpen ? (
+            <div
+              className="data-grid-mobile-control-list"
+              role="group"
+              aria-label={`${title} column controls`}
+            >
+              {mobileControlColumns.map((column) => (
+                <div
+                  key={column.id}
+                  className="data-grid-mobile-control"
+                  data-column-id={column.id}
+                >
+                  {renderColumnControls(column)}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </details>
+      ) : null}
       <div className="filterable-data-grid-scroll">
         <table
           ref={tableRef}
+          aria-label={title}
           className={
             tableClassName
               ? `filterable-data-grid-table ${tableClassName}`
@@ -939,19 +1070,12 @@ export function FilterableDataGrid<TData>({
             <tr>
               {displayColumns.map((column) => {
                 const active = sort.columnId === column.id;
-                const SortIcon = sort.direction === "desc" ? IconSortDescending : IconSortAscending;
                 const sortable =
                   column.sortable ?? Boolean(column.getSortValue);
-                const filterable = Boolean(column.getFilterValue);
-                const filter = filters[column.id] ?? emptyFilter();
-                const filterActive = isActiveDataGridFilter(filter);
-                const header =
-                  typeof column.header === "function"
-                    ? column.header(headerContext)
-                    : (column.header ?? column.label);
                 return (
                   <th
                     key={column.id}
+                    id={`${tableInstanceId}-${column.id}-header`}
                     data-column-id={column.id}
                     aria-sort={
                       active
@@ -969,57 +1093,7 @@ export function FilterableDataGrid<TData>({
                     scope="col"
                   >
                     <div className="data-grid-column-head">
-                      {sortable ? (
-                        <button
-                          type="button"
-                          className="data-grid-sort-button"
-                          aria-label={sortButtonLabel(
-                            column.label,
-                            active ? sort.direction : null,
-                          )}
-                          onClick={() => toggleSort(column)}
-                        >
-                          <span>{header}</span>
-                          {active ? (
-                            <SortIcon size={13} aria-hidden="true" />
-                          ) : (
-                            <span aria-hidden="true">↕</span>
-                          )}
-                        </button>
-                      ) : (
-                        <span className="data-grid-column-title">{header}</span>
-                      )}
-                      {filterable ? (
-                        <ColumnFilterDialog
-                          column={column}
-                          filter={filter}
-                          values={distinctValues.get(column.id) ?? []}
-                          valueQuery={valueQueries[column.id] ?? ""}
-                          active={filterActive}
-                          onClear={() => clearFilter(column.id)}
-                          onOperatorChange={(operator) =>
-                            updateFilter(column.id, (current) => ({
-                              ...current,
-                              operator,
-                            }))
-                          }
-                          onTextChange={(text) =>
-                            updateFilter(column.id, (current) => ({
-                              ...current,
-                              text,
-                            }))
-                          }
-                          onValueQueryChange={(text) =>
-                            setValueQueries((current) => ({
-                              ...current,
-                              [column.id]: text,
-                            }))
-                          }
-                          onToggleValue={(value) =>
-                            toggleFilterValue(column.id, value)
-                          }
-                        />
-                      ) : null}
+                      {renderColumnControls(column)}
                     </div>
                     {resizableColumns ? (
                       <button
@@ -1070,7 +1144,8 @@ export function FilterableDataGrid<TData>({
                     toneClass("row", rowTone),
                     onRowActivate && "data-grid-row-activatable",
                   );
-                  const activationLabel = rowActivationLabel?.(row) ?? `Open row ${rowId}`;
+                  const activationLabel =
+                    rowActivationLabel?.(row) ?? `Open row ${rowId}`;
                   return (
                     <tr
                       key={rowId}
@@ -1088,7 +1163,11 @@ export function FilterableDataGrid<TData>({
                       }
                     >
                       {displayColumns.map((column, columnIndex) => {
-                        const content = column.render(row, { pageRows, rowId, rowIndex });
+                        const content = column.render(row, {
+                          pageRows,
+                          rowId,
+                          rowIndex,
+                        });
                         const cellTone = firstMatchingTone(
                           row,
                           columnsById,
@@ -1100,11 +1179,16 @@ export function FilterableDataGrid<TData>({
                           toneClass("cell", cellTone),
                         );
                         const isActivationCell =
-                          Boolean(onRowActivate) && columnIndex === activationColumnIndex;
+                          Boolean(onRowActivate) &&
+                          columnIndex === activationColumnIndex;
                         const activationButton = isActivationCell ? (
                           <button
                             type="button"
-                            className="data-grid-row-activation-button"
+                            className={classNames(
+                              "data-grid-row-activation-button",
+                              rowActivationAppearance === "focus-only" &&
+                                "sr-only focus:not-sr-only",
+                            )}
                             aria-label={activationLabel}
                             onClick={(event) => {
                               event.stopPropagation();
@@ -1118,13 +1202,21 @@ export function FilterableDataGrid<TData>({
                           <th
                             key={column.id}
                             className={cellClassName}
+                            data-label={column.label}
+                            data-row-header="true"
+                            headers={`${tableInstanceId}-${column.id}-header`}
                             scope="row"
                           >
                             {content}
                             {activationButton}
                           </th>
                         ) : (
-                          <td key={column.id} className={cellClassName}>
+                          <td
+                            key={column.id}
+                            className={cellClassName}
+                            data-label={column.label}
+                            headers={`${tableInstanceId}-${column.id}-header`}
+                          >
                             {content}
                             {activationButton}
                           </td>

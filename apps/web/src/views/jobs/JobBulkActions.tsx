@@ -3,13 +3,13 @@ import { RetailorCurrentPolicyButton } from "../../contexts/materials/components
 import { RescoreCurrentPolicyButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
-import { ToggleGroup, ToggleGroupItem } from "../../shared/ui/toggle-group.js";
+import { Button } from "../../shared/ui/button.js";
+import { Tabs, TabsList, TabsTrigger } from "../../shared/ui/tabs.js";
 
-const JOB_VIEWS = [
-  { label: "active", value: "active" },
-  { label: "closed", value: "closed" },
-  { label: "deleted", value: "deleted" },
-  { label: "hidden", value: "hidden" },
+const JOB_QUEUES = [
+  { label: "Active", value: "active" },
+  { label: "Deleted", value: "deleted" },
+  { label: "Hidden", value: "hidden" },
 ] as const satisfies readonly {
   label: string;
   value: JobsSearch["deleted"];
@@ -68,7 +68,7 @@ export function JobBulkActions({
 }: JobBulkActionsProps) {
   const restoring = search.deleted === "deleted";
   const hidden = search.deleted === "hidden";
-  const closed = search.deleted === "closed";
+  const legacyClosed = search.deleted === "closed";
   const retryAllFailures = search.deleted === "active";
   const retrySelectedFailures = retryAllFailures && search.state === "failed";
   const primaryLabel = hidden
@@ -77,88 +77,91 @@ export function JobBulkActions({
       ? "restore"
       : "delete selected";
   return (
-    <div className="bulk-bar">
-      <ToggleGroup
-        aria-label="Job views"
-        className="job-view-switcher max-w-full flex-wrap"
-        size="sm"
-        spacing={1}
-        type="single"
-        value={search.deleted}
-        variant="outline"
-        onValueChange={(value) => {
-          if (value) {
+    <>
+      <div className="jobs-queue-navigation">
+        {legacyClosed ? (
+          <span className="jobs-legacy-queue-context" role="status">
+            Viewing posting availability exceptions from a legacy link.
+          </span>
+        ) : null}
+        <Tabs
+          className="jobs-queue-tabs-root"
+          onValueChange={(value) => {
             onSetDeleted(value as JobsSearch["deleted"]);
-          }
-        }}
-      >
-        {JOB_VIEWS.map((view) => (
-          <ToggleGroupItem key={view.value} value={view.value}>
-            {view.label}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-      {selectedCount ? (
-        <span className="meta">{selectedCount} selected</span>
-      ) : null}
-      <button
-        className="tab"
-        type="button"
-        disabled={!hasItems}
-        onClick={onSelectPage}
-      >
-        select page
-      </button>
-      <button
-        className="tab"
-        type="button"
-        disabled={!hasAnyMatching || hasLocalFilters}
-        onClick={onSelectAllMatching}
-      >
-        select all matching
-      </button>
-      <button
-        className="tab"
-        type="button"
-        disabled={!selectedCount}
-        onClick={onClearSelection}
-      >
-        clear selected
-      </button>
-      <RefreshAllCompensationButton onSuccess={onMaintenanceSuccess} />
-      {staleCount || selectedStaleKeys.length ? (
-        <ResetStaleScoresButton
-          jobKeys={selectedStaleKeys}
-          staleCount={selectedStaleKeys.length || staleCount}
-          label={
-            selectedStaleKeys.length
-              ? "reset stale selected"
-              : "reset all stale scores"
-          }
-          onSuccess={onResetStaleSuccess}
-        />
-      ) : null}
-      {!restoring && !hidden && !closed ? (
-        <>
-          <RescoreCurrentPolicyButton onSuccess={onMaintenanceSuccess} />
-          <RetailorCurrentPolicyButton onSuccess={onMaintenanceSuccess} />
-          {selectedJobKeys.length ? (
-            <>
-              <RescoreCurrentPolicyButton
-                jobKeys={selectedJobKeys}
-                label="rescore selected"
-                onSuccess={onMaintenanceSuccess}
-              />
-              <RetailorCurrentPolicyButton
-                jobKeys={selectedJobKeys}
-                label="re-tailor selected"
-                onSuccess={onMaintenanceSuccess}
-              />
-            </>
-          ) : null}
-        </>
-      ) : null}
-      {retrySelectedFailures ? (
+          }}
+          value={legacyClosed ? undefined : search.deleted}
+        >
+          <TabsList aria-label="Job queues" className="jobs-queue-tabs" loop>
+            {JOB_QUEUES.map((queue) => (
+              <TabsTrigger key={queue.value} value={queue.value}>
+                {queue.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
+      <div className="bulk-bar jobs-bulk-actions">
+        {selectedCount ? (
+          <span className="meta">{selectedCount} selected</span>
+        ) : null}
+        <button
+          className="tab"
+          type="button"
+          disabled={!hasItems}
+          onClick={onSelectPage}
+        >
+          select page
+        </button>
+        <button
+          className="tab"
+          type="button"
+          disabled={!hasAnyMatching || hasLocalFilters}
+          onClick={onSelectAllMatching}
+        >
+          select all matching
+        </button>
+        <button
+          className="tab"
+          type="button"
+          disabled={!selectedCount}
+          onClick={onClearSelection}
+        >
+          clear selected
+        </button>
+        <RefreshAllCompensationButton onSuccess={onMaintenanceSuccess} />
+        {staleCount || selectedStaleKeys.length ? (
+          <ResetStaleScoresButton
+            jobKeys={selectedStaleKeys}
+            staleCount={selectedStaleKeys.length || staleCount}
+            label={
+              selectedStaleKeys.length
+                ? "reset stale selected"
+                : "reset all stale scores"
+            }
+            onSuccess={onResetStaleSuccess}
+          />
+        ) : null}
+        {!restoring && !hidden && !legacyClosed ? (
+          <>
+            <RescoreCurrentPolicyButton onSuccess={onMaintenanceSuccess} />
+            <RetailorCurrentPolicyButton onSuccess={onMaintenanceSuccess} />
+            {selectedJobKeys.length ? (
+              <>
+                <RescoreCurrentPolicyButton
+                  jobKeys={selectedJobKeys}
+                  label="rescore selected"
+                  onSuccess={onMaintenanceSuccess}
+                />
+                <RetailorCurrentPolicyButton
+                  jobKeys={selectedJobKeys}
+                  label="re-tailor selected"
+                  onSuccess={onMaintenanceSuccess}
+                />
+              </>
+            ) : null}
+          </>
+        ) : null}
+        {retrySelectedFailures ? (
           <button
             className="tab on"
             type="button"
@@ -167,58 +170,62 @@ export function JobBulkActions({
           >
             retry selected
           </button>
-      ) : null}
-      {retryAllFailures ? (
-        <>
-          <button
-            className="tab"
+        ) : null}
+        {retryAllFailures ? (
+          <>
+            <button
+              className="tab"
+              type="button"
+              disabled={hasLocalFilters || pendingPreparationLoading}
+              onClick={onRunPendingPreparation}
+            >
+              continue pending prep
+            </button>
+            <button
+              className="tab"
+              type="button"
+              disabled={hasLocalFilters || retryLoading}
+              onClick={onRetryAllFailed}
+            >
+              retry all failed
+            </button>
+          </>
+        ) : null}
+        {!hidden ? (
+          <Button
+            aria-label="hide selected"
+            size="sm"
             type="button"
-            disabled={hasLocalFilters || pendingPreparationLoading}
-            onClick={onRunPendingPreparation}
+            variant="outline"
+            disabled={!selectedCount || loading}
+            onClick={onHideSelected}
           >
-            continue pending prep
-          </button>
-          <button
-            className="tab"
+            hide
+          </Button>
+        ) : null}
+        {restoring || hidden ? (
+          <Button
+            aria-label="permanently delete selected"
+            size="sm"
             type="button"
-            disabled={hasLocalFilters || retryLoading}
-            onClick={onRetryAllFailed}
+            variant="destructive"
+            disabled={!selectedCount || loading}
+            onClick={onPermanentlyDeleteSelected}
           >
-            retry all failed
-          </button>
-        </>
-      ) : null}
-      {!hidden ? (
-        <button
-          aria-label="hide selected"
-          className="tab danger-action"
+            permanently delete
+          </Button>
+        ) : null}
+        <Button
+          aria-label={restoring ? "restore selected" : undefined}
+          size="sm"
           type="button"
+          variant={restoring || hidden ? "default" : "destructive"}
           disabled={!selectedCount || loading}
-          onClick={onHideSelected}
+          onClick={onPrimaryAction}
         >
-          hide
-        </button>
-      ) : null}
-      {restoring || hidden ? (
-        <button
-          aria-label="permanently delete selected"
-          className="tab danger-action"
-          type="button"
-          disabled={!selectedCount || loading}
-          onClick={onPermanentlyDeleteSelected}
-        >
-          permanently delete
-        </button>
-      ) : null}
-      <button
-        aria-label={restoring ? "restore selected" : undefined}
-        className={`tab ${restoring || hidden ? "on" : "danger-action"}`}
-        type="button"
-        disabled={!selectedCount || loading}
-        onClick={onPrimaryAction}
-      >
-        {primaryLabel}
-      </button>
-    </div>
+          {primaryLabel}
+        </Button>
+      </div>
+    </>
   );
 }

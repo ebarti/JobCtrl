@@ -1,9 +1,11 @@
 import Database from "better-sqlite3";
 import { test, expect, type Locator, type Page } from "@playwright/test";
 
-const FILTER_PARAMS = "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
+const FILTER_PARAMS =
+  "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
 const PLATFORM_JOB_TITLE = "Director of Platform Engineering";
-const PLATFORM_JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
+const PLATFORM_JOB_URL =
+  "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
 // Pending-preparation pickup is an existing non-apply Jobs behavior; Phase 22 blocks apply/material/Gmail/destructive paths.
 const PROHIBITED_PRODUCT_PATH_REQUESTS = [
   /\/v1\/jobs\/.+\/actions\/apply$/i,
@@ -30,7 +32,9 @@ function watchProhibitedProductPathRequests(page: Page): string[] {
   page.on("request", (request) => {
     if (["GET", "HEAD", "OPTIONS"].includes(request.method())) return;
     const pathname = new URL(request.url()).pathname;
-    if (PROHIBITED_PRODUCT_PATH_REQUESTS.some((pattern) => pattern.test(pathname))) {
+    if (
+      PROHIBITED_PRODUCT_PATH_REQUESTS.some((pattern) => pattern.test(pathname))
+    ) {
       prohibitedRequests.push(`${request.method()} ${pathname}`);
     }
   });
@@ -40,7 +44,9 @@ function watchProhibitedProductPathRequests(page: Page): string[] {
 function seedSyntheticCompensationData(): void {
   const dbPath = process.env["JOBCTRL_E2E_DB_PATH"];
   if (!dbPath) {
-    throw new Error("JOBCTRL_E2E_DB_PATH is required for Jobs compensation e2e data.");
+    throw new Error(
+      "JOBCTRL_E2E_DB_PATH is required for Jobs compensation e2e data.",
+    );
   }
   const db = new Database(dbPath);
   try {
@@ -102,7 +108,10 @@ function seedSyntheticCompensationData(): void {
         PRIMARY KEY (tenant_id, job_url)
       );
     `);
-    db.prepare("UPDATE jobs SET salary = ? WHERE url = ?").run("€55,000/year", PLATFORM_JOB_URL);
+    db.prepare("UPDATE jobs SET salary = ? WHERE url = ?").run(
+      "€55,000/year",
+      PLATFORM_JOB_URL,
+    );
     db.prepare(
       `INSERT INTO job_posted_compensation_facts (
         tenant_id, job_url, source_field, source_text, legacy_raw_salary,
@@ -318,10 +327,36 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
 
   const gridScroll = page.locator(".filterable-data-grid-scroll");
   await expect(gridScroll).toBeVisible({ timeout: 30_000 });
-  const hasHorizontalScroll = await gridScroll.evaluate(
-    (element) => element.scrollWidth > element.clientWidth,
+  const responsiveLayout = await gridScroll.evaluate((element) => ({
+    documentClientWidth: document.documentElement.clientWidth,
+    documentScrollWidth: document.documentElement.scrollWidth,
+    gridClientWidth: element.clientWidth,
+    gridScrollWidth: element.scrollWidth,
+  }));
+  expect(
+    responsiveLayout.documentScrollWidth,
+    "mobile Jobs should not create document-level horizontal overflow",
+  ).toBeLessThanOrEqual(responsiveLayout.documentClientWidth + 1);
+  expect(
+    responsiveLayout.gridScrollWidth,
+    "mobile Jobs should reflow rather than require horizontal grid scrolling",
+  ).toBeLessThanOrEqual(responsiveLayout.gridClientWidth + 1);
+  await page.getByRole("button", { name: "Configure table columns" }).click();
+  const columnDialog = page.getByRole("dialog", { name: "Columns" });
+  const warningsColumn = columnDialog.getByRole("checkbox", {
+    name: "Warnings",
+  });
+  await expect(warningsColumn).not.toBeChecked();
+  await warningsColumn.check();
+  await page.keyboard.press("Escape");
+  await expect(columnDialog).toHaveCount(0);
+
+  const mobileColumnControls = page.locator(
+    "details.data-grid-mobile-controls",
   );
-  expect(hasHorizontalScroll).toBe(true);
+  await expect(mobileColumnControls).toBeVisible();
+  await mobileColumnControls.locator("summary").click();
+  await expect(mobileColumnControls).toHaveAttribute("open", "");
   for (const label of [
     "Salary min (€ / year)",
     "Salary max (€ / year)",
@@ -329,8 +364,16 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
     "Confidence",
     "Warnings",
   ]) {
-    await expect(page.getByRole("button", { name: `Sort by ${label}` })).toBeVisible();
+    await expect(
+      mobileColumnControls.getByRole("button", { name: `Sort by ${label}` }),
+    ).toBeVisible();
   }
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+    "expanded mobile column controls should remain inside the viewport",
+  ).toBeLessThanOrEqual(
+    await page.evaluate(() => document.documentElement.clientWidth + 1),
+  );
 
   const row = page
     .locator("table.jobs-data-grid-table tbody tr")
@@ -344,29 +387,49 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   await expect(row.getByText(/2 sources/i)).toBeVisible();
   await expect(row.getByText("2 warnings")).toBeVisible();
 
-  await row
-    .getByRole("button", { name: /^Open job Director of Platform Engineering/ })
-    .click();
+  const visibleTitle = row
+    .locator('[data-slot="title-stack-primary"]')
+    .filter({ hasText: new RegExp(`^${PLATFORM_JOB_TITLE}$`) });
+  await expect(visibleTitle).toBeVisible();
+  await visibleTitle.click();
 
-  const drawer = page.getByRole("dialog", { name: "Job details" });
+  const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });
 
-  const compensation = drawer.getByRole("region", { name: "Compensation evidence" });
+  const compensation = drawer.getByRole("region", {
+    name: "Compensation evidence",
+  });
   const triage = drawer.getByRole("region", { name: "Job audit triage" });
   const description = drawer.locator("section.job-detail-description");
   await expectRegionBefore(triage, compensation, "triage before compensation");
-  await expectRegionBefore(compensation, description, "compensation before description");
+  await expectRegionBefore(
+    compensation,
+    description,
+    "compensation before description",
+  );
 
-  await expect(compensation.getByRole("heading", { name: "Compensation" })).toBeVisible();
-  await expect(compensation.getByText("EUR 55000/year").first()).toBeVisible();
-  await expect(compensation.getByText("EUR 112000-142000/year").first()).toBeVisible();
-  await expect(compensation.getByText("reported_compensation_sample")).toBeVisible();
-  await expect(compensation.getByText("source_conflict_with_posted_salary")).toBeVisible();
   await expect(
-    compensation.getByText("Reported compensation diverges materially from the posted salary."),
+    compensation.getByRole("heading", { name: "Compensation" }),
+  ).toBeVisible();
+  await expect(compensation.getByText("EUR 55000/year").first()).toBeVisible();
+  await expect(
+    compensation.getByText("EUR 112000-142000/year").first(),
   ).toBeVisible();
   await expect(
-    compensation.getByText("The estimate uses reported compensation rows for the job company and role."),
+    compensation.getByText("reported_compensation_sample"),
+  ).toBeVisible();
+  await expect(
+    compensation.getByText("source_conflict_with_posted_salary"),
+  ).toBeVisible();
+  await expect(
+    compensation.getByText(
+      "Reported compensation diverges materially from the posted salary.",
+    ),
+  ).toBeVisible();
+  await expect(
+    compensation.getByText(
+      "The estimate uses reported compensation rows for the job company and role.",
+    ),
   ).toBeVisible();
   await expect(compensation.getByText("Reported source trail")).toBeVisible();
   await expect(compensation.getByText("Levels.fyi").first()).toBeVisible();
@@ -374,14 +437,22 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   await expect(compensation.getByText("Confidence factors")).toBeVisible();
 
   await expect(triage.getByText("reported_compensation_sample")).toHaveCount(0);
-  await expect(triage.getByText("source_conflict_with_posted_salary")).toHaveCount(0);
-  await expect(triage.getByText("Reported compensation diverges materially from the posted salary.")).toHaveCount(0);
-  await expect(drawer.getByLabel("Apply readiness")).not.toContainText(/compensation|salary|source conflict/i);
+  await expect(
+    triage.getByText("source_conflict_with_posted_salary"),
+  ).toHaveCount(0);
+  await expect(
+    triage.getByText(
+      "Reported compensation diverges materially from the posted salary.",
+    ),
+  ).toHaveCount(0);
+  await expect(drawer.getByLabel("Apply readiness")).not.toContainText(
+    /compensation|salary|source conflict/i,
+  );
   await expect(drawer.getByText("Fit score").first()).toBeVisible();
   expect(prohibitedRequests).toEqual([]);
 });
 
-test("Job drawer: opens with requirement fit, stages, artifacts, survives reload, close preserves the URL filter", async ({
+test("Job detail: keyboard activation opens requirement fit, stages, and artifacts; reload and back preserve the URL filter", async ({
   page,
 }) => {
   const prohibitedRequests = watchProhibitedProductPathRequests(page);
@@ -390,20 +461,28 @@ test("Job drawer: opens with requirement fit, stages, artifacts, survives reload
     .locator("table.jobs-data-grid-table tbody tr")
     .filter({ hasText: "Director of Platform Engineering" });
   await expect(row).toBeVisible({ timeout: 30_000 });
-  // Row activation is the named per-row "Open" button, not a whole-row click:
-  // structural rows stay non-interactive for accessibility.
-  await row
-    .getByRole("button", { name: /^Open job Director of Platform Engineering/ })
-    .click();
+  const keyboardActivation = row.getByRole("button", {
+    name: /^Open job Director of Platform Engineering/,
+  });
+  await keyboardActivation.focus();
+  await expect(keyboardActivation).toBeFocused();
+  await expect(keyboardActivation).toBeVisible();
+  await keyboardActivation.press("Enter");
 
   await expect(page).toHaveURL(/\/jobs\/.+/);
-  const drawer = page.getByRole("dialog", { name: "Job details" });
+  const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });
-  await expect(drawer.getByRole("heading", { name: /Preparation diagnostics/i })).toBeVisible();
-  await expect(drawer.getByRole("heading", { name: /Active artifacts/i })).toBeVisible();
+  await expect(
+    drawer.getByRole("heading", { name: /Preparation diagnostics/i }),
+  ).toBeVisible();
+  await expect(
+    drawer.getByRole("heading", { name: /Active artifacts/i }),
+  ).toBeVisible();
   const roleAnalysis = drawer.getByRole("region", { name: "Role Analysis" });
   await expect(roleAnalysis).toBeVisible();
-  await expect(roleAnalysis.getByRole("heading", { name: /Requirements \(2\)/i })).toBeVisible();
+  await expect(
+    roleAnalysis.getByRole("heading", { name: /Requirements \(2\)/i }),
+  ).toBeVisible();
   const primaryRequirement = roleAnalysis.getByLabel(
     "Requirement: Lead platform reliability improvements across critical services.",
   );
@@ -414,33 +493,46 @@ test("Job drawer: opens with requirement fit, stages, artifacts, survives reload
   await expect(primaryRequirement).toContainText("Double Down");
 
   await page.reload();
-  await expect(page.getByRole("dialog", { name: "Job details" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("article", { name: "Job details" })).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(page).toHaveURL(/sort=fit_score/);
 
-  const closeButton = page.getByRole("button", { name: /close job details/i });
-  await closeButton.click();
-  await expect(page.getByRole("dialog", { name: "Job details" })).toHaveCount(0);
+  const backButton = page.getByRole("button", { name: "Back to jobs" });
+  await backButton.click();
+  await expect(page.getByRole("article", { name: "Job details" })).toHaveCount(
+    0,
+  );
   await expect(page).toHaveURL(/sort=fit_score/);
   await expect(page).toHaveURL(/\/jobs\?/);
   expect(prohibitedRequests).toEqual([]);
 });
 
-test("Job drawer: Apply Review handoff preserves the selected job", async ({ page }) => {
+test("Job detail: Apply Review handoff preserves the selected job", async ({
+  page,
+}) => {
   const prohibitedRequests = watchProhibitedProductPathRequests(page);
 
   const response = await page.request.get("/v1/apply/review-queue");
   expect(response.ok()).toBeTruthy();
   const queue = (await response.json()) as {
-    readonly items?: readonly { readonly jobKey: string; readonly title: string }[];
+    readonly items?: readonly {
+      readonly jobKey: string;
+      readonly title: string;
+    }[];
   };
   const target = queue.items?.[0];
   expect(target, "seeded review queue should contain an item").toBeTruthy();
 
-  await page.goto(`/jobs/${encodeURIComponent(target!.jobKey)}?${FILTER_PARAMS}`);
-  const drawer = page.getByRole("dialog", { name: "Job details" });
+  await page.goto(
+    `/jobs/${encodeURIComponent(target!.jobKey)}?${FILTER_PARAMS}`,
+  );
+  const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 30_000 });
 
-  await drawer.getByRole("link", { name: `Open Apply Review for ${target!.title}` }).click();
+  await drawer
+    .getByRole("link", { name: `Open Apply Review for ${target!.title}` })
+    .click();
 
   await expect(page).toHaveURL(/\/apply-review\?/);
   const applyReviewUrl = new URL(page.url());

@@ -42,7 +42,9 @@ export function ApplyRuntimeSettingsPanel() {
         {status ? <div className="status-line" role="status">{status}</div> : null}
         <form.Field name="applyMaxBudgetUsd">{(field) => <div className="field"><label htmlFor="apply-max-budget">Maximum AI budget per application (USD)</label><input id="apply-max-budget" name="applyMaxBudgetUsd" type="number" min={0} step={0.01} readOnly={!budget.editable} aria-describedby="apply-max-budget-help" value={field.state.value} onChange={(event) => field.handleChange(Number(event.target.value))} /><small id="apply-max-budget-help">0 is a zero-dollar cap, not unlimited. {policyContext(budget.source)}</small></div>}</form.Field>
         <form.Field name="applyTimeoutSeconds">{(field) => <div className="field"><label htmlFor="apply-timeout">Apply agent timeout (seconds)</label><input id="apply-timeout" name="applyTimeoutSeconds" type="number" min={60} max={3600} step={1} readOnly={!timeout.editable} aria-describedby="apply-timeout-help" value={field.state.value} onChange={(event) => field.handleChange(Number(event.target.value))} /><small id="apply-timeout-help">Per application agent; separate from Temporal activity timeouts. {policyContext(timeout.source)}</small></div>}</form.Field>
-        <button className="tab on" type="submit" disabled={updateSettings.isPending || (!budget.editable && !timeout.editable)}>{updateSettings.isPending ? "saving" : "save Apply runtime"}</button>
+        <div className="form-actions">
+          <button className="tab on" type="submit" disabled={updateSettings.isPending || (!budget.editable && !timeout.editable)}>{updateSettings.isPending ? "saving" : "save Apply runtime"}</button>
+        </div>
       </form>
     </section>
   );

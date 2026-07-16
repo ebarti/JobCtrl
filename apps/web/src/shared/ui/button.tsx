@@ -5,7 +5,7 @@ import { forwardRef } from "react";
 import { cn } from "../lib/cn.js";
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent text-[13px] font-medium transition-[color,background-color,border-color,box-shadow,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent text-sm font-medium transition-[color,background-color,border-color,box-shadow,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
@@ -15,18 +15,16 @@ const buttonVariants = cva(
           "bg-success text-success-foreground shadow-[0_1px_2px_rgb(0_0_0_/_0.14)] hover:bg-success/90 focus-visible:ring-success active:translate-y-px",
         warning:
           "bg-warning text-warning-foreground shadow-[0_1px_2px_rgb(0_0_0_/_0.1)] hover:bg-warning/90 focus-visible:ring-warning active:translate-y-px",
-        destructive: "bg-destructive text-white hover:bg-destructive/90 active:translate-y-px",
-        outline:
-          "border-border bg-card text-foreground hover:bg-muted",
-        secondary:
-          "bg-secondary text-secondary-foreground hover:bg-accent",
-        ghost:
-          "text-muted-foreground hover:bg-muted hover:text-foreground",
+        destructive:
+          "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive disabled:bg-destructive/60 disabled:text-white disabled:opacity-100 active:translate-y-px",
+        outline: "border-border bg-card text-foreground hover:bg-muted",
+        secondary: "bg-secondary text-secondary-foreground hover:bg-accent",
+        ghost: "text-muted-foreground hover:bg-muted hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
         default: "h-9 px-3.5",
-        sm: "h-8 px-3 text-[12px]",
+        sm: "h-8 px-3 text-sm",
         lg: "h-10 px-4",
         icon: "size-9",
       },

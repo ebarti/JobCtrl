@@ -68,8 +68,14 @@ export function CompensationSourcePolicyPanel() {
       ) : null}
       {query.isLoading ? <Empty title="Loading compensation sources." /> : null}
       {!query.isLoading && !query.error ? (
-        <div className="source-registry-table-wrap">
-          <table className="source-registry-table" aria-label="Compensation source policy">
+        <div
+          className="source-registry-table-wrap responsive-record-table-wrap"
+          data-mobile-layout="cards"
+        >
+          <table
+            className="source-registry-table responsive-record-table"
+            aria-label="Compensation source policy"
+          >
             <caption>{sources.length} configured source policies</caption>
             <thead>
               <tr>
@@ -112,7 +118,7 @@ function CompensationSourcePolicyRow({
 }) {
   return (
     <tr>
-      <th scope="row">
+      <th data-label="Source" data-row-header="true" scope="row">
         <strong>{source.displayName}</strong>
         <div className="meta">{source.sourceId}</div>
         <div className="source-table-actions">
@@ -130,18 +136,18 @@ function CompensationSourcePolicyRow({
           ) : null}
         </div>
       </th>
-      <td>
+      <td data-label="Enablement">
         <CompensationSourceControls
           busy={busy}
           onUpdate={onUpdate}
           source={source}
         />
       </td>
-      <td>
+      <td data-label="Policy">
         <div>{formatLabel(source.sourceType)}</div>
         <span className="tag muted">{formatLabel(source.accessMode)}</span>
       </td>
-      <td>
+      <td data-label="Status">
         <div className="flex flex-col items-start gap-1">
           <span className={availabilityClass(source.availability)}>
             {formatLabel(source.availability)}
@@ -152,15 +158,15 @@ function CompensationSourcePolicyRow({
           <div className="meta">{source.configured ? "configured" : "not configured"}</div>
         </div>
       </td>
-      <td>{source.freshnessPolicy}</td>
-      <td>{source.attributionRequirement}</td>
-      <td>
+      <td data-label="Freshness">{source.freshnessPolicy}</td>
+      <td data-label="Attribution">{source.attributionRequirement}</td>
+      <td data-label="Coverage">
         <div>{formatLabel(source.coverage.geography)}</div>
         <div className="meta">{source.coverage.regions.join(", ") || "none configured"}</div>
         <div className="meta">{source.coverage.notes}</div>
       </td>
-      <td>{renderSupportedFields(source)}</td>
-      <td>
+      <td data-label="Supported fields">{renderSupportedFields(source)}</td>
+      <td data-label="Access notes">
         {source.disabledReason ? <div className="banner inline">{source.disabledReason}</div> : null}
         {source.notes.map((note) => (
           <div key={note} className="meta">

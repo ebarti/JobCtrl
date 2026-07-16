@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
+import { provenanceEntries } from "../../../test/fixtures/materials-inspector.js";
 import { TailoringExplanationSection } from "./TailoringExplanationSection.js";
 
 const keywordOnlyExplanation: ArtifactTailoringExplanation = {
@@ -231,6 +232,62 @@ describe("<TailoringExplanationSection>", () => {
     expect(
       screen.queryByText("Evidence reference unavailable."),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps distinct per-bullet evidence with duplicate titles keyed by canonical ID", async () => {
+    const user = userEvent.setup();
+    const explanation: ArtifactTailoringExplanation = {
+      ...keywordOnlyExplanation,
+      bulletProvenance: [
+        {
+          ...provenanceEntries[0]!,
+          evidenceIds: ["ev-platform-a", "ev-platform-b", "ev-platform-a"],
+        },
+      ],
+    };
+
+    render(
+      <TailoringExplanationSection
+        explanation={explanation}
+        renderEvidenceReference={(reference) => (
+          <a href={`/evidence-map?entry=${reference.entryId}`}>
+            {reference.title}
+          </a>
+        )}
+        resolveEvidenceReference={(evidenceId) => ({
+          entryId: evidenceId,
+          title: "Led a platform reliability transformation",
+          excerpt: null,
+        })}
+      />,
+    );
+
+    const provenance = screen.getByRole("region", {
+      name: "Per-bullet provenance",
+    });
+    const references = within(provenance).getAllByRole("link", {
+      name: "Led a platform reliability transformation",
+    });
+    expect(references).toHaveLength(2);
+    expect(
+      references.map((reference) => reference.getAttribute("href")),
+    ).toEqual([
+      "/evidence-map?entry=ev-platform-a",
+      "/evidence-map?entry=ev-platform-b",
+    ]);
+    expect(
+      within(provenance).queryByText("ev-platform-a"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(provenance).queryByText("ev-platform-b"),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(provenance).getByRole("button", { name: "Technical details" }),
+    );
+
+    expect(within(provenance).getByText("ev-platform-a")).toBeInTheDocument();
+    expect(within(provenance).getByText("ev-platform-b")).toBeInTheDocument();
   });
 
   it("renders an honest not-recorded voice pass and empty provenance (INSPECT-05)", () => {

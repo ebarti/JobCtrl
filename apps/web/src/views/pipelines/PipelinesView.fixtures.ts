@@ -269,6 +269,77 @@ export const pipelinesCompletedSnapshot = snapshot({
   overallEta: { status: "unavailable", reason: "no_work", asOf: AS_OF },
 });
 
+export const pipelinesFailedHistorySnapshot = snapshot({
+  execution: {
+    ...pipelinesDiscoveringSnapshot.execution!,
+    selectedAs: "latest_terminal",
+    workflowStatus: "terminated",
+    phase: "failed",
+    membershipClosed: false,
+    finishedAt: "2026-07-14T12:04:00.000Z",
+    errorCode: "reconciled_not_found",
+    currentExecution: {
+      members: 9,
+      planned: 9,
+      notEligible: 0,
+      pending: 9,
+      failedPlan: 0,
+      terminal: 0,
+      remaining: 9,
+    },
+    sweptExistingBacklog: {
+      members: 11,
+      planned: 11,
+      notEligible: 0,
+      pending: 11,
+      failedPlan: 0,
+      terminal: 0,
+      remaining: 11,
+    },
+  },
+  capacity: {
+    ...availableCapacity,
+    activeSlots: 0,
+    availableSlots: 4,
+    slotSaturation: 0,
+  },
+  stages: discoveringStages.map((entry) => ({
+    ...entry,
+    currentExecution: counts(),
+    capacity: {
+      ...availableCapacity,
+      activeSlots: 0,
+      availableSlots: 4,
+      slotSaturation: 0,
+    },
+    eta: { status: "unavailable", reason: "no_work", asOf: AS_OF },
+  })),
+  activeItems: [],
+  activeItemsTotal: 0,
+  activeItemsTruncated: false,
+  overallEta: { status: "unavailable", reason: "no_work", asOf: AS_OF },
+});
+
+export const pipelinesMixedFailureSnapshot = snapshot({
+  stages: discoveringStages.map((entry) =>
+    entry.stage === "source_family" && entry.scope === "current_execution"
+      ? {
+          ...entry,
+          currentExecution: counts({
+            eligible: 8,
+            waiting: 1,
+            processing: 1,
+            succeeded: 2,
+            blocked: 1,
+            failed: 1,
+            canceled: 1,
+            needsVerification: 1,
+          }),
+        }
+      : entry,
+  ),
+});
+
 export const pipelinesCompletedWithIssuesSnapshot = snapshot({
   freshness: {
     status: "stale",

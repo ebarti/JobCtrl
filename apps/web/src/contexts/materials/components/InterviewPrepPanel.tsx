@@ -1,7 +1,12 @@
-import type { InterviewPrep, InterviewPrepItem, InterviewPrepItemKind } from "@jobctrl/contracts";
+import type {
+  EmployerAnalysisRequirement,
+  InterviewPrep,
+  InterviewPrepItem,
+  InterviewPrepItemKind,
+} from "@jobctrl/contracts";
 import { IconAlertTriangle } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import type { JSX, ReactNode } from "react";
 
 import {
   Alert,
@@ -10,11 +15,17 @@ import {
 } from "../../../shared/ui/alert.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
+import {
+  AuditTechnicalDetails,
+  type ResolveAuditEvidenceReference,
+} from "./AuditTechnicalDetails.js";
 import { GenerateInterviewPrepButton } from "./GenerateInterviewPrepButton.js";
 
 export interface InterviewPrepPanelProps {
   jobId: string;
   prep: InterviewPrep | null;
+  requirements?: readonly EmployerAnalysisRequirement[];
+  resolveEvidenceReference?: ResolveAuditEvidenceReference;
   reflectionContent?: ReactNode;
 }
 
@@ -24,6 +35,7 @@ const KIND_LABELS: Record<InterviewPrepItemKind, string> = {
   gap_drill: "Gap drill",
   company_note: "Company note",
 };
+const EMPTY_REQUIREMENTS: readonly EmployerAnalysisRequirement[] = [];
 
 function kindTone(kind: InterviewPrepItemKind): "info" | "muted" | "warn" {
   if (kind === "gap_drill") return "warn";
@@ -31,11 +43,64 @@ function kindTone(kind: InterviewPrepItemKind): "info" | "muted" | "warn" {
   return "info";
 }
 
-function PrepItemCard({ item, jobId }: { readonly item: InterviewPrepItem; readonly jobId: string }) {
+function EvidenceReference({
+  evidenceId,
+  jobId,
+  resolveEvidenceReference,
+}: {
+  readonly evidenceId: string;
+  readonly jobId: string;
+  readonly resolveEvidenceReference:
+    | ResolveAuditEvidenceReference
+    | undefined;
+}): JSX.Element {
+  const reference = resolveEvidenceReference
+    ? resolveEvidenceReference(evidenceId)
+    : null;
+  if (reference === undefined) {
+    return <li className="muted">Loading evidence details.</li>;
+  }
+  if (!reference) {
+    return <li className="muted">Evidence reference unavailable.</li>;
+  }
+  return (
+    <li className="flex min-w-0 flex-col gap-0.5">
+      <Link
+        className="font-medium"
+        search={{ q: "", entry: reference.entryId, job: jobId }}
+        to="/evidence-map"
+      >
+        {reference.title}
+      </Link>
+      {reference.excerpt ? (
+        <span className="muted leading-relaxed">{reference.excerpt}</span>
+      ) : null}
+    </li>
+  );
+}
+
+function PrepItemCard({
+  item,
+  jobId,
+  requirementsById,
+  resolveEvidenceReference,
+}: {
+  readonly item: InterviewPrepItem;
+  readonly jobId: string;
+  readonly requirementsById: ReadonlyMap<
+    string,
+    EmployerAnalysisRequirement
+  >;
+  readonly resolveEvidenceReference:
+    | ResolveAuditEvidenceReference
+    | undefined;
+}): JSX.Element {
   return (
     <article className="interview-prep-item">
       <div className="interview-prep-item-head">
-        <span className={`tag ${kindTone(item.kind)}`}>{KIND_LABELS[item.kind]}</span>
+        <span className={`tag ${kindTone(item.kind)}`}>
+          {KIND_LABELS[item.kind]}
+        </span>
         <h4>{item.title}</h4>
       </div>
       <p>{item.generatedText}</p>
@@ -45,32 +110,80 @@ function PrepItemCard({ item, jobId }: { readonly item: InterviewPrepItem; reado
             <>
               <dt>Grounded in</dt>
               <dd>
-                {item.evidenceIds.map((evidenceId) => (
-                  <Link
-                    className="tag info"
-                    key={evidenceId}
-                    search={{ q: "", entry: evidenceId, job: jobId }}
-                    to="/evidence-map"
-                  >
-                    {evidenceId}
-                  </Link>
-                ))}
+                <ul className="compact-list">
+                  {item.evidenceIds.map((evidenceId) => (
+                    <EvidenceReference
+                      evidenceId={evidenceId}
+                      jobId={jobId}
+                      key={evidenceId}
+                      resolveEvidenceReference={resolveEvidenceReference}
+                    />
+                  ))}
+                </ul>
               </dd>
             </>
           ) : null}
           {item.requirementIds.length ? (
             <>
-              <dt>{item.kind === "gap_drill" ? "Gap requirements" : "Requirements"}</dt>
+              <dt>
+                {item.kind === "gap_drill"
+                  ? "Gap requirements"
+                  : "Requirements"}
+              </dt>
               <dd>
-                {item.requirementIds.map((requirementId) => (
-                  <span className="tag muted" key={requirementId}>
-                    {requirementId}
-                  </span>
-                ))}
+                <ul className="compact-list">
+                  {item.requirementIds.map((requirementId) => (
+                    <li
+                      className={
+                        requirementsById.has(requirementId)
+                          ? undefined
+                          : "muted"
+                      }
+                      key={requirementId}
+                    >
+                      {requirementsById.get(requirementId)?.text ??
+                        "Requirement reference unavailable."}
+                    </li>
+                  ))}
+                </ul>
               </dd>
             </>
           ) : null}
         </dl>
+      ) : null}
+      {item.evidenceIds.length || item.requirementIds.length ? (
+        <AuditTechnicalDetails>
+          <dl className="interview-prep-provenance">
+            {item.evidenceIds.length ? (
+              <>
+                <dt>Evidence IDs</dt>
+                <dd>
+                  <ul className="compact-list">
+                    {item.evidenceIds.map((evidenceId) => (
+                      <li key={evidenceId}>
+                        <code>{evidenceId}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </>
+            ) : null}
+            {item.requirementIds.length ? (
+              <>
+                <dt>Requirement IDs</dt>
+                <dd>
+                  <ul className="compact-list">
+                    {item.requirementIds.map((requirementId) => (
+                      <li key={requirementId}>
+                        <code>{requirementId}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </>
+            ) : null}
+          </dl>
+        </AuditTechnicalDetails>
       ) : null}
       {item.sourceText.length ? (
         <details className="interview-prep-sources">
@@ -130,23 +243,46 @@ function ResidualWarnings({
   );
 }
 
-export function InterviewPrepPanel({ jobId, prep, reflectionContent }: InterviewPrepPanelProps) {
+export function InterviewPrepPanel({
+  jobId,
+  prep,
+  requirements = EMPTY_REQUIREMENTS,
+  resolveEvidenceReference,
+  reflectionContent,
+}: InterviewPrepPanelProps): JSX.Element {
+  const requirementsById = new Map(
+    requirements.map((requirement) => [requirement.id, requirement]),
+  );
   return (
-    <section className="section interview-prep-panel" aria-label="Interview preparation">
+    <section
+      className="section interview-prep-panel"
+      aria-label="Interview preparation"
+    >
       <div className="interview-prep-heading">
         <h3>Interview prep</h3>
-        <GenerateInterviewPrepButton jobId={jobId} hasAcceptedPrep={Boolean(prep)} />
+        <GenerateInterviewPrepButton
+          jobId={jobId}
+          hasAcceptedPrep={Boolean(prep)}
+        />
       </div>
       {prep ? (
         <>
           <GateAudit prep={prep} />
           <div className="interview-prep-items">
             {prep.items.map((item) => (
-              <PrepItemCard item={item} jobId={jobId} key={item.itemId} />
+              <PrepItemCard
+                item={item}
+                jobId={jobId}
+                key={item.itemId}
+                requirementsById={requirementsById}
+                resolveEvidenceReference={resolveEvidenceReference}
+              />
             ))}
           </div>
           {reflectionContent ? (
-            <div className="interview-prep-reflections">{reflectionContent}</div>
+            <div className="interview-prep-reflections">
+              {reflectionContent}
+            </div>
           ) : null}
         </>
       ) : (

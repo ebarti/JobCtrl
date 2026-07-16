@@ -320,8 +320,15 @@ do not own queries, mutations, or persistent stores. They own:
 `<FilterableDataGrid>` (`shared/ui/filterable-data-grid.tsx`); each table
 view supplies a `DataGridColumn<T>[]` column model (`views/<view>/columns.tsx`,
 and `activity-columns.tsx` for Debug). It implements sort, per-column
-filter, pagination, row selection, and row activation directly —
-`@tanstack/react-table` is a **types-only** dependency here (the views
+filter, pagination, row selection, and row activation directly. A view that
+sets `mobileLayout="cards"` keeps the semantic table in the DOM but, at 900px
+and below, turns each record into a two-column labelled card (one column below
+560px) and exposes sort/filter controls above the records. Jobs, Artifacts,
+Contacts, Discovery source data, and Settings compensation-source data use this
+contract instead of page-level horizontal scrolling. The grid also supports a
+focus-only activation control so an actionable row does not need a permanently
+visible duplicate **Open** button. `@tanstack/react-table` is a **types-only**
+dependency here (the views
 import just `RowSelectionState` / `SortingState`). An earlier shadcn
 `data-table.tsx` (which wraps `@tanstack/react-table` at runtime) still
 lives under `shared/ui/` but is imported by no view.
@@ -329,7 +336,7 @@ lives under `shared/ui/` but is imported by no view.
 | View | Owned files | Composes from |
 |---|---|---|
 | `views/dashboard/` | `DashboardView.tsx`, `KpiGrid.tsx`, `ConversionPanel.tsx`, `Funnel.tsx`, `SourceHealthCard.tsx`, `ApplyRunsCard.tsx`, `apply-run-dot-state.ts` | operations (`useDashboardSummaryQuery`, `useApplicationOutcomesQuery`); pipeline (`<StageBadge>`); apply (`<ApplyRunBadge>`, `<OutcomeSuggestionsPanel>`) |
-| `views/jobs/` | `JobsView.tsx`, `JobsTable.tsx`, `JobBulkActions.tsx`, `JobDetailDrawer.tsx`, `JobOverview.tsx`, `JobDescription.tsx`, `JobAuditTriage.tsx`, `columns.tsx`, `jobStageFilters.ts`, `selectors/jobsSelectors.ts` | operations (`useJobsListQuery`, `useJobDetailQuery`, `<JobAuditHistory>`); discovery (bulk delete / hide / unhide / restore / permanent-delete); scoring (`<ScoreBadge>`, `<ScoreCorrectionControl>`, `<RescoreJobButton>`); pipeline (`<StageBadge>`, `<StageTimeline>`, `<JobActions>`); materials (`<RetailorCurrentPolicyButton>`, `<EmployerAnalysisPanel>`, artifact badges + `<OpenArtifactButton>`); apply (`<ApplyHistory>`, `<JobOutcomePanel>`); enrichment (`<CompensationAuditSection>`) |
+| `views/jobs/` | `JobsView.tsx`, `JobsTable.tsx`, `JobBulkActions.tsx`, `JobDetailDrawer.tsx`, `JobOverview.tsx`, `JobDescription.tsx`, `JobAuditTriage.tsx`, `columns.tsx`, `jobStageFilters.ts`, `selectors/jobsSelectors.ts` | operations (`useJobsListQuery`, `useJobDetailQuery`, `<JobAuditHistory>`); discovery (the user-facing Active / Deleted / Hidden Tabs plus bulk delete / hide / unhide / restore / permanent-delete); scoring (`<ScoreBadge>`, `<ScoreCorrectionControl>`, `<RescoreJobButton>`); pipeline (`<StageBadge>`, `<StageTimeline>`, `<JobActions>`); materials (`<RetailorCurrentPolicyButton>`, `<EmployerAnalysisPanel>`, artifact badges + `<OpenArtifactButton>`); apply (`<ApplyHistory>`, `<JobOutcomePanel>`); enrichment (`<CompensationAuditSection>`) |
 | `views/artifacts/` | `ArtifactsView.tsx`, `ArtifactsTable.tsx`, `ArtifactFilterBar.tsx`, `ArtifactDetailPanel.tsx`, `columns.tsx` | operations (`useArtifactsListQuery`, `useArtifactDetailQuery`); materials (`<OpenArtifactButton>`, artifact badges, `<TailoringExplanationSection>`) |
 | `views/apply-review/` | `ApplyReviewView.tsx` | operations (`useApplyReviewQueueQuery`, `useResumeReviewDraftQuery`); apply (review mutations, `<ApplyReviewDecisionControls>`, `<CancelApplyButton>`); materials (`<ResumePlateEditor>`, `<ArtifactGroundingRiskPanel>`, `<JobResumeTemplateSelect>`); enrichment (`<CompensationSummaryStrip>`); profile (`useResumeTemplatesQuery`) |
 | `views/runs/` | `RunsView.tsx`, `RunsTable.tsx`, `RunsFilterBar.tsx`, `WorkflowRunDrawer.tsx`, `columns.tsx`, `temporal-web-ui.ts` | operations (`useWorkflowRunsListQuery`, `useWorkflowRunDetailQuery`); apply (`<RunStatusBadge>`); pipeline (`<CancelWorkflowRunButton>`) |
@@ -337,12 +344,32 @@ lives under `shared/ui/` but is imported by no view.
 | `views/discovery/` | `DiscoveryView.tsx` | discovery (`<DiscoveryProductControls>`, `<DiscoveryRuntimeSettingsPanel>`); profile (`<TargetSearchSettingsPanel>`, `<DiscoveryAutomationSettingsPanel>`) |
 | `views/debug/` | `DebugView.tsx`, `DebugActivityTable.tsx`, `DebugFilterBar.tsx`, `ActivityDetailDrawer.tsx`, `activity-columns.tsx`, `activity-tone.ts` | operations (`useActivityListQuery`, `useActivityEventQuery`); URL-bound event search, sorting, pagination |
 
-The Pipelines composer renders three separately labeled, keyboard-focusable
-scope tables; source-family planning and reconciliation live in their own
-disclosure rather than being folded into downstream completion. Its compact
-phase/cohort/source/ETA/snapshot header is the single `aria-live="polite"`
-region, so polling does not cause every detail cell to re-announce. The
-execution/capacity/active-work inspector is ordinary inspectable content. The
+Jobs presents its queues as the Active, Deleted, and Hidden Tabs. `closed`
+remains a compatible URL/read-model filter for old links, not a normal
+user-facing queue. The default saved-table presentation keeps Sources and
+Warnings available but hidden, and active posting rows omit redundant
+`open`/`active` lifecycle copy. Delete and permanent-delete controls use the
+destructive primitive; restore and unhide remain ordinary recovery actions.
+
+Apply Review keeps the queue as a left rail while the surface can support it;
+the selected application then reads as full-width decision, evidence, and
+materials sections in sequence. At narrow widths the queue moves above the
+review and decision controls wrap in reading order. Artifact Detail likewise
+uses a single audit flow: summary, technical disclosure, evidence, and
+comparison precede the full-width PDF preview instead of competing with it in a
+permanent split pane. Profile's editor/preview and Evidence Map's three panes
+stack when their working width can no longer preserve readable content.
+
+The Pipelines composer presents the current execution as a visual stage flow
+with waiting, processing, terminal, and attention totals. Exact outcome counts
+remain in **All stage outcomes**; execution-sweep and unrelated global backlog
+stay separate under **Backlog and diagnostics** rather than being folded into
+downstream completion. Its compact phase/cohort/source/ETA/snapshot header is
+the single `aria-live="polite"` region, so polling does not cause every detail
+cell to re-announce. The execution/capacity/active-work inspector is ordinary
+inspectable content. Eligible active Discover runs expose an explicit stop
+mutation. Failed-run replacement setup requires an exact zero active-work
+inventory and only focuses the launch controls; it never dispatches work. The
 Pipeline-owned `StageTriggerPanel` remains available in the shared `ToolRow`
 while the snapshot is loading or unavailable, and a fetch failure is surfaced
 as an alert rather than silently replacing the controls.
@@ -439,6 +466,11 @@ layout vocabulary, not bounded-context components. `PipelinesView` composes
 these directly around Operations data and the Pipeline-owned
 `StageTriggerPanel`.
 
+`PageHead` supplies one compact route hierarchy: optional eyebrow, a 26px title,
+an optional short subtitle, and route actions. Actions align to the right at
+working desktop widths and stack below the identity at narrow widths; route
+composers do not reintroduce promotional hero headings.
+
 **Visual grammar.** Status components — including legacy-named `*Badge` and
 `ConnectionStatusPill` identifiers — render a small dot or glyph plus text, not
 rounded colored pills. Section tabs use a neutral active underline. Dense facts
@@ -472,7 +504,8 @@ The theme toggle (§4.10) flips a `data-theme="dark"` attribute on
 default class strategy. `color-scheme` is set at the root for native
 controls. Density is scoped to the app shell: `.app-shell` owns
 `--jh-row-height`, with compact, regular, and comfy modes computing to
-32px, 40px, and 48px.
+32px, 40px, and 48px. The body token remains 16px in every density; density
+changes geometry, not typography.
 
 ## 4.9 Cross-Cutting Client State (Zustand vs Context)
 

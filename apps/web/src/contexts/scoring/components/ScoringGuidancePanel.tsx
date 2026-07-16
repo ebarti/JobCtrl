@@ -32,7 +32,9 @@ export function ScoringGuidancePanel() {
         {status ? <div className="status-line" role="status">{status}</div> : null}
         <form.Field name="scoreCriteria">{(field) => <div className="field"><label htmlFor="score-guidance">Scoring priorities</label><textarea id="score-guidance" name="scoreCriteria" maxLength={8000} aria-describedby="score-guidance-help" value={field.state.value} onChange={(event) => field.handleChange(event.target.value)} /><small id="score-guidance-help">What strong-fit jobs should demonstrate. Applies to new scoring work.</small></div>}</form.Field>
         <form.Field name="targetCriteria">{(field) => <div className="field"><label htmlFor="target-guidance">Target role guidance</label><textarea id="target-guidance" name="targetCriteria" maxLength={8000} aria-describedby="target-guidance-help" value={field.state.value} onChange={(event) => field.handleChange(event.target.value)} /><small id="target-guidance-help">Additional role and company targeting guidance.</small></div>}</form.Field>
-        <button className="tab on" type="submit" disabled={updateSettings.isPending}>{updateSettings.isPending ? "saving" : "save scoring guidance"}</button>
+        <div className="form-actions">
+          <button className="tab on" type="submit" disabled={updateSettings.isPending}>{updateSettings.isPending ? "saving" : "save scoring guidance"}</button>
+        </div>
       </form>
     </section>
   );

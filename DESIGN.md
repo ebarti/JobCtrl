@@ -60,7 +60,7 @@ typography:
     letterSpacing: "-0.045em"
   h1:
     fontFamily: "Geist Variable"
-    fontSize: 28px
+    fontSize: 26px
     fontWeight: 680
     lineHeight: "1.05"
     letterSpacing: "-0.045em"
@@ -72,31 +72,31 @@ typography:
     letterSpacing: "-0.015em"
   body:
     fontFamily: "Geist Variable"
-    fontSize: 14px
+    fontSize: 16px
     fontWeight: 500
     lineHeight: "1.5"
     letterSpacing: "0em"
   body-sm:
     fontFamily: "Geist Variable"
-    fontSize: 12px
+    fontSize: 15px
     fontWeight: 500
     lineHeight: "1.45"
     letterSpacing: "0em"
   label:
     fontFamily: "Geist Variable"
-    fontSize: 11px
+    fontSize: 13px
     fontWeight: 700
     lineHeight: "1.2"
     letterSpacing: "0em"
   button:
     fontFamily: "Geist Variable"
-    fontSize: 13px
+    fontSize: 14px
     fontWeight: 500
     lineHeight: "1"
     letterSpacing: "0em"
   mono:
     fontFamily: "JetBrains Mono Variable"
-    fontSize: 12px
+    fontSize: 14px
     fontWeight: 500
     lineHeight: "1.45"
     letterSpacing: "0em"
@@ -196,6 +196,7 @@ Non-negotiables:
 - The 10px Rhea base radius maps to 6px–10px controls, 14px–18px callouts, and a capped 24px card radius. Full rounding is reserved for intrinsically circular controls.
 - Cards use only the quiet panel shadow/ring. Stronger elevation belongs to menus, dialogs, popovers, and mobile sheets.
 - Route-backed detail is a full workspace, not a modal-shaped card floating over the index.
+- Route identity uses one compact `PageHead`: a 26px title, optional eyebrow and short subtitle, with actions aligned beside it on desktop and stacked below it on narrow screens.
 - Missing, unknown, blocked, residual-warning, and failed-refresh states remain visible.
 - Retrying or re-tailoring never hides the last accepted artifact.
 
@@ -206,9 +207,10 @@ Non-negotiables:
 | Base rhythm | 4px; primary steps 8, 12, 16, 24, 32 |
 | Product type | Geist Variable |
 | Technical type | JetBrains Mono Variable |
-| Page title | 28–36px, 650–680 weight, tight optical spacing |
-| Body | 14px / 21px |
-| Label/meta | 10–12px, stronger weight or mono where appropriate |
+| Page title | 26–32px, 650–680 weight, tight optical spacing |
+| Body | 16px / 24px; density never changes type size |
+| Secondary copy | 15px / 22px |
+| Label/meta | 13–15px, stronger weight or mono where appropriate |
 | Table density | 32px compact, 40px regular, 48px comfy |
 | Control density | 28px compact, 32px regular, 36px comfy for density-aware shared controls |
 | Canvas | neutral `oklch(0.972 0 0)` |
@@ -244,7 +246,7 @@ Dark mode remaps the same semantic tokens. It does not invent a second component
 ## Composition rules
 
 - Overview pages use a metric summary followed by a small number of coherent insight cards or bands.
-- Data indexes use one tool row and one dense table surface. Saved views and filters are controls, not content cards.
+- Data indexes use one tool row and one dense table surface. Saved views and filters are controls, not content cards. Record tables reflow into labelled cards at 900px and below instead of forcing page-level horizontal scrolling.
 - Inspector pages use stable master-detail geometry with evidence and the decision action visible together.
 - Operations pages use a small set of cards containing ledgers, stage rows, timelines, and disclosures; each datum does not get its own tile.
 - Configuration pages use provider/section cards and adaptive field grids. The resume preview is a full-width workbench.
@@ -281,7 +283,9 @@ Forms:
 
 Data grids:
 
-- Keep columns scannable, ruled, and compact; allow horizontal scrolling only inside the table.
+- Keep columns scannable, ruled, and compact on desktop. At 900px and below,
+  record-oriented tables use labelled cards with their sort/filter controls still
+  available; do not hide primary fields behind multi-viewport horizontal scroll.
 - Filters and saved views live in the tool row or an overlay, never as a wall of mini-cards.
 - Semantic row/cell rules are thin markers. Do not flood a cell or row with status color.
 
@@ -299,6 +303,8 @@ Every asynchronous composite defines loading, empty, error, populated, refreshin
 
 - URL state owns navigation and filters that users may revisit, share, or traverse with browser history.
 - Focus remains visible with the focus token.
+- Compact, regular, and comfy density change row, field, and control geometry;
+  body and supporting text remain the same readable size in every mode.
 - Interactive targets are at least 24px, with 32–40px preferred for primary controls.
 - State never relies on color alone and remains legible in forced-colors mode.
 - Mobile reflow favors readable stacking over compressed desktop columns.

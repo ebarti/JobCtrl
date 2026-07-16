@@ -52,12 +52,28 @@
   --topbar-height: 60px;
 
   --jh-font-sans:
-    "Geist Variable", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+    "Geist Variable", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
   --jh-font-heading:
-    "Geist Variable", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    "Geist Variable", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, sans-serif;
   --jh-font-mono:
-    "JetBrains Mono Variable", "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+    "JetBrains Mono Variable", "SFMono-Regular", ui-monospace, Menlo, Consolas,
+    monospace;
+
+  /*
+   * Product typography stays independent from density. Compact and comfy
+   * modes may tune row/control geometry, but the text inside those surfaces
+   * must remain equally readable.
+   */
+  --jh-font-size-caption: 0.8125rem;
+  --jh-font-size-code: 0.875rem;
+  --jh-font-size-body-sm: 0.9375rem;
+  --jh-font-size-body: 1rem;
+  --jh-font-size-heading-sm: 1.0625rem;
+  --jh-font-size-page-title: clamp(1.625rem, 1.48rem + 0.7vw, 2rem);
+  --jh-line-height-tight: 1.2;
+  --jh-line-height-body: 1.5;
 }
 
 :root[data-theme="dark"] {
@@ -118,6 +134,8 @@
   --jh-field-grid-row-gap: 14px;
   --jh-field-grid-column-gap: 16px;
   --jh-control-height: 32px;
+  font-size: var(--jh-font-size-body);
+  line-height: var(--jh-line-height-body);
 }
 
 :where(.app-shell[data-density="compact"]) {
@@ -128,7 +146,6 @@
   --jh-field-grid-row-gap: 10px;
   --jh-field-grid-column-gap: 12px;
   --jh-control-height: 28px;
-  font-size: 12px;
 }
 
 :where(.app-shell[data-density="comfy"]) {
@@ -139,7 +156,6 @@
   --jh-field-grid-row-gap: 18px;
   --jh-field-grid-column-gap: 20px;
   --jh-control-height: 36px;
-  font-size: 14px;
 }
 
 /*

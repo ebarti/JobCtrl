@@ -132,7 +132,7 @@ describe("Tooltip", () => {
       "bg-foreground",
       "px-2.5",
       "py-1.5",
-      "text-xs",
+      "text-[13px]",
       "leading-4",
       "text-background",
       "shadow-lg",

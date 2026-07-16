@@ -177,10 +177,36 @@ for the security, apply, or workflow matrices above.
 corepack pnpm --filter @jobctrl/web exec vitest run \
   src/styles/token-contract.test.ts \
   src/styles/token-contrast.test.ts \
+  src/styles/shared-layout-contract.test.ts \
+  src/styles/profile-evidence-responsive-layout.test.ts \
+  src/styles/apply-review-contacts-responsive.test.ts \
   src/shared/ui/base-ui-migration-boundary.test.ts \
+  src/shared/layout/Topbar.test.tsx \
+  src/shared/ui/button.test.tsx \
+  src/shared/ui/data-table.test.tsx \
+  src/shared/ui/label.test.tsx \
+  src/shared/ui/page-head.test.tsx \
+  src/shared/ui/filterable-data-grid.test.tsx \
+  src/shared/stores/saved-table-views.test.ts \
   src/contexts/operations/components/BrowserCapabilitiesPanel.test.tsx \
   src/contexts/profile/components/CredentialsPanel.test.tsx \
+  src/contexts/outreach/components/DueFollowUpsPanel.test.tsx \
+  src/contexts/scoring/components/CompensationSourcePolicyPanel.test.tsx \
+  src/contexts/materials/components/EmployerAnalysisPanel.test.tsx \
+  src/contexts/materials/components/EmployerAnalysisPanel.a11y.test.tsx \
+  src/contexts/materials/components/TailoringExplanationSection.test.tsx \
+  src/contexts/pipeline/hooks/useCancelWorkflowRunMutation.test.ts \
   src/views/pipelines/PipelinesView.test.tsx \
+  src/routes/-jobs.search.test.ts \
+  src/views/jobs/JobBulkActions.test.tsx \
+  src/views/jobs/JobBulkActions.a11y.test.tsx \
+  src/views/jobs/JobsTable.test.tsx \
+  src/views/jobs/JobsTable.a11y.test.tsx \
+  src/views/jobs/JobsView.test.tsx \
+  src/views/jobs/JobDetailDrawer.test.tsx \
+  src/views/artifacts/ArtifactDetailPanel.test.tsx \
+  src/views/evidence-map/EvidenceMapView.test.tsx \
+  src/views/apply-review/ApplyReviewView.test.tsx \
   src/contexts/operations/hooks/usePipelineOperationsQuery.test.ts \
   src/contexts/operations/invalidation-router.test.ts
 corepack pnpm --filter @jobctrl/api exec vitest run \
@@ -195,20 +221,39 @@ JOBCTRL_E2E_APP_DIR=/tmp/jobctrl-route-qa \
 JOBCTRL_E2E_API_PORT=8878 \
 JOBCTRL_E2E_WEB_PORT=5275 \
 corepack pnpm --filter @jobctrl/web e2e -- tests/route-visual-qa.spec.ts
+JOBCTRL_E2E_APP_DIR=/tmp/jobctrl-responsive-qa \
+JOBCTRL_E2E_API_PORT=8879 \
+JOBCTRL_E2E_WEB_PORT=5276 \
+corepack pnpm --filter @jobctrl/web e2e -- tests/responsive-data-surfaces.spec.ts
 git diff --check
 ```
 
 The gate passes only when:
 
 - `base-rhea`, Geist, the semantic token mappings, light/dark contrast, all
-  three densities, and the shared card/status rules remain intact;
+  three densities, a density-independent 16px body, the compact PageHead
+  hierarchy, and the shared card/status rules remain intact;
 - direct Radix imports and raw native selects are absent, Base UI overlays keep
   their focus/dismissal/portal contract, and route visuals show no clipping or
   document-level overflow at desktop and 390×844;
+- Jobs exposes Active/Deleted/Hidden as real Tabs, keeps legacy `closed` only as
+  a compatible deep-link state, hides Sources/Warnings in the default view,
+  omits redundant active lifecycle copy, uses destructive deletion, and keeps
+  row activation focus-visible without a permanent duplicate action;
+- Jobs, Artifacts, Contacts, Discovery, and Settings record data reflows into
+  labelled cards at 900px and below; Profile and Evidence Map stack their work
+  regions, while Apply Review keeps a desktop queue rail and wraps decisions in
+  its narrow sequential layout;
 - Pipelines keeps source families separate from the two reconciliation steps,
-  preserves execution/sweep/global-backlog scope, masks sensitive identifiers,
-  and reports honest ETA, freshness, capacity, queue, and active-inventory
-  states without invented numbers;
+  preserves execution/sweep/global-backlog scope and exact outcome counts,
+  masks sensitive identifiers, refreshes after stopping active discovery, and
+  gates replacement-run setup on an exact zero-active-work inventory without
+  dispatching implicitly;
+- Job Detail and Artifact Detail resolve evidence through the Evidence Map into
+  human-readable titles/excerpts, keep unresolved keys behind technical details,
+  Artifact Detail places the preview after its audit details, and Apply Review
+  preserves persisted comments even when a rendered-line anchor cannot be
+  resolved;
 - passive browser detection exposes no paths or side effects, stale detected
   IDs fail closed, manual path entry remains an advanced explicit fallback, and
   profile copying still requires separate consent;

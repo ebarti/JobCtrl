@@ -167,6 +167,14 @@ Artifact projections expose validation/judge metadata plus canonical
 provenance, coverage, and voice columns. A PDF resolves those audit fields from
 its sibling tailored-resume row because both represent the same generation.
 
+Job Detail and Artifact Detail resolve stored profile-evidence foreign keys
+through the canonical Evidence Map read model before rendering them. A resolved
+reference shows the evidence title plus a bounded outcome/action/scope excerpt;
+Artifact Detail links to the owning Evidence entry. A missing legacy reference
+renders an explicit unavailable state and keeps the raw key behind a technical
+disclosure. The read layer does not invent a title, hide the missing reference,
+or present a storage key as meaningful evidence.
+
 Apply Review and Artifacts compare only stored audit data: coverage buckets,
 template metadata, validation/judge fields, and review risk labels. If either
 artifact lacks coverage, the UI reports `coverage not recorded`; it does not

@@ -166,6 +166,31 @@ Both execution cohorts participate in the delivered phase calculation:
 unresolved observed jobs or swept backlog can keep an otherwise successful
 workflow in `draining`.
 
+### Operator stop and failure recovery
+
+The Pipelines workspace exposes cancellation only when the selected Discover
+execution has `workflowStatus=in_progress` and phase `discovering` or
+`draining`. The action cancels the deterministic Discover workflow ID, then
+invalidates the workflow-run, dashboard, and pipeline-operations queries so the
+stop request cannot leave the live workspace stale. A closed workflow whose
+durable phase still says `draining` is not cancelable.
+
+A failed execution is never treated as proof that the runtime is idle. The UI
+uses `activeItemsTotal` as a three-state recovery gate: a positive value reports
+remaining work, `null` reports that the inventory is unavailable, and exactly
+zero permits **Set up a new Discover run**. That action only selects and focuses
+the Discover launch controls; it never dispatches work implicitly.
+
+`reconciled_not_found` is a provisional verdict: the worker could not find the
+exact recorded Temporal run in the history store it could currently reach. The
+reconciler keeps probing that exact run. When the authoritative history is
+available again, a marked recovery event automatically restores the run to
+`in_progress` or replaces the provisional verdict with its real closed outcome;
+the false terminal remains visible in the audit history. Starting a replacement
+run is appropriate only when the exact execution is genuinely absent and the
+runtime inventory confirms that no work remains. Workflow IDs, Temporal run
+IDs, and the raw reason code stay in a collapsed technical disclosure.
+
 ### Two durable progress authorities
 
 Canonical `job_stage_states` remains the source of truth for per-job `enrich`,

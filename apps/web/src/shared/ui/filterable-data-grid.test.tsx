@@ -87,6 +87,7 @@ describe("FilterableDataGrid", () => {
     const acmeRow = screen.getByRole("row", { name: /Acme Workday ATS 3/i });
     expect(acmeRow).not.toHaveAttribute("tabindex");
     const openAcme = within(acmeRow).getByRole("button", { name: "Open Acme" });
+    expect(openAcme).toHaveClass("sr-only", "focus:not-sr-only");
 
     await user.click(within(acmeRow).getByText("Workday ATS"));
     expect(onRowActivate).toHaveBeenLastCalledWith(rows[0]);
@@ -103,6 +104,29 @@ describe("FilterableDataGrid", () => {
 
     await user.keyboard("{ArrowDown}");
     expect(onRowActivate).toHaveBeenCalledTimes(4);
+  });
+
+  it("can opt into persistent activation copy without removing keyboard access", () => {
+    render(
+      <FilterableDataGrid
+        title="Grid view"
+        data={rows}
+        columns={columns}
+        getRowId={(row) => row.id}
+        loading={false}
+        loadingMessage="Loading rows."
+        emptyMessage="No rows."
+        initialSort={{ columnId: "company", direction: "asc" }}
+        onRowActivate={() => {}}
+        rowActivationLabel={(row) => `Open ${row.company}`}
+        rowActivationAppearance="visible"
+      />,
+    );
+
+    const openAcme = screen.getByRole("button", { name: "Open Acme" });
+    expect(openAcme).not.toHaveClass("sr-only", "focus:not-sr-only");
+    expect(openAcme).toHaveAttribute("type", "button");
+    expect(openAcme).not.toHaveAttribute("tabindex", "-1");
   });
 
   it("paginates local rows after filtering and sorting", async () => {
@@ -190,6 +214,60 @@ describe("FilterableDataGrid", () => {
 
     const tableRows = screen.getAllByRole("row");
     expect(within(tableRows[1]!).getByText("BoardCo")).toBeInTheDocument();
+  });
+
+  it("reflows records with labeled cells and keeps mobile sort and filter controls operable", async () => {
+    render(
+      <FilterableDataGrid
+        title="Responsive grid"
+        data={rows}
+        columns={columns}
+        getRowId={(row) => row.id}
+        loading={false}
+        loadingMessage="Loading rows."
+        emptyMessage="No rows."
+        initialSort={{ columnId: "company", direction: "asc" }}
+        mobileLayout="cards"
+      />,
+    );
+    const user = userEvent.setup();
+    const table = screen.getByRole("table", { name: "Responsive grid" });
+    const grid = table.closest(".filterable-data-grid");
+    const acmeRow = within(table).getByRole("row", {
+      name: /Acme Workday ATS 3/i,
+    });
+
+    expect(grid).toHaveAttribute("data-mobile-layout", "cards");
+    expect(within(acmeRow).getByRole("rowheader")).toHaveAttribute(
+      "data-label",
+      "Company",
+    );
+    const providerCell = within(acmeRow).getByText("Workday ATS").closest("td");
+    const providerHeader = within(table).getByRole("columnheader", {
+      name: /Provider/i,
+    });
+    expect(providerCell).toHaveAttribute("data-label", "Provider");
+    expect(providerCell).toHaveAttribute("headers", providerHeader.id);
+
+    await user.click(screen.getByText("Sort and filter columns"));
+    const controls = screen.getByRole("group", {
+      name: "Responsive grid column controls",
+    });
+    await user.click(
+      within(controls).getByRole("button", { name: /sort by observed/i }),
+    );
+    expect(within(table).getAllByRole("row")[1]).toHaveTextContent(
+      "Salesforce",
+    );
+
+    await user.click(
+      within(controls).getByRole("button", {
+        name: /filter company column/i,
+      }),
+    );
+    await user.type(screen.getByLabelText("Company filter text"), "board");
+    expect(within(table).getByText("BoardCo")).toBeInTheDocument();
+    expect(within(table).queryByText("Acme")).not.toBeInTheDocument();
   });
 
   it("clears the exact active filter chip without removing other filters", async () => {
@@ -390,7 +468,9 @@ describe("FilterableDataGrid", () => {
     expect(within(acmeRow).getByRole("rowheader")).toHaveClass(
       "data-grid-cell-tone-success",
     );
-    const boardRow = screen.getByRole("row", { name: /BoardCo JobSpy board 8/i });
+    const boardRow = screen.getByRole("row", {
+      name: /BoardCo JobSpy board 8/i,
+    });
     expect(boardRow).toHaveClass("data-grid-row-tone-warning");
     expect(within(boardRow).getByText("8").closest("td")).toHaveClass(
       "data-grid-cell-tone-warning",
@@ -410,5 +490,25 @@ describe("FilterableDataGrid", () => {
     expect(css).toMatch(
       /\.data-grid-column-resizer:focus-visible\s*\{[^}]*--ring/s,
     );
+  });
+
+  it("defines two-column tablet and one-column mobile record reflow", () => {
+    const css = readFileSync("src/styles/redesign-data.css", "utf8");
+    const responsiveRules = css.slice(css.indexOf("Dense records reflow"));
+
+    expect(css).toMatch(
+      /\.filterable-data-grid-table thead th\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\)/s,
+    );
+    expect(css).toMatch(
+      /\.responsive-record-table thead th\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\)/s,
+    );
+    expect(responsiveRules).toMatch(/@media \(max-width: 900px\)/);
+    expect(responsiveRules).toMatch(
+      /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/,
+    );
+    expect(responsiveRules).toMatch(/width: 100% !important/);
+    expect(responsiveRules).toMatch(/overflow-x: clip/);
+    expect(responsiveRules).toMatch(/@media \(max-width: 560px\)/);
+    expect(responsiveRules).toContain(".responsive-record-table");
   });
 });

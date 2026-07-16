@@ -582,7 +582,13 @@ Refresh checklist: run the command on a clean checkout, confirm every asset in
 the Product Tour matrix was rewritten, review every desktop and mobile PNG for
 private data, broken layout, clipped content, and local-path leaks, and inspect
 Pipelines for the seeded execution, three source families, two reconciliation
-steps, available worker capacity, stage ledger, and active work. Confirm the
+steps, available worker capacity, visual stage flow, stop/recovery controls, and
+active work. Confirm Jobs shows only the Active/Deleted/Hidden queue tabs and
+that Sources/Warnings remain hidden in its default view. Check Apply Review's
+left queue plus sequential review content, Artifact Detail's preview after its
+audit details, and the mobile Profile/Evidence/record-card reflows without
+horizontal overflow. Keep raw IDs and paths inside technical disclosures.
+Confirm the
 homepage hero copy at `docs/public/assets/screenshots/dashboard.png` is
 byte-for-byte identical to the gallery dashboard screenshot, update the tour
 if screenshot names changed, and finish with `git diff --check`.

@@ -52,7 +52,7 @@ describe("saved table views store", () => {
           sort: { columnId: "ghost", direction: "asc" },
           urlFilters: {
             stage: "apply",
-            deleted: "hidden",
+            deleted: "closed",
             discoveredSince: "2026-07-01T00:00:00.000Z",
             scoredSince: "2026-07-01T00:00:00.000Z",
           },
@@ -84,6 +84,18 @@ describe("saved table views store", () => {
         },
       ],
       activeViewIdByTable: { [JOBS_TABLE_ID]: "legacy" },
+      presentationByTable: {
+        [JOBS_TABLE_ID]: {
+          columns: {
+            order: [...JOBS_TABLE_COLUMN_IDS],
+            hidden: [],
+            widths: {},
+          },
+          density: "regular",
+          grouping: null,
+          colorRules: [],
+        },
+      },
     });
 
     const defaultView = normalized.views.find(
@@ -96,6 +108,10 @@ describe("saved table views store", () => {
       name: "Default",
       tableId: JOBS_TABLE_ID,
     });
+    expect(defaultView?.columns.hidden).toEqual([
+      "source",
+      "compensation_warnings",
+    ]);
     expect(legacy).toBeDefined();
     expect(legacy?.columns.order).toContain("company");
     expect(legacy?.columns.order).toContain("title");
@@ -108,7 +124,7 @@ describe("saved table views store", () => {
     });
     expect(legacy?.urlFilters).toMatchObject({
       stage: "apply",
-      deleted: "hidden",
+      deleted: "closed",
       discoveredSince: "2026-07-01T00:00:00.000Z",
       scoredSince: "2026-07-01T00:00:00.000Z",
     });
@@ -128,15 +144,40 @@ describe("saved table views store", () => {
       },
     ]);
     expect(normalized.activeViewIdByTable[JOBS_TABLE_ID]).toBe("legacy");
+    expect(
+      normalized.presentationByTable[JOBS_TABLE_ID]?.columns.hidden,
+    ).toEqual([]);
+  });
+
+  it("reconstructs the built-in Default with its current hidden columns", () => {
+    const normalized = normalizeSavedTableViewsState({
+      activeViewIdByTable: { [JOBS_TABLE_ID]: DEFAULT_SAVED_TABLE_VIEW_ID },
+      presentationByTable: {
+        [JOBS_TABLE_ID]: {
+          columns: {
+            order: [...JOBS_TABLE_COLUMN_IDS],
+            hidden: [],
+            widths: {},
+          },
+          density: null,
+          grouping: null,
+          colorRules: [],
+        },
+      },
+    });
+
+    expect(
+      normalized.presentationByTable[JOBS_TABLE_ID]?.columns.hidden,
+    ).toEqual(["source", "compensation_warnings"]);
   });
 
   it("keeps templates unchanged until an explicit save/update action", () => {
     const store = useSavedTableViewsStore.getState();
     const createdId = store.createView(JOBS_TABLE_ID, "Apply review", snapshot);
 
-    expect(useSavedTableViewsStore.getState().activeViewIdByTable[JOBS_TABLE_ID]).toBe(
-      createdId,
-    );
+    expect(
+      useSavedTableViewsStore.getState().activeViewIdByTable[JOBS_TABLE_ID],
+    ).toBe(createdId);
 
     useSavedTableViewsStore.getState().setTablePresentation(JOBS_TABLE_ID, {
       ...snapshot,
@@ -176,8 +217,8 @@ describe("saved table views store", () => {
     expect(
       useSavedTableViewsStore.getState().deleteView(JOBS_TABLE_ID, createdId),
     ).toBe(true);
-    expect(useSavedTableViewsStore.getState().activeViewIdByTable[JOBS_TABLE_ID]).toBe(
-      DEFAULT_SAVED_TABLE_VIEW_ID,
-    );
+    expect(
+      useSavedTableViewsStore.getState().activeViewIdByTable[JOBS_TABLE_ID],
+    ).toBe(DEFAULT_SAVED_TABLE_VIEW_ID);
   });
 });

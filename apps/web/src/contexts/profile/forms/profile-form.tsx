@@ -28,6 +28,7 @@ export interface ProfileFormValues {
 export interface ProfileFormProps {
   initial: ProfileConfigResponse;
   section?: ProfileSection;
+  showSectionHeading?: boolean;
 }
 
 export function toProfileFormValues(profile: ProfileConfigResponse): ProfileFormValues {
@@ -92,7 +93,11 @@ function serializeProfileValues(values: ProfileFormValues): string {
   return JSON.stringify(values);
 }
 
-export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) {
+export function ProfileForm({
+  initial,
+  section = "profile",
+  showSectionHeading = true,
+}: ProfileFormProps) {
   const updateProfile = useUpdateProfileMutation();
   const [statusMessage, setStatusMessage] = useState("");
   const [resetToken, setResetToken] = useState(0);
@@ -204,6 +209,7 @@ export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) 
             {(styleField) => (
               <StructuredProfileEditor
                 mode={section}
+                showSectionHeading={showSectionHeading}
                 profileText={profileField.state.value}
                 styleText={styleField.state.value}
                 onProfileTextChange={(value) => profileField.handleChange(value)}

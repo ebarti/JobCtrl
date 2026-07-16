@@ -2,11 +2,7 @@
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { IconCheck, IconChevronRight, IconCircle } from "@tabler/icons-react";
-import {
-  forwardRef,
-  type ComponentRef,
-  type HTMLAttributes,
-} from "react";
+import { forwardRef, type ComponentRef, type HTMLAttributes } from "react";
 
 import { cn } from "../lib/cn.js";
 
@@ -45,16 +41,14 @@ export const DropdownMenuGroup = forwardRef<
   ComponentRef<typeof MenuPrimitive.Group>,
   MenuPrimitive.Group.Props
 >((props, ref) => (
-  <MenuPrimitive.Group
-    data-slot="dropdown-menu-group"
-    ref={ref}
-    {...props}
-  />
+  <MenuPrimitive.Group data-slot="dropdown-menu-group" ref={ref} {...props} />
 ));
 DropdownMenuGroup.displayName = "DropdownMenuGroup";
 
-export interface DropdownMenuPortalProps
-  extends Omit<MenuPrimitive.Portal.Props, "keepMounted"> {
+export interface DropdownMenuPortalProps extends Omit<
+  MenuPrimitive.Portal.Props,
+  "keepMounted"
+> {
   forceMount?: boolean;
   keepMounted?: MenuPrimitive.Portal.Props["keepMounted"];
 }
@@ -65,10 +59,7 @@ export function DropdownMenuPortal({
   ...props
 }: DropdownMenuPortalProps) {
   return (
-    <MenuPrimitive.Portal
-      keepMounted={keepMounted ?? forceMount}
-      {...props}
-    />
+    <MenuPrimitive.Portal keepMounted={keepMounted ?? forceMount} {...props} />
   );
 }
 
@@ -93,7 +84,7 @@ export const DropdownMenuSubTrigger = forwardRef<
     ref={ref}
     data-slot="dropdown-menu-sub-trigger"
     className={cn(
-      "flex min-h-8 cursor-default select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] outline-none transition-colors focus:bg-muted focus:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground",
+      "flex min-h-8 cursor-default select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none transition-colors focus:bg-muted focus:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground",
       inset && "pl-8",
       className,
     )}
@@ -246,7 +237,7 @@ export const DropdownMenuItem = forwardRef<
     ref={ref}
     data-slot="dropdown-menu-item"
     className={cn(
-      "relative flex min-h-8 cursor-default select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] outline-none transition-colors focus:bg-muted focus:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:shrink-0",
+      "relative flex min-h-8 cursor-default select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none transition-colors focus:bg-muted focus:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:shrink-0",
       inset && "pl-8",
       className,
     )}
@@ -263,7 +254,7 @@ export const DropdownMenuCheckboxItem = forwardRef<
     ref={ref}
     data-slot="dropdown-menu-checkbox-item"
     className={cn(
-      "relative flex min-h-8 cursor-default select-none items-center rounded-md py-1.5 pl-8 pr-2.5 text-[13px] outline-none transition-colors focus:bg-muted focus:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50",
+      "relative flex min-h-8 cursor-default select-none items-center rounded-md py-1.5 pl-8 pr-2.5 text-sm outline-none transition-colors focus:bg-muted focus:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50",
       className,
     )}
     {...props}
@@ -286,7 +277,7 @@ export const DropdownMenuRadioItem = forwardRef<
     ref={ref}
     data-slot="dropdown-menu-radio-item"
     className={cn(
-      "relative flex min-h-8 cursor-default select-none items-center rounded-md py-1.5 pl-8 pr-2.5 text-[13px] outline-none transition-colors focus:bg-muted focus:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50",
+      "relative flex min-h-8 cursor-default select-none items-center rounded-md py-1.5 pl-8 pr-2.5 text-sm outline-none transition-colors focus:bg-muted focus:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50",
       className,
     )}
     {...props}
@@ -309,7 +300,7 @@ export const DropdownMenuLabel = forwardRef<
     ref={ref}
     data-slot="dropdown-menu-label"
     className={cn(
-      "px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground",
+      "px-2.5 py-1.5 text-[13px] font-semibold uppercase tracking-[0.08em] text-muted-foreground",
       inset && "pl-8",
       className,
     )}
@@ -339,7 +330,7 @@ export function DropdownMenuShortcut({
     <span
       data-slot="dropdown-menu-shortcut"
       className={cn(
-        "ml-auto text-[11px] tracking-wider text-muted-foreground",
+        "ml-auto text-[13px] tracking-wider text-muted-foreground",
         className,
       )}
       {...props}

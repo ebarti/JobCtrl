@@ -17,8 +17,13 @@ The user-visible surfaces divide the work:
   requirement evidence, stage failures, and the per-job generation/re-tailor
   controls.
 - `/artifacts` lists registered generations; `/artifacts/:artifactId` opens a
-  route-level inspector with the real preview when supported, stored validation,
-  provenance, coverage, voice, template, risk metadata, and same-job comparison.
+  route-level inspector with stored validation, provenance, coverage, voice,
+  template, risk metadata, and same-job comparison followed by the full-width
+  real preview when supported.
+  Canonical evidence foreign keys resolve to human-readable Evidence-map titles
+  and excerpts with links back to the owning entry. An unresolved legacy key is
+  labeled unavailable and stays accessible under **Technical details** rather
+  than being presented as user-facing evidence.
 - `/apply-review` consumes the accepted generation. The editor, revision,
   replacement-render, and submission-approval lifecycle is owned by
   [Apply](apply.md#materials-and-resume-rendering).

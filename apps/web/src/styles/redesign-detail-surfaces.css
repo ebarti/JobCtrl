@@ -47,7 +47,7 @@
 
 .detail-drawer:not(.job-detail-drawer) .drawer-head small {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.055em;
   text-transform: uppercase;
@@ -63,7 +63,7 @@
 
 .detail-drawer:not(.job-detail-drawer) .drawer-head p {
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.5;
 }
 
@@ -84,7 +84,7 @@
 .detail-drawer:not(.job-detail-drawer) .section > h3,
 .detail-drawer:not(.job-detail-drawer) .outreach-thread-head h3 {
   margin-bottom: 14px;
-  font-size: 13px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 680;
   letter-spacing: -0.015em;
 }
@@ -104,13 +104,13 @@
 
 .detail-drawer:not(.job-detail-drawer) .detail-list dt {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 560;
 }
 
 .detail-drawer:not(.job-detail-drawer) .detail-list dd {
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body);
   line-height: 1.5;
 }
 
@@ -160,33 +160,133 @@
 }
 
 /* Artifact details read as one audit flow; the document preview follows it. */
+.artifact-detail-route-body {
+  padding: clamp(14px, 2vw, 24px);
+  background: color-mix(in oklch, var(--muted) 28%, var(--background));
+}
+
 .artifact-detail-layout {
+  display: grid;
   grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
   min-height: 0;
 }
 
 .artifact-detail-sidebar {
+  display: grid;
   min-width: 0;
-  border-right: 0;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in oklch, var(--muted) 30%, var(--card));
-}
-
-.artifact-detail-sidebar > .section,
-.artifact-detail-sidebar > .tailoring-explanation-section {
+  gap: 18px;
   border: 0;
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-  padding: 22px 24px;
   background: transparent;
 }
 
-.artifact-detail-sidebar > .section:last-child {
-  border-bottom: 0;
+.artifact-card-heading {
+  margin: 0;
+  font: inherit;
 }
 
-.artifact-detail-sidebar .tab + .tab {
-  margin-left: 6px;
+.artifact-summary-card__content {
+  display: grid;
+  gap: 16px;
+}
+
+.artifact-summary-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+.artifact-summary-facts > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.artifact-summary-facts dt,
+.artifact-technical-details__content dt {
+  color: var(--muted-foreground);
+  font-size: var(--jh-font-size-caption);
+  font-weight: 650;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.artifact-summary-facts dd,
+.artifact-technical-details__content dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.artifact-summary-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.artifact-technical-details {
+  display: grid;
+  gap: 10px;
+}
+
+.artifact-technical-details [data-slot="collapsible-trigger"] svg {
+  transition: transform 160ms ease;
+}
+
+.artifact-technical-details
+  [data-slot="collapsible-trigger"][data-panel-open]
+  svg {
+  transform: rotate(180deg);
+}
+
+.artifact-technical-details__content {
+  border-left: 2px solid color-mix(in oklch, var(--primary) 34%, var(--border));
+  padding-left: 14px;
+}
+
+.artifact-technical-details__content dl {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.artifact-technical-details__content dl > div {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.2fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.artifact-technical-details__content code {
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.artifact-tailoring-card {
+  --artifact-card-spacing: clamp(18px, 2vw, 24px);
+  display: grid;
+  gap: 18px;
+  overflow: hidden;
+  border-radius: min(var(--radius-4xl), 24px);
+  padding: var(--artifact-card-spacing);
+  background: var(--card);
+  box-shadow:
+    0 1px 2px color-mix(in oklch, var(--foreground) 6%, transparent),
+    0 0 0 1px color-mix(in oklch, var(--foreground) 5%, transparent);
+}
+
+.artifact-tailoring-card > h3 {
+  margin: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.artifact-tailoring-card .evidence-summary-grid > div {
+  border: 0;
+  border-left: 2px solid color-mix(in oklch, var(--primary) 44%, var(--border));
+  border-radius: 0;
+  padding: 2px 12px;
 }
 
 .artifact-preview-panel {
@@ -194,16 +294,28 @@
   width: 100%;
   min-width: 0;
   min-height: 760px;
+  overflow: hidden;
+  border-radius: min(var(--radius-4xl), 24px);
   background: oklch(0.18 0 0);
+  box-shadow:
+    0 1px 2px color-mix(in oklch, var(--foreground) 6%, transparent),
+    0 0 0 1px color-mix(in oklch, var(--foreground) 5%, transparent);
 }
 
 .artifact-detail-sidebar .tailoring-evidence-reference-list {
   display: grid;
-  gap: 8px;
+  gap: 0;
+  border-top: 1px solid var(--border);
 }
 
-.artifact-detail-sidebar .tailoring-evidence-reference {
+.artifact-detail-sidebar
+  .tailoring-evidence-reference-list
+  > .tailoring-evidence-reference {
   min-width: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 10px 0;
 }
 
 .artifact-detail-sidebar .tailoring-evidence-reference__link,
@@ -244,6 +356,54 @@
   margin-top: 6px;
   color: var(--muted-foreground);
   overflow-wrap: anywhere;
+}
+
+/* Evidence prose is audit content, not status. Keep only true states in badges. */
+.artifact-detail-sidebar .compact-list:not(.tailoring-evidence-reference-list) {
+  display: grid;
+  gap: 6px;
+}
+
+.artifact-detail-sidebar
+  .compact-list:not(.tailoring-evidence-reference-list)
+  > li {
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  padding: 0 0 0 14px;
+  line-height: 1.45;
+}
+
+.artifact-detail-sidebar
+  .compact-list:not(.tailoring-evidence-reference-list)
+  > li::before {
+  position: absolute;
+  top: 0.63em;
+  left: 2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  content: "";
+}
+
+.artifact-detail-sidebar .bullet-provenance-tags dd {
+  display: grid;
+  gap: 5px;
+}
+
+.artifact-detail-sidebar .bullet-provenance-tags .tag {
+  display: block;
+  justify-content: flex-start;
+  max-width: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--foreground);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .artifact-preview-panel .pdf-preview-viewer {
@@ -388,7 +548,7 @@
 .evidence-map-toolbar label {
   gap: 6px;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   letter-spacing: 0.02em;
 }
 
@@ -436,12 +596,12 @@
 }
 
 .evidence-entry-link strong {
-  font-size: 12px;
+  font-size: var(--jh-font-size-body);
   line-height: 1.35;
 }
 
 .evidence-entry-link .muted {
-  font-size: 10px;
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .evidence-entry-meta {
@@ -460,7 +620,7 @@
   align-items: center;
   gap: 4px;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 560;
   line-height: 1.4;
   white-space: nowrap;
@@ -503,7 +663,7 @@
 
 .evidence-attribute-row > span {
   color: var(--muted-foreground);
-  font-size: 9px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 680;
   letter-spacing: 0.04em;
   line-height: 1.55;
@@ -518,7 +678,7 @@
 
 .evidence-inline-value {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 520;
   line-height: 1.5;
 }
@@ -541,7 +701,7 @@
 
 .evidence-detail h3,
 .evidence-side-panel h2 {
-  font-size: 12px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 680;
 }
 
@@ -562,7 +722,7 @@
   border-radius: 0;
   background: transparent;
   padding: 10px 0;
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .evidence-usage-link:hover {
@@ -644,29 +804,38 @@
 }
 
 .apply-run-timeline-head strong {
-  font-size: 12px;
+  font-size: var(--jh-font-size-body);
   font-weight: 650;
 }
 
-@media (max-width: 980px) {
-  .artifact-detail-layout,
+@media (max-width: 1180px) {
   .evidence-map-shell {
     grid-template-columns: 1fr;
   }
 
-  .artifact-detail-sidebar,
   .evidence-entry-list,
   .evidence-detail {
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
 
-  .artifact-preview-panel {
-    min-height: 660px;
-  }
-
   .evidence-map-shell {
     min-height: 0;
+  }
+}
+
+@media (max-width: 980px) {
+  .artifact-detail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .artifact-detail-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .artifact-preview-panel {
+    min-height: 660px;
   }
 }
 

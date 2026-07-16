@@ -5,6 +5,7 @@ import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { dashboardKeys } from "../../operations/dashboardKeys.js";
 import { workflowRunsKeys } from "../../operations/workflowRunsKeys.js";
+import { pipelineKeys } from "../queryKeys.js";
 
 export interface CancelWorkflowRunVariables {
   readonly runId: string;
@@ -24,6 +25,7 @@ export function useCancelWorkflowRunMutation(): UseMutationResult<
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: workflowRunsKeys.lists(tenantId) }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
+        queryClient.invalidateQueries({ queryKey: pipelineKeys.operations(tenantId) }),
       ]);
     },
   });

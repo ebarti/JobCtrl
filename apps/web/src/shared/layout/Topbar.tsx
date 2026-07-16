@@ -96,7 +96,6 @@ export function Topbar() {
       </ToggleGroup>
       <ThemeToggle />
       <ConnectionStatusPill />
-      <LegalNotice className="legal-notice legal-notice--topbar" />
     </header>
   );
 }

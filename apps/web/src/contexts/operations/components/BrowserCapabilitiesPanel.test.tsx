@@ -16,9 +16,10 @@ describe("<BrowserCapabilitiesPanel>", () => {
     expect(await screen.findByText("Core managed browser")).toBeInTheDocument();
     expect(
       screen.getByText(
-        /detects supported installed browsers but never enables/i,
+        /nothing is enabled, launched, or adopted until you confirm/i,
       ),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
     expect(
       screen.getAllByRole("button", { name: "Enable Google Chrome" }),
     ).toHaveLength(2);

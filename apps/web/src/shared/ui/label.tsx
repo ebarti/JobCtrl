@@ -8,7 +8,7 @@ import {
 import { cn } from "../lib/cn.js";
 
 const labelVariants = cva(
-  "text-[12px] font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
+  "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
 );
 
 export const Label = forwardRef<

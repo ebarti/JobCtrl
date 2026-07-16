@@ -6,13 +6,16 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "../../../shared/ui/collapsible.js";
-import { BulletProvenanceList } from "./BulletProvenanceList.js";
+import {
+  BulletProvenanceList,
+  type BulletProvenanceListProps,
+} from "./BulletProvenanceList.js";
+import type {
+  AuditEvidenceReference,
+  ResolveAuditEvidenceReference,
+} from "./AuditTechnicalDetails.js";
 
-export interface TailoringEvidenceReference {
-  readonly entryId: string;
-  readonly title: string;
-  readonly excerpt: string | null;
-}
+export type TailoringEvidenceReference = AuditEvidenceReference;
 
 export interface TailoringExplanationSectionProps {
   readonly explanation: ArtifactTailoringExplanation | null;
@@ -22,12 +25,11 @@ export interface TailoringExplanationSectionProps {
    * `undefined` means the lookup is still loading; `null` means the key is not
    * present in the current evidence projection.
    */
-  readonly resolveEvidenceReference?: (
-    evidenceId: string,
-  ) => TailoringEvidenceReference | null | undefined;
+  readonly resolveEvidenceReference?: ResolveAuditEvidenceReference;
   readonly renderEvidenceReference?: (
     reference: TailoringEvidenceReference,
   ) => ReactNode;
+  readonly resolveRequirementReference?: BulletProvenanceListProps["resolveRequirementReference"];
 }
 
 type AdversarialReview = NonNullable<
@@ -486,6 +488,7 @@ export function TailoringExplanationSection({
   explanation,
   className = "section",
   resolveEvidenceReference,
+  resolveRequirementReference,
   renderEvidenceReference,
 }: TailoringExplanationSectionProps) {
   if (!explanation) return null;
@@ -749,24 +752,13 @@ export function TailoringExplanationSection({
 
         <BulletProvenanceList
           className="evidence-block"
-          provenance={
-            resolveEvidenceReference
-              ? explanation.bulletProvenance.map((entry) => ({
-                  ...entry,
-                  evidenceIds: Array.from(
-                    new Set(
-                      entry.evidenceIds.map((evidenceId) =>
-                        evidenceReferenceLabel(
-                          evidenceId,
-                          resolveEvidenceReference,
-                        ),
-                      ),
-                    ),
-                  ),
-                }))
-              : explanation.bulletProvenance
-          }
+          provenance={explanation.bulletProvenance}
           annotatedChanges={explanation.annotatedChanges}
+          {...(resolveEvidenceReference ? { resolveEvidenceReference } : {})}
+          {...(renderEvidenceReference ? { renderEvidenceReference } : {})}
+          {...(resolveRequirementReference
+            ? { resolveRequirementReference }
+            : {})}
         />
 
         {hasSafetyData ? (

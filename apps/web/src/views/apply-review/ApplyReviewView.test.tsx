@@ -878,7 +878,7 @@ describe("<ApplyReviewView>", () => {
     expect(decisionCard).toHaveClass("apply-review-decision-card");
     expect(selectedFacts?.parentElement).toBe(decisionCard);
     expect(header.queryByText("Selected application")).not.toBeInTheDocument();
-    expect(header.getByText("Decision workspace")).toBeInTheDocument();
+    expect(header.queryByText("Decision workspace")).not.toBeInTheDocument();
     expect(header.getByRole("heading", { name: "Principal Platform Engineer" })).toBeInTheDocument();
     expect(header.getByText("Globex · discovered via Lever")).toBeInTheDocument();
     expect(header.queryByText(/Globex · score 9/i)).not.toBeInTheDocument();
@@ -2975,7 +2975,10 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByText(/apply failed: missing_profile_data:age_18_plus/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/apply failed: required profile answers missing: Age 18\+/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/missing_profile_data|age_18_plus/i)).not.toBeInTheDocument();
   });
 
   it("renders incomplete application attestations as review warnings", async () => {
@@ -3015,9 +3018,10 @@ describe("<ApplyReviewView>", () => {
 
     expect(
       await screen.findByText(
-        /Profile attestations incomplete: Application attestations missing: background_check_consent\./i,
+        /Profile attestations incomplete: Application attestations missing: Background check consent\./i,
       ),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/background_check_consent/i)).not.toBeInTheDocument();
   });
 
   it("renders canonical audit facts for missing apply-review source data", async () => {

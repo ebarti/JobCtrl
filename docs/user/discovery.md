@@ -74,19 +74,25 @@ exists; calibrating, paused, stale, unavailable, and no-work states stay explici
 instead of becoming a guessed finish time. Freshness and the bounded active-work
 inventory show whether the operational facts are current.
 
-### Workflow recovery across restarts
+### Stop Or Recover A Discover Run
 
-JobCtrl records the exact Temporal run ID for every projected execution and
-reconciles that exact run after a worker or app restart. If the runtime cannot
-temporarily find its history, the execution is marked provisionally unavailable
-and remains eligible for reconciliation. When the authoritative history becomes
-available again, JobCtrl automatically restores the same run or records its
-actual closed outcome; no manual retry is required.
+While the selected Discover workflow is actively discovering or draining,
+**Stop discovery** requests Temporal cancellation and refreshes the Pipelines,
+Runs, and Dashboard read models. A closed workflow that is only draining
+already-admitted work is not presented as stoppable.
 
-Start a replacement Discover run only when the exact execution is genuinely
-absent and the runtime inventory confirms that no work remains. The workflow ID,
-exact Temporal run ID, and reconciliation reason remain available in technical
-details for diagnosis and audit.
+When an execution fails, Pipelines reports whether the runtime inventory shows
+active work before suggesting another run. A positive total tells you to review
+that work first; unavailable inventory is reported as unknown, never as idle.
+If the worker temporarily cannot find the exact Temporal history, JobCtrl marks
+the execution as provisionally unavailable and keeps checking it. Reconnecting
+to the authoritative history automatically restores that exact run or records
+its actual closed outcome; no manual retry is needed. **Set up a new Discover
+run** is appropriate only when the exact execution is genuinely absent and the
+inventory confirms zero active work. It selects the Discover launch controls
+but does not dispatch anything until you submit them. Raw workflow identifiers,
+the exact Temporal run ID, and the reconciler reason code remain available
+under **Technical details**.
 
 ### How target search controls are used
 

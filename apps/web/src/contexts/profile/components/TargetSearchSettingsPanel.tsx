@@ -15,7 +15,11 @@ export function TargetSearchSettingsPanel() {
     >
       {profileQuery.error ? <div className="banner inline">{profileQuery.error.message}</div> : null}
       {profileQuery.data ? (
-        <ProfileForm initial={profileQuery.data} section="target-search" />
+        <ProfileForm
+          initial={profileQuery.data}
+          section="target-search"
+          showSectionHeading={false}
+        />
       ) : (
         <Empty title="Loading discovery settings." />
       )}

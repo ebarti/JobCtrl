@@ -12,10 +12,10 @@ describe("DiscoveryView", () => {
     expect(
       await screen.findByRole("heading", { level: 2, name: "Target search" }),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 3, name: "Target search" })).not.toBeInTheDocument();
     expect(
-      await screen.findByRole("heading", { level: 3, name: "Target search" }),
+      await screen.findByRole("group", { name: "Target tracks" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Target tracks" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Management" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Director of Engineering" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Automation settings" })).toBeInTheDocument();
