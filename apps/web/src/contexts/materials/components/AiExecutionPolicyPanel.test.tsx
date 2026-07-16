@@ -6,6 +6,13 @@ import { renderWithProviders } from "../../../test/render.js";
 import { AiExecutionPolicyPanel } from "./AiExecutionPolicyPanel.js";
 
 describe("<AiExecutionPolicyPanel>", () => {
+  it("does not expose the internal materials context as card metadata", async () => {
+    renderWithProviders(<AiExecutionPolicyPanel />);
+    expect(screen.queryByText("materials", { selector: ".meta" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("group", { name: "Employer analysis perspectives" })).toBeInTheDocument();
+    expect(screen.queryByText("materials", { selector: ".meta" })).not.toBeInTheDocument();
+  });
+
   it("uses product provider names and catalog-backed model choices", async () => {
     const user = userEvent.setup();
     renderWithProviders(<AiExecutionPolicyPanel />);

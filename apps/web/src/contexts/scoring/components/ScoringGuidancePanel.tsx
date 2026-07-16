@@ -24,10 +24,10 @@ export function ScoringGuidancePanel() {
   useEffect(() => {
     if (response && !form.state.isDirty) form.reset({ scoreCriteria: response.settings.scoreCriteria, targetCriteria: response.settings.targetCriteria });
   }, [form, response]);
-  if (!response) return <section className="card full"><CardHeader title="Scoring guidance" meta="scoring" /><Empty title="Loading scoring guidance." /></section>;
+  if (!response) return <section className="card full"><CardHeader title="Scoring guidance" /><Empty title="Loading scoring guidance." /></section>;
   return (
     <section className="card full">
-      <CardHeader title="Scoring guidance" meta="scoring" />
+      <CardHeader title="Scoring guidance" />
       <form className="config-form" onSubmit={(event) => { event.preventDefault(); void form.handleSubmit(); }}>
         {status ? <div className="status-line" role="status">{status}</div> : null}
         <form.Field name="scoreCriteria">{(field) => <div className="field"><label htmlFor="score-guidance">Scoring priorities</label><textarea id="score-guidance" name="scoreCriteria" maxLength={8000} aria-describedby="score-guidance-help" value={field.state.value} onChange={(event) => field.handleChange(event.target.value)} /><small id="score-guidance-help">What strong-fit jobs should demonstrate. Applies to new scoring work.</small></div>}</form.Field>

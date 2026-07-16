@@ -32,12 +32,12 @@ export function ApplyRuntimeSettingsPanel() {
   useEffect(() => {
     if (response && !form.state.isDirty) form.reset({ applyMaxBudgetUsd: response.settings.applyMaxBudgetUsd, applyTimeoutSeconds: response.settings.applyTimeoutSeconds });
   }, [form, response]);
-  if (!response) return <section className="card full"><CardHeader title="Application runtime" meta="apply" /><Empty title="Loading Apply runtime settings." /></section>;
+  if (!response) return <section className="card full"><CardHeader title="Application runtime" /><Empty title="Loading Apply runtime settings." /></section>;
   const budget = response.effectiveSettings.applyMaxBudgetUsd;
   const timeout = response.effectiveSettings.applyTimeoutSeconds;
   return (
     <section className="card full">
-      <CardHeader title="Application runtime" meta="apply" />
+      <CardHeader title="Application runtime" />
       <form className="config-form" onSubmit={(event) => { event.preventDefault(); void form.handleSubmit(); }}>
         {status ? <div className="status-line" role="status">{status}</div> : null}
         <form.Field name="applyMaxBudgetUsd">{(field) => <div className="field"><label htmlFor="apply-max-budget">Maximum AI budget per application (USD)</label><input id="apply-max-budget" name="applyMaxBudgetUsd" type="number" min={0} step={0.01} readOnly={!budget.editable} aria-describedby="apply-max-budget-help" value={field.state.value} onChange={(event) => field.handleChange(Number(event.target.value))} /><small id="apply-max-budget-help">0 is a zero-dollar cap, not unlimited. {policyContext(budget.source)}</small></div>}</form.Field>

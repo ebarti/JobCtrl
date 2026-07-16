@@ -63,11 +63,11 @@ export function AiExecutionPolicyPanel() {
     const savedGenerators = response.settings.tailoringGeneratorModels ?? [];
     form.reset({ analysisLegs: response.settings.analysisLegs, generatorPrimary: savedGenerators[0] ?? "", generatorFallback: savedGenerators[1] ?? "", tailoringJudgeModel: response.settings.tailoringJudgeModel ?? "", tailoringJudgeMinScore: response.settings.tailoringJudgeMinScore });
   }, [form, response]);
-  if (!response) return <section className="card full"><CardHeader title="AI execution policy" meta="materials" /><Empty title="Loading AI execution policy." /></section>;
+  if (!response) return <section className="card full"><CardHeader title="AI execution policy" /><Empty title="Loading AI execution policy." /></section>;
   const effective = response.effectiveSettings;
   return (
     <section className="card full">
-      <CardHeader title="AI execution policy" meta="materials" />
+      <CardHeader title="AI execution policy" />
       <form className="config-form" onSubmit={(event) => { event.preventDefault(); void form.handleSubmit(); }}>
         {status ? <div className="status-line" role="status">{status}</div> : null}
         <form.Field name="analysisLegs">{(field) => <fieldset className="field wide checkbox-group-field" aria-describedby="analysis-legs-help"><legend>Employer analysis perspectives</legend><div className="checkbox-options">{LEG_OPTIONS.map((option) => <label className="choice target-choice" key={option.value}><input name="analysisLegs" type="checkbox" disabled={!effective.analysisLegs.editable} checked={field.state.value.includes(option.value)} onChange={(event) => { const next = event.target.checked ? [...field.state.value, option.value] : field.state.value.filter((leg) => leg !== option.value); if (next.length) field.handleChange(next); }} /><span>{option.label}</span></label>)}</div><small id="analysis-legs-help">{context(effective.analysisLegs.source, "next analysis")}</small></fieldset>}</form.Field>

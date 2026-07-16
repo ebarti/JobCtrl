@@ -5,6 +5,13 @@ import { renderWithProviders } from "../../../test/render.js";
 import { ApplyRuntimeSettingsPanel } from "./ApplyRuntimeSettingsPanel.js";
 
 describe("<ApplyRuntimeSettingsPanel>", () => {
+  it("does not expose the internal apply context as card metadata", async () => {
+    renderWithProviders(<ApplyRuntimeSettingsPanel />);
+    expect(screen.queryByText("apply", { selector: ".meta" })).not.toBeInTheDocument();
+    expect(await screen.findByLabelText("Maximum AI budget per application (USD)")).toBeInTheDocument();
+    expect(screen.queryByText("apply", { selector: ".meta" })).not.toBeInTheDocument();
+  });
+
   it("distinguishes the zero-dollar cap and agent timeout", async () => {
     renderWithProviders(<ApplyRuntimeSettingsPanel />);
     expect(await screen.findByLabelText("Maximum AI budget per application (USD)")).toHaveValue(5);
