@@ -51,7 +51,7 @@ const etaUnavailable: PipelineEta = {
   asOf: AS_OF,
 };
 
-const availableCapacity: PipelineCapacity = {
+const availableCapacity = {
   status: "available",
   kind: "shared_activity_pool_with_internal_parallelism",
   asOf: AS_OF,
@@ -84,7 +84,7 @@ const availableCapacity: PipelineCapacity = {
       tasksDispatchRate: 0.5,
     },
   },
-};
+} satisfies PipelineCapacity;
 
 function stage(
   stageName: string,
@@ -164,7 +164,17 @@ function snapshot(overrides: Partial<PipelineOperationsSnapshot> = {}): Pipeline
       preparationFanout: counts({ eligible: 1, waiting: 1 }),
       asOf: AS_OF,
     },
+    projectionCoverage: {
+      status: "ready",
+      mode: "native",
+      decoderVersion: 1,
+      historyEventId: 89,
+      membershipCount: 20,
+      stepCount: 8,
+      updatedAt: AS_OF,
+    },
     stages: discoveringStages,
+    activeStageCounts: [{ stage: "source_family", count: 2 }],
     activeItems: [
       {
         kind: "source_family",
@@ -193,6 +203,43 @@ function snapshot(overrides: Partial<PipelineOperationsSnapshot> = {}): Pipeline
 }
 
 export const pipelinesDiscoveringSnapshot = snapshot();
+
+export const pipelinesIdleSnapshot = snapshot({
+  execution: null,
+  capacity: {
+    ...availableCapacity,
+    activeSlots: 0,
+    availableSlots: availableCapacity.configuredSlots,
+    slotSaturation: 0,
+    approximateTaskQueue: {
+      status: "available",
+      observedAt: AS_OF,
+      workflow: {
+        pollerCount: 1,
+        approximateBacklogCount: 0,
+        approximateBacklogAgeSeconds: 0,
+        tasksAddRate: 0,
+        tasksDispatchRate: 0,
+      },
+      activity: {
+        pollerCount: 1,
+        approximateBacklogCount: 0,
+        approximateBacklogAgeSeconds: 0,
+        tasksAddRate: 0,
+        tasksDispatchRate: 0,
+      },
+    },
+  },
+  sourceFamilies: null,
+  reconciliation: null,
+  projectionCoverage: null,
+  stages: [],
+  activeStageCounts: [],
+  activeItems: [],
+  activeItemsTotal: 0,
+  activeItemsTruncated: false,
+  overallEta: { status: "unavailable", reason: "no_work", asOf: AS_OF },
+});
 
 export const pipelinesDrainingSnapshot = snapshot({
   execution: {
@@ -224,6 +271,7 @@ export const pipelinesDrainingSnapshot = snapshot({
     },
   ],
   activeItemsTotal: 1,
+  activeStageCounts: [{ stage: "reconciliation", count: 1 }],
   overallEta: {
     status: "available",
     lowSeconds: 120,
@@ -264,9 +312,82 @@ export const pipelinesCompletedSnapshot = snapshot({
     eta: { status: "unavailable", reason: "no_work", asOf: AS_OF },
   })),
   activeItems: [],
+  activeStageCounts: [],
   activeItemsTotal: 0,
   activeItemsTruncated: false,
   overallEta: { status: "unavailable", reason: "no_work", asOf: AS_OF },
+});
+
+export const pipelinesFailedHistorySnapshot = snapshot({
+  execution: {
+    ...pipelinesDiscoveringSnapshot.execution!,
+    selectedAs: "latest_terminal",
+    workflowStatus: "terminated",
+    phase: "failed",
+    membershipClosed: false,
+    finishedAt: "2026-07-14T12:04:00.000Z",
+    errorCode: "reconciled_not_found",
+    currentExecution: {
+      members: 9,
+      planned: 9,
+      notEligible: 0,
+      pending: 9,
+      failedPlan: 0,
+      terminal: 0,
+      remaining: 9,
+    },
+    sweptExistingBacklog: {
+      members: 11,
+      planned: 11,
+      notEligible: 0,
+      pending: 11,
+      failedPlan: 0,
+      terminal: 0,
+      remaining: 11,
+    },
+  },
+  capacity: {
+    ...availableCapacity,
+    activeSlots: 0,
+    availableSlots: 4,
+    slotSaturation: 0,
+  },
+  stages: discoveringStages.map((entry) => ({
+    ...entry,
+    currentExecution: counts(),
+    capacity: {
+      ...availableCapacity,
+      activeSlots: 0,
+      availableSlots: 4,
+      slotSaturation: 0,
+    },
+    eta: { status: "unavailable", reason: "no_work", asOf: AS_OF },
+  })),
+  activeItems: [],
+  activeStageCounts: [],
+  activeItemsTotal: 0,
+  activeItemsTruncated: false,
+  overallEta: { status: "unavailable", reason: "no_work", asOf: AS_OF },
+});
+
+export const pipelinesMixedFailureSnapshot = snapshot({
+  stages: discoveringStages.map((entry) =>
+    entry.stage === "source_family" && entry.scope === "current_execution"
+      ? {
+          ...entry,
+          currentExecution: counts({
+            eligible: 8,
+            waiting: 1,
+            processing: 1,
+            succeeded: 2,
+            blocked: 1,
+            failed: 1,
+            canceled: 1,
+            needsVerification: 1,
+          }),
+        }
+      : entry,
+  ),
 });
 
 export const pipelinesCompletedWithIssuesSnapshot = snapshot({
@@ -298,6 +419,7 @@ export const pipelinesCompletedWithIssuesSnapshot = snapshot({
     eta: { status: "stale", reason: "telemetry_stale", asOf: AS_OF },
   })),
   activeItems: [],
+  activeStageCounts: null,
   activeItemsTotal: null,
   activeItemsTruncated: null,
   overallEta: { status: "stale", reason: "telemetry_stale", asOf: AS_OF },
@@ -344,6 +466,7 @@ export const pipelinesUnavailableTelemetrySnapshot = snapshot({
     approximateTaskQueue: { status: "unavailable", observedAt: AS_OF, reasonCode: "runtime_telemetry_missing" },
   }, eta: etaUnavailable })),
   activeItems: [],
+  activeStageCounts: null,
   activeItemsTotal: null,
   activeItemsTruncated: null,
   overallEta: etaUnavailable,
@@ -392,11 +515,272 @@ export const pipelinesMultiWorkerCapacitySnapshot = snapshot({
       attempt: 3,
       startedAt: "2026-07-14T11:57:00.000Z",
       opaqueId: "activity-opaque-17",
+      stage: null,
     },
   ],
   activeItemsTotal: 9,
   activeItemsTruncated: true,
+  activeStageCounts: [
+    { stage: "source_family", count: 2 },
+    { stage: "score", count: 7 },
+  ],
 });
+
+export const pipelinesRecoveringProjectionSnapshot = snapshot({
+  execution: {
+    ...pipelinesDiscoveringSnapshot.execution!,
+    currentExecution: {
+      members: 0,
+      planned: 0,
+      notEligible: 0,
+      pending: 0,
+      failedPlan: 0,
+      terminal: 0,
+      remaining: 0,
+    },
+    sweptExistingBacklog: {
+      members: 0,
+      planned: 0,
+      notEligible: 0,
+      pending: 0,
+      failedPlan: 0,
+      terminal: 0,
+      remaining: 0,
+    },
+  },
+  capacity: {
+    ...availableCapacity,
+    activeSlots: 4,
+    availableSlots: 0,
+    slotSaturation: 1,
+    approximateTaskQueue: {
+      status: "available",
+      observedAt: AS_OF,
+      workflow: {
+        pollerCount: 1,
+        approximateBacklogCount: 0,
+        approximateBacklogAgeSeconds: 0,
+        tasksAddRate: 0.1,
+        tasksDispatchRate: 0.1,
+      },
+      activity: {
+        pollerCount: 1,
+        approximateBacklogCount: 41,
+        approximateBacklogAgeSeconds: 126,
+        tasksAddRate: 1.2,
+        tasksDispatchRate: 0.4,
+      },
+    },
+  },
+  sourceFamilies: {
+    planned: 0,
+    counts: counts(),
+    eta: { status: "unavailable", reason: "contention_unbounded", asOf: AS_OF },
+    asOf: AS_OF,
+  },
+  reconciliation: {
+    enrichment: counts(),
+    preparationFanout: counts(),
+    asOf: AS_OF,
+  },
+  projectionCoverage: {
+    status: "recovering",
+    mode: "reconstructed",
+    decoderVersion: 1,
+    historyEventId: 89,
+    expectedMembershipCount: 72,
+    persistedMembershipCount: 15,
+    expectedStepCount: 8,
+    persistedStepCount: 3,
+    updatedAt: AS_OF,
+  },
+  stages: discoveringStages.map((entry) => ({
+    ...entry,
+    currentExecution: counts(),
+    eta: { status: "unavailable", reason: "contention_unbounded", asOf: AS_OF },
+  })),
+  activeStageCounts: [
+    { stage: "source_family", count: 1 },
+    { stage: "tailor", count: 3 },
+  ],
+  activeItems: [
+    {
+      kind: "unresolved_runtime_activity",
+      activityType: "discovery_source_family",
+      workflowId: "discover-local",
+      executionId: "run-discover-20260714",
+      attempt: 1,
+      startedAt: "2026-07-14T11:50:00.000Z",
+      opaqueId: "source-family-runtime-1",
+      stage: "source_family",
+    },
+    ...[1, 2, 3].map((index) => ({
+      kind: "unresolved_runtime_activity" as const,
+      activityType: "tailor_job",
+      workflowId: null,
+      executionId: null,
+      attempt: 1,
+      startedAt: `2026-07-14T11:5${index}:00.000Z`,
+      opaqueId: `tailor-runtime-${index}`,
+      stage: "tailor",
+    })),
+  ],
+  activeItemsTotal: 4,
+  activeItemsTruncated: false,
+  overallEta: {
+    status: "unavailable",
+    reason: "contention_unbounded",
+    asOf: AS_OF,
+  },
+});
+
+export const pipelinesRetryingProjectionSnapshot: PipelineOperationsSnapshot = {
+  ...pipelinesRecoveringProjectionSnapshot,
+  projectionCoverage: {
+    status: "retrying",
+    mode: "reconstructed",
+    decoderVersion: 1,
+    historyEventId: 89,
+    expectedMembershipCount: 72,
+    persistedMembershipCount: 15,
+    expectedStepCount: 8,
+    persistedStepCount: 3,
+    errorCode: "recovery_manifest_set_mismatch",
+    updatedAt: AS_OF,
+  },
+};
+
+export const pipelinesTerminalRecoveringProjectionSnapshot: PipelineOperationsSnapshot = {
+  ...pipelinesRecoveringProjectionSnapshot,
+  execution: {
+    ...pipelinesCompletedWithIssuesSnapshot.execution!,
+    currentExecution: {
+      members: 9,
+      planned: 9,
+      notEligible: 0,
+      pending: 6,
+      failedPlan: 0,
+      terminal: 3,
+      remaining: 6,
+    },
+    sweptExistingBacklog: {
+      members: 11,
+      planned: 11,
+      notEligible: 0,
+      pending: 7,
+      failedPlan: 0,
+      terminal: 4,
+      remaining: 7,
+    },
+  },
+  sourceFamilies: pipelinesCompletedWithIssuesSnapshot.sourceFamilies,
+  reconciliation: pipelinesCompletedWithIssuesSnapshot.reconciliation,
+  stages: pipelinesCompletedWithIssuesSnapshot.stages,
+  activeStageCounts: [],
+  activeItems: [],
+  activeItemsTotal: 0,
+  activeItemsTruncated: false,
+  overallEta: etaAvailable,
+  projectionCoverage: {
+    status: "recovering",
+    mode: "reconstructed",
+    decoderVersion: 1,
+    historyEventId: 89,
+    expectedMembershipCount: 20,
+    persistedMembershipCount: 7,
+    expectedStepCount: 8,
+    persistedStepCount: 3,
+    updatedAt: AS_OF,
+  },
+};
+
+export const pipelinesIncompleteProjectionSnapshot: PipelineOperationsSnapshot = {
+  ...pipelinesTerminalRecoveringProjectionSnapshot,
+  capacity: {
+    ...availableCapacity,
+    activeSlots: 0,
+    availableSlots: 4,
+    slotSaturation: 0,
+  },
+  execution: {
+    ...pipelinesCompletedWithIssuesSnapshot.execution!,
+    phase: "failed",
+    workflowStatus: "failed",
+    errorCode: "legacy-fanout-terminal-failed",
+  },
+  projectionCoverage: {
+    status: "incomplete",
+    mode: "reconstructed",
+    decoderVersion: 2,
+    historyEventId: 119,
+    expectedMembershipCount: null,
+    persistedMembershipCount: 7,
+    expectedStepCount: null,
+    persistedStepCount: 4,
+    errorCode: "legacy-fanout-terminal-failed",
+    updatedAt: AS_OF,
+  },
+};
+
+export const pipelinesPartialSweepRecoveringSnapshot: PipelineOperationsSnapshot = {
+  ...pipelinesRecoveringProjectionSnapshot,
+  execution: {
+    ...pipelinesDiscoveringSnapshot.execution!,
+    phase: "draining",
+    membershipClosed: true,
+    currentExecution: {
+      members: 59,
+      planned: 59,
+      notEligible: 0,
+      pending: 41,
+      failedPlan: 0,
+      terminal: 18,
+      remaining: 41,
+    },
+    sweptExistingBacklog: {
+      members: 97,
+      planned: 97,
+      notEligible: 0,
+      pending: 83,
+      failedPlan: 0,
+      terminal: 14,
+      remaining: 83,
+    },
+  },
+  sourceFamilies: {
+    planned: 47,
+    counts: counts({ eligible: 47, processing: 4, succeeded: 43 }),
+    eta: etaAvailable,
+    asOf: AS_OF,
+  },
+  reconciliation: {
+    enrichment: counts({ eligible: 31, waiting: 29, succeeded: 2 }),
+    preparationFanout: counts({ eligible: 23, waiting: 19, succeeded: 4 }),
+    asOf: AS_OF,
+  },
+  stages: discoveringStages.map((entry) => ({
+    ...entry,
+    currentExecution:
+      entry.scope === "execution_sweep"
+        ? counts({ eligible: 97, waiting: 83, succeeded: 14 })
+        : entry.scope === "current_execution"
+          ? counts({ eligible: 59, waiting: 41, succeeded: 18 })
+          : entry.currentExecution,
+    eta: etaAvailable,
+  })),
+  overallEta: etaAvailable,
+  projectionCoverage: {
+    status: "recovering",
+    mode: "reconstructed",
+    decoderVersion: 1,
+    historyEventId: 89,
+    expectedMembershipCount: 156,
+    persistedMembershipCount: 53,
+    expectedStepCount: 47,
+    persistedStepCount: 18,
+    updatedAt: AS_OF,
+  },
+};
 
 /**
  * Guards the original topology: three source-family activities are not the
@@ -424,6 +808,7 @@ export const pipelinesThreeSourceSixStepSnapshot = snapshot({
     stage("tailor", "Tailor", "execution_sweep", counts({ eligible: 1, succeeded: 1 })),
   ],
   activeItems: [],
+  activeStageCounts: [],
   activeItemsTotal: 0,
   activeItemsTruncated: false,
   overallEta: { status: "unavailable", reason: "no_work", asOf: AS_OF },

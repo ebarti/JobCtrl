@@ -39,7 +39,7 @@
 .compensation-detail-grid dt,
 .compensation-panel .eyebrow {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 680;
   letter-spacing: 0.075em;
   line-height: 1.25;
@@ -98,7 +98,7 @@
 .job-overview-location {
   margin: 0;
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.45;
 }
 
@@ -112,7 +112,7 @@
 
 .job-detail-drawer .external-link {
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 610;
   text-decoration: underline;
   text-decoration-color: color-mix(
@@ -155,7 +155,7 @@
   min-height: 30px;
   border-radius: 5px;
   padding: 6px 9px;
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .job-detail-workspace {
@@ -189,7 +189,7 @@
 .job-detail-drawer .section h3 {
   margin: 0;
   color: var(--foreground);
-  font-size: 14px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 650;
   letter-spacing: -0.018em;
 }
@@ -215,14 +215,14 @@
   max-width: 82ch;
   gap: 14px;
   color: color-mix(in oklch, var(--foreground) 88%, var(--muted-foreground));
-  font-size: 14px;
+  font-size: var(--jh-font-size-body);
   line-height: 1.63;
 }
 
 .job-detail-description .description-text h4 {
   margin-top: 6px;
   color: var(--foreground);
-  font-size: 14px;
+  font-size: var(--jh-font-size-heading-sm);
 }
 
 .job-detail-description .description-text li {
@@ -276,7 +276,7 @@
   min-width: 0;
   margin: 0;
   color: var(--foreground);
-  font-size: 14px;
+  font-size: var(--jh-font-size-body);
   font-variant-numeric: tabular-nums;
   font-weight: 640;
   overflow-wrap: anywhere;
@@ -286,7 +286,7 @@
   max-width: 88ch;
   margin: 0;
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.55;
 }
 
@@ -318,7 +318,7 @@
   box-shadow: none;
   padding: 0;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 590;
   letter-spacing: 0;
   line-height: 1.35;
@@ -386,7 +386,7 @@
 
 .job-detail-drawer .score-correction label > span {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 620;
 }
 
@@ -395,7 +395,7 @@
   height: 34px;
   border-radius: 5px;
   background: var(--card);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body);
 }
 
 .job-detail-drawer .score-correction button {
@@ -415,7 +415,7 @@
 
 .job-detail-drawer .score-correction small {
   grid-column: 1 / -1;
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .job-detail-drawer .job-audit-concerns {
@@ -456,12 +456,12 @@
   padding: 11px 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .job-detail-drawer .compensation-strip-label {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 680;
   letter-spacing: 0.075em;
   text-transform: uppercase;
@@ -507,7 +507,7 @@
 }
 
 .job-detail-drawer .compensation-detail-grid dd {
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .job-detail-drawer .compensation-evidence-row {
@@ -533,7 +533,9 @@
   gap: 12px;
 }
 
-.job-detail-drawer .job-detail-role-analysis .employer-analysis-requirement,
+.job-detail-drawer
+  .job-detail-role-analysis
+  .employer-analysis-requirement:not(.employer-analysis-requirement-card),
 .job-detail-drawer .job-detail-role-analysis .employer-analysis-keyword,
 .job-detail-drawer .job-detail-role-analysis .employer-analysis-sub {
   border: 0;
@@ -556,41 +558,85 @@
   padding: 0 0 14px;
 }
 
-.job-detail-drawer .timeline {
-  display: grid;
-  grid-template-columns: 1fr;
+:is(.job-detail-drawer, .job-detail-workspace) .timeline {
+  display: flex;
+  flex-direction: column;
   gap: 0;
   border-top: 1px solid var(--border);
 }
 
-.job-detail-drawer .timeline-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px 12px;
+:is(.job-detail-drawer, .job-detail-workspace) .timeline-row {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 9px;
   border: 0;
   border-bottom: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
-  padding: 11px 0;
+  padding: 12px 0;
 }
 
-.job-detail-drawer .timeline-row-head {
-  gap: 7px;
+:is(.job-detail-drawer, .job-detail-workspace) .stage-timeline__header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.job-detail-drawer .timeline-row > .tag {
-  justify-self: end;
+:is(.job-detail-drawer, .job-detail-workspace) .stage-timeline__stage-name {
+  min-width: 0;
+  color: var(--foreground);
+  font-size: var(--jh-font-size-body-sm);
+  font-weight: 650;
+  line-height: 1.4;
 }
 
-.job-detail-drawer .timeline-diagnostics {
-  grid-column: 1 / -1;
-  gap: 5px;
+:is(.job-detail-drawer, .job-detail-workspace)
+  .stage-timeline__header
+  [data-slot="status-badge"] {
+  flex: 0 0 auto;
+  text-transform: capitalize;
+}
+
+:is(.job-detail-drawer, .job-detail-workspace) .stage-timeline__guidance {
+  margin-top: 1px;
+}
+
+:is(.job-detail-drawer, .job-detail-workspace)
+  .stage-timeline__diagnostic-disclosure {
+  min-width: 0;
+}
+
+:is(.job-detail-drawer, .job-detail-workspace)
+  .stage-timeline__diagnostic-trigger {
+  width: fit-content;
+  height: auto;
+  min-height: 28px;
+  justify-content: flex-start;
+  padding: 0 6px 0 0;
+}
+
+:is(.job-detail-drawer, .job-detail-workspace)
+  .stage-timeline__diagnostic-trigger[data-panel-open]
+  [data-icon="inline-start"] {
+  transform: rotate(180deg);
+}
+
+:is(.job-detail-drawer, .job-detail-workspace)
+  .stage-timeline__diagnostic-content {
+  padding: 2px 0 2px 19px;
+}
+
+:is(.job-detail-drawer, .job-detail-workspace) .timeline-diagnostics {
+  gap: 6px;
   border-left: 1px solid var(--border);
-  padding-left: 11px;
+  padding-left: 12px;
 }
 
-.job-detail-drawer .timeline-action {
-  grid-column: 1 / -1;
+:is(.job-detail-drawer, .job-detail-workspace) .timeline-action {
   width: fit-content;
   min-height: 29px;
 }
@@ -615,7 +661,7 @@
 .job-detail-drawer .section .mini-row > span:not(.tag) {
   grid-column: 1;
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 610;
 }
 
@@ -623,7 +669,7 @@
   grid-column: 1;
   grid-row: 2;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-code);
 }
 
 .job-detail-drawer .section .mini-row > button,
@@ -638,7 +684,7 @@
 }
 
 .job-detail-drawer .job-audit-summary-title {
-  font-size: 12px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 650;
 }
 
@@ -672,14 +718,14 @@
 }
 
 .job-detail-drawer .job-audit-head strong {
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 630;
 }
 
 .job-detail-drawer .job-audit-description,
 .job-detail-drawer .job-audit-head time,
 .job-detail-drawer .job-audit-actor {
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.45;
 }
 

@@ -20,13 +20,16 @@ const optionalTimestamp = z
     z.string().trim().min(1).optional(),
   )
   .catch(undefined);
+const jobsQueue = z
+  .enum(["active", "closed", "deleted", "hidden"])
+  .default("active");
 
 export const jobsSearchSchema = z.object({
   q: z.string().default(""),
   stage: z.enum(STAGE_OR_ALL).default("all"),
   state: z.enum(STATE_OR_ALL).default("all"),
   applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all"),
-  deleted: z.enum(["active", "closed", "deleted", "hidden"]).default("active"),
+  deleted: jobsQueue,
   sort: z.enum(JOB_SORT_FIELDS).default("discovered_at"),
   dir: z.enum(["asc", "desc"]).default("desc"),
   page: z.number().int().min(1).default(1),

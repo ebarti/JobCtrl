@@ -45,21 +45,27 @@ class WorkflowStartedPayload:
     input_summary: dict[str, Any] = field(default_factory=dict)
     started_at: str | None = None
     temporal_run_id: str | None = None
+    # Set only by the reconciler after the exact Temporal execution that was
+    # previously misclassified as missing becomes authoritative again.
+    recovered_from_missing_history: bool = False
 
 
 def create_workflow_started(tenant_id: TenantId, payload: WorkflowStartedPayload) -> DomainEvent:
+    event_payload: dict[str, Any] = {
+        "tenantId": str(tenant_id),
+        "workflowId": payload.workflow_id,
+        "workflowType": payload.workflow_type,
+        "status": WORKFLOW_STATUS_IN_PROGRESS,
+        "inputSummary": payload.input_summary,
+        "startedAt": payload.started_at,
+        "temporalRunId": payload.temporal_run_id,
+    }
+    if payload.recovered_from_missing_history:
+        event_payload["recoveredFromMissingHistory"] = True
     return create_domain_event(
         "WorkflowStarted",
         tenant_id,
-        {
-            "tenantId": str(tenant_id),
-            "workflowId": payload.workflow_id,
-            "workflowType": payload.workflow_type,
-            "status": WORKFLOW_STATUS_IN_PROGRESS,
-            "inputSummary": payload.input_summary,
-            "startedAt": payload.started_at,
-            "temporalRunId": payload.temporal_run_id,
-        },
+        event_payload,
     )
 
 

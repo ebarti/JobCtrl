@@ -57,6 +57,75 @@ and accepted-artifact preservation. The
 [Regression Catalog](developer/qa/regression-catalog.md) explains which layer
 proves each class of invariant; the complete page maps every risk to exact tests.
 
+### Pipeline history recovery and restart regression
+
+Reproduce the human-reported partial-projection state with an active Discover
+execution, 72 expected execution members, 15 persisted members, 16 expected
+pipeline-step keys, four persisted keys, one live source-family activity, three
+live tailoring activities, and an approximate activity backlog of 41. Verify:
+
+- the durable checkpoint and operations response remain `recovering`; partial
+  row counts, active slots, and fresh telemetry never promote it to `ready`;
+- the UI renders **Restoring pipeline history**, the 15/72 and 4/16 restoration
+  progress, and the live worker/queue/activity facts;
+- selected-run counts, stage percentages, source/reconciliation ledgers, ETAs,
+  **0%**, and **No work remaining** stay hidden until the checkpoint is `ready`;
+  and
+- a stale `ready` row whose exact key digest no longer matches is downgraded to
+  `recovering` by the API and selected for worker repair;
+- an idle snapshot with no selected execution has `projectionCoverage: null`
+  only when fresh available telemetry proves zero active slots; occupied, stale,
+  or unavailable runtime inventory reports `recovering` instead of fabricated
+  idle or `ready`; and
+- a non-ASCII membership and stage-key golden vector hashes identically in the
+  Python recovery writer and TypeScript API validator.
+
+Then exercise the write-side recovery controller with legacy queued, running,
+completed, and failed activities, a mixed legacy/native history, and a true
+empty native execution. Kill the worker after a partial replay while leaving
+Temporal running, restart the worker, and verify that startup reconciliation:
+
+1. resumes from the exact workflow/run history without starting, canceling, or
+   signaling a discovery workflow;
+2. restores source and backlog memberships, work plans, and step lifecycle
+   events without duplicates;
+3. records the current Temporal history-event watermark and exact membership
+   and step-key digest; and
+4. publishes `ready` only after projection refresh and exact set equality.
+
+The legacy fixture must also reproduce the lossy projection shape: repeated
+fanout passes declare `0`, `71`, `67`, and `34` targets with legitimate overlap,
+the folded workflow projection retains only `jobUrl`, and the append-only event
+log retains both causal job-only starts and exact full summaries. Verify decoder
+v2 derives the 72-member union from each fanout's exact interval, rejects a
+per-pass target-count or workflow-run mismatch, restores all 16 declared stage
+keys, persists `legacy_history_recovery` as a valid bounded reason code, and
+reaches a verified 72/72-membership and 16/16-step `ready` checkpoint.
+
+For ambiguous mapping or a transient history read, verify `retrying` with a
+bounded error code, automatic heartbeat retry, and no mutation of the running
+workflow. Run the focused worker reconciliation tests, API checkpoint tests,
+Pipelines component tests, and the live browser path together. The live pass
+must compare the operations response with the rendered workspace so shared-pool
+telemetry cannot be mistaken for selected-run proof.
+
+Also cover the retry and terminal edge cases. A successful fanout retry with
+`attempt > 1` must restore exact membership and steps without inventing a queue
+timestamp. A failed attempt that is waiting to retry, or a later attempt that is
+still running, must remain non-terminal and cannot publish `ready` or a false
+failed step. A canceled or terminally failed fanout with no retry remaining must
+preserve its exact partial membership, work plan, failed-step evidence, digest,
+and watermark as `projectionCoverage.status = incomplete`. Its expected counts
+remain unknown in the API and UI. Restart the worker and verify that the closed
+incomplete run is not selected for automatic repair again. Pipelines must label
+the history as incomplete, avoid claims about the missing remainder, and expose
+**Set up a new Discover run** only when active work is exactly zero.
+
+Finally, begin from a valid `ready` manifest and force a transient history-read
+failure. Verify the worker first demotes it to `retrying`, preserves the prior
+proof for audit, and returns to `ready` after the authoritative history becomes
+readable; it must not leave stale ready data published during the failure.
+
 ### Public demo privacy and edge gate
 
 When consent, cookies, telemetry, D1, retention, or Cloudflare configuration
@@ -177,10 +246,36 @@ for the security, apply, or workflow matrices above.
 corepack pnpm --filter @jobctrl/web exec vitest run \
   src/styles/token-contract.test.ts \
   src/styles/token-contrast.test.ts \
+  src/styles/shared-layout-contract.test.ts \
+  src/styles/profile-evidence-responsive-layout.test.ts \
+  src/styles/apply-review-contacts-responsive.test.ts \
   src/shared/ui/base-ui-migration-boundary.test.ts \
+  src/shared/layout/Topbar.test.tsx \
+  src/shared/ui/button.test.tsx \
+  src/shared/ui/data-table.test.tsx \
+  src/shared/ui/label.test.tsx \
+  src/shared/ui/page-head.test.tsx \
+  src/shared/ui/filterable-data-grid.test.tsx \
+  src/shared/stores/saved-table-views.test.ts \
   src/contexts/operations/components/BrowserCapabilitiesPanel.test.tsx \
   src/contexts/profile/components/CredentialsPanel.test.tsx \
+  src/contexts/outreach/components/DueFollowUpsPanel.test.tsx \
+  src/contexts/scoring/components/CompensationSourcePolicyPanel.test.tsx \
+  src/contexts/materials/components/EmployerAnalysisPanel.test.tsx \
+  src/contexts/materials/components/EmployerAnalysisPanel.a11y.test.tsx \
+  src/contexts/materials/components/TailoringExplanationSection.test.tsx \
+  src/contexts/pipeline/hooks/useCancelWorkflowRunMutation.test.ts \
   src/views/pipelines/PipelinesView.test.tsx \
+  src/routes/-jobs.search.test.ts \
+  src/views/jobs/JobBulkActions.test.tsx \
+  src/views/jobs/JobBulkActions.a11y.test.tsx \
+  src/views/jobs/JobsTable.test.tsx \
+  src/views/jobs/JobsTable.a11y.test.tsx \
+  src/views/jobs/JobsView.test.tsx \
+  src/views/jobs/JobDetailDrawer.test.tsx \
+  src/views/artifacts/ArtifactDetailPanel.test.tsx \
+  src/views/evidence-map/EvidenceMapView.test.tsx \
+  src/views/apply-review/ApplyReviewView.test.tsx \
   src/contexts/operations/hooks/usePipelineOperationsQuery.test.ts \
   src/contexts/operations/invalidation-router.test.ts
 corepack pnpm --filter @jobctrl/api exec vitest run \
@@ -195,20 +290,40 @@ JOBCTRL_E2E_APP_DIR=/tmp/jobctrl-route-qa \
 JOBCTRL_E2E_API_PORT=8878 \
 JOBCTRL_E2E_WEB_PORT=5275 \
 corepack pnpm --filter @jobctrl/web e2e -- tests/route-visual-qa.spec.ts
+JOBCTRL_E2E_APP_DIR=/tmp/jobctrl-responsive-qa \
+JOBCTRL_E2E_API_PORT=8879 \
+JOBCTRL_E2E_WEB_PORT=5276 \
+corepack pnpm --filter @jobctrl/web e2e -- tests/responsive-data-surfaces.spec.ts
 git diff --check
 ```
 
 The gate passes only when:
 
 - `base-rhea`, Geist, the semantic token mappings, light/dark contrast, all
-  three densities, and the shared card/status rules remain intact;
+  three densities, a density-independent 16px body, the compact PageHead
+  hierarchy, and the shared card/status rules remain intact;
 - direct Radix imports and raw native selects are absent, Base UI overlays keep
   their focus/dismissal/portal contract, and route visuals show no clipping or
   document-level overflow at desktop and 390×844;
+- Jobs exposes Active/Deleted/Hidden as real Tabs, keeps legacy `closed` only as
+  a compatible deep-link state, hides Sources/Warnings in the default view,
+  omits redundant active lifecycle copy, uses destructive deletion, and keeps
+  row activation focus-visible without a permanent duplicate action;
+- Jobs, Artifacts, Contacts, Discovery, and Settings record data reflows into
+  labelled cards at 900px and below; Profile and Evidence Map stack their work
+  regions, while Apply Review keeps a desktop queue rail and wraps decisions in
+  its narrow sequential layout;
 - Pipelines keeps source families separate from the two reconciliation steps,
-  preserves execution/sweep/global-backlog scope, masks sensitive identifiers,
-  and reports honest ETA, freshness, capacity, queue, and active-inventory
-  states without invented numbers;
+  preserves execution/sweep/global-backlog scope and exact outcome counts,
+  masks sensitive identifiers, refreshes after stopping active discovery, and
+  gates replacement-run setup on an exact zero-active-work inventory without
+  dispatching implicitly; compact inspector labels, values, and timestamps also
+  remain on the same body-small typography scale;
+- Job Detail and Artifact Detail resolve evidence through the Evidence Map into
+  human-readable titles/excerpts, keep unresolved keys behind technical details,
+  Artifact Detail places the preview after its audit details, and Apply Review
+  preserves persisted comments even when a rendered-line anchor cannot be
+  resolved;
 - passive browser detection exposes no paths or side effects, stale detected
   IDs fail closed, manual path entry remains an advanced explicit fallback, and
   profile copying still requires separate consent;

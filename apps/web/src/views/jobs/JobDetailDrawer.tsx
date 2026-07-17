@@ -2,6 +2,7 @@ import { JobCtrlApiError } from "@jobctrl/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobctrl/contracts";
 import { IconArrowLeft } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
+import { useCallback, useMemo } from "react";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
 import {
@@ -11,12 +12,17 @@ import {
 import { CompensationAuditSection } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { JobContactsPanel } from "../../contexts/outreach/components/JobContactsPanel.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
-import { EmployerAnalysisPanel } from "../../contexts/materials/components/EmployerAnalysisPanel.js";
+import {
+  EmployerAnalysisPanel,
+  type EmployerAnalysisEvidenceReference,
+} from "../../contexts/materials/components/EmployerAnalysisPanel.js";
 import { InterviewPrepPanel } from "../../contexts/materials/components/InterviewPrepPanel.js";
 import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
 import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHistory.js";
 import { useDiscoverySettingsQuery } from "../../contexts/operations/hooks/useDiscoverySettingsQuery.js";
+import { useEvidenceMapQuery } from "../../contexts/operations/hooks/useEvidenceMapQuery.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
+import type { EvidenceMapEntry } from "../../contexts/operations/types.js";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
 import { RescoreJobButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
@@ -50,6 +56,11 @@ function canRetryStage(stage: StageSummary | undefined): boolean {
 
 function canRunCurrentStage(stage: StageSummary | undefined): boolean {
   return Boolean(stage && !["queued", "running"].includes(stage.state));
+}
+
+function evidenceReferenceExcerpt(entry: EvidenceMapEntry): string | null {
+  const excerpt = entry.story?.outcome ?? entry.story?.action ?? entry.story?.scope ?? null;
+  return excerpt && excerpt !== entry.title ? excerpt : null;
 }
 
 function JobAuditHistorySection({
@@ -95,6 +106,28 @@ function RequirementFitMissingCallout({ jobId }: { readonly jobId: string }) {
 
 export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
   const { data: detail, error: detailError } = useJobDetailQuery(jobId);
+  const evidenceMap = useEvidenceMapQuery();
+  const evidenceEntriesById = useMemo(() => {
+    const entries = new Map<string, EvidenceMapEntry>();
+    for (const entry of evidenceMap.data?.entries ?? []) {
+      entries.set(entry.entryId, entry);
+      if (entry.evidenceId) entries.set(entry.evidenceId, entry);
+    }
+    return entries;
+  }, [evidenceMap.data?.entries]);
+  const resolveEvidenceReference = useCallback(
+    (evidenceId: string): EmployerAnalysisEvidenceReference | null | undefined => {
+      if (evidenceMap.isPending) return undefined;
+      const entry = evidenceEntriesById.get(evidenceId);
+      if (!entry) return null;
+      return {
+        entryId: entry.entryId,
+        title: entry.title,
+        excerpt: evidenceReferenceExcerpt(entry),
+      };
+    },
+    [evidenceEntriesById, evidenceMap.isPending],
+  );
   const discoverySettingsQuery = useDiscoverySettingsQuery();
   const applyApprovalRequired =
     discoverySettingsQuery.data?.settings.applyApprovalRequired ?? true;
@@ -219,10 +252,13 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
               analysis={detail.employerAnalysis}
               className="section job-detail-role-analysis"
               requirementFitReport={detail.requirementFitReport}
+              resolveEvidenceReference={resolveEvidenceReference}
             />
             <InterviewPrepPanel
               jobId={detail.job.jobKey}
               prep={detail.interviewPrep}
+              requirements={detail.employerAnalysis?.requirements ?? []}
+              resolveEvidenceReference={resolveEvidenceReference}
               reflectionContent={
                 detail.interviewPrep ? (
                   <InterviewReflectionPanel

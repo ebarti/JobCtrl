@@ -74,6 +74,40 @@ exists; calibrating, paused, stale, unavailable, and no-work states stay explici
 instead of becoming a guessed finish time. Freshness and the bounded active-work
 inventory show whether the operational facts are current.
 
+Exact selected-run stage tracking is durable. New executions record their
+membership and stage lineage natively. For an execution created by an older
+JobCtrl version, worker startup and heartbeats rebuild the same lineage from the
+exact Temporal workflow/run history. During that bounded repair, Pipelines shows
+**Restoring pipeline history**, keeps fresh shared-worker and queue facts visible,
+and hides selected-run counts, percentages, and ETAs until the recovered key sets
+have been verified. Partial rows or live-worker telemetry never become a false
+completion claim.
+
+### Stop Or Recover A Discover Run
+
+While the selected Discover workflow is actively discovering or draining,
+**Stop discovery** requests Temporal cancellation and refreshes the Pipelines,
+Runs, and Dashboard read models. A closed workflow that is only draining
+already-admitted work is not presented as stoppable.
+
+When an execution fails, Pipelines reports whether the runtime inventory shows
+active work before suggesting another run. A positive total tells you to review
+that work first; unavailable inventory is reported as unknown, never as idle.
+If an authoritative history read is temporarily unavailable or cannot yet be
+mapped unambiguously, JobCtrl shows that history repair will retry automatically.
+It does not present permanent missing tracking, infer completion from partial
+rows, or require a manual retry. Reconnecting to the exact history restores that
+run or records its actual closed outcome. If an older run ended before its
+history recorded every target, JobCtrl marks that run **Historical run
+incomplete**, preserves all exact recovered evidence, and does not invent or
+repeatedly retry the missing remainder. **Set up a new Discover run** is
+appropriate only when the prior execution is closed or genuinely absent and
+fresh runtime capacity confirms zero active slots. It selects the Discover
+launch controls but does not dispatch anything until you submit them. Raw
+workflow identifiers, the exact
+Temporal run ID, and the bounded repair reason code remain available under
+**Technical details**.
+
 ### How target search controls are used
 
 These controls do not divide cleanly into “search fields” and “filter fields.”

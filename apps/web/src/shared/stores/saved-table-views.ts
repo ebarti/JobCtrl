@@ -11,9 +11,13 @@ import {
   type TableId,
 } from "@jobctrl/contracts";
 import { create } from "zustand";
-import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
+import {
+  createJSONStorage,
+  persist,
+  type StateStorage,
+} from "zustand/middleware";
 
-export const SAVED_TABLE_VIEW_STORE_VERSION = 1;
+export const SAVED_TABLE_VIEW_STORE_VERSION = 2;
 export const SAVED_TABLE_VIEW_SCHEMA_VERSION = 1;
 export const DEFAULT_SAVED_TABLE_VIEW_ID = "default";
 export const JOBS_TABLE_ID = "jobs" satisfies TableId;
@@ -38,7 +42,12 @@ export const JOBS_TABLE_COLUMN_IDS = [
 
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
 const STATE_OR_ALL = [...STAGE_STATES, "all"] as const;
-const JOB_DELETED_VIEW_FILTERS = ["active", "closed", "deleted", "hidden"] as const;
+const JOB_DELETED_VIEW_FILTERS = [
+  "active",
+  "closed",
+  "deleted",
+  "hidden",
+] as const;
 const DENSITIES = ["compact", "regular", "comfy"] as const;
 const COLOR_RULE_OPERATORS = ["eq", "neq", "gte", "lte", "contains"] as const;
 const COLOR_RULE_TONES = ["success", "warning", "danger", "info"] as const;
@@ -46,6 +55,8 @@ const COLOR_RULE_TONES = ["success", "warning", "danger", "info"] as const;
 type KnownTableConfig = {
   tableId: TableId;
   columnIds: readonly string[];
+  fixedLeadingColumnIds: readonly string[];
+  defaultHiddenColumnIds: readonly string[];
   defaultSort: SavedTableView["sort"];
   defaultUrlFilters: SavedTableViewUrlFilters;
 };
@@ -54,6 +65,12 @@ const TABLE_CONFIGS: Record<string, KnownTableConfig> = {
   [JOBS_TABLE_ID]: {
     tableId: JOBS_TABLE_ID,
     columnIds: JOBS_TABLE_COLUMN_IDS,
+    fixedLeadingColumnIds: ["select"],
+    defaultHiddenColumnIds: [
+      "source",
+      "compensation_warnings",
+      "resume_template",
+    ],
     defaultSort: { columnId: "discovered_at", direction: "desc" },
     defaultUrlFilters: {
       q: "",
@@ -93,7 +110,10 @@ interface SavedTableViewsState {
     name: string,
     snapshot: SavedTableViewSnapshot,
   ) => string;
-  updateActiveView: (tableId: TableId, snapshot: SavedTableViewSnapshot) => boolean;
+  updateActiveView: (
+    tableId: TableId,
+    snapshot: SavedTableViewSnapshot,
+  ) => boolean;
   renameView: (tableId: TableId, viewId: string, name: string) => boolean;
   deleteView: (tableId: TableId, viewId: string) => boolean;
   reset: () => void;
@@ -134,6 +154,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function migrateSavedTableViewsState(
+  value: unknown,
+  persistedVersion: number,
+): unknown {
+  if (persistedVersion >= SAVED_TABLE_VIEW_STORE_VERSION || !isRecord(value)) {
+    return value;
+  }
+  const activeViewIdByTable = isRecord(value["activeViewIdByTable"])
+    ? value["activeViewIdByTable"]
+    : {};
+  const presentationByTable = isRecord(value["presentationByTable"])
+    ? value["presentationByTable"]
+    : {};
+  const jobsPresentation = presentationByTable[JOBS_TABLE_ID];
+  if (
+    activeViewIdByTable[JOBS_TABLE_ID] !== DEFAULT_SAVED_TABLE_VIEW_ID ||
+    !isRecord(jobsPresentation) ||
+    !isRecord(jobsPresentation["columns"]) ||
+    !Array.isArray(jobsPresentation["columns"]["hidden"]) ||
+    jobsPresentation["columns"]["hidden"].includes("resume_template")
+  ) {
+    return value;
+  }
+
+  return {
+    ...value,
+    presentationByTable: {
+      ...presentationByTable,
+      [JOBS_TABLE_ID]: {
+        ...jobsPresentation,
+        columns: {
+          ...jobsPresentation["columns"],
+          hidden: [...jobsPresentation["columns"]["hidden"], "resume_template"],
+        },
+      },
+    },
+  };
+}
+
 function isOneOf<const T extends readonly string[]>(
   value: unknown,
   values: T,
@@ -142,7 +201,10 @@ function isOneOf<const T extends readonly string[]>(
 }
 
 function createId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
   return `view-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -177,7 +239,18 @@ function normalizeColumns(
       order.push(columnId);
     }
   }
-  const hidden = uniqueKnownStrings(source["hidden"], knownIds);
+  for (const columnId of [...config.fixedLeadingColumnIds].reverse()) {
+    const currentIndex = order.indexOf(columnId);
+    if (currentIndex < 0) continue;
+    order.splice(currentIndex, 1);
+    order.unshift(columnId);
+  }
+  const hidden = uniqueKnownStrings(
+    Array.isArray(source["hidden"])
+      ? source["hidden"]
+      : config.defaultHiddenColumnIds,
+    knownIds,
+  );
   if (hidden.length >= config.columnIds.length) {
     hidden.shift();
   }
@@ -399,7 +472,9 @@ function normalizeView(
   };
 }
 
-export function normalizeSavedTableViewsState(value: unknown): Pick<
+export function normalizeSavedTableViewsState(
+  value: unknown,
+): Pick<
   SavedTableViewsState,
   "views" | "activeViewIdByTable" | "presentationByTable"
 > {
@@ -413,7 +488,8 @@ export function normalizeSavedTableViewsState(value: unknown): Pick<
     : {};
   const views: SavedTableView[] = [];
   const activeViewIdByTable: Partial<Record<TableId, string>> = {};
-  const presentationByTable: Partial<Record<TableId, SavedTablePresentation>> = {};
+  const presentationByTable: Partial<Record<TableId, SavedTablePresentation>> =
+    {};
 
   for (const config of Object.values(TABLE_CONFIGS)) {
     const tableDefault = defaultView(config);
@@ -427,7 +503,8 @@ export function normalizeSavedTableViewsState(value: unknown): Pick<
       tableViews.push(normalized);
     }
     const activeCandidate = activeSource[config.tableId];
-    const activeView = tableViews.find((view) => view.id === activeCandidate) ?? tableDefault;
+    const activeView =
+      tableViews.find((view) => view.id === activeCandidate) ?? tableDefault;
     const persistedPresentation = normalizePresentation(
       presentationSource[config.tableId],
       config,
@@ -480,7 +557,8 @@ export const useSavedTableViewsStore = create<SavedTableViewsState>()(
           return {
             presentationByTable: {
               ...state.presentationByTable,
-              [tableId]: normalizePresentation(presentation, config) ?? presentation,
+              [tableId]:
+                normalizePresentation(presentation, config) ?? presentation,
             },
           };
         }),
@@ -578,6 +656,7 @@ export const useSavedTableViewsStore = create<SavedTableViewsState>()(
       name: "jh:saved-table-views",
       storage: createJSONStorage(getStorage),
       version: SAVED_TABLE_VIEW_STORE_VERSION,
+      migrate: migrateSavedTableViewsState,
       partialize: ({ views, activeViewIdByTable, presentationByTable }) => ({
         views,
         activeViewIdByTable,

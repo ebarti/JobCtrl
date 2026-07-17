@@ -24,6 +24,12 @@ Use the current web routes according to the kind of change you are making:
 | `/evidence-map` | A read-only map from canonical achievements and skills to their uses in scores, requirement fit, generated bullets, and coverage gaps. |
 | `/discovery` | Target search and Discovery controls. These are composed near the workflow that uses them rather than treated as general profile editing. |
 
+Profile keeps the canonical editor and the real baseline-resume preview side by
+side only while both remain readable; at narrower working widths the preview
+moves below the editor and the resize handle disappears. Evidence Map follows
+the same rule: its entry list, selected evidence, and gaps/reusable-stories
+inspector stack instead of compressing the three-pane desktop workspace.
+
 Profile and preference forms validate before saving. Their autosave and explicit
 Save buttons use the same mutation path; the exact delay and field contract are
 owned by the [Profile & Settings API](../api/profile-and-settings.md), not by
@@ -59,7 +65,9 @@ The profile's main ownership boundaries are:
 
 The Evidence map is a projection over these canonical profile rows and their
 downstream use. It does not create a second evidence store or infer evidence
-from generated prose.
+from generated prose. Human-facing rows use evidence titles, source labels, and
+bounded excerpts. Sparse storage keys remain available only from each row's
+**Technical details** disclosure.
 
 ## Lifecycle
 

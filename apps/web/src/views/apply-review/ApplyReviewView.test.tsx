@@ -878,7 +878,7 @@ describe("<ApplyReviewView>", () => {
     expect(decisionCard).toHaveClass("apply-review-decision-card");
     expect(selectedFacts?.parentElement).toBe(decisionCard);
     expect(header.queryByText("Selected application")).not.toBeInTheDocument();
-    expect(header.getByText("Decision workspace")).toBeInTheDocument();
+    expect(header.queryByText("Decision workspace")).not.toBeInTheDocument();
     expect(header.getByRole("heading", { name: "Principal Platform Engineer" })).toBeInTheDocument();
     expect(header.getByText("Globex · discovered via Lever")).toBeInTheDocument();
     expect(header.queryByText(/Globex · score 9/i)).not.toBeInTheDocument();
@@ -2012,18 +2012,30 @@ describe("<ApplyReviewView>", () => {
     expect(artifact).not.toHaveBeenCalledWith(draftArtifact.artifactId);
   });
 
-  it("lets the user reply to a persisted JobCtrl line comment without hiding source context", async () => {
+  it("lets the user reply to a persisted JobCtrl comment inside its matched resume line", async () => {
+    htmlPreviewResumeText =
+      "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.";
+    const existingReply = {
+      replyId: "reply-existing",
+      threadId: "thread-claim-risk",
+      draftRevisionId: "draft-revision-1",
+      author: "jobctrl" as const,
+      decision: "rewrite_requested" as const,
+      body: "Please cite the supporting profile evidence before approval.",
+      createdAt: "2026-06-24T10:05:00.000Z",
+    };
     const draft: ResumeReviewDraft = {
       ...makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
         editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
         plateDocument: savedDraftPlateDocument("Restored human rewrite for incident response."),
       }),
-      commentThreads: [makeResumeCommentThread()],
+      commentThreads: [{ ...makeResumeCommentThread(), replies: [existingReply] }],
     };
     const repliedThread: ResumeCommentThread = {
       ...draft.commentThreads[0]!,
       state: "user_replied",
       replies: [
+        existingReply,
         {
           replyId: "reply-1",
           threadId: "thread-claim-risk",
@@ -2038,7 +2050,7 @@ describe("<ApplyReviewView>", () => {
     const replyToResumeReviewComment = vi.fn(async () => ({
       ok: true as const,
       thread: repliedThread,
-      reply: repliedThread.replies[0]!,
+      reply: repliedThread.replies[1]!,
       feedbackSignal: {
         signalId: "resume-feedback-1",
         jobKey: draft.jobKey,
@@ -2073,13 +2085,33 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    await screen.findByText("Check the quantified reliability claim against profile evidence.");
-    expect(screen.getByText("claim risk")).toBeInTheDocument();
-    expect(screen.getByText("Source pin: pin-experience-claim")).toBeInTheDocument();
+    const shadow = await findResumeShadowRoot();
+    const matchedLine = shadowElementWithText(shadow, "Restored human rewrite for incident response.");
+    const inlineThread = within(matchedLine).getByRole("note", { name: "JobCtrl resume comment" });
+    const inlineThreadContent = within(inlineThread);
 
-    const replyBox = screen.getAllByLabelText("Reply")[0]!;
+    expect(inlineThread).toHaveClass("resume-plate-thread-bubble");
+    expect(inlineThread).toHaveAttribute("contenteditable", "false");
+    expect(inlineThreadContent.getByText("Open")).toBeInTheDocument();
+    expect(
+      inlineThreadContent.getByText("Check the quantified reliability claim against profile evidence."),
+    ).toBeInTheDocument();
+    expect(inlineThreadContent.getByText("claim risk")).toBeInTheDocument();
+    expect(inlineThreadContent.getByText("Rewrite Requested")).toBeInTheDocument();
+    expect(
+      inlineThreadContent.getByText("Please cite the supporting profile evidence before approval."),
+    ).toBeInTheDocument();
+    expect(inlineThreadContent.getByRole("group", { name: "Reply to claim risk" })).toBeInTheDocument();
+    expect(inlineThread).not.toHaveTextContent("pin-experience-claim");
+    expect(inlineThread).not.toHaveTextContent("experience:line:3");
+    expect(screen.queryByRole("complementary", { name: "Unanchored JobCtrl comments" })).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText("Check the quantified reliability claim against profile evidence."),
+    ).toHaveLength(1);
+
+    const replyBox = inlineThreadContent.getByLabelText("Reply");
     await userEvent.type(replyBox, "This number is supported by the incident response profile bullet.");
-    await userEvent.click(screen.getAllByRole("button", { name: "reply" })[0]!);
+    await userEvent.click(inlineThreadContent.getByRole("button", { name: "reply" }));
 
     await waitFor(() =>
       expect(replyToResumeReviewComment).toHaveBeenCalledWith("thread-claim-risk", {
@@ -2090,7 +2122,69 @@ describe("<ApplyReviewView>", () => {
       }),
     );
     await screen.findByText("This number is supported by the incident response profile bullet.");
-    expect(screen.getByText("Source pin: pin-experience-claim")).toBeInTheDocument();
+    expect(
+      within(inlineThreadContent.getByRole("list", { name: "Comment replies" })).getByText("Clarified"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps unresolved and unmatched resume comments in a labeled fallback", async () => {
+    const unresolvedThread: ResumeCommentThread = {
+      ...makeResumeCommentThread(),
+      threadId: "thread-unresolved-anchor",
+      commentBody: "This persisted comment has an unresolved anchor.",
+      anchorResolved: false,
+    };
+    const unmatchedThread: ResumeCommentThread = {
+      ...makeResumeCommentThread(),
+      threadId: "thread-unmatched-anchor",
+      semanticId: "experience:line:999",
+      lineAnchor: {
+        semanticId: "experience:line:999",
+        lineNumber: 999,
+        pageNumber: 1,
+        textHash: null,
+      },
+      sourcePinId: "pin-without-rendered-line",
+      commentBody: "This persisted comment points to a missing rendered line.",
+    };
+    const draft: ResumeReviewDraft = {
+      ...makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, {
+        editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
+        plateDocument: savedDraftPlateDocument("Restored human rewrite for incident response."),
+      }),
+      commentThreads: [unresolvedThread, unmatchedThread],
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+          seedResumeReviewCommentThreads: vi.fn(async () => ({
+            ok: true as const,
+            draft,
+            commentThreads: draft.commentThreads,
+            seededCount: 0,
+            updatedCount: draft.commentThreads.length,
+          })),
+        },
+      }),
+    });
+
+    const shadow = await findResumeShadowRoot();
+    const fallback = await screen.findByRole("complementary", { name: "Unanchored JobCtrl comments" });
+    const fallbackContent = within(fallback);
+
+    expect(fallbackContent.getByText("Comments without a rendered line")).toBeInTheDocument();
+    expect(fallbackContent.getByText("2 threads")).toBeInTheDocument();
+    expect(fallbackContent.getByText("This persisted comment has an unresolved anchor.")).toBeInTheDocument();
+    expect(fallbackContent.getByText("anchor unresolved")).toBeInTheDocument();
+    expect(
+      fallbackContent.getByText("This persisted comment points to a missing rendered line."),
+    ).toBeInTheDocument();
+    expect(fallbackContent.getByText("line 999")).toBeInTheDocument();
+    expect(shadow).not.toHaveTextContent("This persisted comment has an unresolved anchor.");
+    expect(shadow).not.toHaveTextContent("This persisted comment points to a missing rendered line.");
   });
 
   it("distinguishes pre-tailor profile gaps from accepted-resume coverage gaps", async () => {
@@ -2881,7 +2975,10 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByText(/apply failed: missing_profile_data:age_18_plus/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/apply failed: required profile answers missing: Age 18\+/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/missing_profile_data|age_18_plus/i)).not.toBeInTheDocument();
   });
 
   it("renders incomplete application attestations as review warnings", async () => {
@@ -2921,9 +3018,10 @@ describe("<ApplyReviewView>", () => {
 
     expect(
       await screen.findByText(
-        /Profile attestations incomplete: Application attestations missing: background_check_consent\./i,
+        /Profile attestations incomplete: Application attestations missing: Background check consent\./i,
       ),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/background_check_consent/i)).not.toBeInTheDocument();
   });
 
   it("renders canonical audit facts for missing apply-review source data", async () => {

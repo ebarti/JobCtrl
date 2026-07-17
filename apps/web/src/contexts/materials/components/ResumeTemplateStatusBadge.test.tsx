@@ -15,6 +15,14 @@ const STATE_TONES: Record<ResumeTemplateStaleState, string> = {
   refresh_unavailable: "warn",
 };
 
+const STATE_LABELS: Record<ResumeTemplateStaleState, string> = {
+  template_current: "current",
+  template_stale: "stale",
+  refresh_queued: "refresh queued",
+  refresh_failed: "refresh failed",
+  refresh_unavailable: "refresh unavailable",
+};
+
 describe("<ResumeTemplateStatusBadge>", () => {
   it.each(Object.entries(STATE_TONES) as [ResumeTemplateStaleState, string][])(
     "renders %s with its existing tone",
@@ -24,6 +32,8 @@ describe("<ResumeTemplateStatusBadge>", () => {
       const badge = screen.getByTitle("Compact from job override.");
       expect(badge).toHaveAttribute("data-slot", "status-badge");
       expect(badge).toHaveAttribute("data-status-tone", tone);
+      expect(badge).toHaveTextContent(STATE_LABELS[state]);
+      expect(badge).not.toHaveTextContent(/^template\s/i);
     },
   );
 

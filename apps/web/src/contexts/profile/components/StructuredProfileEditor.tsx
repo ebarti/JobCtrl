@@ -13,6 +13,7 @@ import {
   AdaptiveFieldGrid,
   AdaptiveFieldSpan,
 } from "../../../shared/ui/adaptive-field-grid.js";
+import { Button } from "../../../shared/ui/button.js";
 import { Checkbox } from "../../../shared/ui/checkbox.js";
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import {
@@ -193,6 +194,7 @@ function editorControlId(scope: "profile" | "style", path: string, suffix = "") 
 export interface StructuredProfileEditorProps {
   applicationConfigurationFields?: ReactNode;
   mode?: "profile" | "preferences" | "target-search";
+  showSectionHeading?: boolean;
   profileText: string;
   styleText: string;
   onProfileTextChange: (value: string) => void;
@@ -202,6 +204,7 @@ export interface StructuredProfileEditorProps {
 export function StructuredProfileEditor({
   applicationConfigurationFields,
   mode = "profile",
+  showSectionHeading = true,
   profileText,
   styleText,
   onProfileTextChange,
@@ -509,7 +512,7 @@ export function StructuredProfileEditor({
             })
           }
         >
-          <SelectTrigger aria-label={`${label} month`} className="configuration-select-trigger">
+          <SelectTrigger aria-label={`${label} month`} className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -533,7 +536,7 @@ export function StructuredProfileEditor({
             })
           }
         >
-          <SelectTrigger aria-label={`${label} year`} className="configuration-select-trigger">
+          <SelectTrigger aria-label={`${label} year`} className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -637,7 +640,7 @@ export function StructuredProfileEditor({
         value={textAt(profile, path)}
         onValueChange={(value) => updateProfilePath(path, value)}
       >
-        <SelectTrigger id={id} aria-label={label} className="configuration-select-trigger">
+        <SelectTrigger id={id} aria-label={label} className="w-full">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -684,14 +687,36 @@ export function StructuredProfileEditor({
 
   const yesNoCheckboxField = (path: string, label: string) => {
     const id = editorControlId("profile", path);
+    const descriptionId = `${id}-description`;
+    const answer = textAt(profile, path);
+    const isUnanswered = answer === "";
     return (
     <Field className="field check" orientation="horizontal">
       <Checkbox
+        aria-describedby={descriptionId}
         id={id}
-        checked={textAt(profile, path) === "Yes"}
+        checked={answer === "Yes"}
+        indeterminate={isUnanswered}
         onCheckedChange={(checked) => updateProfilePath(path, checked ? "Yes" : "No")}
       />
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <FieldContent>
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <div className="flex flex-wrap items-center gap-2">
+          <FieldDescription id={descriptionId} aria-live="polite">
+            {isUnanswered ? "Not answered" : answer}
+          </FieldDescription>
+          <Button
+            aria-label={`Set ${label} to not answered`}
+            disabled={isUnanswered}
+            onClick={() => updateProfilePath(path, "")}
+            size="sm"
+            type="button"
+            variant="link"
+          >
+            Clear answer
+          </Button>
+        </div>
+      </FieldContent>
     </Field>
     );
   };
@@ -1164,7 +1189,7 @@ export function StructuredProfileEditor({
   );
 
   const writingStyleGroup = () => (
-    <FieldSet className="field wide checkbox-group-field tailoring-control-group">
+    <FieldSet className="field wide checkbox-group-field tailoring-control-group tailoring-writing-style-group">
       <FieldLegend>Writing style</FieldLegend>
       <AdaptiveFieldGrid>
         {selectField("resume.tailoring_rules.writing_style.tone", "Writing tone", [
@@ -1215,7 +1240,7 @@ export function StructuredProfileEditor({
   );
 
   const additionalGuidanceGroup = () => (
-    <AdaptiveFieldGrid>
+    <AdaptiveFieldGrid className="tailoring-additional-guidance-group">
       <AdaptiveFieldSpan span="full">
         {textareaField(
           "resume.tailoring_rules.custom_tailoring_prompt",
@@ -1229,7 +1254,7 @@ export function StructuredProfileEditor({
 
   const targetSearchSection = () => (
     <section className="form-section">
-      <h3>Target search</h3>
+      {showSectionHeading ? <h3>Target search</h3> : null}
       <FieldGroup className="target-preferences-grid">
         {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS)}
         {targetSearchCheckboxGroup(
@@ -1261,7 +1286,7 @@ export function StructuredProfileEditor({
         value={textAt(style, path)}
         onValueChange={(value) => updateStylePath(path, value)}
       >
-        <SelectTrigger id={id} aria-label={label} className="configuration-select-trigger">
+        <SelectTrigger id={id} aria-label={label} className="w-full">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

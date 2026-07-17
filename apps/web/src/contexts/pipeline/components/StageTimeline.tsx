@@ -1,14 +1,22 @@
 import type { JSX } from "react";
 import type { StageSummary } from "@jobctrl/contracts";
-import { IconExternalLink } from "@tabler/icons-react";
+import {
+  IconAlertTriangle,
+  IconChevronDown,
+  IconExternalLink,
+} from "@tabler/icons-react";
 
-import { StatusDot } from "../../../shared/ui/status-dot.js";
 import {
   Alert,
   AlertDescription,
   AlertTitle,
 } from "../../../shared/ui/alert.js";
 import { Button } from "../../../shared/ui/button.js";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "../../../shared/ui/collapsible.js";
 import { TailorJobButton } from "../../materials/components/RetailorCurrentPolicyButton.js";
 import { useBrowserCapabilitiesQuery } from "../../operations/hooks/useBrowserCapabilitiesQuery.js";
 import { useRetryStageMutation } from "../hooks/useRetryStageMutation.js";
@@ -26,20 +34,26 @@ export function StageTimeline({
   postingUrl,
 }: StageTimelineProps): JSX.Element {
   return (
-    <ol className="timeline">
+    <ol aria-label="Preparation stages" className="timeline stage-timeline">
       {stages.map((stage) => {
         const diagnostics = stageDiagnostics(stage);
         const guidance = stageGuidance(stage);
         const manualCaptureUrl = guidance ? publicPostingUrl(postingUrl) : null;
         return (
-          <li key={stage.stage} className="timeline-row">
-            <span className="timeline-row-head">
-              <StatusDot state={stage.state} />
-              <StageBadge stage={stage.stage} />
-            </span>
-            <StageBadge state={stage.state} />
+          <li
+            className="timeline-row stage-timeline__item"
+            data-stage-state={stage.state}
+            key={stage.stage}
+          >
+            <div className="timeline-row-head stage-timeline__header">
+              <span className="stage-timeline__stage-name">
+                {stageLabel(stage.stage)}
+              </span>
+              <StageBadge state={stage.state} />
+            </div>
             {guidance ? (
-              <Alert className="col-span-full mt-1">
+              <Alert className="stage-timeline__guidance">
+                <IconAlertTriangle aria-hidden="true" />
                 <AlertTitle>{guidance.title}</AlertTitle>
                 <AlertDescription>
                   <p>{guidance.explanation}</p>
@@ -82,16 +96,8 @@ export function StageTimeline({
                 </AlertDescription>
               </Alert>
             ) : null}
-            {diagnostics.length && guidance ? (
-              <details className="col-span-full w-full">
-                <summary>Technical details</summary>
-                <StageDiagnosticList
-                  diagnostics={diagnostics}
-                  stage={stage.stage}
-                />
-              </details>
-            ) : diagnostics.length ? (
-              <StageDiagnosticList
+            {diagnostics.length ? (
+              <StageDiagnosticDisclosure
                 diagnostics={diagnostics}
                 stage={stage.stage}
               />
@@ -103,6 +109,35 @@ export function StageTimeline({
         );
       })}
     </ol>
+  );
+}
+
+function StageDiagnosticDisclosure({
+  diagnostics,
+  stage,
+}: {
+  diagnostics: Array<[string, string]>;
+  stage: StageSummary["stage"];
+}): JSX.Element {
+  return (
+    <Collapsible className="stage-timeline__diagnostic-disclosure">
+      <CollapsibleTrigger
+        render={
+          <Button
+            className="stage-timeline__diagnostic-trigger"
+            size="sm"
+            type="button"
+            variant="ghost"
+          />
+        }
+      >
+        <IconChevronDown aria-hidden="true" data-icon="inline-start" />
+        Technical details
+      </CollapsibleTrigger>
+      <CollapsibleContent className="stage-timeline__diagnostic-content">
+        <StageDiagnosticList diagnostics={diagnostics} stage={stage} />
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -203,6 +238,19 @@ function canTailorFromStage(stage: StageSummary): boolean {
     stage.stage === "tailor" &&
     !["queued", "running", "succeeded", "exhausted"].includes(stage.state)
   );
+}
+
+const STAGE_LABELS: Record<StageSummary["stage"], string> = {
+  discover: "Discover",
+  enrich: "Enrich",
+  score: "Score",
+  tailor: "Tailor",
+  cover: "Cover letter",
+  apply: "Apply",
+};
+
+function stageLabel(stage: StageSummary["stage"]): string {
+  return STAGE_LABELS[stage];
 }
 
 function stageDiagnostics(stage: StageSummary): Array<[string, string]> {

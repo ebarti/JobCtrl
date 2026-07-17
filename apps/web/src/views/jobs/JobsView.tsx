@@ -72,7 +72,9 @@ type BulkJobMutation = UseMutationResult<
   BulkJobMutationRequest
 >;
 type RetryFailedMutation = ReturnType<typeof useRetryFailedJobsMutation>;
-type RunPendingPreparationMutation = ReturnType<typeof useRunPendingPreparationMutation>;
+type RunPendingPreparationMutation = ReturnType<
+  typeof useRunPendingPreparationMutation
+>;
 
 const SEARCH_FILTER_COLUMNS = new Set([
   "current_stage",
@@ -80,8 +82,17 @@ const SEARCH_FILTER_COLUMNS = new Set([
   "apply_status",
 ]);
 const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
+const DEFAULT_JOBS_HIDDEN_COLUMN_IDS = [
+  "source",
+  "compensation_warnings",
+  "resume_template",
+] as const;
 const DEFAULT_JOBS_PRESENTATION: SavedTablePresentation = {
-  columns: { order: [...JOBS_TABLE_COLUMN_IDS], hidden: [], widths: {} },
+  columns: {
+    order: [...JOBS_TABLE_COLUMN_IDS],
+    hidden: [...DEFAULT_JOBS_HIDDEN_COLUMN_IDS],
+    widths: {},
+  },
   density: null,
   grouping: null,
   colorRules: [],
@@ -129,11 +140,18 @@ function searchFilters(search: JobsSearch): DataGridFilterState {
 
 function localFiltersOnly(filters: DataGridFilterState): DataGridFilterState {
   return Object.fromEntries(
-    Object.entries(filters).filter(([columnId]) => !SEARCH_FILTER_COLUMNS.has(columnId)),
+    Object.entries(filters).filter(
+      ([columnId]) => !SEARCH_FILTER_COLUMNS.has(columnId),
+    ),
   );
 }
 
-function boundedInt(value: string, fallback: number, min: number, max: number): number {
+function boundedInt(
+  value: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) {
     return fallback;
@@ -153,7 +171,10 @@ function retryWorkersFromConfigs(
 
 function retryRunOptions(
   configs: ReturnType<typeof useStageTriggerStore.getState>["configs"],
-): Pick<BulkRetryFailedRequest, "runAfter" | "workers" | "minScore" | "validationMode" | "dryRun" | "llmModel"> {
+): Pick<
+  BulkRetryFailedRequest,
+  "runAfter" | "workers" | "minScore" | "validationMode" | "dryRun" | "llmModel"
+> {
   return {
     runAfter: true,
     workers: retryWorkersFromConfigs(configs),
@@ -166,7 +187,10 @@ function retryRunOptions(
 
 function pendingPreparationRunOptions(
   configs: ReturnType<typeof useStageTriggerStore.getState>["configs"],
-): Pick<BulkRunPendingPreparationRequest, "workers" | "minScore" | "validationMode" | "dryRun" | "llmModel"> {
+): Pick<
+  BulkRunPendingPreparationRequest,
+  "workers" | "minScore" | "validationMode" | "dryRun" | "llmModel"
+> {
   return {
     workers: retryWorkersFromConfigs(configs),
     minScore: boundedInt(configs.tailor.minScore, 7, 0, 10),
@@ -197,9 +221,7 @@ function savedUrlFiltersFromSearch(
   };
 }
 
-function searchPatchFromSavedView(
-  view: SavedTableView,
-): Partial<JobsSearch> {
+function searchPatchFromSavedView(view: SavedTableView): Partial<JobsSearch> {
   const filters = { ...DEFAULT_SAVED_URL_FILTERS, ...view.urlFilters };
   return {
     q: filters.q ?? "",
@@ -212,7 +234,9 @@ function searchPatchFromSavedView(
     maxFitScore: filters.maxFitScore,
     discoveredSince: filters.discoveredSince,
     scoredSince: filters.scoredSince,
-    sort: isJobSortField(view.sort.columnId) ? view.sort.columnId : "discovered_at",
+    sort: isJobSortField(view.sort.columnId)
+      ? view.sort.columnId
+      : "discovered_at",
     dir: view.sort.direction,
     page: 1,
   };
@@ -273,7 +297,8 @@ export function JobsView() {
   const activeSavedView = useMemo(
     () =>
       savedTableViews.find(
-        (view) => view.tableId === JOBS_TABLE_ID && view.id === activeSavedViewId,
+        (view) =>
+          view.tableId === JOBS_TABLE_ID && view.id === activeSavedViewId,
       ) ?? null,
     [activeSavedViewId, savedTableViews],
   );
@@ -282,12 +307,7 @@ export function JobsView() {
       ...localTableFilters,
       ...searchFilters(search),
     }),
-    [
-      localTableFilters,
-      search.applyStatus,
-      search.stage,
-      search.state,
-    ],
+    [localTableFilters, search.applyStatus, search.stage, search.state],
   );
 
   useEffect(() => {
@@ -367,6 +387,16 @@ export function JobsView() {
     [savedPresentation, setSavedPresentation],
   );
 
+  const handleColumnOrderChange = useCallback(
+    (order: readonly string[]) => {
+      setSavedPresentation(JOBS_TABLE_ID, {
+        ...savedPresentation,
+        columns: { ...savedPresentation.columns, order: [...order] },
+      });
+    },
+    [savedPresentation, setSavedPresentation],
+  );
+
   const handleSavedViewApply = useCallback(
     (view: SavedTableView) => {
       setLocalTableFilters(view.gridFilters as DataGridFilterState);
@@ -385,11 +415,7 @@ export function JobsView() {
         onPresentationChange={handleSavedPresentationChange}
       />
     ),
-    [
-      handleSavedPresentationChange,
-      handleSavedViewApply,
-      savedViewSnapshot,
-    ],
+    [handleSavedPresentationChange, handleSavedViewApply, savedViewSnapshot],
   );
 
   const handleTableFiltersChange = useCallback(
@@ -399,7 +425,9 @@ export function JobsView() {
         firstAllowedValue(next.current_stage, JOB_TABLE_STAGE_FILTERS) ?? "all";
       const nextState =
         firstAllowedValue(next.current_state, STAGE_STATES) ?? "all";
-      const applyFilter = firstAllowedValue(next.apply_status, ["applied"] as const);
+      const applyFilter = firstAllowedValue(next.apply_status, [
+        "applied",
+      ] as const);
       const nextApplyStatus = applyFilter ?? "all";
       if (
         nextStage !== search.stage ||
@@ -519,12 +547,14 @@ export function JobsView() {
     }));
 
   const pendingPreparationPayloads = (): BulkRunPendingPreparationRequest[] =>
-    bulkJobFilters(search, { deleted: "active", state: "pending" }).map((filter) => ({
-      allMatching: true,
-      filter,
-      jobKeys: [],
-      ...pendingPreparationRunOptions(stageTriggerConfigs),
-    }));
+    bulkJobFilters(search, { deleted: "active", state: "pending" }).map(
+      (filter) => ({
+        allMatching: true,
+        filter,
+        jobKeys: [],
+        ...pendingPreparationRunOptions(stageTriggerConfigs),
+      }),
+    );
 
   const mutatePayloads = (
     mutation: BulkJobMutation,
@@ -616,9 +646,7 @@ export function JobsView() {
       return;
     }
     if (
-      !window.confirm(
-        `Retry ${count} selected job${count === 1 ? "" : "s"}?`,
-      )
+      !window.confirm(`Retry ${count} selected job${count === 1 ? "" : "s"}?`)
     ) {
       return;
     }
@@ -626,7 +654,9 @@ export function JobsView() {
   };
 
   const retryAllFailed = () => {
-    if (!window.confirm("Retry all failed jobs matching the current filters?")) {
+    if (
+      !window.confirm("Retry all failed jobs matching the current filters?")
+    ) {
       return;
     }
     mutateRetryPayloads(
@@ -643,10 +673,17 @@ export function JobsView() {
   };
 
   const continuePendingPreparation = () => {
-    if (!window.confirm("Continue pending preparation for matching active jobs? This will not run apply.")) {
+    if (
+      !window.confirm(
+        "Continue pending preparation for matching active jobs? This will not run apply.",
+      )
+    ) {
       return;
     }
-    mutatePendingPreparationPayloads(runPendingPreparation, pendingPreparationPayloads());
+    mutatePendingPreparationPayloads(
+      runPendingPreparation,
+      pendingPreparationPayloads(),
+    );
   };
 
   const permanentlyDeleteSelected = () => {
@@ -668,9 +705,13 @@ export function JobsView() {
   return (
     <>
       <PageHead
-        eyebrow="Pipeline"
+        className="jobs-page-head"
         title="Jobs"
-        subtitle={data ? `${data.pagination.total} total` : "loading"}
+        subtitle={
+          data
+            ? `${data.pagination.total} ${data.pagination.total === 1 ? "job" : "jobs"}`
+            : "Loading jobs"
+        }
       />
       <section className="card full data-list-card">
         {message ? <div className="banner inline">{message}</div> : null}
@@ -716,6 +757,7 @@ export function JobsView() {
           onFiltersChange={handleTableFiltersChange}
           onVisiblePageRowsChange={handleVisiblePageRowsChange}
           columnOrder={savedPresentation.columns.order}
+          onColumnOrderChange={handleColumnOrderChange}
           hiddenColumnIds={savedPresentation.columns.hidden}
           columnWidths={savedPresentation.columns.widths}
           onColumnWidthsChange={handleColumnWidthsChange}

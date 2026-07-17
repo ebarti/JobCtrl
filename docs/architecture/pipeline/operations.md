@@ -166,6 +166,31 @@ Both execution cohorts participate in the delivered phase calculation:
 unresolved observed jobs or swept backlog can keep an otherwise successful
 workflow in `draining`.
 
+### Operator stop and failure recovery
+
+The Pipelines workspace exposes cancellation only when the selected Discover
+execution has `workflowStatus=in_progress` and phase `discovering` or
+`draining`. The action cancels the deterministic Discover workflow ID, then
+invalidates the workflow-run, dashboard, and pipeline-operations queries so the
+stop request cannot leave the live workspace stale. A closed workflow whose
+durable phase still says `draining` is not cancelable.
+
+A failed execution is never treated as proof that the runtime is idle. The UI
+uses `activeItemsTotal` as a three-state recovery gate: a positive value reports
+remaining work, `null` reports that the inventory is unavailable, and exactly
+zero permits **Set up a new Discover run**. That action only selects and focuses
+the Discover launch controls; it never dispatches work implicitly.
+
+`reconciled_not_found` is a provisional verdict: the worker could not find the
+exact recorded Temporal run in the history store it could currently reach. The
+reconciler keeps probing that exact run. When the authoritative history is
+available again, a marked recovery event automatically restores the run to
+`in_progress` or replaces the provisional verdict with its real closed outcome;
+the false terminal remains visible in the audit history. Starting a replacement
+run is appropriate only when the exact execution is genuinely absent and the
+runtime inventory confirms that no work remains. Workflow IDs, Temporal run
+IDs, and the raw reason code stay in a collapsed technical disclosure.
+
 ### Two durable progress authorities
 
 Canonical `job_stage_states` remains the source of truth for per-job `enrich`,
@@ -180,6 +205,80 @@ attempt, the first terminal result wins. Details contain only allowlisted codes
 and counts, and failures persist bounded error codes rather than exception text.
 The Python and TypeScript projection builders fold the same events and share the
 normal operations-projection watermark/rebuild path.
+
+### Durable projection recovery and runtime-only visibility
+
+`projectionCoverage` is the selected execution's durable recovery checkpoint;
+it does not restate telemetry freshness. Its states are:
+
+- `ready`: the worker decoded one exact Temporal workflow/run history, refreshed
+  its projections, and verified equality of the expected and persisted
+  membership-key and pipeline-step-key sets at the recorded history-event
+  watermark;
+- `recovering`: startup or heartbeat reconciliation is rebuilding those exact
+  sets;
+- `retrying`: the latest safe reconciliation attempt refused an ambiguous input
+  or met a transient dependency failure and will retry automatically; and
+- `incomplete`: an immutable legacy history ended before it could identify every
+  originally targeted job. JobCtrl preserves every exact recovered member and
+  step, records the bounded terminal reason, and does not retry or invent the
+  missing lineage.
+
+The checkpoint is stored in `discovery_execution_recoveries`, keyed by tenant,
+Discover workflow ID, and Temporal run ID. It records the decoder version,
+native/reconstructed mode, history-event watermark, expected and persisted
+counts, a digest of both canonical key sets, and a bounded error code. A
+`ready` row is valid only while its counts and digest still match the current
+durable rows. Row counts alone, workflow terminal state, and runtime telemetry
+can never promote an execution to `ready`.
+
+The worker runs reconciliation before accepting activities and again on every
+heartbeat. Legacy activity history is decoded into queued, running, completed,
+and failed step events. Exact source observations and preparation-workflow roots
+restore execution membership and work plans. Existing partial rows are merged
+idempotently, so a process kill during repair resumes without duplicate events
+or jobs. Native activities retain ownership of their normal events; mixed
+legacy/native histories merge the two key sets without replaying native work.
+Ambiguous provenance is refused rather than guessed.
+
+Reconstructed decoder v2 does not treat `workflow_run_projections` as causal
+evidence because repeated generic workflow-start events can legitimately fold a
+full preparation input down to a job-only summary. For each succeeded legacy
+preparation-fanout attempt, it selects the exact job-only
+`JobPreparationWorkflow` starts inside that activity's recorded time interval
+and requires their distinct workflow count to equal the fanout's declared
+target count. It unions overlapping targets from repeated passes, then resolves
+each exact workflow/run against its append-only full `WorkflowStarted` summary
+and validates the job URL, required steps, and `prep-{idempotencyKey}` identity.
+Any count, run, identity, or plan conflict keeps the checkpoint in automatic
+retry; a successful repair records the bounded reason code
+`legacy_history_recovery` and verifies the complete membership and step-key
+digest before publishing `ready`.
+
+Temporal retry attempts remain distinct causal attempts. A successful retry can
+be recovered from its exact start and completion events even when legacy history
+has no separate queue event for that attempt; the decoder leaves `queuedAt`
+unknown rather than fabricating a timestamp. If a fanout is terminally failed
+with no retry remaining, the decoder publishes `incomplete` from the exact
+partial dispatch set and failed-step evidence instead of retrying forever.
+
+`activeStageCounts` is a separate aggregation of allowlisted activity types
+from fresh worker heartbeats. It is `null` when that runtime inventory is stale
+or unavailable. These counts expose what the shared worker pool is executing
+now; they never fabricate selected-execution membership, pipeline-step rows, or
+a durable stage denominator.
+
+While coverage is `recovering` or `retrying`, the Pipelines surface keeps worker,
+slot, queue, and active-activity facts visible, labels selected-run history as
+being restored, and hides selected-run counts, percentages, and ETAs. Recovery
+is an automatic transition state, not an accepted tracking mode. For selected
+scopes, `no_work` is valid only after coverage is `ready`, execution membership
+is closed, and projected demand is exactly zero.
+
+`incomplete` is a terminal audit state, not a degraded operating mode. Pipelines
+shows the exact partial evidence and bounded reason, withholds claims about the
+unknown remainder, and offers a new Discover setup only when fresh runtime
+inventory proves there is no active work.
 
 ### Runtime capacity and conservative ETA
 

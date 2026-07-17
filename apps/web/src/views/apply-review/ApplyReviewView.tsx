@@ -278,10 +278,13 @@ function formatRequirementTailoring(requirement: ApplyReviewRequirement): {
 }
 
 const AUDIT_TOKEN_LABELS: Record<string, string> = {
+  age_18_plus: "Age 18+",
   adjacent_translation: "adjacent translation",
+  background_check_consent: "Background check consent",
   draft_requires_confirmation: "draft requires confirmation",
   evidence_reframed: "evidence reframed",
   evidence_reframing: "evidence reframing",
+  felony_conviction: "Felony conviction",
   enhancement_coverage: "enhancement coverage",
   fit_score_and_must_have_coverage_below_threshold: "fit score and must-have coverage below threshold",
   fit_score_below_threshold: "fit score below threshold",
@@ -289,6 +292,7 @@ const AUDIT_TOKEN_LABELS: Record<string, string> = {
   must_have_coverage_below_threshold: "must-have coverage below threshold",
   passed: "passed",
   pinned_required_bullet: "pinned required bullet",
+  previously_worked_at_employer: "Previously worked at employer",
   requirement_coverage: "requirement coverage",
   review_blocked_claims: "review blocked claims",
   verified_only: "verified only",
@@ -304,6 +308,15 @@ function formatAuditMessage(value: string): string {
   const normalized = value.trim();
   if (!normalized) {
     return "not recorded";
+  }
+  const missingProfileData = normalized.match(/missing_profile_data\s*:\s*([a-z0-9_, -]+)/i);
+  if (missingProfileData?.[1]) {
+    const labels = missingProfileData[1]
+      .split(",")
+      .map((field) => formatReadableToken(field))
+      .filter(Boolean);
+    const replacement = `required profile answers missing: ${labels.join(", ")}`;
+    return normalized.replace(missingProfileData[0], replacement);
   }
   return (
     AUDIT_TOKEN_LABELS[normalized] ??
@@ -412,7 +425,7 @@ function ApplyAuditFacts({ item }: { readonly item: ApplyReviewQueueItem }) {
                 tone={factTone(fact)}
                 key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}
               >
-                {fact.detail ? `${fact.label}: ${fact.detail}` : fact.label}
+                {formatAuditMessage(fact.detail ? `${fact.label}: ${fact.detail}` : fact.label)}
               </StatusBadge>
             ))}
           </dd>
@@ -1239,7 +1252,6 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
         >
           <div className="apply-review-selected-context">
             <div className="apply-review-selected-identity">
-              <span className="apply-review-selected-label">Decision workspace</span>
               <CardTitle>
                 <h2>{item.title}</h2>
               </CardTitle>

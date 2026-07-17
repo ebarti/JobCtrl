@@ -1,5 +1,6 @@
 import {
   IconFilter,
+  IconGripVertical,
   IconSortAscending,
   IconSortDescending,
   IconTable,
@@ -7,11 +8,13 @@ import {
 } from "@tabler/icons-react";
 import {
   Fragment,
+  type DragEvent as ReactDragEvent,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -60,6 +63,7 @@ export interface DataGridColumn<TData> {
   minWidth?: number;
   maxWidth?: number;
   rowHeader?: boolean;
+  reorderable?: boolean;
 }
 
 export interface DataGridSortState {
@@ -68,6 +72,7 @@ export interface DataGridSortState {
 }
 
 export type DataGridDensity = "compact" | "regular" | "comfy";
+export type DataGridMobileLayout = "table" | "cards";
 export type DataGridColumnVisibilityState = Record<string, boolean>;
 export type DataGridColumnWidthsState = Record<string, number>;
 export type DataGridColorTone = "success" | "warning" | "danger" | "info";
@@ -133,15 +138,18 @@ export interface FilterableDataGridProps<TData> {
   resizableColumns?: boolean;
   columnVisibility?: DataGridColumnVisibilityState;
   columnOrder?: readonly string[];
+  onColumnOrderChange?: (next: readonly string[]) => void;
   columnWidths?: DataGridColumnWidthsState;
   onColumnWidthsChange?: (next: DataGridColumnWidthsState) => void;
   density?: DataGridDensity | null;
+  mobileLayout?: DataGridMobileLayout;
   grouping?: DataGridGroupingState | null;
   colorRules?: readonly DataGridColorRule[];
   rowClassName?: (row: TData) => string | undefined;
   rowAriaSelected?: (row: TData) => boolean;
   onRowActivate?: (row: TData) => void;
   rowActivationLabel?: (row: TData) => string;
+  rowActivationAppearance?: "visible" | "focus-only";
   onPageRowsChange?: (rows: readonly TData[]) => void;
 }
 
@@ -200,10 +208,15 @@ function shouldIgnoreRowActivation(event: MouseEvent<HTMLElement>): boolean {
   ) {
     return true;
   }
-  return event.target instanceof Element && Boolean(event.target.closest(ROW_ACTIVATION_IGNORE_SELECTOR));
+  return (
+    event.target instanceof Element &&
+    Boolean(event.target.closest(ROW_ACTIVATION_IGNORE_SELECTOR))
+  );
 }
 
-function classNames(...values: Array<string | undefined | false>): string | undefined {
+function classNames(
+  ...values: Array<string | undefined | false>
+): string | undefined {
   const joined = values.filter(Boolean).join(" ");
   return joined || undefined;
 }
@@ -242,7 +255,14 @@ function filterVisibleColumns<TData>(
   return columns.filter((column) => visibility[column.id] !== false);
 }
 
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+function isColumnReorderable<TData>(column: DataGridColumn<TData>): boolean {
+  return column.reorderable !== false;
+}
+
+function sameStrings(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
   return (
     left.length === right.length &&
     left.every((value, index) => value === right[index])
@@ -321,7 +341,9 @@ export function isActiveDataGridFilter(
   return Boolean(filter?.text.trim() || filter?.selectedValues.length);
 }
 
-export function hasActiveDataGridFilters(filters: DataGridFilterState): boolean {
+export function hasActiveDataGridFilters(
+  filters: DataGridFilterState,
+): boolean {
   return Object.values(filters).some(isActiveDataGridFilter);
 }
 
@@ -490,15 +512,18 @@ export function FilterableDataGrid<TData>({
   resizableColumns = true,
   columnVisibility,
   columnOrder,
+  onColumnOrderChange,
   columnWidths: controlledColumnWidths,
   onColumnWidthsChange,
   density,
+  mobileLayout = "table",
   grouping,
   colorRules = [],
   rowClassName,
   rowAriaSelected,
   onRowActivate,
   rowActivationLabel,
+  rowActivationAppearance = "focus-only",
   onPageRowsChange,
 }: FilterableDataGridProps<TData>) {
   const [localSort, setLocalSort] = useState<DataGridSortState>(initialSort);
@@ -507,6 +532,14 @@ export function FilterableDataGrid<TData>({
   const [localPage, setLocalPage] = useState(1);
   const [localPageSize, setLocalPageSize] = useState(initialPageSize);
   const [valueQueries, setValueQueries] = useState<Record<string, string>>({});
+  const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
+  const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
+  const [columnDropTarget, setColumnDropTarget] = useState<{
+    columnId: string;
+    edge: "before" | "after";
+  } | null>(null);
+  const [columnReorderStatus, setColumnReorderStatus] = useState("");
+  const tableInstanceId = useId();
   const [localColumnWidths, setLocalColumnWidths] =
     useState<DataGridColumnWidthsState>({});
   const tableRef = useRef<HTMLTableElement | null>(null);
@@ -536,7 +569,9 @@ export function FilterableDataGrid<TData>({
     ? columnsById.get(grouping.columnId)
     : undefined;
   const activationColumnIndex = useMemo(() => {
-    const rowHeaderIndex = displayColumns.findIndex((column) => column.rowHeader);
+    const rowHeaderIndex = displayColumns.findIndex(
+      (column) => column.rowHeader,
+    );
     return rowHeaderIndex >= 0 ? rowHeaderIndex : 0;
   }, [displayColumns]);
 
@@ -670,7 +705,9 @@ export function FilterableDataGrid<TData>({
       const next = Object.fromEntries(
         Object.entries(current).filter(([columnId]) => columnIds.has(columnId)),
       );
-      return Object.keys(next).length === Object.keys(current).length ? current : next;
+      return Object.keys(next).length === Object.keys(current).length
+        ? current
+        : next;
     });
   }, [columns]);
 
@@ -682,9 +719,7 @@ export function FilterableDataGrid<TData>({
   );
 
   function setColumnWidths(
-    updater: (
-      current: DataGridColumnWidthsState,
-    ) => DataGridColumnWidthsState,
+    updater: (current: DataGridColumnWidthsState) => DataGridColumnWidthsState,
   ) {
     const next = updater(columnWidths);
     if (next === columnWidths) {
@@ -816,7 +851,11 @@ export function FilterableDataGrid<TData>({
     const minWidth = column.minWidth ?? 56;
     const maxWidth = column.maxWidth ?? 1600;
     const startingWidths = measuredColumnWidths();
-    const startWidth = columnWidths[column.id] ?? startingWidths[column.id] ?? column.width ?? minWidth;
+    const startWidth =
+      columnWidths[column.id] ??
+      startingWidths[column.id] ??
+      column.width ??
+      minWidth;
     const startX = event.clientX;
 
     setColumnWidths((current) => ({ ...startingWidths, ...current }));
@@ -861,23 +900,191 @@ export function FilterableDataGrid<TData>({
     resizeColumnBy(column, event.key === "ArrowLeft" ? -step : step);
   };
 
+  const moveColumn = (
+    sourceColumnId: string,
+    targetColumnId: string,
+    edge: "before" | "after",
+  ) => {
+    if (!onColumnOrderChange || sourceColumnId === targetColumnId) return;
+    const sourceColumn = columnsById.get(sourceColumnId);
+    const targetColumn = columnsById.get(targetColumnId);
+    if (
+      !sourceColumn ||
+      !targetColumn ||
+      !isColumnReorderable(sourceColumn) ||
+      !isColumnReorderable(targetColumn)
+    )
+      return;
+
+    const next = orderedColumns.map((column) => column.id);
+    const sourceIndex = next.indexOf(sourceColumnId);
+    if (sourceIndex < 0) return;
+    next.splice(sourceIndex, 1);
+    const targetIndex = next.indexOf(targetColumnId);
+    if (targetIndex < 0) return;
+    next.splice(targetIndex + (edge === "after" ? 1 : 0), 0, sourceColumnId);
+    if (
+      sameStrings(
+        next,
+        orderedColumns.map((column) => column.id),
+      )
+    )
+      return;
+
+    onColumnOrderChange(next);
+    setColumnReorderStatus(
+      `${sourceColumn.label} moved ${edge} ${targetColumn.label}.`,
+    );
+  };
+
+  const columnDropEdge = (
+    event: ReactDragEvent<HTMLTableCellElement>,
+  ): "before" | "after" => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return event.clientX > bounds.left + bounds.width / 2 ? "after" : "before";
+  };
+
+  const draggedColumnFrom = (
+    event: ReactDragEvent<HTMLElement>,
+  ): string | null =>
+    event.dataTransfer.getData("application/x-jobctrl-column") ||
+    event.dataTransfer.getData("text/plain") ||
+    draggedColumnId;
+
+  const handleColumnReorderKeyDown = (
+    column: DataGridColumn<TData>,
+    event: KeyboardEvent<HTMLButtonElement>,
+  ) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const reorderableColumns = displayColumns.filter(isColumnReorderable);
+    const currentIndex = reorderableColumns.findIndex(
+      (candidate) => candidate.id === column.id,
+    );
+    const delta = event.key === "ArrowLeft" ? -1 : 1;
+    const target = reorderableColumns[currentIndex + delta];
+    if (!target) {
+      setColumnReorderStatus(
+        `${column.label} is already the ${delta < 0 ? "first" : "last"} visible column.`,
+      );
+      return;
+    }
+    moveColumn(column.id, target.id, delta < 0 ? "before" : "after");
+  };
+
   const summaryText = pagination
     ? `${data.length} shown / ${totalRows ?? data.length} total`
     : paginationEnabled
       ? `${pageRows.length} shown / ${visibleRows.length} filtered / ${data.length} loaded`
       : `${visibleRows.length} shown / ${data.length} loaded`;
   const columnWidthTotal = resizableColumns
-    ? displayColumns.reduce((total, column) => total + (columnWidths[column.id] ?? column.width ?? 0), 0)
+    ? displayColumns.reduce(
+        (total, column) =>
+          total + (columnWidths[column.id] ?? column.width ?? 0),
+        0,
+      )
     : 0;
   const tableStyle = columnWidthTotal
     ? { width: `max(100%, ${columnWidthTotal}px)` }
     : undefined;
 
+  const renderColumnControls = (column: DataGridColumn<TData>) => {
+    const active = sort.columnId === column.id;
+    const SortIcon =
+      sort.direction === "desc" ? IconSortDescending : IconSortAscending;
+    const sortable = column.sortable ?? Boolean(column.getSortValue);
+    const filterable = Boolean(column.getFilterValue);
+    const filter = filters[column.id] ?? emptyFilter();
+    const filterActive = isActiveDataGridFilter(filter);
+    const header =
+      typeof column.header === "function"
+        ? column.header(headerContext)
+        : (column.header ?? column.label);
+
+    return (
+      <>
+        {sortable ? (
+          <button
+            type="button"
+            className="data-grid-sort-button"
+            aria-label={sortButtonLabel(
+              column.label,
+              active ? sort.direction : null,
+            )}
+            onClick={() => toggleSort(column)}
+          >
+            <span>{header}</span>
+            {active ? (
+              <SortIcon size={13} aria-hidden="true" />
+            ) : (
+              <span aria-hidden="true">↕</span>
+            )}
+          </button>
+        ) : (
+          <span className="data-grid-column-title">{header}</span>
+        )}
+        {filterable ? (
+          <ColumnFilterDialog
+            column={column}
+            filter={filter}
+            values={distinctValues.get(column.id) ?? []}
+            valueQuery={valueQueries[column.id] ?? ""}
+            active={filterActive}
+            onClear={() => clearFilter(column.id)}
+            onOperatorChange={(operator) =>
+              updateFilter(column.id, (current) => ({
+                ...current,
+                operator,
+              }))
+            }
+            onTextChange={(text) =>
+              updateFilter(column.id, (current) => ({
+                ...current,
+                text,
+              }))
+            }
+            onValueQueryChange={(text) =>
+              setValueQueries((current) => ({
+                ...current,
+                [column.id]: text,
+              }))
+            }
+            onToggleValue={(value) => toggleFilterValue(column.id, value)}
+          />
+        ) : null}
+      </>
+    );
+  };
+
+  const mobileControlColumns = displayColumns.filter(
+    (column) =>
+      typeof column.header === "function" ||
+      (column.sortable ?? Boolean(column.getSortValue)) ||
+      Boolean(column.getFilterValue),
+  );
+
   return (
     <div
       className="filterable-data-grid data-surface"
       data-density={density ?? undefined}
+      data-mobile-layout={mobileLayout}
     >
+      {onColumnOrderChange ? (
+        <>
+          <span
+            id={`${tableInstanceId}-column-reorder-help`}
+            className="sr-only"
+          >
+            Drag a column grip to reorder visible columns. With a grip focused,
+            use the left and right arrow keys. Move earlier and later buttons
+            remain available in the Columns dialog.
+          </span>
+          <span className="sr-only" role="status" aria-live="polite">
+            {columnReorderStatus}
+          </span>
+        </>
+      ) : null}
       <div className="data-grid-toolbar">
         <div className="data-grid-view-title">
           <IconTable size={15} aria-hidden="true" />
@@ -911,9 +1118,36 @@ export function FilterableDataGrid<TData>({
           ))}
         </div>
       ) : null}
+      {mobileLayout === "cards" && mobileControlColumns.length ? (
+        <details
+          className="data-grid-mobile-controls"
+          open={mobileControlsOpen}
+          onToggle={(event) => setMobileControlsOpen(event.currentTarget.open)}
+        >
+          <summary>Sort and filter columns</summary>
+          {mobileControlsOpen ? (
+            <div
+              className="data-grid-mobile-control-list"
+              role="group"
+              aria-label={`${title} column controls`}
+            >
+              {mobileControlColumns.map((column) => (
+                <div
+                  key={column.id}
+                  className="data-grid-mobile-control"
+                  data-column-id={column.id}
+                >
+                  {renderColumnControls(column)}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </details>
+      ) : null}
       <div className="filterable-data-grid-scroll">
         <table
           ref={tableRef}
+          aria-label={title}
           className={
             tableClassName
               ? `filterable-data-grid-table ${tableClassName}`
@@ -939,19 +1173,12 @@ export function FilterableDataGrid<TData>({
             <tr>
               {displayColumns.map((column) => {
                 const active = sort.columnId === column.id;
-                const SortIcon = sort.direction === "desc" ? IconSortDescending : IconSortAscending;
                 const sortable =
                   column.sortable ?? Boolean(column.getSortValue);
-                const filterable = Boolean(column.getFilterValue);
-                const filter = filters[column.id] ?? emptyFilter();
-                const filterActive = isActiveDataGridFilter(filter);
-                const header =
-                  typeof column.header === "function"
-                    ? column.header(headerContext)
-                    : (column.header ?? column.label);
                 return (
                   <th
                     key={column.id}
+                    id={`${tableInstanceId}-${column.id}-header`}
                     data-column-id={column.id}
                     aria-sort={
                       active
@@ -966,60 +1193,84 @@ export function FilterableDataGrid<TData>({
                       column.headerClassName,
                       resizableColumns && "data-grid-column-resizable",
                     )}
+                    data-column-drop-edge={
+                      columnDropTarget?.columnId === column.id
+                        ? columnDropTarget.edge
+                        : undefined
+                    }
                     scope="col"
+                    onDragOver={
+                      onColumnOrderChange && isColumnReorderable(column)
+                        ? (event) => {
+                            const sourceColumnId = draggedColumnFrom(event);
+                            if (!sourceColumnId || sourceColumnId === column.id)
+                              return;
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                            setColumnDropTarget({
+                              columnId: column.id,
+                              edge: columnDropEdge(event),
+                            });
+                          }
+                        : undefined
+                    }
+                    onDrop={
+                      onColumnOrderChange && isColumnReorderable(column)
+                        ? (event) => {
+                            const sourceColumnId = draggedColumnFrom(event);
+                            if (!sourceColumnId) return;
+                            event.preventDefault();
+                            const edge =
+                              columnDropTarget?.columnId === column.id
+                                ? columnDropTarget.edge
+                                : columnDropEdge(event);
+                            moveColumn(sourceColumnId, column.id, edge);
+                            setDraggedColumnId(null);
+                            setColumnDropTarget(null);
+                          }
+                        : undefined
+                    }
                   >
                     <div className="data-grid-column-head">
-                      {sortable ? (
+                      {onColumnOrderChange && isColumnReorderable(column) ? (
                         <button
                           type="button"
-                          className="data-grid-sort-button"
-                          aria-label={sortButtonLabel(
-                            column.label,
-                            active ? sort.direction : null,
-                          )}
-                          onClick={() => toggleSort(column)}
+                          className="data-grid-column-reorder-handle"
+                          aria-label={`Reorder ${column.label} column`}
+                          aria-describedby={`${tableInstanceId}-column-reorder-help`}
+                          aria-keyshortcuts="ArrowLeft ArrowRight"
+                          title={`Drag to reorder ${column.label} column`}
+                          draggable
+                          data-row-activation-ignore
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onDragStart={(event) => {
+                            event.stopPropagation();
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData(
+                              "application/x-jobctrl-column",
+                              column.id,
+                            );
+                            event.dataTransfer.setData("text/plain", column.id);
+                            setDraggedColumnId(column.id);
+                            setColumnReorderStatus(
+                              `${column.label} picked up for reordering.`,
+                            );
+                          }}
+                          onDragEnd={() => {
+                            setDraggedColumnId(null);
+                            setColumnDropTarget(null);
+                          }}
+                          onKeyDown={(event) =>
+                            handleColumnReorderKeyDown(column, event)
+                          }
                         >
-                          <span>{header}</span>
-                          {active ? (
-                            <SortIcon size={13} aria-hidden="true" />
-                          ) : (
-                            <span aria-hidden="true">↕</span>
-                          )}
+                          <IconGripVertical size={14} aria-hidden="true" />
                         </button>
-                      ) : (
-                        <span className="data-grid-column-title">{header}</span>
-                      )}
-                      {filterable ? (
-                        <ColumnFilterDialog
-                          column={column}
-                          filter={filter}
-                          values={distinctValues.get(column.id) ?? []}
-                          valueQuery={valueQueries[column.id] ?? ""}
-                          active={filterActive}
-                          onClear={() => clearFilter(column.id)}
-                          onOperatorChange={(operator) =>
-                            updateFilter(column.id, (current) => ({
-                              ...current,
-                              operator,
-                            }))
-                          }
-                          onTextChange={(text) =>
-                            updateFilter(column.id, (current) => ({
-                              ...current,
-                              text,
-                            }))
-                          }
-                          onValueQueryChange={(text) =>
-                            setValueQueries((current) => ({
-                              ...current,
-                              [column.id]: text,
-                            }))
-                          }
-                          onToggleValue={(value) =>
-                            toggleFilterValue(column.id, value)
-                          }
-                        />
                       ) : null}
+                      {renderColumnControls(column)}
                     </div>
                     {resizableColumns ? (
                       <button
@@ -1070,7 +1321,8 @@ export function FilterableDataGrid<TData>({
                     toneClass("row", rowTone),
                     onRowActivate && "data-grid-row-activatable",
                   );
-                  const activationLabel = rowActivationLabel?.(row) ?? `Open row ${rowId}`;
+                  const activationLabel =
+                    rowActivationLabel?.(row) ?? `Open row ${rowId}`;
                   return (
                     <tr
                       key={rowId}
@@ -1088,7 +1340,11 @@ export function FilterableDataGrid<TData>({
                       }
                     >
                       {displayColumns.map((column, columnIndex) => {
-                        const content = column.render(row, { pageRows, rowId, rowIndex });
+                        const content = column.render(row, {
+                          pageRows,
+                          rowId,
+                          rowIndex,
+                        });
                         const cellTone = firstMatchingTone(
                           row,
                           columnsById,
@@ -1100,31 +1356,44 @@ export function FilterableDataGrid<TData>({
                           toneClass("cell", cellTone),
                         );
                         const isActivationCell =
-                          Boolean(onRowActivate) && columnIndex === activationColumnIndex;
+                          Boolean(onRowActivate) &&
+                          columnIndex === activationColumnIndex;
                         const activationButton = isActivationCell ? (
                           <button
                             type="button"
-                            className="data-grid-row-activation-button"
+                            className={classNames(
+                              "data-grid-row-activation-button",
+                              rowActivationAppearance === "focus-only" &&
+                                "row-activation-focus-only",
+                            )}
                             aria-label={activationLabel}
                             onClick={(event) => {
                               event.stopPropagation();
                               onRowActivate?.(row);
                             }}
                           >
-                            <span aria-hidden="true">Open</span>
+                            <span aria-hidden="true">View details</span>
                           </button>
                         ) : null;
                         return column.rowHeader ? (
                           <th
                             key={column.id}
                             className={cellClassName}
+                            data-label={column.label}
+                            data-row-header="true"
+                            headers={`${tableInstanceId}-${column.id}-header`}
                             scope="row"
                           >
                             {content}
                             {activationButton}
                           </th>
                         ) : (
-                          <td key={column.id} className={cellClassName}>
+                          <td
+                            key={column.id}
+                            className={cellClassName}
+                            data-label={column.label}
+                            headers={`${tableInstanceId}-${column.id}-header`}
+                          >
                             {content}
                             {activationButton}
                           </td>

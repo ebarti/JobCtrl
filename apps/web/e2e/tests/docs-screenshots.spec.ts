@@ -209,6 +209,11 @@ const desktopSurfaces: readonly ScreenshotSurface[] = [
       await expect(
         page.getByRole("link", { name: "model selection", exact: true }),
       ).toHaveAttribute("aria-current", "page");
+      await expect(page.locator(".model-selection-list")).toHaveAttribute(
+        "aria-busy",
+        "false",
+      );
+      await expect(page.getByText("Checking", { exact: true })).toHaveCount(0);
     },
   },
   {
@@ -413,7 +418,7 @@ async function nonJobActivityDetailPath(page: Page): Promise<string> {
 async function verifyPipelineOperations(page: Page): Promise<void> {
   for (const heading of [
     "Pipelines",
-    "Operational stage ledger",
+    "Live pipeline",
     "Source families and reconciliation",
     "Execution inspector",
     "Active work",
@@ -593,6 +598,7 @@ async function verifyCredentialsCaptureReady(page: Page): Promise<void> {
 test("capture public documentation screenshots from synthetic seed data", async ({
   page,
 }) => {
+  test.setTimeout(120_000);
   test.skip(
     process.env.JOBCTRL_DOCS_SCREENSHOTS !== "1",
     "Rewrites docs/assets/screenshots — opt in via JOBCTRL_DOCS_SCREENSHOTS=1 (pnpm docs:screenshots sets it).",

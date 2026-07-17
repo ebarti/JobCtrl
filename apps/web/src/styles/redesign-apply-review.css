@@ -48,7 +48,7 @@
 
 .apply-review-queue-count {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 600;
 }
 
@@ -71,7 +71,9 @@
   border-radius: 0;
   background: transparent;
   padding: 11px 14px 12px;
-  transition: background-color 140ms ease, box-shadow 140ms ease;
+  transition:
+    background-color 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .apply-review-queue-item:hover,
@@ -92,7 +94,7 @@
 .apply-review-queue-fit {
   min-width: 1rem;
   color: var(--muted-foreground);
-  font-size: 14px;
+  font-size: var(--jh-font-size-body-sm);
   font-variant-numeric: tabular-nums;
   font-weight: 760;
   line-height: 1;
@@ -115,7 +117,7 @@
 
 .apply-review-queue-item .meta {
   overflow: hidden;
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -129,7 +131,7 @@
   box-shadow: none;
   padding: 0;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 610;
   line-height: 1.45;
 }
@@ -178,7 +180,7 @@
 
 .apply-review-selected-label {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 680;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -195,7 +197,7 @@
 
 .apply-review-selected-identity [data-slot="card-description"] {
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.45;
 }
 
@@ -240,7 +242,7 @@
 
 .apply-review-selected-score > span {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 650;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -259,7 +261,7 @@
 
 .apply-review-selected-facts .compensation-strip-label,
 .apply-review-selected-facts .field > span {
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 660;
   letter-spacing: 0.07em;
 }
@@ -300,7 +302,7 @@
 }
 
 .apply-review-audit-facts dt {
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 670;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -318,7 +320,7 @@
   box-shadow: none;
   padding: 0;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 500;
   line-height: 1.45;
 }
@@ -346,7 +348,7 @@
   justify-content: flex-start;
   padding-top: 0;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.45;
   text-align: left;
 }
@@ -360,10 +362,10 @@
   display: flex;
   grid-column: 2;
   grid-row: 1;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-  overflow-x: auto;
+  overflow-x: visible;
 }
 
 .apply-review-selected-actions .apply-review-approval-binding {
@@ -397,7 +399,8 @@
   min-width: 0;
 }
 
-.apply-review-position-disclosure[data-open="false"] .apply-review-pane-heading {
+.apply-review-position-disclosure[data-open="false"]
+  .apply-review-pane-heading {
   border-bottom-color: transparent;
   padding-bottom: 0;
 }
@@ -426,7 +429,7 @@
 }
 
 .apply-review-pane-heading .eyebrow {
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
 }
 
 .apply-review-pane-heading h2 {
@@ -459,7 +462,7 @@
 
 .apply-review-preview-block h3,
 .artifact-comparison-head h3 {
-  font-size: 13px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 650;
   letter-spacing: -0.015em;
 }
@@ -467,10 +470,9 @@
 .apply-review-document {
   max-height: min(44dvh, 600px);
   border: 0;
-  border-left: 2px solid var(--border);
   border-radius: 0;
   background: transparent;
-  padding: 2px 0 2px 13px;
+  padding: 2px 0;
   color: var(--foreground);
   line-height: 1.62;
 }
@@ -665,7 +667,7 @@
 }
 
 .artifact-comparison-tag-group > span {
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 650;
   letter-spacing: 0.07em;
 }
@@ -678,7 +680,7 @@
   box-shadow: none;
   padding: 0;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.45;
 }
 
@@ -691,7 +693,7 @@
 }
 
 .apply-review-audit-section h4 {
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 670;
   letter-spacing: 0.07em;
 }
@@ -707,7 +709,7 @@
 }
 
 .apply-review-audit-tags > span:first-child {
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 650;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -738,12 +740,14 @@
 .apply-review-requirement-meta,
 .apply-review-evidence-token {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 560;
   line-height: 1.45;
 }
 
-.apply-review-ideal-requirement-head .apply-review-requirement-meta + .apply-review-requirement-meta,
+.apply-review-ideal-requirement-head
+  .apply-review-requirement-meta
+  + .apply-review-requirement-meta,
 .apply-review-evidence-token + .apply-review-evidence-token {
   margin-left: 10px;
 }
@@ -758,7 +762,7 @@
 }
 
 .apply-review-requirement-summary dt {
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 650;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -796,7 +800,7 @@
 }
 
 .apply-review-evidence-list dt {
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 650;
   letter-spacing: 0.06em;
   text-transform: uppercase;

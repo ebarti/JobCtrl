@@ -38,6 +38,7 @@ export interface JobsTableProps {
   onFiltersChange?: (next: DataGridFilterState) => void;
   onVisiblePageRowsChange?: (rows: readonly JobSummary[]) => void;
   columnOrder?: readonly string[];
+  onColumnOrderChange?: (next: readonly string[]) => void;
   hiddenColumnIds?: readonly string[];
   columnWidths?: DataGridColumnWidthsState;
   onColumnWidthsChange?: (next: DataGridColumnWidthsState) => void;
@@ -64,6 +65,7 @@ export function JobsTable({
   onFiltersChange = noopFiltersChange,
   onVisiblePageRowsChange = noopVisiblePageRowsChange,
   columnOrder,
+  onColumnOrderChange,
   hiddenColumnIds = [],
   columnWidths,
   onColumnWidthsChange,
@@ -130,6 +132,7 @@ export function JobsTable({
       loadingMessage="Loading jobs."
       emptyMessage="No jobs match."
       initialSort={{ columnId: "discovered_at", direction: "desc" }}
+      mobileLayout="cards"
       sort={gridSort}
       onSortChange={handleSortChange}
       manualSorting
@@ -138,6 +141,7 @@ export function JobsTable({
       columnVisibility={columnVisibility}
       toolbarActions={renderedToolbarActions}
       {...(columnOrder ? { columnOrder } : {})}
+      {...(onColumnOrderChange ? { onColumnOrderChange } : {})}
       {...(columnWidths ? { columnWidths } : {})}
       {...(onColumnWidthsChange ? { onColumnWidthsChange } : {})}
       {...(density !== undefined ? { density } : {})}
@@ -151,6 +155,7 @@ export function JobsTable({
       rowActivationLabel={(row) =>
         `Open job ${row.title} at ${row.company || "unknown company"}`
       }
+      rowActivationAppearance="focus-only"
       onPageRowsChange={onVisiblePageRowsChange}
       pagination={{
         page,

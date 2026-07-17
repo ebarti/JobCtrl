@@ -3695,11 +3695,22 @@ class ProjectionBuilder:
                 # terminal can apply. A stale/duplicate WorkflowStarted for the
                 # run that already folded a terminal is idempotent and preserves
                 # that terminal (the reconciler-describe vs finalize backstop).
-                if status in _WORKFLOW_TERMINAL_STATUSES and not _starts_new_execution(
-                    folded_run_id=temporal_run_id,
-                    folded_finished_at=finished_at,
-                    event_run_id=event_run_id,
-                    event_occurred_at=occurred_at,
+                recovers_missing_history = (
+                    status == "terminated"
+                    and error_code == "reconciled_not_found"
+                    and payload.get("recoveredFromMissingHistory") is True
+                    and bool(event_run_id)
+                    and event_run_id == temporal_run_id
+                )
+                if (
+                    status in _WORKFLOW_TERMINAL_STATUSES
+                    and not recovers_missing_history
+                    and not _starts_new_execution(
+                        folded_run_id=temporal_run_id,
+                        folded_finished_at=finished_at,
+                        event_run_id=event_run_id,
+                        event_occurred_at=occurred_at,
+                    )
                 ):
                     continue
                 status = "in_progress"

@@ -36,6 +36,36 @@ terminal execution. If no execution can be selected, the response still
 reports global job-stage backlog and runtime capacity, but its execution,
 source-family, and reconciliation summaries are `null`.
 
+`projectionCoverage` reports whether exact selected-execution lineage is ready.
+It is `null` only when no execution is selected and fresh, available runtime
+telemetry proves `activeSlots = 0`. Unavailable, stale, or occupied runtime
+inventory without a selected execution reports `recovering`; the API never
+fabricates an idle or ready checkpoint. For a selected execution:
+
+- `ready` includes native/reconstructed mode, decoder version, Temporal history
+  event watermark, verified membership/step counts, and checkpoint timestamp;
+- `recovering` includes expected and persisted counts while the worker rebuilds
+  and verifies the exact durable key sets;
+- `retrying` carries the same progress fields plus a bounded error code for a
+  safe automatic retry; and
+- `incomplete` carries the verified partial counts and bounded terminal reason
+  when immutable legacy history ended before the complete target set was
+  recorded. It is not retried automatically.
+
+Only `ready` permits selected-run completion counts or ETA scope to be treated
+as exact. The checkpoint is revalidated against current row counts and a
+cross-runtime canonical key digest on every read; a stale `ready` row is
+downgraded and selected for worker repair.
+
+For reconstructed legacy runs, decoder v2 derives preparation ownership from
+append-only workflow-start events inside each exact fanout-attempt interval and
+requires the recovered per-pass workflow count to equal the declared target
+count. Folded workflow projections and runtime telemetry cannot supply or
+promote that lineage. Retry attempts retain their exact attempt/start/completion
+facts without inventing a missing queue timestamp. A terminal failed fanout
+publishes `incomplete` with its exact partial dispatch set instead of remaining
+in an automatic retry loop.
+
 The execution identity is the immutable tuple exposed as `discoverWorkflowId`
 and `discoverRunId` (the Temporal run ID). A deterministic Temporal workflow ID can be reused, so the run
 ID is required to distinguish executions. Membership is split into two
@@ -93,6 +123,10 @@ Temporal task-queue statistics are a separate infrastructure signal. Workflow
 and activity poller counts, approximate backlog count/age, and add/dispatch
 rates are observations, not domain-job totals. Unsupported, unavailable, and
 stale observations remain typed states instead of being converted to zero.
+`activeStageCounts` is the exact fresh runtime-activity total grouped by known
+operational stage, or `null` when runtime telemetry is not fresh. It explains
+which stages currently occupy the shared activity pool but cannot promote
+`projectionCoverage` or prove selected-execution completion.
 
 ### Freshness And ETA
 

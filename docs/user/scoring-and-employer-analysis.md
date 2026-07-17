@@ -14,7 +14,10 @@ surfaces rather than looking for a separate scoring page:
 - `/jobs` exposes fit-score filters, sorting, bands, and stage state.
 - `/jobs/:jobId` shows the employer analysis, score breakdown, confidence,
   hard blockers, matched/missing/transferable signals, requirement-fit report,
-  policy metadata, correction history, and stale state when recorded.
+  policy metadata, correction history, and stale state when recorded. Profile
+  evidence attached to a requirement resolves through the Evidence map into its
+  title and a useful source excerpt; unresolved references are labeled
+  unavailable, with the raw storage key kept under **Technical details**.
 - `/evidence-map` works in the opposite direction: it shows where a profile
   achievement or skill was used by requirement-fit and generated materials.
 - `/settings` owns scoring and target guidance. Guidance influences subsequent

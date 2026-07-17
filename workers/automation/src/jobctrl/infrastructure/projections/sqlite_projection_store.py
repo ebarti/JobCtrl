@@ -1007,14 +1007,26 @@ class SqliteProjectionStore:
     )
 
     def open_workflow_runs(self, tenant_id: str) -> list[dict]:
-        """Return non-terminal workflow-run rows for the describe-reconciler."""
+        """Return rows whose Temporal execution can still change their truth.
+
+        Normal non-terminal runs are described until they close. A row that
+        was terminalized specifically as ``reconciled_not_found`` remains a
+        candidate too: if the exact execution reappears after the launcher
+        reconnects to its authoritative history store, the reconciler repairs
+        the projection without deleting the false-terminal audit event.
+        """
         placeholders = ",".join("?" for _ in self.WORKFLOW_TERMINAL_STATUSES)
         cursor = self._conn.execute(
             f"""
             SELECT workflow_id, tenant_id, workflow_type, status, started_at,
-                   temporal_run_id
+                   finished_at, temporal_run_id, error_code,
+                   input_summary_json
             FROM workflow_run_projections
-            WHERE tenant_id = ? AND status NOT IN ({placeholders})
+            WHERE tenant_id = ?
+              AND (
+                status NOT IN ({placeholders})
+                OR (status = 'terminated' AND error_code = 'reconciled_not_found')
+              )
             """,
             (tenant_id, *self.WORKFLOW_TERMINAL_STATUSES),
         )

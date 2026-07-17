@@ -2235,6 +2235,19 @@ def worker(
     async def _run() -> None:
         client = await get_temporal_client()
         await _reconcile_discovery_schedule(client, queue)
+        # Repair any exact pre-lineage Discover execution before this worker
+        # starts accepting more activities.  The controller reads only that
+        # workflow/run's Temporal history and is idempotent, so a worker restart
+        # can finish a partial repair without canceling or restarting discovery.
+        try:
+            await _reconcile_legacy_discovery_executions(client)
+        except Exception:
+            # Recovery is retried by the heartbeat loop.  An unavailable
+            # history store must not take down the worker or mutate the run.
+            log.warning(
+                "Legacy Discover execution recovery failed at worker startup; will retry",
+                exc_info=True,
+            )
         from jobctrl.apply.auto_apply import reconcile_auto_apply_loop
 
         identity = current_runtime_identity()
@@ -2331,19 +2344,32 @@ async def _worker_heartbeat_loop(
         except Exception:
             log.warning("Worker heartbeat loop iteration failed; will retry", exc_info=True)
             continue
-        # Describe-based reconciler: terminalize workflow-run rows whose
-        # Temporal execution has closed (or vanished on a dev-server restart)
-        # but never got a finalize outcome — e.g. a killed worker.
+        # Describe-based reconciler: settle workflow-run rows whose Temporal
+        # execution closed without finalize, and repair a false
+        # reconciled_not_found terminal if the exact execution reappears.
         if temporal_client is not None:
             try:
-                terminalized = await _reconcile_workflow_runs(temporal_client)
+                reconciled = await _reconcile_workflow_runs(temporal_client)
             except Exception:
                 log.warning("Workflow-run reconciler iteration failed; will retry", exc_info=True)
             else:
-                if terminalized:
+                if reconciled:
                     console.print(
-                        f"[yellow]Reconciler terminalized {terminalized} orphaned "
-                        "workflow run(s).[/yellow]"
+                        f"[yellow]Reconciler updated {reconciled} workflow "
+                        "run(s).[/yellow]"
+                    )
+            try:
+                recovered = await _reconcile_legacy_discovery_executions(temporal_client)
+            except Exception:
+                log.warning(
+                    "Legacy Discover execution recovery iteration failed; will retry",
+                    exc_info=True,
+                )
+            else:
+                if recovered:
+                    console.print(
+                        f"[yellow]Recovered durable tracking for {recovered} legacy "
+                        "Discover execution(s).[/yellow]"
                     )
             try:
                 from jobctrl.apply.auto_apply import reconcile_auto_apply_loop
@@ -2384,6 +2410,169 @@ def _worker_heartbeat_iteration(
         activity_snapshot=activity_snapshot,
         task_queue_observation=task_queue_observation,
     )
+
+
+def _legacy_discovery_recovery_candidates(
+    conn: Any,
+    *,
+    tenant_id: str,
+) -> list[dict[str, str]]:
+    """Return exact Discover executions whose durable tracking may need repair.
+
+    Open executions remain candidates while they run because a pre-lineage
+    history can grow between heartbeat passes.  For closed executions only the
+    newest selected-run candidate is considered, and its durable recovery
+    manifest is the sole readiness authority.  Projection row counts cannot
+    prove that the exact history was completely decoded.
+    """
+    from jobctrl.discovery.execution_reconciliation import (
+        _recovery_manifest_matches_persisted_keys,
+    )
+
+    terminal_statuses = (
+        "succeeded",
+        "failed",
+        "canceled",
+        "terminated",
+        "timed_out",
+        "dry_run_complete",
+    )
+    try:
+        recovery_manifest_exists = conn.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'discovery_execution_recoveries'
+            """
+        ).fetchone()
+        if recovery_manifest_exists:
+            rows = conn.execute(
+                """
+                SELECT wrp.workflow_id, wrp.temporal_run_id, wrp.status,
+                       der.state AS recovery_state
+                FROM workflow_run_projections wrp
+                LEFT JOIN discovery_execution_recoveries der
+                  ON der.tenant_id = wrp.tenant_id
+                 AND der.discover_workflow_id = wrp.workflow_id
+                 AND der.discover_run_id = wrp.temporal_run_id
+                WHERE wrp.tenant_id = ?
+                  AND wrp.workflow_type = 'DiscoverWorkflow'
+                  AND wrp.temporal_run_id IS NOT NULL
+                  AND trim(wrp.temporal_run_id) <> ''
+                ORDER BY COALESCE(wrp.started_at, wrp.finished_at) DESC,
+                         wrp.workflow_id DESC
+                """,
+                (tenant_id,),
+            ).fetchall()
+        else:
+            # The first recovery attempt creates the manifest table.  Until
+            # then, missing checkpoint state means recovery is required.
+            rows = conn.execute(
+                """
+                SELECT workflow_id, temporal_run_id, status,
+                       NULL AS recovery_state
+                FROM workflow_run_projections
+                WHERE tenant_id = ?
+                  AND workflow_type = 'DiscoverWorkflow'
+                  AND temporal_run_id IS NOT NULL
+                  AND trim(temporal_run_id) <> ''
+                ORDER BY COALESCE(started_at, finished_at) DESC,
+                         workflow_id DESC
+                """,
+                (tenant_id,),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        # First-run and migration windows are retried after schema setup.
+        return []
+
+    candidates: list[dict[str, str]] = []
+    latest_terminal_considered = False
+    for row in rows:
+        status = str(row["status"] or "")
+        recovery_state = str(row["recovery_state"] or "")
+        is_open = status not in terminal_statuses
+        if not is_open:
+            if latest_terminal_considered:
+                continue
+            latest_terminal_considered = True
+            # An exact-history decoder can prove that a legacy terminal fanout
+            # failed before its complete target set existed.  That evidence is
+            # durable but cannot become more complete on a closed history, so
+            # do not retry the same immutable run forever.
+            if recovery_state == "incomplete":
+                continue
+            if recovery_state == "ready" and (
+                _recovery_manifest_matches_persisted_keys(
+                    conn,
+                    tenant_id=tenant_id,
+                    workflow_id=str(row["workflow_id"]),
+                    temporal_run_id=str(row["temporal_run_id"]),
+                )
+            ):
+                continue
+        candidates.append(
+            {
+                "workflow_id": str(row["workflow_id"]),
+                "temporal_run_id": str(row["temporal_run_id"]),
+            }
+        )
+    return candidates
+
+
+async def _reconcile_legacy_discovery_executions(
+    temporal_client: Any,
+    *,
+    tenant_id: str | None = None,
+    conn: Any = None,
+) -> int:
+    """Idempotently recover exact legacy Discover tracking candidates.
+
+    One ambiguous or temporarily unavailable history is isolated from every
+    other candidate.  This function never starts, cancels, signals, or retries
+    a workflow; it only delegates exact-history projection repair to the
+    write-side reconciliation module.
+    """
+    from jobctrl.database import get_connection
+    from jobctrl.discovery.execution_reconciliation import (
+        LegacyDiscoveryRecoveryError,
+        reconcile_legacy_discovery_execution,
+    )
+    from jobctrl.domain.tenant import LOCAL_TENANT
+
+    tenant = str(tenant_id or LOCAL_TENANT)
+    connection = conn or get_connection()
+    candidates = _legacy_discovery_recovery_candidates(connection, tenant_id=tenant)
+    changed = 0
+    for candidate in candidates:
+        try:
+            result = await reconcile_legacy_discovery_execution(
+                temporal_client,
+                workflow_id=candidate["workflow_id"],
+                temporal_run_id=candidate["temporal_run_id"],
+                tenant_id=tenant,
+                conn=connection,
+            )
+        except LegacyDiscoveryRecoveryError as exc:
+            # Refusal is safe: the controller found evidence it cannot map
+            # uniquely.  Keep the execution untouched and retry after more
+            # canonical rows/history arrive.
+            log.warning(
+                "Legacy Discover execution recovery deferred (%s); will retry",
+                exc.code,
+            )
+            continue
+        except Exception:
+            log.warning(
+                "Legacy Discover execution recovery failed for one exact run; will retry",
+                exc_info=True,
+            )
+            continue
+        if (
+            result.activities_recovered
+            or result.jobs_linked
+            or result.work_plans_recovered
+        ):
+            changed += 1
+    return changed
 
 
 async def _safe_task_queue_observation(temporal_client: Any, task_queue: str) -> Any:
@@ -2440,11 +2629,12 @@ def _reconciled_reason(status: str, describe_status: Any) -> tuple[str | None, s
 
 
 async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | None = None) -> int:
-    """Terminalize open ``workflow_run_projections`` rows by describing them.
+    """Reconcile workflow projections against their exact Temporal executions.
 
-    For each non-terminal row: a CLOSED Temporal execution records the matching
-    terminal ``Workflow*`` event; a NOT_FOUND execution (dev-server data loss)
-    records ``WorkflowTerminated``; a still-RUNNING execution is left alone.
+    Normal open rows settle from their exact recorded Temporal run. A
+    ``reconciled_not_found`` terminal remains provisional: the loop keeps
+    probing that same run and repairs the projection if its authoritative
+    history becomes reachable again.
     """
     from jobctrl.database import get_connection
     from jobctrl.domain.tenant import LOCAL_TENANT
@@ -2459,11 +2649,11 @@ async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | Non
     except sqlite3.OperationalError:
         return 0
 
-    terminalized = 0
+    changed = 0
     for run in open_runs:
         if await _reconcile_one_workflow_run(temporal_client, conn, run):
-            terminalized += 1
-    return terminalized
+            changed += 1
+    return changed
 
 
 async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> bool:
@@ -2472,12 +2662,26 @@ async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> 
     workflow_id = str(run.get("workflow_id") or "")
     if not workflow_id:
         return False
+    temporal_run_id = str(run.get("temporal_run_id") or "") or None
+    missing_history_terminal = (
+        str(run.get("status") or "") == "terminated"
+        and str(run.get("error_code") or "") == "reconciled_not_found"
+    )
     try:
-        description = await temporal_client.get_workflow_handle(workflow_id).describe()
+        handle = temporal_client.get_workflow_handle(
+            workflow_id,
+            **({"run_id": temporal_run_id} if temporal_run_id else {}),
+        )
+        description = await handle.describe()
     except RPCError as exc:
         if exc.status == RPCStatusCode.NOT_FOUND:
+            if missing_history_terminal:
+                # The provisional terminal is already recorded. Keep probing
+                # without appending duplicate events so reconnecting to the
+                # authoritative history store can heal it later.
+                return False
             # The dev server lost its history across a restart; treat the run as
-            # terminated so it stops showing as forever-running.
+            # provisionally terminated so it stops showing as forever-running.
             _record_reconciled_outcome(
                 conn,
                 run,
@@ -2493,10 +2697,20 @@ async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> 
         log.warning("describe_workflow failed for %s; will retry", workflow_id, exc_info=True)
         return False
 
+    recovered = False
+    if missing_history_terminal:
+        recovered = _record_reconciled_recovery(
+            conn,
+            run,
+            temporal_run_id=str(description.run_id or temporal_run_id or "") or None,
+        )
+        if not recovered:
+            return False
+
     status = _reconcile_status_map().get(description.status)
     if status is None:
         # RUNNING / CONTINUED_AS_NEW — still live, leave it.
-        return False
+        return recovered
     error_code, error_message = _reconciled_reason(status, description.status)
     _record_reconciled_outcome(
         conn,
@@ -2506,6 +2720,90 @@ async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> 
         error_message=error_message,
         temporal_run_id=description.run_id or run.get("temporal_run_id"),
     )
+    return True
+
+
+def _record_reconciled_recovery(
+    conn,
+    run: dict,
+    *,
+    temporal_run_id: str | None,
+) -> bool:
+    """Reopen one false missing-history terminal after exact-run recovery.
+
+    The prior ``WorkflowTerminated`` event remains in the audit stream. The
+    compensating ``WorkflowStarted`` carries an explicit recovery marker, and
+    both projection folds accept that marker only when the current terminal is
+    ``reconciled_not_found`` and the Temporal run id is unchanged.
+    """
+    from jobctrl.database import get_connection
+    from jobctrl.domain.events.workflow import (
+        WorkflowStartedPayload,
+        create_workflow_started,
+    )
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+    from jobctrl.state import record_job_event
+
+    workflow_id = str(run.get("workflow_id") or "")
+    expected_run_id = str(run.get("temporal_run_id") or "") or None
+    if not workflow_id or not temporal_run_id or temporal_run_id != expected_run_id:
+        return False
+
+    own_txn = not conn.in_transaction
+    if own_txn:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        existing = conn.execute(
+            """
+            SELECT status, error_code, temporal_run_id, started_at,
+                   input_summary_json
+            FROM workflow_run_projections
+            WHERE workflow_id = ?
+            """,
+            (workflow_id,),
+        ).fetchone()
+        if (
+            existing is None
+            or str(existing["status"]) != "terminated"
+            or str(existing["error_code"] or "") != "reconciled_not_found"
+            or str(existing["temporal_run_id"] or "") != temporal_run_id
+        ):
+            if own_txn:
+                conn.rollback()
+            return False
+        try:
+            input_summary = json.loads(existing["input_summary_json"] or "{}")
+        except (TypeError, ValueError):
+            input_summary = {}
+        if not isinstance(input_summary, dict):
+            input_summary = {}
+        event = create_workflow_started(
+            str(run.get("tenant_id") or LOCAL_TENANT),
+            WorkflowStartedPayload(
+                workflow_id=workflow_id,
+                workflow_type=str(run.get("workflow_type") or ""),
+                input_summary=input_summary,
+                started_at=str(existing["started_at"] or "") or None,
+                temporal_run_id=temporal_run_id,
+                recovered_from_missing_history=True,
+            ),
+        )
+        record_job_event(
+            conn,
+            None,
+            "workflow",
+            event.event_type,
+            payload=dict(event.payload),
+            occurred_at=event.occurred_at,
+        )
+        if own_txn:
+            conn.commit()
+    except Exception:
+        if own_txn:
+            conn.rollback()
+        raise
+    ProjectionBuilder(conn_factory=get_connection).refresh()
     return True
 
 

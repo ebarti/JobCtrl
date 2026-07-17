@@ -21,6 +21,11 @@ On desktop, the navigation rail groups the product into Overview, Pipeline,
 Library, Activity, and Setup. On mobile, the same destinations move into the
 navigation sheet and each workspace reflows in reading order.
 
+Across routes, the compact page header keeps the eyebrow, 26px title, short
+subtitle, and actions in one hierarchy. Body copy remains 16px in compact,
+regular, and comfy density; density changes row and control geometry,
+not readability.
+
 ## Intended Screenshot Asset Matrix
 
 Every production primary route, detail route, import step, and Settings route
@@ -85,25 +90,30 @@ conversion rates.
 
 ### Pipelines
 
-![JobCtrl Pipelines workspace with launch controls, scoped stage ledger, execution inspector, and active work](../assets/screenshots/pipelines.png)
+![JobCtrl Pipelines workspace with launch controls, live stage flow, execution inspector, and active work](../assets/screenshots/pipelines.png)
 
-Pipelines combines launch controls with the operations ledger. The Discover tab
+Pipelines combines launch controls with a live current-execution flow and
+collapsed backlog diagnostics. The Discover tab
 keeps limit, internal concurrency, source, and dry-run controls; Apply adds
 minimum score, model, headless-browser, continuous, and stop controls where
 applicable. Worker readiness and launch status remain visible in the action
 panel.
 
-The ledger separates three scopes so their numbers are never conflated:
+The workspace separates three scopes so their numbers are never conflated:
 **Current execution** is work admitted to the selected Discover run,
 **Execution sweep** is eligible backlog that run adopted, and **Global outside
 execution** is unrelated backlog. The execution inspector shows both cohort
 plans and remaining counts. Source-family crawling is reported separately from
 the two reconciliation steps that enrich intake and fan preparation out.
-Per-stage outcome and backlog counts sit beside capacity, ETA, and observation
-time; disclosures expose worker slots, internal parallelism, approximate task
-queue pollers/backlog/age/rates, read-model freshness, and the bounded
-active-work inventory. Calibrating, paused, stale, unavailable, and no-work ETA
-states stay explicit.
+Current-execution cards show active, waiting, processing, terminal, and
+attention totals first; **All stage outcomes** exposes every exact state.
+**Backlog and diagnostics** holds the sweep/global ledgers, worker slots,
+internal parallelism, approximate task-queue pollers/backlog/age/rates,
+read-model freshness, and the bounded active-work inventory. Calibrating,
+paused, stale, unavailable, and no-work ETA states stay explicit. Active
+discovery can be stopped here; replacement-run setup is offered only after an
+exact zero-active-work inventory, while provisionally missing history continues
+to reconcile automatically.
 
 ### Discovery
 
@@ -122,7 +132,12 @@ and observing that execution.
 
 Jobs is the URL-backed triage table. Search, stage/state/apply/deleted filters,
 sorting, pagination, saved views, selection, columns, and bulk actions remain
-available before opening one record.
+available before opening one record. **Active**, **Deleted**, and **Hidden** are
+the visible queues; legacy closed-posting filters do not become a fourth tab.
+The normal Active row omits redundant `OPEN` copy, deletion is destructive,
+and the default view keeps Sources and Warnings available but hidden. A
+focus-only row action opens the record without filling the table with visible
+**Open** buttons.
 
 ### Job Detail
 
@@ -151,6 +166,9 @@ job and requirement evidence, fit rationale, tailoring directives and coverage,
 accepted/current artifacts, editable resume, cover letter or email, comparison,
 grounding/fabrication/judge warnings, dry-run evidence, and approval actions. A
 failed retry remains audit history and never hides the last accepted artifact.
+On desktop the queue remains a left rail and the selected review reads as
+full-width sections in sequence; narrow screens move the queue above the review
+and wrap its decision actions.
 
 ## Library And Evidence
 
@@ -164,12 +182,15 @@ related job when the decision needs job-level context.
 
 ### Artifact Detail
 
-![JobCtrl Artifact Detail route workspace with PDF preview, provenance, tailoring explanation, and comparison](../assets/screenshots/artifact-detail.png)
+![JobCtrl Artifact Detail route workspace with audit details, provenance, comparison, and the PDF preview below](../assets/screenshots/artifact-detail.png)
 
 Artifact Detail combines the real in-app PDF preview, when supported, with
 status, ID, job, local-file metadata, tailoring explanation, warnings,
 provenance, and same-job comparison. Historical or unavailable artifacts stay
-explicit instead of masquerading as current material.
+explicit instead of masquerading as current material. The audit details come
+first and the full-width preview follows below them. Evidence uses titles and
+bounded excerpts; raw artifact, job, path, evidence, and requirement keys stay
+inside **Technical details**.
 
 ### Evidence Map
 
@@ -178,7 +199,9 @@ explicit instead of masquerading as current material.
 Evidence is a master-detail workspace over canonical achievements and skills.
 The selected entry shows source pins, freshness, resume and requirement uses,
 coverage history, and linked jobs/artifacts; the inspector keeps gaps and
-reusable stories visible.
+reusable stories visible. Human-readable labels lead each usage, with raw
+storage identifiers behind **Technical details**. The entry, detail, and
+inspector panes stack when the desktop three-pane layout no longer fits.
 
 ### Contacts
 
@@ -240,7 +263,8 @@ single-event timeline.
 Profile keeps canonical personal, experience, education, skills, evidence, and
 voluntary EEO fields beside the real baseline resume editor. The resizable
 preview is the visual feedback surface for the same data, not a second profile
-source.
+source. Below its working desktop width, the preview stacks after the editor
+instead of shrinking the document or leaving an unusable resize gutter.
 
 ### Resume Import
 
@@ -277,11 +301,13 @@ visible at the owning section.
 
 ![JobCtrl Credentials Settings route with provider readiness and guided secret setup](../assets/screenshots/settings-credentials.png)
 
-Credentials shows provider readiness, supported authentication modes, secret
-presence metadata, sanitized errors, and add/update/remove/verify actions. It
-never displays stored secret values. A failed provider replacement preserves the
-previous stored configuration; a failed model-catalog read does not change
-credentials.
+Credentials shows provider readiness, supported authentication modes, whether
+a secret is configured, sanitized errors, and add/update/remove/verify actions.
+It never displays stored secret values. A failed provider replacement preserves
+the previous stored configuration; a failed model-catalog read does not change
+credentials. Each credential route keeps status, field, and actions together;
+at narrow widths actions wrap beneath the field and environment-owned controls
+remain visibly read-only.
 
 ### Settings — Model Selection
 
@@ -306,6 +332,11 @@ pairing and authenticated-profile copying remain separate explicit actions.
 
 The intended mobile captures verify that the same information remains reachable
 in reading order at 390×844; they are not reduced-content mockups.
+
+At 900px and below, record tables on Jobs, Artifacts, Contacts, Discovery, and
+Settings reflow into labelled cards while keeping sort/filter access. Profile,
+Evidence Map, and Apply Review stack their larger work regions independently;
+none should introduce document-level horizontal overflow.
 
 | | |
 | --- | --- |

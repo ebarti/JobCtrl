@@ -20,6 +20,7 @@ export function OutreachTable({ data, loading, onOpenContact }: OutreachTablePro
       loadingMessage="Loading contacts."
       emptyMessage="No contacts match."
       initialSort={{ columnId: "displayName", direction: "asc" }}
+      mobileLayout="cards"
       onRowActivate={(row) => onOpenContact(row.contactId)}
       rowActivationLabel={(row) => `Open contact ${row.displayName}`}
       tableClassName="contacts-data-grid-table"

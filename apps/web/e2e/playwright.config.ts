@@ -55,6 +55,15 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
+      grepInvert: /@mobile/,
+    },
+    {
+      name: "mobile-chromium",
+      grep: /@mobile/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 390, height: 844 },
+      },
     },
   ],
   webServer: [

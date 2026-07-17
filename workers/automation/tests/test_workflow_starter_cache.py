@@ -54,7 +54,9 @@ class _FakeDescribeClient:
         self._workflow_id = workflow_id
         self._outcome = outcome
 
-    def get_workflow_handle(self, workflow_id: str) -> _FakeDescribeHandle:
+    def get_workflow_handle(
+        self, workflow_id: str, *, run_id: str | None = None
+    ) -> _FakeDescribeHandle:
         if workflow_id == self._workflow_id:
             return _FakeDescribeHandle(self._outcome)
         return _FakeDescribeHandle(_FakeDescribe(WorkflowExecutionStatus.RUNNING))

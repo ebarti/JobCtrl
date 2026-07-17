@@ -43,14 +43,23 @@ class _FakeClient:
 
     def __init__(self, mapping: dict) -> None:
         self._mapping = mapping
+        self.lookups: list[tuple[str, str | None]] = []
 
-    def get_workflow_handle(self, workflow_id: str) -> _FakeHandle:
+    def get_workflow_handle(
+        self, workflow_id: str, *, run_id: str | None = None
+    ) -> _FakeHandle:
+        self.lookups.append((workflow_id, run_id))
         return _FakeHandle(
             self._mapping.get(workflow_id, _FakeDescribe(WorkflowExecutionStatus.RUNNING))
         )
 
 
-def _seed_open_run(conn, workflow_id: str, workflow_type: str = "JobPipelineWorkflow") -> None:
+def _seed_open_run(
+    conn,
+    workflow_id: str,
+    workflow_type: str = "JobPipelineWorkflow",
+    temporal_run_id: str | None = None,
+) -> None:
     record_job_event(
         conn,
         None,
@@ -61,6 +70,7 @@ def _seed_open_run(conn, workflow_id: str, workflow_type: str = "JobPipelineWork
             "workflowId": workflow_id,
             "workflowType": workflow_type,
             "status": "in_progress",
+            "temporalRunId": temporal_run_id,
         },
     )
     conn.commit()
@@ -93,6 +103,15 @@ def _reason(conn, workflow_id: str) -> tuple[str | None, str | None]:
     if row is None:
         return None, None
     return row["error_code"], row["error_message"]
+
+
+def _raw_workflow_payloads(conn, workflow_id: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT payload_json FROM job_events WHERE event_type LIKE 'Workflow%' "
+        "ORDER BY event_id ASC"
+    ).fetchall()
+    payloads = [json.loads(row["payload_json"] or "{}") for row in rows]
+    return [payload for payload in payloads if payload.get("workflowId") == workflow_id]
 
 
 @pytest.mark.asyncio
@@ -132,6 +151,81 @@ async def test_reconciler_terminalizes_closed_and_notfound_leaves_running() -> N
     assert notfound_message and "no longer exists" in notfound_message
     # Still RUNNING → untouched.
     assert _status(conn, running_id) == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_reconciler_recovers_exact_run_after_false_not_found_terminal() -> None:
+    conn = get_connection()
+    workflow_id = f"run-{uuid.uuid4().hex}"
+    run_id = f"temporal-{uuid.uuid4().hex}"
+    _seed_open_run(conn, workflow_id, temporal_run_id=run_id)
+
+    missing_client = _FakeClient(
+        {workflow_id: RPCError("not found", RPCStatusCode.NOT_FOUND, b"")}
+    )
+    assert await _reconcile_workflow_runs(missing_client) >= 1
+    assert _status(conn, workflow_id) == "terminated"
+    assert _reason(conn, workflow_id)[0] == "reconciled_not_found"
+
+    live_client = _FakeClient(
+        {workflow_id: _FakeDescribe(WorkflowExecutionStatus.RUNNING, run_id=run_id)}
+    )
+    assert await _reconcile_workflow_runs(live_client) >= 1
+
+    assert (workflow_id, run_id) in live_client.lookups
+    assert _status(conn, workflow_id) == "in_progress"
+    assert _reason(conn, workflow_id) == (None, None)
+    payloads = _raw_workflow_payloads(conn, workflow_id)
+    assert [payload.get("status") for payload in payloads] == [
+        "in_progress",
+        "terminated",
+        "in_progress",
+    ]
+    assert payloads[-1]["temporalRunId"] == run_id
+    assert payloads[-1]["recoveredFromMissingHistory"] is True
+
+
+@pytest.mark.asyncio
+async def test_reconciler_replaces_false_terminal_with_recovered_real_outcome() -> None:
+    conn = get_connection()
+    workflow_id = f"run-{uuid.uuid4().hex}"
+    run_id = f"temporal-{uuid.uuid4().hex}"
+    _seed_open_run(conn, workflow_id, temporal_run_id=run_id)
+
+    missing_client = _FakeClient(
+        {workflow_id: RPCError("not found", RPCStatusCode.NOT_FOUND, b"")}
+    )
+    await _reconcile_workflow_runs(missing_client)
+    assert _status(conn, workflow_id) == "terminated"
+
+    completed_client = _FakeClient(
+        {workflow_id: _FakeDescribe(WorkflowExecutionStatus.COMPLETED, run_id=run_id)}
+    )
+    assert await _reconcile_workflow_runs(completed_client) >= 1
+
+    assert _status(conn, workflow_id) == "succeeded"
+    assert _reason(conn, workflow_id) == (None, None)
+    assert _events(conn, workflow_id)[-2:] == ["WorkflowStarted", "WorkflowCompleted"]
+
+
+@pytest.mark.asyncio
+async def test_reconciler_does_not_duplicate_provisional_terminal_while_still_missing() -> None:
+    conn = get_connection()
+    workflow_id = f"run-{uuid.uuid4().hex}"
+    run_id = f"temporal-{uuid.uuid4().hex}"
+    _seed_open_run(conn, workflow_id, temporal_run_id=run_id)
+    client = _FakeClient(
+        {workflow_id: RPCError("not found", RPCStatusCode.NOT_FOUND, b"")}
+    )
+
+    assert await _reconcile_workflow_runs(client) >= 1
+    event_count = len(_events(conn, workflow_id))
+    assert await _reconcile_workflow_runs(client) == 0
+
+    assert _status(conn, workflow_id) == "terminated"
+    assert len(_events(conn, workflow_id)) == event_count
+    target_lookups = [lookup for lookup in client.lookups if lookup[0] == workflow_id]
+    assert target_lookups == [(workflow_id, run_id), (workflow_id, run_id)]
 
 
 def _record_terminal(conn, workflow_id: str, event_type: str, status: str) -> None:

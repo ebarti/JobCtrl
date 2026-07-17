@@ -26,7 +26,7 @@
   border-radius: 6px;
   background: var(--primary);
   color: var(--primary-foreground);
-  font-size: 13px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 760;
   letter-spacing: -0.04em;
 }
@@ -34,7 +34,7 @@
 .demo-consent-kicker {
   margin: 24px 0 8px;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 700;
   letter-spacing: 0.09em;
 }
@@ -55,7 +55,7 @@
 .demo-consent-requirement {
   margin-top: 22px;
   color: var(--foreground) !important;
-  font-size: 14px;
+  font-size: var(--jh-font-size-body);
   font-weight: 620;
 }
 
@@ -65,7 +65,7 @@
   padding: 10px 0 10px 13px;
   border-radius: 0;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .demo-consent-return-note {
@@ -99,9 +99,12 @@
   min-height: 40px;
   padding: 9px 14px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 650;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 
 .demo-consent-actions button:focus-visible {

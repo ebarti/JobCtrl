@@ -60,9 +60,15 @@ sequenceDiagram
     end
     Act->>DB: terminal Workflow* event + refresh
     Note over Rec,DB: backstop when finalize never runs
-    Rec->>T: describe open workflow_run_projections
+    Rec->>T: describe exact workflow ID + recorded run ID
     T-->>Rec: CLOSED / NOT_FOUND / RUNNING
-    Rec->>DB: record matching terminal Workflow* (first-terminal-wins)
+    alt CLOSED
+        Rec->>DB: record matching terminal Workflow*
+    else NOT_FOUND
+        Rec->>DB: record provisional reconciled_not_found
+    else exact run reappears
+        Rec->>DB: append marked recovery start, then real state
+    end
 ```
 
 Notice that every path ends in exactly one terminal `Workflow*` event: finalize
@@ -135,20 +141,28 @@ authoritative for `enrich`, `score`, `tailor`, and `cover`.
 ### Finalize + The Describe-Based Reconciler
 
 When the Python worker is killed mid-run, an activity times out, or the Temporal
-dev server loses history on restart, finalize may never run. The **reconciler** is
-the backstop. It is not a trigger-coupled reaper; it is a describe loop inside
-the worker's 15-second heartbeat loop (`cli.py`, `_reconcile_workflow_runs`):
+service is temporarily connected to the wrong history store, finalize may never
+run. The **reconciler** is the backstop. It is not a trigger-coupled reaper; it
+is a describe loop inside the worker's 15-second heartbeat loop (`cli.py`,
+`_reconcile_workflow_runs`):
 
-- For each non-terminal `workflow_run_projections` row it calls
-  `describe()` on the workflow handle.
+- For each non-terminal row, and each provisional
+  `reconciled_not_found` row, it calls `describe()` with both the workflow ID
+  and the recorded Temporal run ID.
 - A **CLOSED** execution records the matching terminal `Workflow*` event
   (COMPLETED→succeeded, FAILED→failed, CANCELED→canceled,
   TERMINATED→terminated, TIMED_OUT→timed_out).
-- A **NOT_FOUND** execution (dev-server history loss) records
-  `WorkflowTerminated` so the run stops showing as forever-running.
+- A **NOT_FOUND** execution records a provisional `WorkflowTerminated` so the
+  run stops showing as forever-running while its authority is unavailable.
 - A **RUNNING / CONTINUED_AS_NEW** execution is left alone.
+- If that exact Temporal run later reappears, the reconciler appends an
+  explicitly marked recovery `WorkflowStarted`. The fold accepts this
+  compensation only for the same run ID after `reconciled_not_found`; ordinary
+  duplicate starts still cannot reopen terminal truth. A recovered closed run
+  receives its actual terminal outcome in the same pass.
 
-The reconciler never overwrites terminal truth. Both `JobPipelineWorkflow` and
+The reconciler never deletes or overwrites terminal audit events. Both
+`JobPipelineWorkflow` and
 `ApplyWorkflow` encode stage/apply failure in their *return value*, so a failing
 run still closes COMPLETED on the Temporal side even though finalize already
 wrote `WorkflowFailed`. Before writing, the reconciler takes `BEGIN IMMEDIATE`

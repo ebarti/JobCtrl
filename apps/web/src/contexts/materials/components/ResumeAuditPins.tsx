@@ -49,6 +49,7 @@ import {
   type JSX,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
+  type ReactNode,
   type SetStateAction,
 } from "react";
 
@@ -162,13 +163,24 @@ interface ResumePlateLineEntry {
 }
 
 interface ResumePlateRenderContextValue {
+  readonly commentThreadsByLineIndex: ReadonlyMap<number, readonly ResumeCommentThread[]>;
   readonly layoutBoxes: readonly ResumeLayoutBox[];
+  readonly lineEntriesBySemanticId: ReadonlyMap<string, ResumePlateLineEntry>;
   readonly lineEntries: ReadonlyMap<number | undefined, ResumePlateLineEntry>;
   readonly onSelectLine: (selection: PdfAuditLineSelection) => void;
+  readonly onReplyToThread?: ResumePlateEditorProps["onReplyToThread"];
   readonly pins: readonly ResumeAuditPin[];
+  readonly replyPending: boolean;
   readonly risk: RiskSignals;
   readonly selectedLine: PdfAuditLineSelection | null | undefined;
 }
+
+interface ResumeCommentThreadPlacement {
+  readonly commentThreadsByLineIndex: ReadonlyMap<number, readonly ResumeCommentThread[]>;
+  readonly unmatchedThreads: readonly ResumeCommentThread[];
+}
+
+const EMPTY_COMMENT_THREADS_BY_LINE_INDEX: ReadonlyMap<number, readonly ResumeCommentThread[]> = new Map();
 
 type ResumeEditorTextAlign = "left" | "center" | "right";
 type ResumeEditorFontFamily = ResumeTemplateTheme["fontFamily"] | "resume" | "mono";
@@ -1178,6 +1190,72 @@ function pinForPlateLine(
   return pins.find((pin) => pin.tailoredText.some((text) => textsMatchLine(text, line.text))) ?? null;
 }
 
+function placeResumeCommentThreads(
+  lines: readonly ResumePlateLine[],
+  pins: readonly ResumeAuditPin[],
+  threads: readonly ResumeCommentThread[],
+): ResumeCommentThreadPlacement {
+  const lineIndexByNumber = new Map<number, number>();
+  const lineIndexBySourcePinId = new Map<string, number>();
+  const lineIndexBySemanticId = new Map<string, number>();
+
+  for (const [index, line] of lines.entries()) {
+    if (line.lineNumber !== undefined && !lineIndexByNumber.has(line.lineNumber)) {
+      lineIndexByNumber.set(line.lineNumber, index);
+    }
+    if (line.semanticId && !lineIndexBySemanticId.has(line.semanticId)) {
+      lineIndexBySemanticId.set(line.semanticId, index);
+    }
+    const pin = pinForPlateLine(line, index, pins);
+    if (pin?.id && !lineIndexBySourcePinId.has(pin.id)) {
+      lineIndexBySourcePinId.set(pin.id, index);
+    }
+    if (pin?.sourceId && !lineIndexBySemanticId.has(pin.sourceId)) {
+      lineIndexBySemanticId.set(pin.sourceId, index);
+    }
+  }
+
+  const mutableThreadsByLineIndex = new Map<number, ResumeCommentThread[]>();
+  const unmatchedThreads: ResumeCommentThread[] = [];
+  for (const thread of threads) {
+    if (!thread.anchorResolved) {
+      unmatchedThreads.push(thread);
+      continue;
+    }
+
+    let lineIndex: number | undefined;
+    const lineNumber = thread.lineAnchor?.lineNumber;
+    if (lineNumber !== null && lineNumber !== undefined) {
+      lineIndex = lineIndexByNumber.get(lineNumber);
+    }
+    if (lineIndex === undefined && thread.sourcePinId) {
+      lineIndex = lineIndexBySourcePinId.get(thread.sourcePinId);
+    }
+    if (lineIndex === undefined) {
+      const semanticIds = [thread.semanticId, thread.lineAnchor?.semanticId].filter(
+        (semanticId): semanticId is string => Boolean(semanticId),
+      );
+      for (const semanticId of semanticIds) {
+        lineIndex = lineIndexBySemanticId.get(semanticId);
+        if (lineIndex !== undefined) break;
+      }
+    }
+
+    if (lineIndex === undefined) {
+      unmatchedThreads.push(thread);
+      continue;
+    }
+    const lineThreads = mutableThreadsByLineIndex.get(lineIndex) ?? [];
+    lineThreads.push(thread);
+    mutableThreadsByLineIndex.set(lineIndex, lineThreads);
+  }
+
+  return {
+    commentThreadsByLineIndex: mutableThreadsByLineIndex,
+    unmatchedThreads,
+  };
+}
+
 function inlineCommentForPin(pin: ResumeAuditPin, risk: RiskSignals): ResumePlateComment {
   const signals = pin.matchedSignals.length ? `Signals reflected: ${pin.matchedSignals.join(", ")}.` : "";
   const sourceText = primarySourceTextForPin(pin)?.[0] ?? null;
@@ -1660,8 +1738,7 @@ function ResumeCommentReplyForm({
   const [decision, setDecision] = useState<ResumeCommentReplyDecision>("clarified");
   if (!onReply) return null;
   const formId = `resume-comment-reply-${thread.threadId}`;
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submit = () => {
     const trimmed = body.trim();
     if (!trimmed) return;
     onReply(thread, { body: trimmed, decision });
@@ -1669,7 +1746,12 @@ function ResumeCommentReplyForm({
     setDecision("clarified");
   };
   return (
-    <form className="resume-comment-reply-form" onSubmit={submit}>
+    <span
+      aria-label={`Reply to ${thread.riskLabel ?? "resume comment"}`}
+      className="resume-comment-reply-form"
+      role="group"
+      onClick={(event) => event.stopPropagation()}
+    >
       <label htmlFor={`${formId}-body`}>Reply</label>
       <textarea
         id={`${formId}-body`}
@@ -1680,7 +1762,7 @@ function ResumeCommentReplyForm({
         disabled={disabled}
         onChange={(event) => setBody(event.currentTarget.value)}
       />
-      <div className="resume-comment-reply-controls">
+      <span className="resume-comment-reply-controls">
         <label htmlFor={`${formId}-decision`}>Decision</label>
         <Select
           items={COMMENT_REPLY_DECISION_ITEMS}
@@ -1691,11 +1773,99 @@ function ResumeCommentReplyForm({
           <SelectTrigger id={`${formId}-decision`} aria-label="Decision" className="min-w-40"><SelectValue /></SelectTrigger>
           <SelectContent><SelectGroup>{COMMENT_REPLY_DECISION_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
         </Select>
-        <button className="tab" type="submit" disabled={disabled || !body.trim()}>
+        <button className="tab" type="button" disabled={disabled || !body.trim()} onClick={submit}>
           reply
         </button>
-      </div>
-    </form>
+      </span>
+    </span>
+  );
+}
+
+function ResumeCommentThreadDetails({
+  pending,
+  showAnchorStatus,
+  showSourceIdentifiers,
+  thread,
+  onReply,
+}: {
+  readonly pending: boolean;
+  readonly showAnchorStatus: boolean;
+  readonly showSourceIdentifiers: boolean;
+  readonly thread: ResumeCommentThread;
+  readonly onReply?: ResumePlateEditorProps["onReplyToThread"];
+}): JSX.Element {
+  return (
+    <>
+      <span className="resume-comment-thread-meta">
+        <span className="resume-comment-thread-state">{commentThreadStateLabel(thread)}</span>
+        {thread.riskLabel ? <span className="resume-comment-thread-risk">{thread.riskLabel}</span> : null}
+        {showAnchorStatus && thread.lineAnchor?.lineNumber ? (
+          <span className="mono">line {thread.lineAnchor.lineNumber}</span>
+        ) : null}
+        {showAnchorStatus && !thread.anchorResolved ? (
+          <span className="resume-comment-thread-risk">anchor unresolved</span>
+        ) : null}
+      </span>
+      <span className="resume-comment-thread-body">{thread.commentBody}</span>
+      {showSourceIdentifiers && (thread.sourcePinId || thread.semanticId) ? (
+        <span className="resume-comment-thread-source">
+          {thread.sourcePinId ? <span>Source pin: {thread.sourcePinId}</span> : null}
+          {thread.semanticId ? <span>Semantic id: {thread.semanticId}</span> : null}
+        </span>
+      ) : null}
+      {thread.replies.length ? (
+        <span className="resume-comment-replies" aria-label="Comment replies" role="list">
+          {thread.replies.map((reply) => (
+            <span key={reply.replyId} role="listitem">
+              <b>{formatToken(reply.decision)}</b>
+              <span>{reply.body}</span>
+            </span>
+          ))}
+        </span>
+      ) : null}
+      <ResumeCommentReplyForm disabled={pending} thread={thread} onReply={onReply} />
+    </>
+  );
+}
+
+function ResumePlateCommentThreadBubble({
+  expanded,
+  pending,
+  threads,
+  onReply,
+}: {
+  readonly expanded: boolean;
+  readonly pending: boolean;
+  readonly threads: readonly ResumeCommentThread[];
+  readonly onReply?: ResumePlateEditorProps["onReplyToThread"];
+}): JSX.Element {
+  return (
+    <span
+      aria-label="JobCtrl resume comment"
+      className={`resume-plate-comment resume-plate-thread-bubble ${expanded ? "expanded" : "collapsed"}`}
+      contentEditable={false}
+      data-resume-editor-chrome="true"
+      role="note"
+      suppressContentEditableWarning
+    >
+      <span className="resume-plate-comment-head">
+        <b>JobCtrl</b>
+        <span>{threads.length} comment{threads.length === 1 ? "" : "s"}</span>
+      </span>
+      <span className="resume-plate-thread-list">
+        {threads.map((thread) => (
+          <span className={`resume-comment-thread ${thread.state}`} key={thread.threadId}>
+            <ResumeCommentThreadDetails
+              pending={pending}
+              showAnchorStatus={false}
+              showSourceIdentifiers={false}
+              thread={thread}
+              onReply={onReply}
+            />
+          </span>
+        ))}
+      </span>
+    </span>
   );
 }
 
@@ -1712,36 +1882,21 @@ function ResumeCommentThreadPanel({
 }): JSX.Element | null {
   if (!threads.length && !error) return null;
   return (
-    <aside className="resume-comment-thread-panel" aria-label="JobCtrl line comments">
+    <aside className="resume-comment-thread-panel" aria-label="Unanchored JobCtrl comments">
       <div className="resume-comment-thread-head">
-        <b>JobCtrl comments</b>
+        <b>Comments without a rendered line</b>
         <span>{threads.length} thread{threads.length === 1 ? "" : "s"}</span>
       </div>
       {error ? <div className="banner inline">{error}</div> : null}
       {threads.map((thread) => (
         <article className={`resume-comment-thread ${thread.state}`} key={thread.threadId}>
-          <div className="resume-comment-thread-meta">
-            <span className="tag info">{commentThreadStateLabel(thread)}</span>
-            {thread.riskLabel ? <span className="tag warn">{thread.riskLabel}</span> : null}
-            {thread.lineAnchor?.lineNumber ? <span className="mono">line {thread.lineAnchor.lineNumber}</span> : null}
-            {!thread.anchorResolved ? <span className="tag warn">anchor unresolved</span> : null}
-          </div>
-          <p>{thread.commentBody}</p>
-          <div className="resume-comment-thread-source">
-            {thread.sourcePinId ? <span>Source pin: {thread.sourcePinId}</span> : null}
-            {thread.semanticId ? <span>Semantic id: {thread.semanticId}</span> : null}
-          </div>
-          {thread.replies.length ? (
-            <ul className="resume-comment-replies" aria-label="Comment replies">
-              {thread.replies.map((reply) => (
-                <li key={reply.replyId}>
-                  <b>{formatToken(reply.decision)}</b>
-                  <span>{reply.body}</span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          <ResumeCommentReplyForm disabled={Boolean(pending)} thread={thread} onReply={onReply} />
+          <ResumeCommentThreadDetails
+            pending={Boolean(pending)}
+            showAnchorStatus
+            showSourceIdentifiers
+            thread={thread}
+            onReply={onReply}
+          />
         </article>
       ))}
     </aside>
@@ -1792,18 +1947,33 @@ function useResumePlateRenderContext(): ResumePlateRenderContextValue {
 }
 
 function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JSX.Element {
-  const { layoutBoxes, lineEntries, onSelectLine, pins, risk, selectedLine } = useResumePlateRenderContext();
+  const {
+    commentThreadsByLineIndex,
+    layoutBoxes,
+    lineEntries,
+    lineEntriesBySemanticId,
+    onReplyToThread,
+    onSelectLine,
+    pins,
+    replyPending,
+    risk,
+    selectedLine,
+  } = useResumePlateRenderContext();
   const element = props.element;
-  const lineEntry = element.lineNumber ? lineEntries.get(element.lineNumber) : undefined;
+  const lineEntry =
+    (element.lineNumber !== undefined ? lineEntries.get(element.lineNumber) : undefined) ??
+    (element.semanticId ? lineEntriesBySemanticId.get(element.semanticId) : undefined);
   const pin = lineEntry ? pinForPlateLine(lineEntry.line, lineEntry.index, pins) : null;
   const comment = pin ? inlineCommentForPin(pin, risk) : null;
+  const commentThreads = lineEntry ? (commentThreadsByLineIndex.get(lineEntry.index) ?? []) : [];
   const selected = lineEntry ? selectedLineMatchesElement(selectedLine, lineEntry.line, lineEntry.index) : false;
-  const showComment = Boolean(comment && (selected || comment.tone === "warn"));
+  const showComment = Boolean(!commentThreads.length && comment && (selected || comment.tone === "warn"));
+  const expandThreads = selected || comment?.tone === "warn";
   const className = [
     element.className,
     lineEntry && !element.className ? resumeClassForLineKind(lineEntry.line.kind) : "",
     element.lineNumber ? "jobctrl-review-line" : "",
-    comment ? "has-jobctrl-comment" : "",
+    comment || commentThreads.length ? "has-jobctrl-comment" : "",
     selected ? "jobctrl-selected-line" : "",
   ]
     .filter(Boolean)
@@ -1823,6 +1993,14 @@ function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JS
       style: resumeElementStyle(element),
     },
     props.children,
+    commentThreads.length ? (
+      <ResumePlateCommentThreadBubble
+        expanded={expandThreads}
+        pending={replyPending}
+        threads={commentThreads}
+        onReply={onReplyToThread}
+      />
+    ) : null,
     showComment && comment ? <ResumePlateCommentBubble comment={comment} /> : null,
   );
 }
@@ -2380,28 +2558,34 @@ function ResumeEditorToolbarControls({
 }
 
 function ResumePlateDocument({
+  commentThreadsByLineIndex,
   documentKey,
   initialValue,
   layoutBoxes,
   lines,
+  onReplyToThread,
   onClearLineSelection,
   onFormattingApiChange,
   onValueChange,
   onSelectLine,
   pins,
+  replyPending,
   risk,
   selectedLine,
   title,
 }: {
+  readonly commentThreadsByLineIndex: ReadonlyMap<number, readonly ResumeCommentThread[]>;
   readonly documentKey: string;
   readonly initialValue: Value;
   readonly layoutBoxes: readonly ResumeLayoutBox[];
   readonly lines: readonly ResumePlateLine[];
+  readonly onReplyToThread?: ResumePlateEditorProps["onReplyToThread"];
   readonly onClearLineSelection: () => void;
   readonly onFormattingApiChange?: (api: ResumeEditorFormattingApi | null) => void;
   readonly onValueChange: (value: Value) => void;
   readonly onSelectLine: (selection: PdfAuditLineSelection | null) => void;
   readonly pins: readonly ResumeAuditPin[];
+  readonly replyPending: boolean;
   readonly risk: RiskSignals;
   readonly selectedLine: PdfAuditLineSelection | null | undefined;
   readonly title: string;
@@ -2410,16 +2594,40 @@ function ResumePlateDocument({
     () => new Map(lines.map((line, index) => [line.lineNumber, { index, line }])),
     [lines],
   );
+  const lineEntriesBySemanticId = useMemo<ReadonlyMap<string, ResumePlateLineEntry>>(
+    () =>
+      new Map(
+        lines.flatMap((line, index) =>
+          line.semanticId ? [[line.semanticId, { index, line }] as const] : [],
+        ),
+      ),
+    [lines],
+  );
   const renderContext = useMemo<ResumePlateRenderContextValue>(
     () => ({
+      commentThreadsByLineIndex,
       layoutBoxes,
       lineEntries,
+      lineEntriesBySemanticId,
+      onReplyToThread,
       onSelectLine,
       pins,
+      replyPending,
       risk,
       selectedLine,
     }),
-    [layoutBoxes, lineEntries, onSelectLine, pins, risk, selectedLine],
+    [
+      commentThreadsByLineIndex,
+      layoutBoxes,
+      lineEntries,
+      lineEntriesBySemanticId,
+      onReplyToThread,
+      onSelectLine,
+      pins,
+      replyPending,
+      risk,
+      selectedLine,
+    ],
   );
   useClearResumeLineSelection(selectedLine, onClearLineSelection);
 
@@ -2559,6 +2767,7 @@ export function ResumeStandalonePlateEditor({
   previewStyle,
   title,
   transformKey,
+  workspaceControls,
 }: {
   readonly className?: string;
   readonly htmlTransform?: ((html: string) => string) | undefined;
@@ -2566,6 +2775,7 @@ export function ResumeStandalonePlateEditor({
   readonly previewStyle?: CSSProperties | undefined;
   readonly title: string;
   readonly transformKey?: string;
+  readonly workspaceControls?: ReactNode;
 }): JSX.Element {
   const htmlState = useResumeHtmlState(htmlUrl, htmlTransform, transformKey);
   const layoutBoxes = useMemo<readonly ResumeLayoutBox[]>(() => [], []);
@@ -2658,6 +2868,11 @@ export function ResumeStandalonePlateEditor({
 
   return (
     <section className={`resume-plate-editor ${className ?? ""}`.trim()} aria-label={title} style={previewStyle}>
+      {workspaceControls ? (
+        <div className="resume-plate-workspace-controls" data-resume-editor-chrome="true">
+          {workspaceControls}
+        </div>
+      ) : null}
       <div className="resume-plate-toolbar" data-resume-editor-chrome="true">
         <b>{title}</b>
         <span className="toolbar-status">Plate HTML/CSS editor</span>
@@ -2692,6 +2907,7 @@ export function ResumeStandalonePlateEditor({
             data-draft-dirty={dirty ? "true" : "false"}
           >
             <ResumePlateDocument
+              commentThreadsByLineIndex={EMPTY_COMMENT_THREADS_BY_LINE_INDEX}
               documentKey={documentKey}
               initialValue={currentPlateValue}
               layoutBoxes={layoutBoxes}
@@ -2701,6 +2917,7 @@ export function ResumeStandalonePlateEditor({
               onSelectLine={handleSelectLine}
               onValueChange={setCurrentPlateValue}
               pins={[]}
+              replyPending={false}
               risk={risk}
               selectedLine={selectedLine}
               title={title}
@@ -2761,6 +2978,10 @@ export function ResumePlateEditor({
   const linePins = useMemo(
     () => (provenanceReady && plateLines.length ? pinsFromResumeLines(plateLines, explanation, profileSourceFields) : []),
     [explanation, plateLines, profileSourceFields, provenanceReady],
+  );
+  const threadPlacement = useMemo(
+    () => placeResumeCommentThreads(plateLines, linePins, draft?.commentThreads ?? []),
+    [draft?.commentThreads, linePins, plateLines],
   );
   const seedThreads = useMemo(
     () => seedThreadsFromPins(artifactId, linePins, risk),
@@ -3065,14 +3286,17 @@ export function ResumePlateEditor({
             data-draft-dirty={draftDirty ? "true" : "false"}
           >
             <ResumePlateDocument
+              commentThreadsByLineIndex={threadPlacement.commentThreadsByLineIndex}
               documentKey={documentKey}
               initialValue={currentPlateValue}
               layoutBoxes={layoutBoxes}
               lines={plateLines}
+              onReplyToThread={onReplyToThread}
               onClearLineSelection={handleClearLineSelection}
               onFormattingApiChange={handleFormattingApiChange}
               onValueChange={setCurrentPlateValue}
               pins={linePins}
+              replyPending={replyPending}
               risk={risk}
               selectedLine={selectedLine}
               title={title}
@@ -3099,7 +3323,7 @@ export function ResumePlateEditor({
       <ResumeCommentThreadPanel
         error={replyError}
         pending={replyPending}
-        threads={draft?.commentThreads ?? []}
+        threads={threadPlacement.unmatchedThreads}
         onReply={onReplyToThread}
       />
     </section>

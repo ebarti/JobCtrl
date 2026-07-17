@@ -349,11 +349,36 @@ schema:
 | `capacity` | Discriminated `available`, `stale`, or `unavailable`; see below. |
 | `sourceFamilies` | `null` or `{ planned, counts, eta, asOf }`. |
 | `reconciliation` | `null` or `{ enrichment, preparationFanout, asOf }`, where both values use the canonical stage-count shape. |
+| `projectionCoverage` | `null` only when no execution is selected and fresh available telemetry proves zero active slots; otherwise the `ready`, `recovering`, `retrying`, or terminal `incomplete` exact-lineage checkpoint described below. |
 | `stages` | Ordered `PipelineOperationalStage[]`; each has `stage`, `label`, `scope`, `currentExecution`, `existingBacklog`, `capacity`, `eta`, and `asOf`. |
+| `activeStageCounts` | `null` without fresh runtime telemetry, otherwise positive exact runtime-activity totals grouped by operational stage. These are shared-pool facts, not selected-execution completion proof. |
 | `activeItems` | Oldest-first `PipelineActiveItem[]`, maximum 20. |
 | `activeItemsTotal` | Exact allowlisted active-detail count, or `null` when inventory cannot make an exact statement. |
 | `activeItemsTruncated` | Whether safe detail was omitted, or `null` when inventory is unavailable/stale. |
 | `overallEta` | The ETA discriminated union below. |
+
+`projectionCoverage.status = "ready"` carries `mode` (`native` or
+`reconstructed`), `decoderVersion`, `historyEventId`, verified
+`membershipCount`, verified `stepCount`, and `updatedAt`. `recovering` and
+`retrying` carry nullable mode/decoder/watermark/expected counts, non-negative
+persisted membership and step counts, and a nullable update timestamp;
+`retrying` additionally carries a non-empty bounded `errorCode`. `incomplete`
+carries verified persisted partial counts, unknown expected counts, and a
+bounded terminal `errorCode`; it represents immutable legacy history that
+cannot identify every original target and is not automatically retried. Without
+a selectable execution, `projectionCoverage` is `null` only when fresh available
+telemetry proves zero active slots. Occupied, stale, or unavailable runtime
+inventory returns `recovering`, never an invented idle or `ready` checkpoint. A
+ready row is accepted only when its exact persisted counts and canonical key
+digest still match the selected execution.
+
+Reconstructed decoder v2 treats append-only workflow-start events—not folded
+workflow projections—as preparation-lineage evidence. Each legacy fanout's
+causal workflow count must equal its declared target count before overlapping
+passes are unioned and their full workflow/run summaries are accepted. A retry
+attempt without a separate legacy queue event retains its exact attempt and
+start/completion facts with an unknown queue timestamp. A terminal failed
+fanout preserves its exact partial dispatch set as `incomplete`.
 
 The canonical stage-count object contains non-negative integers for
 `eligible`, `waiting`, `processing`, `succeeded`, `skipped`, `blocked`,

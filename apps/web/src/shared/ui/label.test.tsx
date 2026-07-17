@@ -15,7 +15,7 @@ describe("<Label>", () => {
     const label = screen.getByText("Minimum fit score");
 
     expect(label.tagName).toBe("LABEL");
-    expect(label).toHaveClass("text-[12px]", "font-medium", "leading-none");
+    expect(label).toHaveClass("text-sm", "font-medium", "leading-none");
     expect(screen.getByLabelText("Minimum fit score")).toHaveAttribute(
       "id",
       "label-test-input",

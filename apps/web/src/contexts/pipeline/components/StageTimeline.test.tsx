@@ -66,6 +66,31 @@ function readyAuthenticatedLinkedInBrowser(): BrowserCapabilitiesResponse {
 }
 
 describe("<StageTimeline>", () => {
+  it("renders preparation as a semantic operational list without legacy pills", () => {
+    const { container } = renderWithProviders(
+      <StageTimeline
+        stages={[
+          makeStage("discover", "succeeded"),
+          makeStage("enrich", "blocked"),
+          makeStage("score", "pending"),
+        ]}
+      />,
+    );
+
+    const timeline = screen.getByRole("list", { name: "Preparation stages" });
+    expect(timeline).toHaveTextContent("Discover");
+    expect(timeline).toHaveTextContent("Enrich");
+    expect(timeline).toHaveTextContent("Score");
+    expect(timeline).toHaveTextContent("succeeded");
+    expect(timeline).toHaveTextContent("blocked");
+    expect(timeline).toHaveTextContent("pending");
+    expect(timeline.querySelectorAll("[data-status-icon='true']")).toHaveLength(
+      3,
+    );
+    expect(container.querySelector(".stage-pill")).not.toBeInTheDocument();
+    expect(container.querySelector(".status-dot")).not.toBeInTheDocument();
+  });
+
   it("shows a manual tailor action on actionable tailor stages", () => {
     renderWithProviders(
       <StageTimeline
@@ -95,7 +120,8 @@ describe("<StageTimeline>", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows failed-stage diagnostics without raw next-action commands", () => {
+  it("keeps failed-stage diagnostics inspectable without raw next-action commands", async () => {
+    const user = userEvent.setup();
     renderWithProviders(
       <StageTimeline
         stages={[
@@ -111,6 +137,12 @@ describe("<StageTimeline>", () => {
       />,
     );
 
+    expect(
+      screen.getByRole("button", { name: "Technical details" }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Technical details" }),
+    );
     expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent(
       "DETAIL_ERROR",
     );
@@ -123,7 +155,8 @@ describe("<StageTimeline>", () => {
     expect(screen.queryByText(/jobctrl retry enrich/i)).not.toBeInTheDocument();
   });
 
-  it("explains a robots block and offers audited manual capture for the posting", () => {
+  it("explains a robots block and offers audited manual capture for the posting", async () => {
+    const user = userEvent.setup();
     const postingUrl = "https://www.linkedin.com/jobs/view/123";
     renderWithProviders(
       <StageTimeline
@@ -166,6 +199,9 @@ describe("<StageTimeline>", () => {
       screen.getByRole("link", { name: "Open posting for manual capture" }),
     ).toHaveAttribute("href", postingUrl);
     expect(screen.getByText("Technical details")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Technical details" }),
+    );
     expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent(
       "ENRICH_ROBOTS_DISALLOWED",
     );
@@ -327,7 +363,8 @@ describe("<StageTimeline>", () => {
     expect(browserCapabilities).not.toHaveBeenCalled();
   });
 
-  it("explains a blocked page request without hiding the fetch-guard evidence", () => {
+  it("explains a blocked page request without hiding the fetch-guard evidence", async () => {
+    const user = userEvent.setup();
     const postingUrl = "https://www.linkedin.com/jobs/view/456";
     renderWithProviders(
       <StageTimeline
@@ -351,6 +388,9 @@ describe("<StageTimeline>", () => {
     expect(
       screen.getByRole("link", { name: "Open posting for manual capture" }),
     ).toHaveAttribute("href", postingUrl);
+    await user.click(
+      screen.getByRole("button", { name: "Technical details" }),
+    );
     expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent(
       "DETAIL_UNSAFE_URL",
     );

@@ -43,6 +43,13 @@ const REPAIR_STATES = new Set<StageState>([
 
 const ACTIVE_STATES = new Set<StageState>(["queued", "running"]);
 
+const APPLICATION_ATTESTATION_LABELS: Readonly<Record<string, string>> = {
+  age_18_plus: "Age 18+",
+  background_check_consent: "Background check consent",
+  felony_conviction: "Felony conviction",
+  previously_worked_at_employer: "Previously worked at employer",
+};
+
 export function buildApplyAudit(input: BuildApplyAuditInput): ApplyAudit {
   const missingPrerequisites: ApplyAuditFact[] = [];
   const hardBlockers: ApplyAuditFact[] = [];
@@ -99,7 +106,7 @@ export function buildApplyAudit(input: BuildApplyAuditInput): ApplyAudit {
       "Application attestations",
       input.missingProfileData?.length ? "missing" : "present",
       input.missingProfileData?.length
-        ? `Application attestations missing: ${input.missingProfileData.join(", ")}.`
+        ? missingApplicationAttestationDetail(input.missingProfileData)
         : "Typed application attestations are complete.",
     ),
   ];
@@ -204,7 +211,7 @@ export function buildApplyAudit(input: BuildApplyAuditInput): ApplyAudit {
       fact(
         "missing_profile_attestations",
         "Profile attestations incomplete",
-        `Application attestations missing: ${input.missingProfileData.join(", ")}.`,
+        missingApplicationAttestationDetail(input.missingProfileData),
         "warning",
         "profile_attestations",
       ),
@@ -429,7 +436,18 @@ function source(
 }
 
 function cleanReason(value: string | null | undefined): string | null {
-  const text = String(value ?? "")
+  const raw = String(value ?? "").trim();
+  const missingProfileData = raw.match(/^missing_profile_data\s*:\s*(.+)$/i);
+  if (missingProfileData?.[1]) {
+    const fields = missingProfileData[1]
+      .split(",")
+      .map((field) => field.trim())
+      .filter(Boolean);
+    return fields.length
+      ? `required profile answers missing: ${fields.map(applicationAttestationLabel).join(", ")}`
+      : "required profile answers are missing";
+  }
+  const text = raw
     .replace(/_/g, " ")
     .replace(/\s+/g, " ")
     .trim()
@@ -442,4 +460,18 @@ function cleanReason(value: string | null | undefined): string | null {
 
 function humanize(value: string): string {
   return value.replace(/_/g, " ");
+}
+
+function applicationAttestationLabel(field: string): string {
+  const normalized = field.trim();
+  const known = APPLICATION_ATTESTATION_LABELS[normalized];
+  if (known) {
+    return known;
+  }
+  const readable = humanize(normalized).trim();
+  return readable ? `${readable.charAt(0).toUpperCase()}${readable.slice(1)}` : "Required answer";
+}
+
+function missingApplicationAttestationDetail(fields: readonly string[]): string {
+  return `Application attestations missing: ${fields.map(applicationAttestationLabel).join(", ")}.`;
 }

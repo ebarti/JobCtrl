@@ -2,6 +2,8 @@ import type {
   ArtifactOpenResponse,
   ArtifactSummary,
   ArtifactTailoringExplanation,
+  EvidenceMapResponse,
+  JobDetail,
 } from "@jobctrl/contracts";
 import {
   createMemoryHistory,
@@ -11,7 +13,13 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -21,9 +29,17 @@ import { DemoArtifactPreviewError } from "../../demo/DemoExternalRehearsalExecut
 import { DemoFeatureFlagAdapter } from "../../demo/ports.js";
 import { buildProviderHarness } from "../../test/render.js";
 import {
+  makeArtifactTailoringExplanation,
   makeArtifactsPage,
+  makeJobDetail,
   sampleArtifact,
+  sampleEvidenceMapResponse,
+  sampleJob,
 } from "../../test/fixtures/projections.js";
+import {
+  populatedEmployerAnalysis,
+  provenanceEntries,
+} from "../../test/fixtures/materials-inspector.js";
 import { ArtifactDetailPanel } from "./ArtifactDetailPanel.js";
 
 vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
@@ -37,8 +53,36 @@ vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
 
 interface RenderArtifactRouteOptions {
   readonly demo?: boolean;
+  readonly evidenceMap?: EvidenceMapResponse;
+  readonly jobDetail?: JobDetail;
   readonly openArtifact?: (artifactId: string) => Promise<ArtifactOpenResponse>;
 }
+
+const artifactEvidenceMap: EvidenceMapResponse = {
+  ...sampleEvidenceMapResponse,
+  entries: [
+    {
+      ...sampleEvidenceMapResponse.entries[0]!,
+      entryId: "ev_latency",
+      evidenceId: "ev_latency",
+      title: "Reduced platform latency through reliability automation",
+      story: {
+        ...sampleEvidenceMapResponse.entries[0]!.story!,
+        outcome: "Improved response time across critical services.",
+      },
+    },
+    {
+      ...sampleEvidenceMapResponse.entries[0]!,
+      entryId: "ev_scope",
+      evidenceId: "ev_scope",
+      title: "Led reliability programs across the platform",
+      story: {
+        ...sampleEvidenceMapResponse.entries[0]!.story!,
+        outcome: "Expanded technical ownership across multiple teams.",
+      },
+    },
+  ],
+};
 
 function renderArtifactRoute(
   children: ReactNode,
@@ -77,6 +121,10 @@ function renderArtifactRoute(
             layoutBoxes: [],
             tailoringExplanation,
           })),
+          evidenceMap: vi.fn(
+            async () => options.evidenceMap ?? artifactEvidenceMap,
+          ),
+          job: vi.fn(async () => options.jobDetail ?? makeJobDetail()),
           artifactPreviewPdfUrl,
         },
       ),
@@ -169,7 +217,67 @@ describe("<ArtifactDetailPanel>", () => {
     expect(openArtifact).toHaveBeenCalledWith("artifact-preview");
   });
 
-  it("explains approved status and renders PDF artifacts in the detail drawer", async () => {
+  it("keeps raw storage details collapsed while preserving the audit trail", async () => {
+    const user = userEvent.setup();
+    renderArtifactRoute(<ArtifactDetailPanel artifactId="artifact-preview" />);
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 3,
+        name: "Artifact summary",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("/tmp/artifact-preview.pdf"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("artifact-preview")).not.toBeInTheDocument();
+    expect(screen.queryByText("job-1")).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /Technical details/i }),
+    );
+
+    expect(screen.getByText("/tmp/artifact-preview.pdf")).toBeInTheDocument();
+    expect(screen.getByText("artifact-preview")).toBeInTheDocument();
+    expect(screen.getByText("job-1")).toBeInTheDocument();
+  });
+
+  it("renders canonical requirement text while keeping provenance IDs in Technical details", async () => {
+    const user = userEvent.setup();
+    renderArtifactRoute(
+      <ArtifactDetailPanel artifactId="artifact-preview" />,
+      "approved",
+      makeArtifactTailoringExplanation(null, {
+        bulletProvenance: [provenanceEntries[0]!],
+      }),
+      [],
+      {
+        jobDetail: makeJobDetail(sampleJob, {
+          employerAnalysis: populatedEmployerAnalysis,
+        }),
+      },
+    );
+
+    const requirementText = await screen.findByText(
+      "Lead platform reliability programs across multiple teams",
+    );
+    const provenanceCard = requirementText.closest("article");
+    if (!provenanceCard) {
+      throw new Error("Expected requirement text inside a provenance card.");
+    }
+
+    expect(within(provenanceCard).queryByText("req-1")).not.toBeInTheDocument();
+
+    await user.click(
+      within(provenanceCard).getByRole("button", {
+        name: "Technical details",
+      }),
+    );
+
+    expect(within(provenanceCard).getByText("req-1")).toBeInTheDocument();
+  });
+
+  it("explains approved status and renders the PDF preview after the audit", async () => {
     const { artifactPreviewPdfUrl } = renderArtifactRoute(
       <ArtifactDetailPanel artifactId="artifact-preview" />,
     );
@@ -184,6 +292,12 @@ describe("<ArtifactDetailPanel>", () => {
     );
     expect(screen.getByLabelText("Artifact PDF preview")).toHaveTextContent(
       "/v1/artifacts/artifact-preview/preview.pdf?v=test",
+    );
+    const audit = screen
+      .getByRole("heading", { level: 2, name: "Artifact audit" })
+      .closest(".artifact-detail-sidebar");
+    expect(audit?.nextElementSibling).toBe(
+      screen.getByLabelText("Artifact PDF preview"),
     );
     expect(artifactPreviewPdfUrl).toHaveBeenCalledWith(
       "artifact-preview",
@@ -403,8 +517,36 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(
       0,
     );
-    expect(screen.getAllByText("ev_latency")).toHaveLength(2);
-    expect(screen.getAllByText("ev_scope").length).toBeGreaterThan(0);
+    const latencyEvidence = screen.getAllByRole("link", {
+      name: /Reduced platform latency through reliability automation/i,
+    });
+    expect(latencyEvidence).toHaveLength(2);
+    expect(latencyEvidence[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("/evidence-map"),
+    );
+    expect(latencyEvidence[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("entry=ev_latency"),
+    );
+    expect(latencyEvidence[0]).toHaveAttribute(
+      "href",
+      expect.stringContaining("job=job-1"),
+    );
+    const firstLatencyEvidence = latencyEvidence[0];
+    if (!firstLatencyEvidence) {
+      throw new Error("Expected latency evidence to be rendered.");
+    }
+    expect(firstLatencyEvidence.closest("li")).not.toHaveClass("tag");
+    expect(firstLatencyEvidence.closest("li")).toHaveTextContent(
+      "Improved response time across critical services.",
+    );
+    expect(
+      screen.getAllByText("Led reliability programs across the platform")
+        .length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("ev_latency")).not.toBeInTheDocument();
+    expect(screen.queryByText("ev_scope")).not.toBeInTheDocument();
     expect(screen.queryByText("Missing evidence")).not.toBeInTheDocument();
     expect(screen.queryByText("Metric claims")).not.toBeInTheDocument();
     expect(screen.queryByText("none recorded")).not.toBeInTheDocument();

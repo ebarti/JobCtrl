@@ -27,7 +27,7 @@
 }
 
 .dashboard-view .kpis [data-slot="stat-label"] {
-  font-size: 11px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.06em;
 }
@@ -142,7 +142,7 @@
 }
 
 .dashboard-view .funnel-stage {
-  font-size: 13px;
+  font-size: var(--jh-font-size-body);
   font-weight: 620;
   transition: color 140ms ease;
 }
@@ -189,7 +189,7 @@
 
 .dashboard-view .conversion-breakdown-title {
   color: var(--foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 620;
   letter-spacing: 0;
   text-transform: none;
@@ -226,12 +226,12 @@
 }
 
 .dashboard-view .title-stack b {
-  font-size: 12px;
+  font-size: var(--jh-font-size-body);
   font-weight: 620;
 }
 
 .dashboard-view .title-stack span {
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.35;
 }
 
@@ -266,7 +266,7 @@
 
 .dashboard-view .work-status-metric dt {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 680;
   letter-spacing: 0.075em;
   text-transform: uppercase;
@@ -291,7 +291,7 @@
 .dashboard-view .work-status-metric-description {
   margin: 0;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.45;
 }
 

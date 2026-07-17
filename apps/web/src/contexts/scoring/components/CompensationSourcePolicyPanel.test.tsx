@@ -1,5 +1,5 @@
 import { axe } from "jest-axe";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -130,6 +130,30 @@ function policyResponse(): CompensationSourceRegistryResponse {
 }
 
 describe("<CompensationSourcePolicyPanel>", () => {
+  it("does not expose internal policy metadata in the card header", async () => {
+    renderWithProviders(<CompensationSourcePolicyPanel />, {
+      ports: buildTestPorts({
+        api: { compensationSources: vi.fn(async () => policyResponse()) },
+      }),
+    });
+
+    await screen.findByRole("table", { name: "Compensation source policy" });
+    expect(screen.queryByText("editable source policy")).not.toBeInTheDocument();
+  });
+
+  it("keeps stacked source-status labels visually separated", async () => {
+    renderWithProviders(<CompensationSourcePolicyPanel />, {
+      ports: buildTestPorts({
+        api: { compensationSources: vi.fn(async () => policyResponse()) },
+      }),
+    });
+
+    const permitted = await screen.findByText("permitted");
+    const statusStack = permitted.closest("td")?.firstElementChild;
+    expect(statusStack).toContainElement(permitted);
+    expect(statusStack).toHaveClass("flex", "flex-col", "items-start", "gap-1");
+  });
+
   it("renders reported compensation sources with required policy fields", async () => {
     renderWithProviders(<CompensationSourcePolicyPanel />, {
       ports: buildTestPorts({
@@ -161,6 +185,41 @@ describe("<CompensationSourcePolicyPanel>", () => {
     expect(table).toHaveTextContent("Glassdoor");
     expect(table).toHaveTextContent("Requires Glassdoor partner API access or written permission.");
     expect(table).toHaveTextContent("none until permitted");
+  });
+
+  it("labels every compensation policy field for responsive record reflow", async () => {
+    const { container } = renderWithProviders(<CompensationSourcePolicyPanel />, {
+      ports: buildTestPorts({
+        api: { compensationSources: vi.fn(async () => policyResponse()) },
+      }),
+    });
+
+    const table = await screen.findByRole("table", {
+      name: "Compensation source policy",
+    });
+    const firstRecord = within(table)
+      .getByText("Manual reported compensation import")
+      .closest("tr");
+
+    expect(
+      container.querySelector(".responsive-record-table-wrap"),
+    ).toHaveAttribute("data-mobile-layout", "cards");
+    expect(firstRecord).not.toBeNull();
+    expect(
+      Array.from(firstRecord?.querySelectorAll<HTMLElement>("[data-label]") ?? []).map(
+        (cell) => cell.dataset["label"],
+      ),
+    ).toEqual([
+      "Source",
+      "Enablement",
+      "Policy",
+      "Status",
+      "Freshness",
+      "Attribution",
+      "Coverage",
+      "Supported fields",
+      "Access notes",
+    ]);
   });
 
   it("offers user-controlled enablement for Levels.fyi and Glassdoor", async () => {

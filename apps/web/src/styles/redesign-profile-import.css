@@ -5,7 +5,11 @@
  */
 
 .resume-import-page {
-  --resume-import-rule: color-mix(in oklch, var(--border) 88%, var(--foreground));
+  --resume-import-rule: color-mix(
+    in oklch,
+    var(--border) 88%,
+    var(--foreground)
+  );
   --resume-import-subtle: color-mix(in oklch, var(--muted) 58%, var(--card));
   width: min(100%, 1240px);
   margin-inline: auto;
@@ -49,7 +53,7 @@
   padding-top: 2px;
   color: var(--muted-foreground);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 550;
   letter-spacing: 0.02em;
 }
@@ -120,7 +124,7 @@
 .resume-import-step-link__number {
   color: inherit;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.04em;
 }
@@ -134,7 +138,7 @@
 .resume-import-step-link__copy strong {
   overflow: hidden;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--jh-font-size-body);
   font-weight: 650;
   line-height: 1.25;
   text-overflow: ellipsis;
@@ -144,7 +148,7 @@
 .resume-import-step-link__copy small {
   overflow: hidden;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -168,7 +172,7 @@
 
 .resume-import-step__eyebrow {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 650;
   letter-spacing: 0.085em;
   text-transform: uppercase;
@@ -188,7 +192,7 @@
 .resume-import-step__hint {
   margin: 0;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.55;
 }
 
@@ -198,7 +202,7 @@
 }
 
 .resume-import-alert [data-slot="alert-description"] {
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.45;
 }
 
@@ -254,7 +258,7 @@
 
 .resume-import-target__copy b {
   color: var(--foreground);
-  font-size: 14px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 650;
   letter-spacing: -0.015em;
 }
@@ -262,7 +266,7 @@
 .resume-import-target__copy small {
   overflow: hidden;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -283,7 +287,7 @@
   border-left: 1px solid var(--resume-import-rule);
   padding: 6px 0 6px 18px;
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 620;
   white-space: nowrap;
 }
@@ -324,7 +328,7 @@
 
 .resume-import-selected-file small {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -333,7 +337,7 @@
 .resume-import-selected-file strong {
   overflow: hidden;
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -349,7 +353,7 @@
 .resume-import-option-set [data-slot="field-legend"] {
   margin: 0;
   color: var(--foreground);
-  font-size: 14px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 660;
   letter-spacing: -0.02em;
 }
@@ -386,14 +390,14 @@
 
 .resume-import-option [data-slot="field-label"] {
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body);
   font-weight: 650;
 }
 
 .resume-import-option [data-slot="field-description"] {
   max-width: 52ch;
   margin: 0;
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.45;
 }
 
@@ -420,7 +424,7 @@
 .resume-import-document-preview h3 {
   margin: 0;
   color: var(--foreground);
-  font-size: 14px;
+  font-size: var(--jh-font-size-heading-sm);
   font-weight: 660;
   letter-spacing: -0.02em;
 }
@@ -430,7 +434,7 @@
   overflow: hidden;
   color: var(--muted-foreground);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -451,7 +455,7 @@
   min-height: 46px;
   background: var(--foreground);
   color: var(--background);
-  font-size: 11px;
+  font-size: var(--jh-font-size-caption);
 }
 
 .resume-import-document-preview .pdf-preview-toolbar .toolbar-status {
@@ -462,7 +466,11 @@
   color: var(--background);
   font-weight: 600;
   text-decoration: underline;
-  text-decoration-color: color-mix(in oklch, var(--background) 36%, transparent);
+  text-decoration-color: color-mix(
+    in oklch,
+    var(--background) 36%,
+    transparent
+  );
   text-underline-offset: 3px;
 }
 
@@ -480,7 +488,7 @@
   padding: 10px 12px;
   background: var(--resume-import-subtle);
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .resume-import-status [data-slot="alert-description"] {
@@ -508,7 +516,7 @@
 
 .resume-import-confirmation-summary dt {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 570;
 }
 
@@ -519,7 +527,7 @@
   gap: 9px;
   margin: 0;
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--jh-font-size-body);
   font-weight: 620;
 }
 
@@ -565,13 +573,13 @@
 }
 
 .resume-import-scope-review strong {
-  font-size: 12px;
+  font-size: var(--jh-font-size-body);
   font-weight: 650;
 }
 
 .resume-import-scope-review small {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   line-height: 1.4;
 }
 

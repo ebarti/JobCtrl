@@ -35,6 +35,11 @@ export interface WorkflowStartedPayload {
   readonly inputSummary: Record<string, unknown>;
   readonly startedAt: string | null;
   readonly temporalRunId: string | null;
+  /**
+   * Present only when the reconciler has rediscovered this exact Temporal run
+   * after a transient `reconciled_not_found` projection.
+   */
+  readonly recoveredFromMissingHistory?: boolean;
 }
 
 export type WorkflowStarted = DomainEvent<"WorkflowStarted", WorkflowStartedPayload>;

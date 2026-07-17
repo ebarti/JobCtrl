@@ -30,6 +30,51 @@ afterEach(() => {
 });
 
 describe("pipeline operations read model", () => {
+  it("keeps projection coverage absent only when fresh telemetry proves no selected execution or runtime work", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
+
+    expect(snapshot(fixture).projectionCoverage).toBeNull();
+  });
+
+  it("reports recovering coverage when no selected execution has unavailable telemetry", () => {
+    const fixture = createFixture();
+
+    expect(snapshot(fixture).projectionCoverage).toMatchObject({
+      status: "recovering",
+      persistedMembershipCount: 0,
+      persistedStepCount: 0,
+    });
+  });
+
+  it("reports recovering coverage when occupied slots have no allowlisted runtime details", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, { activeSlots: 1, counts: {}, details: [] });
+
+    expect(snapshot(fixture).projectionCoverage).toMatchObject({
+      status: "recovering",
+      persistedMembershipCount: 0,
+      persistedStepCount: 0,
+    });
+  });
+
+  it("reports recovering coverage when fresh runtime work has no selected execution", () => {
+    const fixture = createFixture();
+    insertHeartbeat(fixture, {
+      activeSlots: 1,
+      counts: { tailor_job: 1 },
+      details: [
+        activityDetail("tailor_job", "op_000000000000000000000041", unmatchedWorkflowRef("unselected")),
+      ],
+    });
+
+    expect(snapshot(fixture).projectionCoverage).toMatchObject({
+      status: "recovering",
+      persistedMembershipCount: 0,
+      persistedStepCount: 0,
+    });
+  });
+
   it.each([
     ["in_progress", "discovering", false, "pending"],
     ["canceled", "canceled", false, "pending"],
@@ -441,6 +486,356 @@ describe("pipeline operations read model", () => {
     expect(result.activeItemsTruncated).toBe(false);
   });
 
+  it("does not report no work when a legacy active execution has runtime work but no lineage projections", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertHeartbeat(fixture, {
+      activeSlots: 4,
+      counts: { discovery_source_family: 1, tailor_job: 3 },
+      details: [
+        activityDetail("discovery_source_family", "op_000000000000000000000021", DISCOVER_WORKFLOW_ID),
+        activityDetail("tailor_job", "op_000000000000000000000022", unmatchedWorkflowRef("legacy-tailor-1")),
+        activityDetail("tailor_job", "op_000000000000000000000023", unmatchedWorkflowRef("legacy-tailor-2")),
+        activityDetail("tailor_job", "op_000000000000000000000024", unmatchedWorkflowRef("legacy-tailor-3")),
+      ],
+      queueObservation: availableObservation({ activityBacklog: 41 }),
+    });
+
+    const result = snapshot(fixture, { autoReadyCheckpoint: false });
+    expect(result.execution).toMatchObject({
+      phase: "discovering",
+      membershipClosed: false,
+      currentExecution: { members: 0 },
+    });
+    expect(result.projectionCoverage).toMatchObject({
+      status: "recovering",
+      persistedMembershipCount: 0,
+      persistedStepCount: 0,
+    });
+    expect(result.activeStageCounts).toEqual([
+      { stage: "source_family", count: 1 },
+      { stage: "tailor", count: 3 },
+    ]);
+    expect(result.activeItemsTotal).toBe(4);
+    expect(result.activeItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "unresolved_runtime_activity",
+        activityType: "discovery_source_family",
+        stage: "source_family",
+      }),
+      expect.objectContaining({
+        kind: "unresolved_runtime_activity",
+        activityType: "tailor_job",
+        stage: "tailor",
+      }),
+    ]));
+    expect(result.activeItems.filter((item) => item.activityType === "tailor_job")).toHaveLength(3);
+    expect(result.overallEta).toMatchObject({ status: "unavailable", reason: "unknown_scope" });
+    expectSelectedEtasNotNoWork(result);
+  });
+
+  it("does not infer selected-execution gaps or runtime work from unrelated preparation activity", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "selected-complete", requiredSteps: ["score"] });
+    insertStageState(fixture, "selected-complete", "score", "pending");
+    insertStep(fixture, { stepKind: "source_planning", itemKey: "selected-plan", state: "succeeded" });
+    const unrelatedWorkflowId = unmatchedWorkflowRef("other-prep");
+    insertWorkflowProjection(fixture, unrelatedWorkflowId, "in_progress", PREPARATION_RUN_ID, {
+      discoveryExecution: {
+        tenantId: "local",
+        workflowId: DISCOVER_WORKFLOW_ID,
+        temporalRunId: "00000000-0000-4000-8000-000000000099",
+      },
+      discoveryCohortKind: "observed_this_run",
+    });
+    insertHeartbeat(fixture, {
+      activeSlots: 1,
+      counts: { tailor_job: 1 },
+      details: [
+        activityDetail("tailor_job", "op_000000000000000000000025", unrelatedWorkflowId, PREPARATION_RUN_ID),
+      ],
+    });
+
+    const result = snapshot(fixture);
+    expect(result.projectionCoverage).toMatchObject({ status: "ready" });
+    expect(result.activeStageCounts).toEqual([{ stage: "tailor", count: 1 }]);
+    expect(stage(result, "tailor", "current_execution").eta).toMatchObject({
+      status: "unavailable",
+      reason: "no_work",
+    });
+  });
+
+  it("uses persisted preparation lineage to prove a missing selected membership", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    const preparationWorkflowId = unmatchedWorkflowRef("attributed-prep");
+    insertWorkflowProjection(fixture, preparationWorkflowId, "in_progress", PREPARATION_RUN_ID, {
+      discoveryExecution: {
+        tenantId: "local",
+        workflowId: DISCOVER_WORKFLOW_ID,
+        temporalRunId: DISCOVER_RUN_ID,
+      },
+      discoveryCohortKind: "observed_this_run",
+    });
+    insertHeartbeat(fixture, {
+      activeSlots: 1,
+      counts: { tailor_job: 1 },
+      details: [
+        activityDetail("tailor_job", "op_000000000000000000000026", preparationWorkflowId, PREPARATION_RUN_ID),
+      ],
+    });
+
+    const result = snapshot(fixture, { autoReadyCheckpoint: false });
+    expect(result.projectionCoverage).toMatchObject({
+      status: "recovering",
+      persistedMembershipCount: 0,
+      persistedStepCount: 0,
+    });
+    expectSelectedEtasNotNoWork(result);
+  });
+
+  it("keeps projection coverage recovering when runtime scope cannot be resolved", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertHeartbeat(fixture, {
+      activeSlots: 1,
+      counts: { tailor_job: 1 },
+      details: [
+        activityDetail("tailor_job", "op_000000000000000000000027", unmatchedWorkflowRef("unresolved-prep")),
+      ],
+    });
+
+    const result = snapshot(fixture, { autoReadyCheckpoint: false });
+    expect(result.projectionCoverage).toMatchObject({
+      status: "recovering",
+      persistedMembershipCount: 0,
+      persistedStepCount: 0,
+    });
+    expectSelectedEtasNotNoWork(result);
+  });
+
+  it.each([
+    ["truncated", { counts: { discovery_source_family: 1 }, details: [] }],
+    ["unmapped", {
+      counts: { derive_preparation_targets: 1 },
+      details: [
+        activityDetail(
+          "derive_preparation_targets",
+          "op_000000000000000000000028",
+          DISCOVER_WORKFLOW_ID,
+        ),
+      ],
+    }],
+  ] as const)("degrades safely for %s runtime detail", (_name, telemetry) => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertHeartbeat(fixture, { activeSlots: 1, ...telemetry, details: [...telemetry.details] });
+
+    const result = snapshot(fixture, { autoReadyCheckpoint: false });
+    expect(result.projectionCoverage).toMatchObject({
+      status: "recovering",
+      persistedMembershipCount: 0,
+      persistedStepCount: 0,
+    });
+    expectSelectedEtasNotNoWork(result);
+    if (_name === "unmapped") {
+      expect(result.activeStageCounts).toEqual([]);
+      expect(result.activeItems).toEqual([
+        expect.objectContaining({ kind: "unresolved_runtime_activity", stage: null }),
+      ]);
+    }
+  });
+
+  it("keeps a partial recovery checkpoint restoring instead of treating row counts as complete", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    for (let index = 0; index < 15; index += 1) {
+      insertMember(fixture, { key: `partial-${index}`, requiredSteps: ["score"] });
+    }
+    for (let index = 0; index < 4; index += 1) {
+      insertStep(fixture, { stepKind: "source_family", itemKey: `partial-${index}`, state: "succeeded" });
+    }
+    insertRecoveryCheckpoint(fixture, {
+      state: "recovering",
+      expectedMembershipCount: 72,
+      persistedMembershipCount: 15,
+      expectedStepCount: 8,
+      persistedStepCount: 4,
+    });
+
+    expect(snapshot(fixture, { autoReadyCheckpoint: false }).projectionCoverage).toMatchObject({
+      status: "recovering",
+      expectedMembershipCount: 72,
+      persistedMembershipCount: 15,
+      expectedStepCount: 8,
+      persistedStepCount: 4,
+    });
+  });
+
+  it("refuses a source-family ETA while selected-run projection recovery is partial", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    for (let index = 0; index < 5; index += 1) {
+      insertStep(fixture, {
+        stepKind: "source_family",
+        itemKey: `source-history-${index}`,
+        state: "succeeded",
+      });
+    }
+    insertStep(fixture, {
+      stepKind: "source_family",
+      itemKey: "source-still-running",
+      state: "running",
+    });
+    insertRecoveryCheckpoint(fixture, {
+      state: "recovering",
+      expectedMembershipCount: 72,
+      persistedMembershipCount: 0,
+      expectedStepCount: 10,
+      persistedStepCount: 6,
+    });
+    insertHeartbeat(fixture, { activeSlots: 0, counts: {}, details: [] });
+
+    expect(snapshot(fixture, { autoReadyCheckpoint: false }).sourceFamilies?.eta).toMatchObject({
+      status: "unavailable",
+      reason: "unknown_scope",
+    });
+  });
+
+  it("downgrades a stale ready checkpoint when the exact persisted key digest differs", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "digest-mismatch", requiredSteps: ["score"] });
+    insertRecoveryCheckpoint(fixture, {
+      state: "ready",
+      expectedMembershipCount: 1,
+      persistedMembershipCount: 1,
+      expectedStepCount: 0,
+      persistedStepCount: 0,
+      keyDigest: "0".repeat(64),
+    });
+
+    expect(snapshot(fixture, { autoReadyCheckpoint: false }).projectionCoverage).toMatchObject({
+      status: "recovering",
+      expectedMembershipCount: 1,
+      persistedMembershipCount: 1,
+    });
+  });
+
+  it("keeps a matching decoder-v1 checkpoint recovering", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "legacy-decoder", requiredSteps: [] });
+    insertRecoveryCheckpoint(fixture, {
+      state: "ready",
+      decoderVersion: 1,
+      expectedMembershipCount: 1,
+      persistedMembershipCount: 1,
+      expectedStepCount: 0,
+      persistedStepCount: 0,
+      keyDigest: recoveryKeyDigest(["https://private.invalid/legacy-decoder"], []),
+    });
+
+    expect(snapshot(fixture, { autoReadyCheckpoint: false }).projectionCoverage).toMatchObject({
+      status: "recovering",
+      decoderVersion: 1,
+      expectedMembershipCount: 1,
+      persistedMembershipCount: 1,
+      expectedStepCount: 0,
+      persistedStepCount: 0,
+    });
+  });
+
+  it("accepts the cross-runtime non-ASCII recovery digest golden vector", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertMember(fixture, { key: "café", jobUrl: "café", requiredSteps: [] });
+    insertMember(fixture, { key: "求人/東京", jobUrl: "求人/東京", requiredSteps: [] });
+    insertStep(fixture, {
+      stepKind: "source_family",
+      itemKey: "família:日本",
+      state: "succeeded",
+    });
+    insertStep(fixture, {
+      stepKind: "enrichment_pass",
+      itemKey: "étape:😀",
+      state: "succeeded",
+    });
+    insertRecoveryCheckpoint(fixture, {
+      state: "ready",
+      expectedMembershipCount: 2,
+      persistedMembershipCount: 2,
+      expectedStepCount: 2,
+      persistedStepCount: 2,
+      keyDigest: "e10391b8b6c6def285172f687166d666e466e740a80487934aae552e6a1e6611",
+    });
+
+    expect(snapshot(fixture, { autoReadyCheckpoint: false }).projectionCoverage).toMatchObject({
+      status: "ready",
+      membershipCount: 2,
+      stepCount: 2,
+    });
+  });
+
+  it("reports a retrying checkpoint without exposing runtime telemetry as recovery proof", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "in_progress" });
+    insertHeartbeat(fixture, {
+      activeSlots: 4,
+      counts: { tailor_job: 4 },
+      details: [
+        activityDetail("tailor_job", "op_000000000000000000000031", unmatchedWorkflowRef("one")),
+        activityDetail("tailor_job", "op_000000000000000000000032", unmatchedWorkflowRef("two")),
+        activityDetail("tailor_job", "op_000000000000000000000033", unmatchedWorkflowRef("three")),
+        activityDetail("tailor_job", "op_000000000000000000000034", unmatchedWorkflowRef("four")),
+      ],
+    });
+    insertRecoveryCheckpoint(fixture, {
+      state: "retrying",
+      expectedMembershipCount: 72,
+      persistedMembershipCount: 15,
+      expectedStepCount: 8,
+      persistedStepCount: 4,
+      lastErrorCode: "history-read-transient",
+    });
+
+    expect(snapshot(fixture, { autoReadyCheckpoint: false }).projectionCoverage).toMatchObject({
+      status: "retrying",
+      errorCode: "history-read-transient",
+      persistedMembershipCount: 0,
+      persistedStepCount: 0,
+    });
+  });
+
+  it("reports a terminal incomplete checkpoint without pretending recovery will retry", () => {
+    const fixture = createFixture();
+    insertExecution(fixture, { status: "failed" });
+    insertMember(fixture, { key: "partial-terminal", requiredSteps: [] });
+    insertStep(fixture, {
+      stepKind: "preparation_fanout",
+      itemKey: "terminal-failure",
+      state: "failed",
+    });
+    insertRecoveryCheckpoint(fixture, {
+      state: "incomplete",
+      expectedMembershipCount: 1,
+      persistedMembershipCount: 1,
+      expectedStepCount: 1,
+      persistedStepCount: 1,
+      lastErrorCode: "legacy-fanout-terminal-failed",
+    });
+
+    expect(snapshot(fixture, { autoReadyCheckpoint: false }).projectionCoverage).toMatchObject({
+      status: "incomplete",
+      errorCode: "legacy-fanout-terminal-failed",
+      expectedMembershipCount: null,
+      persistedMembershipCount: 1,
+      expectedStepCount: null,
+      persistedStepCount: 1,
+    });
+  });
+
   it("does not enrich an unrelated runtime activity that shares a projection activity type", () => {
     const fixture = createFixture();
     insertExecution(fixture, { status: "in_progress" });
@@ -772,6 +1167,23 @@ function createFixture(): Fixture {
       task_queue_observation_json TEXT,
       heartbeat_schema_version INTEGER NOT NULL DEFAULT 2
     );
+    CREATE TABLE discovery_execution_recoveries (
+      tenant_id TEXT NOT NULL,
+      discover_workflow_id TEXT NOT NULL,
+      discover_run_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      decoder_version INTEGER NOT NULL,
+      history_event_id INTEGER NOT NULL,
+      expected_membership_count INTEGER NOT NULL,
+      persisted_membership_count INTEGER NOT NULL,
+      expected_step_count INTEGER NOT NULL,
+      persisted_step_count INTEGER NOT NULL,
+      key_digest TEXT NOT NULL,
+      last_error_code TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, discover_workflow_id, discover_run_id)
+    );
   `);
   ensureProjectionTables(db);
   const fixture = { directory, dbPath, configPath, db };
@@ -779,12 +1191,101 @@ function createFixture(): Fixture {
   return fixture;
 }
 
-function snapshot(fixture: Fixture) {
+function snapshot(fixture: Fixture, options: { autoReadyCheckpoint?: boolean } = {}) {
+  if (options.autoReadyCheckpoint !== false) insertReadyRecoveryCheckpoints(fixture);
   return PipelineOperationsSnapshotSchema.parse(buildPipelineOperationsSnapshot(fixture.db, {
     dbPath: fixture.dbPath,
     configPath: fixture.configPath,
     now: NOW,
   }));
+}
+
+function insertReadyRecoveryCheckpoints(fixture: Fixture): void {
+  const executions = fixture.db.prepare(
+    `SELECT workflow_id, temporal_run_id FROM workflow_run_projections
+      WHERE tenant_id = 'local' AND workflow_type = 'DiscoverWorkflow'
+        AND temporal_run_id IS NOT NULL`,
+  ).all() as Array<{ workflow_id: string; temporal_run_id: string }>;
+  for (const execution of executions) {
+    const memberships = (fixture.db.prepare(
+      `SELECT job_url FROM discovery_execution_jobs
+        WHERE tenant_id = 'local' AND discover_workflow_id = ? AND discover_run_id = ?
+        ORDER BY job_url`,
+    ).all(execution.workflow_id, execution.temporal_run_id) as Array<{ job_url: string }>)
+      .map((row) => row.job_url);
+    const steps = (fixture.db.prepare(
+      `SELECT step_kind, item_key FROM pipeline_step_projections
+        WHERE tenant_id = 'local' AND discover_workflow_id = ? AND discover_run_id = ?
+        ORDER BY step_kind, item_key`,
+    ).all(execution.workflow_id, execution.temporal_run_id) as Array<{ step_kind: string; item_key: string }>)
+      .map((row): [string, string] => [row.step_kind, row.item_key]);
+    const keyDigest = recoveryKeyDigest(memberships, steps);
+    fixture.db.prepare(
+      `INSERT OR REPLACE INTO discovery_execution_recoveries (
+         tenant_id, discover_workflow_id, discover_run_id, state, mode,
+         decoder_version, history_event_id, expected_membership_count,
+         persisted_membership_count, expected_step_count, persisted_step_count,
+         key_digest, last_error_code, updated_at
+       ) VALUES ('local', ?, ?, 'ready', 'native', 2, 100, ?, ?, ?, ?, ?, NULL, ?)`,
+    ).run(
+      execution.workflow_id,
+      execution.temporal_run_id,
+      memberships.length,
+      memberships.length,
+      steps.length,
+      steps.length,
+      keyDigest,
+      NOW.toISOString(),
+    );
+  }
+}
+
+function insertRecoveryCheckpoint(
+  fixture: Fixture,
+  input: {
+    state: "incomplete" | "recovering" | "ready" | "retrying";
+    expectedMembershipCount: number;
+    persistedMembershipCount: number;
+    expectedStepCount: number;
+    persistedStepCount: number;
+    decoderVersion?: number;
+    keyDigest?: string;
+    lastErrorCode?: string | null;
+  },
+): void {
+  fixture.db.prepare(
+    `INSERT OR REPLACE INTO discovery_execution_recoveries (
+       tenant_id, discover_workflow_id, discover_run_id, state, mode,
+       decoder_version, history_event_id, expected_membership_count,
+       persisted_membership_count, expected_step_count, persisted_step_count,
+       key_digest, last_error_code, updated_at
+     ) VALUES ('local', ?, ?, ?, 'reconstructed', ?, 119, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    DISCOVER_WORKFLOW_ID,
+    DISCOVER_RUN_ID,
+    input.state,
+    input.decoderVersion ?? 2,
+    input.expectedMembershipCount,
+    input.persistedMembershipCount,
+    input.expectedStepCount,
+    input.persistedStepCount,
+    input.keyDigest ?? recoveryKeyDigest([], []),
+    input.lastErrorCode ?? null,
+    NOW.toISOString(),
+  );
+}
+
+function recoveryKeyDigest(
+  membershipKeys: readonly string[],
+  stepKeys: ReadonlyArray<readonly [string, string]>,
+): string {
+  const memberships = membershipKeys.map((value) => Buffer.from(value, "utf8").toString("hex")).sort();
+  const steps = stepKeys
+    .map((value) => Buffer.from(JSON.stringify(value), "utf8").toString("hex"))
+    .sort();
+  return createHash("sha256")
+    .update(JSON.stringify({ memberships, steps }))
+    .digest("hex");
 }
 
 function insertExecution(
@@ -810,12 +1311,20 @@ function insertWorkflowProjection(
   workflowId: string,
   status: string,
   runId: string | null = null,
+  inputSummary: Record<string, unknown> = {},
 ): void {
   fixture.db.prepare(
     `INSERT OR REPLACE INTO workflow_run_projections (
        workflow_id, tenant_id, workflow_type, status, input_summary_json, temporal_run_id, started_at, finished_at
-     ) VALUES (?, 'local', 'JobPreparationWorkflow', ?, '{}', ?, ?, ?)`,
-  ).run(workflowId, status, runId, "2026-07-14T11:00:00.000Z", "2026-07-14T11:30:00.000Z");
+     ) VALUES (?, 'local', 'JobPreparationWorkflow', ?, ?, ?, ?, ?)`,
+  ).run(
+    workflowId,
+    status,
+    JSON.stringify(inputSummary),
+    runId,
+    "2026-07-14T11:00:00.000Z",
+    "2026-07-14T11:30:00.000Z",
+  );
 }
 
 function insertMember(
@@ -826,6 +1335,7 @@ function insertMember(
     requiredSteps: string[];
     workflowId?: string;
     runId?: string;
+    jobUrl?: string;
   },
 ): { preparationWorkflowId: string } {
   const preparationWorkflowId = `prep-preparation:${createHash("sha256").update(input.key).digest("hex")}`;
@@ -837,7 +1347,7 @@ function insertMember(
   ).run(
     input.workflowId ?? DISCOVER_WORKFLOW_ID,
     input.runId ?? DISCOVER_RUN_ID,
-    `https://private.invalid/${input.key}`,
+    input.jobUrl ?? `https://private.invalid/${input.key}`,
     input.cohort ?? "observed_this_run",
     preparationWorkflowId,
     JSON.stringify(input.requiredSteps),
@@ -927,9 +1437,11 @@ function activityDetail(
   const kinds: Record<string, string> = {
     render_pdf: "job-pdf-render",
     score_job: "job-scoring",
+    tailor_job: "job-tailoring",
     discovery_source_family: "discovery-source-family",
     discovery_preparation_fanout: "discovery-preparation-fanout",
     plan_discovery_sources: "discovery-plan",
+    derive_preparation_targets: "preparation-targets",
   };
   return {
     activityType,
@@ -973,4 +1485,15 @@ function stage(
   const entry = result.stages.find((candidate) => candidate.stage === name && candidate.scope === scope);
   if (!entry) throw new Error(`Missing ${name}/${scope} stage`);
   return entry;
+}
+
+function expectSelectedEtasNotNoWork(result: ReturnType<typeof snapshot>): void {
+  for (const entry of result.stages.filter(
+    (candidate) => candidate.scope === "current_execution" || candidate.scope === "execution_sweep",
+  )) {
+    expect(entry.eta, `${entry.stage}/${entry.scope}`).not.toMatchObject({
+      status: "unavailable",
+      reason: "no_work",
+    });
+  }
 }

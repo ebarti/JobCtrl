@@ -73,6 +73,8 @@ export interface PipelineEtaEstimatorInput {
   readonly budgetAvailable: boolean;
   readonly blocked: boolean;
   readonly dispatchObserved: boolean;
+  /** Fresh runtime proves work exists even when durable projection coverage is incomplete. */
+  readonly runtimeActiveWork: boolean;
   readonly configuredSlots: number | null;
   readonly stages: readonly PipelineEtaStageInput[];
   readonly remainingPaths: readonly PipelineEtaRemainingPath[];
@@ -164,9 +166,13 @@ export function roundEtaRangeSeconds(
 export function estimatePipelineEta(input: PipelineEtaEstimatorInput): PipelineEtaEstimate {
   const activeStages = input.stages.filter((stage) => normalizedCount(stage.remainingCurrentStage) > 0);
 
-  // Scope/no-work must win even when the last telemetry sample is stale.
+  // Unknown scope and a closed, projection-complete zero remain proof-level
+  // answers even when the last telemetry sample is stale. Open membership or
+  // fresh runtime activity make a projection zero inconclusive, not no work.
   if (input.scope === "unknown") return unavailable(input.asOf, "unknown_scope");
-  if (activeStages.length === 0) return unavailable(input.asOf, "no_work");
+  if (activeStages.length === 0 && !input.runtimeActiveWork && !input.membershipOpen) {
+    return unavailable(input.asOf, "no_work");
+  }
   if (!input.telemetryFresh) return stale(input.asOf, "telemetry_stale");
 
   // A pause is more useful than a numeric range when the current cohort cannot progress.
@@ -189,12 +195,18 @@ export function estimatePipelineEta(input: PipelineEtaEstimatorInput): PipelineE
   }
 
   const completeEstimates = relevantEstimates.filter((estimate): estimate is StageEstimate => estimate !== undefined);
-  const completedSamples = Math.min(...completeEstimates.map((estimate) => estimate.sampleSize));
+  const completedSamples = completeEstimates.length > 0
+    ? Math.min(...completeEstimates.map((estimate) => estimate.sampleSize))
+    : 0;
 
   // Membership remains provisional even with sufficient service-time evidence.
   if (input.membershipOpen) {
     return calibrating(input.asOf, "membership_open", completedSamples);
   }
+
+  // Runtime-only work has a known activity classification but no durable
+  // quantity or execution scope from which a numeric estimate can be built.
+  if (activeStages.length === 0) return unavailable(input.asOf, "unknown_scope");
 
   if (
     completeEstimates.some(

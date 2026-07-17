@@ -112,11 +112,7 @@ describe("<Topbar>", () => {
     );
     expect(screen.getByRole("button", { name: "compact" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "comfy" })).toBeInTheDocument();
-    expect(
-      screen.getByText("Copyright © 2026 Eloi Barti", {
-        selector: ".legal-notice--topbar span",
-      }),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("Copyright © 2026 Eloi Barti")).toBeNull();
   });
 
   it("opens the responsive navigation sheet with the grouped nav links", async () => {
@@ -130,6 +126,7 @@ describe("<Topbar>", () => {
     const nav = await screen.findByRole("navigation", {
       name: "Main navigation",
     });
+    expect(screen.getByText("Copyright © 2026 Eloi Barti")).toBeInTheDocument();
     for (const label of [
       "Dashboard",
       "Apply review",

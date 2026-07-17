@@ -518,9 +518,13 @@ The plan and phase-by-phase surface inventory live in
 
 A local Temporal dev server (`temporal server start-dev --db-filename
 "$JOBCTRL_TEMPORAL_DB"`) is the workflow engine for the Python worker. The dev
-launcher defaults `JOBCTRL_TEMPORAL_DB` to `.dev/temporal/temporal.db` so
-workflow execution history persists across local restarts. The infrastructure
-split lives under `workers/automation/src/jobctrl/infrastructure/temporal/`:
+launcher defaults `JOBCTRL_TEMPORAL_DB` to
+`$JOBCTRL_DIR/temporal/temporal.db`. The JobCtrl event/projection database and
+Temporal history are one runtime identity, so both remain stable when the same
+local app is relaunched from another source worktree. An isolated development
+stack uses a distinct `JOBCTRL_DIR`, rather than combining the shared
+`jobctrl.db` with a worktree-local history store. The infrastructure split
+lives under `workers/automation/src/jobctrl/infrastructure/temporal/`:
 
 - `client.py` — `get_temporal_client()` connects to `TEMPORAL_ADDRESS`
   (default `localhost:7233`) and `TEMPORAL_NAMESPACE` (default `default`).
@@ -711,16 +715,17 @@ TypeScript Temporal SDK and without trigger-coupled reapers:
   activities reuse `record_job_event` + a projection refresh; workflow bodies
   stay deterministic (all SQLite/clock IO is inside the activities).
 - **Describe-based reconciler** — `_reconcile_workflow_runs` runs in the worker
-  heartbeat loop (15s). It `describe`s each open `workflow_run_projections` row
-  and terminalizes CLOSED executions (mapped to the matching terminal event) or
-  NOT_FOUND executions (dev-server history loss → `WorkflowTerminated`), leaving
-  RUNNING rows alone. This is what makes a `kill -9`'d, timed-out, or cancelled
-  worker's runs terminalize on their own — replacing the trigger-coupled
-  reapers. A backstop-closed run carries no app-level error detail, so the
-  reconciler stamps its own reason — a `reconciled_*` `errorCode`
-  (`reconciled_terminated` / `reconciled_not_found` / `reconciled_closed_<status>`)
-  plus a human-readable message quoting the Temporal execution status — so the
-  `/runs` UI never shows a reconciler-terminalized run with no explanation.
+  heartbeat loop (15s). It pins each lookup to the exact recorded Temporal run
+  ID. CLOSED executions map to their matching terminal event and RUNNING
+  executions stay open. NOT_FOUND creates a provisional
+  `reconciled_not_found` terminal so the UI does not show a run as live while
+  its authority is unavailable, but that row remains in the reconciliation
+  set. If the exact run reappears after reconnecting to the authoritative
+  history store, a marked compensating `WorkflowStarted` event reopens it (or
+  immediately precedes its actual terminal outcome). The false terminal remains
+  in the audit stream. This is what lets a `kill -9`'d or restarted worker heal
+  itself without confusing a later execution that reuses the deterministic
+  workflow ID.
 - **Dispatch-time open row** — the default starter writes a `WorkflowStarted`
   event immediately after a workflow start returns from Temporal. The in-workflow
   start marker remains as a duplicate-safe upsert, but a workflow killed or

@@ -12,16 +12,18 @@ import {
 } from "../../test/fixtures/projections.js";
 import { JobsTable } from "./JobsTable.js";
 
-function renderJobsTable(jobs: readonly JobSummary[] = [
-  {
-    ...sampleJob,
-    company: "Acme Corp",
-    source: "LinkedIn",
-    discoverySource: "jobspy:linkedin",
-    postingSource: "greenhouse:acme",
-    postingSourceUrl: "https://boards.greenhouse.io/acme/jobs/123",
-  },
-]) {
+function renderJobsTable(
+  jobs: readonly JobSummary[] = [
+    {
+      ...sampleJob,
+      company: "Acme Corp",
+      source: "LinkedIn",
+      discoverySource: "jobspy:linkedin",
+      postingSource: "greenhouse:acme",
+      postingSourceUrl: "https://boards.greenhouse.io/acme/jobs/123",
+    },
+  ],
+) {
   const sorting: SortingState = [{ id: "discovered_at", desc: true }];
   const rowSelection: RowSelectionState = {};
   return render(
@@ -86,12 +88,59 @@ function rowForTitle(title: string): HTMLTableRowElement {
 }
 
 function hitboxForTitle(title: string): HTMLElement {
-  const hitbox = screen.getByLabelText(`Select ${title}`).closest(".row-check-hitbox");
+  const hitbox = screen
+    .getByLabelText(`Select ${title}`)
+    .closest(".row-check-hitbox");
   expect(hitbox).not.toBeNull();
   return hitbox as HTMLElement;
 }
 
 describe("<JobsTable>", () => {
+  it("omits ordinary active lifecycle copy and labels real posting exceptions", () => {
+    const unknownJob: JobSummary = {
+      ...sampleSecondaryJob,
+      jobKey: "job-unknown",
+      title: "Unverified posting",
+      activeState: "unknown",
+    };
+    const expiredJob: JobSummary = {
+      ...sampleSecondaryJob,
+      jobKey: "job-expired",
+      title: "Expired posting",
+      activeState: "expired",
+    };
+
+    renderJobsTable([sampleJob, unknownJob, expiredJob]);
+
+    const activeTitleStack = screen
+      .getByText(sampleJob.title)
+      .closest('[data-slot="title-stack"]');
+    expect(
+      activeTitleStack?.querySelector('[data-slot="title-stack-secondary"]'),
+    ).toBeNull();
+    expect(activeTitleStack).not.toHaveTextContent(/^open$/i);
+    expect(activeTitleStack).not.toHaveTextContent(/^active$/i);
+
+    const unknownTitleStack = screen
+      .getByText(unknownJob.title)
+      .closest('[data-slot="title-stack"]');
+    expect(
+      unknownTitleStack?.querySelector('[data-slot="title-stack-secondary"]'),
+    ).toBeNull();
+    expect(unknownTitleStack).not.toHaveTextContent(/posting status unknown/i);
+    const activationButton = rowForTitle(sampleJob.title).querySelector(
+      ".data-grid-row-activation-button",
+    );
+    expect(activationButton).toHaveClass("row-activation-focus-only");
+    expect(activationButton).not.toHaveClass("sr-only", "focus:not-sr-only");
+    expect(activationButton).toHaveTextContent("View details");
+    expect(activationButton).toHaveAttribute(
+      "aria-label",
+      `Open job ${sampleJob.title} at ${sampleJob.company}`,
+    );
+    expect(rowForTitle(expiredJob.title)).toHaveTextContent("Posting expired");
+  });
+
   it("renders source as its own column instead of folding it into company", () => {
     renderJobsTable();
 
@@ -99,7 +148,9 @@ describe("<JobsTable>", () => {
     expect(screen.getByText("Sources")).toBeInTheDocument();
     expect(screen.getByText("Acme Corp")).toBeInTheDocument();
     expect(screen.getByText("posting greenhouse:acme")).toBeInTheDocument();
-    expect(screen.getByText("discovered via jobspy:linkedin")).toBeInTheDocument();
+    expect(
+      screen.getByText("discovered via jobspy:linkedin"),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Acme Corp.*LinkedIn/)).not.toBeInTheDocument();
   });
 
@@ -115,7 +166,9 @@ describe("<JobsTable>", () => {
     ]);
 
     expect(screen.queryByText("posting LinkedIn")).not.toBeInTheDocument();
-    expect(screen.getByText("discovered via jobspy:linkedin")).toBeInTheDocument();
+    expect(
+      screen.getByText("discovered via jobspy:linkedin"),
+    ).toBeInTheDocument();
   });
 
   it("renders state with internal stage context", () => {
@@ -161,7 +214,10 @@ describe("<JobsTable>", () => {
 
     await user.click(hitboxForTitle(sampleJob.title));
 
-    expect(rowForTitle(sampleJob.title)).toHaveAttribute("aria-selected", "true");
+    expect(rowForTitle(sampleJob.title)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     expect(rowForTitle(sampleSecondaryJob.title)).toHaveAttribute(
       "aria-selected",
       "false",
@@ -183,7 +239,10 @@ describe("<JobsTable>", () => {
     await user.click(screen.getByText(sampleJob.title));
 
     expect(openCalls).toEqual([sampleJob.jobKey]);
-    expect(rowForTitle(sampleJob.title)).toHaveAttribute("aria-selected", "false");
+    expect(rowForTitle(sampleJob.title)).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
   });
 
   it("shift-selects the visible range between the anchor row and target row", async () => {

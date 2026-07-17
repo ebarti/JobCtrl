@@ -11,7 +11,10 @@ import { userEvent } from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 
-import type { EvidenceUsageRef } from "../../contexts/operations/types.js";
+import type {
+  EvidenceMapEntry,
+  EvidenceUsageRef,
+} from "../../contexts/operations/types.js";
 import { artifactsSearchSchema } from "../../routes/-artifacts.search.js";
 import { evidenceMapSearchSchema } from "../../routes/-evidence-map.search.js";
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
@@ -62,6 +65,48 @@ function renderEvidenceMap(initialEntry = "/evidence-map") {
   return {
     router,
     ...render(<RouterProvider router={router} />, { wrapper: harness.Wrapper }),
+  };
+}
+
+function sparseLabelEntry(): EvidenceMapEntry {
+  const entry = sampleEvidenceMapResponse.entries[0];
+  const resumeUsage = entry?.resumeUsages[0];
+  const requirementUsage = entry?.requirementUsages[0];
+  const coverageUsage = sampleEvidenceMapResponse.entries[1]?.coverageUsages[0];
+  if (!entry || !resumeUsage || !requirementUsage || !coverageUsage) {
+    throw new Error("Evidence Map fixture must include every usage kind");
+  }
+  return {
+    ...entry,
+    resumeUsages: [
+      {
+        ...resumeUsage,
+        jobKey: "job-storage-key-7",
+        jobTitle: null,
+        employer: "Acme Robotics",
+        generatedTextPreview: null,
+        bulletId: "experience:legacy#7",
+      },
+    ],
+    requirementUsages: [
+      {
+        ...requirementUsage,
+        jobKey: "job-storage-key-7",
+        jobTitle: null,
+        employer: null,
+        requirementId: "req-storage-17",
+        requirementText: null,
+      },
+    ],
+    coverageUsages: [
+      {
+        ...coverageUsage,
+        jobKey: "job-storage-key-7",
+        jobTitle: null,
+        employer: null,
+        keyword: null,
+      },
+    ],
   };
 }
 
@@ -163,6 +208,46 @@ describe("<EvidenceMapView>", () => {
     expect(transferableBadge).not.toHaveClass("tag");
     expect(transferableBadge.closest("a")).toHaveAttribute("href", "/jobs/job-1");
     expect(container.querySelectorAll(".evidence-map-view .tag")).toHaveLength(0);
+  });
+
+  it("keeps sparse storage identifiers out of human labels while retaining technical access", async () => {
+    server.use(
+      http.get("*/v1/evidence-map", () =>
+        HttpResponse.json({
+          ...sampleEvidenceMapResponse,
+          entries: [sparseLabelEntry()],
+          gaps: [],
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderEvidenceMap();
+
+    const resumeLink = await screen.findByRole("link", {
+      name: /Role at Acme Robotics · Resume bullet/i,
+    });
+    const requirementLink = screen.getByRole("link", {
+      name: /Job · Requirement/i,
+    });
+    const coverageLink = screen.getByRole("link", {
+      name: /Job · Skill coverage/i,
+    });
+
+    expect(resumeLink).toHaveAttribute("href", "/artifacts/artifact-resume-1");
+    expect(requirementLink).toHaveAttribute("href", "/jobs/job-storage-key-7");
+    expect(coverageLink).toHaveAttribute("href", "/jobs/job-storage-key-7");
+    for (const link of [resumeLink, requirementLink, coverageLink]) {
+      expect(link).not.toHaveAccessibleName(/job-storage-key-7|experience:legacy#7/i);
+    }
+
+    const resumeUsage = resumeLink.closest("li");
+    expect(resumeUsage).not.toBeNull();
+    if (!resumeUsage) {
+      throw new Error("Expected resume usage row");
+    }
+    await user.click(within(resumeUsage).getByRole("button", { name: "Technical details" }));
+    expect(within(resumeUsage).getByText("job-storage-key-7")).toBeInTheDocument();
+    expect(within(resumeUsage).getByText("experience:legacy#7")).toBeInTheDocument();
   });
 
   it("opens with a job filter from a job-detail deep link", async () => {

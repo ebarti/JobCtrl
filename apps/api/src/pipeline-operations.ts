@@ -9,6 +9,7 @@ import type {
   PipelineOperationsFreshness,
   PipelineOperationsSnapshot,
   PipelineOperationalStage,
+  PipelineProjectionCoverage,
   PipelineStageCounts,
 } from "./contracts.js";
 import { allRows, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
@@ -24,6 +25,7 @@ import { readLlmSpendHealth } from "./worker-health.js";
 const DEFAULT_TENANT = "local";
 const ETA_SAMPLE_LIMIT = 50;
 const ETA_SAMPLE_WINDOW_MS = 14 * 24 * 60 * 60 * 1_000;
+const CURRENT_DISCOVERY_EXECUTION_DECODER_VERSION = 2;
 
 const JOB_STAGES = ["enrich", "score", "tailor", "cover"] as const;
 const STEP_STAGES = ["source_planning", "source_family", "reconciliation", "pdf_render"] as const;
@@ -103,6 +105,20 @@ interface PipelineStepRow extends Record<string, unknown> {
   detail_count: number | null;
 }
 
+interface DiscoveryExecutionRecoveryRow extends Record<string, unknown> {
+  state: string;
+  mode: string;
+  decoder_version: number;
+  history_event_id: number;
+  expected_membership_count: number;
+  persisted_membership_count: number;
+  expected_step_count: number;
+  persisted_step_count: number;
+  key_digest: string;
+  last_error_code: string | null;
+  updated_at: string;
+}
+
 interface JobDisplayRow extends Record<string, unknown> {
   url: string;
   title: string | null;
@@ -152,6 +168,26 @@ interface GlobalRetryability {
   hasUnboundedRetryableDemand: boolean;
 }
 
+type SelectedRuntimeScope = "current_execution" | "execution_sweep";
+
+interface SelectedRuntimeAttribution {
+  currentStageCounts: Map<(typeof OPERATIONAL_STAGES)[number], number>;
+  sweepStageCounts: Map<(typeof OPERATIONAL_STAGES)[number], number>;
+  selectedActivityCount: number;
+}
+
+interface RuntimePreparationLineage {
+  tenantId: string;
+  workflowId: string;
+  runId: string;
+  cohort: MembershipRow["cohort_kind"] | null;
+}
+
+interface EtaRuntimeContext {
+  runtimeActiveWork: boolean;
+  scope: "known" | "unknown";
+}
+
 /**
  * Build the current (not historical) Discover operations view.  The execution
  * identity is always the persisted workflow-id/run-id pair; a workflow id by
@@ -168,6 +204,7 @@ export function buildPipelineOperationsSnapshot(
   const telemetry = readWorkerRuntimeTelemetry(options.dbPath, { now });
   const budgetAvailable = readLlmSpendHealth(options.dbPath, options.configPath, now).status !== "over_budget";
   const capacity = buildCapacity(telemetry, selectedInternalParallelism(db, tenantId));
+  const activeStageCounts = buildActiveStageCounts(telemetry);
   const freshness = buildFreshness(telemetry);
   const executions = loadExecutions(db, tenantId);
   const selected = selectExecution(db, tenantId, executions);
@@ -182,6 +219,7 @@ export function buildPipelineOperationsSnapshot(
       budgetAvailable,
       blocked: false,
       dispatchObserved: dispatchObserved(telemetry),
+      runtimeActiveWork: runtimeActiveWork(telemetry),
       configuredSlots: telemetry.status === "available" ? telemetry.configuredSlots : null,
       stages: [],
       remainingPaths: [],
@@ -195,7 +233,11 @@ export function buildPipelineOperationsSnapshot(
       capacity,
       sourceFamilies: null,
       reconciliation: null,
+      projectionCoverage: unselectedExecutionCoverageRequired(telemetry)
+        ? recoveringProjectionCoverage(0, 0)
+        : null,
       stages: buildGlobalStages(db, tenantId, capacity, generatedAt, telemetry, budgetAvailable, now),
+      activeStageCounts,
       activeItems: [],
       activeItemsTotal: null,
       activeItemsTruncated: null,
@@ -203,6 +245,8 @@ export function buildPipelineOperationsSnapshot(
     };
   }
 
+  const runtimeAttribution = buildSelectedRuntimeAttribution(db, tenantId, selected, telemetry);
+  const projectionCoverage = loadProjectionCoverage(db, tenantId, selected);
   const selectedCapacity = buildCapacity(telemetry, internalParallelism(selected.row));
   const currentCounts = stageCountsForCohort(selected.current, selected.steps);
   const sweepCounts = stageCountsForCohort(selected.sweep, selected.steps);
@@ -219,6 +263,8 @@ export function buildPipelineOperationsSnapshot(
     telemetry,
     budgetAvailable,
     now,
+    runtimeAttribution,
+    projectionCoverage,
   );
   const reconciliation = reconciliationProgress(selected);
   const active = buildActiveItems(db, selected, telemetry);
@@ -234,6 +280,8 @@ export function buildPipelineOperationsSnapshot(
     budgetAvailable,
     generatedAt,
     now,
+    runtimeAttribution,
+    projectionCoverage,
   );
   const overallEta = estimatePipelineEta(etaInput) as PipelineEta;
   const stages = buildStages({
@@ -249,6 +297,8 @@ export function buildPipelineOperationsSnapshot(
     budgetAvailable,
     generatedAt,
     now,
+    runtimeAttribution,
+    projectionCoverage,
   });
 
   return {
@@ -259,7 +309,9 @@ export function buildPipelineOperationsSnapshot(
     capacity: selectedCapacity,
     sourceFamilies,
     reconciliation,
+    projectionCoverage,
     stages,
+    activeStageCounts,
     activeItems: active.items,
     activeItemsTotal: active.total,
     activeItemsTruncated: active.truncated,
@@ -614,6 +666,288 @@ function buildFreshness(telemetry: WorkerRuntimeTelemetrySnapshot): PipelineOper
   };
 }
 
+function buildActiveStageCounts(
+  telemetry: WorkerRuntimeTelemetrySnapshot,
+): PipelineOperationsSnapshot["activeStageCounts"] {
+  if (telemetry.status !== "available") return null;
+  const counts = new Map<(typeof OPERATIONAL_STAGES)[number], number>();
+  for (const [activityType, count] of Object.entries(telemetry.activeCountsByType)) {
+    const stage = RUNTIME_ACTIVITY_STAGE[activityType];
+    if (!stage || !isOperationalStage(stage) || typeof count !== "number" || count <= 0) continue;
+    counts.set(stage, (counts.get(stage) ?? 0) + count);
+  }
+  return OPERATIONAL_STAGES.flatMap((stage) => {
+    const count = counts.get(stage) ?? 0;
+    return count > 0 ? [{ stage, count }] : [];
+  });
+}
+
+function buildSelectedRuntimeAttribution(
+  db: SqliteDatabase,
+  tenantId: string,
+  selected: SelectedExecution,
+  telemetry: WorkerRuntimeTelemetrySnapshot,
+): SelectedRuntimeAttribution {
+  const result: SelectedRuntimeAttribution = {
+    currentStageCounts: new Map(),
+    sweepStageCounts: new Map(),
+    selectedActivityCount: 0,
+  };
+  if (telemetry.status !== "available") return result;
+
+  const members = selected.current.members.concat(selected.sweep.members);
+  const lineages = loadRuntimePreparationLineages(db, tenantId, telemetry);
+  for (const detail of telemetry.activeDetails) {
+    const stage = RUNTIME_ACTIVITY_STAGE[detail.activityType];
+    const exactDiscoveryActivity =
+      detail.workflowRef === selected.row.workflow_id &&
+      detail.executionRef === selected.row.temporal_run_id;
+    let scope: SelectedRuntimeScope | null = exactDiscoveryActivity ? "current_execution" : null;
+    let selectedActivity = exactDiscoveryActivity;
+
+    if (!selectedActivity && detail.workflowRef && detail.executionRef) {
+      const member = members.find((candidate) => {
+        const workflowId = nullableText(candidate.preparation_workflow_id);
+        return workflowId !== null &&
+          workflowId === detail.workflowRef &&
+          preparationWorkflowRunId(selected, workflowId) === detail.executionRef;
+      });
+      if (member) {
+        selectedActivity = true;
+        scope = member.cohort_kind === "existing_backlog" ? "execution_sweep" : "current_execution";
+      } else {
+        const lineage = lineages.get(runtimeIdentityKey(detail.workflowRef, detail.executionRef));
+        if (lineage && runtimeLineageMatchesSelected(lineage, selected, tenantId)) {
+          selectedActivity = true;
+          scope = lineage.cohort === "existing_backlog"
+            ? "execution_sweep"
+            : lineage.cohort === "observed_this_run"
+              ? "current_execution"
+              : null;
+        }
+      }
+    }
+
+    if (!selectedActivity) continue;
+    result.selectedActivityCount += 1;
+    if (!stage || !isOperationalStage(stage) || scope === null) continue;
+    incrementRuntimeStageCount(
+      scope === "execution_sweep" ? result.sweepStageCounts : result.currentStageCounts,
+      stage,
+    );
+  }
+  return result;
+}
+
+function loadRuntimePreparationLineages(
+  db: SqliteDatabase,
+  tenantId: string,
+  telemetry: WorkerRuntimeTelemetrySnapshot,
+): Map<string, RuntimePreparationLineage> {
+  const result = new Map<string, RuntimePreparationLineage>();
+  if (!tableExists(db, "workflow_run_projections")) return result;
+  const workflowIds = [...new Set(
+    telemetry.activeDetails
+      .map((detail) => detail.workflowRef)
+      .filter((workflowId): workflowId is string => workflowId !== null),
+  )];
+  for (const group of chunks(workflowIds, 500)) {
+    const rows = allRows<{
+      workflow_id: string;
+      temporal_run_id: string | null;
+      input_summary_json: string | null;
+    }>(
+      db,
+      `SELECT workflow_id, temporal_run_id, input_summary_json
+         FROM workflow_run_projections
+        WHERE tenant_id = ?
+          AND workflow_type = 'JobPreparationWorkflow'
+          AND workflow_id IN (${group.map(() => "?").join(", ")})`,
+      [tenantId, ...group],
+    );
+    for (const row of rows) {
+      const runId = nullableText(row.temporal_run_id);
+      const summary = parseRecord(row.input_summary_json);
+      const execution = summary?.discoveryExecution;
+      if (!runId || execution === null || typeof execution !== "object" || Array.isArray(execution)) continue;
+      const record = execution as Record<string, unknown>;
+      const workflowId = nullableText(record.workflowId);
+      const temporalRunId = nullableText(record.temporalRunId);
+      const executionTenant = nullableText(record.tenantId);
+      if (!workflowId || !temporalRunId || !executionTenant) continue;
+      const cohortValue = summary?.discoveryCohortKind;
+      const cohort = cohortValue === "observed_this_run" || cohortValue === "existing_backlog"
+        ? cohortValue
+        : null;
+      result.set(runtimeIdentityKey(row.workflow_id, runId), {
+        tenantId: executionTenant,
+        workflowId,
+        runId: temporalRunId,
+        cohort,
+      });
+    }
+  }
+  return result;
+}
+
+function runtimeLineageMatchesSelected(
+  lineage: RuntimePreparationLineage,
+  selected: SelectedExecution,
+  tenantId: string,
+): boolean {
+  return lineage.workflowId === selected.row.workflow_id &&
+    lineage.runId === selected.row.temporal_run_id &&
+    lineage.tenantId === tenantId;
+}
+
+function runtimeIdentityKey(workflowId: string, runId: string): string {
+  return `${workflowId}\u0000${runId}`;
+}
+
+function incrementRuntimeStageCount(
+  counts: Map<(typeof OPERATIONAL_STAGES)[number], number>,
+  stage: (typeof OPERATIONAL_STAGES)[number],
+): void {
+  counts.set(stage, (counts.get(stage) ?? 0) + 1);
+}
+
+function loadProjectionCoverage(
+  db: SqliteDatabase,
+  tenantId: string,
+  selected: SelectedExecution,
+): PipelineProjectionCoverage {
+  const membershipKeys = [...new Set(
+    selected.current.members.concat(selected.sweep.members).map((member) => member.job_url),
+  )];
+  const stepKeys = [...new Set(
+    selected.steps.map((step) => JSON.stringify([step.step_kind, step.item_key])),
+  )]
+    .map((value) => JSON.parse(value) as [string, string]);
+  const persistedMembershipCount = membershipKeys.length;
+  const persistedStepCount = stepKeys.length;
+
+  if (!tableExists(db, "discovery_execution_recoveries")) {
+    return recoveringProjectionCoverage(persistedMembershipCount, persistedStepCount);
+  }
+  const rows = allRows<DiscoveryExecutionRecoveryRow>(
+    db,
+    `SELECT state, mode, decoder_version, history_event_id,
+            expected_membership_count, persisted_membership_count,
+            expected_step_count, persisted_step_count, key_digest,
+            last_error_code, updated_at
+       FROM discovery_execution_recoveries
+      WHERE tenant_id = ? AND discover_workflow_id = ? AND discover_run_id = ?
+      LIMIT 1`,
+    [tenantId, selected.row.workflow_id, selected.row.temporal_run_id],
+  );
+  const row = rows[0];
+  if (!row) return recoveringProjectionCoverage(persistedMembershipCount, persistedStepCount);
+
+  const mode: "native" | "reconstructed" | null =
+    row.mode === "native" || row.mode === "reconstructed" ? row.mode : null;
+  const decoderVersion = positiveIntegerOrNull(row.decoder_version);
+  const historyEventId = nonnegativeIntegerOrNull(row.history_event_id);
+  const expectedMembershipCount = nonnegativeIntegerOrNull(row.expected_membership_count);
+  const expectedStepCount = nonnegativeIntegerOrNull(row.expected_step_count);
+  const updatedAt = nullableText(row.updated_at);
+  const currentDigest = recoveryKeyDigest(membershipKeys, stepKeys);
+  const checkpointMatches =
+    mode !== null &&
+    decoderVersion === CURRENT_DISCOVERY_EXECUTION_DECODER_VERSION &&
+    historyEventId !== null &&
+    expectedMembershipCount === persistedMembershipCount &&
+    expectedStepCount === persistedStepCount &&
+    nonnegativeIntegerOrNull(row.persisted_membership_count) === persistedMembershipCount &&
+    nonnegativeIntegerOrNull(row.persisted_step_count) === persistedStepCount &&
+    row.key_digest === currentDigest &&
+    updatedAt !== null;
+
+  if (row.state === "ready" && checkpointMatches) {
+    return {
+      status: "ready",
+      mode,
+      decoderVersion,
+      historyEventId,
+      membershipCount: persistedMembershipCount,
+      stepCount: persistedStepCount,
+      updatedAt,
+    };
+  }
+
+  const common = {
+    mode,
+    decoderVersion,
+    historyEventId,
+    expectedMembershipCount,
+    persistedMembershipCount,
+    expectedStepCount,
+    persistedStepCount,
+    updatedAt,
+  };
+  if (row.state === "retrying") {
+    return {
+      status: "retrying",
+      ...common,
+      errorCode: nullableText(row.last_error_code) ?? "pipeline-history-repair-failed",
+    };
+  }
+  if (row.state === "incomplete") {
+    return {
+      status: "incomplete",
+      ...common,
+      // The recovery table keeps NOT NULL bookkeeping counts for every row,
+      // but a terminally truncated legacy history cannot prove its original
+      // denominator. Expose only the exact persisted partial set.
+      expectedMembershipCount: null,
+      expectedStepCount: null,
+      errorCode: nullableText(row.last_error_code) ?? "pipeline-history-incomplete",
+    };
+  }
+  return { status: "recovering", ...common };
+}
+
+function recoveringProjectionCoverage(
+  persistedMembershipCount: number,
+  persistedStepCount: number,
+): PipelineProjectionCoverage {
+  return {
+    status: "recovering",
+    mode: null,
+    decoderVersion: null,
+    historyEventId: null,
+    expectedMembershipCount: null,
+    persistedMembershipCount,
+    expectedStepCount: null,
+    persistedStepCount,
+    updatedAt: null,
+  };
+}
+
+function recoveryKeyDigest(
+  membershipKeys: readonly string[],
+  stepKeys: ReadonlyArray<readonly [string, string]>,
+): string {
+  const memberships = membershipKeys.map(utf8Hex).sort();
+  const steps = stepKeys
+    .map((stepKey) => utf8Hex(JSON.stringify(stepKey)))
+    .sort();
+  return createHash("sha256")
+    .update(JSON.stringify({ memberships, steps }))
+    .digest("hex");
+}
+
+function utf8Hex(value: string): string {
+  return Buffer.from(value, "utf8").toString("hex");
+}
+
+function positiveIntegerOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function nonnegativeIntegerOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
 function buildCapacity(
   telemetry: WorkerRuntimeTelemetrySnapshot,
   internalParallelism: number | null,
@@ -957,8 +1291,11 @@ function buildStages(input: {
   budgetAvailable: boolean;
   generatedAt: string;
   now: Date;
+  runtimeAttribution: SelectedRuntimeAttribution;
+  projectionCoverage: PipelineProjectionCoverage;
 }): PipelineOperationalStage[] {
   const result: PipelineOperationalStage[] = [];
+  const selectedScope = input.projectionCoverage.status === "ready" ? "known" : "unknown";
   for (const stage of OPERATIONAL_STAGES) {
     const current = input.currentCounts.get(stage) ?? emptyCounts();
     const sweep = input.sweepCounts.get(stage) ?? emptyCounts();
@@ -975,6 +1312,14 @@ function buildStages(input: {
       input.now,
       retryableRemainingForStage(input.selected, input.selected.current, stage, true),
       true,
+      {
+        runtimeActiveWork: selectedRuntimeStageActiveWork(
+          input.runtimeAttribution,
+          "current_execution",
+          stage,
+        ),
+        scope: selectedScope,
+      },
       currentStageContention(
         input.selected,
         stage,
@@ -1016,6 +1361,14 @@ function buildStages(input: {
           input.now,
           retryableRemainingForStage(input.selected, input.selected.sweep, stage, false),
           false,
+          {
+            runtimeActiveWork: selectedRuntimeStageActiveWork(
+              input.runtimeAttribution,
+              "execution_sweep",
+              stage,
+            ),
+            scope: selectedScope,
+          },
         ),
         membershipOpen: false,
       }) as PipelineEta,
@@ -1110,6 +1463,8 @@ function sourceFamilyProgress(
   telemetry: WorkerRuntimeTelemetrySnapshot,
   budgetAvailable: boolean,
   now: Date,
+  runtimeAttribution: SelectedRuntimeAttribution,
+  projectionCoverage: PipelineProjectionCoverage,
 ): PipelineOperationsSnapshot["sourceFamilies"] {
   const sourceRows = selected.steps.filter((step) => step.step_kind === "source_family");
   const sourcePlanRows = selected.steps.filter((step) => step.step_kind === "source_planning");
@@ -1120,8 +1475,14 @@ function sourceFamilyProgress(
     planned,
     counts,
     eta: estimatePipelineEta({
-      ...basicEtaInput(selected, telemetry, budgetAvailable, generatedAt),
-      scope: "known",
+      ...basicEtaInput(
+        selected,
+        telemetry,
+        budgetAvailable,
+        generatedAt,
+        selectedRuntimeStageActiveWork(runtimeAttribution, "current_execution", "source_family"),
+      ),
+      scope: projectionCoverage.status === "ready" ? "known" : "unknown",
       membershipOpen: false,
       stages: [
         {
@@ -1204,6 +1565,7 @@ function buildActiveItems(
       attempt: detail.attempt,
       startedAt: detail.startedAt,
       opaqueId: detail.operationalRef.opaqueId,
+      stage: stage && isOperationalStage(stage) ? stage : null,
     };
   });
   const consumedRuntimeItemIndexes = new Set<number>();
@@ -1317,6 +1679,8 @@ function buildEtaInput(
   budgetAvailable: boolean,
   generatedAt: string,
   now: Date,
+  runtimeAttribution: SelectedRuntimeAttribution,
+  projectionCoverage: PipelineProjectionCoverage,
 ): PipelineEtaEstimatorInput {
   const stages: PipelineEtaStageInput[] = OPERATIONAL_STAGES.filter((stage) => stage !== "reconciliation").map((stage) => ({
       stage,
@@ -1345,8 +1709,14 @@ function buildEtaInput(
     })),
   );
   return {
-    ...basicEtaInput(selected, telemetry, budgetAvailable, generatedAt),
-    scope: "known" as const,
+    ...basicEtaInput(
+      selected,
+      telemetry,
+      budgetAvailable,
+      generatedAt,
+      runtimeAttribution.selectedActivityCount > 0,
+    ),
+    scope: projectionCoverage.status === "ready" ? "known" as const : "unknown" as const,
     membershipOpen: !selected.membershipClosed,
     blocked: stages.some((stage) => (currentCounts.get(stage.stage as (typeof OPERATIONAL_STAGES)[number])?.blocked ?? 0) > 0),
     stages,
@@ -1367,6 +1737,10 @@ function stageEtaInput(
   now: Date,
   retryableRemaining = 0,
   includeExecutionSteps = true,
+  runtimeContext: EtaRuntimeContext = {
+    runtimeActiveWork: runtimeStageActiveWork(telemetry, stage),
+    scope: "known",
+  },
   contentionInput: PipelineEtaEstimatorInput["contention"] = sharedRuntimeContention(telemetry),
 ): PipelineEtaEstimatorInput {
   const stages =
@@ -1394,8 +1768,14 @@ function stageEtaInput(
           },
         ];
   return {
-    ...basicEtaInput(selected, telemetry, budgetAvailable, generatedAt),
-    scope: "known" as const,
+    ...basicEtaInput(
+      selected,
+      telemetry,
+      budgetAvailable,
+      generatedAt,
+      runtimeContext.runtimeActiveWork,
+    ),
+    scope: runtimeContext.scope,
     membershipOpen: false,
     blocked: counts.blocked > 0,
     stages,
@@ -1409,6 +1789,7 @@ function basicEtaInput(
   telemetry: WorkerRuntimeTelemetrySnapshot,
   budgetAvailable: boolean,
   generatedAt: string,
+  runtimeWork = runtimeActiveWork(telemetry),
 ) {
   return {
     asOf: generatedAt,
@@ -1419,6 +1800,7 @@ function basicEtaInput(
     budgetAvailable,
     blocked: false,
     dispatchObserved: dispatchObserved(telemetry),
+    runtimeActiveWork: runtimeWork,
     configuredSlots: telemetry.status === "available" ? telemetry.configuredSlots : null,
     stages: [],
     remainingPaths: [],
@@ -1438,6 +1820,10 @@ function estimateForStage(
   now: Date,
   retryableRemaining = 0,
   includeExecutionSteps = true,
+  runtimeContext: EtaRuntimeContext = {
+    runtimeActiveWork: runtimeStageActiveWork(telemetry, stage),
+    scope: "known",
+  },
   contentionInput: PipelineEtaEstimatorInput["contention"] = sharedRuntimeContention(telemetry),
 ): PipelineEta {
   return estimatePipelineEta(
@@ -1453,6 +1839,7 @@ function estimateForStage(
       now,
       retryableRemaining,
       includeExecutionSteps,
+      runtimeContext,
       contentionInput,
     ),
   ) as PipelineEta;
@@ -1751,6 +2138,46 @@ function isTerminalWorkflowStatus(status: string | undefined): boolean {
 
 function isJobStage(stage: string): stage is (typeof JOB_STAGES)[number] {
   return (JOB_STAGES as readonly string[]).includes(stage);
+}
+
+function isOperationalStage(stage: string): stage is (typeof OPERATIONAL_STAGES)[number] {
+  return (OPERATIONAL_STAGES as readonly string[]).includes(stage);
+}
+
+function runtimeActiveWork(telemetry: WorkerRuntimeTelemetrySnapshot): boolean {
+  return telemetry.status === "available" && telemetry.activeDetailsTotal > 0;
+}
+
+function unselectedExecutionCoverageRequired(
+  telemetry: WorkerRuntimeTelemetrySnapshot,
+): boolean {
+  // The absence of a selected execution is only proof of an idle system when
+  // fresh worker telemetry also proves that every activity slot is idle.  A
+  // stale/missing heartbeat or occupied non-allowlisted slot is unknown scope,
+  // not an empty pipeline.
+  return telemetry.status !== "available" || telemetry.activeSlots > 0;
+}
+
+function runtimeStageActiveWork(
+  telemetry: WorkerRuntimeTelemetrySnapshot,
+  stage: (typeof OPERATIONAL_STAGES)[number],
+): boolean {
+  if (telemetry.status !== "available") return false;
+  return Object.entries(telemetry.activeCountsByType).some(
+    ([activityType, count]) =>
+      RUNTIME_ACTIVITY_STAGE[activityType] === stage && typeof count === "number" && count > 0,
+  );
+}
+
+function selectedRuntimeStageActiveWork(
+  attribution: SelectedRuntimeAttribution,
+  scope: SelectedRuntimeScope,
+  stage: (typeof OPERATIONAL_STAGES)[number],
+): boolean {
+  const counts = scope === "execution_sweep"
+    ? attribution.sweepStageCounts
+    : attribution.currentStageCounts;
+  return (counts.get(stage) ?? 0) > 0;
 }
 
 function usesStepProjection(stage: string): boolean {

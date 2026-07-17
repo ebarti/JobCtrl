@@ -52,7 +52,7 @@ export const StatCard = forwardRef<HTMLDivElement, StatCardProps>(
             <div className="flex items-start justify-between gap-2">
               <span
                 data-slot="stat-label"
-                className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-muted-foreground"
+                className="text-[13px] font-extrabold uppercase tracking-[0.08em] text-muted-foreground"
               >
                 {label}
               </span>
@@ -71,7 +71,7 @@ export const StatCard = forwardRef<HTMLDivElement, StatCardProps>(
               <span
                 data-slot="stat-delta"
                 className={cn(
-                  "text-[12px] font-semibold",
+                  "text-[13px] font-semibold",
                   deltaTone ? toneClass[deltaTone] : "text-muted-foreground",
                 )}
               >

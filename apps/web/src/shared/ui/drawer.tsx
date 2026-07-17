@@ -13,7 +13,12 @@ export function Drawer({
   shouldScaleBackground = true,
   ...props
 }: ComponentProps<typeof DrawerPrimitive.Root>) {
-  return <DrawerPrimitive.Root shouldScaleBackground={shouldScaleBackground} {...props} />;
+  return (
+    <DrawerPrimitive.Root
+      shouldScaleBackground={shouldScaleBackground}
+      {...props}
+    />
+  );
 }
 Drawer.displayName = "Drawer";
 
@@ -63,7 +68,10 @@ export const DrawerContent = forwardRef<
 ));
 DrawerContent.displayName = "DrawerContent";
 
-export function DrawerHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function DrawerHeader({
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-slot="drawer-header"
@@ -74,7 +82,10 @@ export function DrawerHeader({ className, ...props }: HTMLAttributes<HTMLDivElem
 }
 DrawerHeader.displayName = "DrawerHeader";
 
-export function DrawerFooter({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function DrawerFooter({
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-slot="drawer-footer"
@@ -108,7 +119,7 @@ export const DrawerDescription = forwardRef<
   <DrawerPrimitive.Description
     ref={ref}
     data-slot="drawer-description"
-    className={cn("text-[13px] leading-5 text-muted-foreground", className)}
+    className={cn("text-sm leading-5 text-muted-foreground", className)}
     {...props}
   />
 ));

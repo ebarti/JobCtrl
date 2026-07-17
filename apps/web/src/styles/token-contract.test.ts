@@ -305,6 +305,7 @@ describe("shadcn token contract", () => {
     const shellRule = cssRuleContaining(".apply-review-shell", applyReviewCss);
     const workspaceRule = cssRuleContaining(".apply-review-workspace", applyReviewCss);
     const paneRule = cssRuleContaining(".apply-review-pane ", applyReviewCss);
+    const documentRule = cssRuleContaining(".apply-review-document", applyReviewCss);
     const jobPostRule = cssRuleContaining(".apply-review-document > .description-text", applyReviewCss);
 
     expect(shellRule, "review shell should own its layout without legacy CSS").toContain("display: grid;");
@@ -320,6 +321,12 @@ describe("shadcn token contract", () => {
     expect(workspaceRule, "review cards should use consistent inter-card spacing").toContain("gap: 20px;");
     expect(paneRule, "review regions should preserve the shared shadcn Card radius").toContain(
       "border-radius: min(var(--radius-4xl), 24px);",
+    );
+    expect(documentRule, "verbatim document prose should not carry a decorative left rule").not.toContain(
+      "border-left:",
+    );
+    expect(documentRule, "verbatim document prose should align to the card content edge").toContain(
+      "padding: 2px 0;",
     );
     expect(jobPostRule, "the verbatim job post should use the full review-card width").toContain(
       "width: 100%;",

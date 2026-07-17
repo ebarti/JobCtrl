@@ -12,11 +12,11 @@ export interface ResumeTemplateStatusBadgeProps {
 }
 
 const STATUS_LABELS: Record<ResumeTemplateStaleState, string> = {
-  template_current: "template current",
-  template_stale: "template stale",
-  refresh_queued: "template refresh queued",
-  refresh_failed: "template refresh failed",
-  refresh_unavailable: "template refresh unavailable",
+  template_current: "current",
+  template_stale: "stale",
+  refresh_queued: "refresh queued",
+  refresh_failed: "refresh failed",
+  refresh_unavailable: "refresh unavailable",
 };
 
 export function ResumeTemplateStatusBadge({

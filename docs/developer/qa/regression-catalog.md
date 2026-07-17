@@ -60,6 +60,11 @@ enough when the value could come from the wrong layer.
 Check input evidence, deterministic/LLM transforms, validator or judge output,
 persistence, projection/API shape, and rendering. Missing evidence must render
 as missing—not be inferred, hidden, or replaced with reassuring copy.
+Foreign keys shown in Job Detail or Artifact Detail must resolve through the
+Evidence Map read model into human-readable evidence. If resolution fails, keep
+the unavailable reference visible and place the raw key behind technical
+details. Persisted resume comments must likewise remain visible when their
+rendered-line anchor is missing.
 
 ## Cumulative Redesign Boundaries
 
@@ -67,16 +72,34 @@ The `base-rhea` preset, semantic tokens, Geist type, 10px radius scale,
 capped 24px cards, neutral chart ramp, violet focus/primary treatment, and
 icon/dot-plus-text domain statuses form one contract. Direct Radix imports, raw
 native selects, route-local primitive replicas, capsule statuses, and
-card-per-datum layouts are regressions even when the page compiles. Prove the
-same production-shaped content across light/dark, all three densities, desktop,
-collapsed rail, and 390×844.
+card-per-datum layouts are regressions even when the page compiles. Body copy is
+16px in every density; density changes geometry only. Primary routes share the
+compact PageHead hierarchy. Prove the same production-shaped content across
+light/dark, all three densities, desktop, collapsed rail, and 390×844.
+
+Jobs has three user queues—Active, Deleted, and Hidden—even though `closed`
+remains a compatible URL/read-model value for old links. Active rows omit
+redundant posting-lifecycle copy, Sources and Warnings are hidden only in the
+default presentation, destructive actions retain destructive treatment, and
+focus-only row activation remains keyboard discoverable. At 900px and below,
+Jobs, Artifacts, Contacts, Discovery, and Settings record tables must keep their
+fields and sort/filter access in labelled cards instead of overflowing the
+page. Profile and Evidence Map must stack their desktop regions. Apply Review
+keeps the queue left on working desktops, then stacks it above sequential
+full-width content and wraps decisions as space narrows. Artifact Detail keeps
+the document preview after the audit details.
 
 Pipeline operations uses a deterministic execution with three source families
 and exactly two reconciliation steps. Current execution, execution sweep, and
 global backlog remain distinct; raw activity inputs and private identifiers
 must not enter the read model or DOM. Verify event invalidation, bounded polling,
 ETA/freshness/capacity/task-queue degraded states, observation time, and active
-inventory without replacing unavailable evidence with a numeric guess.
+inventory without replacing unavailable evidence with a numeric guess. Exact
+stage outcomes must remain available even when the primary view summarizes them
+as terminal and attention totals. Stopping active discovery must refresh the
+pipeline snapshot. Replacement-run setup is allowed only for an exact zero
+active-work inventory, never for a positive or unavailable inventory, and it
+must not dispatch until the user submits the Discover controls.
 
 Browser reads may detect installations only to return opaque kinds and labels.
 They must not disclose paths, launch, adopt, or persist a browser. Enablement is

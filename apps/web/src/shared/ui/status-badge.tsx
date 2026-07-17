@@ -13,7 +13,7 @@ import { Badge, type BadgeProps } from "./badge.js";
 import type { StatusTagTone } from "./status-tokens.js";
 
 const statusBadgeVariants = cva(
-  "min-h-0 gap-1.5 rounded-none border-0 bg-transparent p-0 text-[11px] font-semibold leading-5 shadow-none before:size-1.5 before:shrink-0 before:rounded-full before:bg-current before:content-[''] has-[>svg]:before:hidden",
+  "min-h-0 gap-1.5 rounded-none border-0 bg-transparent p-0 text-[13px] font-semibold leading-5 shadow-none before:size-1.5 before:shrink-0 before:rounded-full before:bg-current before:content-[''] has-[>svg]:before:hidden",
   {
     variants: {
       tone: {
@@ -31,7 +31,8 @@ const statusBadgeVariants = cva(
 );
 
 export interface StatusBadgeProps
-  extends Omit<BadgeProps, "variant">,
+  extends
+    Omit<BadgeProps, "variant">,
     VariantProps<typeof statusBadgeVariants> {
   /** Override the semantic tone icon, or pass false to retain the quiet dot. */
   icon?: TablerIcon | false | undefined;
@@ -56,7 +57,8 @@ export function StatusBadge({
   ...props
 }: StatusBadgeProps): JSX.Element {
   const resolvedTone = tone ?? "muted";
-  const StatusIcon = icon === false ? null : icon ?? defaultToneIcons[resolvedTone];
+  const StatusIcon =
+    icon === false ? null : (icon ?? defaultToneIcons[resolvedTone]);
 
   return (
     <Badge
@@ -67,7 +69,11 @@ export function StatusBadge({
       {...props}
     >
       {StatusIcon ? (
-        <StatusIcon aria-hidden="true" data-icon="inline-start" data-status-icon="true" />
+        <StatusIcon
+          aria-hidden="true"
+          data-icon="inline-start"
+          data-status-icon="true"
+        />
       ) : null}
       {children}
     </Badge>

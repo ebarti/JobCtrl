@@ -839,6 +839,7 @@ function SourceRegistryPanel({
         loadingMessage="Loading sources."
         emptyMessage="No sources registered."
         initialSort={{ columnId: "displayName", direction: "asc" }}
+        mobileLayout="cards"
         initialFilters={initialFilters}
         paginate
         initialPageSize={25}

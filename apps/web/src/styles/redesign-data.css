@@ -17,9 +17,65 @@
   box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 4%, transparent);
 }
 
+.jobs-page-head {
+  align-items: baseline;
+  margin-bottom: 10px;
+}
+
+.jobs-page-head .page-head-text {
+  display: flex;
+  flex-flow: row wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.jobs-queue-navigation {
+  display: grid;
+  gap: 4px;
+  padding: 0 16px;
+}
+
+.jobs-legacy-queue-context {
+  padding-top: 8px;
+  color: var(--muted-foreground);
+}
+
+.jobs-queue-tabs-root,
+.jobs-queue-tabs {
+  width: 100%;
+}
+
+.jobs-queue-tabs {
+  height: 40px;
+}
+
+.jobs-bulk-actions {
+  min-height: 48px;
+  padding-block: 7px;
+}
+
 .data-list-card > .toolbar,
 .data-list-card > .filter-bar {
   background: transparent;
+}
+
+@media (max-width: 720px) {
+  .jobs-page-head {
+    align-items: flex-start;
+    margin-bottom: 8px;
+  }
+
+  .jobs-queue-navigation {
+    padding-inline: 12px;
+  }
+
+  .jobs-queue-tabs {
+    overflow-x: auto;
+  }
+
+  .jobs-bulk-actions {
+    padding-inline: 12px;
+  }
 }
 
 .contacts-filter-toolbar {
@@ -38,6 +94,17 @@
   gap: 6px;
 }
 
+.outreach-due-follow-ups-content {
+  display: grid;
+  gap: 12px;
+  padding: 16px 20px 20px;
+}
+
+.outreach-due-follow-ups-content > .muted,
+.outreach-due-follow-ups-list {
+  margin: 0;
+}
+
 .data-surface {
   border-top: 1px solid var(--border);
   background: transparent;
@@ -52,7 +119,7 @@
 
 .data-grid-view-title {
   gap: 9px;
-  font-size: 13px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 620;
   letter-spacing: -0.01em;
 }
@@ -65,7 +132,7 @@
   padding-left: 9px;
   border-left: 1px solid var(--border);
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 450;
 }
 
@@ -87,7 +154,7 @@
   background: transparent;
   padding: 2px 10px;
   color: var(--foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-caption);
   line-height: 1.5;
 }
 
@@ -111,7 +178,7 @@
 }
 
 .filterable-data-grid-table {
-  font-size: 12px;
+  font-size: var(--jh-font-size-body);
 }
 
 .filterable-data-grid-table th,
@@ -135,9 +202,13 @@
 .filterable-data-grid-table thead th {
   background: color-mix(in oklch, var(--muted) 42%, var(--card));
   color: color-mix(in oklch, var(--muted-foreground) 88%, var(--foreground));
-  font-size: 10px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 720;
   letter-spacing: 0.07em;
+}
+
+.responsive-record-table thead th {
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .filterable-data-grid-table tbody th {
@@ -161,19 +232,23 @@
 }
 
 .filterable-data-grid-table tbody tr.data-grid-row-tone-success {
-  box-shadow: inset 2px 0 0 color-mix(in oklch, var(--success) 58%, var(--border));
+  box-shadow: inset 2px 0 0
+    color-mix(in oklch, var(--success) 58%, var(--border));
 }
 
 .filterable-data-grid-table tbody tr.data-grid-row-tone-warning {
-  box-shadow: inset 2px 0 0 color-mix(in oklch, var(--warning) 62%, var(--border));
+  box-shadow: inset 2px 0 0
+    color-mix(in oklch, var(--warning) 62%, var(--border));
 }
 
 .filterable-data-grid-table tbody tr.data-grid-row-tone-danger {
-  box-shadow: inset 2px 0 0 color-mix(in oklch, var(--destructive) 62%, var(--border));
+  box-shadow: inset 2px 0 0
+    color-mix(in oklch, var(--destructive) 62%, var(--border));
 }
 
 .filterable-data-grid-table tbody tr.data-grid-row-tone-info {
-  box-shadow: inset 2px 0 0 color-mix(in oklch, var(--status-info) 58%, var(--border));
+  box-shadow: inset 2px 0 0
+    color-mix(in oklch, var(--status-info) 58%, var(--border));
 }
 
 .filterable-data-grid-table .data-grid-cell-tone-success,
@@ -186,7 +261,7 @@
 .filterable-data-grid-table tbody tr.data-grid-group-row th {
   background: color-mix(in oklch, var(--muted) 54%, var(--card));
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -203,6 +278,48 @@
 .data-grid-sort-button svg,
 .data-grid-sort-button > span:last-child {
   color: var(--muted-foreground);
+}
+
+.data-grid-column-reorder-handle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 22px;
+  margin-left: -3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  padding: 0;
+  color: var(--muted-foreground);
+  cursor: grab;
+  opacity: 0.68;
+}
+
+.data-grid-column-reorder-handle:hover,
+.data-grid-column-reorder-handle:focus-visible {
+  border: 0;
+  background: var(--muted);
+  color: var(--foreground);
+  opacity: 1;
+}
+
+.data-grid-column-reorder-handle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.data-grid-column-reorder-handle:active {
+  cursor: grabbing;
+}
+
+.filterable-data-grid-table thead th[data-column-drop-edge="before"] {
+  box-shadow: inset 2px 0 0 var(--ring);
+}
+
+.filterable-data-grid-table thead th[data-column-drop-edge="after"] {
+  box-shadow: inset -2px 0 0 var(--ring);
 }
 
 .data-grid-column-resizer::after {
@@ -238,7 +355,7 @@
   border-radius: 0;
   padding: 0;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 650;
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -253,6 +370,37 @@
   text-underline-offset: 3px;
 }
 
+.data-grid-row-activation-button.row-activation-focus-only,
+.table-row-activation-button.row-activation-focus-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-width: 1px;
+  min-height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.data-grid-row-activation-button.row-activation-focus-only:focus-visible,
+.table-row-activation-button.row-activation-focus-only:focus-visible {
+  position: static;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 0 0 7px;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  white-space: normal;
+  text-transform: none;
+}
+
 /* Scores retain their useful colour signal without becoming colored tiles. */
 .jobs-data-grid-table .fit {
   width: auto;
@@ -263,7 +411,7 @@
   background: transparent;
   box-shadow: none;
   color: var(--muted-foreground);
-  font-size: 14px;
+  font-size: var(--jh-font-size-body);
   font-variant-numeric: tabular-nums;
   font-weight: 760;
 }
@@ -291,8 +439,9 @@
   border: 0;
   border-radius: 0;
   background: transparent;
+  box-shadow: none;
   padding: 0;
-  font-size: 11px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 630;
   letter-spacing: 0;
 }
@@ -342,7 +491,7 @@
   border-radius: 4px;
   padding: 5px 9px;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 600;
 }
 
@@ -355,7 +504,7 @@
 .data-table-pager .meta {
   padding-inline: 5px;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-caption);
   font-variant-numeric: tabular-nums;
 }
 
@@ -363,7 +512,7 @@
   min-height: 30px;
   border-radius: 4px;
   padding: 4px 25px 4px 8px;
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .data-table-views {
@@ -392,7 +541,7 @@
 
 .data-table-views .saved-table-views-select span {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 650;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -401,7 +550,7 @@
 .data-table-views .saved-table-views-select select {
   max-width: 158px;
   padding: 4px 27px 4px 8px;
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
 }
 
 .data-grid-column-filter-dialog .data-grid-filter-condition {
@@ -409,6 +558,229 @@
   border-radius: 0;
   background: transparent;
   padding: 4px 0;
+}
+
+/*
+ * Dense records reflow below desktop width instead of forcing primary values
+ * behind a multi-viewport horizontal scroll. The semantic table stays intact;
+ * each visible cell gains its column label and all sort/filter controls remain
+ * available in the disclosure above the record cards.
+ */
+.data-grid-mobile-controls {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .filterable-data-grid[data-mobile-layout="cards"] .data-grid-mobile-controls {
+    display: block;
+    border-bottom: 1px solid var(--border);
+    padding: 0 12px 10px;
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .data-grid-mobile-controls
+    > summary {
+    width: fit-content;
+    cursor: pointer;
+    color: var(--foreground);
+    font-size: var(--jh-font-size-body-sm);
+    font-weight: 650;
+    line-height: 1.5;
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .data-grid-mobile-controls
+    > summary:focus-visible {
+    border-radius: 4px;
+    outline: 2px solid var(--ring);
+    outline-offset: 3px;
+  }
+
+  .data-grid-mobile-control-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding-top: 10px;
+  }
+
+  .data-grid-mobile-control {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    border-bottom: 1px solid color-mix(in oklch, var(--border) 72%, transparent);
+    padding: 7px 0;
+  }
+
+  .data-grid-mobile-control .data-grid-sort-button {
+    min-width: 0;
+    justify-content: flex-start;
+    font-size: var(--jh-font-size-body-sm);
+    white-space: normal;
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .filterable-data-grid-scroll,
+  .responsive-record-table-wrap[data-mobile-layout="cards"] {
+    overflow-x: clip;
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"] .filterable-data-grid-table,
+  .responsive-record-table-wrap[data-mobile-layout="cards"]
+    .responsive-record-table {
+    display: block;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .filterable-data-grid-table
+    colgroup,
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .filterable-data-grid-table
+    thead,
+  .responsive-record-table-wrap[data-mobile-layout="cards"]
+    .responsive-record-table
+    thead {
+    display: none;
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .filterable-data-grid-table
+    tbody,
+  .responsive-record-table-wrap[data-mobile-layout="cards"]
+    .responsive-record-table
+    tbody {
+    display: grid;
+    gap: 12px;
+    padding: 0 12px 12px;
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .filterable-data-grid-table
+    tbody
+    tr,
+  .responsive-record-table-wrap[data-mobile-layout="cards"]
+    .responsive-record-table
+    tbody
+    tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 0.8);
+    background: var(--card);
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .filterable-data-grid-table
+    tbody
+    tr.data-grid-group-row {
+    grid-template-columns: minmax(0, 1fr);
+    border-radius: 4px;
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .filterable-data-grid-table
+    tbody
+    tr.data-grid-group-row
+    th {
+    grid-column: 1 / -1;
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .filterable-data-grid-table
+    tbody
+    :is(th, td)[data-label],
+  .responsive-record-table-wrap[data-mobile-layout="cards"]
+    .responsive-record-table
+    tbody
+    :is(th, td)[data-label] {
+    display: block;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: 100%;
+    border-bottom: 1px solid color-mix(in oklch, var(--border) 72%, transparent);
+    padding: 10px 12px;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .filterable-data-grid-table
+    tbody
+    :is(th, td)[data-label]::before,
+  .responsive-record-table-wrap[data-mobile-layout="cards"]
+    .responsive-record-table
+    tbody
+    :is(th, td)[data-label]::before {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--muted-foreground);
+    content: attr(data-label);
+    font-size: var(--jh-font-size-caption);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 1.3;
+    text-transform: uppercase;
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .filterable-data-grid-table
+    tbody
+    [data-row-header="true"],
+  .responsive-record-table-wrap[data-mobile-layout="cards"]
+    .responsive-record-table
+    tbody
+    [data-row-header="true"] {
+    order: -1;
+    grid-column: 1 / -1;
+    background: color-mix(in oklch, var(--muted) 36%, var(--card));
+  }
+
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .filterable-data-grid-table
+    tbody
+    :is(th, td)[data-label]
+    > *,
+  .responsive-record-table-wrap[data-mobile-layout="cards"]
+    .responsive-record-table
+    tbody
+    :is(th, td)[data-label]
+    > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .responsive-record-table-wrap[data-mobile-layout="cards"]
+    .responsive-record-table
+    caption {
+    display: block;
+    width: 100%;
+    padding-inline: 12px;
+  }
+
+  .responsive-record-table-wrap[data-mobile-layout="cards"]
+    .responsive-record-table
+    [data-slot="field-group"] {
+    min-width: 0 !important;
+  }
+}
+
+@media (max-width: 560px) {
+  .data-grid-mobile-control-list,
+  .filterable-data-grid[data-mobile-layout="cards"]
+    .filterable-data-grid-table
+    tbody
+    tr,
+  .responsive-record-table-wrap[data-mobile-layout="cards"]
+    .responsive-record-table
+    tbody
+    tr {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .data-grid-filter-operator {
@@ -452,7 +824,7 @@
   height: 38px;
   padding-inline: 12px;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 720;
   letter-spacing: 0.07em;
 }
@@ -470,7 +842,7 @@
   min-height: 38px;
   background: color-mix(in oklch, var(--muted) 42%, var(--card));
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--jh-font-size-caption);
   font-weight: 720;
   letter-spacing: 0.07em;
 }
@@ -491,7 +863,7 @@
   border-radius: 4px;
   padding-inline: 9px;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--jh-font-size-body-sm);
   font-weight: 600;
 }
 
@@ -534,6 +906,10 @@
 @media (max-width: 720px) {
   .contacts-filter-toolbar {
     padding-inline: 12px;
+  }
+
+  .outreach-due-follow-ups-content {
+    padding: 12px 16px 16px;
   }
 
   .contacts-filter-field {

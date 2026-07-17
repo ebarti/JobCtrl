@@ -555,10 +555,13 @@ while true; do sleep 1; done
       temporalPid = await waitForPidFile(pidFile);
       await waitForFileText(
         callsLog,
-        `fake temporal server start-dev --db-filename ${join(devDir, "temporal/temporal.db")}`,
+        `fake temporal server start-dev --db-filename ${join(devDir, "app/temporal/temporal.db")}`,
       );
 
       expect(processExists(temporalPid)).toBe(true);
+      expect(readFileSync(callsLog, "utf8")).not.toContain(
+        join(devDir, "temporal/temporal.db"),
+      );
     } finally {
       try {
         execFileSync(devScript, ["stop", "temporal"], {

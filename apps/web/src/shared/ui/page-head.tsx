@@ -18,7 +18,7 @@ export function PageHead({
   className,
 }: PageHeadProps): JSX.Element {
   return (
-    <div className={cn("page-head", className)} data-slot="page-head">
+    <header className={cn("page-head", className)} data-slot="page-head">
       <div className="page-head-text" data-slot="page-head-text">
         {eyebrow ? (
           <span className="eyebrow" data-slot="page-head-eyebrow">
@@ -37,6 +37,6 @@ export function PageHead({
           {actions}
         </div>
       ) : null}
-    </div>
+    </header>
   );
 }

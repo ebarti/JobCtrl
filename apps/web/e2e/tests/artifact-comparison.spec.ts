@@ -43,7 +43,8 @@ const draft = {
     draftId: "draft-job-2",
     jobKey,
     revisionNumber: 1,
-    editedText: "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
+    editedText:
+      "Principal Platform Engineer\nExperience\nRestored human rewrite for incident response.",
     plateDocument: null,
     editDeltas: [],
     createdAt: "2026-06-24T10:00:00.000Z",
@@ -63,7 +64,8 @@ const draft = {
       },
       sourcePinId: "pin-experience-claim",
       riskLabel: "claim risk",
-      commentBody: "Check the quantified reliability claim against profile evidence.",
+      commentBody:
+        "Check the quantified reliability claim against profile evidence.",
       state: "open",
       anchorResolved: true,
       createdAt: "2026-06-24T10:02:00.000Z",
@@ -121,18 +123,21 @@ async function installArtifactComparisonRoutes(page: Page) {
       body: JSON.stringify({ ok: true, draft }),
     });
   });
-  await page.route("**/v1/resume-review/drafts/*/comment-threads", async (route) => {
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        draft,
-        commentThreads: draft.commentThreads,
-        seededCount: draft.commentThreads.length,
-        updatedCount: 0,
-      }),
-    });
-  });
+  await page.route(
+    "**/v1/resume-review/drafts/*/comment-threads",
+    async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          draft,
+          commentThreads: draft.commentThreads,
+          seededCount: draft.commentThreads.length,
+          updatedCount: 0,
+        }),
+      });
+    },
+  );
   await page.route("**/v1/resume-review/drafts/*/render", async (route) => {
     await route.fulfill({
       contentType: "application/json",
@@ -161,7 +166,9 @@ async function installArtifactComparisonRoutes(page: Page) {
   await page.route(/\/v1\/artifacts(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(makeArtifactsPage([draftArtifact, acceptedArtifact])),
+      body: JSON.stringify(
+        makeArtifactsPage([draftArtifact, acceptedArtifact]),
+      ),
     });
   });
   await page.route("**/v1/artifacts/*/preview.html*", async (route) => {
@@ -171,7 +178,9 @@ async function installArtifactComparisonRoutes(page: Page) {
     });
   });
   await page.route("**/v1/artifacts/*", async (route) => {
-    const artifactId = decodeURIComponent(new URL(route.request().url()).pathname.split("/").pop() ?? "");
+    const artifactId = decodeURIComponent(
+      new URL(route.request().url()).pathname.split("/").pop() ?? "",
+    );
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify(artifactDetail(artifactId)),
@@ -179,13 +188,17 @@ async function installArtifactComparisonRoutes(page: Page) {
   });
 }
 
-test("apply review compares accepted artifact with rendered draft artifact", async ({ page }) => {
+test("apply review compares accepted artifact with rendered draft artifact", async ({
+  page,
+}) => {
   await installArtifactComparisonRoutes(page);
 
   await page.goto("/apply-review");
 
   const comparison = page.getByRole("region", { name: "Artifact comparison" });
-  await expect(comparison).toContainText("Render a saved draft to compare it with the accepted artifact.");
+  await expect(comparison).toContainText(
+    "Render a saved draft to compare it with the accepted artifact.",
+  );
 
   const renderButton = page.getByRole("button", { name: "render replacement" });
   await expect(renderButton).toBeEnabled();
@@ -199,17 +212,35 @@ test("apply review compares accepted artifact with rendered draft artifact", asy
   await expect(comparison).toContainText("declared lost");
   await expect(comparison).toContainText("gcp");
   await expect(comparison).toContainText("claim risk");
-  await expect(page.getByRole("region", { name: "Tailored resume preview" })).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Tailored resume preview" }),
+  ).toBeVisible();
 });
 
-test("artifacts drawer compares same-job generated artifacts", async ({ page }) => {
+test("artifact full-page detail compares same-job generated artifacts", async ({
+  page,
+}) => {
   await installArtifactComparisonRoutes(page);
 
   await page.goto(`/artifacts/${acceptedArtifact.artifactId}`);
 
-  await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeVisible();
-  await expect(page.getByLabel("Compare with")).toHaveValue(draftArtifact.artifactId);
+  const artifactDetail = page.getByRole("article", {
+    name: "Artifact details",
+  });
+  await expect(artifactDetail).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "Artifact details" }),
+  ).toHaveCount(0);
+  await expect(
+    artifactDetail.getByRole("button", { name: "Back to artifacts" }),
+  ).toBeVisible();
+  await expect(
+    artifactDetail.getByRole("combobox", { name: "Compare with" }),
+  ).toContainText("candidate / Compact");
   const comparison = page.getByRole("region", { name: "Artifact comparison" });
+  await expect(
+    comparison.getByRole("region", { name: "Comparison artifact summary" }),
+  ).toContainText(draftArtifact.title);
   await expect(comparison).toContainText("+covered");
   await expect(comparison).toContainText("incident response");
   await expect(comparison).toContainText("lost");

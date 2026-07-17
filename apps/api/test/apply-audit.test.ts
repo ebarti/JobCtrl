@@ -131,13 +131,34 @@ describe("buildApplyAudit", () => {
       expect.objectContaining({
         code: "missing_profile_attestations",
         label: "Profile attestations incomplete",
-        detail: "Application attestations missing: age_18_plus, felony_conviction.",
+        detail: "Application attestations missing: Age 18+, Felony conviction.",
         source: "profile_attestations",
         severity: "warning",
       }),
     ]);
     expect(audit.sources.find((source) => source.kind === "profile_attestations")).toMatchObject({
       status: "missing",
+      detail: "Application attestations missing: Age 18+, Felony conviction.",
     });
+  });
+
+  it("turns legacy missing-profile failure keys into actionable labels", () => {
+    const audit = buildApplyAudit({
+      ...READY_INPUT,
+      currentStage: "apply",
+      currentState: "failed",
+      currentErrorMessage: "missing_profile_data:age_18_plus,background_check_consent",
+    });
+
+    expect(audit.hardBlockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "stage_not_ready",
+          detail: "required profile answers missing: Age 18+, Background check consent",
+        }),
+      ]),
+    );
+    expect(JSON.stringify(audit)).not.toContain("age_18_plus");
+    expect(JSON.stringify(audit)).not.toContain("background_check_consent");
   });
 });

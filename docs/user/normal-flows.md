@@ -146,8 +146,8 @@ workflows when you want a narrower run.
 
 <WorkflowSurfacePanel surface="web">
 
-![JobCtrl Pipelines workspace with Discover controls and the operational stage ledger](../assets/screenshots/pipelines.png)
-*Pipelines starts bounded work and keeps its execution scope, stage outcomes, backlog, capacity, ETA, freshness, and active work visible.*
+![JobCtrl Pipelines workspace with Discover controls, the live stage flow, and backlog diagnostics](../assets/screenshots/pipelines.png)
+*Pipelines starts bounded work and keeps its execution scope, exact stage outcomes, backlog, capacity, ETA, freshness, and active work visible.*
 
 </WorkflowSurfacePanel>
 
@@ -168,14 +168,41 @@ Keep Pipelines open while the run works. Read its scopes separately:
   selected execution's completion claim.
 
 The source-family plan reports intake separately from the two reconciliation
-steps: the enrichment pass and preparation fanout. Each stage row then reports
-scoped outcomes, existing backlog, worker capacity, ETA, and observation time.
-Capacity details include configured and active slots, internal parallelism when
-applicable, and approximate task-queue pollers, backlog, age, add rate, and
-dispatch rate. The execution inspector shows cohort membership and remaining
-work, read-model freshness, and the bounded active-work inventory. Treat ETA as
-an observed range: calibrating, paused, stale, unavailable, and no-work states
-are deliberately explicit rather than replaced by a guessed finish time.
+steps: the enrichment pass and preparation fanout. The live stage cards make
+waiting, processing, terminal, and attention totals visible first; **All stage
+outcomes** expands the exact succeeded, skipped, blocked, failed, exhausted,
+canceled, needs-verification, stale, and unknown counts. **Backlog and
+diagnostics** keeps the execution sweep and unrelated global backlog separate
+from that current-execution flow. Capacity details include configured and active
+slots, internal parallelism when applicable, and approximate task-queue pollers,
+backlog, age, add rate, and dispatch rate. The execution inspector shows cohort
+membership and remaining work, read-model freshness, and the bounded active-work
+inventory. Treat ETA as an observed range: calibrating, paused, stale,
+unavailable, and no-work states are deliberately explicit rather than replaced
+by a guessed finish time.
+
+Selected-run tracking is reconstructed automatically after an upgrade or worker
+restart when an older execution predates native lineage. Pipelines labels that
+transition **Restoring pipeline history**, continues to show fresh worker, queue,
+and active-stage telemetry, and withholds exact selected-run counts, percentages,
+and ETAs until the worker verifies the complete membership and stage-key sets.
+
+Use **Stop discovery** while the selected Discover workflow is actively
+discovering or draining. Cancellation refreshes Pipelines as well as Runs and
+Dashboard. After a failed execution, Pipelines reports the active-work total or
+states that the runtime inventory is unavailable; it never turns missing
+inventory into "no work." If the exact history cannot be read or mapped safely
+on one pass, the repair remains in automatic retry instead of becoming a
+permanent tracking mode. Reconnecting to its authoritative history restores that
+run or records its real terminal outcome. If immutable legacy history ended
+before recording every target, the run is labeled **Historical run incomplete**;
+JobCtrl preserves all exact recovered evidence and does not fabricate or
+continuously retry the unknown remainder. **Set up a new Discover run** is
+appropriate only when the prior execution is closed or genuinely absent and
+fresh runtime capacity confirms zero active slots; it selects the Discover
+controls and does not start a run until you submit them. Workflow identifiers
+and bounded reason codes remain
+under **Technical details**.
 
 Internal stages such as Enrich and Score, and material generation (the `tailor`
 and `cover` commands), stay visible in job detail and diagnostics, but the
@@ -216,6 +243,20 @@ evidence, source provenance, artifacts, readiness, and per-job actions.
 
 </WorkflowSurfacePanel>
 
+Use the **Active**, **Deleted**, and **Hidden** tabs to move between real job
+queues; **Closed** is not a normal user-facing queue. Active postings do not
+repeat an `OPEN` label beside every title. The default view keeps **Sources**
+and **Warnings** available in column controls but hides them until needed.
+Delete and permanent-delete actions use destructive styling, while restore and
+unhide remain recovery actions. Opening a row uses its keyboard-focusable row
+action, so the table does not add a redundant visible **Open** control to every
+record.
+
+At 900px and below, the Jobs, Artifacts, Contacts, Discovery, and Settings data
+tables reflow into labelled record cards. Their sorting and filtering controls
+remain available, and at phone width each card becomes a single readable
+column rather than forcing a multi-viewport horizontal scroll.
+
 Open the Job Detail route workspace to inspect:
 
 - score, confidence, blockers, gaps, and score policy metadata;
@@ -248,7 +289,9 @@ workspace. The Evidence map shows the canonical profile achievements and declare
 skills currently reused by generated resume bullets, requirement-fit decisions,
 keyword coverage, and recorded gaps. Links in the usage lists return to the
 owning artifact or job detail so you can audit the source before editing profile
-evidence or re-running materials.
+evidence or re-running materials. Its entry list, selected evidence, and gaps
+inspector stack in reading order when the three-pane desktop workspace no
+longer fits.
 
 </WorkflowSurfacePanel>
 
@@ -286,6 +329,12 @@ web app before using anything.
 Generated material records are kept as audit history. Re-generation does not
 destroy the accepted material already in use; a replacement becomes active only
 after it validates and you approve it.
+
+Artifact Detail presents the human-readable audit first—summary, evidence,
+tailoring explanation, and comparison—then places the full-width PDF preview
+below those details. Raw artifact, job, path, evidence, and requirement keys are
+diagnostic facts under **Technical details**, not the primary labels shown to
+the reviewer.
 
 [Materials & Tailoring](materials-and-tailoring.md) explains provenance,
 validation, accepted-artifact history, and the boundary between generation and
@@ -357,6 +406,12 @@ resumes in Apply Review.
 
 </WorkflowSurfacePanel>
 
+On working desktop widths, the review queue remains a left rail and the
+selected application's decision, evidence, and materials occupy one full-width
+sequence. On narrower screens, the queue moves above that sequence and decision
+actions wrap below their approval context without dropping or hiding audit
+content.
+
 Typical review actions:
 
 - edit the generated resume text, formatting, and hyperlinks;
@@ -366,6 +421,12 @@ Typical review actions:
 - compare the accepted artifact with the rendered draft using stored coverage,
   validation, judge, template, and risk-label rows;
 - approve only after the edited draft is saved, valid, and rendered.
+
+Persisted comments stay attached to their rendered resume line when their
+anchor resolves. A comment whose line no longer exists or whose anchor cannot
+be resolved remains visible under **Comments without a rendered line** rather
+than being dropped, so its status, replies, and source identifiers stay
+inspectable.
 
 Failed validation stays as audit history and does not hide the last accepted
 artifact.

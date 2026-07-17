@@ -12,6 +12,9 @@ describe("<DueFollowUpsPanel>", () => {
     await waitFor(() =>
       expect(view.getByText("https://example.com/job/1")).toBeInTheDocument(),
     );
+    expect(
+      view.getByText(/Reminders surfaced for you to act on/i).parentElement,
+    ).toHaveClass("outreach-due-follow-ups-content");
     expect(view.getByText("application_submitted")).toBeInTheDocument();
     expect(view.getByText("due")).toBeInTheDocument();
   });

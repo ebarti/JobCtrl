@@ -194,7 +194,11 @@ set_default_env() {
   export JOBCTRL_DEMO_API_PORT="${JOBCTRL_DEMO_API_PORT:-8787}"
   export JOBCTRL_DEMO_WEB_PORT="${JOBCTRL_DEMO_WEB_PORT:-5174}"
   export JOBCTRL_DEMO_STATE_DIR="${JOBCTRL_DEMO_STATE_DIR:-$DEV_DIR/demo/wrangler}"
-  export JOBCTRL_TEMPORAL_DB="${JOBCTRL_TEMPORAL_DB:-$DEV_DIR/temporal/temporal.db}"
+  # Temporal history and the JobCtrl projection database form one runtime
+  # identity. Keep both under JOBCTRL_DIR so launching the same local app from
+  # another Git worktree cannot silently switch workflow-history stores while
+  # continuing to read the shared JobCtrl database.
+  export JOBCTRL_TEMPORAL_DB="${JOBCTRL_TEMPORAL_DB:-$JOBCTRL_DIR/temporal/temporal.db}"
   mkdir -p "$(dirname "$JOBCTRL_TEMPORAL_DB")" "$JOBCTRL_DEMO_STATE_DIR"
 }
 

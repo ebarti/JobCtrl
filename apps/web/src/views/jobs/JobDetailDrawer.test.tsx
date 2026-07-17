@@ -25,6 +25,8 @@ import {
   makeJobDetail,
   sampleCompensationAudit,
   sampleCompensationSummary,
+  sampleEvidenceMapResponse,
+  sampleInterviewPrep,
   sampleJob,
   sampleSecondaryJob,
 } from "../../test/fixtures/projections.js";
@@ -287,9 +289,36 @@ describe("<JobDetailDrawer>", () => {
                 },
               ],
             }),
+            employerAnalysis: populatedEmployerAnalysis,
+            interviewPrep: {
+              ...sampleInterviewPrep,
+              items: sampleInterviewPrep.items.map((item) => ({
+                ...item,
+                evidenceIds: ["ev-platform"],
+                requirementIds: ["req-1"],
+              })),
+            },
             requirementFitReport: populatedRequirementFitReport,
           }),
         );
+      }),
+      http.get("*/v1/evidence-map", () => {
+        const entry = sampleEvidenceMapResponse.entries[0]!;
+        return HttpResponse.json({
+          ...sampleEvidenceMapResponse,
+          entries: [
+            {
+              ...entry,
+              entryId: "ev-platform",
+              evidenceId: "ev-platform",
+              title: "Led a platform reliability transformation",
+              story: {
+                ...entry.story!,
+                outcome: "Reduced incident response time by 42%.",
+              },
+            },
+          ],
+        });
       }),
     );
 
@@ -333,7 +362,33 @@ describe("<JobDetailDrawer>", () => {
     expect(screen.getByText("Preparation diagnostics")).toBeInTheDocument();
     expect(screen.queryByText("Score breakdown")).not.toBeInTheDocument();
     expect(screen.queryByText("Tailoring rationale")).not.toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Role Analysis" })).toHaveClass("job-detail-role-analysis");
+    const roleAnalysis = screen.getByRole("region", { name: "Role Analysis" });
+    expect(roleAnalysis).toHaveClass("job-detail-role-analysis");
+    const matchedRequirement = within(roleAnalysis).getByRole("article", {
+      name: "Requirement: Lead platform reliability programs across multiple teams",
+    });
+    expect(
+      within(matchedRequirement).getByText("Led a platform reliability transformation"),
+    ).toBeInTheDocument();
+    expect(
+      within(matchedRequirement).getByText("Reduced incident response time by 42%."),
+    ).toBeInTheDocument();
+    expect(within(matchedRequirement).queryByText("ev-platform")).not.toBeInTheDocument();
+    const interviewPrep = screen.getByRole("region", {
+      name: "Interview preparation",
+    });
+    expect(
+      within(interviewPrep).getByRole("link", {
+        name: "Led a platform reliability transformation",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(interviewPrep).getByText(
+        "Lead platform reliability programs across multiple teams",
+      ),
+    ).toBeInTheDocument();
+    expect(within(interviewPrep).queryByText("ev-platform")).not.toBeInTheDocument();
+    expect(within(interviewPrep).queryByText("req-1")).not.toBeInTheDocument();
     const description = screen.getByText("Description").closest("section");
     expect(description).not.toBeNull();
     expect(description).toHaveClass("job-detail-description");

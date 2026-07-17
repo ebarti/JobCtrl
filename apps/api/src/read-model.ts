@@ -5763,6 +5763,13 @@ function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): Workf
     if (event.eventType === "WorkflowStarted") {
       const eventRunId = workflowLifecycleRunId(payload);
       const eventStartedAt = nullableString(payload.startedAt) ?? event.occurredAt;
+      const recoversMissingHistory =
+        phase === "terminal" &&
+        status === "terminated" &&
+        errorCode === "reconciled_not_found" &&
+        payload.recoveredFromMissingHistory === true &&
+        eventRunId !== null &&
+        eventRunId === runId;
       // A start carrying a NEW run id while the fold is still open means the
       // previous execution died without a recorded terminal (Temporal id reuse
       // only admits a new run once the old one closed server-side); the fold
@@ -5772,6 +5779,7 @@ function foldWorkflowRunEvents(events: readonly WorkflowLifecycleEvent[]): Workf
       const reopens =
         phase === "none" ||
         adoptsNewExecution ||
+        recoversMissingHistory ||
         (phase === "terminal" &&
           startsNewWorkflowExecution({
             foldedRunId: runId,
