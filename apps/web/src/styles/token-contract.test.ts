@@ -15,6 +15,7 @@ const globalsCss = readText("apps/web/src/styles/globals.css");
 const applyReviewCss = readText("apps/web/src/styles/redesign-apply-review.css");
 const commonCss = readText("apps/web/src/styles/redesign-common.css");
 const configurationCss = readText("apps/web/src/styles/redesign-configuration.css");
+const dataCss = readText("apps/web/src/styles/redesign-data.css");
 const shellCss = readText("apps/web/src/styles/redesign-shell.css");
 const tabsSource = readText("apps/web/src/shared/ui/tabs.tsx");
 const componentsJson = readJson<{
@@ -137,6 +138,15 @@ describe("shadcn token contract", () => {
     expect(tokensCss, "expected dark JobCtrl violet primary value").toContain(
       "--primary: oklch(0.702 0.183 293.541);",
     );
+    expect(tokensCss, "expected a violet-neutral light canvas").toContain(
+      "--background: oklch(0.972 0.008 293);",
+    );
+    expect(tokensCss, "expected a violet-neutral light navigation rail").toContain(
+      "--sidebar: oklch(0.982 0.014 294.588);",
+    );
+    expect(tokensCss, "expected a violet-neutral dark navigation rail").toContain(
+      "--sidebar: oklch(0.19 0.024 293.5);",
+    );
     expect(tokensCss, "expected neutral chart ramp anchor").toContain("--chart-1: oklch(0.24 0 0);");
   });
 
@@ -155,6 +165,18 @@ describe("shadcn token contract", () => {
       "active navigation should not be a solid black rounded rectangle",
     ).toContain("background: transparent;");
     expect(
+      cssRuleContaining(".side-rail", shellCss),
+      "the final shell override should consume the sidebar surface token",
+    ).toContain("background: var(--sidebar);");
+    expect(
+      cssRuleContaining(".side-rail", shellCss),
+      "the final shell override should consume the sidebar border token",
+    ).toContain("border-right-color: var(--sidebar-border);");
+    expect(
+      cssRuleContaining(".side-rail__link.on", shellCss),
+      "active navigation text should carry the violet identity",
+    ).toContain("color: var(--sidebar-accent-foreground);");
+    expect(
       cssRuleContaining(".side-rail__link.on::before", shellCss),
       "active navigation should use the violet selection rule",
     ).toContain("background: var(--sidebar-primary);");
@@ -168,6 +190,17 @@ describe("shadcn token contract", () => {
     expect(tabsSource, "shared tabs should use the semantic violet rule").toContain(
       "data-active:border-primary",
     );
+    expect(tabsSource, "shared active tabs should use semantic violet text").toContain(
+      "data-active:text-accent-foreground",
+    );
+    expect(
+      cssRuleContaining('.topbar__density [data-pressed]', shellCss),
+      "the selected density should use a violet rule instead of a filled blob",
+    ).toContain("box-shadow: inset 0 -2px 0 var(--primary);");
+    expect(
+      cssRuleContaining('.filterable-data-grid-table tbody tr[aria-selected="true"]', dataCss),
+      "selected data rows should use a restrained violet marker",
+    ).toContain("box-shadow: inset 2px 0 0 var(--primary);");
   });
 
   it("maps tokens through Tailwind CSS-first theme variables", () => {

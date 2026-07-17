@@ -46,7 +46,11 @@ export function Topbar() {
         >
           <IconMenu2 aria-hidden="true" />
         </SheetTrigger>
-        <SheetContent side="left" aria-describedby={undefined}>
+        <SheetContent
+          className="bg-sidebar text-sidebar-foreground"
+          side="left"
+          aria-describedby={undefined}
+        >
           <SheetHeader>
             <SheetTitle>
               <BrandMark showTagline />
@@ -96,6 +100,7 @@ export function Topbar() {
       </ToggleGroup>
       <ThemeToggle />
       <ConnectionStatusPill />
+      <LegalNotice className="legal-notice legal-notice--topbar" />
     </header>
   );
 }

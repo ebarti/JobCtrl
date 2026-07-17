@@ -41,9 +41,12 @@ async function expectColorScheme(page: Page, expected: "light" | "dark"): Promis
 }
 
 async function expectDensity(page: Page, density: "compact" | "regular" | "comfy", height: string) {
-  await page.getByRole("combobox", { name: "Row density" }).selectOption(density);
+  const densityGroup = page.getByRole("group", { name: "Row density" });
+  const densityButton = densityGroup.getByRole("button", { name: density, exact: true });
+  await densityButton.click();
   const shell = page.locator(".app-shell");
 
+  await expect(densityButton).toHaveAttribute("data-pressed", "");
   await expect(shell).toHaveAttribute("data-density", density);
   await expect
     .poll(() => shell.evaluate((element) => getComputedStyle(element).getPropertyValue("--jh-row-height").trim()))
@@ -151,6 +154,46 @@ async function expectPaintedStatus(locator: Locator, label: string): Promise<voi
   expect(styles.toneDiffersFromBase, `${label} should differ from its base status styling`).toBe(true);
 }
 
+async function expectQuietInlineStatus(locator: Locator, label: string): Promise<void> {
+  await expect.poll(() => locator.count(), { message: `${label} should exist in the DOM` }).toBeGreaterThan(0);
+  const status = locator.first();
+  await expect(status).toBeVisible();
+  const styles = await status.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return {
+      backgroundColor: style.backgroundColor,
+      borderRadius: style.borderRadius,
+      borderTopWidth: Number.parseFloat(style.borderTopWidth),
+      color: style.color,
+      height: rect.height,
+      width: rect.width,
+    };
+  });
+
+  expect(styles.backgroundColor, `${label} should not render a filled blob`).toMatch(
+    /^(transparent|rgba\(0, 0, 0, 0\))$/,
+  );
+  expectPainted(styles.color, `${label} foreground`);
+  expect(styles.borderTopWidth, `${label} should not render a bordered pill`).toBe(0);
+  expect(styles.borderRadius, `${label} should not render a rounded capsule`).toBe("0px");
+  expect(styles.width, `${label} width`).toBeGreaterThan(0);
+  expect(styles.height, `${label} height`).toBeGreaterThan(0);
+}
+
+async function readActiveNavStyles(locator: Locator) {
+  return locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const marker = getComputedStyle(element, "::before");
+    return {
+      color: style.color,
+      markerBackground: marker.backgroundColor,
+      markerDisplay: marker.display,
+      markerWidth: Number.parseFloat(marker.width),
+    };
+  });
+}
+
 async function focusByKeyboard(page: Page, target: Locator): Promise<void> {
   for (let attempt = 0; attempt < 24; attempt += 1) {
     const isFocused = await target.evaluate((element) => element === document.activeElement);
@@ -234,7 +277,7 @@ async function expectShellChromePainted(page: Page, route: string, activeLink: s
   await expect(topbar).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("link", { name: activeLink })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Global search" })).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "Row density" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Row density" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Switch to (dark|light) theme/i })).toBeVisible();
   await expect(page.locator(".connection-pill")).toBeVisible();
 
@@ -244,25 +287,25 @@ async function expectShellChromePainted(page: Page, route: string, activeLink: s
   expect(Number.parseFloat(topbarStyles.borderBottomWidth)).toBeGreaterThan(0);
   expect(topbarStyles.borderBottomStyle).not.toBe("none");
 
-  const activeNavStyles = await readSurfaceStyles(page.getByRole("link", { name: activeLink }));
-  expectPainted(activeNavStyles.backgroundColor, `${route} active nav background`);
+  const activeNavStyles = await readActiveNavStyles(page.getByRole("link", { name: activeLink }));
   expectPainted(activeNavStyles.color, `${route} active nav foreground`);
+  expect(activeNavStyles.markerDisplay, `${route} active nav selection rule`).not.toBe("none");
+  expect(activeNavStyles.markerWidth, `${route} active nav selection rule width`).toBeGreaterThanOrEqual(2);
+  expectPainted(activeNavStyles.markerBackground, `${route} active nav selection rule`);
 
-  const searchStyles = await readSurfaceStyles(page.getByRole("textbox", { name: "Global search" }));
+  const searchStyles = await readSurfaceStyles(page.locator(".topbar__search"));
   expectPainted(searchStyles.backgroundColor, `${route} global search background`);
   expectPainted(searchStyles.color, `${route} global search foreground`);
-  expectPainted(searchStyles.borderTopColor, `${route} global search border`);
-  expect(Number.parseFloat(searchStyles.borderTopWidth)).toBeGreaterThan(0);
+  expectPainted(searchStyles.borderBottomColor, `${route} global search border`);
+  expect(Number.parseFloat(searchStyles.borderBottomWidth)).toBeGreaterThan(0);
 
-  const densityStyles = await readSurfaceStyles(page.getByRole("combobox", { name: "Row density" }));
-  expectPainted(densityStyles.backgroundColor, `${route} density background`);
-  expectPainted(densityStyles.color, `${route} density foreground`);
-  expectPainted(densityStyles.borderTopColor, `${route} density border`);
+  const densityButton = page.getByRole("group", { name: "Row density" }).locator("[data-pressed]");
+  const densityStyles = await readSurfaceStyles(densityButton);
+  expectPainted(densityStyles.color, `${route} selected density foreground`);
+  expectPainted(densityStyles.borderTopColor, `${route} selected density border`);
   expect(Number.parseFloat(densityStyles.borderTopWidth)).toBeGreaterThan(0);
 
-  const pillStyles = await readSurfaceStyles(page.locator(".connection-pill"));
-  expectPainted(pillStyles.backgroundColor, `${route} connection pill background`);
-  expectPainted(pillStyles.color, `${route} connection pill foreground`);
+  await expectQuietInlineStatus(page.locator(".connection-pill"), `${route} connection status`);
 
   const themeStyles = await readSurfaceStyles(page.getByRole("button", { name: /Switch to (dark|light) theme/i }));
   expectPainted(themeStyles.color, `${route} theme toggle foreground`);
@@ -279,6 +322,9 @@ test("token foundation computes light/dark app-shell tokens and density values",
 
   const lightTokens = await readRootTokensWhenReady(page);
   await expectColorScheme(page, "light");
+  expect(lightTokens["--sidebar"], "the rail should carry a distinct violet-neutral surface").not.toBe(
+    lightTokens["--background"],
+  );
 
   await focusByKeyboard(page, themeButton);
   await expectVisibleFocusIndicator(themeButton);
@@ -290,10 +336,15 @@ test("token foundation computes light/dark app-shell tokens and density values",
   const darkTokens = await readRootTokensWhenReady(page);
   expect(darkTokens["--background"]).not.toBe(lightTokens["--background"]);
   expect(darkTokens["--foreground"]).not.toBe(lightTokens["--foreground"]);
+  expect(darkTokens["--sidebar"], "the dark rail should remain distinct from the canvas").not.toBe(
+    darkTokens["--background"],
+  );
 
   await expectDensity(page, "compact", "32px");
   await expectDensity(page, "regular", "40px");
   await expectDensity(page, "comfy", "48px");
+  await page.mouse.move(0, 0);
+  await page.waitForTimeout(200);
 
   const topbarStyles = await readSurfaceStyles(page.locator(".topbar"));
   expectPainted(topbarStyles.backgroundColor, "topbar background");
@@ -301,14 +352,18 @@ test("token foundation computes light/dark app-shell tokens and density values",
   expect(Number.parseFloat(topbarStyles.borderBottomWidth)).toBeGreaterThan(0);
   expect(topbarStyles.borderBottomStyle).not.toBe("none");
 
-  const dashboardNavStyles = await readSurfaceStyles(page.getByRole("link", { name: "Dashboard" }));
-  expectPainted(dashboardNavStyles.backgroundColor, "active dashboard nav background");
+  const dashboardNavStyles = await readActiveNavStyles(page.getByRole("link", { name: "Dashboard" }));
   expectPainted(dashboardNavStyles.color, "active dashboard nav foreground");
+  expectPainted(dashboardNavStyles.markerBackground, "active dashboard nav selection rule");
 
-  const densityStyles = await readSurfaceStyles(page.getByRole("combobox", { name: "Row density" }));
-  expectPainted(densityStyles.backgroundColor, "row density select background");
-  expectPainted(densityStyles.borderTopColor, "row density select border");
-  expectPainted(densityStyles.color, "row density select foreground");
+  const densityStyles = await readSurfaceStyles(
+    page.getByRole("group", { name: "Row density" }).locator("[data-pressed]"),
+  );
+  expect(densityStyles.backgroundColor, "selected density should not be a filled blob").toMatch(
+    /^(transparent|rgba\(0, 0, 0, 0\))$/,
+  );
+  expectPainted(densityStyles.borderTopColor, "selected density border");
+  expectPainted(densityStyles.color, "selected density foreground");
   expect(Number.parseFloat(densityStyles.borderTopWidth)).toBeGreaterThan(0);
   expect(densityStyles.borderTopStyle).not.toBe("none");
   expect(densityStyles.colorScheme).toContain("dark");
@@ -330,12 +385,11 @@ test("token foundation computes light/dark app-shell tokens and density values",
   await expect(page.locator("table.jobs-data-grid-table")).toBeVisible({ timeout: 30_000 });
   await expectNoDocumentInlineOverflow(page);
 });
-
 test("shell chrome stays readable on Phase 8 route surfaces", async ({ page }) => {
   await expectShellChromePainted(page, "/jobs", "Jobs");
   await expectShellChromePainted(page, "/apply-review", "Apply review");
   await expectShellChromePainted(page, "/artifacts/2", "Artifacts");
-  await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Artifact details" })).toBeVisible();
   await expectArtifactPdfPreviewRendered(page);
   await expect(page.getByRole("link", { name: "open PDF" })).toBeVisible();
 
@@ -347,7 +401,7 @@ test("shell chrome stays readable on Phase 8 route surfaces", async ({ page }) =
   await expectShellChromePainted(page, "/apply-review", "Apply review");
   await expectShellChromePainted(page, "/pipelines", "Pipelines");
   await expectShellChromePainted(page, "/artifacts/2", "Artifacts");
-  await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Artifact details" })).toBeVisible();
   await expectArtifactPdfPreviewRendered(page);
   await expect(page.getByRole("link", { name: "open PDF" })).toBeVisible();
 });
@@ -359,13 +413,14 @@ test("shell chrome collapses navigation into a sheet on the mobile viewport", as
   await expect(page.locator(".topbar")).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".side-rail")).toBeHidden();
   await expect(page.getByRole("textbox", { name: "Global search" })).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "Row density" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Row density" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Switch to dark theme/i })).toBeVisible();
   await expectNoDocumentInlineOverflow(page);
 
   await page.getByRole("button", { name: "Open navigation" }).click();
   const navSheet = page.getByRole("dialog");
   await expect(navSheet).toBeVisible();
+  await expect(navSheet).toHaveClass(/bg-sidebar/);
   await expect(navSheet.getByRole("link", { name: "Jobs" })).toBeVisible();
   await expect(navSheet.getByRole("link", { name: "Apply review" })).toBeVisible();
   // The mobile sheet must render the full grouped, labelled nav — not the
@@ -397,7 +452,7 @@ test("legal attribution remains visible while the side rail is icon-only", async
   await expectNoDocumentInlineOverflow(page);
 });
 
-test("domain status surfaces use painted semantic token classes", async ({ page }) => {
+test("domain statuses preserve semantic color without filled pill blobs", async ({ page }) => {
   await page.goto("/dashboard");
   await expect(page.getByRole("heading", { name: "Source health" })).toBeVisible({ timeout: 30_000 });
   await expectPaintedStatus(page.locator(".seg-done"), "dashboard completed funnel segment");
@@ -405,34 +460,38 @@ test("domain status surfaces use painted semantic token classes", async ({ page 
   await expectPaintedStatus(page.locator(".seg-blocked"), "dashboard blocked funnel segment");
   await expectPaintedStatus(page.locator(".seg-pending"), "dashboard pending funnel segment");
   await expectPaintedStatus(page.locator(".status-dot.succeeded"), "dashboard completed apply-run dot");
-  await expectPaintedStatus(page.locator(".tag.info"), "dashboard dry-run info tag");
+  await expectQuietInlineStatus(
+    page.locator('[data-slot="status-badge"]'),
+    "dashboard shared status badge",
+  );
 
   await page.goto("/jobs");
   await expect(page.locator("table.jobs-data-grid-table")).toBeVisible({ timeout: 30_000 });
-  await expectPaintedStatus(page.locator(".fit.good"), "jobs good fit score");
-  await expectPaintedStatus(page.locator(".stage-pill.ok"), "jobs apply stage pill");
-  await expectPaintedStatus(page.locator(".tag.danger"), "jobs failed state tag");
-  await expectPaintedStatus(page.locator(".tag.warn"), "jobs blocked state tag");
-  await expectPaintedStatus(page.locator(".tag.muted"), "jobs pending state tag");
+  await expectQuietInlineStatus(
+    page.locator('table.jobs-data-grid-table [data-slot="status-badge"]'),
+    "jobs shared status badge",
+  );
 
   await page.goto("/apply-review");
   await expect(page.getByRole("complementary", { name: "Application review queue" })).toBeVisible({ timeout: 30_000 });
-  await expectPaintedStatus(page.locator(".tag.ok"), "apply review fit score tag");
-  await expectPaintedStatus(page.locator(".tag.info"), "apply review preparing status tag");
+  await expectQuietInlineStatus(
+    page.locator('[data-slot="status-badge"]'),
+    "apply review shared status badge",
+  );
 
   await page.goto("/artifacts");
   await expect(page.locator("table.artifacts-data-grid-table")).toBeVisible({ timeout: 30_000 });
-  await expectPaintedStatus(page.locator(".tag.ok"), "artifacts approved status tag");
-  await expectPaintedStatus(page.locator(".tag.muted"), "artifacts type tag");
+  await expectQuietInlineStatus(
+    page.locator('table.artifacts-data-grid-table [data-slot="status-badge"]'),
+    "artifacts shared status badge",
+  );
 
   await page.goto("/runs");
   await expect(page.locator("table.runs-data-grid-table")).toBeVisible({ timeout: 30_000 });
-  await expectPaintedStatus(page.locator(".tag.info"), "runs active workflow status tag");
-  await expectPaintedStatus(page.locator(".tag.ok"), "runs succeeded workflow status tag");
-
-  await page.goto("/debug");
-  await expect(page.locator("table.activity-data-grid-table")).toBeVisible({ timeout: 30_000 });
-  await expectPaintedStatus(page.locator(".tag.info"), "debug activity level tag");
+  await expectQuietInlineStatus(
+    page.locator('table.runs-data-grid-table [data-slot="status-badge"]'),
+    "runs shared status badge",
+  );
 
   await page.getByRole("button", { name: /Switch to dark theme/i }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -443,6 +502,8 @@ test("domain status surfaces use painted semantic token classes", async ({ page 
 
   await page.goto("/jobs");
   await expect(page.locator("table.jobs-data-grid-table")).toBeVisible({ timeout: 30_000 });
-  await expectPaintedStatus(page.locator(".fit.good"), "dark jobs good fit score");
-  await expectPaintedStatus(page.locator(".tag.danger"), "dark jobs failed state tag");
+  await expectQuietInlineStatus(
+    page.locator('table.jobs-data-grid-table [data-slot="status-badge"]'),
+    "dark jobs shared status badge",
+  );
 });

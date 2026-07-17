@@ -10,7 +10,7 @@ implementation:
   icons: "Tabler"
 
 colors:
-  background: "oklch(0.972 0 0)"
+  background: "oklch(0.972 0.008 293)"
   foreground: "oklch(0.145 0 0)"
   card: "oklch(1 0 0)"
   card-foreground: "oklch(0.145 0 0)"
@@ -20,29 +20,31 @@ colors:
   primary-foreground: "oklch(0.985 0.006 293)"
   secondary: "oklch(0.94 0 0)"
   secondary-foreground: "oklch(0.205 0 0)"
-  muted: "oklch(0.948 0 0)"
-  muted-foreground: "oklch(0.49 0 0)"
+  muted: "oklch(0.948 0.01 293)"
+  muted-foreground: "oklch(0.49 0.015 293)"
   accent: "oklch(0.943 0.029 294.588)"
   accent-foreground: "oklch(0.541 0.281 293.009)"
   destructive: "oklch(0.577 0.245 27.325)"
-  border: "oklch(0.89 0 0)"
-  input: "oklch(0.82 0 0)"
+  border: "oklch(0.89 0.012 293)"
+  input: "oklch(0.82 0.014 293)"
   ring: "oklch(0.541 0.281 293.009)"
   success: "oklch(0.54 0.13 145)"
   warning: "oklch(0.72 0.15 72)"
   status-info: "oklch(0.56 0.12 242)"
-  sidebar: "oklch(0.99 0 0)"
+  sidebar: "oklch(0.982 0.014 294.588)"
   sidebar-foreground: "oklch(0.145 0 0)"
   sidebar-primary: "oklch(0.541 0.281 293.009)"
   sidebar-primary-foreground: "oklch(0.985 0.006 293)"
   sidebar-accent: "oklch(0.943 0.029 294.588)"
   sidebar-accent-foreground: "oklch(0.541 0.281 293.009)"
-  sidebar-border: "oklch(0.89 0 0)"
+  sidebar-border: "oklch(0.88 0.018 293)"
 
 darkColors:
-  background: "oklch(0.145 0 0)"
+  background: "oklch(0.145 0.012 293)"
   foreground: "oklch(0.985 0 0)"
   card: "oklch(0.185 0 0)"
+  muted: "oklch(0.269 0.016 293)"
+  muted-foreground: "oklch(0.708 0.012 293)"
   primary: "oklch(0.702 0.183 293.541)"
   primary-foreground: "oklch(0.21 0.03 293.5)"
   border: "oklch(1 0 0 / 10%)"
@@ -50,6 +52,7 @@ darkColors:
   success: "oklch(0.66 0.14 145)"
   warning: "oklch(0.8 0.15 76)"
   status-info: "oklch(0.72 0.13 242)"
+  sidebar: "oklch(0.19 0.024 293.5)"
 
 typography:
   display:
@@ -132,7 +135,7 @@ components:
     padding: 12px
   side-rail-active-item:
     backgroundColor: transparent
-    textColor: "{colors.foreground}"
+    textColor: "{colors.sidebar-accent-foreground}"
     indicatorColor: "{colors.primary}"
     rounded: "{rounded.none}"
   card:
@@ -163,7 +166,7 @@ components:
   tab:
     backgroundColor: transparent
     textColor: "{colors.muted-foreground}"
-    activeTextColor: "{colors.foreground}"
+    activeTextColor: "{colors.accent-foreground}"
     activeRuleColor: "{colors.primary}"
     rounded: "{rounded.none}"
   status:
@@ -213,7 +216,7 @@ Non-negotiables:
 | Label/meta | 13–15px, stronger weight or mono where appropriate |
 | Table density | 32px compact, 40px regular, 48px comfy |
 | Control density | 28px compact, 32px regular, 36px comfy for density-aware shared controls |
-| Canvas | neutral `oklch(0.972 0 0)` |
+| Canvas | violet-neutral `oklch(0.972 0.008 293)` |
 | Surface | white `oklch(1 0 0)` |
 | Ink | near-black `oklch(0.145 0 0)` |
 | Primary/focus | violet `oklch(0.541 0.281 293.009)` |
