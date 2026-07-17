@@ -1424,11 +1424,7 @@ input[type="radio"] {
 .privacy-box {
   border: 1px solid color-mix(in oklch, var(--primary) 34%, var(--border));
   border-radius: var(--radius);
-  background: linear-gradient(
-    135deg,
-    var(--card) 0%,
-    color-mix(in oklch, var(--primary) 7%, var(--card)) 100%
-  );
+  background: linear-gradient(135deg, var(--card) 0%, color-mix(in oklch, var(--primary) 7%, var(--card)) 100%);
   padding: 16px 18px;
 }
 
@@ -4014,7 +4010,9 @@ input[type="radio"] {
 
 .saved-table-rule-editor {
   display: grid;
-  grid-template-columns: minmax(120px, 1.1fr) minmax(88px, 0.75fr) minmax(120px, 1fr) minmax(88px, 0.75fr) auto;
+  grid-template-columns:
+    minmax(120px, 1.1fr) minmax(88px, 0.75fr) minmax(120px, 1fr)
+    minmax(88px, 0.75fr) auto;
   align-items: end;
   gap: 8px;
 }
@@ -5649,7 +5647,7 @@ input[type="radio"] {
 
 .job-audit-triage {
   display: grid;
-  gap: 14px;
+  gap: var(--jh-surface-gap);
 }
 
 .job-audit-triage-head {
@@ -5666,13 +5664,13 @@ input[type="radio"] {
 
 .job-audit-triage-grid {
   display: grid;
-  gap: 18px;
+  gap: var(--jh-surface-gap);
 }
 
 .job-audit-triage-column {
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: var(--jh-surface-gap);
   min-width: 0;
 }
 
@@ -7836,13 +7834,13 @@ input[type="radio"] {
   .apply-review-selected-head,
   .apply-review-workspace,
   .compensation-panels,
-	  .compensation-detail-grid,
-	  .import-panel,
-	  .resume-template-shell,
-	  .credential-row,
-	  .credential-row-form {
-	    grid-template-columns: 1fr;
-	  }
+  .compensation-detail-grid,
+  .import-panel,
+  .resume-template-shell,
+  .credential-row,
+  .credential-row-form {
+    grid-template-columns: 1fr;
+  }
 
   .provider-mode-fields,
   .codex-auth-options {
@@ -7954,14 +7952,14 @@ input[type="radio"] {
     width: min(100vw, 760px);
   }
 
-	  .artifact-detail-layout {
-	    grid-template-columns: 1fr;
-	  }
+  .artifact-detail-layout {
+    grid-template-columns: 1fr;
+  }
 
-	  .resume-template-plate-editor {
-	    height: min(68dvh, 680px);
-	    min-height: 460px;
-	  }
+  .resume-template-plate-editor {
+    height: min(68dvh, 680px);
+    min-height: 460px;
+  }
 
   .artifact-detail-sidebar {
     border-right: 0;

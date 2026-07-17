@@ -28,7 +28,7 @@
 }
 
 .route-workspace__header {
-  padding: 16px 18px;
+  padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
   border-bottom: 1px solid var(--border);
 }
 
@@ -60,7 +60,7 @@
 .route-workspace__content,
 .route-workspace__inspector {
   min-width: 0;
-  padding: 16px;
+  padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
 }
 
 .route-workspace__navigation {
@@ -85,7 +85,7 @@
 .job-run-workspace__header {
   display: grid;
   min-width: 0;
-  gap: 12px 16px;
+  gap: var(--jh-surface-gap);
   align-items: start;
 }
 
@@ -106,7 +106,7 @@
   display: grid;
   min-width: 0;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--jh-surface-gap);
   align-items: start;
 }
 
@@ -143,16 +143,16 @@
 .job-detail-top-actions {
   align-self: stretch;
   justify-content: space-between;
-  gap: 10px 18px;
+  gap: var(--jh-surface-gap);
   border: 0;
   border-top: 1px solid var(--border);
-  padding: 14px 0 0;
+  padding: var(--jh-surface-gap) 0 0;
 }
 
 .job-detail-top-actions .action-panel {
   display: flex;
   flex: 1 1 48rem;
-  gap: 10px 18px;
+  gap: var(--jh-surface-gap);
   min-width: 0;
   margin: 0;
   border: 0;
@@ -165,7 +165,7 @@
 .job-detail-handoff-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: calc(var(--jh-surface-gap) * 0.7);
   align-items: center;
   min-width: 0;
 }
@@ -216,7 +216,7 @@
 .workflow-run-workspace__timeline,
 .job-run-workspace__inspector > .section,
 .job-run-workspace__timeline {
-  padding: 16px 18px;
+  padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
 }
 
 .artifact-detail-workspace__header,
@@ -265,7 +265,7 @@
 }
 
 .artifact-comparison-picker {
-  margin-bottom: 12px;
+  margin-bottom: var(--jh-surface-gap);
 }
 
 .contact-detail-workspace .route-workspace__content {
@@ -273,8 +273,8 @@
 }
 
 .activity-detail-workspace__inspector {
-  gap: 12px;
-  padding: 16px;
+  gap: var(--jh-surface-gap);
+  padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
 }
 
 .activity-detail-workspace__inspector h2 {

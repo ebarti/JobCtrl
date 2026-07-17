@@ -133,7 +133,12 @@
   --jh-field-gap: 7px;
   --jh-field-grid-row-gap: 14px;
   --jh-field-grid-column-gap: 16px;
-  --jh-control-height: 32px;
+  --jh-control-height: 36px;
+  --jh-card-spacing: 20px;
+  --jh-card-spacing-sm: 16px;
+  --jh-section-padding-block: 16px;
+  --jh-section-padding-inline: 18px;
+  --jh-surface-gap: 14px;
   font-size: var(--jh-font-size-body);
   line-height: var(--jh-line-height-body);
 }
@@ -145,7 +150,12 @@
   --jh-field-gap: 5px;
   --jh-field-grid-row-gap: 10px;
   --jh-field-grid-column-gap: 12px;
-  --jh-control-height: 28px;
+  --jh-control-height: 32px;
+  --jh-card-spacing: 16px;
+  --jh-card-spacing-sm: 12px;
+  --jh-section-padding-block: 12px;
+  --jh-section-padding-inline: 14px;
+  --jh-surface-gap: 10px;
 }
 
 :where(.app-shell[data-density="comfy"]) {
@@ -155,7 +165,12 @@
   --jh-field-gap: 10px;
   --jh-field-grid-row-gap: 18px;
   --jh-field-grid-column-gap: 20px;
-  --jh-control-height: 36px;
+  --jh-control-height: 40px;
+  --jh-card-spacing: 24px;
+  --jh-card-spacing-sm: 20px;
+  --jh-section-padding-block: 20px;
+  --jh-section-padding-inline: 22px;
+  --jh-surface-gap: 18px;
 }
 
 /*
@@ -203,6 +218,37 @@
 }
 
 .app-shell[data-density]
-  :where([data-slot="input-group"], [data-slot="select-trigger"]) {
+  :where(
+    .jh-control-default,
+    [data-slot="input-group"],
+    [data-slot="select-trigger"][data-size="default"]
+  ) {
   height: var(--jh-control-height);
+  min-height: var(--jh-control-height);
+}
+
+.app-shell[data-density]
+  :where(.jh-control-sm, [data-slot="select-trigger"][data-size="sm"]) {
+  height: calc(var(--jh-control-height) - 4px);
+  min-height: calc(var(--jh-control-height) - 4px);
+}
+
+.app-shell[data-density] .jh-control-lg {
+  height: calc(var(--jh-control-height) + 4px);
+  min-height: calc(var(--jh-control-height) + 4px);
+}
+
+.app-shell[data-density] .jh-control-icon {
+  width: var(--jh-control-height);
+  height: var(--jh-control-height);
+  min-width: var(--jh-control-height);
+  min-height: var(--jh-control-height);
+}
+
+.app-shell[data-density] [data-slot="card"] {
+  --card-spacing: var(--jh-card-spacing);
+}
+
+.app-shell[data-density] [data-slot="card"][data-size="sm"] {
+  --card-spacing: var(--jh-card-spacing-sm);
 }

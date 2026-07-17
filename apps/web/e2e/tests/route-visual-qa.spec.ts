@@ -622,6 +622,53 @@ async function setDensity(page: Page, density: Density): Promise<void> {
     .toBe(DENSITY_TOKENS[density]);
 }
 
+interface DensityGeometry {
+  readonly actionHeight: number;
+  readonly densityControlHeight: number;
+  readonly headerPaddingTop: number;
+  readonly sectionPaddingTop: number;
+  readonly titleFontSize: string;
+}
+
+async function readJobDetailDensityGeometry(
+  page: Page,
+  density: Density,
+): Promise<DensityGeometry> {
+  await setDensity(page, density);
+
+  const densityControl = page.getByRole("button", {
+    name: density,
+    exact: true,
+  });
+  const action = page.locator(".job-detail-top-actions .jh-control").first();
+  const header = page.locator(".route-workspace__header");
+  const section = page
+    .locator(".job-detail-workspace__content > .section")
+    .first();
+  const title = page.locator(".job-overview h1");
+
+  await expect(action, `${density} job action`).toBeVisible();
+  await expect(section, `${density} job section`).toBeVisible();
+
+  return {
+    actionHeight: await action.evaluate(
+      (element) => element.getBoundingClientRect().height,
+    ),
+    densityControlHeight: await densityControl.evaluate(
+      (element) => element.getBoundingClientRect().height,
+    ),
+    headerPaddingTop: await header.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).paddingTop),
+    ),
+    sectionPaddingTop: await section.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).paddingTop),
+    ),
+    titleFontSize: await title.evaluate(
+      (element) => getComputedStyle(element).fontSize,
+    ),
+  };
+}
+
 async function expectTableRowsVisible(
   page: Page,
   tableSelector: string,
@@ -755,6 +802,37 @@ test("@mobile key product routes keep navigation, content, and primary controls 
     await expect(navigation).toBeHidden();
     await expectNoDocumentInlineOverflow(page);
   }
+});
+
+test("density modes visibly change shared job-detail geometry without shrinking type", async ({
+  page,
+}) => {
+  await page.goto(
+    `/jobs/${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}?${JOB_FILTER_PARAMS}`,
+  );
+  await expect(page.getByRole("article", { name: "Job details" })).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const compact = await readJobDetailDensityGeometry(page, "compact");
+  const regular = await readJobDetailDensityGeometry(page, "regular");
+  const comfy = await readJobDetailDensityGeometry(page, "comfy");
+
+  expect(compact.densityControlHeight).toBeLessThan(
+    regular.densityControlHeight,
+  );
+  expect(regular.densityControlHeight).toBeLessThan(comfy.densityControlHeight);
+  expect(compact.actionHeight).toBeLessThan(regular.actionHeight);
+  expect(regular.actionHeight).toBeLessThan(comfy.actionHeight);
+  expect(compact.headerPaddingTop).toBeLessThan(regular.headerPaddingTop);
+  expect(regular.headerPaddingTop).toBeLessThan(comfy.headerPaddingTop);
+  expect(compact.sectionPaddingTop).toBeLessThan(regular.sectionPaddingTop);
+  expect(regular.sectionPaddingTop).toBeLessThan(comfy.sectionPaddingTop);
+  expect(
+    new Set([compact.titleFontSize, regular.titleFontSize, comfy.titleFontSize])
+      .size,
+    "density must not reduce readable typography",
+  ).toBe(1);
 });
 
 test("density modes, focus rings, filters, forms, and destructive controls remain usable", async ({
