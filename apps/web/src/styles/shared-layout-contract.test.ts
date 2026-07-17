@@ -235,6 +235,15 @@ describe("shared typography and layout contract", () => {
       /\.route-workspace__grid > \*\s*\{[^}]*min-width: 0;/s,
     );
     expect(workspaceCss).toMatch(
+      /\.job-detail-workspace__header\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\);/s,
+    );
+    expect(workspaceCss).toMatch(
+      /\.job-detail-top-actions \.action-panel\s*\{[^}]*border: 0;[^}]*background: transparent;[^}]*padding: 0;/s,
+    );
+    expect(workspaceCss).toMatch(
+      /\.job-action-group,[\s\S]*?\.job-detail-handoff-actions\s*\{[^}]*flex-wrap: wrap;[^}]*min-width: 0;/s,
+    );
+    expect(workspaceCss).toMatch(
       /@media \(max-width: 1000px\)[\s\S]*\.route-workspace__grid[\s\S]*grid-template-columns: minmax\(0, 1fr\);/,
     );
     expect(pipelinesCss).toMatch(

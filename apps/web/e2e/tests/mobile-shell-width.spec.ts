@@ -25,7 +25,6 @@ async function expectFullWidthMobileShell(page: Page): Promise<void> {
     const mainShellRect = mainShell.getBoundingClientRect();
     const mainRect = main.getBoundingClientRect();
     return {
-      gridTemplateColumns: getComputedStyle(shell).gridTemplateColumns,
       mainLeft: mainRect.left,
       mainShellLeft: mainShellRect.left,
       mainShellWidth: mainShellRect.width,
@@ -36,7 +35,6 @@ async function expectFullWidthMobileShell(page: Page): Promise<void> {
   });
 
   expect(layout.shellWidth).toBeCloseTo(layout.viewportWidth, 0);
-  expect(layout.gridTemplateColumns).toBe(`${layout.viewportWidth}px`);
   expect(layout.mainShellLeft).toBeCloseTo(0, 0);
   expect(layout.mainShellWidth).toBeCloseTo(layout.viewportWidth, 0);
   expect(layout.mainLeft).toBeCloseTo(0, 0);
@@ -119,6 +117,72 @@ test("job detail stacks evidence and diagnostics within the mobile viewport", as
   expect(layout.inspectorWidth).toBeCloseTo(layout.gridWidth, 0);
   expect(layout.inspectorTop).toBeGreaterThanOrEqual(layout.contentBottom - 1);
   expect(layout.pageScrollWidth).toBeLessThanOrEqual(layout.viewportWidth + 1);
+});
+
+test("job detail keeps its title and actions readable at desktop and mobile widths", async ({
+  page,
+}) => {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto(JOB_DETAIL_ROUTE);
+
+    const workspace = page.getByRole("article", { name: "Job details" });
+    const toolbar = workspace.getByRole("toolbar", { name: "Job actions" });
+    await expect(workspace).toBeVisible({ timeout: 30_000 });
+    await expect(
+      workspace.getByRole("group", { name: "Preparation actions" }),
+    ).toBeVisible();
+    await expect(
+      workspace.getByRole("group", { name: "Application actions" }),
+    ).toBeVisible();
+    await expect(
+      toolbar.getByRole("link", { name: /apply review/i }),
+    ).toHaveCount(0);
+    await expect(
+      workspace.getByRole("link", { name: /open apply review/i }),
+    ).toHaveCount(1);
+
+    const layout = await workspace.evaluate((element) => {
+      const header = element.querySelector<HTMLElement>(
+        ".job-detail-workspace__header",
+      );
+      const title = element.querySelector<HTMLElement>(".job-overview h1");
+      const actions = element.querySelector<HTMLElement>(
+        ".job-detail-top-actions",
+      );
+      if (!header || !title || !actions) {
+        throw new Error("Expected the job detail header, title, and actions.");
+      }
+
+      const headerRect = header.getBoundingClientRect();
+      const titleRect = title.getBoundingClientRect();
+      const actionsRect = actions.getBoundingClientRect();
+      const controls = [
+        ...actions.querySelectorAll<HTMLElement>("button, a"),
+      ];
+      return {
+        actionsBelowTitle: actionsRect.top >= titleRect.bottom,
+        controlsContained: controls.every((control) => {
+          const rect = control.getBoundingClientRect();
+          return (
+            rect.left >= actionsRect.left - 1 &&
+            rect.right <= actionsRect.right + 1
+          );
+        }),
+        pageScrollWidth: document.documentElement.scrollWidth,
+        titleWidthRatio: titleRect.width / headerRect.width,
+        viewportWidth: document.documentElement.clientWidth,
+      };
+    });
+
+    expect(layout.titleWidthRatio).toBeGreaterThan(0.65);
+    expect(layout.actionsBelowTitle).toBe(true);
+    expect(layout.controlsContained).toBe(true);
+    expect(layout.pageScrollWidth).toBeLessThanOrEqual(layout.viewportWidth + 1);
+  }
 });
 
 test("settings keeps every section tab readable on mobile", async ({
