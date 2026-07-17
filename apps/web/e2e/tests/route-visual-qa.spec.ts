@@ -622,6 +622,53 @@ async function setDensity(page: Page, density: Density): Promise<void> {
     .toBe(DENSITY_TOKENS[density]);
 }
 
+interface DensityGeometry {
+  readonly actionHeight: number;
+  readonly densityControlHeight: number;
+  readonly headerPaddingTop: number;
+  readonly sectionPaddingTop: number;
+  readonly titleFontSize: string;
+}
+
+async function readJobDetailDensityGeometry(
+  page: Page,
+  density: Density,
+): Promise<DensityGeometry> {
+  await setDensity(page, density);
+
+  const densityControl = page.getByRole("button", {
+    name: density,
+    exact: true,
+  });
+  const action = page.locator(".job-detail-top-actions .jh-control").first();
+  const header = page.locator(".route-workspace__header");
+  const section = page
+    .locator(".job-detail-workspace__content > .section")
+    .first();
+  const title = page.locator(".job-overview h1");
+
+  await expect(action, `${density} job action`).toBeVisible();
+  await expect(section, `${density} job section`).toBeVisible();
+
+  return {
+    actionHeight: await action.evaluate(
+      (element) => element.getBoundingClientRect().height,
+    ),
+    densityControlHeight: await densityControl.evaluate(
+      (element) => element.getBoundingClientRect().height,
+    ),
+    headerPaddingTop: await header.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).paddingTop),
+    ),
+    sectionPaddingTop: await section.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).paddingTop),
+    ),
+    titleFontSize: await title.evaluate(
+      (element) => getComputedStyle(element).fontSize,
+    ),
+  };
+}
+
 async function expectTableRowsVisible(
   page: Page,
   tableSelector: string,
@@ -757,6 +804,37 @@ test("@mobile key product routes keep navigation, content, and primary controls 
   }
 });
 
+test("density modes visibly change shared job-detail geometry without shrinking type", async ({
+  page,
+}) => {
+  await page.goto(
+    `/jobs/${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}?${JOB_FILTER_PARAMS}`,
+  );
+  await expect(page.getByRole("article", { name: "Job details" })).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const compact = await readJobDetailDensityGeometry(page, "compact");
+  const regular = await readJobDetailDensityGeometry(page, "regular");
+  const comfy = await readJobDetailDensityGeometry(page, "comfy");
+
+  expect(compact.densityControlHeight).toBeLessThan(
+    regular.densityControlHeight,
+  );
+  expect(regular.densityControlHeight).toBeLessThan(comfy.densityControlHeight);
+  expect(compact.actionHeight).toBeLessThan(regular.actionHeight);
+  expect(regular.actionHeight).toBeLessThan(comfy.actionHeight);
+  expect(compact.headerPaddingTop).toBeLessThan(regular.headerPaddingTop);
+  expect(regular.headerPaddingTop).toBeLessThan(comfy.headerPaddingTop);
+  expect(compact.sectionPaddingTop).toBeLessThan(regular.sectionPaddingTop);
+  expect(regular.sectionPaddingTop).toBeLessThan(comfy.sectionPaddingTop);
+  expect(
+    new Set([compact.titleFontSize, regular.titleFontSize, comfy.titleFontSize])
+      .size,
+    "density must not reduce readable typography",
+  ).toBe(1);
+});
+
 test("density modes, focus rings, filters, forms, and destructive controls remain usable", async ({
   page,
 }) => {
@@ -877,6 +955,177 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
     100,
   );
 });
+test("Profile and Preferences subjects share one expandable-card hierarchy", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/profile");
+  await expect(
+    page.getByRole("heading", { name: "Profile", level: 1 }),
+  ).toBeVisible({ timeout: 30_000 });
+
+  const sections = page.locator(".profile-sections > .profile-disclosure");
+  await expect(sections).toHaveCount(6);
+
+  const cardStyles = await sections.evaluateAll((elements) =>
+    elements.map((element) => {
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return {
+        backgroundColor: style.backgroundColor,
+        borderRadius: style.borderRadius,
+        borderStyles: [
+          style.borderTopStyle,
+          style.borderRightStyle,
+          style.borderBottomStyle,
+          style.borderLeftStyle,
+        ],
+        borderWidths: [
+          style.borderTopWidth,
+          style.borderRightWidth,
+          style.borderBottomWidth,
+          style.borderLeftWidth,
+        ],
+        bottom: rect.bottom,
+        top: rect.top,
+      };
+    }),
+  );
+
+  for (const [index, style] of cardStyles.entries()) {
+    expectPainted(
+      style.backgroundColor,
+      `Profile card ${index + 1} background`,
+    );
+    expect(style.borderStyles, `Profile card ${index + 1} borders`).toEqual([
+      "solid",
+      "solid",
+      "solid",
+      "solid",
+    ]);
+    expect(
+      style.borderWidths,
+      `Profile card ${index + 1} border widths`,
+    ).toEqual(["1px", "1px", "1px", "1px"]);
+    expect(style.borderRadius, `Profile card ${index + 1} radius`).toBe("8px");
+    if (index > 0) {
+      expect(
+        style.top - cardStyles[index - 1]!.bottom,
+        `Profile card ${index + 1} spacing`,
+      ).toBe(16);
+    }
+  }
+
+  const baselineSection = sections.filter({
+    has: page.getByRole("heading", { name: "Resume baseline" }),
+  });
+  const baselineTrigger = baselineSection.getByRole("button", {
+    name: /Resume baseline/i,
+  });
+  const baselineContent = baselineSection.locator(
+    '[data-slot="collapsible-content"]',
+  );
+  await expect(baselineContent).toBeVisible();
+  await baselineTrigger.click();
+  await expect(baselineContent).toBeHidden();
+  await baselineTrigger.click();
+  await expect(baselineContent).toBeVisible();
+
+  await page.goto("/preferences");
+  await expect(
+    page.getByRole("heading", { name: "Preferences", level: 1 }),
+  ).toBeVisible({ timeout: 30_000 });
+
+  const preferenceSections = page.locator(".profile-sections > .form-section");
+  await expect(preferenceSections).toHaveCount(3);
+  await expect(page.locator(".profile-sections--card-stack")).toHaveCount(1);
+  await expect(page.locator(".profile-sections--resume-data")).toHaveCount(0);
+
+  const preferenceHierarchy = await page
+    .locator(".profile-sections")
+    .evaluate((element) => {
+      const sections = Array.from(element.children).filter((child) =>
+        child.classList.contains("form-section"),
+      );
+      return {
+        gap: getComputedStyle(element).gap,
+        sections: sections.map((section) => {
+          const style = getComputedStyle(section);
+          return {
+            backgroundColor: style.backgroundColor,
+            borderRadius: style.borderRadius,
+            borderStyles: [
+              style.borderTopStyle,
+              style.borderRightStyle,
+              style.borderBottomStyle,
+              style.borderLeftStyle,
+            ],
+            borderWidths: [
+              style.borderTopWidth,
+              style.borderRightWidth,
+              style.borderBottomWidth,
+              style.borderLeftWidth,
+            ],
+            bottom: section.getBoundingClientRect().bottom,
+            top: section.getBoundingClientRect().top,
+          };
+        }),
+      };
+    });
+
+  expect(preferenceHierarchy.gap).toBe("16px");
+  for (const [index, section] of preferenceHierarchy.sections.entries()) {
+    expectPainted(
+      section.backgroundColor,
+      `Preferences card ${index + 1} background`,
+    );
+    expect(
+      section.borderStyles,
+      `Preferences card ${index + 1} borders`,
+    ).toEqual(["solid", "solid", "solid", "solid"]);
+    expect(
+      section.borderWidths,
+      `Preferences card ${index + 1} border widths`,
+    ).toEqual(["1px", "1px", "1px", "1px"]);
+    expect(section.borderRadius, `Preferences card ${index + 1} radius`).toBe(
+      "8px",
+    );
+    if (index > 0) {
+      expect(
+        section.top - preferenceHierarchy.sections[index - 1]!.bottom,
+        `Preferences card ${index + 1} spacing`,
+      ).toBe(16);
+    }
+  }
+
+  const tailoringSection = preferenceSections.filter({
+    has: page.getByRole("heading", { name: "Tailoring controls" }),
+  });
+  const tailoringTrigger = tailoringSection.getByRole("button", {
+    name: /Tailoring controls/i,
+  });
+  const tailoringContent = tailoringSection.locator(
+    '[data-slot="collapsible-content"]',
+  );
+  await expect(tailoringContent).toBeVisible();
+  await tailoringTrigger.click();
+  await expect(tailoringContent).toBeHidden();
+  await tailoringTrigger.click();
+  await expect(tailoringContent).toBeVisible();
+
+  const resumeStyleSection = preferenceSections.filter({
+    has: page.getByRole("heading", { name: "Resume style" }),
+  });
+  const resumeStyleTrigger = resumeStyleSection.getByRole("button", {
+    name: /Resume style/i,
+  });
+  const resumeStyleContent = resumeStyleSection.locator(
+    '[data-slot="collapsible-content"]',
+  );
+  await expect(resumeStyleContent).toBeHidden();
+  await resumeStyleTrigger.click();
+  await expect(resumeStyleContent).toBeVisible();
+});
 
 test("detail workspaces open with seeded data and preserve route navigation", async ({
   page,
@@ -977,6 +1226,29 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
   await expect(decisionCard).toBeVisible({ timeout: 30_000 });
   await expect(decisionCard).toContainText("Tailored resume missing");
   await expect(decisionCard).toContainText("tailor failed");
+  await expect(
+    decisionCard.getByRole("combobox", { name: "Resume template" }),
+  ).toHaveCount(0);
+
+  const materialsCard = page.locator(".apply-review-materials-pane");
+  const templateControl = materialsCard.locator(
+    ".apply-review-resume-template-control",
+  );
+  await expect(materialsCard).toBeVisible();
+  await expect(
+    materialsCard.getByRole("combobox", { name: "Resume template" }),
+  ).toBeVisible();
+  await expect(templateControl).toBeVisible();
+  expect(
+    await templateControl.evaluate((element) => {
+      const audit = element.parentElement?.querySelector(
+        ".apply-review-resume-review",
+      );
+      if (!(audit instanceof HTMLElement)) return false;
+      return element.getBoundingClientRect().top <= audit.getBoundingClientRect().top;
+    }),
+    "resume template control should lead directly into the resume review surface",
+  ).toBe(true);
 
   const layout = await decisionCard.evaluate((element) => {
     const context = element.querySelector(".apply-review-selected-facts");

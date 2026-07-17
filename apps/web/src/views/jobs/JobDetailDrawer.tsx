@@ -59,7 +59,8 @@ function canRunCurrentStage(stage: StageSummary | undefined): boolean {
 }
 
 function evidenceReferenceExcerpt(entry: EvidenceMapEntry): string | null {
-  const excerpt = entry.story?.outcome ?? entry.story?.action ?? entry.story?.scope ?? null;
+  const excerpt =
+    entry.story?.outcome ?? entry.story?.action ?? entry.story?.scope ?? null;
   return excerpt && excerpt !== entry.title ? excerpt : null;
 }
 
@@ -116,7 +117,9 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
     return entries;
   }, [evidenceMap.data?.entries]);
   const resolveEvidenceReference = useCallback(
-    (evidenceId: string): EmployerAnalysisEvidenceReference | null | undefined => {
+    (
+      evidenceId: string,
+    ): EmployerAnalysisEvidenceReference | null | undefined => {
       if (evidenceMap.isPending) return undefined;
       const entry = evidenceEntriesById.get(evidenceId);
       if (!entry) return null;
@@ -169,22 +172,33 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   canRetailor={detail.artifacts.length > 0}
                   applyApprovalRequired={applyApprovalRequired}
                 />
-                <Link
-                  aria-label={`Open Apply Review for ${detail.job.title}`}
-                  className={buttonVariants({ size: "sm", variant: "outline" })}
-                  search={{ jobKey: detail.job.jobKey }}
-                  to="/apply-review"
+                <div
+                  className="job-detail-handoff-actions"
+                  aria-label="Related job workspaces"
                 >
-                  Open Apply Review
-                </Link>
-                <Link
-                  aria-label={`Open evidence map for ${detail.job.title}`}
-                  className={buttonVariants({ size: "sm", variant: "outline" })}
-                  search={{ q: "", entry: "", job: detail.job.jobKey }}
-                  to="/evidence-map"
-                >
-                  Evidence map
-                </Link>
+                  <Link
+                    aria-label={`Open Apply Review for ${detail.job.title}`}
+                    className={buttonVariants({
+                      size: "sm",
+                      variant: "default",
+                    })}
+                    search={{ jobKey: detail.job.jobKey }}
+                    to="/apply-review"
+                  >
+                    Open Apply Review
+                  </Link>
+                  <Link
+                    aria-label={`Open evidence map for ${detail.job.title}`}
+                    className={buttonVariants({
+                      size: "sm",
+                      variant: "outline",
+                    })}
+                    search={{ q: "", entry: "", job: detail.job.jobKey }}
+                    to="/evidence-map"
+                  >
+                    Evidence map
+                  </Link>
+                </div>
               </div>
             </div>
           }

@@ -1,6 +1,6 @@
 import { IconMenu2, IconSearch } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useDensity } from "../hooks/useDensity.js";
 import type { Density } from "../stores/ui-preferences.js";
@@ -26,13 +26,18 @@ import { ThemeToggle } from "./ThemeToggle.js";
 
 const DENSITY_OPTIONS: ReadonlyArray<Density> = ["compact", "regular", "comfy"];
 
-export function Topbar() {
+interface TopbarProps {
+  readonly navigationToggle?: ReactNode;
+}
+
+export function Topbar({ navigationToggle }: TopbarProps = {}) {
   const { density, setDensity } = useDensity();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [navOpen, setNavOpen] = useState(false);
   return (
     <header className="topbar">
+      {navigationToggle}
       <Sheet open={navOpen} onOpenChange={setNavOpen}>
         <SheetTrigger
           render={
@@ -46,7 +51,11 @@ export function Topbar() {
         >
           <IconMenu2 aria-hidden="true" />
         </SheetTrigger>
-        <SheetContent side="left" aria-describedby={undefined}>
+        <SheetContent
+          className="bg-sidebar text-sidebar-foreground"
+          side="left"
+          aria-describedby={undefined}
+        >
           <SheetHeader>
             <SheetTitle>
               <BrandMark showTagline />
@@ -96,6 +105,7 @@ export function Topbar() {
       </ToggleGroup>
       <ThemeToggle />
       <ConnectionStatusPill />
+      <LegalNotice className="legal-notice legal-notice--topbar" />
     </header>
   );
 }

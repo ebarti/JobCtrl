@@ -10,6 +10,7 @@ import { axe } from "jest-axe";
 import { describe, expect, it } from "vitest";
 
 import { SideRail } from "./SideRail.js";
+import { SidebarProvider } from "../ui/sidebar.js";
 
 const NAV_PATHS = [
   "/dashboard",
@@ -28,10 +29,22 @@ const NAV_PATHS = [
   "/settings",
 ] as const;
 
+function TestRail() {
+  return (
+    <SidebarProvider>
+      <SideRail />
+    </SidebarProvider>
+  );
+}
+
 function renderRail() {
-  const rootRoute = createRootRoute({ component: SideRail });
+  const rootRoute = createRootRoute({ component: TestRail });
   const childRoutes = NAV_PATHS.map((path) =>
-    createRoute({ getParentRoute: () => rootRoute, path, component: () => null }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path,
+      component: () => null,
+    }),
   );
   const router = createRouter({
     routeTree: rootRoute.addChildren(childRoutes),
@@ -44,7 +57,9 @@ describe("<SideRail> accessibility", () => {
   it("has no axe violations for the grouped navigation rail", async () => {
     const view = renderRail();
     await waitFor(() =>
-      expect(screen.getByRole("navigation", { name: "Main navigation" })).toBeInTheDocument(),
+      expect(
+        screen.getByRole("navigation", { name: "Main navigation" }),
+      ).toBeInTheDocument(),
     );
 
     expect(await axe(view.container)).toHaveNoViolations();

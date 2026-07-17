@@ -1336,7 +1336,15 @@ export function StructuredProfileEditor({
   const showProvinceStateField = isUnitedStatesAddressCountry(textAt(profile, "personal.country"));
 
   return (
-    <div className="profile-sections">
+    <div
+      className={
+        mode === "profile"
+          ? "profile-sections profile-sections--card-stack profile-sections--resume-data"
+          : mode === "preferences"
+            ? "profile-sections profile-sections--card-stack"
+            : "profile-sections"
+      }
+    >
       {mode === "profile" ? (
         <>
           <DisclosureSection

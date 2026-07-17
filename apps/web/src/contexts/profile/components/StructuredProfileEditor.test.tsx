@@ -83,6 +83,26 @@ function storedValueAt(profileText: string, path: string) {
 }
 
 describe("<StructuredProfileEditor>", () => {
+  it("marks profile and preferences disclosure subjects as equal card stacks", () => {
+    const { container, rerender } = render(<StatefulEditor mode="profile" />);
+
+    expect(
+      container.querySelector(".profile-sections--card-stack"),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector(".profile-sections--resume-data"),
+    ).toBeInTheDocument();
+
+    rerender(<StatefulEditor mode="preferences" />);
+
+    expect(
+      container.querySelector(".profile-sections--card-stack"),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector(".profile-sections--resume-data"),
+    ).not.toBeInTheDocument();
+  });
+
   it("round-trips persisted Yes/No preferences through accessible checkboxes", async () => {
     const user = userEvent.setup();
     const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));

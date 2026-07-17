@@ -1,6 +1,5 @@
 import type { JSX } from "react";
 import type { Stage } from "@jobctrl/contracts";
-import { Link } from "@tanstack/react-router";
 
 import { ApplyButton } from "../../apply/components/ApplyButton.js";
 import { CancelApplyButton } from "../../apply/components/CancelApplyButton.js";
@@ -13,6 +12,7 @@ import { MarkAppliedButton } from "./MarkAppliedButton.js";
 import { MarkSkippedButton } from "./MarkSkippedButton.js";
 import { RetryStageButton } from "./RetryStageButton.js";
 import { RunJobStageButton } from "./RunJobStageButton.js";
+import { buttonVariants } from "../../../shared/ui/button.js";
 
 export interface JobActionsProps {
   jobId: string;
@@ -33,33 +33,73 @@ export function JobActions({
 }: JobActionsProps): JSX.Element {
   return (
     <div className="action-panel" role="toolbar" aria-label="Job actions">
-      {canRetryStage ? (
-        <RetryStageButton
+      <div
+        className="job-action-group"
+        role="group"
+        aria-label="Preparation actions"
+      >
+        {canRetryStage ? (
+          <RetryStageButton
+            className={buttonVariants({ size: "sm", variant: "default" })}
+            jobId={jobId}
+            stage={currentStage}
+            runAfter={shouldRunAfterRetry(currentStage)}
+          />
+        ) : null}
+        <RunJobStageButton
+          className={buttonVariants({ size: "sm", variant: "outline" })}
+          disabled={!canRunCurrentStage}
           jobId={jobId}
           stage={currentStage}
-          runAfter={shouldRunAfterRetry(currentStage)}
         />
-      ) : null}
-      <RunJobStageButton
-        disabled={!canRunCurrentStage}
-        jobId={jobId}
-        stage={currentStage}
-      />
-      <CancelStageButton jobId={jobId} stage={currentStage} />
-      <RescoreJobButton jobId={jobId} />
-      <GenerateMaterialsButton jobId={jobId} />
-      {canRetailor ? <RetailorJobButton jobId={jobId} /> : null}
-      <DryRunButton jobId={jobId} />
-      {applyApprovalRequired ? (
-        <Link className="tab on" search={{ jobKey: jobId }} to="/apply-review">
-          apply review
-        </Link>
-      ) : (
-        <ApplyButton jobId={jobId} />
-      )}
-      <CancelApplyButton jobId={jobId} />
-      <MarkAppliedButton jobId={jobId} />
-      <MarkSkippedButton jobId={jobId} />
+        <CancelStageButton
+          className={buttonVariants({ size: "sm", variant: "warning" })}
+          jobId={jobId}
+          stage={currentStage}
+        />
+        <RescoreJobButton
+          className={buttonVariants({ size: "sm", variant: "outline" })}
+          jobId={jobId}
+        />
+        <GenerateMaterialsButton
+          className={buttonVariants({ size: "sm", variant: "default" })}
+          jobId={jobId}
+        />
+        {canRetailor ? (
+          <RetailorJobButton
+            className={buttonVariants({ size: "sm", variant: "secondary" })}
+            jobId={jobId}
+          />
+        ) : null}
+      </div>
+      <div
+        className="job-action-group"
+        role="group"
+        aria-label="Application actions"
+      >
+        <DryRunButton
+          className={buttonVariants({ size: "sm", variant: "outline" })}
+          jobId={jobId}
+        />
+        {!applyApprovalRequired ? (
+          <ApplyButton
+            className={buttonVariants({ size: "sm", variant: "default" })}
+            jobId={jobId}
+          />
+        ) : null}
+        <CancelApplyButton
+          className={buttonVariants({ size: "sm", variant: "warning" })}
+          jobId={jobId}
+        />
+        <MarkAppliedButton
+          className={buttonVariants({ size: "sm", variant: "success" })}
+          jobId={jobId}
+        />
+        <MarkSkippedButton
+          className={buttonVariants({ size: "sm", variant: "ghost" })}
+          jobId={jobId}
+        />
+      </div>
     </div>
   );
 }

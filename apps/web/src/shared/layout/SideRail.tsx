@@ -19,6 +19,7 @@ import { Link } from "@tanstack/react-router";
 
 import { useDemoWorkspace } from "../../demo/workspace/DemoWorkspaceProvider.js";
 import { cn } from "../lib/cn.js";
+import { Sidebar, SidebarRail } from "../ui/sidebar.js";
 import { BrandMark } from "./BrandMark.js";
 import { LegalNotice } from "./LegalNotice.js";
 
@@ -98,7 +99,10 @@ interface RailNavProps {
 
 export function RailNav({ className, onNavigate }: RailNavProps) {
   return (
-    <nav className={cn("side-rail__nav", className)} aria-label="Main navigation">
+    <nav
+      className={cn("side-rail__nav", className)}
+      aria-label="Main navigation"
+    >
       {NAV_GROUPS.map((group) => (
         <div
           key={group.label}
@@ -117,7 +121,12 @@ export function RailNav({ className, onNavigate }: RailNavProps) {
               title={label}
               onClick={onNavigate}
             >
-              <NavIcon className="side-rail__icon" size={18} stroke={1.75} aria-hidden="true" />
+              <NavIcon
+                className="side-rail__icon"
+                size={18}
+                stroke={1.75}
+                aria-hidden="true"
+              />
               <span className="side-rail__label">{label}</span>
             </Link>
           ))}
@@ -145,14 +154,17 @@ export function LocalModeCard() {
 
 export function SideRail() {
   return (
-    <aside className="side-rail">
-      <Link to="/dashboard" className="side-rail__brand" aria-label="JobCtrl">
-        <BrandMark />
-      </Link>
-      <RailNav />
-      <span className="side-rail__spacer" />
-      <LocalModeCard />
-      <LegalNotice className="legal-notice legal-notice--rail" />
-    </aside>
+    <Sidebar className="side-rail-frame" collapsible="icon">
+      <aside className="side-rail">
+        <Link to="/dashboard" className="side-rail__brand" aria-label="JobCtrl">
+          <BrandMark />
+        </Link>
+        <RailNav />
+        <span className="side-rail__spacer" />
+        <LocalModeCard />
+        <LegalNotice className="legal-notice legal-notice--rail" />
+      </aside>
+      <SidebarRail />
+    </Sidebar>
   );
 }

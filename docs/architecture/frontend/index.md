@@ -136,7 +136,7 @@ current `App.tsx`. The target architecture enforces strict separation.
 | ---------------- | ------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Server state** | TanStack Query cache                  | Until invalidated or GC'd                                        | Anything fetched from `apps/api/` — projections, profile, settings, credentials, dashboard summary.                                               |
 | **URL state**    | TanStack Router (typed search params) | The current URL                                                  | Anything bookmarkable / shareable / restorable on refresh — current view, filters, sort order, page index, page size, and selected detail record. |
-| **Client state** | Zustand stores + React context        | Process lifetime (with `localStorage` persist where appropriate) | Theme, density, tenant context, transient UI like toast queue, ephemeral form drafts that do not survive navigation.                              |
+| **Client state** | Zustand stores + React context        | Process lifetime (with `localStorage` persist where appropriate) | Theme, density, desktop navigation expansion, tenant context, transient UI like toast queue, ephemeral form drafts that do not survive navigation. |
 
 ```mermaid
 graph TB
@@ -188,7 +188,8 @@ graph TB
 2. **No filter / pagination / sort / detail-route state in `useState`.** If
    refreshing the page should preserve it, it lives in a typed search param.
 3. **No durable user preferences in component-local state.** Theme, density,
-   and similar belong in Zustand with `persist` middleware.
+   desktop navigation expansion, and similar belong in Zustand with `persist`
+   middleware.
 4. **One source of truth per fact.** A field never lives in two layers
    simultaneously. URL state binds the fetch parameters; the cache owns the
    fetched result; the component reads both via hooks.

@@ -15,11 +15,17 @@ const globalsCss = readText("apps/web/src/styles/globals.css");
 const applyReviewCss = readText("apps/web/src/styles/redesign-apply-review.css");
 const commonCss = readText("apps/web/src/styles/redesign-common.css");
 const configurationCss = readText("apps/web/src/styles/redesign-configuration.css");
+const dataCss = readText("apps/web/src/styles/redesign-data.css");
 const shellCss = readText("apps/web/src/styles/redesign-shell.css");
 const tabsSource = readText("apps/web/src/shared/ui/tabs.tsx");
 const componentsJson = readJson<{
   style: string;
-  tailwind: { config: string; css: string; baseColor: string; cssVariables: boolean };
+  tailwind: {
+    config: string;
+    css: string;
+    baseColor: string;
+    cssVariables: boolean;
+  };
   iconLibrary: string;
   menuColor: string;
   menuAccent: string;
@@ -96,6 +102,12 @@ const cssRuleContaining = (selector: string, css = globalsCss): string => {
   const match = css.match(pattern);
   return match?.groups?.body?.trim() ?? "";
 };
+const cssRuleExactly = (selector: string, css = globalsCss): string => {
+  const pattern = new RegExp(`(?:^|})\\s*${escapeRegExp(selector)}\\s*\\{(?<body>[^}]*)\\}`, "m");
+  const match = css.match(pattern);
+  return match?.groups?.body?.trim() ?? "";
+};
+const normalizeCss = (value: string) => value.replace(/\s+/g, " ").trim();
 const absentPattern = (prefix: string, parts: readonly string[], joiner = "") =>
   new RegExp(`${escapeRegExp(prefix)}${parts.map(escapeRegExp).join(escapeRegExp(joiner))}(?![a-z0-9-])`, "i");
 
@@ -134,19 +146,20 @@ describe("shadcn token contract", () => {
     expect(tokensCss, "expected light JobCtrl violet primary value").toContain(
       "--primary: oklch(0.541 0.281 293.009);",
     );
-    expect(tokensCss, "expected dark JobCtrl violet primary value").toContain(
-      "--primary: oklch(0.702 0.183 293.541);",
+    expect(tokensCss, "expected dark JobCtrl violet primary value").toContain("--primary: oklch(0.702 0.183 293.541);");
+    expect(tokensCss, "expected a violet-neutral light canvas").toContain("--background: oklch(0.972 0.008 293);");
+    expect(tokensCss, "expected a violet-neutral light navigation rail").toContain(
+      "--sidebar: oklch(0.982 0.014 294.588);",
+    );
+    expect(tokensCss, "expected a violet-neutral dark navigation rail").toContain(
+      "--sidebar: oklch(0.19 0.024 293.5);",
     );
     expect(tokensCss, "expected neutral chart ramp anchor").toContain("--chart-1: oklch(0.24 0 0);");
   });
 
   it("keeps JobCtrl interaction emphasis on semantic violet tokens", () => {
-    expect(tokensCss, "expected a pale violet selection surface").toContain(
-      "--accent: oklch(0.943 0.029 294.588);",
-    );
-    expect(tokensCss, "expected an opaque violet focus ring").toContain(
-      "--ring: oklch(0.541 0.281 293.009);",
-    );
+    expect(tokensCss, "expected a pale violet selection surface").toContain("--accent: oklch(0.943 0.029 294.588);");
+    expect(tokensCss, "expected an opaque violet focus ring").toContain("--ring: oklch(0.541 0.281 293.009);");
     expect(cssRuleContaining(".tab.on", commonCss), "primary legacy actions must not be black").toContain(
       "background: var(--primary);",
     );
@@ -155,19 +168,37 @@ describe("shadcn token contract", () => {
       "active navigation should not be a solid black rounded rectangle",
     ).toContain("background: transparent;");
     expect(
+      cssRuleExactly(".side-rail", shellCss),
+      "the final shell override should consume the sidebar surface token",
+    ).toContain("background: var(--sidebar);");
+    expect(
+      cssRuleExactly(".side-rail-frame", shellCss),
+      "the shell frame should consume the sidebar border token",
+    ).toContain("border-color: var(--sidebar-border);");
+    expect(
+      cssRuleContaining(".side-rail__link.on", shellCss),
+      "active navigation text should carry the violet identity",
+    ).toContain("color: var(--sidebar-accent-foreground);");
+    expect(
       cssRuleContaining(".side-rail__link.on::before", shellCss),
       "active navigation should use the violet selection rule",
     ).toContain("background: var(--sidebar-primary);");
     expect(
-      cssRuleContaining(
-        '.discovery-workspace .discovery-tab-list [role="tab"][data-active]',
-        configurationCss,
-      ),
+      cssRuleContaining('.discovery-workspace .discovery-tab-list [role="tab"][data-active]', configurationCss),
       "selected discovery tabs should use the violet rule",
     ).toContain("border-color: var(--primary);");
-    expect(tabsSource, "shared tabs should use the semantic violet rule").toContain(
-      "data-active:border-primary",
+    expect(tabsSource, "shared tabs should use the semantic violet rule").toContain("data-active:border-primary");
+    expect(tabsSource, "shared active tabs should use semantic violet text").toContain(
+      "data-active:text-accent-foreground",
     );
+    expect(
+      cssRuleContaining(".topbar__density [data-pressed]", shellCss),
+      "the selected density should use a violet rule instead of a filled blob",
+    ).toContain("box-shadow: inset 0 -2px 0 var(--primary);");
+    expect(
+      cssRuleContaining('.filterable-data-grid-table tbody tr[aria-selected="true"]', dataCss),
+      "selected data rows should use a restrained violet marker",
+    ).toContain("box-shadow: inset 2px 0 0 var(--primary);");
   });
 
   it("maps tokens through Tailwind CSS-first theme variables", () => {
@@ -190,28 +221,27 @@ describe("shadcn token contract", () => {
   });
 
   it("applies global density to shared rows, tables, fields, and controls", () => {
-    expect(
-      tokensCss,
-      "expected global density to reach grids without an explicit override",
-    ).toContain(".filterable-data-grid:not([data-density])");
-    expect(
-      tokensCss,
-      "expected saved-view density to remain an explicit override",
-    ).toContain(
+    expect(tokensCss, "expected global density to reach grids without an explicit override").toContain(
+      ".filterable-data-grid:not([data-density])",
+    );
+    expect(tokensCss, "expected saved-view density to remain an explicit override").toContain(
       ".app-shell[data-density]\n  .filterable-data-grid:not([data-density])",
     );
-    expect(
-      tokensCss,
-      "expected shared row spacing to consume the density token",
-    ).toContain("padding-block: var(--jh-row-padding-block);");
-    expect(
-      tokensCss,
-      "expected shared field spacing to consume the density token",
-    ).toContain("gap: var(--jh-field-gap);");
-    expect(
-      tokensCss,
-      "expected shared controls to consume the density token",
-    ).toContain("height: var(--jh-control-height);");
+    expect(tokensCss, "expected shared row spacing to consume the density token").toContain(
+      "padding-block: var(--jh-row-padding-block);",
+    );
+    expect(tokensCss, "expected shared field spacing to consume the density token").toContain(
+      "gap: var(--jh-field-gap);",
+    );
+    expect(tokensCss, "expected shared controls to consume the density token").toContain(
+      "height: var(--jh-control-height);",
+    );
+    expect(tokensCss, "expected shared cards to consume density spacing").toContain(
+      "--card-spacing: var(--jh-card-spacing);",
+    );
+    expect(tokensCss, "expected route sections to expose density padding").toContain(
+      "--jh-section-padding-block: 16px;",
+    );
 
     const style = document.createElement("style");
     style.textContent = tokensCss;
@@ -221,6 +251,8 @@ describe("shadcn token contract", () => {
       '<div class="data-row" data-testid="density-row"></div>',
       '<div class="field" data-testid="density-field"></div>',
       '<div data-slot="input-group" data-testid="density-control"></div>',
+      '<button class="jh-control-sm" data-testid="density-small-control"></button>',
+      '<div data-slot="card" data-testid="density-card"></div>',
     ].join("");
     document.head.append(style);
     document.body.append(shell);
@@ -228,60 +260,60 @@ describe("shadcn token contract", () => {
     try {
       for (const [density, expected] of Object.entries({
         compact: {
-          controlHeight: "28px",
+          cardSpacing: "16px",
+          controlHeight: "32px",
           fieldGap: "5px",
           rowHeight: "32px",
           rowPadding: "6px",
+          sectionPaddingBlock: "12px",
           tablePadding: "7px",
         },
         regular: {
-          controlHeight: "32px",
+          cardSpacing: "20px",
+          controlHeight: "36px",
           fieldGap: "7px",
           rowHeight: "40px",
           rowPadding: "9px",
+          sectionPaddingBlock: "16px",
           tablePadding: "10px",
         },
         comfy: {
-          controlHeight: "36px",
+          cardSpacing: "24px",
+          controlHeight: "40px",
           fieldGap: "10px",
           rowHeight: "48px",
           rowPadding: "12px",
+          sectionPaddingBlock: "20px",
           tablePadding: "14px",
         },
       })) {
         shell.dataset["density"] = density;
         const computed = getComputedStyle(shell);
 
-        expect(computed.getPropertyValue("--jh-row-height").trim()).toBe(
-          expected.rowHeight,
+        expect(computed.getPropertyValue("--jh-row-height").trim()).toBe(expected.rowHeight);
+        expect(computed.getPropertyValue("--jh-row-padding-block").trim()).toBe(expected.rowPadding);
+        expect(computed.getPropertyValue("--jh-table-cell-padding-block").trim()).toBe(expected.tablePadding);
+        expect(computed.getPropertyValue("--jh-field-gap").trim()).toBe(expected.fieldGap);
+        expect(computed.getPropertyValue("--jh-control-height").trim()).toBe(expected.controlHeight);
+        expect(computed.getPropertyValue("--jh-card-spacing").trim()).toBe(expected.cardSpacing);
+        expect(computed.getPropertyValue("--jh-section-padding-block").trim()).toBe(expected.sectionPaddingBlock);
+        expect(getComputedStyle(shell.querySelector<HTMLElement>("[data-testid=density-row]")!).paddingBlock).toBe(
+          "var(--jh-row-padding-block)",
         );
-        expect(computed.getPropertyValue("--jh-row-padding-block").trim()).toBe(
-          expected.rowPadding,
+        expect(getComputedStyle(shell.querySelector<HTMLElement>("[data-testid=density-field]")!).gap).toBe(
+          "var(--jh-field-gap)",
+        );
+        expect(getComputedStyle(shell.querySelector<HTMLElement>("[data-testid=density-control]")!).height).toBe(
+          "var(--jh-control-height)",
+        );
+        expect(getComputedStyle(shell.querySelector<HTMLElement>("[data-testid=density-small-control]")!).height).toBe(
+          "calc(var(--jh-control-height) - 4px)",
         );
         expect(
-          computed.getPropertyValue("--jh-table-cell-padding-block").trim(),
-        ).toBe(expected.tablePadding);
-        expect(computed.getPropertyValue("--jh-field-gap").trim()).toBe(
-          expected.fieldGap,
-        );
-        expect(computed.getPropertyValue("--jh-control-height").trim()).toBe(
-          expected.controlHeight,
-        );
-        expect(
-          getComputedStyle(
-            shell.querySelector<HTMLElement>("[data-testid=density-row]")!,
-          ).paddingBlock,
-        ).toBe("var(--jh-row-padding-block)");
-        expect(
-          getComputedStyle(
-            shell.querySelector<HTMLElement>("[data-testid=density-field]")!,
-          ).gap,
-        ).toBe("var(--jh-field-gap)");
-        expect(
-          getComputedStyle(
-            shell.querySelector<HTMLElement>("[data-testid=density-control]")!,
-          ).height,
-        ).toBe("var(--jh-control-height)");
+          getComputedStyle(shell.querySelector<HTMLElement>("[data-testid=density-card]")!).getPropertyValue(
+            "--card-spacing",
+          ),
+        ).toBe("var(--jh-card-spacing)");
       }
     } finally {
       shell.remove();
@@ -312,9 +344,7 @@ describe("shadcn token contract", () => {
     expect(shellRule, "review queue should remain a dedicated left rail").toContain(
       "grid-template-columns: minmax(236px, 278px) minmax(0, 1fr);",
     );
-    expect(workspaceRule, "review workspace should own its layout without legacy CSS").toContain(
-      "display: grid;",
-    );
+    expect(workspaceRule, "review workspace should own its layout without legacy CSS").toContain("display: grid;");
     expect(workspaceRule, "Job Position and Application Materials must stack full width").toContain(
       "grid-template-columns: minmax(0, 1fr);",
     );
@@ -325,15 +355,9 @@ describe("shadcn token contract", () => {
     expect(documentRule, "verbatim document prose should not carry a decorative left rule").not.toContain(
       "border-left:",
     );
-    expect(documentRule, "verbatim document prose should align to the card content edge").toContain(
-      "padding: 2px 0;",
-    );
-    expect(jobPostRule, "the verbatim job post should use the full review-card width").toContain(
-      "width: 100%;",
-    );
-    expect(jobPostRule, "wide review cards must not inherit the shared 72ch prose cap").toContain(
-      "max-width: none;",
-    );
+    expect(documentRule, "verbatim document prose should align to the card content edge").toContain("padding: 2px 0;");
+    expect(jobPostRule, "the verbatim job post should use the full review-card width").toContain("width: 100%;");
+    expect(jobPostRule, "wide review cards must not inherit the shared 72ch prose cap").toContain("max-width: none;");
   });
 
   it("keeps success badges visibly green", () => {
@@ -343,7 +367,7 @@ describe("shadcn token contract", () => {
     expect(tagOkRule, "expected a shared success badge rule").toContain(
       "background: color-mix(in oklab, var(--success) 32%, var(--card));",
     );
-    expect(tagOkRule, "expected success badge border to stay green").toContain(
+    expect(normalizeCss(tagOkRule), "expected success badge border to stay green").toContain(
       "box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--success) 52%, transparent);",
     );
     expect(tagOkRule, "expected success badge text to stay green").toContain(
@@ -366,10 +390,7 @@ describe("shadcn token contract", () => {
 
     expect(packageJson.dependencies.shadcn, "expected shadcn dependency").toBe("4.11.0");
     expect(packageJson.dependencies["tw-animate-css"], "expected Tailwind v4 animation dependency").toBe("1.4.0");
-    expect(
-      packageJson.dependencies["@fontsource-variable/geist"],
-      "expected Geist font dependency",
-    ).toBe("^5.2.9");
+    expect(packageJson.dependencies["@fontsource-variable/geist"], "expected Geist font dependency").toBe("^5.2.9");
     expect(
       packageJson.dependencies["@fontsource-variable/jetbrains-mono"],
       "expected JetBrains Mono font dependency",

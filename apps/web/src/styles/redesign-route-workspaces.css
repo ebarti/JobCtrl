@@ -28,7 +28,7 @@
 }
 
 .route-workspace__header {
-  padding: 16px 18px;
+  padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
   border-bottom: 1px solid var(--border);
 }
 
@@ -60,7 +60,7 @@
 .route-workspace__content,
 .route-workspace__inspector {
   min-width: 0;
-  padding: 16px;
+  padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
 }
 
 .route-workspace__navigation {
@@ -85,12 +85,12 @@
 .job-run-workspace__header {
   display: grid;
   min-width: 0;
-  gap: 12px 16px;
+  gap: var(--jh-surface-gap);
   align-items: start;
 }
 
 .job-detail-workspace__header {
-  grid-template-columns: minmax(300px, 1fr) minmax(320px, auto);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .job-detail-workspace__header > .workspace-back,
@@ -106,7 +106,7 @@
   display: grid;
   min-width: 0;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--jh-surface-gap);
   align-items: start;
 }
 
@@ -127,6 +127,7 @@
   font-size: clamp(20px, 2vw, 27px);
   line-height: 1.15;
   letter-spacing: -0.025em;
+  text-wrap: balance;
 }
 
 .job-overview p,
@@ -140,15 +141,38 @@
 }
 
 .job-detail-top-actions {
-  align-self: end;
-  justify-content: flex-end;
+  align-self: stretch;
+  justify-content: space-between;
+  gap: var(--jh-surface-gap);
   border: 0;
-  padding: 0;
+  border-top: 1px solid var(--border);
+  padding: var(--jh-surface-gap) 0 0;
 }
 
 .job-detail-top-actions .action-panel {
-  flex: 1 1 100%;
+  display: flex;
+  flex: 1 1 48rem;
+  gap: var(--jh-surface-gap);
+  min-width: 0;
   margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.job-action-group,
+.job-detail-handoff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--jh-surface-gap) * 0.7);
+  align-items: center;
+  min-width: 0;
+}
+
+.job-action-group:last-child,
+.job-detail-handoff-actions {
+  margin-left: auto;
 }
 
 .job-detail-workspace > .route-workspace__grid,
@@ -192,7 +216,7 @@
 .workflow-run-workspace__timeline,
 .job-run-workspace__inspector > .section,
 .job-run-workspace__timeline {
-  padding: 16px 18px;
+  padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
 }
 
 .artifact-detail-workspace__header,
@@ -241,7 +265,7 @@
 }
 
 .artifact-comparison-picker {
-  margin-bottom: 12px;
+  margin-bottom: var(--jh-surface-gap);
 }
 
 .contact-detail-workspace .route-workspace__content {
@@ -249,8 +273,8 @@
 }
 
 .activity-detail-workspace__inspector {
-  gap: 12px;
-  padding: 16px;
+  gap: var(--jh-surface-gap);
+  padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
 }
 
 .activity-detail-workspace__inspector h2 {
@@ -339,6 +363,11 @@
 
   .job-detail-top-actions {
     justify-content: flex-start;
+  }
+
+  .job-action-group:last-child,
+  .job-detail-handoff-actions {
+    margin-left: 0;
   }
 }
 

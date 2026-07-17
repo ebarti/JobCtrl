@@ -235,7 +235,7 @@
 
 .job-audit-triage-grid,
 .job-audit-triage-column {
-  gap: 16px;
+  gap: var(--jh-surface-gap);
 }
 
 .job-audit-triage-heading {

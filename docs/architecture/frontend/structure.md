@@ -195,7 +195,7 @@ apps/web/
 │   │   │   ├── saved-table-views-control.tsx # shared table-view switcher + save/rename/delete/columns UI
 │   │   │   ├── data-table.tsx               # shadcn wrapper over @tanstack/react-table — unused by any view
 │   │   │   ├── route-workspace.tsx          # shared content + optional inspector shell
-│   │   │   ├── page-head.tsx                # route eyebrow/title/action identity
+│   │   │   ├── page-head.tsx                # route breadcrumb/subtitle/action identity + semantic h1
 │   │   │   ├── disclosure-section.tsx       # progressive detail section
 │   │   │   ├── inspector-ledger.tsx         # audit-friendly label/value facts
 │   │   │   ├── empty.tsx                    # explicit empty/loading absence
@@ -237,7 +237,7 @@ apps/web/
 │   │   │       ├── ConsoleTelemetryAdapter.ts
 │   │   │       └── StaticFeatureFlagAdapter.ts
 │   │   ├── stores/
-│   │   │   ├── ui-preferences.ts           # Zustand+persist → jh:ui-preferences (theme, density)
+│   │   │   ├── ui-preferences.ts           # Zustand+persist → jh:ui-preferences (theme, density, sidebar expansion)
 │   │   │   ├── saved-table-views.ts        # Zustand+persist → jh:saved-table-views (table templates + presentation)
 │   │   │   ├── toasts.ts                   # Zustand
 │   │   │   └── command-palette.ts          # Zustand (open/close + search)

@@ -18,15 +18,7 @@
 }
 
 .jobs-page-head {
-  align-items: baseline;
-  margin-bottom: 10px;
-}
-
-.jobs-page-head .page-head-text {
-  display: flex;
-  flex-flow: row wrap;
-  align-items: baseline;
-  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .jobs-queue-navigation {
@@ -61,7 +53,6 @@
 
 @media (max-width: 720px) {
   .jobs-page-head {
-    align-items: flex-start;
     margin-bottom: 8px;
   }
 
@@ -219,11 +210,6 @@
   background: color-mix(in oklch, var(--foreground) 3%, var(--card));
 }
 
-.filterable-data-grid-table tbody tr[aria-selected="true"] {
-  background: color-mix(in oklch, var(--foreground) 5%, var(--card));
-  box-shadow: inset 2px 0 0 var(--foreground);
-}
-
 .filterable-data-grid-table tbody tr.data-grid-row-tone-success,
 .filterable-data-grid-table tbody tr.data-grid-row-tone-warning,
 .filterable-data-grid-table tbody tr.data-grid-row-tone-danger,
@@ -249,6 +235,11 @@
 .filterable-data-grid-table tbody tr.data-grid-row-tone-info {
   box-shadow: inset 2px 0 0
     color-mix(in oklch, var(--status-info) 58%, var(--border));
+}
+
+.filterable-data-grid-table tbody tr[aria-selected="true"] {
+  background: color-mix(in oklch, var(--primary) 5%, var(--card));
+  box-shadow: inset 2px 0 0 var(--primary);
 }
 
 .filterable-data-grid-table .data-grid-cell-tone-success,

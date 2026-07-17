@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { axe } from "jest-axe";
 import { describe, expect, it } from "vitest";
 
@@ -17,6 +17,12 @@ describe("PageHead accessibility", () => {
       </main>,
     );
 
+    expect(screen.getByRole("heading", { level: 1, name: "Jobs" })).toHaveClass(
+      "sr-only",
+    );
+    expect(
+      screen.getByRole("navigation", { name: "breadcrumb" }),
+    ).toBeInTheDocument();
     expect(await axe(view.container)).toHaveNoViolations();
   });
 

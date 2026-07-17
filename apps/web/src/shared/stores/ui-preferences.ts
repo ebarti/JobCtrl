@@ -7,8 +7,10 @@ export type Density = "compact" | "regular" | "comfy";
 interface UiPreferencesState {
   theme: Theme;
   density: Density;
+  sidebarOpen: boolean;
   setTheme: (theme: Theme) => void;
   setDensity: (density: Density) => void;
+  setSidebarOpen: (sidebarOpen: boolean) => void;
 }
 
 export const useUiPreferencesStore = create<UiPreferencesState>()(
@@ -16,8 +18,10 @@ export const useUiPreferencesStore = create<UiPreferencesState>()(
     (set) => ({
       theme: "light",
       density: "regular",
+      sidebarOpen: true,
       setTheme: (theme) => set({ theme }),
       setDensity: (density) => set({ density }),
+      setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
     }),
     {
       name: "jh:ui-preferences",

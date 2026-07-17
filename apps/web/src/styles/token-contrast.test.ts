@@ -135,4 +135,34 @@ describe("JobCtrl violet interaction contrast", () => {
     expect(light, `light focus ring was ${light.toFixed(3)}:1`).toBeGreaterThanOrEqual(NON_TEXT_UI);
     expect(dark, `dark focus ring was ${dark.toFixed(3)}:1`).toBeGreaterThanOrEqual(NON_TEXT_UI);
   });
+
+  it("keeps active navigation text readable on the tinted rail", () => {
+    const light = contrastRatio(
+      readToken(lightBlock, "sidebar-accent-foreground"),
+      readToken(lightBlock, "sidebar"),
+    );
+    const dark = contrastRatio(
+      readToken(darkBlock, "sidebar-accent-foreground"),
+      readToken(darkBlock, "sidebar"),
+    );
+
+    expect(light, `light active navigation text was ${light.toFixed(3)}:1`).toBeGreaterThanOrEqual(
+      AA_NORMAL,
+    );
+    expect(dark, `dark active navigation text was ${dark.toFixed(3)}:1`).toBeGreaterThanOrEqual(
+      AA_NORMAL,
+    );
+  });
+
+  it("keeps the navigation selection rule visible on the tinted rail", () => {
+    const light = contrastRatio(readToken(lightBlock, "sidebar-primary"), readToken(lightBlock, "sidebar"));
+    const dark = contrastRatio(readToken(darkBlock, "sidebar-primary"), readToken(darkBlock, "sidebar"));
+
+    expect(light, `light navigation selection rule was ${light.toFixed(3)}:1`).toBeGreaterThanOrEqual(
+      NON_TEXT_UI,
+    );
+    expect(dark, `dark navigation selection rule was ${dark.toFixed(3)}:1`).toBeGreaterThanOrEqual(
+      NON_TEXT_UI,
+    );
+  });
 });

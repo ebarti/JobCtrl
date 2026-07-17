@@ -32,6 +32,7 @@ is the canonical decision matrix.
 | Saved table view definitions, active view id, column visibility/order/widths, and table density override | **Client** (Zustand+persist) | Local UI preference/template data. Applying a view writes URL-owned filters/sort through `navigate`; active filters/sort are not shadowed in the store. |
 | Theme (light/dark) | **Client** (Zustand+persist) | User preference; not URL-bound; persists across sessions. |
 | Density (compact/regular/comfy) | **Client** (Zustand+persist) | Same. |
+| Desktop navigation expansion | **Client** (Zustand+persist) | User preference; the icon-only or expanded rail choice survives reloads. Mobile navigation remains transient sheet state. |
 | Tenant identity | **Client** (context fed by Zustand+session in cloud) | Determined by session; not navigation-controlled. |
 | Toast queue | **Client** (Zustand) | Transient, cross-cutting. |
 | Profile data | **Server** (Query) | Fetched, cached, mutation-invalidated. |

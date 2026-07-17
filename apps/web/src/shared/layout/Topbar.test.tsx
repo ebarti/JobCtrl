@@ -91,7 +91,11 @@ function renderAppShell(initialEntry = "/dashboard") {
 describe("<Topbar>", () => {
   beforeEach(() => {
     window.localStorage.clear();
-    useUiPreferencesStore.setState({ theme: "light", density: "regular" });
+    useUiPreferencesStore.setState({
+      theme: "light",
+      density: "regular",
+      sidebarOpen: true,
+    });
   });
 
   it("renders the search, density control, and no inline navigation rail", async () => {
@@ -112,7 +116,7 @@ describe("<Topbar>", () => {
     );
     expect(screen.getByRole("button", { name: "compact" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "comfy" })).toBeInTheDocument();
-    expect(screen.queryByText("Copyright © 2026 Eloi Barti")).toBeNull();
+    expect(screen.getByText("Copyright © 2026 Eloi Barti")).toBeInTheDocument();
   });
 
   it("opens the responsive navigation sheet with the grouped nav links", async () => {
@@ -126,7 +130,7 @@ describe("<Topbar>", () => {
     const nav = await screen.findByRole("navigation", {
       name: "Main navigation",
     });
-    expect(screen.getByText("Copyright © 2026 Eloi Barti")).toBeInTheDocument();
+    expect(screen.getAllByText("Copyright © 2026 Eloi Barti")).toHaveLength(2);
     for (const label of [
       "Dashboard",
       "Apply review",
@@ -137,6 +141,7 @@ describe("<Topbar>", () => {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
     const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveClass("bg-sidebar", "text-sidebar-foreground");
     expect(
       within(dialog).getByText("Copyright © 2026 Eloi Barti"),
     ).toBeInTheDocument();
@@ -200,5 +205,22 @@ describe("<Topbar>", () => {
         expect(appShell).toHaveAttribute("data-density", density);
       });
     }
+  });
+
+  it("collapses the desktop navigation from the shell trigger and persists the preference", async () => {
+    const user = userEvent.setup();
+    const { container } = renderAppShell();
+    const shell = await waitFor(() => {
+      const element = container.querySelector(".app-shell");
+      expect(element).toHaveAttribute("data-sidebar-open", "true");
+      return element;
+    });
+
+    await user.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+
+    await waitFor(() => {
+      expect(shell).toHaveAttribute("data-sidebar-open", "false");
+      expect(useUiPreferencesStore.getState().sidebarOpen).toBe(false);
+    });
   });
 });

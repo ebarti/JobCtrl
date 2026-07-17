@@ -5,7 +5,7 @@ import { forwardRef } from "react";
 import { cn } from "../lib/cn.js";
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent text-sm font-medium transition-[color,background-color,border-color,box-shadow,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+  "jh-control jh-button inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent text-sm font-medium transition-[color,background-color,border-color,box-shadow,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
@@ -23,10 +23,10 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-9 px-3.5",
-        sm: "h-8 px-3 text-sm",
-        lg: "h-10 px-4",
-        icon: "size-9",
+        default: "jh-control-default h-9 px-3.5",
+        sm: "jh-control-sm h-8 px-3 text-sm",
+        lg: "jh-control-lg h-10 px-4",
+        icon: "jh-control-icon size-9",
       },
     },
     defaultVariants: {
@@ -46,6 +46,8 @@ export interface ButtonProps
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, ...props }, ref) => (
     <ButtonPrimitive
+      data-size={size ?? "default"}
+      data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
       ref={ref}
       {...props}

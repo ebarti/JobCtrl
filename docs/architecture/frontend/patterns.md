@@ -466,10 +466,12 @@ layout vocabulary, not bounded-context components. `PipelinesView` composes
 these directly around Operations data and the Pipeline-owned
 `StageTriggerPanel`.
 
-`PageHead` supplies one compact route hierarchy: optional eyebrow, a 26px title,
-an optional short subtitle, and route actions. Actions align to the right at
-working desktop widths and stack below the identity at narrow widths; route
-composers do not reintroduce promotional hero headings.
+`PageHead` supplies one compact route hierarchy: the sidebar section and current
+page render as a breadcrumb, a short subtitle or count stays inline when space
+allows, and a visually hidden level-1 heading preserves the document outline.
+Actions align to the right at working desktop widths and stack below the
+identity at narrow widths; route composers do not reintroduce promotional hero
+headings.
 
 **Visual grammar.** Status components — including legacy-named `*Badge` and
 `ConnectionStatusPill` identifiers — render a small dot or glyph plus text, not
@@ -528,9 +530,10 @@ changes geometry, not typography.
   TanStack provider patterns.
 
 **Zustand** for:
-- **Theme and density** — a single `useUiPreferencesStore` (`persist`
-  middleware → the one `jh:ui-preferences` `localStorage` key holds both
-  theme and density). Replaces the earlier `useState<Theme>` + manual
+- **UI preferences** — a single `useUiPreferencesStore` (`persist`
+  middleware → the one `jh:ui-preferences` `localStorage` key holds theme,
+  density, and desktop navigation expansion). Replaces the earlier
+  `useState<Theme>` + manual
   `localStorage.getItem`/`setItem` ceremony. The provider context (above)
   reads from this store via a slim selector.
 - **Toast queue** — `useToastStore()` exposes `toast({ ... })` callable
