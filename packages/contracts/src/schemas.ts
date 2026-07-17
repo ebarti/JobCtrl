@@ -2667,6 +2667,7 @@ export interface PipelineProgressSummary {
     filteredJobs: number | null;
     errorCount: number | null;
     rawTotal: number | null;
+    recoveredUnits?: number | null;
   };
   updatedAt: string | null;
 }

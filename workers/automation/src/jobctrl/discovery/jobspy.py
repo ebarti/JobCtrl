@@ -1,4 +1,4 @@
-"""JobSpy-based job discovery: searches Indeed, LinkedIn, Glassdoor, ZipRecruiter.
+"""JobStreaming broad-board discovery for Indeed, LinkedIn, Glassdoor, and ZipRecruiter.
 
 Uses JobStreaming to scrape multiple job boards, deduplicates results,
 parses salary ranges, and stores accepted postings in the JobCtrl database.
@@ -19,7 +19,11 @@ from jobctrl import config
 from jobctrl.database import get_connection, init_db, resurface_deleted_job
 from jobctrl.domain.discovery import JobMetadata, PostingUrl, SearchStrategy, Source
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
-from jobctrl.domain.discovery.search_units import DiscoverySearchUnitLease
+from jobctrl.domain.discovery.search_units import (
+    DiscoverySearchSpec,
+    DiscoverySearchUnit,
+    DiscoverySearchUnitLease,
+)
 from jobctrl.domain.discovery.identity import JobSourceObservation, normalize_observed_url
 from jobctrl.domain.discovery.source_registry import BROAD_BOARD_LEAD_POLICY
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
@@ -69,12 +73,16 @@ _SOURCE_SLUG_RE = re.compile(r"[^a-z0-9]+")
 # per-board requests. Instead we enforce politeness at OUR invocation boundary:
 # a per-run request budget + inter-search pacing via the shared host limiter,
 # recording a budget-exhausted outcome when the budget stops a crawl. The
-# residual (jobspy's internal requests are unpoliced) is a documented risk.
+# residual (JobStreaming's internal requests are unpoliced) is documented.
 _JOBSPY_HOST_KEY = "jobspy"
 
 
 class DiscoveryCancelled(RuntimeError):
-    """Raised when a cooperative discovery cancel request stops JobSpy."""
+    """Raised when a cooperative request stops broad-board discovery."""
+
+
+class DiscoveryResumeRequired(RuntimeError):
+    """Raised when an unfinished search unit should be retried by Temporal."""
 
 
 # -- Retry wrapper -----------------------------------------------------------
@@ -134,7 +142,7 @@ def _location_ok(
     )
 
 
-# -- DB storage (JobSpy DataFrame -> SQLite) ---------------------------------
+# -- DB storage (legacy broad-board DataFrame -> SQLite) ----------------------
 
 
 def store_jobspy_results(
@@ -147,7 +155,7 @@ def store_jobspy_results(
     discovery_execution: DiscoveryExecutionRef | None = None,
     search_unit_lease: DiscoverySearchUnitLease | None = None,
 ) -> tuple[int, int]:
-    """Store JobSpy DataFrame results into the DB. Returns (new, existing)."""
+    """Store broad-board DataFrame results. Returns ``(new, existing)``."""
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0
@@ -206,14 +214,14 @@ def store_jobspy_results(
 
         strategy = "jobspy"
 
-        # If JobSpy gave us a full description, promote it directly
+        # If JobStreaming gave us a full description, promote it directly.
         full_description = None
         detail_scraped_at = None
         if description and len(description) > 200:
             full_description = description
             detail_scraped_at = now
 
-        # Extract apply URL if JobSpy provided it. JobSpy's board URL remains
+        # Extract the direct URL when supplied. The provider's board URL remains
         # the discovery observation; this direct URL can identify who owns the
         # posting for future direct discovery.
         apply_url = _nullable_str(row.get("job_url_direct"))
@@ -608,7 +616,7 @@ def _refresh_existing_jobspy_job(
             job_url,
             "discover",
             "JobMetadataUpdated",
-            message="Job metadata refreshed from JobSpy",
+            message="Job metadata refreshed from broad-board discovery",
             payload={
                 "company": company,
                 "description": bool((description or "").strip()),
@@ -1163,7 +1171,7 @@ def search_jobs(
     proxy: str | None = None,
     country_indeed: str = "usa",
 ) -> dict:
-    """Run a single job search via JobSpy and store results in DB."""
+    """Run a single broad-board search via JobStreaming and store results."""
     if sites is None:
         sites = ["indeed", "linkedin", "zip_recruiter"]
 
@@ -1201,11 +1209,11 @@ def search_jobs(
         ):
             df, provider_errors = _jobstreaming_frame_and_failures(_scrape_with_retry(kwargs))
     except Exception as e:
-        log.error("JobSpy search failed: %s", e)
+        log.error("JobStreaming search failed: %s", e)
         return {"error": str(e), "total": 0, "new": 0, "existing": 0, "errors": 1}
 
     total = len(df)
-    log.info("JobSpy returned %d results", total)
+    log.info("JobStreaming returned %d results", total)
 
     if total == 0:
         return {"total": 0, "new": 0, "existing": 0, "errors": provider_errors}
@@ -1229,6 +1237,96 @@ def search_jobs(
 # -- Full crawl (all queries x all locations) --------------------------------
 
 
+def _configured_searches(
+    search_cfg: dict,
+    *,
+    tiers: list[int] | None = None,
+    locations: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Compile the ordered query/location plan shared by both execution paths."""
+
+    queries = search_cfg.get("queries", [])
+    locs = search_cfg.get("locations", [])
+    if tiers:
+        queries = [query for query in queries if query.get("tier") in tiers]
+    if locations:
+        locs = [location for location in locs if location.get("label") in locations]
+
+    return [
+        {
+            "query": query["query"],
+            "location": location["location"],
+            "remote": location.get("remote", False),
+            "tier": query.get("tier", 0),
+            "match_mode": query.get("match_mode", "strict"),
+            "target_track": query.get("target_track", ""),
+            "seniority_floor": query.get("seniority_floor", ""),
+        }
+        for query in queries
+        for location in locs
+    ]
+
+
+def _durable_search_specs(
+    search_cfg: dict,
+    *,
+    tiers: list[int] | None,
+    locations: list[str] | None,
+    sites: list[str],
+    results_per_site: int,
+    hours_old: int,
+) -> list[DiscoverySearchSpec]:
+    """Split the crawl into immutable provider-location-compatible units."""
+
+    searches = _configured_searches(
+        search_cfg,
+        tiers=tiers,
+        locations=locations,
+    )
+    defaults = dict(search_cfg.get("defaults", {}))
+    country_indeed = str(
+        defaults.get("country_indeed", search_cfg.get("country", "usa"))
+    )
+    glassdoor_map = search_cfg.get("glassdoor_location_map", {})
+    accept_locs, reject_locs, local_accept_locs = _load_location_config(search_cfg)
+    specs: list[DiscoverySearchSpec] = []
+
+    for search in searches:
+        common = {
+            "query": str(search["query"]),
+            "target_location": str(search["location"]),
+            "results_per_site": results_per_site,
+            "hours_old": hours_old,
+            "remote_only": bool(search.get("remote")),
+            "country_indeed": country_indeed,
+            "match_mode": str(search.get("match_mode") or "strict"),
+            "target_track": str(search.get("target_track") or ""),
+            "seniority_floor": str(search.get("seniority_floor") or ""),
+            "accept_locations": tuple(accept_locs),
+            "reject_locations": tuple(reject_locs),
+            "local_accept_locations": tuple(local_accept_locs),
+        }
+        for site in sites:
+            target_location = str(search["location"])
+            provider_location = target_location
+            if site == "glassdoor":
+                provider_location = str(
+                    glassdoor_map.get(
+                        target_location,
+                        target_location.split(",")[0],
+                    )
+                )
+            specs.append(
+                DiscoverySearchSpec(
+                    provider_location=provider_location,
+                    sites=(site,),
+                    linkedin_fetch_description=site == "linkedin",
+                    **common,
+                )
+            )
+    return specs
+
+
 def _full_crawl(
     search_cfg: dict,
     tiers: list[int] | None = None,
@@ -1248,33 +1346,15 @@ def _full_crawl(
     if sites is None:
         sites = ["indeed", "linkedin", "zip_recruiter"]
 
-    # Build search combinations from config
-    queries = search_cfg.get("queries", [])
-    locs = search_cfg.get("locations", [])
     defaults = dict(search_cfg.get("defaults", {}))
     defaults.setdefault("country_indeed", search_cfg.get("country", "usa"))
     glassdoor_map = search_cfg.get("glassdoor_location_map", {})
     accept_locs, reject_locs, local_accept_locs = _load_location_config(search_cfg)
-
-    if tiers:
-        queries = [q for q in queries if q.get("tier") in tiers]
-    if locations:
-        locs = [loc for loc in locs if loc.get("label") in locations]
-
-    searches = []
-    for q in queries:
-        for loc in locs:
-            searches.append(
-                {
-                    "query": q["query"],
-                    "location": loc["location"],
-                    "remote": loc.get("remote", False),
-                    "tier": q.get("tier", 0),
-                    "match_mode": q.get("match_mode", "strict"),
-                    "target_track": q.get("target_track", ""),
-                    "seniority_floor": q.get("seniority_floor", ""),
-                }
-            )
+    searches = _configured_searches(
+        search_cfg,
+        tiers=tiers,
+        locations=locations,
+    )
 
     proxy_config = parse_proxy(proxy) if proxy else None
 
@@ -1285,7 +1365,7 @@ def _full_crawl(
     init_db()
 
     # Politeness invocation boundary (R10, D3): pace searches + bound the run's
-    # search fan-out. jobspy owns its internal per-board tls-client transport, so
+    # search fan-out. JobStreaming owns its internal per-board transport, so
     # we cannot count (or robots-gate) its individual outbound requests. The
     # budget here therefore counts SEARCH INVOCATIONS, not outbound requests: one
     # unit == one ``_run_one_search`` call (each of which fans out to up to two
@@ -1334,7 +1414,7 @@ def _full_crawl(
 
     for s in searches:
         if cancel_event is not None and cancel_event.is_set():
-            raise DiscoveryCancelled("JobSpy discovery canceled")
+            raise DiscoveryCancelled("JobStreaming discovery canceled")
         remaining = max(limit - total_new, 0) if limit > 0 else 0
         if limit > 0 and remaining <= 0:
             break
@@ -1353,9 +1433,9 @@ def _full_crawl(
             # outcome is durable even though we break out before the crawl's
             # normal end-of-run persistence.
             politeness_conn.commit()
-            log.warning("JobSpy per-run search-invocation budget exhausted after %d searches", completed)
+            log.warning("JobStreaming per-run search-invocation budget exhausted after %d searches", completed)
             break
-        emit_progress(s, "JobSpy search started")
+        emit_progress(s, "JobStreaming search started")
         with limiter.slot(
             _JOBSPY_HOST_KEY,
             min_interval_seconds=BROAD_BOARD_LEAD_POLICY.min_request_interval_seconds,
@@ -1385,7 +1465,7 @@ def _full_crawl(
         total_found += result.get("total", 0)
         total_filtered += result.get("filtered", 0)
         failed_searches += int(bool(result.get("all_sites_failed", False)))
-        emit_progress(s, "JobSpy search completed")
+        emit_progress(s, "JobStreaming search completed")
 
         if completed % 5 == 0 or completed == len(searches):
             log.info(
@@ -1397,7 +1477,7 @@ def _full_crawl(
                 total_errors,
             )
         if cancel_event is not None and cancel_event.is_set():
-            raise DiscoveryCancelled("JobSpy discovery canceled")
+            raise DiscoveryCancelled("JobStreaming discovery canceled")
 
     # Final stats
     conn = get_connection()
@@ -1411,7 +1491,7 @@ def _full_crawl(
         db_total,
     )
     if completed > 0 and failed_searches == completed and total_new + total_existing == 0:
-        raise RuntimeError(f"JobSpy failed for all {completed} search combination(s)")
+        raise RuntimeError(f"JobStreaming failed for all {completed} search combination(s)")
 
     return {
         "total": total_new + total_existing,
@@ -1426,6 +1506,443 @@ def _full_crawl(
     }
 
 
+def _jobstreaming_spec(spec: DiscoverySearchSpec):
+    from jobctrl.infrastructure.discovery.jobstreaming_gateway import (
+        JobStreamingSearchSpec,
+    )
+
+    return JobStreamingSearchSpec(
+        sites=spec.sites,
+        query=spec.query,
+        location=spec.provider_location,
+        results_per_site=spec.results_per_site,
+        hours_old=spec.hours_old,
+        remote_only=spec.remote_only,
+        country_indeed=spec.country_indeed,
+        linkedin_fetch_description=spec.linkedin_fetch_description,
+    )
+
+
+def _filter_jobstreaming_event_frame(
+    frame,
+    spec: DiscoverySearchSpec,
+):
+    """Apply the caller-owned title and target-location policy to one event."""
+
+    if frame.empty:
+        return frame
+    row = frame.iloc[0]
+    location = (
+        str(row.get("location", ""))
+        if str(row.get("location", "")) != "nan"
+        else None
+    )
+    title = (
+        str(row.get("title", ""))
+        if str(row.get("title", "")) != "nan"
+        else None
+    )
+    if not _location_ok(
+        location,
+        list(spec.accept_locations),
+        list(spec.reject_locations),
+        search_location=spec.target_location,
+        remote_required=spec.remote_only,
+        is_remote=_truthy_remote(row.get("is_remote", False)),
+        local_accept=list(spec.local_accept_locations),
+    ):
+        return frame.iloc[0:0]
+    if not _title_ok(
+        title,
+        spec.query,
+        match_mode=spec.match_mode,
+        target_track=spec.target_track or None,
+        seniority_floor=spec.seniority_floor or None,
+    ):
+        return frame.iloc[0:0]
+    return frame
+
+
+def _failed_jobstreaming_source_ids(
+    units: list[DiscoverySearchUnit],
+) -> list[str]:
+    failed: set[str] = set()
+    for unit in units:
+        if not unit.last_error_code:
+            continue
+        board, separator, _code = unit.last_error_code.partition(":")
+        boards = (board,) if separator and board in unit.spec.sites else unit.spec.sites
+        failed.update(_jobspy_source_id(site) for site in boards)
+    return sorted(failed)
+
+
+def _durable_progress_snapshot(
+    units: list[DiscoverySearchUnit],
+    counts: dict[str, int],
+    *,
+    current: DiscoverySearchUnit | None,
+    filtered_jobs: int,
+    raw_total: int,
+    message: str,
+) -> dict[str, Any]:
+    terminal = {"completed", "skipped", "failed", "canceled"}
+    snapshot: dict[str, Any] = {
+        "completed": sum(unit.state in terminal for unit in units),
+        "total": len(units),
+        "unit": "search units",
+        "new_jobs": counts["new"],
+        "existing_jobs": counts["existing"],
+        "filtered_jobs": filtered_jobs,
+        "raw_total": raw_total,
+        "errors": len(_failed_jobstreaming_source_ids(units)),
+        "message": message,
+        "recovered_units": sum(unit.recovered for unit in units),
+    }
+    if current is not None:
+        snapshot["current_query"] = current.spec.query
+        snapshot["current_location"] = current.spec.target_location
+    return snapshot
+
+
+def _durable_full_crawl(
+    search_cfg: dict,
+    *,
+    tiers: list[int] | None,
+    locations: list[str] | None,
+    sites: list[str],
+    results_per_site: int,
+    hours_old: int,
+    proxy: str | None,
+    max_retries: int,
+    limit: int,
+    run_id: str,
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+    cancel_event: threading.Event | None,
+    discovery_execution: DiscoveryExecutionRef,
+    activity_attempt: int,
+    activity_owner_token: str,
+    adapter_registry: Any | None,
+) -> dict[str, Any]:
+    """Consume JobStreaming from caller-owned units with store-before-ack."""
+
+    from jobstreaming import (
+        CheckpointCompatibilityError,
+        CheckpointMismatchError,
+        ErrorEvent,
+        JobEvent,
+        ProgressEvent,
+        SearchCompleteEvent,
+        SiteCompleteEvent,
+        StreamCancelledError,
+        WarningEvent,
+    )
+
+    from jobctrl.infrastructure.discovery.jobstreaming_gateway import (
+        JobStreamingGateway,
+    )
+    from jobctrl.infrastructure.discovery.sqlite_search_unit_repository import (
+        SqliteDiscoverySearchUnitRepository,
+    )
+
+    specs = _durable_search_specs(
+        search_cfg,
+        tiers=tiers,
+        locations=locations,
+        sites=sites,
+        results_per_site=results_per_site,
+        hours_old=hours_old,
+    )
+    conn = init_db()
+    repository = SqliteDiscoverySearchUnitRepository(conn)
+    repository.plan_units(discovery_execution, specs)
+    proxy_config = parse_proxy(proxy) if proxy else None
+    proxies = [proxy_config.jobspy] if proxy_config else None
+    gateway = JobStreamingGateway()
+    limiter = get_shared_rate_limiter()
+    politeness_ua = PolitenessGateway().user_agent
+    politeness_context = PolitenessSourceContext(
+        stage="discover",
+        source_id=_JOBSPY_HOST_KEY,
+        source_role="broad_board",
+        adapter="jobstreaming",
+        run_id=run_id,
+    )
+    filtered_jobs = 0
+    stopped_for_limit = False
+
+    def emit_progress(current: DiscoverySearchUnit | None, message: str) -> None:
+        if progress_callback is None:
+            return
+        progress_callback(
+            _durable_progress_snapshot(
+                repository.list_units(discovery_execution),
+                repository.execution_counts(discovery_execution),
+                current=current,
+                filtered_jobs=filtered_jobs,
+                raw_total=repository.execution_provider_job_count(
+                    discovery_execution
+                ),
+                message=message,
+            )
+        )
+
+    emit_progress(None, "JobStreaming search plan ready")
+    while True:
+        lease = repository.claim_next(
+            discovery_execution,
+            activity_owner_token,
+            activity_attempt,
+        )
+        if lease is None:
+            break
+        unit = repository.get_unit(discovery_execution, lease.unit_id)
+        if unit is None:  # pragma: no cover - protected by the lease foreign key
+            raise RuntimeError(f"claimed search unit {lease.unit_id} disappeared")
+
+        if cancel_event is not None and cancel_event.is_set():
+            repository.mark_execution_canceled(lease)
+            emit_progress(unit, "JobStreaming discovery canceled")
+            raise DiscoveryCancelled("JobStreaming discovery canceled")
+
+        invocations = sum(
+            (1 + candidate.recovery_count)
+            for candidate in repository.list_units(discovery_execution)
+            if candidate.lease_attempt > 0
+        )
+        if invocations > BROAD_BOARD_LEAD_POLICY.max_requests_per_run:
+            repository.mark_skipped(lease)
+            repository.mark_pending_skipped(discovery_execution)
+            record_politeness_outcome(
+                conn,
+                decision=PolitenessDecision(
+                    allowed=False,
+                    outcome=PolitenessOutcome.BUDGET_EXHAUSTED,
+                    user_agent=politeness_ua,
+                    reason="JobStreaming per-run search-unit budget exhausted",
+                ),
+                context=politeness_context,
+            )
+            conn.commit()
+            emit_progress(unit, "JobStreaming search-unit budget exhausted")
+            break
+
+        repository.reset_checkpoint_if_requested(lease)
+        unit = repository.get_unit(discovery_execution, lease.unit_id)
+        assert unit is not None
+        message = (
+            "Resuming interrupted JobStreaming search unit"
+            if unit.recovered
+            else "JobStreaming search unit started"
+        )
+        emit_progress(unit, message)
+        failures: list[ErrorEvent] = []
+        completed_sites: set[str] = set()
+        saw_search_complete = False
+        terminal_checkpoint_failure = False
+        provider_spec = _jobstreaming_spec(unit.spec)
+
+        try:
+            with limiter.slot(
+                _JOBSPY_HOST_KEY,
+                min_interval_seconds=BROAD_BOARD_LEAD_POLICY.min_request_interval_seconds,
+                max_concurrency=BROAD_BOARD_LEAD_POLICY.max_concurrent_requests_per_host,
+            ):
+                with gateway.open_stream(
+                    provider_spec,
+                    proxies=proxies,
+                    user_agent=politeness_ua,
+                    checkpoint_store=repository.checkpoint_store(lease),
+                    resume=True,
+                    max_retries=max_retries,
+                    retry_backoff=5.0,
+                    cancel_event=cancel_event,
+                    registry=adapter_registry,
+                ) as stream:
+                    for event in stream:
+                        if isinstance(event, JobEvent):
+                            counts = repository.execution_counts(discovery_execution)
+                            if limit > 0 and counts["new"] >= limit:
+                                # A worker can disappear after acknowledging the
+                                # limit-reaching event but before terminalizing
+                                # the unit. Never accept one extra posting when
+                                # that completed checkpoint resumes at the next
+                                # provider result.
+                                repository.mark_skipped(lease)
+                                repository.mark_pending_skipped(discovery_execution)
+                                stream.close()
+                                stopped_for_limit = True
+                                emit_progress(unit, "Discovery result limit reached")
+                                break
+                            frame = gateway.frame_for_job_event(
+                                event,
+                                provider_spec,
+                            )
+                            accepted_frame = _filter_jobstreaming_event_frame(
+                                frame,
+                                unit.spec,
+                            )
+                            if accepted_frame.empty:
+                                filtered_jobs += 1
+                            else:
+                                store_jobspy_results(
+                                    conn,
+                                    accepted_frame,
+                                    unit.spec.query,
+                                    run_id=run_id,
+                                    search_cfg=search_cfg,
+                                    discovery_execution=discovery_execution,
+                                    search_unit_lease=lease,
+                                )
+                            stream.ack(event)
+                            counts = repository.execution_counts(discovery_execution)
+                            emit_progress(unit, "JobStreaming posting acknowledged")
+                            if limit > 0 and counts["new"] >= limit:
+                                repository.mark_skipped(lease)
+                                repository.mark_pending_skipped(discovery_execution)
+                                stream.close()
+                                stopped_for_limit = True
+                                emit_progress(unit, "Discovery result limit reached")
+                                break
+                        elif isinstance(event, ErrorEvent):
+                            repository.record_failure(
+                                lease,
+                                error_code=f"{event.site.value}:{event.code.value}",
+                                error_type=event.error_type,
+                                retryable=event.retryable,
+                                reset_checkpoint=event.reset_checkpoint,
+                                terminal=False,
+                            )
+                            stream.ack(event)
+                            failures.append(event)
+                            log.warning(
+                                "JobStreaming board %s reported %s (%s)",
+                                event.site.value,
+                                event.code.value,
+                                event.error_type,
+                            )
+                        elif isinstance(event, SiteCompleteEvent):
+                            completed_sites.add(event.site.value)
+                            stream.ack(event)
+                        elif isinstance(event, SearchCompleteEvent):
+                            stream.ack(event)
+                            saw_search_complete = True
+                            recoverable_failure = any(
+                                failure.retryable or failure.reset_checkpoint
+                                for failure in failures
+                            )
+                            if event.completed:
+                                repository.mark_completed(
+                                    lease,
+                                    clear_error=True,
+                                )
+                            elif recoverable_failure:
+                                raise DiscoveryResumeRequired(
+                                    "JobStreaming search unit requires a retry"
+                                )
+                            elif failures and completed_sites:
+                                # Healthy boards are a valid partial result even
+                                # when they found zero postings. Preserve the
+                                # typed failure evidence for the failed board.
+                                repository.mark_completed(lease)
+                            elif failures:
+                                failure = failures[-1]
+                                repository.record_failure(
+                                    lease,
+                                    error_code=(
+                                        f"{failure.site.value}:{failure.code.value}"
+                                    ),
+                                    error_type=failure.error_type,
+                                    retryable=False,
+                                    reset_checkpoint=False,
+                                )
+                            else:
+                                repository.record_failure(
+                                    lease,
+                                    error_code=f"{unit.spec.sites[0]}:incomplete",
+                                    error_type="IncompleteSearchStream",
+                                    retryable=True,
+                                    reset_checkpoint=False,
+                                    terminal=False,
+                                )
+                                raise DiscoveryResumeRequired(
+                                    "JobStreaming ended without a terminal board outcome"
+                                )
+                        elif isinstance(event, (ProgressEvent, WarningEvent)):
+                            stream.ack(event)
+                        else:  # pragma: no cover - pinned event union is exhaustive
+                            raise TypeError(
+                                f"unsupported JobStreaming event: {type(event).__name__}"
+                            )
+        except StreamCancelledError as exc:
+            repository.mark_execution_canceled(lease)
+            emit_progress(unit, "JobStreaming discovery canceled")
+            raise DiscoveryCancelled("JobStreaming discovery canceled") from exc
+        except (CheckpointCompatibilityError, CheckpointMismatchError) as exc:
+            repository.record_failure(
+                lease,
+                error_code=f"{unit.spec.sites[0]}:checkpoint_incompatible",
+                error_type=type(exc).__name__,
+                retryable=False,
+                reset_checkpoint=False,
+            )
+            log.error(
+                "JobStreaming checkpoint is incompatible for search unit %s (%s)",
+                unit.unit_id,
+                type(exc).__name__,
+            )
+            terminal_checkpoint_failure = True
+
+        if stopped_for_limit:
+            break
+        if terminal_checkpoint_failure:
+            emit_progress(
+                repository.get_unit(discovery_execution, lease.unit_id),
+                "JobStreaming checkpoint rejected",
+            )
+            continue
+        if not saw_search_complete:
+            raise DiscoveryResumeRequired(
+                "JobStreaming search unit ended before SearchComplete"
+            )
+        emit_progress(
+            repository.get_unit(discovery_execution, lease.unit_id),
+            "JobStreaming search unit finished",
+        )
+
+    units = repository.list_units(discovery_execution)
+    counts = repository.execution_counts(discovery_execution)
+    failed_units = [unit for unit in units if unit.state == "failed"]
+    completed_units = [unit for unit in units if unit.state == "completed"]
+    canceled_units = [unit for unit in units if unit.state == "canceled"]
+    if canceled_units:
+        raise DiscoveryCancelled("JobStreaming discovery canceled")
+    if failed_units and not completed_units and counts["accepted"] == 0:
+        raise RuntimeError(
+            f"JobStreaming failed for all {len(failed_units)} search unit(s)"
+        )
+
+    db_total = int(conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0])
+    result = {
+        "total": counts["accepted"],
+        "raw_total": repository.execution_provider_job_count(discovery_execution),
+        "new": counts["new"],
+        "existing": counts["existing"],
+        "errors": len(_failed_jobstreaming_source_ids(units)),
+        "failed_queries": len(failed_units),
+        "failed_source_ids": _failed_jobstreaming_source_ids(units),
+        "filtered": filtered_jobs,
+        "db_total": db_total,
+        "queries": sum(
+            unit.state in {"completed", "skipped", "failed"} for unit in units
+        ),
+        "search_units": len(units),
+        "recovered_units": sum(unit.recovered for unit in units),
+        "skipped_units": sum(unit.state == "skipped" for unit in units),
+    }
+    emit_progress(None, "JobStreaming discovery complete")
+    return result
+
+
 # -- Public entry point ------------------------------------------------------
 
 
@@ -1436,8 +1953,11 @@ def run_discovery(
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     cancel_event: threading.Event | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    activity_attempt: int | None = None,
+    activity_owner_token: str | None = None,
+    adapter_registry: Any | None = None,
 ) -> dict:
-    """Main entry point for JobSpy-based job discovery.
+    """Main entry point for JobStreaming broad-board discovery.
 
     Loads search queries and locations from database-backed discovery settings
     plus profile target-search fields, then runs a full crawl across all
@@ -1463,6 +1983,34 @@ def run_discovery(
     hours_old = cfg.get("defaults", {}).get("hours_old", 72)
     tiers = cfg.get("tiers")
     locations = cfg.get("location_labels")
+
+    if discovery_execution is not None:
+        if activity_attempt is None or activity_attempt < 1:
+            raise ValueError(
+                "activity_attempt is required for resumable discovery"
+            )
+        if not activity_owner_token or not activity_owner_token.strip():
+            raise ValueError(
+                "activity_owner_token is required for resumable discovery"
+            )
+        return _durable_full_crawl(
+            search_cfg=cfg,
+            tiers=tiers,
+            locations=locations,
+            sites=sites,
+            results_per_site=results_per_site,
+            hours_old=hours_old,
+            proxy=proxy,
+            max_retries=2,
+            limit=limit,
+            run_id=run_id or "jobstreaming",
+            progress_callback=progress_callback,
+            cancel_event=cancel_event,
+            discovery_execution=discovery_execution,
+            activity_attempt=activity_attempt,
+            activity_owner_token=activity_owner_token,
+            adapter_registry=adapter_registry,
+        )
 
     return _full_crawl(
         search_cfg=cfg,

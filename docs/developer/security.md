@@ -133,7 +133,7 @@ field. Those risks should not be confused with remote-account authorization.
 job sources, ATS APIs, broad-board crawls, page HTML, captured API responses,
 and discovered posting/apply URLs. The shared politeness gateway honors
 `robots.txt` for rendered detail crawls, uses an honest User-Agent, paces
-requests per host, and enforces run budgets; `python-jobspy` remains a
+requests per host, and enforces run budgets; JobStreaming remains a
 documented residual because its internal per-board requests cannot be
 robots-gated. The shared public-HTTP guard rejects loopback, private-network,
 link-local, reserved, unspecified, multicast, metadata, and non-HTTP(S)

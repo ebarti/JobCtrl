@@ -131,6 +131,9 @@ def _row_to_run(row: sqlite3.Row | tuple[Any, ...]) -> DiscoveryRun:
             filtered_jobs=_nullable_int(_first_present(progress, "filtered_jobs", "filteredJobs")),
             error_count=_nullable_int(_first_present(progress, "error_count", "errorCount")),
             raw_total=_nullable_int(_first_present(progress, "raw_total", "rawTotal")),
+            recovered_units=_nullable_int(
+                _first_present(progress, "recovered_units", "recoveredUnits")
+            ),
         ),
         error_classes=tuple(str(value) for value in _json_list(get("error_classes_json", 7))),
         started_at=str(get("started_at", 8)),

@@ -34,7 +34,7 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 | 2026-07-11 | [Public JobCtrl Live Demo](2026-07-11-public-live-demo-plan.md) | Active — P0–P7 landed in #408–#417 and a private candidate is deployed; public cutover, hosted reruns, and privacy approval remain open |
 | 2026-07-13 | [Discovery Pipeline Operations Visibility](2026-07-13-discovery-pipeline-operations-visibility-plan.md) | Active — implementation published in #459–#462; final docs, cumulative QA, review, merge, and archive evidence remain open |
 | 2026-07-14 | [End-to-End Product Redesign](2026-07-14-end-to-end-product-redesign.md) | Active — primitive/redesign/operations stack published in #453–#463; final docs, cumulative QA, review, merge, and archive evidence remain open |
-| 2026-07-17 | [Resumable JobStreaming Discovery](2026-07-17-resumable-jobstreaming-discovery-plan.md) | Active — three-PR implementation stack on top of #467 in progress |
+| 2026-07-17 | [Resumable JobStreaming Discovery](2026-07-17-resumable-jobstreaming-discovery-plan.md) | Active — #468 and #469 published; final Temporal resume/docs/QA layer in progress on #469 |
 
 ## Historical Spec Ledger
 
@@ -94,7 +94,7 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-07-11 | [Public JobCtrl Live Demo](2026-07-11-public-live-demo-plan.md) | Active — #407–#417 landed; private candidate deployed; public cutover, hosted reruns, and privacy approval pending |
 | 2026-07-13 | [Discovery Pipeline Operations Visibility](2026-07-13-discovery-pipeline-operations-visibility-plan.md) | Active — implementation published in #459–#462; final documentation, cumulative QA, review, merge, and archive evidence pending |
 | 2026-07-14 | [End-to-End Product Redesign](2026-07-14-end-to-end-product-redesign.md) | Active — implementation stack #453–#463 is open; final documentation, cumulative QA, review, merge, and archive evidence pending |
-| 2026-07-17 | [Resumable JobStreaming Discovery](2026-07-17-resumable-jobstreaming-discovery-plan.md) | Active — provider boundary, durable search units, and Temporal resume stack in progress on top of #467 |
+| 2026-07-17 | [Resumable JobStreaming Discovery](2026-07-17-resumable-jobstreaming-discovery-plan.md) | Active — provider boundary #468 and durable units #469 published; final Temporal resume/docs/QA layer in progress |
 
 Two 2026-05-17 backlog specs (`…-add-react`, `…-add-brows`) were drafted on
 `origin/mestre/develop-*` branches and never merged to `main`; only `…-add-root`

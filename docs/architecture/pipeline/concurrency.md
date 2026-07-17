@@ -60,10 +60,13 @@ Settings writes `config.json`; restart the worker to apply the new capacity.
 Two knobs that look like Temporal concurrency but are not:
 
 - The Pipelines page's **Internal concurrency** field flows into the discovery payload and
-  controls per-source scraping parallelism inside a source activity (the
-  JobSpy worker count), not Temporal activity slots.
-- Search-combination execution inside one source family is sequential today
-  (a plain loop in `jobspy.py`); parallelising it is a filed
+  controls the worker count for source adapters that expose internal scraping
+  parallelism; it does not create Temporal activity slots.
+- Resumable JobStreaming execution inside the broad-board source family is
+  sequential by immutable query/location/board unit (a plain loop in the
+  compatibility-named `jobspy.py`). JobStreaming owns each board adapter's
+  internal transport/pagination and cancellation-aware waits. Parallelising
+  durable units is a filed
   [backlog item](../../backlog.md), not current behavior.
 
 ## Where Fan-out Happens (And Why)

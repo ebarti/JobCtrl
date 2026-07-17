@@ -119,6 +119,35 @@ to current, but cannot duplicate or demote it. A work plan remains explicitly
 `pending` until it becomes `planned`, `not_eligible`, or `failed`; a missing
 required-step list is never interpreted as proof of no work.
 
+### Broad-Board Search Unit Envelope
+
+The `jobspy` source family name remains a compatibility key, but its provider is
+JobStreaming 0.0.2. At activity start, JobCtrl compiles or verifies an immutable
+ordered plan of query/location/board units under the exact
+`DiscoveryExecutionRef`. Changing the live target-search configuration cannot
+rewrite a retrying execution's persisted plan.
+
+Each claimed unit carries the Temporal activity attempt, an owner token, and a
+monotonic lease epoch. A later attempt may reclaim a `running` unit and
+increments the epoch; every accepted-job write and provider-checkpoint
+compare-and-swap verifies the current fence. This prevents a delayed old worker
+from advancing or canceling work after replacement.
+
+The event order is store, then acknowledge:
+
+1. project and filter the JobStreaming event;
+2. atomically persist accepted job/source/event facts and the unit receipt;
+3. acknowledge the exact event, which advances the provider checkpoint; and
+4. derive progress and the global new-job limit from durable receipts.
+
+Stopping before step 3 causes at-least-once replay, not lost work. Stable
+provider keys and idempotent receipts make that replay harmless. A cursor reset
+is durable intent tied to the acknowledgement revision of its `ErrorEvent`; it
+cannot clear the checkpoint early. Request-fingerprint or cursor-schema
+incompatibility is terminal and explicit. Cooperative cancellation interrupts
+the provider and terminalizes unfinished units; it is never treated as a
+resumable crash.
+
 ### Pipeline-Step Lifecycle Envelope
 
 Execution-owned orchestration uses a narrower lifecycle envelope alongside the

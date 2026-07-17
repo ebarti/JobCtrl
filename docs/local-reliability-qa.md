@@ -47,6 +47,25 @@ Use the workflow-by-workflow matrix in the
 [Regression Catalog](developer/qa/regression-catalog.md#temporal-fault-injection)
 or the [complete checklist](developer/qa/complete-checklist.md#temporal-fault-injection-matrix).
 
+### Broad-board commit/ack recovery
+
+Broad-board discovery adds a stricter fault boundary inside the source-family
+activity. The hermetic fixture commits the first JobStreaming posting and its
+acceptance receipt, blocks the provider acknowledgement, kills that worker,
+starts a fresh worker on the same Temporal task queue, and verifies the same
+Discover execution completes from the stored checkpoint. It also covers
+unacknowledged replay, durable result limits, activity-attempt fencing, cursor
+reset ordering, partial board failure, incompatible cursor schemas, and
+cooperative cancellation. It uses fake local adapters and performs no external
+crawl:
+
+```bash
+uv --project workers/automation run pytest -q \
+  workers/automation/tests/test_jobstreaming_resumable_discovery.py \
+  workers/automation/tests/test_discovery_search_units.py \
+  workers/automation/tests/test_jobstreaming_gateway.py
+```
+
 <a id="durable-execution-recovery-demo"></a>
 
 ## High-Risk Regression Areas

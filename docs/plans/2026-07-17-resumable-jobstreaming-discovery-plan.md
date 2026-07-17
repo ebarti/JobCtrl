@@ -4,10 +4,10 @@
 - **Status:** Active — implementation is being delivered as a three-PR stack on
   top of PR #467.
 - **Provider contract:** `jobstreaming==0.0.2`
-- **Goal:** A JobSpy discovery activity that is interrupted after accepting a
-  posting resumes from durable caller-owned state without losing accepted work,
-  double-counting the run limit, or allowing an older attempt to overwrite a
-  newer attempt.
+- **Goal:** A broad-board discovery activity backed by JobStreaming that is
+  interrupted after accepting a posting resumes from durable caller-owned state
+  without losing accepted work, double-counting the run limit, or allowing an
+  older attempt to overwrite a newer attempt.
 
 ## Product invariant
 
@@ -26,8 +26,11 @@ typed provider failures, and explicit acknowledgement mechanics.
 
 - **Phase 1:** published as PR #468; focused verification and independent
   review passed.
-- **Phase 2:** this stacked change.
-- **Phase 3:** pending on Phase 2.
+- **Phase 2:** published as PR #469; focused verification and independent
+  review passed.
+- **Phase 3:** current final stack layer on PR #469; implementation,
+  canonical documentation, cumulative QA, and independent gates are in
+  progress.
 
 ### Phase 1 — provider boundary
 
@@ -52,8 +55,9 @@ typed provider failures, and explicit acknowledgement mechanics.
 
 ### Phase 3 — Temporal resume and product contract
 
-- Have the JobSpy source activity plan or load units, claim unfinished work,
-  stream each unit, consume each posting, then acknowledge it.
+- Have the broad-board source activity (internally the `jobspy` compatibility
+  family) plan or load units, claim unfinished work, stream each unit, consume
+  each posting, then acknowledge it.
 - Map retryable, terminal, cursor-reset, and cancellation outcomes without
   treating cancellation as resume.
 - Surface recovery/error state through existing discovery progress and run

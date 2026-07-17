@@ -94,6 +94,13 @@ calculation: unresolved current jobs or swept backlog can keep a successful
 Discover workflow in `draining`, while a closed membership with failed or
 inconsistent planning/terminal steps produces `completed_with_issues`.
 
+The Dashboard/Pipelines progress projection may include
+`sourceProgress.recoveredUnits` for the compatibility-named `jobspy` family.
+It counts immutable JobStreaming query/location/board units reclaimed by a
+newer Temporal activity attempt and is rendered as `N resumed` when positive.
+It does not expose checkpoint JSON, provider payloads, activity owner tokens,
+or raw provider errors.
+
 Per-job `enrich`, `score`, `tailor`, and `cover` counts come from canonical
 `job_stage_states`. Execution-owned planning, source-family, reconciliation,
 fan-out, backlog-sweep, and PDF lifecycle comes from attempt-aware

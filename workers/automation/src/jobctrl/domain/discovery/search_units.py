@@ -152,6 +152,7 @@ class DiscoverySearchUnit:
     last_error_type: str | None
     last_error_retryable: bool | None
     reset_checkpoint: bool
+    reset_checkpoint_after_revision: int | None
     created_at: str
     updated_at: str
     completed_at: str | None

@@ -177,7 +177,7 @@ function sourceTypeLabel(source: SourceRegistryEntrySummary): string {
     return "Lever ATS";
   if (sourceId.startsWith("ashby:") || policyId.includes("ashby"))
     return "Ashby ATS";
-  if (sourceId.startsWith("jobspy:")) return "JobSpy board";
+  if (sourceId.startsWith("jobspy:")) return "Broad board";
   if (sourceId.startsWith("smart_extract:")) return "Smart extract";
   if (source.kind === "ats_api") return "ATS API";
   if (source.kind === "employer_careers_page") return "Employer careers page";

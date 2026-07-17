@@ -210,6 +210,14 @@ async def discovery_source_family_activity(
     )
 
     cancel_event = threading.Event()
+    activity_attempt: int | None = None
+    activity_owner_token: str | None = None
+    if payload.discovery_execution is not None:
+        info = activity.info()
+        activity_attempt = info.attempt
+        activity_owner_token = (
+            f"{info.activity_id}:{info.activity_run_id}:{info.attempt}"
+        )
 
     try:
         result = await run_blocking_with_heartbeat(
@@ -224,6 +232,8 @@ async def discovery_source_family_activity(
                 cancel_event=cancel_event,
                 next_run_settings=payload.next_run_settings,
                 discovery_execution=payload.discovery_execution,
+                activity_attempt=activity_attempt,
+                activity_owner_token=activity_owner_token,
             ),
             starting_message=f"discover {payload.family} starting",
             progress_message=f"discover {payload.family} still running",

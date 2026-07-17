@@ -28,7 +28,11 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # the ninth-context canonical tables (``ensure_contact_tables``).
 # v3 (Discovery execution lineage): immutable Temporal execution/job membership
 # and the idempotently filled preparation work plan used by Operations.
-SCHEMA_VERSION = 4
+# v4 (JobStreaming durability): immutable search units, fenced provider
+# checkpoints, and idempotent accepted-job receipts.
+# v5 (JobStreaming reset ordering): the provider checkpoint revision that must
+# be acknowledged before a requested cursor reset can be applied.
+SCHEMA_VERSION = 5
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -3126,6 +3130,7 @@ def ensure_discovery_search_unit_tables(
             last_error_type        TEXT,
             last_error_retryable   INTEGER,
             reset_checkpoint       INTEGER NOT NULL DEFAULT 0 CHECK (reset_checkpoint IN (0, 1)),
+            reset_checkpoint_after_revision INTEGER CHECK (reset_checkpoint_after_revision >= 0),
             created_at             TEXT NOT NULL,
             updated_at             TEXT NOT NULL,
             completed_at           TEXT,
@@ -3142,6 +3147,20 @@ def ensure_discovery_search_unit_tables(
         )
         """
     )
+    search_unit_columns = {
+        str(row[1])
+        for row in conn.execute(
+            "PRAGMA table_info(discovery_search_units)"
+        ).fetchall()
+    }
+    if "reset_checkpoint_after_revision" not in search_unit_columns:
+        conn.execute(
+            """
+            ALTER TABLE discovery_search_units
+            ADD COLUMN reset_checkpoint_after_revision INTEGER
+                CHECK (reset_checkpoint_after_revision >= 0)
+            """
+        )
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_discovery_search_units_state

@@ -594,8 +594,8 @@ describe("StageTriggerPanel", () => {
                 percent: 8,
                 completed: 0,
                 total: 6,
-                currentStep: "JobSpy",
-                message: "JobSpy search completed",
+                currentStep: "Broad boards",
+                message: "JobStreaming search completed",
                 updatedAt: new Date().toISOString(),
                 sourceProgress: {
                   completed: 35,
@@ -608,6 +608,7 @@ describe("StageTriggerPanel", () => {
                   filteredJobs: 412,
                   errorCount: 0,
                   rawTotal: 1000,
+                  recoveredUnits: 1,
                 },
               },
             ],
@@ -618,7 +619,7 @@ describe("StageTriggerPanel", () => {
 
     const status = await screen.findByRole("status");
     expect(status).toHaveTextContent(
-      "Discover 8% complete: JobSpy 35/72 searches done: Head of Platform in Spain (remote); 13 new, 46 dupes, 412 filtered, 0 errors, 1000 found.",
+      "Discover 8% complete: Broad boards 35/72 searches done: Head of Platform in Spain (remote); 13 new, 46 dupes, 412 filtered, 0 errors, 1000 found, 1 resumed.",
     );
     expect(status).not.toHaveTextContent("(0/6)");
     expect(

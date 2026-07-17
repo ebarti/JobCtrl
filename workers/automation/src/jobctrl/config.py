@@ -1043,9 +1043,10 @@ def _string_list(value: object) -> list[str]:
 
 
 def resolve_jobspy_boards(search_cfg: dict | None = None, *, warn: bool = True) -> list[str]:
-    """Return JobSpy board names, accepting legacy ``sites`` for one release.
+    """Return JobStreaming board names, accepting legacy ``sites`` for one release.
 
-    ``boards`` is the stable product key because it names JobSpy source boards.
+    ``boards`` is the stable product key. The internal ``jobspy:`` source-id
+    prefix remains a compatibility identifier after the provider migration.
     ``sites`` remains accepted as a compatibility alias and logs a warning
     instead of failing existing local configs.
     """
@@ -1055,13 +1056,13 @@ def resolve_jobspy_boards(search_cfg: dict | None = None, *, warn: bool = True) 
     if boards:
         if legacy_sites and legacy_sites != boards and warn:
             log.warning(
-                "Both JobSpy 'boards' and legacy 'sites' are configured; using 'boards'. "
+                "Both JobStreaming 'boards' and legacy 'sites' are configured; using 'boards'. "
                 "Remove 'sites' after the compatibility window."
             )
         return boards
     if legacy_sites:
         if warn:
-            log.warning("Discovery settings key 'sites' is deprecated for JobSpy board selection; use 'boards'.")
+            log.warning("Discovery settings key 'sites' is deprecated for JobStreaming board selection; use 'boards'.")
         return legacy_sites
     return list(DEFAULT_JOBSPY_BOARDS)
 
@@ -1163,7 +1164,7 @@ def _jobspy_sources(search_cfg: dict | None) -> list[SourceRegistryEntry]:
                     tenant_id=LOCAL_TENANT,
                     source_id=f"jobspy:{_source_slug(board)}",
                     kind=SourceKind.BROAD_BOARD,
-                    display_name=f"JobSpy {board}",
+                    display_name=f"Broad board: {board}",
                     owner="system",
                     priority=SourcePriority.LEAD_GENERATOR,
                     state=SourceState.EXPERIMENTAL,
@@ -1390,7 +1391,7 @@ def load_source_registry(
     sites_cfg: dict | None = None,
     employers_cfg: dict | None = None,
 ) -> list[SourceRegistryEntry]:
-    """Generate typed source registry entries from packaged YAML and JobSpy config."""
+    """Generate registry entries from packaged YAML and broad-board config."""
     active_search_cfg = search_cfg if search_cfg is not None else load_search_config()
     active_sites_cfg = sites_cfg if sites_cfg is not None else load_sites_config()
     active_employers_cfg = employers_cfg if employers_cfg is not None else load_employers_config()

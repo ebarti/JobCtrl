@@ -5311,7 +5311,7 @@ function pipelineProgressStatusForWorkflow(
 
 const COMPLETE_STAGE_MESSAGES = new Set(["stage ok", "stage partial", "stage skipped"]);
 const DISCOVERY_SOURCE_PROGRESS = [
-  ["jobspy", "JobSpy"],
+  ["jobspy", "Broad boards"],
   ["ats_api", "Canonical ATS APIs"],
   ["workday", "Workday scraper"],
   ["smartextract", "Smart extract"],
@@ -5386,6 +5386,9 @@ function progressSourceDetail(source: Record<string, unknown>): Pick<DashboardSu
   if (completed === null || total === null || total <= 0) {
     return {};
   }
+  const recoveredUnitsValue = Object.hasOwn(detail, "recoveredUnits")
+    ? detail.recoveredUnits
+    : detail.recovered_units;
   return {
     sourceProgress: {
       completed,
@@ -5398,6 +5401,9 @@ function progressSourceDetail(source: Record<string, unknown>): Pick<DashboardSu
       filteredJobs: nullableNumber(detail.filteredJobs ?? detail.filtered_jobs),
       errorCount: nullableNumber(detail.errorCount ?? detail.error_count ?? detail.errors),
       rawTotal: nullableNumber(detail.rawTotal ?? detail.raw_total),
+      ...(recoveredUnitsValue !== undefined
+        ? { recoveredUnits: nullableNumber(recoveredUnitsValue) }
+        : {}),
     },
   };
 }

@@ -51,7 +51,7 @@ MAX_ATTEMPTS: dict[str, int | None] = {
 }
 
 DISCOVERY_SOURCE_PROGRESS: tuple[tuple[str, str], ...] = (
-    ("jobspy", "JobSpy"),
+    ("jobspy", "Broad boards"),
     ("ats_api", "Canonical ATS APIs"),
     ("workday", "Workday scraper"),
     ("smartextract", "Smart extract"),

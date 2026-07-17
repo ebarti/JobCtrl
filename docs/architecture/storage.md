@@ -66,7 +66,7 @@ The remaining tables group by owner:
 | Resume templates | `resume_templates`, `resume_template_versions`, `resume_template_defaults`, `resume_template_refresh_attempts`, `job_resume_template_assignments` |
 | Compensation | `job_posted_compensation_facts`, `job_market_compensation_estimates` |
 | Read-model projections | `job_list_projections`, `job_detail_projections`, `dashboard_projections`, `apply_run_projections`, `workflow_run_projections`, `pipeline_step_projections`, `artifact_list_projections`, `event_watermarks`, `digest_state` |
-| Discovery & preparation | `discovery_runs`, `discovery_execution_jobs`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, legacy `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
+| Discovery & preparation | `discovery_runs`, `discovery_execution_jobs`, `discovery_search_units`, `discovery_search_unit_jobs`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, legacy `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
 | Policies & operations | `tailoring_policies`, `llm_spend`, `job_score_staleness`, `worker_runtime_heartbeats`, `jobctrl_deleted_jobs` |
 
 SQLite in `~/.jobctrl/jobctrl.db` is the local source of truth for jobs,
@@ -132,6 +132,24 @@ source metadata, explicit work-plan state, immutable required steps when
 planned, a bounded reason for not-eligible/failed plans, and the preparation
 workflow ID. Link writes are idempotent; a swept job can be promoted when this
 run later observes it, but cannot be duplicated or demoted.
+
+`discovery_search_units` is the caller-owned authority for resumable
+JobStreaming work. Each row belongs to one exact Discover execution and stores
+an immutable query/location/board request plus its fingerprint, ordered
+lifecycle state, current activity owner/attempt, monotonic lease epoch,
+recovery count, opaque provider checkpoint and revision, bounded typed failure
+fields, and cursor-reset intent. A reset also records the checkpoint revision
+that must be reached by acknowledging the provider error; reclaim cannot clear
+the cursor before that revision is durable.
+
+`discovery_search_unit_jobs` is the idempotent acceptance-receipt set keyed by
+execution, unit, and canonical job URL. The job/source/event writes and receipt
+commit before provider acknowledgement. Durable new/existing counts and the
+run-wide result limit are derived from these receipts, so replay cannot count a
+posting twice. A newer activity attempt reclaims only `running`/`pending` units
+and increments the lease epoch; every checkpoint or accepted-job write fences
+on that epoch. `completed`, `failed`, `skipped`, and `canceled` units are
+terminal.
 
 `pipeline_step_projections` is rebuildable read state keyed by that exact
 execution, bounded step kind, and item key. It folds the four `PipelineStep*`

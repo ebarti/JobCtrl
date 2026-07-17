@@ -269,7 +269,8 @@ def test_discover_persists_jobspy_source_progress(monkeypatch):
                 "filtered_jobs": 412,
                 "errors": 0,
                 "raw_total": 1000,
-                "message": "JobSpy search completed",
+                "recovered_units": 1,
+                "message": "JobStreaming search completed",
             }
         )
         return {"new": 13, "existing": 46, "errors": 0, "filtered": 412, "raw_total": 1000}
@@ -312,6 +313,7 @@ def test_discover_persists_jobspy_source_progress(monkeypatch):
     assert progress_events
     progress = progress_events[0]["progress"]
     assert progress["percent"] > 0
+    assert progress["currentStep"] == "Broad boards"
     assert progress["sourceProgress"] == {
         "completed": 35,
         "total": 72,
@@ -330,6 +332,8 @@ def test_discover_persists_jobspy_source_progress(monkeypatch):
         "errorCount": 0,
         "raw_total": 1000,
         "rawTotal": 1000,
+        "recovered_units": 1,
+        "recoveredUnits": 1,
     }
 
 

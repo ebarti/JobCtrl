@@ -142,7 +142,7 @@ evidence, qualifications, and the complete capability matrix.
 | **Graphical UI** | **Supported product surface** | **Partial:** optional Next.js alpha | **Not evidenced** in the reviewed snapshot |
 | **Tailored documents** | Resume, cover letter, HTML, and PDF | CV/PDF and cover letter | LaTeX CV, cover letter, and PDF |
 | **Submission boundary** | Dry run + guarded browser/Gmail paths; approval on by default | Form autofill; the user clicks Submit | Reviewed documents; the user submits |
-| **Interrupted work** | Temporal history, retries, and stable workflow identities | File integrity + resumable batch flags; no workflow engine | No checkpointed apply resumption evidenced |
+| **Interrupted work** | Temporal history, retries, stable workflow identities, and checkpointed broad-board discovery | File integrity + resumable batch flags; no workflow engine | No checkpointed apply resumption evidenced |
 | **Application-level cost control** | Daily estimated-spend ceiling | Model choice + batch cap, dry run, and resume controls | Token-efficiency instructions; no app-level budget evidenced |
 
 ## What It Does
@@ -150,6 +150,11 @@ evidence, qualifications, and the complete capability matrix.
 - Discover jobs from configured searches and supported source registries,
   driven by your target roles, locations, and seniority — recording which
   source each job came from.
+- Stream broad-board results through JobStreaming and commit each accepted
+  posting before acknowledging its provider checkpoint. If the worker stops,
+  the same Discover execution resumes unfinished query/location/board units;
+  accepted postings and the run-wide new-job limit survive replay, and
+  Pipelines reports how many units resumed.
 - Optionally reconcile a local Temporal Schedule for discovery; it is disabled
   by default and uses the configured cron only after you enable it.
 - Enrich postings with full descriptions, canonical posting URLs, and apply

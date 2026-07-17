@@ -107,9 +107,16 @@ terminal spine and can never oscillate or shrink. Scores still appear
 incrementally in the Jobs view because that path is independent of the progress
 bar: `JobScored` events → projection builders → `GET /v1/events/stream`. Under
 R9 Phase 2 (per-job handoff) those scores arrive at per-job granularity — a job
-is scored the moment it is individually enriched — but the progress payload is
-unchanged. No new `discovery_runs` progress columns are added, so both
-projection builders stay in parity.
+is scored the moment it is individually enriched — while the outer progress
+spine stays unchanged. No new `discovery_runs` progress columns are added, so
+both projection builders stay in parity.
+
+Broad-board progress uses `search units` as its source-level unit. Its
+`newJobs` and `existingJobs` values come from durable acceptance receipts, and
+`recoveredUnits` counts units reclaimed by a newer Temporal activity attempt.
+The TypeScript read model preserves that optional field and Pipelines renders
+it as `N resumed`. Raw provider output, checkpoints, owner tokens, and error
+messages are not projected into this broad progress payload.
 
 ## Pipeline Operations Snapshot
 
@@ -444,6 +451,10 @@ defensive dashboard read keep them truthful on existing databases:
 - **Discovery isolates sources.** One failed source family yields a partial
   result; the workflow fails only if a family fails after retries, and it fails
   with the source error, not a swallowed one.
+- **Broad-board retries isolate search units.** JobStreaming query/location/board
+  units persist accepted results before acknowledgement, fence old activity
+  attempts, and resume only unfinished work. Cancellation terminalizes units;
+  incompatible checkpoints fail rather than reset silently.
 - **Preparation isolates jobs.** A failed step fails only that job's workflow and
   resumes at the failed step; other jobs are unaffected.
 - **Apply fails safe.** At-most-once + one live attempt + the CDP dry-run guard
