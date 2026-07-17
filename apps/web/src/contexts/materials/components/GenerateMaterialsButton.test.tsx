@@ -3,6 +3,7 @@ import { screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DemoFeatureFlagAdapter } from "../../../demo/ports.js";
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { GenerateMaterialsButton } from "./GenerateMaterialsButton.js";
@@ -72,5 +73,31 @@ describe("<GenerateMaterialsButton>", () => {
   it("respects the disabled prop", () => {
     renderWithProviders(<GenerateMaterialsButton jobId="job-1" disabled />);
     expect(screen.getByRole("button", { name: "generate materials" })).toBeDisabled();
+  });
+
+  it("blocks unavailable demo generation before confirmation or dispatch", async () => {
+    const generateMaterials = vi.fn(async () => queued("job-1"));
+    const confirm = vi.fn(() => true);
+    Object.defineProperty(window, "confirm", {
+      configurable: true,
+      writable: true,
+      value: confirm,
+    });
+    const ports = buildTestPorts({ api: { generateMaterials } });
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+
+    renderWithProviders(<GenerateMaterialsButton jobId="job-1" />, { ports });
+
+    const button = screen.getByRole("button", { name: "generate materials" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription(
+      /Material generation is available in the local app.*bundled materials remain available/i,
+    );
+    expect(screen.getByRole("link", { name: "Install JobCtrl" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/getting-started",
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    expect(generateMaterials).not.toHaveBeenCalled();
   });
 });

@@ -164,14 +164,6 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
               </Button>
               <JobOverview detail={detail} />
               <div className="job-detail-top-actions">
-                <JobActions
-                  jobId={detail.job.jobKey}
-                  currentStage={detail.job.currentSubstage}
-                  canRetryStage={canRetryStage(currentSubstage)}
-                  canRunCurrentStage={canRunCurrentStage(currentSubstage)}
-                  canRetailor={detail.artifacts.length > 0}
-                  applyApprovalRequired={applyApprovalRequired}
-                />
                 <div
                   className="job-detail-handoff-actions"
                   aria-label="Related job workspaces"
@@ -199,6 +191,15 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                     Evidence map
                   </Link>
                 </div>
+                <JobActions
+                  jobId={detail.job.jobKey}
+                  currentStage={detail.job.currentSubstage}
+                  canRetryStage={canRetryStage(currentSubstage)}
+                  canRunCurrentStage={canRunCurrentStage(currentSubstage)}
+                  canRetailor={detail.artifacts.length > 0}
+                  applyApprovalRequired={applyApprovalRequired}
+                  activeApplyRunId={detail.activeApplyRun?.runId ?? null}
+                />
               </div>
             </div>
           }

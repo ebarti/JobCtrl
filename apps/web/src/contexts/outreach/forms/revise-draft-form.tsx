@@ -1,7 +1,12 @@
 import { ReviseOutreachDraftRequestSchema } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
-import type { JSX } from "react";
+import { useId, type JSX } from "react";
 
+import {
+  getApiCapabilityAvailability,
+  LOCAL_INSTALL_GUIDE_URL,
+} from "../../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useReviseDraftMutation } from "../hooks/useReviseDraftMutation.js";
 
 export interface ReviseDraftFormProps {
@@ -22,6 +27,12 @@ export function ReviseDraftForm({
   initialBodyText,
   onRevised,
 }: ReviseDraftFormProps): JSX.Element {
+  const { featureFlags } = usePorts();
+  const availability = getApiCapabilityAvailability(
+    featureFlags,
+    "reviseOutreachDraft",
+  );
+  const unavailableReasonId = useId();
   const mutation = useReviseDraftMutation(threadId, contactId, jobId);
   const mutationError = mutation.error instanceof Error ? mutation.error.message : "";
   const form = useForm({
@@ -35,13 +46,22 @@ export function ReviseDraftForm({
       },
     },
     onSubmit: async ({ value }) => {
+      if (!availability.available) {
+        return;
+      }
       const result = ReviseOutreachDraftRequestSchema.safeParse({
         editedBodyText: value.editedBodyText,
       });
       if (!result.success) {
         return;
       }
-      await mutation.mutateAsync(result.data);
+      try {
+        await mutation.mutateAsync(result.data);
+      } catch {
+        // The mutation error is rendered below; resolve the form submission so
+        // a recoverable API failure cannot escape the event handler.
+        return;
+      }
       onRevised?.();
     },
   });
@@ -52,6 +72,9 @@ export function ReviseDraftForm({
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (!availability.available) {
+          return;
+        }
         void form.handleSubmit();
       }}
     >
@@ -60,6 +83,8 @@ export function ReviseDraftForm({
           <label className="field">
             <span>Edit message</span>
             <textarea
+              aria-describedby={availability.available ? undefined : unavailableReasonId}
+              disabled={!availability.available}
               rows={8}
               value={field.state.value}
               onBlur={field.handleBlur}
@@ -68,6 +93,13 @@ export function ReviseDraftForm({
           </label>
         )}
       </form.Field>
+      {!availability.available ? (
+        <span className="meta" id={unavailableReasonId}>
+          Draft revision is available in the local app. This public demo keeps
+          synthetic review history and does not process message edits. {" "}
+          <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
+        </span>
+      ) : null}
       {mutationError ? <div className="banner inline">{mutationError}</div> : null}
       <form.Subscribe selector={(state) => state.errors}>
         {(errors) => {
@@ -81,7 +113,12 @@ export function ReviseDraftForm({
       <form.Subscribe selector={(state) => state.isSubmitting}>
         {(isSubmitting) => (
           <div className="form-actions">
-            <button type="submit" className="tab on" disabled={mutation.isPending || isSubmitting}>
+            <button
+              aria-describedby={availability.available ? undefined : unavailableReasonId}
+              type="submit"
+              className="tab on"
+              disabled={mutation.isPending || isSubmitting || !availability.available}
+            >
               {mutation.isPending || isSubmitting ? "revising…" : "revise draft"}
             </button>
           </div>

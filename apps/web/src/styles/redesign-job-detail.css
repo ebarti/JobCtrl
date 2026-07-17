@@ -345,7 +345,7 @@
 .job-detail-drawer .stage-pill.failed,
 .job-detail-drawer .stage-pill.exhausted,
 .job-detail-drawer .stage-pill.blocked {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .job-detail-drawer .tag.danger {
@@ -355,7 +355,7 @@
 .job-detail-drawer .tag.info,
 .job-detail-drawer .stage-pill.running,
 .job-detail-drawer .stage-pill.queued {
-  color: var(--status-info);
+  color: var(--status-info-text);
 }
 
 .job-detail-drawer .score-policy-row {

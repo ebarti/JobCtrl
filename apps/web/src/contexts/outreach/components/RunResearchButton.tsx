@@ -1,6 +1,11 @@
 import type { RunContactResearchRequest } from "@jobctrl/contracts";
-import { useState, type FormEvent, type JSX } from "react";
+import { useId, useState, type FormEvent, type JSX } from "react";
 
+import {
+  getApiCapabilityAvailability,
+  LOCAL_INSTALL_GUIDE_URL,
+} from "../../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useRunResearchMutation } from "../hooks/useRunResearchMutation.js";
 
 export interface RunResearchButtonProps {
@@ -14,11 +19,21 @@ export interface RunResearchButtonProps {
 // URLs are routed to manual capture server-side, never auto-fetched.
 export function RunResearchButton({ jobId, employer }: RunResearchButtonProps): JSX.Element {
   const [url, setUrl] = useState("");
+  const { featureFlags } = usePorts();
+  const availability = getApiCapabilityAvailability(
+    featureFlags,
+    "runContactResearch",
+  );
+  const unavailableReasonId = useId();
   const mutation = useRunResearchMutation();
   const errorMessage = mutation.error instanceof Error ? mutation.error.message : "";
+  const blocked = mutation.isPending || !availability.available;
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (blocked) {
+      return;
+    }
     const trimmed = url.trim();
     const request: RunContactResearchRequest = {
       ...(employer ? { employer } : {}),
@@ -33,15 +48,29 @@ export function RunResearchButton({ jobId, employer }: RunResearchButtonProps): 
       <label className="run-research-field">
         <span className="run-research-label">Public source URL (optional)</span>
         <input
+          aria-describedby={availability.available ? undefined : unavailableReasonId}
+          disabled={!availability.available}
           type="url"
           value={url}
           placeholder="https://company.example/team"
           onChange={(event) => setUrl(event.target.value)}
         />
       </label>
-      <button type="submit" className="primary" disabled={mutation.isPending}>
+      <button
+        aria-describedby={availability.available ? undefined : unavailableReasonId}
+        type="submit"
+        className="primary"
+        disabled={blocked}
+      >
         {mutation.isPending ? "starting…" : "run research"}
       </button>
+      {!availability.available ? (
+        <span className="meta" id={unavailableReasonId}>
+          Contact research is available in the local app. This public demo does
+          not fetch source URLs or process contact information. {" "}
+          <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
+        </span>
+      ) : null}
       {errorMessage ? (
         <span role="alert" className="banner inline">
           {errorMessage}

@@ -107,7 +107,7 @@
 
 .apply-review-queue-fit[data-score-tone="neutral"],
 .apply-review-selected-score[data-score-tone="neutral"] {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .apply-review-queue-fit[data-score-tone="negative"],
@@ -339,7 +339,7 @@
 }
 
 .apply-review-audit-facts .tag.warn {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .apply-review-selected-actions {
@@ -368,7 +368,7 @@
 
 .apply-review-selected-actions .apply-review-approval-block {
   grid-column: 1 / -1;
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .apply-review-decision-buttons {
@@ -506,13 +506,15 @@
 }
 
 .apply-review-html-line-review .resume-plate-editor {
+  max-inline-size: 100%;
+  isolation: isolate;
   border: 0;
   border-radius: 0;
   box-shadow: none;
 }
 
 .apply-review-html-line-review .resume-plate-toolbar {
-  border-bottom-color: var(--border);
+  border-bottom: 1px solid var(--border);
   background: var(--card);
   padding: 10px 12px;
   color: var(--card-foreground);
@@ -588,6 +590,10 @@
 
 .apply-review-html-line-review .resume-plate-scroll {
   min-height: min(68dvh, 780px);
+  max-inline-size: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   background: color-mix(in oklch, var(--muted) 48%, var(--card));
   padding: clamp(14px, 2vw, 28px);
 }

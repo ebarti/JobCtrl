@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { DemoFeatureFlagAdapter } from "../../demo/ports.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
 import { renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
@@ -810,6 +811,40 @@ describe("PipelinesView", () => {
     expect(operationsAlert).toHaveTextContent("Operations snapshot failed.");
     const tools = screen.getByRole("group", { name: "Pipeline action tools" });
     expect(within(tools).getByRole("button", { name: "Run Discover" })).toBeEnabled();
+  });
+
+  it("replaces raw demo capability errors with a disabled control and supported path", async () => {
+    const pipelineOperations = vi.fn();
+    const runPipelineStages = vi.fn();
+    const ports = buildTestPorts({
+      api: { pipelineOperations, runPipelineStages },
+    });
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+    renderWithProviders(<PipelinesView />, { ports });
+
+    const title = await screen.findByText(
+      "Live pipeline controls require the local app",
+    );
+    const alert = title.closest<HTMLElement>("[role='alert']");
+    if (!alert) throw new Error("Expected demo capability alert.");
+    expect(alert).toHaveTextContent(
+      "The public demo does not start worker-backed pipelines",
+    );
+    expect(alert).not.toHaveTextContent("Demo capability pipelineOperations");
+    expect(within(alert).getByRole("link", { name: "Review demo runs" })).toHaveAttribute(
+      "href",
+      "/runs",
+    );
+    expect(within(alert).getByRole("link", { name: "Install JobCtrl" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/getting-started",
+    );
+    const tools = screen.getByRole("group", { name: "Pipeline action tools" });
+    expect(
+      within(tools).getByRole("button", { name: "Run in local app" }),
+    ).toBeDisabled();
+    expect(pipelineOperations).not.toHaveBeenCalled();
+    expect(runPipelineStages).not.toHaveBeenCalled();
   });
 
   it("does not show secondary discovery navigation inside pipeline actions", async () => {

@@ -1,12 +1,15 @@
 import type { OutreachDraftDto, OutreachThreadDetail } from "@jobctrl/contracts";
-import { useState, type JSX } from "react";
+import { useIsMutating } from "@tanstack/react-query";
+import { useEffect, useRef, useState, type JSX } from "react";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { ReviseDraftForm } from "../forms/revise-draft-form.js";
 import { SendLogForm } from "../forms/send-log-form.js";
 import { useOutreachThreadQuery } from "../hooks/useOutreachThreadQuery.js";
 import { outreachDraftKindLabel } from "../lib/draft-copy.js";
+import { outreachKeys } from "../queryKeys.js";
 import { ApproveDraftButton } from "./ApproveDraftButton.js";
 import { CopyDraftButton } from "./CopyDraftButton.js";
 import { DraftClaimProvenanceList } from "./DraftClaimProvenanceList.js";
@@ -21,6 +24,8 @@ export interface OutreachThreadPanelProps {
   contactId: string;
   jobId?: string;
 }
+
+type DraftDecision = "approve" | "reject";
 
 function approvedDraftOf(thread: OutreachThreadDetail): OutreachDraftDto | undefined {
   return thread.drafts.find((draft) => draft.status === "approved");
@@ -67,12 +72,64 @@ function OutreachThreadBody({
 }): JSX.Element {
   const [revisionTarget, setRevisionTarget] = useState<"approved" | "candidate" | null>(null);
   const [loggingSend, setLoggingSend] = useState(false);
+  const [pendingDecision, setPendingDecision] = useState<DraftDecision | null>(null);
+  const decisionLock = useRef<DraftDecision | null>(null);
+  const decisionMutationObserved = useRef(false);
+  const tenantId = useTenantId();
+  const activeThreadMutations = useIsMutating({
+    mutationKey: outreachKeys.thread(tenantId, thread.threadId),
+  });
   const approved = approvedDraftOf(thread);
   const candidate = candidateUnderReviewOf(thread);
   const history = historyNewestFirst(thread);
   const canApprove = candidate ? candidate.gateResults.passed : false;
   const revisingApproved = revisionTarget === "approved";
   const revisingCandidate = revisionTarget === "candidate";
+  const threadActionPending = pendingDecision !== null || activeThreadMutations > 0;
+  const decisionControlsDisabled = threadActionPending || revisionTarget !== null;
+
+  useEffect(() => {
+    if (pendingDecision === null) {
+      return;
+    }
+    if (activeThreadMutations > 0) {
+      decisionMutationObserved.current = true;
+      return;
+    }
+    if (!decisionMutationObserved.current) {
+      return;
+    }
+    decisionLock.current = null;
+    decisionMutationObserved.current = false;
+    setPendingDecision(null);
+  }, [activeThreadMutations, pendingDecision]);
+
+  function beginDecision(decision: DraftDecision): boolean {
+    if (decisionLock.current !== null || activeThreadMutations > 0 || revisionTarget !== null) {
+      return false;
+    }
+    decisionLock.current = decision;
+    decisionMutationObserved.current = false;
+    setPendingDecision(decision);
+    return true;
+  }
+
+  function settleDecision(decision: DraftDecision): void {
+    if (decisionLock.current !== decision) {
+      return;
+    }
+    decisionLock.current = null;
+    decisionMutationObserved.current = false;
+    setPendingDecision(null);
+  }
+
+  function revisionToggleDisabled(target: "approved" | "candidate"): boolean {
+    return (
+      decisionLock.current !== null ||
+      threadActionPending ||
+      (revisionTarget !== null && revisionTarget !== target)
+    );
+  }
 
   return (
     <>
@@ -87,9 +144,11 @@ function OutreachThreadBody({
               type="button"
               className="tab"
               aria-expanded={revisingApproved}
-              onClick={() =>
-                setRevisionTarget((value) => (value === "approved" ? null : "approved"))
-              }
+              disabled={revisionToggleDisabled("approved")}
+              onClick={() => {
+                if (revisionToggleDisabled("approved")) return;
+                setRevisionTarget((value) => (value === "approved" ? null : "approved"));
+              }}
             >
               {revisingApproved ? "cancel revision" : "revise approved message"}
             </button>
@@ -165,22 +224,29 @@ function OutreachThreadBody({
               threadId={thread.threadId}
               contactId={contactId}
               draftId={candidate.draftId}
-              disabled={!canApprove}
+              disabled={!canApprove || decisionControlsDisabled}
+              onActionStart={() => beginDecision("approve")}
+              onActionSettled={() => settleDecision("approve")}
               {...(jobId ? { jobId } : {})}
             />
             <RejectDraftButton
               threadId={thread.threadId}
               contactId={contactId}
               draftId={candidate.draftId}
+              disabled={decisionControlsDisabled}
+              onActionStart={() => beginDecision("reject")}
+              onActionSettled={() => settleDecision("reject")}
               {...(jobId ? { jobId } : {})}
             />
             <button
               type="button"
               className="tab"
               aria-expanded={revisingCandidate}
-              onClick={() =>
-                setRevisionTarget((value) => (value === "candidate" ? null : "candidate"))
-              }
+              disabled={revisionToggleDisabled("candidate")}
+              onClick={() => {
+                if (revisionToggleDisabled("candidate")) return;
+                setRevisionTarget((value) => (value === "candidate" ? null : "candidate"));
+              }}
             >
               {revisingCandidate ? "cancel revision" : "revise draft"}
             </button>

@@ -85,6 +85,16 @@
   gap: 6px;
 }
 
+.contact-provenance-summary {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-flow: row wrap;
+  align-items: center;
+  gap: 4px 6px;
+  vertical-align: middle;
+}
+
 .outreach-due-follow-ups-content {
   display: grid;
   gap: 12px;
@@ -416,7 +426,7 @@
 }
 
 .jobs-data-grid-table .fit[data-score-tone="neutral"] {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .jobs-data-grid-table .fit[data-score-tone="unknown"] {
@@ -461,7 +471,7 @@
 }
 
 .filterable-data-grid-table .job-compensation-confidence-medium {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .filterable-data-grid-table .job-compensation-confidence-low {

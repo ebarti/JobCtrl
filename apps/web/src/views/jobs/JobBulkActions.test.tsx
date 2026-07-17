@@ -3,6 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DemoFeatureFlagAdapter } from "../../demo/ports.js";
 import { renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { JobBulkActions } from "./JobBulkActions.js";
@@ -331,6 +332,55 @@ describe("<JobBulkActions>", () => {
 
     expect(onRetrySelected).toHaveBeenCalledTimes(1);
     expect(onRetryAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables unavailable demo automation without blocking local job organization", () => {
+    const ports = buildTestPorts();
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+    renderWithProviders(
+      <JobBulkActions
+        search={{ ...baseSearch, state: "failed" }}
+        selectedCount={2}
+        selectedJobKeys={["job-1", "job-2"]}
+        staleCount={1}
+        selectedStaleKeys={["job-1"]}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
+      />,
+      { ports },
+    );
+
+    for (const name of [
+      "refresh compensation",
+      "rescore selected",
+      "re-tailor selected",
+      "retry selected",
+      "continue pending prep",
+      "retry all failed",
+    ]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAccessibleDescription(
+        /Disabled automation actions require the local app.*job organization remains available/i,
+      );
+    }
+    expect(
+      screen.getByRole("button", { name: "reset stale selected" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "hide selected" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "delete selected" })).toBeEnabled();
+    expect(screen.getByRole("link", { name: "Install JobCtrl" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/getting-started",
+    );
   });
 
   it("shows retry all failed for active jobs outside the failed filter", async () => {

@@ -23,8 +23,13 @@ import {
 } from "../../contexts/pipeline/components/pipelineOperationsDisplay.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
 import { usePipelineOperationsQuery } from "../../contexts/operations/hooks/usePipelineOperationsQuery.js";
+import {
+  getApiCapabilityAvailability,
+  LOCAL_INSTALL_GUIDE_URL,
+} from "../../shared/lib/apiCapabilityAvailability.js";
 import { cn } from "../../shared/lib/cn.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
+import { usePorts } from "../../shared/providers/PortsProvider.js";
 import {
   Alert,
   AlertAction,
@@ -1700,18 +1705,13 @@ function EmptyPipelineWorkspace({
   );
 }
 
-export function PipelinesView() {
+function AvailablePipelineWorkspace() {
   const operations = usePipelineOperationsQuery();
   const errorMessage =
     operations.error instanceof Error ? operations.error.message : null;
 
   return (
-    <div className="pipelines-view route-page route-page--pipelines">
-      <PageHead
-        eyebrow="Pipeline"
-        title="Pipelines"
-        subtitle="Follow the current discovery execution, the backlog around it, and the capacity doing the work."
-      />
+    <>
       {errorMessage ? (
         <Alert className="pipeline-operations-alert" variant="destructive">
           <AlertTitle>Pipeline operations unavailable</AlertTitle>
@@ -1722,6 +1722,49 @@ export function PipelinesView() {
         <PipelineWorkspace snapshot={operations.data} />
       ) : (
         <EmptyPipelineWorkspace isLoading={operations.isLoading} />
+      )}
+    </>
+  );
+}
+
+export function PipelinesView() {
+  const { featureFlags } = usePorts();
+  const operationsAvailability = getApiCapabilityAvailability(
+    featureFlags,
+    "pipelineOperations",
+  );
+
+  return (
+    <div className="pipelines-view route-page route-page--pipelines">
+      <PageHead
+        eyebrow="Pipeline"
+        title="Pipelines"
+        subtitle="Follow the current discovery execution, the backlog around it, and the capacity doing the work."
+      />
+      {!operationsAvailability.available ? (
+        <>
+          <Alert className="pipeline-operations-alert">
+            <AlertTitle>Live pipeline controls require the local app</AlertTitle>
+            <AlertDescription>
+              The public demo does not start worker-backed pipelines or expose live
+              runtime telemetry. You can still review the bundled workflow history.
+            </AlertDescription>
+            <AlertAction>
+              <a className={buttonVariants({ size: "sm" })} href="/runs">
+                Review demo runs
+              </a>
+              <a
+                className={buttonVariants({ size: "sm", variant: "outline" })}
+                href={LOCAL_INSTALL_GUIDE_URL}
+              >
+                Install JobCtrl
+              </a>
+            </AlertAction>
+          </Alert>
+          <EmptyPipelineWorkspace isLoading={false} />
+        </>
+      ) : (
+        <AvailablePipelineWorkspace />
       )}
     </div>
   );

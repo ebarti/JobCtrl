@@ -3484,6 +3484,19 @@ export interface JobDetail {
     scoreReasoning: string;
   };
   applyAudit: ApplyAudit;
+  /**
+   * The newest non-terminal apply run for this job, resolved from the
+   * job-scoped apply-run projection rather than the bounded dashboard feed.
+   * It gives the job detail action panel an exact cancellation target.
+   */
+  activeApplyRun?: {
+    runId: string;
+    status: string;
+    result: string | null;
+    dryRun: boolean;
+    startedAt: string | null;
+    finishedAt: string | null;
+  } | null;
   stages: StageSummary[];
   artifacts: ArtifactSummary[];
   auditHistory: JobAuditEntry[];

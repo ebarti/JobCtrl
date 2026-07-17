@@ -42,6 +42,14 @@ describe("<DemoReceiptHistory>", () => {
     expect(
       within(region).getByRole("status", { name: "Latest simulated receipt" }),
     ).toHaveTextContent("Simulated — no external effect occurred.");
+    const mobileDisclosure = within(region)
+      .getByText("Latest no-effect receipt details")
+      .closest("details");
+    expect(mobileDisclosure).not.toBeNull();
+    expect(mobileDisclosure).not.toHaveAttribute("open");
+    expect(mobileDisclosure).toHaveTextContent(
+      "No host operating-system opener was used.",
+    );
 
     await act(async () => {
       await workspace.mutate((draft) => {
@@ -66,6 +74,9 @@ describe("<DemoReceiptHistory>", () => {
     expect(
       within(region).getByText("Receipt history (6)"),
     ).toBeInTheDocument();
+    expect(
+      within(region).getByText("Receipt history (6)").closest("details"),
+    ).toHaveClass("demo-receipt-history__disclosure");
 
     await act(async () => {
       await workspace.reset();

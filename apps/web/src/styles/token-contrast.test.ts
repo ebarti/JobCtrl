@@ -6,6 +6,14 @@ import { describe, expect, it } from "vitest";
 const styleDir = dirname(fileURLToPath(import.meta.url));
 const tokensCss = readFileSync(resolve(styleDir, "tokens.css"), "utf8");
 const globalsCss = readFileSync(resolve(styleDir, "globals.css"), "utf8");
+const semanticTextCss = [
+  "globals.css",
+  "redesign-apply-review.css",
+  "redesign-data.css",
+  "redesign-job-detail.css",
+]
+  .map((file) => readFileSync(resolve(styleDir, file), "utf8"))
+  .join("\n");
 
 const AA_NORMAL = 4.5;
 const NON_TEXT_UI = 3;
@@ -21,6 +29,29 @@ function readToken(block: string, token: string): Oklch {
   const [L, C = 0, H = 0] = raw.trim().split(/\s+/).map(Number);
   if (L === undefined) throw new Error(`token --${token} has no lightness`);
   return { L, C, H };
+}
+
+function readMutedToken(block: string, token: string): Oklch {
+  const match = block.match(
+    new RegExp(
+      `--${token}:\\s*color-mix\\(in\\s+oklch,\\s*var\\(--([\\w-]+)\\)\\s+(\\d+(?:\\.\\d+)?)%,\\s*var\\(--([\\w-]+)\\)\\)`,
+    ),
+  );
+  if (!match) throw new Error(`token --${token} must be an oklch color-mix`);
+
+  const [, foregroundToken, percentage, backgroundToken] = match;
+  if (!foregroundToken || !percentage || !backgroundToken) {
+    throw new Error(`token --${token} has an incomplete oklch color-mix`);
+  }
+  const foreground = readToken(block, foregroundToken);
+  const background = readToken(block, backgroundToken);
+  const weight = Number(percentage) / 100;
+
+  return {
+    L: foreground.L * weight + background.L * (1 - weight),
+    C: foreground.C * weight + background.C * (1 - weight),
+    H: foreground.C > 0 ? foreground.H : background.H,
+  };
 }
 
 // OKLCH -> linear sRGB (Björn Ottosson's matrices).
@@ -165,4 +196,45 @@ describe("JobCtrl violet interaction contrast", () => {
       NON_TEXT_UI,
     );
   });
+});
+
+describe("semantic text token WCAG AA contrast", () => {
+  const textTokens = ["warning-text", "status-info-text"] as const;
+  const surfaceTokens = ["background", "card", "muted"] as const;
+  const mutedSurfaceTokens = ["warning-muted", "status-info-muted"] as const;
+
+  it("reserves raw semantic colors for fills, borders, and graphics rather than text", () => {
+    expect(semanticTextCss).not.toMatch(
+      /(?:^|\n)\s*color:\s*var\(--(?:warning|status-info)\);/m,
+    );
+    expect(semanticTextCss).toContain("color: var(--warning-text)");
+    expect(semanticTextCss).toContain("color: var(--status-info-text)");
+  });
+
+  for (const [theme, block] of [
+    ["light", lightBlock],
+    ["dark", darkBlock],
+  ] as const) {
+    for (const textToken of textTokens) {
+      for (const surfaceToken of surfaceTokens) {
+        it(`clears 4.5:1 for ${textToken} on ${surfaceToken} in the ${theme} theme`, () => {
+          const ratio = contrastRatio(readToken(block, textToken), readToken(block, surfaceToken));
+          expect(
+            ratio,
+            `${theme} ${textToken} on --${surfaceToken} was ${ratio.toFixed(3)}:1`,
+          ).toBeGreaterThanOrEqual(AA_NORMAL);
+        });
+      }
+
+      for (const surfaceToken of mutedSurfaceTokens) {
+        it(`clears 4.5:1 for ${textToken} on ${surfaceToken} in the ${theme} theme`, () => {
+          const ratio = contrastRatio(readToken(block, textToken), readMutedToken(block, surfaceToken));
+          expect(
+            ratio,
+            `${theme} ${textToken} on --${surfaceToken} was ${ratio.toFixed(3)}:1`,
+          ).toBeGreaterThanOrEqual(AA_NORMAL);
+        });
+      }
+    }
+  }
 });

@@ -41,9 +41,11 @@
   --success-muted: color-mix(in oklch, var(--success) 14%, var(--card));
   --warning: oklch(0.72 0.15 72);
   --warning-foreground: oklch(0.145 0 0);
+  --warning-text: oklch(0.44 0.1 72);
   --warning-muted: color-mix(in oklch, var(--warning) 16%, var(--card));
   --status-info: oklch(0.56 0.12 242);
   --status-info-foreground: oklch(0.985 0 0);
+  --status-info-text: oklch(0.44 0.1 242);
   --status-info-muted: color-mix(in oklch, var(--status-info) 14%, var(--card));
 
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.05);
@@ -118,9 +120,11 @@
   --success-muted: color-mix(in oklch, var(--success) 18%, var(--card));
   --warning: oklch(0.8 0.15 76);
   --warning-foreground: oklch(0.145 0 0);
+  --warning-text: oklch(0.72 0.13 76);
   --warning-muted: color-mix(in oklch, var(--warning) 20%, var(--card));
   --status-info: oklch(0.72 0.13 242);
   --status-info-foreground: oklch(0.145 0 0);
+  --status-info-text: oklch(0.72 0.1 242);
   --status-info-muted: color-mix(in oklch, var(--status-info) 18%, var(--card));
 
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.28);

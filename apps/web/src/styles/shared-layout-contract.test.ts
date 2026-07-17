@@ -241,10 +241,19 @@ describe("shared typography and layout contract", () => {
       /\.job-detail-top-actions \.action-panel\s*\{[^}]*border: 0;[^}]*background: transparent;[^}]*padding: 0;/s,
     );
     expect(workspaceCss).toMatch(
+      /\.job-detail-top-actions\s*\{[^}]*align-items: flex-start;/s,
+    );
+    expect(workspaceCss).toMatch(
       /\.job-action-group,[\s\S]*?\.job-detail-handoff-actions\s*\{[^}]*flex-wrap: wrap;[^}]*min-width: 0;/s,
     );
     expect(workspaceCss).toMatch(
       /@media \(max-width: 1000px\)[\s\S]*\.route-workspace__grid[\s\S]*grid-template-columns: minmax\(0, 1fr\);/,
+    );
+    expect(workspaceCss).toMatch(
+      /@media \(max-width: 1000px\)[\s\S]*\.job-detail-handoff-actions\s*\{[^}]*order: -1;/,
+    );
+    expect(workspaceCss).toMatch(
+      /@media \(max-width: 1000px\)[\s\S]*\.job-detail-top-actions \.action-panel,[\s\S]*?\.job-detail-handoff-actions\s*\{[^}]*flex-basis: 100%;/,
     );
     expect(pipelinesCss).toMatch(
       /\.pipeline-operations-inspector[\s\S]*\.pipeline-compact-ledger[\s\S]*> \.inspector-ledger__item[\s\S]*> dt,[\s\S]*> dd\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\);/,

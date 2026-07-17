@@ -1,6 +1,11 @@
 import { IconSparkles } from "@tabler/icons-react";
-import type { JSX } from "react";
+import { useId, type JSX } from "react";
 
+import {
+  getApiCapabilityAvailability,
+  LOCAL_INSTALL_GUIDE_URL,
+} from "../../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useGenerateMaterialsMutation } from "../hooks/useGenerateMaterialsMutation.js";
 
 export interface GenerateMaterialsButtonProps {
@@ -20,30 +25,48 @@ export function GenerateMaterialsButton({
   label = "generate materials",
   disabled = false,
 }: GenerateMaterialsButtonProps): JSX.Element {
+  const { featureFlags } = usePorts();
+  const availability = getApiCapabilityAvailability(
+    featureFlags,
+    "generateMaterials",
+  );
+  const unavailableReasonId = useId();
   const mutation = useGenerateMaterialsMutation();
-  const blocked = disabled || mutation.isPending;
+  const blocked = disabled || mutation.isPending || !availability.available;
 
   return (
-    <button
-      aria-label={label}
-      className={className}
-      disabled={blocked}
-      type="button"
-      data-job-id={jobId}
-      onClick={() => {
-        if (
-          blocked ||
-          !window.confirm(
-            "Generate materials for this job now? Existing accepted materials are retained until a replacement is approved.",
-          )
-        ) {
-          return;
+    <>
+      <button
+        aria-describedby={
+          availability.available ? undefined : unavailableReasonId
         }
-        mutation.mutate({ jobId });
-      }}
-    >
-      <IconSparkles aria-hidden="true" size={14} />
-      <span>{mutation.isPending ? "generating" : label}</span>
-    </button>
+        aria-label={label}
+        className={className}
+        disabled={blocked}
+        type="button"
+        data-job-id={jobId}
+        onClick={() => {
+          if (
+            blocked ||
+            !window.confirm(
+              "Generate materials for this job now? Existing accepted materials are retained until a replacement is approved.",
+            )
+          ) {
+            return;
+          }
+          mutation.mutate({ jobId });
+        }}
+      >
+        <IconSparkles aria-hidden="true" size={14} />
+        <span>{mutation.isPending ? "generating" : label}</span>
+      </button>
+      {!availability.available ? (
+        <span className="meta" id={unavailableReasonId}>
+          Material generation is available in the local app. Existing bundled
+          materials remain available to review. {" "}
+          <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
+        </span>
+      ) : null}
+    </>
   );
 }

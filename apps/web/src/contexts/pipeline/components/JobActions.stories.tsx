@@ -30,3 +30,16 @@ export const ApplyStage: Story = {
     currentStage: "apply",
   },
 };
+
+export const LiveApplyAvailable: Story = {
+  args: {
+    applyApprovalRequired: false,
+    currentStage: "apply",
+  },
+};
+
+export const NoActiveApplyRun: Story = {
+  args: {
+    jobId: "job-without-active-run",
+  },
+};

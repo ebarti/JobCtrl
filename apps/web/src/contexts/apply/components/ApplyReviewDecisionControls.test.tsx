@@ -6,7 +6,7 @@ import { renderWithProviders } from "../../../test/render.js";
 import { ApplyReviewDecisionControls } from "./ApplyReviewDecisionControls.js";
 
 describe("<ApplyReviewDecisionControls>", () => {
-  it("pairs semantic icons and colors with decision actions and the submit-gate status", () => {
+  it("makes live-submit authorization the sole primary action when it is available", () => {
     const item = sampleApplyReviewQueue.items[0]!;
 
     renderWithProviders(<ApplyReviewDecisionControls item={item} />);
@@ -15,8 +15,8 @@ describe("<ApplyReviewDecisionControls>", () => {
       screen.getByRole("button", {
         name: new RegExp(`${name} for ${item.title}`, "i"),
       });
-    const approveSubmitButton = getDecisionButton("Approve submit");
-    const approveDryRunButton = getDecisionButton("Approve dry run");
+    const approveSubmitButton = getDecisionButton("Authorize live submit");
+    const approveDryRunButton = getDecisionButton("Authorize dry run");
     const deferButton = getDecisionButton("Defer");
     const declineButton = getDecisionButton("Decline");
 
@@ -30,22 +30,21 @@ describe("<ApplyReviewDecisionControls>", () => {
       expect(icon).toHaveAttribute("aria-hidden", "true");
     }
 
-    for (const approvalButton of [
-      approveSubmitButton,
-      approveDryRunButton,
-    ]) {
-      expect(approvalButton).toHaveClass(
-        "bg-success",
-        "text-success-foreground",
-        "hover:bg-success/90",
-        "focus-visible:ring-success",
-      );
-    }
+    expect(approveSubmitButton).toHaveClass(
+      "bg-primary",
+      "text-primary-foreground",
+      "hover:bg-primary/90",
+    );
+    expect(approveDryRunButton).toHaveClass(
+      "border-border",
+      "bg-card",
+      "text-foreground",
+    );
+    expect(approveDryRunButton).not.toHaveClass("bg-success");
     expect(deferButton).toHaveClass(
-      "bg-warning",
-      "text-warning-foreground",
-      "hover:bg-warning/90",
-      "focus-visible:ring-warning",
+      "text-muted-foreground",
+      "hover:bg-muted",
+      "hover:text-foreground",
     );
     expect(declineButton).toHaveClass(
       "bg-destructive",
@@ -65,6 +64,9 @@ describe("<ApplyReviewDecisionControls>", () => {
     expect(
       submitGateStatus?.querySelector(".tabler-icon-lock"),
     ).toHaveAttribute("aria-hidden", "true");
+    expect(
+      screen.getByText(/Authorization only:/i).closest("span"),
+    ).toHaveTextContent(/does not start or submit an application immediately/i);
   });
 
   it("keeps partial-evidence blocker icon and copy in one semantic row", () => {
@@ -98,9 +100,18 @@ describe("<ApplyReviewDecisionControls>", () => {
       "true",
     );
 
+    const dryRunButton = screen.getByRole("button", {
+      name: new RegExp(`Authorize dry run for ${item.title}`, "i"),
+    });
+    expect(dryRunButton).toHaveClass(
+      "bg-primary",
+      "text-primary-foreground",
+      "hover:bg-primary/90",
+    );
+
     const overrideButton = screen.getByRole("button", {
       name: new RegExp(
-        `Approve with partial dry-run evidence for ${item.title}`,
+        `Authorize live submit with partial dry-run evidence for ${item.title}`,
         "i",
       ),
     });
@@ -108,11 +119,11 @@ describe("<ApplyReviewDecisionControls>", () => {
       overrideButton.querySelector('svg[data-icon="inline-start"]'),
     ).toHaveAttribute("aria-hidden", "true");
     expect(overrideButton).toHaveClass(
-      "bg-success",
-      "text-success-foreground",
-      "hover:bg-success/90",
-      "focus-visible:ring-success",
+      "border-border",
+      "bg-card",
+      "text-foreground",
     );
+    expect(overrideButton).not.toHaveClass("bg-success");
   });
 
   it("distinguishes approval preparation guidance from a blocked gate", () => {

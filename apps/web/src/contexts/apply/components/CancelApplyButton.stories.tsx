@@ -13,6 +13,10 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
 
+export const NoActiveRun: Story = {
+  args: { jobId: "job-without-active-run" },
+};
+
 export const TargetingRun: Story = {
   args: { runId: "run-1" },
 };

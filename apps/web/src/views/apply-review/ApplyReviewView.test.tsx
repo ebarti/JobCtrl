@@ -893,7 +893,7 @@ describe("<ApplyReviewView>", () => {
         .getByRole("link", { name: /Open job detail for Principal Platform Engineer/i })
         .querySelector('svg[data-icon="inline-start"]'),
     ).toHaveAttribute("aria-hidden", "true");
-    for (const name of ["Approve submit", "Approve dry run", "Defer", "Decline"]) {
+    for (const name of ["Authorize live submit", "Authorize dry run", "Defer", "Decline"]) {
       const button = screen.getByRole("button", { name: new RegExp(`${name} for Principal Platform Engineer`, "i") });
       const icon = button.querySelector('svg[data-icon="inline-start"]');
       expect(icon).toHaveAttribute("aria-hidden", "true");
@@ -1762,7 +1762,7 @@ describe("<ApplyReviewView>", () => {
     });
 
     await findResumeShadowRoot();
-    const approveDryRun = screen.getByRole("button", { name: /Approve dry run/i });
+    const approveDryRun = screen.getByRole("button", { name: /Authorize dry run/i });
     await waitFor(() => expect(approveDryRun).not.toBeDisabled());
     expect(screen.getByText("Saved draft will render automatically before approval.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Defer for Principal Platform Engineer/i })).not.toBeDisabled();
@@ -2814,7 +2814,7 @@ describe("<ApplyReviewView>", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows submit approval as the primary live gate action before a dry run", async () => {
+  it("shows live-submit authorization as the primary action when full dry-run evidence exists", async () => {
     const noDryRunQueue = {
       ...sampleApplyReviewQueue,
       items: sampleApplyReviewQueue.items.map((item, index) =>
@@ -2835,16 +2835,14 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(
-      await screen.findByRole("button", {
-        name: /Approve dry run for Principal Platform Engineer/i,
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", {
-        name: /Approve submit for Principal Platform Engineer/i,
-      }),
-    ).toBeInTheDocument();
+    const dryRunButton = await screen.findByRole("button", {
+      name: /Authorize dry run for Principal Platform Engineer/i,
+    });
+    const liveSubmitButton = screen.getByRole("button", {
+      name: /Authorize live submit for Principal Platform Engineer/i,
+    });
+    expect(liveSubmitButton).toHaveClass("bg-primary", "text-primary-foreground");
+    expect(dryRunButton).toHaveClass("border-border", "bg-card", "text-foreground");
   });
 
   it("renders the verbatim job post markdown without injecting raw html", async () => {
@@ -3120,7 +3118,11 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    await user.click(await screen.findByRole("button", { name: /approve submit for principal platform engineer/i }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: /authorize live submit for principal platform engineer/i,
+      }),
+    );
 
     await waitFor(() => expect(decideApplyReview).toHaveBeenCalledTimes(1));
 	    expect(decideApplyReview).toHaveBeenCalledWith(
@@ -3181,7 +3183,11 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getAllByText("apply@example.com").length).toBeGreaterThan(0);
     expect(screen.getByText("Jordan_Resume.pdf")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /approve submit for principal platform engineer/i }));
+    await user.click(
+      screen.getByRole("button", {
+        name: /authorize live submit for principal platform engineer/i,
+      }),
+    );
 
     await waitFor(() => expect(decideApplyReview).toHaveBeenCalledTimes(1));
     expect(decideApplyReview).toHaveBeenCalledWith(
@@ -3242,9 +3248,13 @@ describe("<ApplyReviewView>", () => {
     expect(partialEvidenceAlert).toHaveTextContent(/Partial dry-run evidence only/i);
     expect(partialEvidenceAlert).toHaveClass("inline-flex", "items-center", "justify-end", "gap-1.5");
     expect(partialEvidenceAlert.querySelector(".tabler-icon-lock")).toHaveAttribute("aria-hidden", "true");
-    expect(screen.getByRole("button", { name: /Approve submit for Principal Platform Engineer/i })).toBeDisabled();
+    expect(
+      screen.getByRole("button", {
+        name: /Authorize live submit for Principal Platform Engineer/i,
+      }),
+    ).toBeDisabled();
     const partialApprovalButton = screen.getByRole("button", {
-      name: /Approve with partial dry-run evidence for Principal Platform Engineer/i,
+      name: /Authorize live submit with partial dry-run evidence for Principal Platform Engineer/i,
     });
     expect(partialApprovalButton.querySelector('svg[data-icon="inline-start"]')).toHaveAttribute(
       "aria-hidden",

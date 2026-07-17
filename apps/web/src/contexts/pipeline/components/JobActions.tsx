@@ -21,6 +21,7 @@ export interface JobActionsProps {
   canRunCurrentStage?: boolean;
   canRetailor?: boolean;
   applyApprovalRequired?: boolean;
+  activeApplyRunId?: string | null;
 }
 
 export function JobActions({
@@ -30,6 +31,7 @@ export function JobActions({
   canRunCurrentStage = true,
   canRetailor = false,
   applyApprovalRequired = true,
+  activeApplyRunId = null,
 }: JobActionsProps): JSX.Element {
   return (
     <div className="action-panel" role="toolbar" aria-label="Job actions">
@@ -62,7 +64,7 @@ export function JobActions({
           jobId={jobId}
         />
         <GenerateMaterialsButton
-          className={buttonVariants({ size: "sm", variant: "default" })}
+          className={buttonVariants({ size: "sm", variant: "outline" })}
           jobId={jobId}
         />
         {canRetailor ? (
@@ -90,6 +92,7 @@ export function JobActions({
         <CancelApplyButton
           className={buttonVariants({ size: "sm", variant: "warning" })}
           jobId={jobId}
+          {...(activeApplyRunId ? { runId: activeApplyRunId } : {})}
         />
         <MarkAppliedButton
           className={buttonVariants({ size: "sm", variant: "success" })}

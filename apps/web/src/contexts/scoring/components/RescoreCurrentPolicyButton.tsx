@@ -44,6 +44,7 @@ export interface RescoreCurrentPolicyButtonProps {
   readonly className?: string;
   readonly label?: string;
   readonly disabled?: boolean;
+  readonly ariaDescribedBy?: string;
   readonly onSuccess?: () => void;
 }
 
@@ -54,6 +55,7 @@ export function RescoreCurrentPolicyButton({
   className = "tab",
   label,
   disabled = false,
+  ariaDescribedBy,
   onSuccess,
 }: RescoreCurrentPolicyButtonProps): JSX.Element {
   const mutation = useRescoreCurrentPolicyMutation();
@@ -66,6 +68,7 @@ export function RescoreCurrentPolicyButton({
 
   return (
     <button
+      aria-describedby={ariaDescribedBy}
       aria-label={buttonLabel}
       className={className}
       disabled={blocked}

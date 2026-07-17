@@ -10,8 +10,13 @@ import {
   type Stage,
 } from "@jobctrl/contracts";
 import { IconPlayerPlay } from "@tabler/icons-react";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useState } from "react";
 
+import {
+  getApiCapabilityAvailability,
+  LOCAL_INSTALL_GUIDE_URL,
+} from "../../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Button } from "../../../shared/ui/button.js";
 import {
   Card,
@@ -504,6 +509,12 @@ export interface StageTriggerPanelProps {
 export function StageTriggerPanel({
   stagePanels = {},
 }: StageTriggerPanelProps = {}) {
+  const { featureFlags } = usePorts();
+  const runAvailability = getApiCapabilityAvailability(
+    featureFlags,
+    "runPipelineStages",
+  );
+  const unavailableReasonId = useId();
   const runStages = useRunPipelineStagesMutation();
   const [submittedStage, setSubmittedStage] = useState<Stage | null>(null);
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
@@ -575,6 +586,7 @@ export function StageTriggerPanel({
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!runAvailability.available) return;
     const workerSnapshot = await health.refetch();
     if (workerSnapshot.data?.worker.status !== "healthy") return;
     setSubmittedStage(activeStage);
@@ -882,9 +894,19 @@ export function StageTriggerPanel({
       </div>
 
       <div className="stage-trigger-actions">
-        <Button disabled={runStages.isPending || workerUnhealthy} type="submit">
+        <Button
+          aria-describedby={
+            runAvailability.available ? undefined : unavailableReasonId
+          }
+          disabled={
+            runStages.isPending || workerUnhealthy || !runAvailability.available
+          }
+          type="submit"
+        >
           <IconPlayerPlay aria-hidden="true" data-icon="inline-start" />
-          {workerUnhealthy
+          {!runAvailability.available
+            ? "Run in local app"
+            : workerUnhealthy
             ? health.isPending
               ? "Checking worker"
               : "Worker unavailable"
@@ -903,7 +925,13 @@ export function StageTriggerPanel({
             ariaLabel={`Stop ${labelForStage(statusStage)} run`}
           />
         ) : null}
-        {workerUnhealthy ? (
+        {!runAvailability.available ? (
+          <span className="status-line" id={unavailableReasonId} role="status">
+            Pipeline runs require the local app. <a href="/runs">Review bundled runs</a>
+            {" or "}
+            <a href={LOCAL_INSTALL_GUIDE_URL}>install JobCtrl</a>.
+          </span>
+        ) : workerUnhealthy ? (
           <span className="status-line danger-action" role="alert">
             {workerHealthMessage}
           </span>

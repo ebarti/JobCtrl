@@ -4,8 +4,13 @@ import {
   type OutreachSendChannel,
 } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
-import type { JSX } from "react";
+import { useId, type JSX } from "react";
 
+import {
+  getApiCapabilityAvailability,
+  LOCAL_INSTALL_GUIDE_URL,
+} from "../../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import {
   Select,
   SelectContent,
@@ -48,6 +53,12 @@ export function SendLogForm({
   jobId,
   onLogged,
 }: SendLogFormProps): JSX.Element {
+  const { featureFlags } = usePorts();
+  const availability = getApiCapabilityAvailability(
+    featureFlags,
+    "logOutreachSend",
+  );
+  const unavailableReasonId = useId();
   const mutation = useLogSendMutation(threadId, contactId, jobId);
   const mutationError =
     mutation.error instanceof Error ? mutation.error.message : "";
@@ -69,6 +80,9 @@ export function SendLogForm({
       },
     },
     onSubmit: async ({ value }) => {
+      if (!availability.available) {
+        return;
+      }
       const result = LogOutreachSendRequestSchema.safeParse({
         draftId,
         channel: value.channel,
@@ -88,6 +102,9 @@ export function SendLogForm({
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (!availability.available) {
+          return;
+        }
         void form.handleSubmit();
       }}
     >
@@ -100,6 +117,7 @@ export function SendLogForm({
           <label className="field">
             <span>Channel</span>
             <Select
+              disabled={!availability.available}
               items={OUTREACH_SEND_CHANNELS.map((channel) => ({
                 label: SEND_CHANNEL_LABELS[channel],
                 value: channel,
@@ -112,8 +130,10 @@ export function SendLogForm({
               }}
             >
               <SelectTrigger
+                aria-describedby={availability.available ? undefined : unavailableReasonId}
                 aria-label="Channel"
                 className="w-full"
+                disabled={!availability.available}
                 onBlur={field.handleBlur}
               >
                 <SelectValue />
@@ -136,6 +156,8 @@ export function SendLogForm({
           <label className="field">
             <span>Date you sent it</span>
             <input
+              aria-describedby={availability.available ? undefined : unavailableReasonId}
+              disabled={!availability.available}
               type="date"
               value={field.state.value}
               onBlur={field.handleBlur}
@@ -144,6 +166,14 @@ export function SendLogForm({
           </label>
         )}
       </form.Field>
+      {!availability.available ? (
+        <span className="meta" id={unavailableReasonId}>
+          Send logging is available in the local app. JobCtrl never sends
+          outreach, and this public demo does not record your personal
+          communication activity. {" "}
+          <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
+        </span>
+      ) : null}
       {mutationError ? (
         <div className="banner inline">{mutationError}</div>
       ) : null}
@@ -162,9 +192,10 @@ export function SendLogForm({
         {(isSubmitting) => (
           <div className="form-actions">
             <button
+              aria-describedby={availability.available ? undefined : unavailableReasonId}
               type="submit"
               className="tab on"
-              disabled={mutation.isPending || isSubmitting}
+              disabled={mutation.isPending || isSubmitting || !availability.available}
             >
               {mutation.isPending || isSubmitting
                 ? "recording…"

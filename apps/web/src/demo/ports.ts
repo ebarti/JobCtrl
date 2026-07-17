@@ -5,6 +5,8 @@ import type { FeatureFlagPort } from "../shared/ports/FeatureFlagPort.js";
 import type { OpenInOsPort } from "../shared/ports/OpenInOsPort.js";
 import type { Session, SessionPort } from "../shared/ports/SessionPort.js";
 import type { StoragePort } from "../shared/ports/StoragePort.js";
+import { apiCapabilityFlagKey } from "../shared/lib/apiCapabilityAvailability.js";
+import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 
 export class DemoCapabilityError extends Error {
   readonly code = "demo_capability_not_implemented" as const;
@@ -48,6 +50,23 @@ export class DemoFeatureFlagAdapter implements FeatureFlagPort {
       typeof defaultValue === "boolean"
     ) {
       return true as T;
+    }
+    for (const operation of Object.keys(
+      DEMO_CAPABILITY_MANIFEST,
+    ) as (keyof typeof DEMO_CAPABILITY_MANIFEST)[]) {
+      const capability = DEMO_CAPABILITY_MANIFEST[operation];
+      if (
+        key === apiCapabilityFlagKey(operation, "available") &&
+        typeof defaultValue === "boolean"
+      ) {
+        return (capability.class !== "unavailable") as T;
+      }
+      if (
+        key === apiCapabilityFlagKey(operation, "reason") &&
+        typeof defaultValue === "string"
+      ) {
+        return capability.reason as T;
+      }
     }
     return defaultValue;
   }

@@ -7,6 +7,7 @@ export interface RefreshAllCompensationButtonProps {
   readonly className?: string;
   readonly label?: string;
   readonly disabled?: boolean;
+  readonly ariaDescribedBy?: string;
   readonly onSuccess?: () => void;
 }
 
@@ -14,6 +15,7 @@ export function RefreshAllCompensationButton({
   className = "tab",
   label = "refresh compensation",
   disabled = false,
+  ariaDescribedBy,
   onSuccess,
 }: RefreshAllCompensationButtonProps): JSX.Element {
   const mutation = useRefreshAllCompensationMutation();
@@ -21,6 +23,7 @@ export function RefreshAllCompensationButton({
 
   return (
     <button
+      aria-describedby={ariaDescribedBy}
       aria-label={label}
       className={className}
       disabled={blocked}

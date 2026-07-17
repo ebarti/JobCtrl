@@ -23,6 +23,7 @@ import {
 import {
   makeApplyAudit,
   makeJobDetail,
+  sampleArtifact,
   sampleCompensationAudit,
   sampleCompensationSummary,
   sampleEvidenceMapResponse,
@@ -342,6 +343,7 @@ describe("<JobDetailDrawer>", () => {
                   },
                 ],
               }),
+              artifacts: [sampleArtifact],
               employerAnalysis: populatedEmployerAnalysis,
               interviewPrep: {
                 ...sampleInterviewPrep,
@@ -449,6 +451,13 @@ describe("<JobDetailDrawer>", () => {
     const handoff = within(workspace).getByRole("link", {
       name: "Open Apply Review for Staff Software Engineer",
     });
+    const handoffGroup = within(workspace).getByLabelText(
+      "Related job workspaces",
+    );
+    expect(
+      handoffGroup.compareDocumentPosition(toolbar) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     const handoffUrl = new URL(
       handoff.getAttribute("href") ?? "",
       "http://localhost",
@@ -466,6 +475,9 @@ describe("<JobDetailDrawer>", () => {
     expect(
       within(toolbar).getByRole("group", { name: "Application actions" }),
     ).toBeInTheDocument();
+    expect(
+      within(toolbar).getByRole("button", { name: "generate materials" }),
+    ).toHaveClass("border-border", "bg-card", "text-foreground");
     expect(screen.getByText("Preparation diagnostics")).toBeInTheDocument();
     expect(screen.queryByText("Score breakdown")).not.toBeInTheDocument();
     expect(screen.queryByText("Tailoring rationale")).not.toBeInTheDocument();

@@ -6,6 +6,7 @@ import { userEvent } from "@testing-library/user-event";
 import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { DemoFeatureFlagAdapter } from "../../../demo/ports.js";
 import { renderWithProviders } from "../../../test/render.js";
 import {
   sampleDashboardSummary,
@@ -28,6 +29,28 @@ describe("StageTriggerPanel", () => {
     expect(
       await screen.findByRole("button", { name: "Run Discover" }),
     ).toBeEnabled();
+  });
+
+  it("disables unavailable demo runs and offers supported next steps", async () => {
+    const runPipelineStages = vi.fn();
+    const ports = buildTestPorts({ api: { runPipelineStages } });
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+    renderWithProviders(<StageTriggerPanel />, { ports });
+
+    const runButton = screen.getByRole("button", { name: "Run in local app" });
+    expect(runButton).toBeDisabled();
+    expect(runButton).toHaveAccessibleDescription(
+      /Pipeline runs require the local app.*Review bundled runs.*install JobCtrl/i,
+    );
+    expect(screen.getByRole("link", { name: "Review bundled runs" })).toHaveAttribute(
+      "href",
+      "/runs",
+    );
+    expect(screen.getByRole("link", { name: "install JobCtrl" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/getting-started",
+    );
+    expect(runPipelineStages).not.toHaveBeenCalled();
   });
 
   it("blocks stage runs when the JobCtrl automation worker heartbeat is missing", async () => {

@@ -142,6 +142,7 @@
 
 .job-detail-top-actions {
   align-self: stretch;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--jh-surface-gap);
   border: 0;
@@ -170,9 +171,12 @@
   min-width: 0;
 }
 
-.job-action-group:last-child,
-.job-detail-handoff-actions {
+.job-action-group:last-child {
   margin-left: auto;
+}
+
+.job-detail-handoff-actions {
+  flex: 0 0 auto;
 }
 
 .job-detail-workspace > .route-workspace__grid,
@@ -365,8 +369,16 @@
     justify-content: flex-start;
   }
 
-  .job-action-group:last-child,
+  .job-detail-top-actions .action-panel,
   .job-detail-handoff-actions {
+    flex-basis: 100%;
+  }
+
+  .job-detail-handoff-actions {
+    order: -1;
+  }
+
+  .job-action-group:last-child {
     margin-left: 0;
   }
 }

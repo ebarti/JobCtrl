@@ -150,10 +150,16 @@ describe("<DemoGuide>", () => {
   it("keeps the compact control available after the panel is dismissed", async () => {
     const { ports, user } = await renderGuide();
 
-    expect(screen.getByRole("button", { name: "Open demo guide" })).toBeVisible();
+    const launcher = screen.getByRole("button", { name: "Open demo guide" });
+    expect(launcher).toBeVisible();
+    expect(launcher).toHaveClass("demo-guide-launcher__button");
+    expect(launcher.closest(".demo-guide-launcher")).not.toBeNull();
+    expect(screen.getByText("Demo guide")).toHaveClass(
+      "demo-guide-launcher__label",
+    );
     await user.click(screen.getByRole("button", { name: "Open demo guide" }));
     expect(screen.getByRole("button", { name: "Hide demo guide" })).toHaveFocus();
-    expect(screen.getByRole("complementary")).toBeVisible();
+    expect(screen.getByRole("complementary")).toHaveClass("overflow-y-auto");
     await user.click(screen.getByRole("button", { name: "Hide demo guide" }));
     expect(
       screen.getByRole("button", { name: "Open demo guide" }),

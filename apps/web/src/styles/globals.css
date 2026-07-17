@@ -100,6 +100,10 @@ small {
   color: var(--warning-foreground);
 }
 
+.demo-workspace-disclosure {
+  display: none;
+}
+
 .demo-receipt-history {
   margin: 8px 16px 0;
   padding: 8px 12px;
@@ -119,6 +123,10 @@ small {
 
 .demo-receipt-latest strong {
   color: var(--success);
+}
+
+.demo-receipt-latest__disclosure {
+  display: none;
 }
 
 .demo-receipt-history summary {
@@ -149,6 +157,47 @@ small {
 
 .demo-receipt-list time {
   color: var(--muted-foreground);
+}
+
+@media (max-width: 560px) {
+  .demo-workspace-notice__desktop-title,
+  .demo-workspace-notice__desktop-copy,
+  .demo-receipt-latest__desktop-copy {
+    display: none;
+  }
+
+  .demo-workspace-disclosure,
+  .demo-receipt-latest__disclosure {
+    display: block;
+    min-width: 0;
+  }
+
+  .demo-workspace-disclosure {
+    flex: 1 1 100%;
+  }
+
+  .demo-workspace-disclosure summary,
+  .demo-receipt-latest__disclosure summary {
+    min-block-size: 24px;
+    cursor: pointer;
+  }
+
+  .demo-workspace-disclosure summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 8px;
+  }
+
+  .demo-workspace-disclosure > span,
+  .demo-receipt-latest__disclosure > span {
+    display: block;
+    margin-top: 6px;
+  }
+
+  .demo-receipt-latest {
+    gap: 0;
+  }
 }
 
 .side-rail {
@@ -571,7 +620,7 @@ input[type="radio"] {
 }
 
 .warn {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .ok {
@@ -2310,9 +2359,18 @@ input[type="radio"] {
   display: flex;
   position: relative;
   flex: 1 1 520px;
-  min-width: 360px;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+.resume-format-toolbar > *,
+.resume-format-select,
+.resume-format-select [data-slot="select-trigger"] {
+  min-inline-size: 0;
+  max-inline-size: 100%;
 }
 
 .resume-link-popover-anchor {
@@ -2458,8 +2516,12 @@ input[type="radio"] {
 }
 
 .resume-plate-scroll {
+  min-inline-size: 0;
+  max-inline-size: 100%;
   flex: 1 1 auto;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 18px 260px 18px 18px;
 }
 
@@ -2914,7 +2976,7 @@ input[type="radio"] {
 }
 
 .resume-comment-thread-risk {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .resume-comment-replies {
@@ -2993,6 +3055,16 @@ input[type="radio"] {
   .resume-format-toolbar {
     flex-basis: 100%;
     min-width: 0;
+  }
+
+  .resume-link-popover-anchor {
+    position: static;
+  }
+
+  .resume-link-popover {
+    inset-inline: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    max-inline-size: 100%;
   }
 
   .resume-plate-scroll {
@@ -4437,7 +4509,7 @@ input[type="radio"] {
 }
 
 .data-grid-column-filter-button.active {
-  color: var(--status-info);
+  color: var(--status-info-text);
 }
 
 .data-grid-column-filter-dialog {
@@ -4613,7 +4685,7 @@ input[type="radio"] {
 .job-compensation-confidence-medium {
   border-color: color-mix(in srgb, var(--warning) 55%, var(--border));
   background: color-mix(in srgb, var(--warning) 12%, transparent);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .job-compensation-confidence-low {
@@ -4726,7 +4798,7 @@ input[type="radio"] {
 }
 
 .source-table-tone.info {
-  color: var(--status-info);
+  color: var(--status-info-text);
 }
 
 .source-table-tone.neutral {
@@ -4735,7 +4807,7 @@ input[type="radio"] {
 
 .source-table-tone.warn,
 .source-table-metric.warn {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .source-table-tone.bad,
@@ -5298,7 +5370,7 @@ input[type="radio"] {
 
 .stage-pill.info {
   background: var(--status-info-muted);
-  color: var(--status-info);
+  color: var(--status-info-text);
 }
 
 .stage-pill.ok,
@@ -5310,7 +5382,7 @@ input[type="radio"] {
 
 .tag.warn {
   background: var(--warning-muted);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .tag.danger {
@@ -5320,7 +5392,7 @@ input[type="radio"] {
 
 .tag.info {
   background: var(--status-info-muted);
-  color: var(--status-info);
+  color: var(--status-info-text);
 }
 
 .pager {
@@ -6164,7 +6236,7 @@ input[type="radio"] {
 }
 
 .external-link {
-  color: var(--status-info);
+  color: var(--status-info-text);
   font-size: var(--jh-font-size-body);
   text-decoration: none;
 }
@@ -6851,7 +6923,7 @@ input[type="radio"] {
 }
 
 .description-text a {
-  color: var(--status-info);
+  color: var(--status-info-text);
 }
 
 .description-text code {
@@ -8089,7 +8161,7 @@ input[type="radio"] {
 }
 
 .connection-pill[data-status="connecting"] {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .connection-pill[data-status="closed"],

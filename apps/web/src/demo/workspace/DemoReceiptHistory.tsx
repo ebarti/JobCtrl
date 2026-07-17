@@ -57,9 +57,16 @@ function DemoReceiptHistoryContent({
         role="status"
       >
         <strong>Simulated — no external effect occurred.</strong>
-        <span>{latest.didNotDo}</span>
+        <span aria-hidden="true" className="demo-receipt-latest__desktop-copy">
+          {latest.didNotDo}
+        </span>
+        <span className="sr-only">{latest.didNotDo}</span>
       </p>
-      <details>
+      <details className="demo-receipt-latest__disclosure">
+        <summary>Latest no-effect receipt details</summary>
+        <span>{latest.didNotDo}</span>
+      </details>
+      <details className="demo-receipt-history__disclosure">
         <summary>Receipt history ({orderedReceipts.length})</summary>
         <ol className="demo-receipt-list">
           {orderedReceipts.map((receipt) => (

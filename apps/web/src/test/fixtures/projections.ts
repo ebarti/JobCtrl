@@ -882,6 +882,7 @@ export function makeJobDetail(
     artifacts: overrides.artifacts ?? [],
     auditHistory: overrides.auditHistory ?? sampleJobAuditHistory,
     applyAudit: overrides.applyAudit ?? makeApplyAudit(),
+    activeApplyRun: overrides.activeApplyRun ?? null,
     employerAnalysis: overrides.employerAnalysis ?? null,
     requirementFitReport: overrides.requirementFitReport ?? null,
     interviewPrep: overrides.interviewPrep ?? null,

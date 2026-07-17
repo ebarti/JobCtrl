@@ -793,6 +793,10 @@ verification-code MCP server:
   facts. The DTO includes state, label, summary, missing prerequisites, hard
   blockers, eligibility concerns, source metadata, and whether review evidence
   remains available.
+- The same job-detail payload exposes `activeApplyRun` (or `null` when none)
+  from the complete job-scoped run history, rather than the dashboard's bounded
+  recent-run feed, so the cancel control retains the exact Temporal run target
+  under unrelated load.
 - `POST /v1/jobs/:jobKey/apply-review/decision` appends an
   `approve_submit`, `approve_dry_run`, `defer`, `decline`, or `reset`
   decision. `approve_submit` records the reviewed materials generation, profile

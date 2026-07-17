@@ -156,10 +156,10 @@ async function expectReceiptCount(page: Page, count: number): Promise<void> {
 
 async function latestReceipt(page: Page): Promise<Locator> {
   const region = page.getByRole("region", { name: "Simulation receipts" });
-  const details = region.locator("details");
+  const details = region.locator(".demo-receipt-history__disclosure");
   if (!(await details.evaluate((element) => element.hasAttribute("open")))) {
-    // A job/artifact detail drawer can cover the shell ledger. Expand the
-    // durable ledger directly, then assert its rendered contents.
+    // A long detail workspace can put the shell ledger outside the viewport.
+    // Expand the durable ledger directly, then assert its rendered contents.
     await details.evaluate((element) => element.setAttribute("open", ""));
   }
   return details.getByRole("listitem").first();
@@ -371,7 +371,7 @@ scenarioTest(
       second.goto("/jobs"),
     ]);
     await expect(
-      page.getByRole("dialog", { name: "Job details" }),
+      page.getByRole("article", { name: "Job details" }),
     ).toBeVisible();
     await expectJobState(second, "Systems delivery director", "failed");
 
@@ -384,13 +384,13 @@ scenarioTest(
     await expectJobState(second, "Systems delivery director", "running");
     await expect(
       page
-        .getByRole("dialog", { name: "Job details" })
+        .getByRole("article", { name: "Job details" })
         .getByText("running", { exact: true }),
     ).toBeVisible();
     await expectJobState(second, "Systems delivery director", "succeeded");
     await expect(
       page
-        .getByRole("dialog", { name: "Job details" })
+        .getByRole("article", { name: "Job details" })
         .getByText("succeeded", { exact: true }),
     ).toBeVisible();
 
@@ -403,7 +403,7 @@ scenarioTest(
   "J2 Contoso re-tailoring fails first, preserves accepted material, and retries successfully",
   async ({ page }) => {
     await page.goto("/jobs/job-contoso-reliability");
-    const drawer = page.getByRole("dialog", { name: "Job details" });
+    const drawer = page.getByRole("article", { name: "Job details" });
     await expect(
       drawer.getByRole("heading", { name: "Reliability engineering manager" }),
     ).toBeVisible();
@@ -431,7 +431,7 @@ scenarioTest(
     );
 
     await page.reload();
-    const reloadedDrawer = page.getByRole("dialog", { name: "Job details" });
+    const reloadedDrawer = page.getByRole("article", { name: "Job details" });
     await expect(
       reloadedDrawer.getByText("succeeded", { exact: true }),
     ).toBeVisible();
@@ -451,7 +451,7 @@ scenarioTest(
     page.on("pageerror", (error) => runtimeErrors.push(error.message));
 
     await page.goto("/jobs/job-contoso-reliability");
-    const drawer = page.getByRole("dialog", { name: "Job details" });
+    const drawer = page.getByRole("article", { name: "Job details" });
     await drawer
       .getByRole("link", {
         name: "Open Apply Review for Reliability engineering manager",
@@ -480,7 +480,7 @@ scenarioTest(
       page.goto("/jobs/job-fabrikam-systems"),
       second.goto("/jobs/job-fabrikam-systems"),
     ]);
-    const drawer = page.getByRole("dialog", { name: "Job details" });
+    const drawer = page.getByRole("article", { name: "Job details" });
     const initialCount = await receiptCount(page);
     await expectReceiptCount(second, initialCount);
 
@@ -515,7 +515,7 @@ scenarioTest(
   "artifact rehearsal opens only the validated same-origin preview and records no host-OS effect",
   async ({ page, context }) => {
     await page.goto("/artifacts/artifact-tailored-resume");
-    const drawer = page.getByRole("dialog", { name: "Artifact details" });
+    const drawer = page.getByRole("article", { name: "Artifact details" });
     await expect(
       page.getByRole("region", { name: "Artifact PDF preview" }),
     ).toBeVisible();
@@ -589,15 +589,12 @@ scenarioTest("Demo guide shortcuts navigate through seeded surfaces and confirm 
   await guide.getByRole("link", { name: "Inspect synthetic scoring evidence" }).click();
   await expect(page).toHaveURL(/\/jobs\/job-northwind-platform(?:\?|$)/);
   await expect(page.getByText("Preparation diagnostics", { exact: false })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog", { name: "Job details" })).toBeHidden();
+  await expect(page.getByRole("article", { name: "Job details" })).toBeVisible();
 
   await openGuide.click();
   await guide.getByRole("link", { name: "Review synthetic tailored materials" }).click();
   await expect(page).toHaveURL(/\/artifacts\/artifact-tailored-resume(?:\?|$)/);
-  await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeHidden();
+  await expect(page.getByRole("article", { name: "Artifact details" })).toBeVisible();
 
   await openGuide.click();
   await guide.getByRole("link", { name: "Open simulated Apply Review and dry run" }).click();
@@ -640,7 +637,7 @@ scenarioTest("Dashboard Failures opens the failed job counted by the KPI", async
 
   await expect(page).toHaveURL(/\/jobs\?.*\bstate=failed\b/);
   await expect(page.getByRole("heading", { name: "Jobs" })).toBeVisible();
-  await expect(page.getByText("1 total", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 shown / 1 total", { exact: true })).toBeVisible();
   await expect(jobRow(page, "Systems delivery director")).toContainText(
     "failed",
   );
@@ -672,17 +669,27 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
   const routes = [
     ["/dashboard", "Dashboard", "3 jobs"],
     ["/jobs", "Jobs", "Platform systems lead"],
-    ["/jobs/job-northwind-platform", "Jobs", "Preparation diagnostics"],
+    ["/jobs/job-northwind-platform", "Job details", "Preparation diagnostics", "article"],
     ["/evidence-map", "Career evidence map", "Delivery improvement evidence"],
     ["/artifacts", "Artifacts", "Platform systems lead"],
-    ["/artifacts/artifact-tailored-resume", "Artifacts", "Artifact details"],
+    [
+      "/artifacts/artifact-tailored-resume",
+      "Artifact details",
+      "Platform systems lead",
+      "article",
+    ],
     [
       "/apply-review?jobKey=job-northwind-platform",
       "Application review",
       "Materials ready",
     ],
     ["/runs", "Workflow runs", "Platform systems lead"],
-    ["/runs/run-materials-progress", "Workflow runs", "Run details"],
+    [
+      "/runs/run-materials-progress",
+      "Workflow run details",
+      "Run details",
+      "article",
+    ],
     ["/analytics", "Outcome analytics", "bundled-capture"],
     ["/profile", "Profile", "Baseline resume editor"],
     ["/settings", "Settings", "Config"],
@@ -690,17 +697,18 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
     ["/outreach", "Contacts", "Synthetic hiring partner"],
     [
       "/outreach/contact-demo-hiring-partner",
-      "Contacts",
+      "Contact details",
       "Facts and provenance",
+      "article",
     ],
     ["/discovery", "Discovery", "Bundled synthetic source"],
     ["/pipelines", "Pipelines", "Configuring"],
     ["/debug", "Debug", "Synthetic score recorded."],
     [
       "/activity/event-demo-score",
-      "Activity details",
-      "Event details",
-      "dialog",
+      "Synthetic score recorded.",
+      "Projected event payload",
+      "article",
     ],
   ] as const;
 
@@ -708,8 +716,8 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
     await page.goto(STATIC_HOST);
     await page.goto(route);
     const identityLocator =
-      role === "dialog"
-        ? page.getByRole("dialog", { name: identity })
+      role === "article"
+        ? page.getByRole("article", { name: identity })
         : page.getByRole("heading", { name: identity }).first();
     await expect(identityLocator).toBeVisible();
     await expect(
@@ -719,8 +727,8 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
 
     await page.reload();
     await expect(
-      role === "dialog"
-        ? page.getByRole("dialog", { name: identity })
+      role === "article"
+        ? page.getByRole("article", { name: identity })
         : page.getByRole("heading", { name: identity }).first(),
     ).toBeVisible();
     await expect(
@@ -822,15 +830,17 @@ scenarioTest("eventless discovery and settings writes resync across tabs and sur
   await expect(second.getByLabel("Results per board")).toHaveValue("23");
 
   await Promise.all([page.goto("/settings"), second.goto("/settings")]);
-  await expect(page.getByLabel("Apply concurrency")).toHaveValue("1");
-  await expect(second.getByLabel("Apply concurrency")).toHaveValue("1");
-  await page.getByLabel("Apply concurrency").fill("3");
-  const executionForm = page.locator("form").filter({ has: page.getByLabel("Apply concurrency") });
+  await expect(page.getByLabel("Concurrent applications")).toHaveValue("1");
+  await expect(second.getByLabel("Concurrent applications")).toHaveValue("1");
+  await page.getByLabel("Concurrent applications").fill("3");
+  const executionForm = page.locator("form").filter({
+    has: page.getByLabel("Concurrent applications"),
+  });
   await executionForm.getByRole("button", { name: "save", exact: true }).click();
   await expect(page.getByText("settings saved", { exact: true })).toBeVisible();
-  await expect(second.getByLabel("Apply concurrency")).toHaveValue("3");
+  await expect(second.getByLabel("Concurrent applications")).toHaveValue("3");
   await second.reload();
-  await expect(second.getByLabel("Apply concurrency")).toHaveValue("3");
+  await expect(second.getByLabel("Concurrent applications")).toHaveValue("3");
 
   expect(productRequests).toEqual([]);
   expect(externalRequests).toEqual([]);

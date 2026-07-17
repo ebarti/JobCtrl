@@ -69,6 +69,11 @@ describe("<DemoWorkspaceNotice>", () => {
       "Other tabs and anyone using this profile can see the same data",
     );
     expect(notice).toHaveTextContent("Do not enter personal data or secrets");
+    const mobileSummary = screen
+      .getByText("Synthetic data · no personal data or secrets")
+      .closest("summary");
+    expect(mobileSummary).not.toBeNull();
+    expect(mobileSummary?.closest("details")).not.toHaveAttribute("open");
     expect(
       screen.getByText("Demo mode — browser-local workspace"),
     ).toBeInTheDocument();
@@ -101,6 +106,9 @@ describe("<DemoWorkspaceNotice>", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "stays only in this tab and is not shared",
     );
+    expect(
+      screen.getByText(/Browser storage is full/).closest("details"),
+    ).toBeNull();
     expect(screen.getByText("Demo mode — this tab only")).toBeInTheDocument();
     expect(workspace.getRuntimeSnapshot()).toMatchObject({
       status: "ready",

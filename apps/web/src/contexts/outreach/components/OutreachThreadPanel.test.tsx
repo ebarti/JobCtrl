@@ -164,4 +164,110 @@ describe("<OutreachThreadPanel>", () => {
       view.getByText(/Approval is disabled until the truthfulness gates pass/i),
     ).toBeInTheDocument();
   });
+
+  it("holds competing draft decisions while a delayed revision is pending", async () => {
+    const candidateThread = makeCandidateThread();
+    let revisionRequests = 0;
+    let resolveRevision: (response: Response) => void = () => {};
+    server.use(
+      http.get("*/v1/contacts/:contactId/outreach", () =>
+        HttpResponse.json(makeOutreachThreadResponse(candidateThread)),
+      ),
+      http.post("*/v1/outreach/threads/:threadId/drafts", () => {
+        revisionRequests += 1;
+        return new Promise<Response>((resolve) => {
+          resolveRevision = resolve;
+        });
+      }),
+    );
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+    await waitFor(() =>
+      expect(view.getByRole("heading", { name: "Draft under review" })).toBeInTheDocument(),
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "revise draft" }));
+    const approve = view.getByRole("button", { name: "approve draft" });
+    const reject = view.getByRole("button", { name: "reject draft" });
+    const submitRevision = view.getByRole("button", { name: "revise draft" });
+    expect(approve).toBeDisabled();
+    expect(reject).toBeDisabled();
+
+    fireEvent.click(submitRevision);
+    fireEvent.click(submitRevision);
+    await waitFor(() => expect(revisionRequests).toBe(1));
+    expect(view.getByRole("button", { name: "cancel revision" })).toBeDisabled();
+
+    resolveRevision(HttpResponse.json(makeOutreachThreadResponse(candidateThread)));
+    await waitFor(() =>
+      expect(view.queryByRole("textbox", { name: "Edit message" })).toBeNull(),
+    );
+    await waitFor(() => expect(approve).toBeEnabled());
+    expect(reject).toBeEnabled();
+  });
+
+  it("admits only the first immediate candidate decision", async () => {
+    const candidateThread = makeCandidateThread();
+    let approvalRequests = 0;
+    let rejectionRequests = 0;
+    let resolveApproval: (response: Response) => void = () => {};
+    server.use(
+      http.get("*/v1/contacts/:contactId/outreach", () =>
+        HttpResponse.json(makeOutreachThreadResponse(candidateThread)),
+      ),
+      http.post("*/v1/outreach/threads/:threadId/drafts/:draftId/approve", () => {
+        approvalRequests += 1;
+        return new Promise<Response>((resolve) => {
+          resolveApproval = resolve;
+        });
+      }),
+      http.post("*/v1/outreach/threads/:threadId/drafts/:draftId/reject", () => {
+        rejectionRequests += 1;
+        return HttpResponse.json(makeOutreachThreadResponse(candidateThread));
+      }),
+    );
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+    await waitFor(() =>
+      expect(view.getByRole("heading", { name: "Draft under review" })).toBeInTheDocument(),
+    );
+
+    const approve = view.getByRole("button", { name: "approve draft" });
+    const reject = view.getByRole("button", { name: "reject draft" });
+    fireEvent.click(approve);
+    fireEvent.click(reject);
+
+    await waitFor(() => expect(approvalRequests).toBe(1));
+    expect(rejectionRequests).toBe(0);
+
+    resolveApproval(HttpResponse.json(makeOutreachThreadResponse(candidateThread)));
+    await waitFor(() => expect(view.getByRole("button", { name: "approve draft" })).toBeEnabled());
+  });
+
+  it("restores a candidate decision after a delayed approval failure", async () => {
+    const candidateThread = makeCandidateThread();
+    let approvalRequests = 0;
+    let resolveApproval: (response: Response) => void = () => {};
+    server.use(
+      http.get("*/v1/contacts/:contactId/outreach", () =>
+        HttpResponse.json(makeOutreachThreadResponse(candidateThread)),
+      ),
+      http.post("*/v1/outreach/threads/:threadId/drafts/:draftId/approve", () => {
+        approvalRequests += 1;
+        return new Promise<Response>((resolve) => {
+          resolveApproval = resolve;
+        });
+      }),
+    );
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+    await waitFor(() =>
+      expect(view.getByRole("heading", { name: "Draft under review" })).toBeInTheDocument(),
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "approve draft" }));
+    await waitFor(() => expect(approvalRequests).toBe(1));
+    await waitFor(() => expect(view.queryByRole("button", { name: "approve draft" })).toBeNull());
+
+    resolveApproval(new HttpResponse(JSON.stringify({ ok: false }), { status: 500 }));
+    await waitFor(() => expect(view.getByRole("button", { name: "approve draft" })).toBeEnabled());
+    expect(view.getByRole("button", { name: "reject draft" })).toBeEnabled();
+  });
 });

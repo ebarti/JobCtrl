@@ -1,8 +1,15 @@
+import { useId } from "react";
+
 import { RefreshAllCompensationButton } from "../../contexts/enrichment/index.js";
 import { RetailorCurrentPolicyButton } from "../../contexts/materials/components/RetailorCurrentPolicyButton.js";
 import { RescoreCurrentPolicyButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
+import {
+  getApiCapabilityAvailability,
+  LOCAL_INSTALL_GUIDE_URL,
+} from "../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { Button } from "../../shared/ui/button.js";
 import { Tabs, TabsList, TabsTrigger } from "../../shared/ui/tabs.js";
 
@@ -66,6 +73,35 @@ export function JobBulkActions({
   onResetStaleSuccess = () => {},
   onMaintenanceSuccess = () => {},
 }: JobBulkActionsProps) {
+  const { featureFlags } = usePorts();
+  const refreshCompensationAvailability = getApiCapabilityAvailability(
+    featureFlags,
+    "refreshAllCompensation",
+  );
+  const rescoreAvailability = getApiCapabilityAvailability(
+    featureFlags,
+    "rescoreJobsNotOnCurrentScoringPolicy",
+  );
+  const retailorAvailability = getApiCapabilityAvailability(
+    featureFlags,
+    "retailorCurrentPolicy",
+  );
+  const retryAvailability = getApiCapabilityAvailability(
+    featureFlags,
+    "retryFailedJobs",
+  );
+  const pendingPreparationAvailability = getApiCapabilityAvailability(
+    featureFlags,
+    "runPendingPreparation",
+  );
+  const unavailableReasonId = useId();
+  const hasUnavailableDemoAutomation = [
+    refreshCompensationAvailability,
+    rescoreAvailability,
+    retailorAvailability,
+    retryAvailability,
+    pendingPreparationAvailability,
+  ].some((availability) => availability.isDemo && !availability.available);
   const restoring = search.deleted === "deleted";
   const hidden = search.deleted === "hidden";
   const legacyClosed = search.deleted === "closed";
@@ -104,6 +140,13 @@ export function JobBulkActions({
         {selectedCount ? (
           <span className="meta">{selectedCount} selected</span>
         ) : null}
+        {hasUnavailableDemoAutomation ? (
+          <span className="meta" id={unavailableReasonId} role="status">
+            Disabled automation actions require the local app. Browser-local job
+            organization remains available. {" "}
+            <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
+          </span>
+        ) : null}
         <button
           className="tab"
           type="button"
@@ -128,7 +171,13 @@ export function JobBulkActions({
         >
           clear selected
         </button>
-        <RefreshAllCompensationButton onSuccess={onMaintenanceSuccess} />
+        <RefreshAllCompensationButton
+          {...(!refreshCompensationAvailability.available
+            ? { ariaDescribedBy: unavailableReasonId }
+            : {})}
+          disabled={!refreshCompensationAvailability.available}
+          onSuccess={onMaintenanceSuccess}
+        />
         {staleCount || selectedStaleKeys.length ? (
           <ResetStaleScoresButton
             jobKeys={selectedStaleKeys}
@@ -143,18 +192,38 @@ export function JobBulkActions({
         ) : null}
         {!restoring && !hidden && !legacyClosed ? (
           <>
-            <RescoreCurrentPolicyButton onSuccess={onMaintenanceSuccess} />
-            <RetailorCurrentPolicyButton onSuccess={onMaintenanceSuccess} />
+            <RescoreCurrentPolicyButton
+              {...(!rescoreAvailability.available
+                ? { ariaDescribedBy: unavailableReasonId }
+                : {})}
+              disabled={!rescoreAvailability.available}
+              onSuccess={onMaintenanceSuccess}
+            />
+            <RetailorCurrentPolicyButton
+              {...(!retailorAvailability.available
+                ? { ariaDescribedBy: unavailableReasonId }
+                : {})}
+              disabled={!retailorAvailability.available}
+              onSuccess={onMaintenanceSuccess}
+            />
             {selectedJobKeys.length ? (
               <>
                 <RescoreCurrentPolicyButton
                   jobKeys={selectedJobKeys}
                   label="rescore selected"
+                  {...(!rescoreAvailability.available
+                    ? { ariaDescribedBy: unavailableReasonId }
+                    : {})}
+                  disabled={!rescoreAvailability.available}
                   onSuccess={onMaintenanceSuccess}
                 />
                 <RetailorCurrentPolicyButton
                   jobKeys={selectedJobKeys}
                   label="re-tailor selected"
+                  {...(!retailorAvailability.available
+                    ? { ariaDescribedBy: unavailableReasonId }
+                    : {})}
+                  disabled={!retailorAvailability.available}
                   onSuccess={onMaintenanceSuccess}
                 />
               </>
@@ -165,7 +234,12 @@ export function JobBulkActions({
           <button
             className="tab on"
             type="button"
-            disabled={!selectedCount || retryLoading}
+            aria-describedby={
+              retryAvailability.available ? undefined : unavailableReasonId
+            }
+            disabled={
+              !selectedCount || retryLoading || !retryAvailability.available
+            }
             onClick={onRetryFailedSelected}
           >
             retry selected
@@ -176,7 +250,16 @@ export function JobBulkActions({
             <button
               className="tab"
               type="button"
-              disabled={hasLocalFilters || pendingPreparationLoading}
+              aria-describedby={
+                pendingPreparationAvailability.available
+                  ? undefined
+                  : unavailableReasonId
+              }
+              disabled={
+                hasLocalFilters ||
+                pendingPreparationLoading ||
+                !pendingPreparationAvailability.available
+              }
               onClick={onRunPendingPreparation}
             >
               continue pending prep
@@ -184,7 +267,12 @@ export function JobBulkActions({
             <button
               className="tab"
               type="button"
-              disabled={hasLocalFilters || retryLoading}
+              aria-describedby={
+                retryAvailability.available ? undefined : unavailableReasonId
+              }
+              disabled={
+                hasLocalFilters || retryLoading || !retryAvailability.available
+              }
               onClick={onRetryAllFailed}
             >
               retry all failed
