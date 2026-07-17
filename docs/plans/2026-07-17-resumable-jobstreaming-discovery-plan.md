@@ -28,9 +28,9 @@ typed provider failures, and explicit acknowledgement mechanics.
   review passed.
 - **Phase 2:** published as PR #469; focused verification and independent
   review passed.
-- **Phase 3:** current final stack layer on PR #469; implementation,
-  canonical documentation, cumulative QA, and independent gates are in
-  progress.
+- **Phase 3:** published as PR #470 on PR #469; implementation, canonical
+  documentation, and cumulative validation are complete, with independent
+  review and QA gates in progress.
 
 ### Phase 1 — provider boundary
 
