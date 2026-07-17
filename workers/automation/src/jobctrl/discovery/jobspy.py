@@ -19,6 +19,7 @@ from jobctrl import config
 from jobctrl.database import get_connection, init_db, resurface_deleted_job
 from jobctrl.domain.discovery import JobMetadata, PostingUrl, SearchStrategy, Source
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+from jobctrl.domain.discovery.search_units import DiscoverySearchUnitLease
 from jobctrl.domain.discovery.identity import JobSourceObservation, normalize_observed_url
 from jobctrl.domain.discovery.source_registry import BROAD_BOARD_LEAD_POLICY
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
@@ -86,9 +87,7 @@ def _scrape_with_retry(kwargs: dict, max_retries: int = 2, backoff: float = 5.0)
             scrape_legacy_options,
         )
     except ImportError as exc:
-        raise ImportError(
-            "jobstreaming 0.0.2 is not installed. Run the JobCtrl setup again."
-        ) from exc
+        raise ImportError("jobstreaming 0.0.2 is not installed. Run the JobCtrl setup again.") from exc
     return scrape_legacy_options(
         kwargs,
         max_retries=max_retries,
@@ -146,6 +145,7 @@ def store_jobspy_results(
     run_id: str = "jobspy",
     search_cfg: dict | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    search_unit_lease: DiscoverySearchUnitLease | None = None,
 ) -> tuple[int, int]:
     """Store JobSpy DataFrame results into the DB. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
@@ -156,13 +156,19 @@ def store_jobspy_results(
     repository = SqliteJobRepository(
         conn,
         discovery_execution=discovery_execution,
-        source_family="jobspy" if discovery_execution is not None else None,
+        source_family=("jobspy" if discovery_execution is not None or search_unit_lease is not None else None),
+        search_unit_lease=search_unit_lease,
     )
-    use_case = DiscoverJobsUseCase(
-        repository=repository,
-        publisher=DurableJobEventPublisher(conn, stage="discover"),
-        acceptance_policy=acceptance_policy,
-    )
+    write_fence: Callable[[], None] | None = None
+    if search_unit_lease is not None:
+        from jobctrl.infrastructure.discovery.sqlite_search_unit_repository import (
+            SqliteDiscoverySearchUnitRepository,
+        )
+
+        search_units = SqliteDiscoverySearchUnitRepository(conn)
+
+        def write_fence() -> None:
+            search_units.fence_write(search_unit_lease)
 
     for _, row in df.iterrows():
         if limit > 0 and new >= limit:
@@ -212,6 +218,12 @@ def store_jobspy_results(
         # posting for future direct discovery.
         apply_url = _nullable_str(row.get("job_url_direct"))
         source_id = _jobspy_source_id(site_label)
+        provider_event_key = _nullable_str(row.get("jobstreaming_job_key")) or _jobspy_source_native_id(row, url)
+        consumption_prefix = _jobstreaming_consumption_prefix(
+            search_unit_lease,
+            source_id=source_id,
+            provider_event_key=provider_event_key,
+        )
         posting = _jobspy_posting_from_row(
             url=url,
             source_id=source_id,
@@ -240,6 +252,7 @@ def store_jobspy_results(
                 duplicate_url=url,
                 source=source_id,
                 observed_at=now,
+                write_fence=write_fence,
             )
             _record_jobspy_source_observation(
                 conn,
@@ -249,6 +262,12 @@ def store_jobspy_results(
                 run_id=run_id,
                 observed_at=now,
                 discovery_execution=discovery_execution,
+                search_unit_lease=search_unit_lease,
+                write_fence=write_fence,
+                idempotency_key=_consumption_event_key(
+                    consumption_prefix,
+                    "JobSourceObserved",
+                ),
             )
             _learn_posting_source(
                 conn,
@@ -256,6 +275,11 @@ def store_jobspy_results(
                 posting_url=apply_url,
                 discovered_via_source_id=source_id,
                 observed_at=now,
+                write_fence=write_fence,
+                event_idempotency_prefix=_consumption_event_key(
+                    consumption_prefix,
+                    "learned-source",
+                ),
             )
             _refresh_existing_jobspy_job(
                 conn,
@@ -271,8 +295,23 @@ def store_jobspy_results(
                 application_url=apply_url,
                 detail_scraped_at=detail_scraped_at,
                 updated_at=now,
+                write_fence=write_fence,
+                idempotency_key=_consumption_event_key(
+                    consumption_prefix,
+                    "JobMetadataUpdated",
+                ),
             )
-            _upsert_posted_compensation_fact(conn, job_url=duplicate_url, parsed_at=now)
+            _upsert_posted_compensation_fact(
+                conn,
+                job_url=duplicate_url,
+                parsed_at=now,
+                write_fence=write_fence,
+                idempotency_key=_consumption_event_key(
+                    consumption_prefix,
+                    "CompensationFactsUpdated",
+                ),
+            )
+            _apply_write_fence(write_fence)
             resurface_deleted_job(conn, duplicate_url, resurfaced_at=now)
             existing += 1
             continue
@@ -285,6 +324,7 @@ def store_jobspy_results(
                 duplicate_url=url,
                 source=source_id,
                 observed_at=now,
+                write_fence=write_fence,
             )
             _record_jobspy_source_observation(
                 conn,
@@ -294,6 +334,12 @@ def store_jobspy_results(
                 run_id=run_id,
                 observed_at=now,
                 discovery_execution=discovery_execution,
+                search_unit_lease=search_unit_lease,
+                write_fence=write_fence,
+                idempotency_key=_consumption_event_key(
+                    consumption_prefix,
+                    "JobSourceObserved",
+                ),
             )
             _learn_posting_source(
                 conn,
@@ -301,6 +347,11 @@ def store_jobspy_results(
                 posting_url=apply_url,
                 discovered_via_source_id=source_id,
                 observed_at=now,
+                write_fence=write_fence,
+                event_idempotency_prefix=_consumption_event_key(
+                    consumption_prefix,
+                    "learned-source",
+                ),
             )
             _refresh_existing_jobspy_job(
                 conn,
@@ -316,12 +367,42 @@ def store_jobspy_results(
                 application_url=apply_url,
                 detail_scraped_at=detail_scraped_at,
                 updated_at=now,
+                write_fence=write_fence,
+                idempotency_key=_consumption_event_key(
+                    consumption_prefix,
+                    "JobMetadataUpdated",
+                ),
             )
-            _upsert_posted_compensation_fact(conn, job_url=stored_duplicate_url, parsed_at=now)
+            _upsert_posted_compensation_fact(
+                conn,
+                job_url=stored_duplicate_url,
+                parsed_at=now,
+                write_fence=write_fence,
+                idempotency_key=_consumption_event_key(
+                    consumption_prefix,
+                    "CompensationFactsUpdated",
+                ),
+            )
+            _apply_write_fence(write_fence)
             resurface_deleted_job(conn, stored_duplicate_url, resurfaced_at=now)
             existing += 1
             continue
 
+        use_case = DiscoverJobsUseCase(
+            repository=repository,
+            publisher=DurableJobEventPublisher(
+                conn,
+                stage="discover",
+                write_fence=write_fence,
+                idempotency_prefix=_consumption_event_key(
+                    consumption_prefix,
+                    "ingest",
+                ),
+            ),
+            acceptance_policy=acceptance_policy,
+            observation_id_factory=((lambda: f"obs:{consumption_prefix}") if consumption_prefix is not None else None),
+            republish_canonical_identity=consumption_prefix is not None,
+        )
         summary = use_case.execute(
             tenant_id=LOCAL_TENANT,
             postings=(posting,),
@@ -342,18 +423,38 @@ def store_jobspy_results(
                 application_url=apply_url,
                 detail_scraped_at=detail_scraped_at,
                 updated_at=now,
+                write_fence=write_fence,
+                idempotency_key=_consumption_event_key(
+                    consumption_prefix,
+                    "JobMetadataUpdated",
+                ),
             )
-            _upsert_posted_compensation_fact(conn, job_url=url, parsed_at=now)
+            _upsert_posted_compensation_fact(
+                conn,
+                job_url=url,
+                parsed_at=now,
+                write_fence=write_fence,
+                idempotency_key=_consumption_event_key(
+                    consumption_prefix,
+                    "CompensationFactsUpdated",
+                ),
+            )
             _learn_posting_source(
                 conn,
                 job_url=url,
                 posting_url=apply_url,
                 discovered_via_source_id=source_id,
                 observed_at=now,
+                write_fence=write_fence,
+                event_idempotency_prefix=_consumption_event_key(
+                    consumption_prefix,
+                    "learned-source",
+                ),
             )
         if summary.new_jobs > 0:
             new += 1
         elif summary.observed > 0 or summary.duplicates_linked > 0:
+            _apply_write_fence(write_fence)
             resurface_deleted_job(conn, url, resurfaced_at=now)
             existing += 1
 
@@ -385,17 +486,32 @@ def _jobspy_posting_from_row(
         source_id=source_id,
         source_native_id=source_native_id,
         canonical_url=url,
-        )
+    )
 
 
-def _upsert_posted_compensation_fact(conn: sqlite3.Connection, *, job_url: str, parsed_at: str) -> None:
+def _upsert_posted_compensation_fact(
+    conn: sqlite3.Connection,
+    *,
+    job_url: str,
+    parsed_at: str,
+    write_fence: Callable[[], None] | None = None,
+    idempotency_key: str | None = None,
+) -> None:
     from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
 
+    repository = SqlitePostedCompensationRepository(conn)
+    _apply_write_fence(write_fence)
     row = conn.execute("SELECT salary FROM jobs WHERE url = ?", (job_url,)).fetchone()
     if row is None:
         return
     salary = row["salary"] if isinstance(row, sqlite3.Row) else row[0]
-    SqlitePostedCompensationRepository(conn).parse_and_save_job_salary(job_url, salary, parsed_at=parsed_at)
+    repository.parse_and_save_job_salary(
+        job_url,
+        salary,
+        parsed_at=parsed_at,
+        event_idempotency_key=idempotency_key,
+        event_write_fence=write_fence,
+    )
 
 
 def _jobspy_source_native_id(row, url: str) -> str:
@@ -448,7 +564,10 @@ def _refresh_existing_jobspy_job(
     application_url: str | None,
     detail_scraped_at: str | None,
     updated_at: str,
+    write_fence: Callable[[], None] | None = None,
+    idempotency_key: str | None = None,
 ) -> None:
+    _apply_write_fence(write_fence)
     cursor = conn.execute(
         """
         UPDATE jobs SET
@@ -497,6 +616,7 @@ def _refresh_existing_jobspy_job(
                 "source": site,
             },
             occurred_at=updated_at,
+            idempotency_key=idempotency_key,
         )
 
 
@@ -507,6 +627,38 @@ def _nullable_str(value: object) -> str | None:
     if not text or text.casefold() in {"nan", "none", "nat", "<na>"}:
         return None
     return text
+
+
+def _apply_write_fence(write_fence: Callable[[], None] | None) -> None:
+    if write_fence is not None:
+        write_fence()
+
+
+def _jobstreaming_consumption_prefix(
+    lease: DiscoverySearchUnitLease | None,
+    *,
+    source_id: str,
+    provider_event_key: str,
+) -> str | None:
+    """Build a replay-stable key without exposing provider or query payloads."""
+
+    if lease is None:
+        return None
+    material = "\x1f".join(
+        (
+            lease.execution.tenant_id,
+            lease.execution.workflow_id,
+            lease.execution.temporal_run_id,
+            lease.unit_id,
+            source_id,
+            provider_event_key,
+        )
+    )
+    return "jobstreaming:" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _consumption_event_key(prefix: str | None, event_type: str) -> str | None:
+    return f"{prefix}:{event_type}" if prefix is not None else None
 
 
 def _jobspy_source_id(source_label: str) -> str:
@@ -523,16 +675,18 @@ def _record_jobspy_source_observation(
     run_id: str,
     observed_at: str,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    search_unit_lease: DiscoverySearchUnitLease | None = None,
+    write_fence: Callable[[], None] | None = None,
+    idempotency_key: str | None = None,
 ) -> None:
     normalized = normalize_observed_url(observed_url)
     source_native_id = normalized or observed_url
-    observation_id = "jobspy:" + hashlib.sha256(
-        f"{source_id}:{source_native_id}".encode("utf-8")
-    ).hexdigest()[:24]
+    observation_id = "jobspy:" + hashlib.sha256(f"{source_id}:{source_native_id}".encode("utf-8")).hexdigest()[:24]
     SqliteJobRepository(
         conn,
         discovery_execution=discovery_execution,
-        source_family="jobspy" if discovery_execution is not None else None,
+        source_family=("jobspy" if discovery_execution is not None or search_unit_lease is not None else None),
+        search_unit_lease=search_unit_lease,
     ).attach_source_observation(
         LOCAL_TENANT,
         JobId(job_url),
@@ -547,6 +701,7 @@ def _record_jobspy_source_observation(
     )
     from jobctrl.state import record_job_event
 
+    _apply_write_fence(write_fence)
     record_job_event(
         conn,
         job_url,
@@ -571,6 +726,7 @@ def _record_jobspy_source_observation(
             "observedAt": observed_at,
         },
         occurred_at=observed_at,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -581,6 +737,8 @@ def _learn_posting_source(
     posting_url: str | None,
     discovered_via_source_id: str,
     observed_at: str,
+    write_fence: Callable[[], None] | None = None,
+    event_idempotency_prefix: str | None = None,
 ) -> None:
     if not posting_url:
         return
@@ -594,6 +752,8 @@ def _learn_posting_source(
         posting_url=posting_url,
         discovered_via_source_id=discovered_via_source_id,
         observed_at=observed_at,
+        write_fence=write_fence,
+        event_idempotency_prefix=event_idempotency_prefix,
     )
 
 
@@ -690,16 +850,19 @@ def _find_content_duplicate_survivor(
         stored_employer = stored_company if stored_company else existing["site"]
         if not is_genuine_employer_identity(stored_employer):
             continue
-        if content_match_basis(
-            incoming_key=incoming_key,
-            incoming_description=description,
-            candidate_title=existing["title"],
-            candidate_employer=stored_employer,
-            candidate_descriptions=(
-                existing["listing_description"],
-                existing["enriched_description"],
-            ),
-        ) is not None:
+        if (
+            content_match_basis(
+                incoming_key=incoming_key,
+                incoming_description=description,
+                candidate_title=existing["title"],
+                candidate_employer=stored_employer,
+                candidate_descriptions=(
+                    existing["listing_description"],
+                    existing["enriched_description"],
+                ),
+            )
+            is not None
+        ):
             return str(existing["url"])
     return None
 
@@ -725,6 +888,7 @@ def _record_content_duplicate_link(
     duplicate_url: str,
     source: str,
     observed_at: str,
+    write_fence: Callable[[], None] | None = None,
 ) -> None:
     link_key = job_content_fingerprint(
         title=surviving_url,
@@ -733,6 +897,7 @@ def _record_content_duplicate_link(
     )
     if link_key is None:
         return
+    _apply_write_fence(write_fence)
     duplicate_link_id = "content:" + link_key[:32]
     normalized_url = normalize_observed_url(duplicate_url)
     conn.execute(
@@ -841,9 +1006,7 @@ def _run_one_search(
         if "linkedin" in other_sites:
             kwargs["linkedin_fetch_description"] = True
         try:
-            df, failures = _jobstreaming_frame_and_failures(
-                _scrape_with_retry(kwargs, max_retries=max_retries)
-            )
+            df, failures = _jobstreaming_frame_and_failures(_scrape_with_retry(kwargs, max_retries=max_retries))
             provider_errors += failures
             all_dfs.append(df)
         except ImportError:
@@ -868,9 +1031,7 @@ def _run_one_search(
         if proxy_config:
             gd_kwargs["proxies"] = [proxy_config.jobspy]
         try:
-            gd_df, failures = _jobstreaming_frame_and_failures(
-                _scrape_with_retry(gd_kwargs, max_retries=max_retries)
-            )
+            gd_df, failures = _jobstreaming_frame_and_failures(_scrape_with_retry(gd_kwargs, max_retries=max_retries))
             provider_errors += failures
             all_dfs.append(gd_df)
         except ImportError:
@@ -1038,9 +1199,7 @@ def search_jobs(
             min_interval_seconds=BROAD_BOARD_LEAD_POLICY.min_request_interval_seconds,
             max_concurrency=BROAD_BOARD_LEAD_POLICY.max_concurrent_requests_per_host,
         ):
-            df, provider_errors = _jobstreaming_frame_and_failures(
-                _scrape_with_retry(kwargs)
-            )
+            df, provider_errors = _jobstreaming_frame_and_failures(_scrape_with_retry(kwargs))
     except Exception as e:
         log.error("JobSpy search failed: %s", e)
         return {"error": str(e), "total": 0, "new": 0, "existing": 0, "errors": 1}
@@ -1194,9 +1353,7 @@ def _full_crawl(
             # outcome is durable even though we break out before the crawl's
             # normal end-of-run persistence.
             politeness_conn.commit()
-            log.warning(
-                "JobSpy per-run search-invocation budget exhausted after %d searches", completed
-            )
+            log.warning("JobSpy per-run search-invocation budget exhausted after %d searches", completed)
             break
         emit_progress(s, "JobSpy search started")
         with limiter.slot(

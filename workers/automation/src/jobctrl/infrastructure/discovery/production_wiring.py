@@ -14,7 +14,7 @@ import json
 import re
 import sqlite3
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable
@@ -190,11 +190,22 @@ _WORKDAY_HOST_ALIAS_SOURCE_RE = re.compile(r"^workday:(?P<employer>.+)-wd\d+-myw
 class DurableJobEventPublisher:
     """Persist domain events to ``job_events`` while still fanning out locally."""
 
-    def __init__(self, conn: sqlite3.Connection, *, stage: str) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        stage: str,
+        write_fence: Callable[[], None] | None = None,
+        idempotency_prefix: str | None = None,
+    ) -> None:
         self._conn = conn
         self._stage = stage
+        self._write_fence = write_fence
+        self._idempotency_prefix = idempotency_prefix
 
     def publish(self, event: DomainEvent) -> None:
+        if self._write_fence is not None:
+            self._write_fence()
         payload = {"tenantId": str(event.tenant_id), **event.payload}
         job_url = _event_job_url(event)
         record_job_event(
@@ -205,6 +216,9 @@ class DurableJobEventPublisher:
             message=event.event_type,
             payload=payload,
             occurred_at=event.occurred_at,
+            idempotency_key=(
+                f"{self._idempotency_prefix}:{event.event_type}" if self._idempotency_prefix is not None else None
+            ),
         )
         self._conn.commit()
 
@@ -322,6 +336,8 @@ def learn_posting_source_from_url(
     posting_url: str | None,
     discovered_via_source_id: str,
     observed_at: str,
+    write_fence: Callable[[], None] | None = None,
+    event_idempotency_prefix: str | None = None,
 ) -> LearnedPostingSource:
     """Learn a durable owner source from a broad-board posting URL.
 
@@ -341,6 +357,7 @@ def learn_posting_source_from_url(
         )
 
     ensure_worker_discovery_tables(conn)
+    _apply_optional_write_fence(write_fence)
     detected = _detect_ats_kind(candidate_url)
     if detected is None:
         candidate = _source_location_candidate(
@@ -358,7 +375,14 @@ def learn_posting_source_from_url(
             },
         )
         if _locator_candidate_is_new(conn, candidate):
-            _record_locator_event(conn, candidate)
+            _record_locator_event(
+                conn,
+                candidate,
+                idempotency_key=_event_idempotency_key(
+                    event_idempotency_prefix,
+                    "SourceLocationCandidateDiscovered",
+                ),
+            )
         _upsert_locator_candidate(conn, candidate)
         _enqueue_manual_action_from_candidate(conn, candidate)
         conn.commit()
@@ -375,16 +399,23 @@ def learn_posting_source_from_url(
         source_native_id=_source_native_id_from_url(candidate_url),
         confidence=0.82,
     )
-    SqliteJobRepository(conn).set_canonical_identity(
+    identity_repository = SqliteJobRepository(conn)
+    _apply_optional_write_fence(write_fence)
+    identity_repository.set_canonical_identity(
         LOCAL_TENANT,
         JobId(job_url),
         identity,
     )
+    _apply_optional_write_fence(write_fence)
     _record_canonical_identity_resolved_event(
         conn,
         job_url=job_url,
         identity=identity,
         occurred_at=observed_at,
+        idempotency_key=_event_idempotency_key(
+            event_idempotency_prefix,
+            "CanonicalJobIdentityResolved",
+        ),
     )
 
     if detected is AtsKind.WORKDAY:
@@ -405,7 +436,14 @@ def learn_posting_source_from_url(
             },
         )
         if _locator_candidate_is_new(conn, candidate):
-            _record_locator_event(conn, candidate)
+            _record_locator_event(
+                conn,
+                candidate,
+                idempotency_key=_event_idempotency_key(
+                    event_idempotency_prefix,
+                    "SourceLocationCandidateDiscovered",
+                ),
+            )
         _upsert_locator_candidate(conn, candidate)
         _enqueue_manual_action_from_candidate(conn, candidate)
         conn.commit()
@@ -431,7 +469,12 @@ def learn_posting_source_from_url(
         },
     )
     source_id = _source_id_from_locator_candidate(conn, candidate)
-    _promote_locator_candidate(conn, candidate)
+    _apply_optional_write_fence(write_fence)
+    _promote_locator_candidate(
+        conn,
+        candidate,
+        event_idempotency_prefix=event_idempotency_prefix,
+    )
     conn.commit()
     return LearnedPostingSource(
         source_id=source_id,
@@ -685,10 +728,7 @@ def _promote_ats_source_description_to_enrichment(
             job_url,
             "enrich",
             "StageCompleted",
-            message=(
-                "ATS source description promoted to enrichment: "
-                f"{len(description)} description chars"
-            ),
+            message=(f"ATS source description promoted to enrichment: {len(description)} description chars"),
             payload={
                 "source_id": posting.source_id,
                 "source_native_id": identity.source_native_id,
@@ -810,9 +850,7 @@ def _query_specs_by_family(search_cfg: Mapping[str, Any]) -> dict[str, tuple[dic
     query_specs_by_family = {
         "ats_api": tuple(_ats_query_specs(search_cfg)),
         "jobspy": tuple(query_specs_for_source(search_cfg.get("queries", []), "jobspy")),
-        "smartextract": tuple(
-            query_specs_for_source(search_cfg.get("queries", []), "smartextract")
-        ),
+        "smartextract": tuple(query_specs_for_source(search_cfg.get("queries", []), "smartextract")),
         "workday": tuple(
             query_specs_for_source(
                 search_cfg.get("queries", []),
@@ -822,9 +860,7 @@ def _query_specs_by_family(search_cfg: Mapping[str, Any]) -> dict[str, tuple[dic
         ),
     }
     if not query_specs_by_family["workday"]:
-        query_specs_by_family["workday"] = tuple(
-            query_specs_for_source(search_cfg.get("queries", []), "workday")
-        )
+        query_specs_by_family["workday"] = tuple(query_specs_for_source(search_cfg.get("queries", []), "workday"))
     return query_specs_by_family
 
 
@@ -875,9 +911,7 @@ def retire_invalid_canonical_ats_jobs(
 
 
 def _source_family(*, source_id: str, strategy: str, ats_kind: str) -> str | None:
-    if ats_kind in {"greenhouse", "lever", "ashby"} or source_id.startswith(
-        ("greenhouse:", "lever:", "ashby:")
-    ):
+    if ats_kind in {"greenhouse", "lever", "ashby"} or source_id.startswith(("greenhouse:", "lever:", "ashby:")):
         return "ats_api"
     if ats_kind == "workday" or source_id.startswith("workday:") or strategy == "workday_api":
         return "workday"
@@ -926,9 +960,7 @@ def _source_rejection_reasons(
 ) -> list[str]:
     reasons: list[str] = []
     effective_accept_locs = accept_locs or [location for location in locations if location]
-    location_evidence = " ".join(
-        str(part).strip() for part in (location, title) if str(part or "").strip()
-    )
+    location_evidence = " ".join(str(part).strip() for part in (location, title) if str(part or "").strip())
     if not _usable_description_text(description):
         reasons.append("missing_description")
     if query_specs and not title_matches_any_query(title, query_specs):
@@ -1339,6 +1371,8 @@ def _upsert_locator_candidate(
 def _promote_locator_candidate(
     conn: sqlite3.Connection,
     candidate: SourceLocationCandidate,
+    *,
+    event_idempotency_prefix: str | None = None,
 ) -> bool:
     source_id = _source_id_from_locator_candidate(conn, candidate)
     now = utc_now()
@@ -1379,6 +1413,10 @@ def _promote_locator_candidate(
             policy_id=policy_id,
             state="active",
             occurred_at=now,
+            idempotency_key=_event_idempotency_key(
+                event_idempotency_prefix,
+                "SourceRegistryEntryCreated",
+            ),
         )
         changed = True
     else:
@@ -1403,6 +1441,10 @@ def _promote_locator_candidate(
                 source_id=source_id,
                 changed_fields=tuple(changed_fields),
                 occurred_at=now,
+                idempotency_key=_event_idempotency_key(
+                    event_idempotency_prefix,
+                    "SourceRegistryEntryUpdated",
+                ),
             )
         changed = bool(changed_fields)
     had_pending_candidate = not _locator_candidate_is_new(conn, candidate)
@@ -1413,6 +1455,10 @@ def _promote_locator_candidate(
             candidate_id=candidate.candidate_id,
             source_id=source_id,
             occurred_at=now,
+            idempotency_key=_event_idempotency_key(
+                event_idempotency_prefix,
+                "SourceLocationCandidatePromoted",
+            ),
         )
     return changed or had_pending_candidate
 
@@ -1445,6 +1491,8 @@ def _delete_locator_candidate(conn: sqlite3.Connection, candidate_id: str) -> No
 def _record_locator_event(
     conn: sqlite3.Connection,
     candidate: SourceLocationCandidate,
+    *,
+    idempotency_key: str | None = None,
 ) -> None:
     record_job_event(
         conn,
@@ -1467,6 +1515,7 @@ def _record_locator_event(
             "discoveredAt": candidate.discovered_at,
         },
         occurred_at=candidate.discovered_at,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -1476,6 +1525,7 @@ def _record_locator_promoted_event(
     candidate_id: str,
     source_id: str,
     occurred_at: str,
+    idempotency_key: str | None = None,
 ) -> None:
     record_job_event(
         conn,
@@ -1493,6 +1543,7 @@ def _record_locator_promoted_event(
             "promotedAt": occurred_at,
         },
         occurred_at=occurred_at,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -1504,6 +1555,7 @@ def _record_source_registry_created_event(
     policy_id: str,
     state: str,
     occurred_at: str,
+    idempotency_key: str | None = None,
 ) -> None:
     record_job_event(
         conn,
@@ -1523,6 +1575,7 @@ def _record_source_registry_created_event(
             "createdAt": occurred_at,
         },
         occurred_at=occurred_at,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -1532,6 +1585,7 @@ def _record_source_registry_updated_event(
     source_id: str,
     changed_fields: tuple[str, ...],
     occurred_at: str,
+    idempotency_key: str | None = None,
 ) -> None:
     record_job_event(
         conn,
@@ -1549,6 +1603,7 @@ def _record_source_registry_updated_event(
             "updatedAt": occurred_at,
         },
         occurred_at=occurred_at,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -1558,6 +1613,7 @@ def _record_canonical_identity_resolved_event(
     job_url: str,
     identity: CanonicalJobIdentity,
     occurred_at: str,
+    idempotency_key: str | None = None,
 ) -> None:
     record_job_event(
         conn,
@@ -1578,7 +1634,17 @@ def _record_canonical_identity_resolved_event(
             "confidence": identity.confidence,
         },
         occurred_at=occurred_at,
+        idempotency_key=idempotency_key,
     )
+
+
+def _apply_optional_write_fence(write_fence: Callable[[], None] | None) -> None:
+    if write_fence is not None:
+        write_fence()
+
+
+def _event_idempotency_key(prefix: str | None, event_type: str) -> str | None:
+    return f"{prefix}:{event_type}" if prefix is not None else None
 
 
 def _enqueue_manual_action_from_candidate(
@@ -1822,13 +1888,17 @@ def _adapter_for_source(
     location_accept, location_reject = configured_location_filters(search_cfg)
     if ats_kind not in (AtsKind.GREENHOUSE, AtsKind.LEVER, AtsKind.ASHBY):
         return None
-    fetcher = http if http is not None else _gateway_ats_fetcher(
-        source,
-        source_id=source_id,
-        ats_kind=ats_kind,
-        gateway=gateway,
-        conn=conn,
-        run_id=run_id,
+    fetcher = (
+        http
+        if http is not None
+        else _gateway_ats_fetcher(
+            source,
+            source_id=source_id,
+            ats_kind=ats_kind,
+            gateway=gateway,
+            conn=conn,
+            run_id=run_id,
+        )
     )
     common = dict(
         source_id=source_id,

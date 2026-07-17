@@ -28,7 +28,7 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # the ninth-context canonical tables (``ensure_contact_tables``).
 # v3 (Discovery execution lineage): immutable Temporal execution/job membership
 # and the idempotently filled preparation work plan used by Operations.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -287,6 +287,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_operational_metric_tables(conn)
     ensure_source_observation_tables(conn)
     ensure_discovery_execution_tables(conn)
+    ensure_discovery_search_unit_tables(conn)
     ensure_discovery_control_tables(conn)
     ensure_discovery_settings_tables(conn)
     ensure_contact_tables(conn)
@@ -893,6 +894,7 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             payload_json        TEXT,
             entity_kind         TEXT,
             entity_ref          TEXT,
+            idempotency_key     TEXT,
             FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
         )
     """)
@@ -904,6 +906,15 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         conn.execute("ALTER TABLE job_events ADD COLUMN entity_kind TEXT")
     if "entity_ref" not in event_cols:
         conn.execute("ALTER TABLE job_events ADD COLUMN entity_ref TEXT")
+    if "idempotency_key" not in event_cols:
+        conn.execute("ALTER TABLE job_events ADD COLUMN idempotency_key TEXT")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_job_events_idempotency_key
+        ON job_events(idempotency_key)
+        WHERE idempotency_key IS NOT NULL
+        """
+    )
     conn.execute("""
         CREATE TABLE IF NOT EXISTS job_artifacts (
             artifact_id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3077,6 +3088,100 @@ def ensure_discovery_execution_tables(conn: sqlite3.Connection | None = None) ->
     )
     conn.commit()
     return ["discovery_execution_jobs"]
+
+
+def ensure_discovery_search_unit_tables(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Create caller-owned JobStreaming plans, checkpoints, and receipts.
+
+    A unit belongs to one exact Temporal Discover workflow/run. ``lease_epoch``
+    is the fencing token: reclaiming an unfinished unit increments it, so an
+    older activity attempt can no longer advance the checkpoint or accept a
+    result. Provider checkpoint JSON remains opaque at this layer.
+    """
+
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_search_units (
+            tenant_id              TEXT NOT NULL,
+            discover_workflow_id   TEXT NOT NULL,
+            discover_run_id        TEXT NOT NULL,
+            unit_id                TEXT NOT NULL,
+            ordinal                INTEGER NOT NULL CHECK (ordinal >= 0),
+            request_json           TEXT NOT NULL,
+            request_fingerprint    TEXT NOT NULL,
+            state                  TEXT NOT NULL DEFAULT 'pending'
+                CHECK (state IN ('pending', 'running', 'completed', 'skipped', 'failed', 'canceled')),
+            lease_owner            TEXT,
+            lease_attempt          INTEGER NOT NULL DEFAULT 0 CHECK (lease_attempt >= 0),
+            lease_epoch            INTEGER NOT NULL DEFAULT 0 CHECK (lease_epoch >= 0),
+            recovery_count         INTEGER NOT NULL DEFAULT 0 CHECK (recovery_count >= 0),
+            checkpoint_json        TEXT,
+            checkpoint_revision    INTEGER CHECK (checkpoint_revision >= 0),
+            last_error_code        TEXT,
+            last_error_type        TEXT,
+            last_error_retryable   INTEGER,
+            reset_checkpoint       INTEGER NOT NULL DEFAULT 0 CHECK (reset_checkpoint IN (0, 1)),
+            created_at             TEXT NOT NULL,
+            updated_at             TEXT NOT NULL,
+            completed_at           TEXT,
+            PRIMARY KEY (
+                tenant_id, discover_workflow_id, discover_run_id, unit_id
+            ),
+            UNIQUE (
+                tenant_id, discover_workflow_id, discover_run_id, ordinal
+            ),
+            CHECK (
+                (checkpoint_json IS NULL AND checkpoint_revision IS NULL)
+                OR (checkpoint_json IS NOT NULL AND checkpoint_revision IS NOT NULL)
+            )
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discovery_search_units_state
+        ON discovery_search_units(
+            tenant_id, discover_workflow_id, discover_run_id, state, ordinal
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_search_unit_jobs (
+            tenant_id              TEXT NOT NULL,
+            discover_workflow_id   TEXT NOT NULL,
+            discover_run_id        TEXT NOT NULL,
+            unit_id                TEXT NOT NULL,
+            job_url                TEXT NOT NULL,
+            was_new                INTEGER NOT NULL CHECK (was_new IN (0, 1)),
+            accepted_at            TEXT NOT NULL,
+            PRIMARY KEY (
+                tenant_id, discover_workflow_id, discover_run_id, unit_id, job_url
+            ),
+            FOREIGN KEY (
+                tenant_id, discover_workflow_id, discover_run_id, unit_id
+            ) REFERENCES discovery_search_units(
+                tenant_id, discover_workflow_id, discover_run_id, unit_id
+            ) ON DELETE CASCADE,
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discovery_search_unit_jobs_execution
+        ON discovery_search_unit_jobs(
+            tenant_id, discover_workflow_id, discover_run_id, was_new
+        )
+        """
+    )
+    conn.commit()
+    return ["discovery_search_units", "discovery_search_unit_jobs"]
 
 
 def _backfill_one_observation_row(

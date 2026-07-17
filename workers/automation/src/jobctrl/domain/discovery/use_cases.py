@@ -32,7 +32,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable, Literal, Protocol
+from typing import Callable, Iterable, Literal, Protocol
 
 from jobctrl.domain.discovery.aggregate import Job
 from jobctrl.domain.discovery.identity import (
@@ -233,6 +233,8 @@ class DiscoverJobsUseCase:
         acceptance_policy: PostingAcceptancePolicy | None = None,
         run_id_factory: object | None = None,
         clock: object | None = None,
+        observation_id_factory: Callable[[], str] | None = None,
+        republish_canonical_identity: bool = False,
     ) -> None:
         self._repository = repository
         self._publisher = publisher
@@ -240,6 +242,8 @@ class DiscoverJobsUseCase:
         self._acceptance_policy = acceptance_policy or accept_all_postings
         self._run_id_factory = run_id_factory or (lambda: f"run:{uuid.uuid4().hex}")
         self._clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
+        self._observation_id_factory = observation_id_factory or (lambda: f"obs:{uuid.uuid4().hex}")
+        self._republish_canonical_identity = republish_canonical_identity
 
     def execute(
         self,
@@ -307,7 +311,9 @@ class DiscoverJobsUseCase:
             pass  # span carries the identity decision metadata
 
         observed_at = self._clock()
-        observation_id = f"obs:{uuid.uuid4().hex}"
+        observation_id = str(self._observation_id_factory()).strip()
+        if not observation_id:
+            raise ValueError("observation_id_factory returned an empty identifier")
 
         if owner_id is None:
             acceptance = self._acceptance_policy(posting)
@@ -493,6 +499,29 @@ class DiscoverJobsUseCase:
         ):
             existing = self._repository.load(tenant_id, owner_id)
             if existing is not None:
+                if self._republish_canonical_identity:
+                    stored_identity = self._repository.load_canonical_identity(
+                        tenant_id,
+                        owner_id,
+                    )
+                    if stored_identity is None:
+                        self._repository.set_canonical_identity(
+                            tenant_id,
+                            owner_id,
+                            identity,
+                        )
+                    self._publisher.publish(
+                        create_canonical_job_identity_resolved(
+                            tenant_id,
+                            CanonicalJobIdentityResolvedPayload(
+                                job_id=str(owner_id),
+                                canonical_url=identity.canonical_url,
+                                ats_kind=identity.ats_kind.value,
+                                source_native_id=identity.source_native_id,
+                                confidence=identity.confidence,
+                            ),
+                        )
+                    )
                 if not acceptance.accepted:
                     reason = _policy_rejection_reason(acceptance)
                     if not existing.is_deleted:
@@ -575,7 +604,13 @@ class DiscoverJobsUseCase:
 
         duplicate_link_id: str | None = None
         if is_distinct_url:
-            duplicate_link_id = f"dup:{uuid.uuid4().hex}"
+            duplicate_link_id = (
+                "dup:"
+                + uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"{tenant_id}:{owner_id}:{observation_id}",
+                ).hex
+            )
             if content_match is not None:
                 if content_match.basis == "fingerprint":
                     link_reason = "content_fingerprint_match"
@@ -584,9 +619,7 @@ class DiscoverJobsUseCase:
                     link_reason = "content_shingle_match"
                     link_confidence = CONTENT_SHINGLE_MATCH_CONFIDENCE
             else:
-                link_reason = (
-                    "canonical_url_match" if identity.canonical_url else "source_native_id_match"
-                )
+                link_reason = "canonical_url_match" if identity.canonical_url else "source_native_id_match"
                 link_confidence = identity.confidence
             link = DuplicateJobLink(
                 duplicate_link_id=duplicate_link_id,

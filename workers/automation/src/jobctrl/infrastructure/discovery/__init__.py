@@ -30,6 +30,12 @@ from jobctrl.infrastructure.discovery.sqlite_execution_repository import (
 from jobctrl.infrastructure.discovery.sqlite_run_repository import (
     SqliteDiscoveryRunRepository,
 )
+from jobctrl.infrastructure.discovery.sqlite_search_unit_repository import (
+    DiscoverySearchPlanConflict,
+    SqliteDiscoverySearchUnitCheckpointStore,
+    SqliteDiscoverySearchUnitRepository,
+    StaleDiscoverySearchUnitLease,
+)
 from jobctrl.infrastructure.discovery.production_wiring import (
     DiscoveryAcceptanceReport,
     ManualCaptureImport,
@@ -54,9 +60,13 @@ __all__ = [
     "SourceControlSeedSummary",
     "SqliteDiscoveryRunRepository",
     "SqliteDiscoveryExecutionRepository",
+    "SqliteDiscoverySearchUnitCheckpointStore",
+    "SqliteDiscoverySearchUnitRepository",
     "SqliteJobRepository",
+    "StaleDiscoverySearchUnitLease",
     "WorkdayBoardAdapter",
     "WorkdayEmployer",
+    "DiscoverySearchPlanConflict",
     "build_discovery_acceptance_report",
     "enqueue_manual_action_for_sources",
     "import_manual_capture_item",

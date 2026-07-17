@@ -38,6 +38,7 @@ from typing import Any
 
 from jobctrl.domain.discovery.aggregate import Job
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+from jobctrl.domain.discovery.search_units import DiscoverySearchUnitLease
 from jobctrl.domain.discovery.identity import (
     AtsKind,
     CanonicalJobIdentity,
@@ -93,10 +94,17 @@ class SqliteJobRepository:
         *,
         discovery_execution: DiscoveryExecutionRef | None = None,
         source_family: str | None = None,
+        search_unit_lease: DiscoverySearchUnitLease | None = None,
     ) -> None:
+        if search_unit_lease is not None:
+            if discovery_execution is None:
+                discovery_execution = search_unit_lease.execution
+            elif discovery_execution != search_unit_lease.execution:
+                raise ValueError("search-unit lease does not match discovery execution")
         self._conn = conn
         self._discovery_execution = discovery_execution
         self._source_family = source_family.strip() if source_family else None
+        self._search_unit_lease = search_unit_lease
         if discovery_execution is not None and self._source_family is None:
             raise ValueError("source_family is required with discovery_execution")
         self._ensure_deleted_jobs_table()
@@ -110,6 +118,14 @@ class SqliteJobRepository:
             self._execution_repository = SqliteDiscoveryExecutionRepository(conn)
         else:
             self._execution_repository = None
+        if search_unit_lease is not None:
+            from jobctrl.infrastructure.discovery.sqlite_search_unit_repository import (
+                SqliteDiscoverySearchUnitRepository,
+            )
+
+            self._search_unit_repository = SqliteDiscoverySearchUnitRepository(conn)
+        else:
+            self._search_unit_repository = None
 
     # ------------------------------------------------------------------
     # Schema bootstrapping
@@ -248,6 +264,12 @@ class SqliteJobRepository:
     # Write
     # ------------------------------------------------------------------
 
+    def _fence_search_unit_write(self) -> None:
+        if self._search_unit_repository is None:
+            return
+        assert self._search_unit_lease is not None
+        self._search_unit_repository.fence_write(self._search_unit_lease)
+
     def save(self, job: Job) -> None:
         """Insert / upsert a Job into the wide ``jobs`` table.
 
@@ -264,6 +286,8 @@ class SqliteJobRepository:
             "SELECT url, discovered_at FROM jobs WHERE url = ?",
             (job.posting_url.value,),
         ).fetchone()
+        was_new = existing is None
+        self._fence_search_unit_write()
 
         if existing is not None:
             existing_url = existing["url"] if isinstance(existing, sqlite3.Row) else existing[0]
@@ -273,11 +297,7 @@ class SqliteJobRepository:
                     owner=JobId(str(existing_url)),
                     attempted=job.job_id,
                 )
-            existing_discovered_at = (
-                existing["discovered_at"]
-                if isinstance(existing, sqlite3.Row)
-                else existing[1]
-            )
+            existing_discovered_at = existing["discovered_at"] if isinstance(existing, sqlite3.Row) else existing[1]
             preserved_discovered_at = existing_discovered_at or job.discovered_at
             self._conn.execute(
                 """
@@ -325,6 +345,14 @@ class SqliteJobRepository:
                 ),
             )
         self._sync_tombstone(job)
+        if self._search_unit_repository is not None:
+            assert self._search_unit_lease is not None
+            self._search_unit_repository.record_accepted_job(
+                self._search_unit_lease,
+                job.posting_url.value,
+                was_new=was_new,
+                accepted_at=job.discovered_at,
+            )
         self._conn.commit()
 
     def soft_delete(
@@ -338,6 +366,7 @@ class SqliteJobRepository:
         existing = self.load(tenant_id, job_id)
         if existing is None:
             return None
+        self._fence_search_unit_write()
         deleted = existing.soft_delete(reason=reason, deleted_at=deleted_at)
         self._conn.execute(
             """
@@ -363,6 +392,7 @@ class SqliteJobRepository:
         existing = self.load(tenant_id, job_id)
         if existing is None:
             return None
+        self._fence_search_unit_write()
         restored = existing.restore()
         restore_timestamp = _restore_timestamp(restored_at, deleted_at=existing.deleted_at)
         # Mirror the API's restore semantics — set restored_at rather
@@ -448,9 +478,7 @@ class SqliteJobRepository:
                     (str(tenant_id), normalized),
                 ).fetchone()
                 if row is not None:
-                    job_url = (
-                        row["job_url"] if isinstance(row, sqlite3.Row) else row[0]
-                    )
+                    job_url = row["job_url"] if isinstance(row, sqlite3.Row) else row[0]
                     if job_url:
                         return JobId(str(job_url))
 
@@ -499,9 +527,7 @@ class SqliteJobRepository:
         )
         if incoming_key is None:
             return None
-        self._conn.create_function(
-            "jh_normalize_identity", 1, normalize_identity_text, deterministic=True
-        )
+        self._conn.create_function("jh_normalize_identity", 1, normalize_identity_text, deterministic=True)
         rows = self._conn.execute(
             """
             SELECT j.url, j.title, j.company, j.site,
@@ -554,6 +580,7 @@ class SqliteJobRepository:
         also collapses cosmetic URL variants.
         """
 
+        self._fence_search_unit_write()
         normalized = normalize_observed_url(observation.observed_url)
         updated = self._conn.execute(
             """
@@ -624,10 +651,19 @@ class SqliteJobRepository:
                     observation.observed_at,
                 ),
             )
+        if self._search_unit_repository is not None:
+            assert self._search_unit_lease is not None
+            self._search_unit_repository.record_accepted_job(
+                self._search_unit_lease,
+                str(job_id),
+                was_new=False,
+                accepted_at=observation.observed_at,
+            )
         if self._execution_repository is not None:
             assert self._discovery_execution is not None
             if str(tenant_id) != self._discovery_execution.tenant_id:
                 raise ValueError("source observation tenant does not match discovery execution")
+            self._fence_search_unit_write()
             # The Temporal execution ref is the authority. ``observation.run_id``
             # is retained only as first-observation source metadata and may be
             # updated independently in ``job_source_observations`` on retries.
@@ -649,6 +685,7 @@ class SqliteJobRepository:
     ) -> None:
         """Persist (or replace) the canonical identity decision for a Job."""
 
+        self._fence_search_unit_write()
         self._conn.execute(
             """
             INSERT INTO job_canonical_identities (
@@ -681,6 +718,7 @@ class SqliteJobRepository:
     ) -> None:
         """Persist a confirmed duplicate-link audit record."""
 
+        self._fence_search_unit_write()
         self._conn.execute(
             """
             INSERT INTO job_duplicate_links (
@@ -726,6 +764,7 @@ class SqliteJobRepository:
         mint a fresh event row (audit noise).
         """
 
+        self._fence_search_unit_write()
         before = self._conn.total_changes
         self._conn.execute(
             """

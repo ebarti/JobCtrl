@@ -664,6 +664,7 @@ def record_job_event(
     publisher: EventPublisher | None = None,
     entity_kind: str | None = None,
     entity_ref: str | None = None,
+    idempotency_key: str | None = None,
 ) -> None:
     """Append a durable per-job event and publish through the in-process bus.
 
@@ -693,12 +694,13 @@ def record_job_event(
     accidentally (round-1 review L3).
     """
     ts = occurred_at or utc_now()
-    conn.execute(
+    cursor = conn.execute(
         """
         INSERT INTO job_events (
             job_url, stage, event_type, level, message, occurred_at, payload_json,
-            entity_kind, entity_ref
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            entity_kind, entity_ref, idempotency_key
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT DO NOTHING
         """,
         (
             job_url,
@@ -710,8 +712,11 @@ def record_job_event(
             _json_dumps(payload),
             entity_kind,
             entity_ref,
+            idempotency_key,
         ),
     )
+    if cursor.rowcount == 0:
+        return
     if publisher is None:
         # Default to the process-wide ``InProcessEventBus`` so the
         # projection builder's wildcard subscriber refreshes after every
