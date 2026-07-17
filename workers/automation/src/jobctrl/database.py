@@ -30,8 +30,9 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # and the idempotently filled preparation work plan used by Operations.
 # v4 (JobStreaming durability): immutable search units, fenced provider
 # checkpoints, and idempotent accepted-job receipts.
-# v5 (JobStreaming reset ordering): the provider checkpoint revision that must
-# be acknowledged before a requested cursor reset can be applied.
+# v5 (JobStreaming consumption ordering): the provider checkpoint revision that
+# must be acknowledged before a requested cursor reset can be applied, plus
+# replay-idempotent receipts for caller-filtered provider results.
 SCHEMA_VERSION = 5
 
 
@@ -3199,8 +3200,34 @@ def ensure_discovery_search_unit_tables(
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_search_unit_filtered_events (
+            tenant_id              TEXT NOT NULL,
+            discover_workflow_id   TEXT NOT NULL,
+            discover_run_id        TEXT NOT NULL,
+            unit_id                TEXT NOT NULL,
+            provider_event_key_hash TEXT NOT NULL
+                CHECK (length(provider_event_key_hash) = 64),
+            filtered_at            TEXT NOT NULL,
+            PRIMARY KEY (
+                tenant_id, discover_workflow_id, discover_run_id,
+                unit_id, provider_event_key_hash
+            ),
+            FOREIGN KEY (
+                tenant_id, discover_workflow_id, discover_run_id, unit_id
+            ) REFERENCES discovery_search_units(
+                tenant_id, discover_workflow_id, discover_run_id, unit_id
+            ) ON DELETE CASCADE
+        ) WITHOUT ROWID
+        """
+    )
     conn.commit()
-    return ["discovery_search_units", "discovery_search_unit_jobs"]
+    return [
+        "discovery_search_units",
+        "discovery_search_unit_jobs",
+        "discovery_search_unit_filtered_events",
+    ]
 
 
 def _backfill_one_observation_row(

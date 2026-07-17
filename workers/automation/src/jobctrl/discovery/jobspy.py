@@ -1667,7 +1667,6 @@ def _durable_full_crawl(
         adapter="jobstreaming",
         run_id=run_id,
     )
-    filtered_jobs = 0
     stopped_for_limit = False
 
     def emit_progress(current: DiscoverySearchUnit | None, message: str) -> None:
@@ -1678,7 +1677,9 @@ def _durable_full_crawl(
                 repository.list_units(discovery_execution),
                 repository.execution_counts(discovery_execution),
                 current=current,
-                filtered_jobs=filtered_jobs,
+                filtered_jobs=repository.execution_filtered_count(
+                    discovery_execution
+                ),
                 raw_total=repository.execution_provider_job_count(
                     discovery_execution
                 ),
@@ -1782,7 +1783,10 @@ def _durable_full_crawl(
                                 unit.spec,
                             )
                             if accepted_frame.empty:
-                                filtered_jobs += 1
+                                repository.record_filtered_result(
+                                    lease,
+                                    event.job_key,
+                                )
                             else:
                                 store_jobspy_results(
                                     conn,
@@ -1930,7 +1934,7 @@ def _durable_full_crawl(
         "errors": len(_failed_jobstreaming_source_ids(units)),
         "failed_queries": len(failed_units),
         "failed_source_ids": _failed_jobstreaming_source_ids(units),
-        "filtered": filtered_jobs,
+        "filtered": repository.execution_filtered_count(discovery_execution),
         "db_total": db_total,
         "queries": sum(
             unit.state in {"completed", "skipped", "failed"} for unit in units

@@ -66,7 +66,7 @@ The remaining tables group by owner:
 | Resume templates | `resume_templates`, `resume_template_versions`, `resume_template_defaults`, `resume_template_refresh_attempts`, `job_resume_template_assignments` |
 | Compensation | `job_posted_compensation_facts`, `job_market_compensation_estimates` |
 | Read-model projections | `job_list_projections`, `job_detail_projections`, `dashboard_projections`, `apply_run_projections`, `workflow_run_projections`, `pipeline_step_projections`, `artifact_list_projections`, `event_watermarks`, `digest_state` |
-| Discovery & preparation | `discovery_runs`, `discovery_execution_jobs`, `discovery_search_units`, `discovery_search_unit_jobs`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, legacy `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
+| Discovery & preparation | `discovery_runs`, `discovery_execution_jobs`, `discovery_search_units`, `discovery_search_unit_jobs`, `discovery_search_unit_filtered_events`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, legacy `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
 | Policies & operations | `tailoring_policies`, `llm_spend`, `job_score_staleness`, `worker_runtime_heartbeats`, `jobctrl_deleted_jobs` |
 
 SQLite in `~/.jobctrl/jobctrl.db` is the local source of truth for jobs,
@@ -150,6 +150,12 @@ posting twice. A newer activity attempt reclaims only `running`/`pending` units
 and increments the lease epoch; every checkpoint or accepted-job write fences
 on that epoch. `completed`, `failed`, `skipped`, and `canceled` units are
 terminal.
+
+`discovery_search_unit_filtered_events` is the matching fenced receipt set for
+provider results rejected by JobCtrl's title/location policy. It stores only a
+SHA-256 digest of the provider event key. Filtered-result progress is aggregated
+from these receipts, so an acknowledged result remains counted after recovery
+without exposing provider payloads or counting replay twice.
 
 `pipeline_step_projections` is rebuildable read state keyed by that exact
 execution, bounded step kind, and item key. It folds the four `PipelineStep*`

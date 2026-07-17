@@ -136,9 +136,11 @@ from advancing or canceling work after replacement.
 The event order is store, then acknowledge:
 
 1. project and filter the JobStreaming event;
-2. atomically persist accepted job/source/event facts and the unit receipt;
+2. atomically persist accepted job/source/event facts and the unit receipt, or
+   a hashed filtered-result receipt when caller policy rejects the posting;
 3. acknowledge the exact event, which advances the provider checkpoint; and
-4. derive progress and the global new-job limit from durable receipts.
+4. derive accepted/filtered progress and the global new-job limit from durable
+   receipts.
 
 Stopping before step 3 causes at-least-once replay, not lost work. Stable
 provider keys and idempotent receipts make that replay harmless. A cursor reset

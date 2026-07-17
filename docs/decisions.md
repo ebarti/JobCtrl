@@ -2034,8 +2034,9 @@ Rationale:
 
 Consequences:
 
-- `discovery_search_units` and `discovery_search_unit_jobs` are canonical local
-  authorities and advance the guarded SQLite schema;
+- `discovery_search_units`, `discovery_search_unit_jobs`, and hashed
+  `discovery_search_unit_filtered_events` are canonical local authorities and
+  advance the guarded SQLite schema;
 - broad-board query/location/board units run sequentially inside one source
   activity today; parallel durable-unit scheduling is a separate future change;
 - the existing non-Temporal compatibility collector can still consume a

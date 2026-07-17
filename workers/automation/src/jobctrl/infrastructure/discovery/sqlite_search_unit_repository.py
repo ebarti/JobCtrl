@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -441,6 +442,37 @@ class SqliteDiscoverySearchUnitRepository:
                 ),
             )
 
+    def record_filtered_result(
+        self,
+        lease: DiscoverySearchUnitLease,
+        provider_event_key: str,
+        *,
+        filtered_at: str | None = None,
+    ) -> None:
+        """Record one replay-idempotent caller-filtered provider result."""
+
+        normalized_key = provider_event_key.strip()
+        if not normalized_key:
+            raise ValueError("provider_event_key must be non-empty")
+        key_hash = hashlib.sha256(normalized_key.encode("utf-8")).hexdigest()
+        with self._conn:
+            self.fence_write(lease)
+            self._conn.execute(
+                """
+                INSERT INTO discovery_search_unit_filtered_events (
+                    tenant_id, discover_workflow_id, discover_run_id,
+                    unit_id, provider_event_key_hash, filtered_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    *_execution_params(lease.execution),
+                    lease.unit_id,
+                    key_hash,
+                    filtered_at or _utc_now(),
+                ),
+            )
+
     def record_failure(
         self,
         lease: DiscoverySearchUnitLease,
@@ -712,6 +744,24 @@ class SqliteDiscoverySearchUnitRepository:
                 adapter.emitted_count for adapter in checkpoint.adapters.values()
             )
         return total
+
+    def execution_filtered_count(
+        self,
+        execution: DiscoveryExecutionRef,
+    ) -> int:
+        """Return the durable number of caller-filtered provider results."""
+
+        row = self._conn.execute(
+            """
+            SELECT COUNT(*)
+              FROM discovery_search_unit_filtered_events
+             WHERE tenant_id = ?
+               AND discover_workflow_id = ?
+               AND discover_run_id = ?
+            """,
+            _execution_params(execution),
+        ).fetchone()
+        return int(row[0] or 0)
 
     def _lease_row(self, lease: DiscoverySearchUnitLease, columns: str) -> sqlite3.Row:
         row = self._conn.execute(

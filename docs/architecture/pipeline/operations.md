@@ -112,8 +112,9 @@ spine stays unchanged. No new `discovery_runs` progress columns are added, so
 both projection builders stay in parity.
 
 Broad-board progress uses `search units` as its source-level unit. Its
-`newJobs` and `existingJobs` values come from durable acceptance receipts, and
-`recoveredUnits` counts units reclaimed by a newer Temporal activity attempt.
+`newJobs` and `existingJobs` values come from durable acceptance receipts,
+`filteredJobs` comes from hashed filtered-result receipts, and `recoveredUnits`
+counts units reclaimed by a newer Temporal activity attempt.
 The TypeScript read model preserves that optional field and Pipelines renders
 it as `N resumed`. Raw provider output, checkpoints, owner tokens, and error
 messages are not projected into this broad progress payload.

@@ -121,9 +121,11 @@ For each posting event, JobCtrl applies the title/location policy and commits
 the accepted job, source observation, event records, and an idempotent unit
 receipt before acknowledging the JobStreaming event. The acknowledgement then
 advances the provider checkpoint. If the process stops in that gap, the event
-is delivered again and the durable receipt makes the replay harmless. Accepted
-new/existing counts and the run-wide new-job limit are also read from durable
-receipts, so a retry cannot start the limit over.
+is delivered again and the durable receipt makes the replay harmless. Results
+rejected by the caller's title/location policy get a separate hashed receipt
+before acknowledgement. Accepted new/existing counts, filtered counts, and the
+run-wide new-job limit are therefore read from durable receipts, so a retry
+cannot lose progress or start the limit over.
 
 Temporal retries reclaim only unfinished units with a newer activity-attempt
 fence. Retryable board errors resume from their checkpoint; an expired board

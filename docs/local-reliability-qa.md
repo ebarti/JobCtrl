@@ -54,10 +54,10 @@ activity. The hermetic fixture commits the first JobStreaming posting and its
 acceptance receipt, blocks the provider acknowledgement, kills that worker,
 starts a fresh worker on the same Temporal task queue, and verifies the same
 Discover execution completes from the stored checkpoint. It also covers
-unacknowledged replay, durable result limits, activity-attempt fencing, cursor
-reset ordering, partial board failure, incompatible cursor schemas, and
-cooperative cancellation. It uses fake local adapters and performs no external
-crawl:
+unacknowledged replay, durable result and filtered counts, activity-attempt
+fencing, cursor reset ordering, partial board failure, incompatible cursor
+schemas, and cooperative cancellation. It uses fake local adapters and performs
+no external crawl:
 
 ```bash
 uv --project workers/automation run pytest -q \

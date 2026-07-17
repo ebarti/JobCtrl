@@ -117,6 +117,33 @@ class _SuccessfulIndeed(_PagedIndeed):
         return JobResponse()
 
 
+class _FilteredIndeed(Scraper):
+    capabilities = AdapterCapabilities(
+        filters=frozenset({"location", "is_remote", "hours_old"})
+    )
+
+    def __init__(self, **_: object) -> None:
+        super().__init__(Site.INDEED)
+
+    def scrape(self, request, context=None) -> JobResponse:
+        del request
+        assert context is not None
+        if int(context.resume_state.get("next", 0)) == 0:
+            context.emit_job(
+                JobPost(
+                    id="filtered-1",
+                    title="Accountant",
+                    company_name="Filtered Example",
+                    job_url="https://example.test/filtered/1",
+                    location=Location(city="Remote"),
+                    description=_DESCRIPTION,
+                    is_remote=True,
+                ),
+                {"next": 1},
+            )
+        return JobResponse()
+
+
 class _InvalidLinkedIn(Scraper):
     capabilities = AdapterCapabilities(
         filters=frozenset({"location", "is_remote", "hours_old"})
@@ -403,6 +430,64 @@ def test_store_before_ack_replay_resumes_without_duplicate_counts_or_events(
         snapshot["message"] == "Resuming interrupted JobStreaming search unit"
         for snapshot in progress
     )
+
+
+def test_filtered_count_survives_loss_after_acknowledgement(
+    discovery_db,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn, _db_path = discovery_db
+    execution = _execution("temporal-run-filtered")
+    original_save = SqliteDiscoverySearchUnitCheckpointStore.save
+    interrupted = False
+
+    def interrupt_after_filtered_ack(self, checkpoint) -> None:
+        nonlocal interrupted
+        if checkpoint.revision == 2 and not interrupted:
+            interrupted = True
+            raise RuntimeError("simulated worker loss after filtered acknowledgement")
+        original_save(self, checkpoint)
+
+    monkeypatch.setattr(
+        SqliteDiscoverySearchUnitCheckpointStore,
+        "save",
+        interrupt_after_filtered_ack,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="simulated worker loss after filtered acknowledgement",
+    ):
+        jobspy.run_discovery(
+            cfg=_config(),
+            discovery_execution=execution,
+            activity_attempt=1,
+            activity_owner_token="filtered-attempt-1",
+            adapter_registry=_registry(indeed_factory=_FilteredIndeed),
+        )
+
+    repository = SqliteDiscoverySearchUnitRepository(conn)
+    interrupted_unit = repository.list_units(execution)[0]
+    assert interrupted_unit.state == "running"
+    assert interrupted_unit.checkpoint_revision == 1
+    assert repository.execution_filtered_count(execution) == 1
+
+    result = jobspy.run_discovery(
+        cfg=_config(),
+        discovery_execution=execution,
+        activity_attempt=2,
+        activity_owner_token="filtered-attempt-2",
+        adapter_registry=_registry(indeed_factory=_FilteredIndeed),
+    )
+
+    recovered = repository.list_units(execution)[0]
+    assert result["new"] == 0
+    assert result["filtered"] == 1
+    assert result["raw_total"] == 1
+    assert recovered.state == "completed"
+    assert recovered.recovery_count == 1
+    assert repository.execution_filtered_count(execution) == 1
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
 
 
 def test_durable_new_job_limit_survives_an_unacknowledged_replay(

@@ -249,7 +249,7 @@ def test_unacknowledged_cursor_reset_intent_does_not_clear_on_reclaim(
     assert repository.checkpoint_store(next_attempt).load() is None
 
 
-def test_v4_search_unit_table_migrates_reset_ack_revision(
+def test_v4_search_unit_tables_migrate_consumption_ordering(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "v4-jobctrl.db"
@@ -260,6 +260,7 @@ def test_v4_search_unit_table_migrates_reset_ack_revision(
         DROP COLUMN reset_checkpoint_after_revision
         """
     )
+    conn.execute("DROP TABLE discovery_search_unit_filtered_events")
     conn.execute("PRAGMA user_version = 4")
     conn.commit()
     close_connection(db_path)
@@ -273,6 +274,14 @@ def test_v4_search_unit_table_migrates_reset_ack_revision(
             ).fetchall()
         }
         assert "reset_checkpoint_after_revision" in columns
+        assert migrated.execute(
+            """
+            SELECT COUNT(*)
+              FROM sqlite_master
+             WHERE type = 'table'
+               AND name = 'discovery_search_unit_filtered_events'
+            """
+        ).fetchone()[0] == 1
         assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5
     finally:
         close_connection(db_path)
