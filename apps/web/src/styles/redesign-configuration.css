@@ -137,7 +137,7 @@
   background: transparent;
 }
 
-/* Personal information is the one clear profile-subject card. */
+/* Preferences keeps its quieter section hierarchy; only the first subject is a card. */
 .profile-layout .profile-sections > .form-section:first-child {
   margin-bottom: 16px;
   border: 1px solid var(--configuration-rule);
@@ -189,6 +189,48 @@
 .profile-layout .repeat-list {
   gap: 0;
   padding: 0 0 18px;
+}
+
+.profile-layout .profile-sections--resume-data {
+  gap: 16px;
+}
+
+.profile-layout
+  .profile-sections.profile-sections--resume-data
+  > .profile-disclosure {
+  margin-bottom: 0;
+  border: 1px solid var(--configuration-rule);
+  border-radius: 8px;
+  background: var(--configuration-surface);
+}
+
+.profile-layout
+  .profile-sections--resume-data
+  > .profile-disclosure
+  > .configuration-section__body {
+  padding-bottom: 0;
+}
+
+.profile-layout
+  .profile-sections--resume-data
+  > .profile-disclosure
+  > .configuration-section__body
+  > .adaptive-field-grid {
+  padding-inline: 20px;
+}
+
+.profile-layout
+  .profile-sections--resume-data
+  > .profile-disclosure
+  > .configuration-section__body
+  > .adaptive-field-grid
+  + .adaptive-field-grid {
+  padding-top: 0;
+}
+
+.profile-layout .profile-sections--resume-data .repeat-list {
+  gap: 0;
+  padding: 0 20px 20px;
 }
 
 .profile-layout .repeat-section {
