@@ -1339,8 +1339,10 @@ export function StructuredProfileEditor({
     <div
       className={
         mode === "profile"
-          ? "profile-sections profile-sections--resume-data"
-          : "profile-sections"
+          ? "profile-sections profile-sections--card-stack profile-sections--resume-data"
+          : mode === "preferences"
+            ? "profile-sections profile-sections--card-stack"
+            : "profile-sections"
       }
     >
       {mode === "profile" ? (

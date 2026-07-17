@@ -137,7 +137,8 @@
   background: transparent;
 }
 
-/* Preferences keeps its quieter section hierarchy; only the first subject is a card. */
+/* Flat section lists remain available for compact configuration surfaces. Routes
+ * whose disclosures are equal top-level subjects opt into the card stack below. */
 .profile-layout .profile-sections > .form-section:first-child {
   margin-bottom: 16px;
   border: 1px solid var(--configuration-rule);
@@ -191,17 +192,23 @@
   padding: 0 0 18px;
 }
 
-.profile-layout .profile-sections--resume-data {
+.profile-layout .profile-sections--card-stack {
   gap: 16px;
 }
 
-.profile-layout
-  .profile-sections.profile-sections--resume-data
-  > .profile-disclosure {
+.profile-layout .profile-sections.profile-sections--card-stack > .form-section {
   margin-bottom: 0;
   border: 1px solid var(--configuration-rule);
   border-radius: 8px;
   background: var(--configuration-surface);
+}
+
+.profile-layout
+  .profile-sections--card-stack
+  > .form-section
+  > .configuration-section__body
+  > .adaptive-field-grid {
+  padding-inline: 20px;
 }
 
 .profile-layout

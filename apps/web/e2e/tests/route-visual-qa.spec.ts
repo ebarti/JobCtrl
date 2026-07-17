@@ -955,8 +955,7 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
     100,
   );
 });
-
-test("Profile resume subjects share one expandable-card hierarchy without changing Preferences", async ({
+test("Profile and Preferences subjects share one expandable-card hierarchy", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -965,9 +964,7 @@ test("Profile resume subjects share one expandable-card hierarchy without changi
     page.getByRole("heading", { name: "Profile", level: 1 }),
   ).toBeVisible({ timeout: 30_000 });
 
-  const sections = page.locator(
-    ".profile-sections > .profile-disclosure",
-  );
+  const sections = page.locator(".profile-sections > .profile-disclosure");
   await expect(sections).toHaveCount(6);
 
   const cardStyles = await sections.evaluateAll((elements) =>
@@ -1006,15 +1003,11 @@ test("Profile resume subjects share one expandable-card hierarchy without changi
       "solid",
       "solid",
     ]);
-    expect(style.borderWidths, `Profile card ${index + 1} border widths`).toEqual([
-      "1px",
-      "1px",
-      "1px",
-      "1px",
-    ]);
-    expect(style.borderRadius, `Profile card ${index + 1} radius`).toBe(
-      "8px",
-    );
+    expect(
+      style.borderWidths,
+      `Profile card ${index + 1} border widths`,
+    ).toEqual(["1px", "1px", "1px", "1px"]);
+    expect(style.borderRadius, `Profile card ${index + 1} radius`).toBe("8px");
     if (index > 0) {
       expect(
         style.top - cardStyles[index - 1]!.bottom,
@@ -1043,10 +1036,9 @@ test("Profile resume subjects share one expandable-card hierarchy without changi
     page.getByRole("heading", { name: "Preferences", level: 1 }),
   ).toBeVisible({ timeout: 30_000 });
 
-  const preferenceSections = page.locator(
-    ".profile-sections > .form-section",
-  );
+  const preferenceSections = page.locator(".profile-sections > .form-section");
   await expect(preferenceSections).toHaveCount(3);
+  await expect(page.locator(".profile-sections--card-stack")).toHaveCount(1);
   await expect(page.locator(".profile-sections--resume-data")).toHaveCount(0);
 
   const preferenceHierarchy = await page
@@ -1062,49 +1054,77 @@ test("Profile resume subjects share one expandable-card hierarchy without changi
           return {
             backgroundColor: style.backgroundColor,
             borderRadius: style.borderRadius,
+            borderStyles: [
+              style.borderTopStyle,
+              style.borderRightStyle,
+              style.borderBottomStyle,
+              style.borderLeftStyle,
+            ],
             borderWidths: [
               style.borderTopWidth,
               style.borderRightWidth,
               style.borderBottomWidth,
               style.borderLeftWidth,
             ],
+            bottom: section.getBoundingClientRect().bottom,
+            top: section.getBoundingClientRect().top,
           };
         }),
       };
     });
 
-  expect(preferenceHierarchy.gap).toBe("0px");
-  expect(preferenceHierarchy.sections[0]?.borderWidths).toEqual([
-    "1px",
-    "1px",
-    "1px",
-    "1px",
-  ]);
-  expect(preferenceHierarchy.sections[0]?.borderRadius).toBe("8px");
-  expectPainted(
-    preferenceHierarchy.sections[0]?.backgroundColor ?? "",
-    "Preferences primary section background",
-  );
-
-  const flattenedPreferenceBorders = [
-    ["1px", "0px", "0px", "0px"],
-    ["1px", "0px", "1px", "0px"],
-  ];
-  for (const [index, section] of preferenceHierarchy.sections
-    .slice(1)
-    .entries()) {
-    expect(
-      section.borderWidths,
-      `Preferences section ${index + 2} borders`,
-    ).toEqual(flattenedPreferenceBorders[index]);
-    expect(section.borderRadius, `Preferences section ${index + 2} radius`).toBe(
-      "0px",
+  expect(preferenceHierarchy.gap).toBe("16px");
+  for (const [index, section] of preferenceHierarchy.sections.entries()) {
+    expectPainted(
+      section.backgroundColor,
+      `Preferences card ${index + 1} background`,
     );
     expect(
-      section.backgroundColor,
-      `Preferences section ${index + 2} background`,
-    ).toBe("rgba(0, 0, 0, 0)");
+      section.borderStyles,
+      `Preferences card ${index + 1} borders`,
+    ).toEqual(["solid", "solid", "solid", "solid"]);
+    expect(
+      section.borderWidths,
+      `Preferences card ${index + 1} border widths`,
+    ).toEqual(["1px", "1px", "1px", "1px"]);
+    expect(section.borderRadius, `Preferences card ${index + 1} radius`).toBe(
+      "8px",
+    );
+    if (index > 0) {
+      expect(
+        section.top - preferenceHierarchy.sections[index - 1]!.bottom,
+        `Preferences card ${index + 1} spacing`,
+      ).toBe(16);
+    }
   }
+
+  const tailoringSection = preferenceSections.filter({
+    has: page.getByRole("heading", { name: "Tailoring controls" }),
+  });
+  const tailoringTrigger = tailoringSection.getByRole("button", {
+    name: /Tailoring controls/i,
+  });
+  const tailoringContent = tailoringSection.locator(
+    '[data-slot="collapsible-content"]',
+  );
+  await expect(tailoringContent).toBeVisible();
+  await tailoringTrigger.click();
+  await expect(tailoringContent).toBeHidden();
+  await tailoringTrigger.click();
+  await expect(tailoringContent).toBeVisible();
+
+  const resumeStyleSection = preferenceSections.filter({
+    has: page.getByRole("heading", { name: "Resume style" }),
+  });
+  const resumeStyleTrigger = resumeStyleSection.getByRole("button", {
+    name: /Resume style/i,
+  });
+  const resumeStyleContent = resumeStyleSection.locator(
+    '[data-slot="collapsible-content"]',
+  );
+  await expect(resumeStyleContent).toBeHidden();
+  await resumeStyleTrigger.click();
+  await expect(resumeStyleContent).toBeVisible();
 });
 
 test("detail workspaces open with seeded data and preserve route navigation", async ({
