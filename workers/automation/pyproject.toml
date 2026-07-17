@@ -33,7 +33,9 @@ dependencies = [
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp-proto-http>=1.27",
     "opentelemetry-instrumentation-httpx>=0.48b0",
-    "python-jobspy>=1.1.82",
+    # Typed, concurrent job-board events plus resumable checkpoints. Pin the
+    # integration contract so JobCtrl's durable adapter changes deliberately.
+    "jobstreaming==0.0.2",
     # Pydantic backs the canonical employer-analysis domain model
     # (``domain/materials/analysis.py``) and is also pulled transitively by
     # the agent SDKs below. Declared explicitly because the domain layer
@@ -105,11 +107,9 @@ pythonVersion = "3.11"
 
 [tool.uv]
 default-groups = ["provider-runtime"]
-# python-jobspy 1.1.82 still caps markdownify below the patched 0.14.1
-# release. Keep this override until upstream loosens its dependency metadata.
-override-dependencies = ["markdownify==0.14.1"]
 
 # The workspace dependency cutoff (UV_EXCLUDE_NEWER) intentionally freezes the
-# broad dependency graph. Provider runtimes move independently, so admit only
-# their audited releases without moving the global cutoff for everything else.
-exclude-newer-package = { "google-antigravity" = "2026-06-04T21:19:27Z", "claude-agent-sdk" = "2026-07-10T00:00:00Z" }
+# broad dependency graph. Provider runtimes and the audited JobStreaming
+# integration move independently, so admit only their reviewed releases
+# without moving the global cutoff for everything else.
+exclude-newer-package = { "google-antigravity" = "2026-06-04T21:19:27Z", "claude-agent-sdk" = "2026-07-10T00:00:00Z", "jobstreaming" = "2026-07-18T00:00:00Z" }

@@ -1,6 +1,6 @@
 """JobSpy-based job discovery: searches Indeed, LinkedIn, Glassdoor, ZipRecruiter.
 
-Uses python-jobspy to scrape multiple job boards, deduplicates results,
+Uses JobStreaming to scrape multiple job boards, deduplicates results,
 parses salary ranges, and stores accepted postings in the JobCtrl database.
 
 Search queries, locations, and filtering rules are loaded from database-backed
@@ -10,7 +10,6 @@ discovery settings plus the profile target-search fields.
 import logging
 import re
 import sqlite3
-import time
 import hashlib
 import threading
 from datetime import datetime, timezone
@@ -63,9 +62,9 @@ from jobctrl.infrastructure.network.proxy import parse_proxy
 log = logging.getLogger(__name__)
 _SOURCE_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
-# Broad boards (indeed/linkedin/zip/glassdoor) are fetched by the python-jobspy
-# library, which owns its own tls-client/requests transport. Per owner decision
-# D3 we therefore CANNOT robots-gate or honest-UA-stamp jobspy's internal
+# Broad boards (indeed/linkedin/zip/glassdoor) are fetched by JobStreaming,
+# which owns its own tls-client/requests transport. Per owner decision D3 we
+# therefore CANNOT robots-gate JobStreaming's internal
 # per-board requests. Instead we enforce politeness at OUR invocation boundary:
 # a per-run request budget + inter-search pacing via the shared host limiter,
 # recording a budget-exhausted outcome when the budget stops a crawl. The
@@ -81,71 +80,21 @@ class DiscoveryCancelled(RuntimeError):
 
 
 def _scrape_with_retry(kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
-    """Call scrape_jobs with retry on transient failures."""
+    """Collect one typed JobStreaming request into the legacy frame shape."""
     try:
-        from jobspy import scrape_jobs
+        from jobctrl.infrastructure.discovery.jobstreaming_gateway import (
+            scrape_legacy_options,
+        )
     except ImportError as exc:
         raise ImportError(
-            "python-jobspy is not installed. Run: "
-            "pip install --no-deps python-jobspy && "
-            "pip install pydantic tls-client requests markdownify regex"
+            "jobstreaming 0.0.2 is not installed. Run the JobCtrl setup again."
         ) from exc
-
-    _patch_jobspy_linkedin_location_parser()
-
-    for attempt in range(max_retries + 1):
-        try:
-            return scrape_jobs(**kwargs)
-        except Exception as e:
-            err = str(e).lower()
-            transient = any(k in err for k in ("timeout", "429", "proxy", "connection", "reset", "refused"))
-            if transient and attempt < max_retries:
-                wait = backoff * (attempt + 1)
-                log.warning("Retry %d/%d in %.0fs: %s", attempt + 1, max_retries, wait, e)
-                time.sleep(wait)
-            else:
-                raise
-
-
-def _patch_jobspy_linkedin_location_parser() -> None:
-    """Keep unsupported LinkedIn country names from aborting the whole scrape."""
-    try:
-        from jobspy.linkedin import LinkedIn
-        from jobspy.model import Country, Location
-    except ImportError:
-        return
-
-    if getattr(LinkedIn, "_jobctrl_tolerates_unknown_countries", False):
-        return
-
-    def _country_or_text(country: str):
-        try:
-            return Country.from_string(country)
-        except ValueError:
-            return country
-
-    def _get_location(self, metadata_card):
-        location = Location(country=_country_or_text(getattr(self, "country", "worldwide")))
-        if metadata_card is None:
-            return location
-
-        location_tag = metadata_card.find("span", class_="job-search-card__location")
-        location_string = location_tag.text.strip() if location_tag else "N/A"
-        parts = location_string.split(", ")
-        if len(parts) == 2:
-            city, state = parts
-            return Location(
-                city=city,
-                state=state,
-                country=_country_or_text(getattr(self, "country", "worldwide")),
-            )
-        if len(parts) == 3:
-            city, state, country = parts
-            return Location(city=city, state=state, country=_country_or_text(country))
-        return location
-
-    LinkedIn._get_location = _get_location
-    LinkedIn._jobctrl_tolerates_unknown_countries = True
+    return scrape_legacy_options(
+        kwargs,
+        max_retries=max_retries,
+        retry_backoff=backoff,
+        user_agent=PolitenessGateway().user_agent,
+    )
 
 
 # -- Location filtering ------------------------------------------------------
@@ -871,6 +820,7 @@ def _run_one_search(
     other_sites = [si for si in sites if si != "glassdoor"]
 
     all_dfs = []
+    provider_errors = 0
 
     # Run non-Glassdoor sites with original location
     if other_sites:
@@ -891,11 +841,15 @@ def _run_one_search(
         if "linkedin" in other_sites:
             kwargs["linkedin_fetch_description"] = True
         try:
-            df = _scrape_with_retry(kwargs, max_retries=max_retries)
+            df, failures = _jobstreaming_frame_and_failures(
+                _scrape_with_retry(kwargs, max_retries=max_retries)
+            )
+            provider_errors += failures
             all_dfs.append(df)
         except ImportError:
             raise
         except Exception as e:
+            provider_errors += 1
             log.error("[%s] (non-gd): %s", label, e)
 
     # Run Glassdoor separately with simplified location
@@ -914,16 +868,28 @@ def _run_one_search(
         if proxy_config:
             gd_kwargs["proxies"] = [proxy_config.jobspy]
         try:
-            gd_df = _scrape_with_retry(gd_kwargs, max_retries=max_retries)
+            gd_df, failures = _jobstreaming_frame_and_failures(
+                _scrape_with_retry(gd_kwargs, max_retries=max_retries)
+            )
+            provider_errors += failures
             all_dfs.append(gd_df)
         except ImportError:
             raise
         except Exception as e:
+            provider_errors += 1
             log.error("[%s] (glassdoor): %s", label, e)
 
     if not all_dfs:
         log.error("[%s]: all sites failed", label)
-        return {"new": 0, "existing": 0, "errors": 1, "filtered": 0, "total": 0, "label": label}
+        return {
+            "new": 0,
+            "existing": 0,
+            "errors": max(provider_errors, 1),
+            "all_sites_failed": True,
+            "filtered": 0,
+            "total": 0,
+            "label": label,
+        }
 
     import pandas as pd
     import warnings
@@ -934,7 +900,15 @@ def _run_one_search(
 
     if len(df) == 0:
         log.info("[%s] 0 results", label)
-        return {"new": 0, "existing": 0, "errors": 0, "filtered": 0, "total": 0, "label": label}
+        return {
+            "new": 0,
+            "existing": 0,
+            "errors": provider_errors,
+            "all_sites_failed": False,
+            "filtered": 0,
+            "total": 0,
+            "label": label,
+        }
 
     # Filter by role title and location before storing.
     before = len(df)
@@ -984,7 +958,35 @@ def _run_one_search(
         msg += f", {title_filtered} filtered (title)"
     log.info(msg)
 
-    return {"new": new, "existing": existing, "errors": 0, "filtered": filtered, "total": before, "label": label}
+    return {
+        "new": new,
+        "existing": existing,
+        "errors": provider_errors,
+        "all_sites_failed": False,
+        "filtered": filtered,
+        "total": before,
+        "label": label,
+    }
+
+
+def _jobstreaming_frame_and_failures(result):
+    """Unpack the typed provider result while tolerating legacy test frames."""
+
+    from jobctrl.infrastructure.discovery.jobstreaming_gateway import (
+        JobStreamingBatch,
+    )
+
+    if not isinstance(result, JobStreamingBatch):
+        return result, 0
+    for failure in result.failures:
+        log.error(
+            "[%s] provider failure [%s]: %s: %s",
+            failure.site,
+            failure.code,
+            failure.error_type,
+            failure.message,
+        )
+    return result.frame, len(result.failures)
 
 
 # -- Single query search -----------------------------------------------------
@@ -1036,16 +1038,18 @@ def search_jobs(
             min_interval_seconds=BROAD_BOARD_LEAD_POLICY.min_request_interval_seconds,
             max_concurrency=BROAD_BOARD_LEAD_POLICY.max_concurrent_requests_per_host,
         ):
-            df = _scrape_with_retry(kwargs)
+            df, provider_errors = _jobstreaming_frame_and_failures(
+                _scrape_with_retry(kwargs)
+            )
     except Exception as e:
         log.error("JobSpy search failed: %s", e)
-        return {"error": str(e), "total": 0, "new": 0, "existing": 0}
+        return {"error": str(e), "total": 0, "new": 0, "existing": 0, "errors": 1}
 
     total = len(df)
     log.info("JobSpy returned %d results", total)
 
     if total == 0:
-        return {"total": 0, "new": 0, "existing": 0}
+        return {"total": 0, "new": 0, "existing": 0, "errors": provider_errors}
 
     if "site" in df.columns:
         site_counts = df["site"].value_counts()
@@ -1060,7 +1064,7 @@ def search_jobs(
     pending = conn.execute("SELECT COUNT(*) FROM jobs WHERE detail_scraped_at IS NULL").fetchone()[0]
     log.info("DB total: %d jobs, %d pending detail scrape", db_total, pending)
 
-    return {"total": total, "new": new, "existing": existing}
+    return {"total": total, "new": new, "existing": existing, "errors": provider_errors}
 
 
 # -- Full crawl (all queries x all locations) --------------------------------
@@ -1147,6 +1151,7 @@ def _full_crawl(
     total_errors = 0
     total_found = 0
     total_filtered = 0
+    failed_searches = 0
     completed = 0
 
     def emit_progress(search: dict | None, message: str) -> None:
@@ -1222,6 +1227,7 @@ def _full_crawl(
         total_errors += result["errors"]
         total_found += result.get("total", 0)
         total_filtered += result.get("filtered", 0)
+        failed_searches += int(bool(result.get("all_sites_failed", False)))
         emit_progress(s, "JobSpy search completed")
 
         if completed % 5 == 0 or completed == len(searches):
@@ -1247,7 +1253,7 @@ def _full_crawl(
         total_errors,
         db_total,
     )
-    if completed > 0 and total_errors == completed and total_new + total_existing == 0:
+    if completed > 0 and failed_searches == completed and total_new + total_existing == 0:
         raise RuntimeError(f"JobSpy failed for all {completed} search combination(s)")
 
     return {
@@ -1256,6 +1262,7 @@ def _full_crawl(
         "new": total_new,
         "existing": total_existing,
         "errors": total_errors,
+        "failed_queries": failed_searches,
         "filtered": total_filtered,
         "db_total": db_total,
         "queries": completed,

@@ -1,7 +1,7 @@
 """Driven ports for crawl politeness (R10).
 
 The politeness gateway is the single choke point every outbound fetch —
-``urllib``, the ``python-jobspy`` invocation boundary, and every Playwright
+``urllib``, the JobStreaming invocation boundary, and every Playwright
 navigation — routes through. It consults each source's :class:`SourcePolicy`
 plus the target host's ``robots.txt``, applies a per-host rate limit +
 concurrency cap + per-run request budget, stamps an honest user-agent, and

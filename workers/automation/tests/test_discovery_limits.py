@@ -187,6 +187,54 @@ def test_jobspy_limit_does_not_let_existing_jobs_starve_later_queries(monkeypatc
     assert result["queries"] == 2
 
 
+def test_jobspy_does_not_treat_board_error_count_as_failed_query_count(monkeypatch):
+    calls = 0
+
+    def fake_run_one_search(*_args, **_kwargs) -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {
+                "new": 0,
+                "existing": 0,
+                "errors": 2,
+                "filtered": 0,
+                "total": 0,
+                "all_sites_failed": True,
+            }
+        return {
+            "new": 0,
+            "existing": 0,
+            "errors": 0,
+            "filtered": 0,
+            "total": 0,
+            "all_sites_failed": False,
+        }
+
+    monkeypatch.setattr(jobspy, "init_db", lambda: None)
+    monkeypatch.setattr(
+        jobspy,
+        "get_connection",
+        lambda: SimpleNamespace(
+            execute=lambda *_args, **_kwargs: SimpleNamespace(fetchone=lambda: [0])
+        ),
+    )
+    monkeypatch.setattr(jobspy, "_run_one_search", fake_run_one_search)
+
+    result = jobspy._full_crawl(
+        {
+            "queries": [{"query": "first"}, {"query": "second"}],
+            "locations": [{"location": "Remote"}],
+            "defaults": {"results_per_site": 10},
+        },
+        sites=["indeed", "linkedin"],
+    )
+
+    assert result["errors"] == 2
+    assert result["failed_queries"] == 1
+    assert result["queries"] == 2
+
+
 def test_jobspy_filters_results_by_target_title(monkeypatch):
     stored_titles: list[str] = []
 
@@ -357,24 +405,64 @@ def test_jobspy_remote_search_rejects_non_remote_country_only_location(monkeypat
     assert result["filtered"] == 1
 
 
-def test_jobspy_linkedin_location_parser_tolerates_unknown_country():
-    from bs4 import BeautifulSoup
-    from jobspy.linkedin import LinkedIn
-
-    jobspy._patch_jobspy_linkedin_location_parser()
-
-    metadata = BeautifulSoup(
-        """
-        <div class="base-search-card__metadata">
-          <span class="job-search-card__location">Sarajevo, Federation, Bosnia and Herzegovina</span>
-        </div>
-        """,
-        "html.parser",
+def test_jobspy_retains_partial_results_and_counts_typed_board_failure(monkeypatch):
+    from jobctrl.infrastructure.discovery.jobstreaming_gateway import (
+        JobStreamingBatch,
+        JobStreamingFailure,
     )
 
-    location = LinkedIn()._get_location(metadata)
+    frame = _jobspy_frame(
+        [
+            {
+                "job_url": "https://example.test/director-engineering",
+                "title": "Director of Engineering",
+                "location": "Barcelona, Spain",
+                "site": "indeed",
+            }
+        ]
+    )
+    batch = JobStreamingBatch(
+        frame=frame,
+        failures=(
+            JobStreamingFailure(
+                site="linkedin",
+                code="rate_limited",
+                error_type="RateLimitError",
+                message="slow down",
+                retryable=True,
+                reset_checkpoint=False,
+            ),
+        ),
+        warnings=(),
+        completed=False,
+    )
+    stored: list[str] = []
+    monkeypatch.setattr(jobspy, "_scrape_with_retry", lambda *_args, **_kwargs: batch)
+    monkeypatch.setattr(jobspy, "get_connection", lambda: object())
+    monkeypatch.setattr(
+        jobspy,
+        "store_jobspy_results",
+        lambda _conn, df, *_args, **_kwargs: (stored.extend(df["title"].tolist()) or 1, 0),
+    )
 
-    assert location.display_location() == "Sarajevo, Federation, Bosnia and Herzegovina"
+    result = jobspy._run_one_search(
+        {"query": "Director of Engineering", "location": "Barcelona, Spain"},
+        ["indeed", "linkedin"],
+        10,
+        72,
+        None,
+        {"country_indeed": "spain"},
+        0,
+        ["Barcelona, Spain"],
+        [],
+        [],
+        {},
+        limit=10,
+    )
+
+    assert stored == ["Director of Engineering"]
+    assert result["new"] == 1
+    assert result["errors"] == 1
 
 
 def test_jobspy_dedups_against_ats_first_null_company_owner(tmp_path):
@@ -1516,11 +1604,11 @@ def test_jobspy_normalizes_source_locations_before_storage(tmp_path):
 
 def test_jobspy_missing_dependency_is_not_reported_as_empty_success(monkeypatch):
     def missing_jobspy(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
-        raise ImportError("python-jobspy is not installed")
+        raise ImportError("jobstreaming 0.0.2 is not installed")
 
     monkeypatch.setattr(jobspy, "_scrape_with_retry", missing_jobspy)
 
-    with pytest.raises(ImportError, match="python-jobspy"):
+    with pytest.raises(ImportError, match="jobstreaming 0.0.2"):
         jobspy._run_one_search(
             {"query": "Director of Engineering", "location": "Barcelona, Spain", "remote": True},
             ["indeed"],
