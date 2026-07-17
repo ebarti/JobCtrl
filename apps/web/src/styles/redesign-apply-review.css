@@ -123,7 +123,7 @@
 }
 
 .apply-review-selected-facts .compensation-strip .tag,
-.apply-review-selected-facts .resume-template-job-select .tag {
+.apply-review-resume-template-control .resume-template-job-select .tag {
   min-height: 0;
   border: 0;
   border-radius: 0;
@@ -250,7 +250,7 @@
 
 .apply-review-selected-facts {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(210px, 0.7fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px 24px;
 }
 
@@ -260,25 +260,38 @@
 }
 
 .apply-review-selected-facts .compensation-strip-label,
-.apply-review-selected-facts .field > span {
+.apply-review-resume-template-control .field > span {
   font-size: var(--jh-font-size-caption);
   font-weight: 660;
   letter-spacing: 0.07em;
 }
 
-.apply-review-selected-facts .resume-template-job-select {
+.apply-review-resume-template-control {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 5px;
+  gap: 10px;
+  padding: 14px 0;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
 }
 
-.apply-review-selected-facts .resume-template-job-select-status {
+.apply-review-resume-template-control .resume-template-job-select {
+  display: grid;
+  grid-template-columns: minmax(220px, 360px) minmax(0, 1fr);
+  align-items: end;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.apply-review-resume-template-control .resume-template-job-select-status {
   display: flex;
   flex-wrap: wrap;
+  align-self: center;
   gap: 8px;
 }
 
-.apply-review-selected-facts .resume-template-job-select select {
+.apply-review-resume-template-control .resume-template-job-select [data-slot="select-trigger"] {
   width: 100%;
   max-width: none;
 }
@@ -908,6 +921,10 @@
 
   .apply-review-selected-context,
   .apply-review-selected-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .apply-review-resume-template-control .resume-template-job-select {
     grid-template-columns: minmax(0, 1fr);
   }
 

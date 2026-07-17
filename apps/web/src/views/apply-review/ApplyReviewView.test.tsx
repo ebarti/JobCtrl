@@ -886,7 +886,7 @@ describe("<ApplyReviewView>", () => {
     expect(document.querySelector(".apply-review-status-note")).not.toBeInTheDocument();
     const decision = within(decisionCard as HTMLElement);
     expect(decision.getByRole("region", { name: "Compensation" })).toBeInTheDocument();
-    expect(decision.getByLabelText("Resume template")).toBeInTheDocument();
+    expect(decision.queryByLabelText("Resume template")).not.toBeInTheDocument();
     expect(decision.queryByRole("button", { name: /Refresh resume materials/i })).not.toBeInTheDocument();
     expect(
       screen
@@ -916,6 +916,15 @@ describe("<ApplyReviewView>", () => {
     expect(positionCard.parentElement?.parentElement).toBe(reviewWorkspace);
     expect(materialsCard.parentElement).toBe(reviewWorkspace);
     expect(positionCard.compareDocumentPosition(materialsCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const materials = within(materialsCard);
+    const templateSelect = materials.getByLabelText("Resume template");
+    const templateControl = templateSelect.closest(".apply-review-resume-template-control");
+    const resumeAudit = materials.getByRole("region", { name: "Resume audit" });
+    expect(templateControl).toBeInstanceOf(HTMLElement);
+    expect(templateControl?.parentElement).toHaveClass("apply-review-materials-scroll");
+    expect(
+      (templateControl as HTMLElement).compareDocumentPosition(resumeAudit) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.getAllByText("materials ready").length).toBeGreaterThan(0);
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
     expect(screen.getByText("public company scale")).toBeInTheDocument();
@@ -1404,8 +1413,14 @@ describe("<ApplyReviewView>", () => {
     const alertTitle = await screen.findByText("Resume template could not be updated");
     const alert = alertTitle.closest('[role="alert"]');
     const icon = alert?.querySelector("svg.tabler-icon-alert-triangle");
+    const materialsCard = screen.getByRole("region", { name: "Tailored resume and cover" });
+    const decisionCard = document.querySelector(".apply-review-decision-card");
 
+    expect(alert).toBeInstanceOf(HTMLElement);
+    expect(decisionCard).toBeInstanceOf(HTMLElement);
     expect(alert).toHaveTextContent("template service unavailable");
+    expect(materialsCard).toContainElement(alert as HTMLElement);
+    expect(decisionCard as HTMLElement).not.toContainElement(alert as HTMLElement);
     expect(icon).toHaveAttribute("aria-hidden", "true");
     expect(icon).toHaveClass("tabler-icon-alert-triangle");
   });

@@ -1055,6 +1055,29 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
   await expect(decisionCard).toBeVisible({ timeout: 30_000 });
   await expect(decisionCard).toContainText("Tailored resume missing");
   await expect(decisionCard).toContainText("tailor failed");
+  await expect(
+    decisionCard.getByRole("combobox", { name: "Resume template" }),
+  ).toHaveCount(0);
+
+  const materialsCard = page.locator(".apply-review-materials-pane");
+  const templateControl = materialsCard.locator(
+    ".apply-review-resume-template-control",
+  );
+  await expect(materialsCard).toBeVisible();
+  await expect(
+    materialsCard.getByRole("combobox", { name: "Resume template" }),
+  ).toBeVisible();
+  await expect(templateControl).toBeVisible();
+  expect(
+    await templateControl.evaluate((element) => {
+      const audit = element.parentElement?.querySelector(
+        ".apply-review-resume-review",
+      );
+      if (!(audit instanceof HTMLElement)) return false;
+      return element.getBoundingClientRect().top <= audit.getBoundingClientRect().top;
+    }),
+    "resume template control should lead directly into the resume review surface",
+  ).toBe(true);
 
   const layout = await decisionCard.evaluate((element) => {
     const context = element.querySelector(".apply-review-selected-facts");

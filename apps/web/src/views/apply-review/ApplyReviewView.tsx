@@ -1295,21 +1295,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             summary={item.compensationSummary}
             label="Compensation"
           />
-          <JobResumeTemplateSelect
-            current={item.materialsPreview.resumeTemplate}
-            disabled={templatesQuery.isLoading || setJobTemplate.isPending || ensureCurrentMaterials.isPending}
-            onTemplateChange={handleTemplateChange}
-            refreshing={setJobTemplate.isPending || ensureCurrentMaterials.isPending}
-            templates={templatesQuery.data?.templates ?? []}
-          />
           <ApplyAuditFacts item={item} />
-          {templateMutationError ? (
-            <Alert variant="destructive" className="apply-review-inline-alert">
-              <IconAlertTriangle aria-hidden="true" />
-              <AlertTitle>Resume template could not be updated</AlertTitle>
-              <AlertDescription>{templateMutationError}</AlertDescription>
-            </Alert>
-          ) : null}
         </CardContent>
         <CardFooter className="apply-review-selected-actions border-t">
           <ApplyReviewDecisionControls
@@ -1394,6 +1380,22 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="apply-review-pane-scroll apply-review-materials-scroll">
+            <div className="apply-review-resume-template-control">
+              <JobResumeTemplateSelect
+                current={item.materialsPreview.resumeTemplate}
+                disabled={templatesQuery.isLoading || setJobTemplate.isPending || ensureCurrentMaterials.isPending}
+                onTemplateChange={handleTemplateChange}
+                refreshing={setJobTemplate.isPending || ensureCurrentMaterials.isPending}
+                templates={templatesQuery.data?.templates ?? []}
+              />
+              {templateMutationError ? (
+                <Alert variant="destructive" className="apply-review-inline-alert">
+                  <IconAlertTriangle aria-hidden="true" />
+                  <AlertTitle>Resume template could not be updated</AlertTitle>
+                  <AlertDescription>{templateMutationError}</AlertDescription>
+                </Alert>
+              ) : null}
+            </div>
             <ResumeReviewSurface
               item={item}
               onComparisonTargetChange={handleComparisonTargetChange}
