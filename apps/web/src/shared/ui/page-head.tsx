@@ -1,6 +1,13 @@
 import type { JSX, ReactNode } from "react";
 
 import { cn } from "../lib/cn.js";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "./breadcrumb.js";
 
 export interface PageHeadProps {
   title: string;
@@ -20,12 +27,31 @@ export function PageHead({
   return (
     <header className={cn("page-head", className)} data-slot="page-head">
       <div className="page-head-text" data-slot="page-head-text">
-        {eyebrow ? (
-          <span className="eyebrow" data-slot="page-head-eyebrow">
-            {eyebrow}
-          </span>
-        ) : null}
-        <h1 data-slot="page-head-title">{title}</h1>
+        <h1 className="sr-only" data-slot="page-head-title">
+          {title}
+        </h1>
+        <Breadcrumb>
+          <BreadcrumbList>
+            {eyebrow ? (
+              <>
+                <BreadcrumbItem>
+                  <span
+                    className="page-head-section"
+                    data-slot="page-head-eyebrow"
+                  >
+                    {eyebrow}
+                  </span>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+              </>
+            ) : null}
+            <BreadcrumbItem>
+              <BreadcrumbPage aria-disabled={undefined} role={undefined}>
+                {title}
+              </BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
         {subtitle ? (
           <p className="page-head-subtitle" data-slot="page-head-subtitle">
             {subtitle}

@@ -18,13 +18,15 @@ Contacts, and Runs carry their URL-backed list state into that return path when
 it is present.
 
 On desktop, the navigation rail groups the product into Overview, Pipeline,
-Library, Activity, and Setup. On mobile, the same destinations move into the
-navigation sheet and each workspace reflows in reading order.
+Library, Activity, and Setup. The desktop rail can collapse to labelled icons
+and remembers that choice across reloads. On mobile, the same destinations move
+into the navigation sheet and each workspace reflows in reading order.
 
-Across routes, the compact page header keeps the eyebrow, 26px title, short
-subtitle, and actions in one hierarchy. Body copy remains 16px in compact,
-regular, and comfy density; density changes row and control geometry,
-not readability.
+Across routes, the compact page header presents the sidebar section and current
+page as a breadcrumb, keeps a short subtitle or count inline when space allows,
+and preserves a level-1 heading for assistive technology. Body copy remains
+16px in compact, regular, and comfy density; density changes row and control
+geometry, not readability.
 
 ## Intended Screenshot Asset Matrix
 

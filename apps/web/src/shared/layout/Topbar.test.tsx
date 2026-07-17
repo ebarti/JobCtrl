@@ -91,7 +91,11 @@ function renderAppShell(initialEntry = "/dashboard") {
 describe("<Topbar>", () => {
   beforeEach(() => {
     window.localStorage.clear();
-    useUiPreferencesStore.setState({ theme: "light", density: "regular" });
+    useUiPreferencesStore.setState({
+      theme: "light",
+      density: "regular",
+      sidebarOpen: true,
+    });
   });
 
   it("renders the search, density control, and no inline navigation rail", async () => {
@@ -201,5 +205,22 @@ describe("<Topbar>", () => {
         expect(appShell).toHaveAttribute("data-density", density);
       });
     }
+  });
+
+  it("collapses the desktop navigation from the shell trigger and persists the preference", async () => {
+    const user = userEvent.setup();
+    const { container } = renderAppShell();
+    const shell = await waitFor(() => {
+      const element = container.querySelector(".app-shell");
+      expect(element).toHaveAttribute("data-sidebar-open", "true");
+      return element;
+    });
+
+    await user.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+
+    await waitFor(() => {
+      expect(shell).toHaveAttribute("data-sidebar-open", "false");
+      expect(useUiPreferencesStore.getState().sidebarOpen).toBe(false);
+    });
   });
 });

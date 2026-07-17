@@ -199,7 +199,7 @@ Non-negotiables:
 - The 10px Rhea base radius maps to 6px–10px controls, 14px–18px callouts, and a capped 24px card radius. Full rounding is reserved for intrinsically circular controls.
 - Cards use only the quiet panel shadow/ring. Stronger elevation belongs to menus, dialogs, popovers, and mobile sheets.
 - Route-backed detail is a full workspace, not a modal-shaped card floating over the index.
-- Route identity uses one compact `PageHead`: a 26px title, optional eyebrow and short subtitle, with actions aligned beside it on desktop and stacked below it on narrow screens.
+- Route identity uses one compact `PageHead`: the sidebar section and current page render as a breadcrumb, a short subtitle or count stays inline when space allows, and a visually hidden level-1 heading preserves the document outline. Actions align beside it on desktop and stack below it on narrow screens.
 - Missing, unknown, blocked, residual-warning, and failed-refresh states remain visible.
 - Retrying or re-tailoring never hides the last accepted artifact.
 

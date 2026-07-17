@@ -706,6 +706,7 @@ export function JobsView() {
     <>
       <PageHead
         className="jobs-page-head"
+        eyebrow="Pipeline"
         title="Jobs"
         subtitle={
           data

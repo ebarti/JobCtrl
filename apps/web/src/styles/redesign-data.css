@@ -18,15 +18,7 @@
 }
 
 .jobs-page-head {
-  align-items: baseline;
-  margin-bottom: 10px;
-}
-
-.jobs-page-head .page-head-text {
-  display: flex;
-  flex-flow: row wrap;
-  align-items: baseline;
-  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .jobs-queue-navigation {
@@ -61,7 +53,6 @@
 
 @media (max-width: 720px) {
   .jobs-page-head {
-    align-items: flex-start;
     margin-bottom: 8px;
   }
 

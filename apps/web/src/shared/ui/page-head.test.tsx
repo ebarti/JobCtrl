@@ -7,15 +7,23 @@ describe("<PageHead>", () => {
   it("renders the title as a level-1 heading", () => {
     const { container } = render(<PageHead title="Workflow runs" />);
 
+    const heading = screen.getByRole("heading", {
+      level: 1,
+      name: "Workflow runs",
+    });
+    expect(heading).toHaveClass("sr-only");
     expect(
-      screen.getByRole("heading", { level: 1, name: "Workflow runs" }),
+      screen.getByRole("navigation", { name: "breadcrumb" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText("Workflow runs", { selector: "[aria-current='page']" }),
+    ).not.toHaveAttribute("role", "link");
     expect(
       container.querySelector("header[data-slot='page-head']"),
     ).toBeInTheDocument();
   });
 
-  it("renders the eyebrow and subtitle when provided", () => {
+  it("renders the section and current page as a compact breadcrumb", () => {
     render(
       <PageHead
         eyebrow="Activity"
@@ -24,7 +32,12 @@ describe("<PageHead>", () => {
       />,
     );
 
-    expect(screen.getByText("Activity")).toBeInTheDocument();
+    const breadcrumb = screen.getByRole("navigation", { name: "breadcrumb" });
+    expect(breadcrumb).toHaveTextContent("Activity");
+    expect(breadcrumb).toHaveTextContent("Debug");
+    expect(
+      breadcrumb.querySelector("[data-slot='breadcrumb-separator']"),
+    ).toBeInTheDocument();
     expect(screen.getByText("42 activity events")).toBeInTheDocument();
   });
 
@@ -44,7 +57,12 @@ describe("<PageHead>", () => {
   it("omits the eyebrow, subtitle, and actions slots when not provided", () => {
     const { container } = render(<PageHead title="Pipelines" />);
 
-    expect(container.querySelector(".eyebrow")).toBeNull();
+    expect(
+      container.querySelector("[data-slot='page-head-eyebrow']"),
+    ).toBeNull();
+    expect(
+      container.querySelector("[data-slot='breadcrumb-separator']"),
+    ).toBeNull();
     expect(container.querySelector(".page-head-subtitle")).toBeNull();
     expect(container.querySelector(".page-head-actions")).toBeNull();
   });

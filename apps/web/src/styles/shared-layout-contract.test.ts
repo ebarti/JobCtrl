@@ -152,20 +152,30 @@ describe("shared typography and layout contract", () => {
   it("keeps shared application primitives on the readable scale", () => {
     const belowCaptionFloor = activeSharedUiSources.flatMap(
       ({ filename, source }) => {
-        const arbitrarySizes = [...source.matchAll(/text-\[(?<value>\d+)px\]/g)].flatMap((match) => {
+        const arbitrarySizes = [
+          ...source.matchAll(/text-\[(?<value>\d+)px\]/g),
+        ].flatMap((match) => {
           const value = Number(match.groups?.["value"]);
           return value < 13 ? [`${filename}: text-[${value}px]`] : [];
         });
-        const textXs = source.includes("text-xs") ? [`${filename}: text-xs`] : [];
+        const textXs = source.includes("text-xs")
+          ? [`${filename}: text-xs`]
+          : [];
         return [...arbitrarySizes, ...textXs];
       },
     );
 
     expect(belowCaptionFloor).toEqual([]);
-    const buttonSource = readFileSync(resolve(sharedUiDir, "button.tsx"), "utf8");
+    const buttonSource = readFileSync(
+      resolve(sharedUiDir, "button.tsx"),
+      "utf8",
+    );
     const fieldSource = readFileSync(resolve(sharedUiDir, "field.tsx"), "utf8");
     const labelSource = readFileSync(resolve(sharedUiDir, "label.tsx"), "utf8");
-    const toggleSource = readFileSync(resolve(sharedUiDir, "toggle.tsx"), "utf8");
+    const toggleSource = readFileSync(
+      resolve(sharedUiDir, "toggle.tsx"),
+      "utf8",
+    );
 
     expect(buttonSource).toContain("text-sm");
     expect(buttonSource).not.toContain("text-[12px]");
@@ -191,8 +201,13 @@ describe("shared typography and layout contract", () => {
     );
   });
 
-  it("keeps page headers compact and lets their content wrap", () => {
-    expect(commonCss).toContain("--jh-font-size-page-title");
+  it("keeps route breadcrumbs compact and lets their content wrap", () => {
+    expect(commonCss).toMatch(
+      /\.page-head \[data-slot="breadcrumb-list"\]\s*\{[^}]*font-size: var\(--jh-font-size-body\);/s,
+    );
+    expect(commonCss).toMatch(
+      /\.page-head \[data-slot="breadcrumb-page"\]\s*\{[^}]*font-size: inherit;/s,
+    );
     expect(commonCss).toMatch(/\.page-head\s*\{[^}]*flex-wrap: wrap;/s);
     expect(commonCss).toMatch(/\.page-head\s*\{[^}]*margin-bottom: 12px;/s);
     expect(commonCss).toMatch(/\.page-head-text\s*\{[^}]*flex: 1 1 24rem;/s);
@@ -209,6 +224,7 @@ describe("shared typography and layout contract", () => {
   });
 
   it("uses the shared readable scale in the shell and reflows workspaces", () => {
+    expect(shellCss).toMatch(/\.side-rail\s*\{[^}]*border-right: 0;/s);
     expect(shellCss).toMatch(
       /\.side-rail__link\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\);/s,
     );
