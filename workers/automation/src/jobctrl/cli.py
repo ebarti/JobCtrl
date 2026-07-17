@@ -2235,6 +2235,19 @@ def worker(
     async def _run() -> None:
         client = await get_temporal_client()
         await _reconcile_discovery_schedule(client, queue)
+        # Repair any exact pre-lineage Discover execution before this worker
+        # starts accepting more activities.  The controller reads only that
+        # workflow/run's Temporal history and is idempotent, so a worker restart
+        # can finish a partial repair without canceling or restarting discovery.
+        try:
+            await _reconcile_legacy_discovery_executions(client)
+        except Exception:
+            # Recovery is retried by the heartbeat loop.  An unavailable
+            # history store must not take down the worker or mutate the run.
+            log.warning(
+                "Legacy Discover execution recovery failed at worker startup; will retry",
+                exc_info=True,
+            )
         from jobctrl.apply.auto_apply import reconcile_auto_apply_loop
 
         identity = current_runtime_identity()
@@ -2346,6 +2359,19 @@ async def _worker_heartbeat_loop(
                         "run(s).[/yellow]"
                     )
             try:
+                recovered = await _reconcile_legacy_discovery_executions(temporal_client)
+            except Exception:
+                log.warning(
+                    "Legacy Discover execution recovery iteration failed; will retry",
+                    exc_info=True,
+                )
+            else:
+                if recovered:
+                    console.print(
+                        f"[yellow]Recovered durable tracking for {recovered} legacy "
+                        "Discover execution(s).[/yellow]"
+                    )
+            try:
                 from jobctrl.apply.auto_apply import reconcile_auto_apply_loop
                 from jobctrl.infrastructure.runtime_identity import current_runtime_identity
 
@@ -2384,6 +2410,169 @@ def _worker_heartbeat_iteration(
         activity_snapshot=activity_snapshot,
         task_queue_observation=task_queue_observation,
     )
+
+
+def _legacy_discovery_recovery_candidates(
+    conn: Any,
+    *,
+    tenant_id: str,
+) -> list[dict[str, str]]:
+    """Return exact Discover executions whose durable tracking may need repair.
+
+    Open executions remain candidates while they run because a pre-lineage
+    history can grow between heartbeat passes.  For closed executions only the
+    newest selected-run candidate is considered, and its durable recovery
+    manifest is the sole readiness authority.  Projection row counts cannot
+    prove that the exact history was completely decoded.
+    """
+    from jobctrl.discovery.execution_reconciliation import (
+        _recovery_manifest_matches_persisted_keys,
+    )
+
+    terminal_statuses = (
+        "succeeded",
+        "failed",
+        "canceled",
+        "terminated",
+        "timed_out",
+        "dry_run_complete",
+    )
+    try:
+        recovery_manifest_exists = conn.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'discovery_execution_recoveries'
+            """
+        ).fetchone()
+        if recovery_manifest_exists:
+            rows = conn.execute(
+                """
+                SELECT wrp.workflow_id, wrp.temporal_run_id, wrp.status,
+                       der.state AS recovery_state
+                FROM workflow_run_projections wrp
+                LEFT JOIN discovery_execution_recoveries der
+                  ON der.tenant_id = wrp.tenant_id
+                 AND der.discover_workflow_id = wrp.workflow_id
+                 AND der.discover_run_id = wrp.temporal_run_id
+                WHERE wrp.tenant_id = ?
+                  AND wrp.workflow_type = 'DiscoverWorkflow'
+                  AND wrp.temporal_run_id IS NOT NULL
+                  AND trim(wrp.temporal_run_id) <> ''
+                ORDER BY COALESCE(wrp.started_at, wrp.finished_at) DESC,
+                         wrp.workflow_id DESC
+                """,
+                (tenant_id,),
+            ).fetchall()
+        else:
+            # The first recovery attempt creates the manifest table.  Until
+            # then, missing checkpoint state means recovery is required.
+            rows = conn.execute(
+                """
+                SELECT workflow_id, temporal_run_id, status,
+                       NULL AS recovery_state
+                FROM workflow_run_projections
+                WHERE tenant_id = ?
+                  AND workflow_type = 'DiscoverWorkflow'
+                  AND temporal_run_id IS NOT NULL
+                  AND trim(temporal_run_id) <> ''
+                ORDER BY COALESCE(started_at, finished_at) DESC,
+                         workflow_id DESC
+                """,
+                (tenant_id,),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        # First-run and migration windows are retried after schema setup.
+        return []
+
+    candidates: list[dict[str, str]] = []
+    latest_terminal_considered = False
+    for row in rows:
+        status = str(row["status"] or "")
+        recovery_state = str(row["recovery_state"] or "")
+        is_open = status not in terminal_statuses
+        if not is_open:
+            if latest_terminal_considered:
+                continue
+            latest_terminal_considered = True
+            # An exact-history decoder can prove that a legacy terminal fanout
+            # failed before its complete target set existed.  That evidence is
+            # durable but cannot become more complete on a closed history, so
+            # do not retry the same immutable run forever.
+            if recovery_state == "incomplete":
+                continue
+            if recovery_state == "ready" and (
+                _recovery_manifest_matches_persisted_keys(
+                    conn,
+                    tenant_id=tenant_id,
+                    workflow_id=str(row["workflow_id"]),
+                    temporal_run_id=str(row["temporal_run_id"]),
+                )
+            ):
+                continue
+        candidates.append(
+            {
+                "workflow_id": str(row["workflow_id"]),
+                "temporal_run_id": str(row["temporal_run_id"]),
+            }
+        )
+    return candidates
+
+
+async def _reconcile_legacy_discovery_executions(
+    temporal_client: Any,
+    *,
+    tenant_id: str | None = None,
+    conn: Any = None,
+) -> int:
+    """Idempotently recover exact legacy Discover tracking candidates.
+
+    One ambiguous or temporarily unavailable history is isolated from every
+    other candidate.  This function never starts, cancels, signals, or retries
+    a workflow; it only delegates exact-history projection repair to the
+    write-side reconciliation module.
+    """
+    from jobctrl.database import get_connection
+    from jobctrl.discovery.execution_reconciliation import (
+        LegacyDiscoveryRecoveryError,
+        reconcile_legacy_discovery_execution,
+    )
+    from jobctrl.domain.tenant import LOCAL_TENANT
+
+    tenant = str(tenant_id or LOCAL_TENANT)
+    connection = conn or get_connection()
+    candidates = _legacy_discovery_recovery_candidates(connection, tenant_id=tenant)
+    changed = 0
+    for candidate in candidates:
+        try:
+            result = await reconcile_legacy_discovery_execution(
+                temporal_client,
+                workflow_id=candidate["workflow_id"],
+                temporal_run_id=candidate["temporal_run_id"],
+                tenant_id=tenant,
+                conn=connection,
+            )
+        except LegacyDiscoveryRecoveryError as exc:
+            # Refusal is safe: the controller found evidence it cannot map
+            # uniquely.  Keep the execution untouched and retry after more
+            # canonical rows/history arrive.
+            log.warning(
+                "Legacy Discover execution recovery deferred (%s); will retry",
+                exc.code,
+            )
+            continue
+        except Exception:
+            log.warning(
+                "Legacy Discover execution recovery failed for one exact run; will retry",
+                exc_info=True,
+            )
+            continue
+        if (
+            result.activities_recovered
+            or result.jobs_linked
+            or result.work_plans_recovered
+        ):
+            changed += 1
+    return changed
 
 
 async def _safe_task_queue_observation(temporal_client: Any, task_queue: str) -> Any:

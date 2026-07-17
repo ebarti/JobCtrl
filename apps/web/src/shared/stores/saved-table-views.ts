@@ -17,7 +17,7 @@ import {
   type StateStorage,
 } from "zustand/middleware";
 
-export const SAVED_TABLE_VIEW_STORE_VERSION = 1;
+export const SAVED_TABLE_VIEW_STORE_VERSION = 2;
 export const SAVED_TABLE_VIEW_SCHEMA_VERSION = 1;
 export const DEFAULT_SAVED_TABLE_VIEW_ID = "default";
 export const JOBS_TABLE_ID = "jobs" satisfies TableId;
@@ -55,6 +55,7 @@ const COLOR_RULE_TONES = ["success", "warning", "danger", "info"] as const;
 type KnownTableConfig = {
   tableId: TableId;
   columnIds: readonly string[];
+  fixedLeadingColumnIds: readonly string[];
   defaultHiddenColumnIds: readonly string[];
   defaultSort: SavedTableView["sort"];
   defaultUrlFilters: SavedTableViewUrlFilters;
@@ -64,7 +65,12 @@ const TABLE_CONFIGS: Record<string, KnownTableConfig> = {
   [JOBS_TABLE_ID]: {
     tableId: JOBS_TABLE_ID,
     columnIds: JOBS_TABLE_COLUMN_IDS,
-    defaultHiddenColumnIds: ["source", "compensation_warnings"],
+    fixedLeadingColumnIds: ["select"],
+    defaultHiddenColumnIds: [
+      "source",
+      "compensation_warnings",
+      "resume_template",
+    ],
     defaultSort: { columnId: "discovered_at", direction: "desc" },
     defaultUrlFilters: {
       q: "",
@@ -148,6 +154,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function migrateSavedTableViewsState(
+  value: unknown,
+  persistedVersion: number,
+): unknown {
+  if (persistedVersion >= SAVED_TABLE_VIEW_STORE_VERSION || !isRecord(value)) {
+    return value;
+  }
+  const activeViewIdByTable = isRecord(value["activeViewIdByTable"])
+    ? value["activeViewIdByTable"]
+    : {};
+  const presentationByTable = isRecord(value["presentationByTable"])
+    ? value["presentationByTable"]
+    : {};
+  const jobsPresentation = presentationByTable[JOBS_TABLE_ID];
+  if (
+    activeViewIdByTable[JOBS_TABLE_ID] !== DEFAULT_SAVED_TABLE_VIEW_ID ||
+    !isRecord(jobsPresentation) ||
+    !isRecord(jobsPresentation["columns"]) ||
+    !Array.isArray(jobsPresentation["columns"]["hidden"]) ||
+    jobsPresentation["columns"]["hidden"].includes("resume_template")
+  ) {
+    return value;
+  }
+
+  return {
+    ...value,
+    presentationByTable: {
+      ...presentationByTable,
+      [JOBS_TABLE_ID]: {
+        ...jobsPresentation,
+        columns: {
+          ...jobsPresentation["columns"],
+          hidden: [...jobsPresentation["columns"]["hidden"], "resume_template"],
+        },
+      },
+    },
+  };
+}
+
 function isOneOf<const T extends readonly string[]>(
   value: unknown,
   values: T,
@@ -193,6 +238,12 @@ function normalizeColumns(
     if (!order.includes(columnId)) {
       order.push(columnId);
     }
+  }
+  for (const columnId of [...config.fixedLeadingColumnIds].reverse()) {
+    const currentIndex = order.indexOf(columnId);
+    if (currentIndex < 0) continue;
+    order.splice(currentIndex, 1);
+    order.unshift(columnId);
   }
   const hidden = uniqueKnownStrings(
     Array.isArray(source["hidden"])
@@ -460,9 +511,8 @@ export function normalizeSavedTableViewsState(
     );
     views.push(...tableViews);
     activeViewIdByTable[config.tableId] = activeView.id;
-    presentationByTable[config.tableId] = activeView.builtIn
-      ? presentationFromView(activeView)
-      : (persistedPresentation ?? presentationFromView(activeView));
+    presentationByTable[config.tableId] =
+      persistedPresentation ?? presentationFromView(activeView);
   }
 
   return { views, activeViewIdByTable, presentationByTable };
@@ -606,6 +656,7 @@ export const useSavedTableViewsStore = create<SavedTableViewsState>()(
       name: "jh:saved-table-views",
       storage: createJSONStorage(getStorage),
       version: SAVED_TABLE_VIEW_STORE_VERSION,
+      migrate: migrateSavedTableViewsState,
       partialize: ({ views, activeViewIdByTable, presentationByTable }) => ({
         views,
         activeViewIdByTable,

@@ -85,6 +85,7 @@ const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
 const DEFAULT_JOBS_HIDDEN_COLUMN_IDS = [
   "source",
   "compensation_warnings",
+  "resume_template",
 ] as const;
 const DEFAULT_JOBS_PRESENTATION: SavedTablePresentation = {
   columns: {
@@ -381,6 +382,16 @@ export function JobsView() {
       setSavedPresentation(JOBS_TABLE_ID, {
         ...savedPresentation,
         columns: { ...savedPresentation.columns, widths },
+      });
+    },
+    [savedPresentation, setSavedPresentation],
+  );
+
+  const handleColumnOrderChange = useCallback(
+    (order: readonly string[]) => {
+      setSavedPresentation(JOBS_TABLE_ID, {
+        ...savedPresentation,
+        columns: { ...savedPresentation.columns, order: [...order] },
       });
     },
     [savedPresentation, setSavedPresentation],
@@ -746,6 +757,7 @@ export function JobsView() {
           onFiltersChange={handleTableFiltersChange}
           onVisiblePageRowsChange={handleVisiblePageRowsChange}
           columnOrder={savedPresentation.columns.order}
+          onColumnOrderChange={handleColumnOrderChange}
           hiddenColumnIds={savedPresentation.columns.hidden}
           columnWidths={savedPresentation.columns.widths}
           onColumnWidthsChange={handleColumnWidthsChange}

@@ -49,6 +49,7 @@ function input(overrides: Partial<PipelineEtaEstimatorInput> = {}): PipelineEtaE
     budgetAvailable: true,
     blocked: false,
     dispatchObserved: true,
+    runtimeActiveWork: false,
     configuredSlots: 1,
     stages,
     remainingPaths: [{ stageIds: ["score"] }],
@@ -99,6 +100,30 @@ describe("estimatePipelineEta", () => {
     });
 
     expect(estimatePipelineEta(input({ membershipOpen: false }))).toMatchObject({ status: "available" });
+  });
+
+  it("does not treat open membership or runtime-only activity as proof of no work", () => {
+    expect(
+      estimatePipelineEta(input({
+        membershipOpen: true,
+        stages: [stage({ remainingCurrentStage: 0 })],
+        remainingPaths: [],
+      })),
+    ).toEqual({
+      status: "calibrating",
+      reason: "membership_open",
+      completedSamples: 0,
+      minimumSamples: PIPELINE_ETA_MINIMUM_SAMPLES,
+      asOf: AS_OF,
+    });
+
+    expect(
+      estimatePipelineEta(input({
+        runtimeActiveWork: true,
+        stages: [stage({ remainingCurrentStage: 0 })],
+        remainingPaths: [],
+      })),
+    ).toEqual({ status: "unavailable", reason: "unknown_scope", asOf: AS_OF });
   });
 
   it("returns no_work instead of a zero-duration range", () => {

@@ -15,7 +15,13 @@ import type {
 } from "@jobctrl/contracts";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { http, HttpResponse } from "msw";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -114,6 +120,16 @@ function rowForTitle(title: string): HTMLElement {
   return row;
 }
 
+function createColumnDragTransfer() {
+  const values = new Map<string, string>();
+  return {
+    dropEffect: "none",
+    effectAllowed: "none",
+    getData: (type: string) => values.get(type) ?? "",
+    setData: (type: string, value: string) => values.set(type, value),
+  };
+}
+
 describe("<JobsRoute> loader reliability", () => {
   it("renders the jobs surface instead of the route error boundary when prefetch fails", async () => {
     const ports = buildTestPorts({
@@ -143,7 +159,7 @@ describe("<JobsRoute> loader reliability", () => {
 });
 
 describe("<JobsView> compensation source-conflict visibility", () => {
-  it("uses a compact header and hides Sources and Warnings in Default", async () => {
+  it("uses a compact header and hides Sources, Warnings, and Template in Default", async () => {
     const jobs = vi.fn(async () => makeJobsPage([sampleSecondaryJob]));
     const harness = buildProviderHarness({
       ports: buildTestPorts({ api: { jobs } }),
@@ -165,6 +181,87 @@ describe("<JobsView> compensation source-conflict visibility", () => {
     expect(
       screen.queryByRole("columnheader", { name: /Warnings/ }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: /Template/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("persists header drag reordering without losing hidden Default columns", async () => {
+    const user = userEvent.setup();
+    const jobs = vi.fn(async () => makeJobsPage([sampleSecondaryJob]));
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const { router, Wrapper } = buildRouter(harness);
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(
+      await screen.findByText(sampleSecondaryJob.title),
+    ).toBeInTheDocument();
+    const titleHandle = screen.getByRole("button", {
+      name: "Reorder Title column",
+    });
+    expect(
+      screen.queryByRole("button", { name: "Reorder Select column" }),
+    ).not.toBeInTheDocument();
+    const fitHeader = screen.getByRole("columnheader", { name: /Fit/i });
+    const transfer = createColumnDragTransfer();
+
+    fireEvent.dragStart(titleHandle, { dataTransfer: transfer });
+    fireEvent.dragOver(fitHeader, { clientX: 0, dataTransfer: transfer });
+    fireEvent.drop(fitHeader, { clientX: 0, dataTransfer: transfer });
+
+    await waitFor(() => {
+      const presentation =
+        useSavedTableViewsStore.getState().presentationByTable[JOBS_TABLE_ID];
+      expect(presentation?.columns.order[0]).toBe("select");
+      expect(presentation?.columns.order.indexOf("title")).toBeLessThan(
+        presentation?.columns.order.indexOf("fit_score") ?? 0,
+      );
+      expect(presentation?.columns.hidden).toEqual([
+        "source",
+        "compensation_warnings",
+        "resume_template",
+      ]);
+    });
+
+    await waitFor(() => {
+      const persisted = JSON.parse(
+        window.localStorage.getItem("jh:saved-table-views") ?? "{}",
+      ) as {
+        state?: {
+          presentationByTable?: Record<
+            string,
+            { columns?: { order?: string[]; hidden?: string[] } }
+          >;
+        };
+      };
+      expect(
+        persisted.state?.presentationByTable?.[JOBS_TABLE_ID]?.columns?.order,
+      ).toEqual(
+        expect.arrayContaining(["title", "fit_score", "resume_template"]),
+      );
+      expect(
+        persisted.state?.presentationByTable?.[JOBS_TABLE_ID]?.columns?.hidden,
+      ).toEqual(["source", "compensation_warnings", "resume_template"]);
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "Configure table columns" }),
+    );
+    const columnsDialog = screen.getByRole("dialog", { name: "Columns" });
+    expect(
+      within(columnsDialog).getByRole("button", {
+        name: "Move Select later",
+      }),
+    ).toBeDisabled();
+    expect(
+      within(columnsDialog).getByRole("button", { name: "Move Fit earlier" }),
+    ).toBeInTheDocument();
+    expect(
+      within(columnsDialog).getByRole("button", { name: "Move Fit later" }),
+    ).toBeInTheDocument();
   });
 
   it("shows salary min/max, market, and warning scan columns with every data column sortable", async () => {
@@ -232,7 +329,7 @@ describe("<JobsView> compensation source-conflict visibility", () => {
     expect(row.getByText("2 warnings")).toBeInTheDocument();
 
     for (const label of [
-      "Fit score",
+      "Fit",
       "Title",
       "Company",
       "Sources",

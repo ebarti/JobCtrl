@@ -66,6 +66,16 @@ function renderGrid() {
   );
 }
 
+function createDragTransfer() {
+  const values = new Map<string, string>();
+  return {
+    dropEffect: "none",
+    effectAllowed: "none",
+    getData: (type: string) => values.get(type) ?? "",
+    setData: (type: string, value: string) => values.set(type, value),
+  };
+}
+
 describe("FilterableDataGrid", () => {
   it("activates rows through named buttons while rows keep table semantics", async () => {
     const onRowActivate = vi.fn();
@@ -87,7 +97,9 @@ describe("FilterableDataGrid", () => {
     const acmeRow = screen.getByRole("row", { name: /Acme Workday ATS 3/i });
     expect(acmeRow).not.toHaveAttribute("tabindex");
     const openAcme = within(acmeRow).getByRole("button", { name: "Open Acme" });
-    expect(openAcme).toHaveClass("sr-only", "focus:not-sr-only");
+    expect(openAcme).toHaveClass("row-activation-focus-only");
+    expect(openAcme).not.toHaveClass("sr-only", "focus:not-sr-only");
+    expect(openAcme).toHaveTextContent("View details");
 
     await user.click(within(acmeRow).getByText("Workday ATS"));
     expect(onRowActivate).toHaveBeenLastCalledWith(rows[0]);
@@ -124,7 +136,8 @@ describe("FilterableDataGrid", () => {
     );
 
     const openAcme = screen.getByRole("button", { name: "Open Acme" });
-    expect(openAcme).not.toHaveClass("sr-only", "focus:not-sr-only");
+    expect(openAcme).not.toHaveClass("row-activation-focus-only");
+    expect(openAcme).toHaveTextContent("View details");
     expect(openAcme).toHaveAttribute("type", "button");
     expect(openAcme).not.toHaveAttribute("tabindex", "-1");
   });
@@ -430,6 +443,61 @@ describe("FilterableDataGrid", () => {
     );
   });
 
+  it("reorders visible columns from accessible grips without dropping hidden columns", async () => {
+    const onColumnOrderChange = vi.fn();
+    render(
+      <FilterableDataGrid
+        title="Grid view"
+        data={rows}
+        columns={columns}
+        getRowId={(row) => row.id}
+        loading={false}
+        loadingMessage="Loading rows."
+        emptyMessage="No rows."
+        initialSort={{ columnId: "company", direction: "asc" }}
+        columnOrder={["company", "provider", "observed"]}
+        columnVisibility={{ provider: false }}
+        onColumnOrderChange={onColumnOrderChange}
+      />,
+    );
+    const user = userEvent.setup();
+    const observedHandle = screen.getByRole("button", {
+      name: "Reorder Observed column",
+    });
+    const companyHeader = screen.getByRole("columnheader", {
+      name: /Company/i,
+    });
+    const transfer = createDragTransfer();
+
+    expect(observedHandle).toHaveAccessibleDescription(
+      /left and right arrow keys.*Columns dialog/i,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Reorder Provider column" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.dragStart(observedHandle, { dataTransfer: transfer });
+    fireEvent.dragOver(companyHeader, { clientX: 0, dataTransfer: transfer });
+    fireEvent.drop(companyHeader, { clientX: 0, dataTransfer: transfer });
+
+    expect(onColumnOrderChange).toHaveBeenLastCalledWith([
+      "observed",
+      "company",
+      "provider",
+    ]);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Observed moved before Company.",
+    );
+
+    screen.getByRole("button", { name: "Reorder Company column" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(onColumnOrderChange).toHaveBeenLastCalledWith([
+      "provider",
+      "observed",
+      "company",
+    ]);
+  });
+
   it("groups page rows and applies semantic color-rule classes", () => {
     render(
       <FilterableDataGrid
@@ -479,6 +547,7 @@ describe("FilterableDataGrid", () => {
 
   it("keeps dense grid focus indicators tied to the standard ring token", () => {
     const css = readFileSync("src/styles/globals.css", "utf8");
+    const redesignCss = readFileSync("src/styles/redesign-data.css", "utf8");
 
     expect(css).toMatch(/:focus-visible\s*\{[^}]*--ring/s);
     expect(css).toMatch(
@@ -490,6 +559,21 @@ describe("FilterableDataGrid", () => {
     expect(css).toMatch(
       /\.data-grid-column-resizer:focus-visible\s*\{[^}]*--ring/s,
     );
+    expect(redesignCss).toMatch(
+      /\.data-grid-column-reorder-handle:focus-visible\s*\{[^}]*--ring/s,
+    );
+
+    const quietTableStatuses = redesignCss.slice(
+      redesignCss.indexOf(".filterable-data-grid-table .tag,"),
+      redesignCss.indexOf(".filterable-data-grid-table .tag::before"),
+    );
+    expect(quietTableStatuses).toContain(
+      ".filterable-data-grid-table .stage-pill",
+    );
+    expect(quietTableStatuses).toContain("border: 0");
+    expect(quietTableStatuses).toContain("border-radius: 0");
+    expect(quietTableStatuses).toContain("background: transparent");
+    expect(quietTableStatuses).toContain("box-shadow: none");
   });
 
   it("defines two-column tablet and one-column mobile record reflow", () => {

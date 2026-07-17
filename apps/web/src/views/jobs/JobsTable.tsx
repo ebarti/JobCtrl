@@ -38,6 +38,7 @@ export interface JobsTableProps {
   onFiltersChange?: (next: DataGridFilterState) => void;
   onVisiblePageRowsChange?: (rows: readonly JobSummary[]) => void;
   columnOrder?: readonly string[];
+  onColumnOrderChange?: (next: readonly string[]) => void;
   hiddenColumnIds?: readonly string[];
   columnWidths?: DataGridColumnWidthsState;
   onColumnWidthsChange?: (next: DataGridColumnWidthsState) => void;
@@ -64,6 +65,7 @@ export function JobsTable({
   onFiltersChange = noopFiltersChange,
   onVisiblePageRowsChange = noopVisiblePageRowsChange,
   columnOrder,
+  onColumnOrderChange,
   hiddenColumnIds = [],
   columnWidths,
   onColumnWidthsChange,
@@ -139,6 +141,7 @@ export function JobsTable({
       columnVisibility={columnVisibility}
       toolbarActions={renderedToolbarActions}
       {...(columnOrder ? { columnOrder } : {})}
+      {...(onColumnOrderChange ? { onColumnOrderChange } : {})}
       {...(columnWidths ? { columnWidths } : {})}
       {...(onColumnWidthsChange ? { onColumnWidthsChange } : {})}
       {...(density !== undefined ? { density } : {})}

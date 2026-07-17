@@ -598,7 +598,7 @@ export function SavedTableViewsControl({
                       type="button"
                       aria-label={`Move ${column.label} earlier`}
                       title={`Move ${column.label} earlier`}
-                      disabled={index === 0}
+                      disabled={Boolean(column.locked) || index === 0}
                       onClick={() => reorderColumn(column.id, -1)}
                     >
                       <IconArrowUp size={13} aria-hidden="true" />
@@ -607,7 +607,10 @@ export function SavedTableViewsControl({
                       type="button"
                       aria-label={`Move ${column.label} later`}
                       title={`Move ${column.label} later`}
-                      disabled={index === snapshot.columns.order.length - 1}
+                      disabled={
+                        Boolean(column.locked) ||
+                        index === snapshot.columns.order.length - 1
+                      }
                       onClick={() => reorderColumn(column.id, 1)}
                     >
                       <IconArrowDown size={13} aria-hidden="true" />

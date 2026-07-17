@@ -131,7 +131,9 @@ describe("<JobsTable>", () => {
     const activationButton = rowForTitle(sampleJob.title).querySelector(
       ".data-grid-row-activation-button",
     );
-    expect(activationButton).toHaveClass("sr-only", "focus:not-sr-only");
+    expect(activationButton).toHaveClass("row-activation-focus-only");
+    expect(activationButton).not.toHaveClass("sr-only", "focus:not-sr-only");
+    expect(activationButton).toHaveTextContent("View details");
     expect(activationButton).toHaveAttribute(
       "aria-label",
       `Open job ${sampleJob.title} at ${sampleJob.company}`,

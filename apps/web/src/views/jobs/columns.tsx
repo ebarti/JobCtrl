@@ -531,13 +531,14 @@ export function jobColumns(
       header: (context) => selectHeader(options, context),
       className: "row-check",
       headerClassName: "row-check",
+      reorderable: false,
       render: (row, context) => (
         <RowSelectionControl context={context} options={options} row={row} />
       ),
     },
     {
       id: "fit_score",
-      label: "Fit score",
+      label: "Fit",
       sortable: true,
       getFilterValue: (row) => String(row.fitScore ?? "unscored"),
       render: (row) => (

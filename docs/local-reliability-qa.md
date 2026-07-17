@@ -57,6 +57,75 @@ and accepted-artifact preservation. The
 [Regression Catalog](developer/qa/regression-catalog.md) explains which layer
 proves each class of invariant; the complete page maps every risk to exact tests.
 
+### Pipeline history recovery and restart regression
+
+Reproduce the human-reported partial-projection state with an active Discover
+execution, 72 expected execution members, 15 persisted members, 16 expected
+pipeline-step keys, four persisted keys, one live source-family activity, three
+live tailoring activities, and an approximate activity backlog of 41. Verify:
+
+- the durable checkpoint and operations response remain `recovering`; partial
+  row counts, active slots, and fresh telemetry never promote it to `ready`;
+- the UI renders **Restoring pipeline history**, the 15/72 and 4/16 restoration
+  progress, and the live worker/queue/activity facts;
+- selected-run counts, stage percentages, source/reconciliation ledgers, ETAs,
+  **0%**, and **No work remaining** stay hidden until the checkpoint is `ready`;
+  and
+- a stale `ready` row whose exact key digest no longer matches is downgraded to
+  `recovering` by the API and selected for worker repair;
+- an idle snapshot with no selected execution has `projectionCoverage: null`
+  only when fresh available telemetry proves zero active slots; occupied, stale,
+  or unavailable runtime inventory reports `recovering` instead of fabricated
+  idle or `ready`; and
+- a non-ASCII membership and stage-key golden vector hashes identically in the
+  Python recovery writer and TypeScript API validator.
+
+Then exercise the write-side recovery controller with legacy queued, running,
+completed, and failed activities, a mixed legacy/native history, and a true
+empty native execution. Kill the worker after a partial replay while leaving
+Temporal running, restart the worker, and verify that startup reconciliation:
+
+1. resumes from the exact workflow/run history without starting, canceling, or
+   signaling a discovery workflow;
+2. restores source and backlog memberships, work plans, and step lifecycle
+   events without duplicates;
+3. records the current Temporal history-event watermark and exact membership
+   and step-key digest; and
+4. publishes `ready` only after projection refresh and exact set equality.
+
+The legacy fixture must also reproduce the lossy projection shape: repeated
+fanout passes declare `0`, `71`, `67`, and `34` targets with legitimate overlap,
+the folded workflow projection retains only `jobUrl`, and the append-only event
+log retains both causal job-only starts and exact full summaries. Verify decoder
+v2 derives the 72-member union from each fanout's exact interval, rejects a
+per-pass target-count or workflow-run mismatch, restores all 16 declared stage
+keys, persists `legacy_history_recovery` as a valid bounded reason code, and
+reaches a verified 72/72-membership and 16/16-step `ready` checkpoint.
+
+For ambiguous mapping or a transient history read, verify `retrying` with a
+bounded error code, automatic heartbeat retry, and no mutation of the running
+workflow. Run the focused worker reconciliation tests, API checkpoint tests,
+Pipelines component tests, and the live browser path together. The live pass
+must compare the operations response with the rendered workspace so shared-pool
+telemetry cannot be mistaken for selected-run proof.
+
+Also cover the retry and terminal edge cases. A successful fanout retry with
+`attempt > 1` must restore exact membership and steps without inventing a queue
+timestamp. A failed attempt that is waiting to retry, or a later attempt that is
+still running, must remain non-terminal and cannot publish `ready` or a false
+failed step. A canceled or terminally failed fanout with no retry remaining must
+preserve its exact partial membership, work plan, failed-step evidence, digest,
+and watermark as `projectionCoverage.status = incomplete`. Its expected counts
+remain unknown in the API and UI. Restart the worker and verify that the closed
+incomplete run is not selected for automatic repair again. Pipelines must label
+the history as incomplete, avoid claims about the missing remainder, and expose
+**Set up a new Discover run** only when active work is exactly zero.
+
+Finally, begin from a valid `ready` manifest and force a transient history-read
+failure. Verify the worker first demotes it to `retrying`, preserves the prior
+proof for audit, and returns to `ready` after the authoritative history becomes
+readable; it must not leave stale ready data published during the failure.
+
 ### Public demo privacy and edge gate
 
 When consent, cookies, telemetry, D1, retention, or Cloudflare configuration
@@ -248,7 +317,8 @@ The gate passes only when:
   preserves execution/sweep/global-backlog scope and exact outcome counts,
   masks sensitive identifiers, refreshes after stopping active discovery, and
   gates replacement-run setup on an exact zero-active-work inventory without
-  dispatching implicitly;
+  dispatching implicitly; compact inspector labels, values, and timestamps also
+  remain on the same body-small typography scale;
 - Job Detail and Artifact Detail resolve evidence through the Evidence Map into
   human-readable titles/excerpts, keep unresolved keys behind technical details,
   Artifact Detail places the preview after its audit details, and Apply Review

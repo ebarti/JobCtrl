@@ -21,6 +21,8 @@ describe("<JobsTable> a11y", () => {
         onPageChange={() => {}}
         onPageSizeChange={() => {}}
         onOpenJob={() => {}}
+        columnOrder={[]}
+        onColumnOrderChange={() => {}}
       />,
     );
 

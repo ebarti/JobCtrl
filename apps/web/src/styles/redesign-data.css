@@ -280,6 +280,48 @@
   color: var(--muted-foreground);
 }
 
+.data-grid-column-reorder-handle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 22px;
+  margin-left: -3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  padding: 0;
+  color: var(--muted-foreground);
+  cursor: grab;
+  opacity: 0.68;
+}
+
+.data-grid-column-reorder-handle:hover,
+.data-grid-column-reorder-handle:focus-visible {
+  border: 0;
+  background: var(--muted);
+  color: var(--foreground);
+  opacity: 1;
+}
+
+.data-grid-column-reorder-handle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.data-grid-column-reorder-handle:active {
+  cursor: grabbing;
+}
+
+.filterable-data-grid-table thead th[data-column-drop-edge="before"] {
+  box-shadow: inset 2px 0 0 var(--ring);
+}
+
+.filterable-data-grid-table thead th[data-column-drop-edge="after"] {
+  box-shadow: inset -2px 0 0 var(--ring);
+}
+
 .data-grid-column-resizer::after {
   top: 9px;
   bottom: 9px;
@@ -328,6 +370,37 @@
   text-underline-offset: 3px;
 }
 
+.data-grid-row-activation-button.row-activation-focus-only,
+.table-row-activation-button.row-activation-focus-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-width: 1px;
+  min-height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.data-grid-row-activation-button.row-activation-focus-only:focus-visible,
+.table-row-activation-button.row-activation-focus-only:focus-visible {
+  position: static;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 0 0 7px;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  white-space: normal;
+  text-transform: none;
+}
+
 /* Scores retain their useful colour signal without becoming colored tiles. */
 .jobs-data-grid-table .fit {
   width: auto;
@@ -366,6 +439,7 @@
   border: 0;
   border-radius: 0;
   background: transparent;
+  box-shadow: none;
   padding: 0;
   font-size: var(--jh-font-size-caption);
   font-weight: 630;

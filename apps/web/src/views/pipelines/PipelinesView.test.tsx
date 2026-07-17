@@ -13,6 +13,12 @@ import {
   pipelinesCompletedWithIssuesSnapshot,
   pipelinesDiscoveringSnapshot,
   pipelinesFailedHistorySnapshot,
+  pipelinesIdleSnapshot,
+  pipelinesIncompleteProjectionSnapshot,
+  pipelinesPartialSweepRecoveringSnapshot,
+  pipelinesRecoveringProjectionSnapshot,
+  pipelinesRetryingProjectionSnapshot,
+  pipelinesTerminalRecoveringProjectionSnapshot,
   pipelinesMixedFailureSnapshot,
   pipelinesMultiWorkerCapacitySnapshot,
   pipelinesThreeSourceSixStepSnapshot,
@@ -158,11 +164,340 @@ describe("PipelinesView", () => {
       screen.getByRole("region", { name: "Worker slots in use" }),
     ).toHaveTextContent("Worker slots in use9 of 12");
     expect(screen.getByRole("region", { name: "Active work" })).toHaveTextContent(
-      "Active work9",
+      "Active work9Crawl sources 2 · Score 7",
     );
-    expect(screen.getByRole("region", { name: "Crawl sources stage" })).toHaveTextContent(
-      "Shared pool · 3 of 12 slots available",
+    expect(screen.getByRole("region", { name: "Queue backlog" })).toHaveTextContent(
+      "Queue backlog2 queuedOldest queued task 18 sec",
     );
+    expect(screen.queryByText(/Shared pool ·/)).not.toBeInTheDocument();
+  });
+
+  it("renders nullable idle coverage as no selected execution without degrading telemetry", async () => {
+    await renderPipelineOperations(pipelinesIdleSnapshot);
+
+    expect(
+      screen.getByText("Idle", {
+        selector: ".pipeline-phase-message [data-slot='status-badge']",
+      }),
+    ).toBeInTheDocument();
+
+    const summary = screen.getByLabelText("Pipeline operations summary");
+    expect(summary).toHaveTextContent("Current cohortNo selected execution");
+    expect(summary).toHaveTextContent("Execution sweepNo selected execution");
+    expect(summary).toHaveTextContent("Source familiesNo selected execution");
+    expect(summary).toHaveTextContent("Overall ETANo work remaining");
+    expect(summary).toHaveTextContent("TelemetryFresh");
+
+    expect(screen.getByRole("region", { name: "Workers online" })).toHaveTextContent(
+      "Workers online1",
+    );
+    expect(
+      screen.getByRole("region", { name: "Worker slots in use" }),
+    ).toHaveTextContent("Worker slots in use0 of 4");
+    expect(screen.getByRole("region", { name: "Active work" })).toHaveTextContent(
+      "Active workNo active workNo active stages",
+    );
+    expect(screen.getByRole("region", { name: "Queue backlog" })).toHaveTextContent(
+      "Queue backlog0 queuedOldest queued task 0 sec",
+    );
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(/restoring history/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/tracking unavailable/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Overall completion estimate" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("No current-execution stages are available."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps live runtime truth visible while exact history is restored", async () => {
+    await renderPipelineOperations(pipelinesRecoveringProjectionSnapshot);
+
+    const coverageAlert = screen.getByRole("alert");
+    expect(coverageAlert).toHaveTextContent("Restoring pipeline history");
+    expect(coverageAlert).toHaveTextContent(
+      "15 of 72 membership records restored",
+    );
+    expect(coverageAlert).toHaveTextContent(
+      "3 of 8 stage records restored",
+    );
+    expect(coverageAlert).toHaveTextContent("no manual restart is needed");
+    expect(coverageAlert).toHaveTextContent(
+      "Global worker, queue, and activity facts remain live below",
+    );
+    expect(coverageAlert.querySelector("svg")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop discovery" })).toBeEnabled();
+
+    const summary = screen.getByLabelText("Pipeline operations summary");
+    expect(summary).toHaveTextContent("Current cohortRestoring history");
+    expect(summary).toHaveTextContent("Execution sweepRestoring history");
+    expect(summary).toHaveTextContent("Source familiesRestoring history");
+    expect(summary).toHaveTextContent("Overall ETARestoring history");
+    expect(summary).toHaveTextContent("TelemetryFresh");
+
+    expect(screen.getByRole("region", { name: "Workers online" })).toHaveTextContent(
+      "Workers online1",
+    );
+    expect(
+      screen.getByRole("region", { name: "Worker slots in use" }),
+    ).toHaveTextContent("Worker slots in use4 of 4");
+    expect(screen.getByRole("region", { name: "Active work" })).toHaveTextContent(
+      "Active work4Crawl sources 1 · Tailor 3",
+    );
+    expect(screen.getByRole("region", { name: "Queue backlog" })).toHaveTextContent(
+      "Queue backlog41 queuedOldest queued task 2 min",
+    );
+
+    expect(screen.queryByText("0% terminal")).not.toBeInTheDocument();
+    expect(screen.queryByText("No work remaining")).not.toBeInTheDocument();
+    expect(screen.queryByText(/tracking unavailable/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Overall completion estimate" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Plan sources stage" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Backlog and diagnostics/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Source families and reconciliation/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "Pipeline action tools" }),
+    ).not.toBeInTheDocument();
+
+    const activeWorkHeading = screen.getByRole("heading", { name: "Active work" });
+    const activeWork = activeWorkHeading.closest<HTMLElement>(
+      ".configuration-section",
+    );
+    if (!activeWork) throw new Error("Expected active-work disclosure.");
+    expect(within(activeWork).getAllByRole("heading", { name: "Tailor" })).toHaveLength(3);
+    expect(within(activeWork).getAllByRole("heading", { name: "Crawl sources" })).toHaveLength(1);
+    expect(activeWork).toHaveTextContent("source_family");
+    expect(activeWork).toHaveTextContent("source-family-runtime-1");
+    expect(activeWork).toHaveTextContent("tailor-runtime-3");
+  });
+
+  it("retries history repair automatically without hiding global telemetry or backlog", async () => {
+    await renderPipelineOperations(pipelinesRetryingProjectionSnapshot);
+
+    const coverageAlert = screen.getByRole("alert");
+    expect(coverageAlert).toHaveTextContent(
+      "Pipeline history repair will retry automatically",
+    );
+    expect(coverageAlert).toHaveTextContent(
+      "Last safe repair result: Recovery manifest set mismatch",
+    );
+    expect(coverageAlert).toHaveTextContent(
+      "Recovery runs at worker startup and on every worker heartbeat",
+    );
+    expect(coverageAlert.querySelector("svg")).toBeInTheDocument();
+
+    const summary = screen.getByLabelText("Pipeline operations summary");
+    expect(summary).toHaveTextContent("Current cohortRepair retry scheduled");
+    expect(summary).toHaveTextContent("Execution sweepRepair retry scheduled");
+    expect(summary).toHaveTextContent("Source familiesRepair retry scheduled");
+    expect(summary).toHaveTextContent("Overall ETARepair retry scheduled");
+    expect(summary).toHaveTextContent("TelemetryFresh");
+
+    expect(screen.getByRole("region", { name: "Workers online" })).toHaveTextContent(
+      "Workers online1",
+    );
+    expect(screen.getByRole("region", { name: "Queue backlog" })).toHaveTextContent(
+      "Queue backlog41 queuedOldest queued task 2 min",
+    );
+    expect(screen.getByRole("region", { name: "Active work" })).toHaveTextContent(
+      "Active work4Crawl sources 1 · Tailor 3",
+    );
+    expect(screen.getByRole("region", { name: "Worker capacity facts" })).toHaveTextContent(
+      "Configured slots4Active slots4Available slots0",
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /Backlog and diagnostics/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Execution sweep ledger table" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Global outside execution ledger table" }),
+    ).not.toBeInTheDocument();
+
+    expect(screen.queryByText("0% terminal")).not.toBeInTheDocument();
+    expect(screen.queryByText("No work remaining")).not.toBeInTheDocument();
+    expect(screen.queryByText(/tracking unavailable/i)).not.toBeInTheDocument();
+  });
+
+  it("preserves terminal incomplete history and offers a safe new Discover run", async () => {
+    const user = userEvent.setup();
+    useStageTriggerStore.getState().setActiveStage("apply");
+    await renderPipelineOperations(pipelinesIncompleteProjectionSnapshot);
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Historical pipeline record is incomplete");
+    expect(alert).toHaveTextContent("preserved every exact record it can prove");
+    expect(alert).toHaveTextContent("will not be retried automatically");
+    expect(alert).not.toHaveTextContent("will retry automatically");
+    expect(screen.queryByText(/0% terminal/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No work remaining/i)).not.toBeInTheDocument();
+
+    const restart = within(alert).getByRole("link", {
+      name: "Set up a new Discover run",
+    });
+    const tools = screen.getByRole("group", { name: "Pipeline action tools" });
+    await user.click(restart);
+    expect(within(tools).getByRole("tab", { name: "Discover" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(await within(tools).findByRole("button", { name: "Run Discover" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Stop discovery" })).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /Technical execution details/i }),
+    );
+    expect(screen.getByText("run-discover-20260714")).toBeInTheDocument();
+    expect(screen.getAllByText("legacy-fanout-terminal-failed").length).toBeGreaterThan(0);
+    expect(screen.getByText("119")).toBeInTheDocument();
+  });
+
+  it("does not offer a new Discover run while non-allowlisted work occupies a slot", async () => {
+    const capacity = pipelinesIncompleteProjectionSnapshot.capacity;
+    if (capacity.status !== "available") {
+      throw new Error("Incomplete-history fixture requires fresh available capacity");
+    }
+    await renderPipelineOperations({
+      ...pipelinesIncompleteProjectionSnapshot,
+      capacity: {
+        ...capacity,
+        activeSlots: 1,
+        availableSlots: 3,
+        slotSaturation: 0.25,
+      },
+      activeItems: [],
+      activeItemsTotal: 0,
+      activeItemsTruncated: false,
+    });
+
+    const alert = screen.getByRole("alert");
+    expect(
+      within(alert).queryByRole("link", { name: "Set up a new Discover run" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "Pipeline action tools" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lets recovery dominate a terminal-looking incomplete projection", async () => {
+    await renderPipelineOperations(pipelinesTerminalRecoveringProjectionSnapshot);
+
+    const coverageAlert = screen.getByRole("alert");
+    expect(coverageAlert).toHaveTextContent("Restoring pipeline history");
+    expect(coverageAlert).not.toHaveTextContent("Discovery completed with source issues");
+
+    const phase = document.querySelector(".pipeline-phase-message");
+    expect(phase).toHaveTextContent("Recovering");
+    expect(phase).not.toHaveTextContent("Completed with issues");
+    expect(
+      screen.queryByRole("link", { name: "Set up a new Discover run" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Stop discovery" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "Pipeline action tools" }),
+    ).not.toBeInTheDocument();
+
+    expect(screen.getByRole("region", { name: "Workers online" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Worker slots in use" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Active work" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Queue backlog" })).toBeInTheDocument();
+    const technicalDetails = screen.getByRole("button", {
+      name: /Technical execution details/i,
+    });
+    await userEvent.setup().click(technicalDetails);
+    expect(screen.getByText("run-discover-20260714")).toBeInTheDocument();
+    expect(screen.getAllByText("Recovering").length).toBeGreaterThan(0);
+    expect(screen.getByText("89")).toBeInTheDocument();
+  });
+
+  it("does not expose partial sweep, cohort, source, or ETA values during recovery", async () => {
+    await renderPipelineOperations(pipelinesPartialSweepRecoveringSnapshot);
+
+    const summary = screen.getByLabelText("Pipeline operations summary");
+    expect(summary).toHaveTextContent("Current cohortRestoring history");
+    expect(summary).toHaveTextContent("Execution sweepRestoring history");
+    expect(summary).toHaveTextContent("Source familiesRestoring history");
+    expect(summary).toHaveTextContent("Overall ETARestoring history");
+
+    expect(screen.queryByText("41 remaining")).not.toBeInTheDocument();
+    expect(screen.queryByText("83 remaining")).not.toBeInTheDocument();
+    expect(screen.queryByText("43/47")).not.toBeInTheDocument();
+    expect(screen.queryByText("83 active")).not.toBeInTheDocument();
+    expect(screen.queryByText("8 min – 12 min")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Execution sweep ledger table" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Plan sources stage" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Source families and reconciliation/i }),
+    ).not.toBeInTheDocument();
+
+    expect(screen.getByRole("region", { name: "Workers online" })).toHaveTextContent(
+      "Workers online1",
+    );
+    expect(screen.getByRole("region", { name: "Active work" })).toHaveTextContent(
+      "Active work4Crawl sources 1 · Tailor 3",
+    );
+    expect(screen.getByRole("region", { name: "Queue backlog" })).toHaveTextContent(
+      "Queue backlog41 queuedOldest queued task 2 min",
+    );
+  });
+
+  it("omits meaningless progress for a complete zero-denominator stage", async () => {
+    await renderPipelineOperations({
+      ...pipelinesDiscoveringSnapshot,
+      stages: pipelinesDiscoveringSnapshot.stages.map((stage) =>
+        stage.stage === "source_planning" && stage.scope === "current_execution"
+          ? {
+              ...stage,
+              currentExecution: {
+                eligible: 0,
+                waiting: 0,
+                processing: 0,
+                succeeded: 0,
+                skipped: 0,
+                blocked: 0,
+                failed: 0,
+                exhausted: 0,
+                canceled: 0,
+                needsVerification: 0,
+                stale: 0,
+                unknown: 0,
+              },
+            }
+          : stage,
+      ),
+    });
+
+    const planSources = screen.getByRole("region", { name: "Plan sources stage" });
+    expect(
+      within(planSources).queryByRole("progressbar", { name: "Stage progress" }),
+    ).not.toBeInTheDocument();
+    expect(within(planSources).queryByText("No work remaining")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Crawl sources stage" })).getByRole(
+        "progressbar",
+        { name: "Stage progress" },
+      ),
+    ).toHaveAttribute("aria-valuenow", "33");
   });
 
   it("explains missing Temporal history and clearly reports that no work is active", async () => {
@@ -349,7 +684,7 @@ describe("PipelinesView", () => {
     expect(screen.getAllByText(/Calibrating · 2\/8/).length).toBeGreaterThan(0);
   });
 
-  it("exposes queue, capacity, and ETA provenance from a stage disclosure", async () => {
+  it("keeps global queue and capacity separate from stage ETA provenance", async () => {
     const user = userEvent.setup();
     await renderPipelineOperations(pipelinesDiscoveringSnapshot);
 
@@ -364,13 +699,20 @@ describe("PipelinesView", () => {
     await user.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
 
-    const activityQueue = within(disclosure).getByRole("region", {
+    const activityQueue = screen.getByRole("region", {
       name: "Activity task queue",
     });
     const eta = within(disclosure).getByLabelText("Score ETA facts");
-    const capacity = within(disclosure).getByRole("region", {
+    const capacity = screen.getByRole("region", {
       name: "Worker capacity facts",
     });
+
+    expect(
+      within(disclosure).queryByRole("region", { name: "Worker capacity facts" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(disclosure).queryByRole("region", { name: "Activity task queue" }),
+    ).not.toBeInTheDocument();
 
     expect(activityQueue).toHaveTextContent("Approximate backlog2");
     expect(activityQueue).toHaveTextContent("Approximate backlog age18 sec");
@@ -394,7 +736,7 @@ describe("PipelinesView", () => {
       name: "Worker capacity facts",
     });
     const freshness = screen.getByRole("region", {
-      name: "Read-model freshness",
+      name: "Telemetry freshness",
     });
 
     expect(capacity).toHaveTextContent("Unavailable");

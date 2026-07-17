@@ -2979,6 +2979,70 @@ export const DiscoveryReconciliationProgressSchema = z
   .strict();
 export type DiscoveryReconciliationProgress = z.infer<typeof DiscoveryReconciliationProgressSchema>;
 
+export const PipelineProjectionCoverageSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("ready"),
+      mode: z.enum(["native", "reconstructed"]),
+      decoderVersion: z.number().int().positive(),
+      historyEventId: z.number().int().nonnegative(),
+      membershipCount: z.number().int().nonnegative(),
+      stepCount: z.number().int().nonnegative(),
+      updatedAt: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("recovering"),
+      mode: z.enum(["native", "reconstructed"]).nullable(),
+      decoderVersion: z.number().int().positive().nullable(),
+      historyEventId: z.number().int().nonnegative().nullable(),
+      expectedMembershipCount: z.number().int().nonnegative().nullable(),
+      persistedMembershipCount: z.number().int().nonnegative(),
+      expectedStepCount: z.number().int().nonnegative().nullable(),
+      persistedStepCount: z.number().int().nonnegative(),
+      updatedAt: z.string().nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("retrying"),
+      mode: z.enum(["native", "reconstructed"]).nullable(),
+      decoderVersion: z.number().int().positive().nullable(),
+      historyEventId: z.number().int().nonnegative().nullable(),
+      expectedMembershipCount: z.number().int().nonnegative().nullable(),
+      persistedMembershipCount: z.number().int().nonnegative(),
+      expectedStepCount: z.number().int().nonnegative().nullable(),
+      persistedStepCount: z.number().int().nonnegative(),
+      errorCode: z.string().min(1),
+      updatedAt: z.string().nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("incomplete"),
+      mode: z.enum(["native", "reconstructed"]).nullable(),
+      decoderVersion: z.number().int().positive().nullable(),
+      historyEventId: z.number().int().nonnegative().nullable(),
+      expectedMembershipCount: z.number().int().nonnegative().nullable(),
+      persistedMembershipCount: z.number().int().nonnegative(),
+      expectedStepCount: z.number().int().nonnegative().nullable(),
+      persistedStepCount: z.number().int().nonnegative(),
+      errorCode: z.string().min(1),
+      updatedAt: z.string().nullable(),
+    })
+    .strict(),
+]);
+export type PipelineProjectionCoverage = z.infer<typeof PipelineProjectionCoverageSchema>;
+
+export const PipelineActiveStageCountSchema = z
+  .object({
+    stage: z.string().min(1),
+    count: z.number().int().positive(),
+  })
+  .strict();
+export type PipelineActiveStageCount = z.infer<typeof PipelineActiveStageCountSchema>;
+
 const PipelineActiveItemBaseSchema = z.object({
   activityType: z.string().min(1),
   workflowId: z.string().nullable(),
@@ -3006,6 +3070,8 @@ export const PipelineActiveItemSchema = z.discriminatedUnion("kind", [
   PipelineActiveItemBaseSchema.extend({
     kind: z.literal("unresolved_runtime_activity"),
     opaqueId: z.string().min(1),
+    /** Known from the allowlisted activity type even when workflow ownership is unresolved. */
+    stage: z.string().min(1).nullable(),
   }).strict(),
 ]);
 export type PipelineActiveItem = z.infer<typeof PipelineActiveItemSchema>;
@@ -3019,7 +3085,10 @@ export const PipelineOperationsSnapshotSchema = z
     capacity: PipelineCapacitySchema,
     sourceFamilies: SourceFamilyProgressSchema.nullable(),
     reconciliation: DiscoveryReconciliationProgressSchema.nullable(),
+    projectionCoverage: PipelineProjectionCoverageSchema.nullable(),
     stages: z.array(PipelineOperationalStageSchema),
+    /** Exact fresh runtime activity totals grouped by known operational stage. */
+    activeStageCounts: z.array(PipelineActiveStageCountSchema).nullable(),
     activeItems: z.array(PipelineActiveItemSchema).max(20),
     /** Null when worker runtime inventory cannot make an exact statement. */
     activeItemsTotal: z.number().int().nonnegative().nullable(),

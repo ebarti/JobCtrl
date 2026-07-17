@@ -181,18 +181,28 @@ inventory. Treat ETA as an observed range: calibrating, paused, stale,
 unavailable, and no-work states are deliberately explicit rather than replaced
 by a guessed finish time.
 
+Selected-run tracking is reconstructed automatically after an upgrade or worker
+restart when an older execution predates native lineage. Pipelines labels that
+transition **Restoring pipeline history**, continues to show fresh worker, queue,
+and active-stage telemetry, and withholds exact selected-run counts, percentages,
+and ETAs until the worker verifies the complete membership and stage-key sets.
+
 Use **Stop discovery** while the selected Discover workflow is actively
 discovering or draining. Cancellation refreshes Pipelines as well as Runs and
 Dashboard. After a failed execution, Pipelines reports the active-work total or
 states that the runtime inventory is unavailable; it never turns missing
-inventory into "no work." If the worker temporarily reaches a history store
-that cannot find the exact recorded run, the execution is marked provisionally
-unavailable and continues to reconcile. Reconnecting to its authoritative
-history restores that run or records its real terminal outcome. **Set up a new
-Discover run** is appropriate only when the exact execution is genuinely absent
-and the inventory confirms zero active work; it selects the Discover controls
-and does not start a run until you submit them. Workflow identifiers and reason
-codes remain under **Technical details**.
+inventory into "no work." If the exact history cannot be read or mapped safely
+on one pass, the repair remains in automatic retry instead of becoming a
+permanent tracking mode. Reconnecting to its authoritative history restores that
+run or records its real terminal outcome. If immutable legacy history ended
+before recording every target, the run is labeled **Historical run incomplete**;
+JobCtrl preserves all exact recovered evidence and does not fabricate or
+continuously retry the unknown remainder. **Set up a new Discover run** is
+appropriate only when the prior execution is closed or genuinely absent and
+fresh runtime capacity confirms zero active slots; it selects the Discover
+controls and does not start a run until you submit them. Workflow identifiers
+and bounded reason codes remain
+under **Technical details**.
 
 Internal stages such as Enrich and Score, and material generation (the `tailor`
 and `cover` commands), stay visible in job detail and diagnostics, but the

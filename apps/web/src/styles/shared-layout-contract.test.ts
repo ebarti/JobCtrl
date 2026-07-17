@@ -34,6 +34,7 @@ const tokensCss = readStyle("tokens.css");
 const commonCss = readStyle("redesign-common.css");
 const shellCss = readStyle("redesign-shell.css");
 const workspaceCss = readStyle("redesign-route-workspaces.css");
+const pipelinesCss = readStyle("redesign-pipelines.css");
 
 describe("shared typography and layout contract", () => {
   it("keeps the core type scale readable and independent from density", () => {
@@ -219,6 +220,9 @@ describe("shared typography and layout contract", () => {
     );
     expect(workspaceCss).toMatch(
       /@media \(max-width: 1000px\)[\s\S]*\.route-workspace__grid[\s\S]*grid-template-columns: minmax\(0, 1fr\);/,
+    );
+    expect(pipelinesCss).toMatch(
+      /\.pipeline-operations-inspector[\s\S]*\.pipeline-compact-ledger[\s\S]*> \.inspector-ledger__item[\s\S]*> dt,[\s\S]*> dd\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\);/,
     );
   });
 });

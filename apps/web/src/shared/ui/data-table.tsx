@@ -149,7 +149,7 @@ export function DataTable<TData>({
                           type="button"
                           className={
                             rowActivationAppearance === "focus-only"
-                              ? "table-row-activation-button sr-only focus:not-sr-only"
+                              ? "table-row-activation-button row-activation-focus-only"
                               : "table-row-activation-button"
                           }
                           aria-label={activationLabel}
@@ -158,7 +158,7 @@ export function DataTable<TData>({
                             onRowActivate?.(row.original);
                           }}
                         >
-                          <span aria-hidden="true">Open</span>
+                          <span aria-hidden="true">View details</span>
                         </button>
                       ) : null}
                     </span>

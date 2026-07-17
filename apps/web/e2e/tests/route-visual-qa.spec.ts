@@ -79,8 +79,8 @@ const ROUTE_SURFACES: readonly RouteSurface[] = [
   {
     path: "/pipelines",
     activeLink: "Pipelines",
-    proof: (page) => page.getByRole("heading", { name: "Pipeline actions" }),
-    surface: (page) => page.locator(".stage-trigger-panel").first(),
+    proof: (page) => page.getByRole("heading", { name: "Live pipeline" }),
+    surface: (page) => page.locator(".pipeline-live-flow").first(),
   },
   {
     path: "/debug",
@@ -138,7 +138,7 @@ const MOBILE_ROUTE_SURFACES: readonly MobileRouteSurface[] = [
   {
     ...ROUTE_SURFACES[8]!,
     primaryControl: (page) =>
-      page.getByRole("tab", { name: "Discover", selected: true }),
+      page.getByRole("button", { name: /Freshness and capacity/i }),
   },
   {
     ...ROUTE_SURFACES[9]!,
@@ -868,12 +868,12 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
 
   await page.goto("/pipelines");
   await expect(
-    page.getByRole("heading", { name: "Pipeline actions" }),
+    page.getByRole("heading", { name: "Live pipeline" }),
   ).toBeVisible({ timeout: 30_000 });
   await expectKeyboardFocusIndicator(
     page,
-    page.getByRole("tab", { name: "Discover", selected: true }),
-    "pipeline discover tab",
+    page.getByRole("button", { name: /Freshness and capacity/i }),
+    "pipeline freshness and capacity disclosure",
     100,
   );
 });
