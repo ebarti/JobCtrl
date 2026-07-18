@@ -194,6 +194,66 @@ export function JobBulkActions({
             <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
           </span>
         ) : null}
+        {retrySelectedFailures || retryAllFailures ? (
+          <div
+            aria-label="Workflow recovery actions"
+            className="jobs-action-group jobs-recovery-actions"
+            role="group"
+          >
+            {retryAllFailures ? (
+              <Button
+                aria-describedby={
+                  pendingPreparationAvailability.available
+                    ? undefined
+                    : unavailableReasonId
+                }
+                size="sm"
+                type="button"
+                variant="default"
+                disabled={
+                  hasLocalFilters ||
+                  pendingPreparationLoading ||
+                  !pendingPreparationAvailability.available
+                }
+                onClick={onRunPendingPreparation}
+              >
+                Continue pending preparation
+              </Button>
+            ) : null}
+            {retrySelectedFailures ? (
+              <Button
+                aria-describedby={
+                  retryAvailability.available ? undefined : unavailableReasonId
+                }
+                size="sm"
+                type="button"
+                variant="outline"
+                disabled={
+                  !selectedCount || retryLoading || !retryAvailability.available
+                }
+                onClick={onRetryFailedSelected}
+              >
+                Retry selected
+              </Button>
+            ) : null}
+            {retryAllFailures ? (
+              <Button
+                aria-describedby={
+                  retryAvailability.available ? undefined : unavailableReasonId
+                }
+                size="sm"
+                type="button"
+                variant="outline"
+                disabled={
+                  hasLocalFilters || retryLoading || !retryAvailability.available
+                }
+                onClick={onRetryAllFailed}
+              >
+                Retry all failed
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         <div
           aria-label="Job operations"
           className="jobs-action-group jobs-operations-actions"
@@ -281,54 +341,6 @@ export function JobBulkActions({
                         onSuccess={onMaintenanceSuccess}
                       />
                     </>
-                  ) : null}
-                </DropdownMenuGroup>
-              ) : null}
-              {retrySelectedFailures || retryAllFailures ? (
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel>Workflow recovery</DropdownMenuLabel>
-                  {retryAllFailures ? (
-                    <DropdownMenuItem
-                      aria-describedby={
-                        pendingPreparationAvailability.available
-                          ? undefined
-                          : unavailableReasonId
-                      }
-                      disabled={
-                        hasLocalFilters ||
-                        pendingPreparationLoading ||
-                        !pendingPreparationAvailability.available
-                      }
-                      onClick={onRunPendingPreparation}
-                    >
-                      Continue pending preparation
-                    </DropdownMenuItem>
-                  ) : null}
-                  {retrySelectedFailures ? (
-                    <DropdownMenuItem
-                      aria-describedby={
-                        retryAvailability.available ? undefined : unavailableReasonId
-                      }
-                      disabled={
-                        !selectedCount || retryLoading || !retryAvailability.available
-                      }
-                      onClick={onRetryFailedSelected}
-                    >
-                      Retry selected
-                    </DropdownMenuItem>
-                  ) : null}
-                  {retryAllFailures ? (
-                    <DropdownMenuItem
-                      aria-describedby={
-                        retryAvailability.available ? undefined : unavailableReasonId
-                      }
-                      disabled={
-                        hasLocalFilters || retryLoading || !retryAvailability.available
-                      }
-                      onClick={onRetryAllFailed}
-                    >
-                      Retry all failed
-                    </DropdownMenuItem>
                   ) : null}
                 </DropdownMenuGroup>
               ) : null}

@@ -33,12 +33,18 @@ describe("Checkbox", () => {
       name: "Uncontrolled checkbox",
     });
     expect(checkbox).toHaveClass("size-6");
+    expect(checkbox).toHaveClass(
+      "before:size-4",
+      "border-transparent",
+      "bg-transparent",
+    );
     expect(checkbox).toHaveAttribute("data-unchecked");
 
     await user.click(checkbox);
 
     expect(checkbox).toHaveAttribute("data-checked");
     expect(checkbox).toHaveAttribute("aria-checked", "true");
+    expect(checkbox.querySelector("svg")).toHaveClass("size-3");
     expect(onCheckedChange).toHaveBeenCalledWith(true, expect.anything());
   });
 

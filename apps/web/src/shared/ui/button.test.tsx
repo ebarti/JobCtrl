@@ -27,6 +27,15 @@ describe("<Button>", () => {
     );
   });
 
+  it("lets composite buttons size to their content without a density height cap", () => {
+    render(<Button size="content">Composite action</Button>);
+
+    const button = screen.getByRole("button", { name: "Composite action" });
+    expect(button).toHaveAttribute("data-size", "content");
+    expect(button).toHaveClass("h-auto", "min-h-0");
+    expect(button).not.toHaveClass("jh-control-default");
+  });
+
   it("normalizes direct SVG icons without shrinking the icon-button hit area", () => {
     render(
       <>

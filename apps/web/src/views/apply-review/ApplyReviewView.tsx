@@ -522,6 +522,7 @@ function ApplyReviewQueue({
                 key={item.jobKey}
                 type="button"
                 variant="ghost"
+                size="content"
                 className={`apply-review-queue-item${item.jobKey === selected.jobKey ? " selected" : ""}`}
                 aria-pressed={item.jobKey === selected.jobKey}
                 onClick={() => onSelect(item.jobKey)}

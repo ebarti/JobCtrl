@@ -498,6 +498,30 @@ function failedTailoringQueue(): ApplyReviewQueueResponse {
   };
 }
 
+function multiRowApplyReviewQueue(): ApplyReviewQueueResponse {
+  const base = sampleApplyReviewQueue.items[0]!;
+  const titles = [
+    "Principal Platform Engineer",
+    "Director of Engineering",
+    "Head of Engineering",
+    "Staff Software Engineer",
+    "Engineering Manager",
+    "Senior Backend Engineer",
+    "Platform Reliability Lead",
+    "Principal Software Architect",
+  ];
+  return {
+    ok: true,
+    items: titles.map((title, index) => ({
+      ...base,
+      jobKey: `qa-apply-review-row-${index + 1}`,
+      title,
+      company: `QA Employer ${index + 1}`,
+      fitScore: 10 - (index % 4),
+    })),
+  };
+}
+
 async function installFailedTailoringApplyReviewRoutes(
   page: Page,
 ): Promise<void> {
@@ -1190,6 +1214,103 @@ test("density modes visibly change shared job-detail geometry without shrinking 
   ).toBe(1);
 });
 
+test("Apply Review queue items contain their content at every density", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1666, height: 900 });
+  await page.route("**/v1/apply/review-queue", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(multiRowApplyReviewQueue()),
+    });
+  });
+  await page.goto("/apply-review");
+
+  const queueItems = page.locator(".apply-review-queue-item");
+  await expect(queueItems.first()).toBeVisible({ timeout: 30_000 });
+  expect(await queueItems.count(), "queue fixture should contain multiple rows").toBeGreaterThan(1);
+
+  for (const density of Object.keys(DENSITY_TOKENS) as Density[]) {
+    await setDensity(page, density);
+    const rows = await queueItems.evaluateAll((elements) =>
+      elements.slice(0, 8).map((element) => {
+        const rect = element.getBoundingClientRect();
+        const children = [...element.children].map((child) =>
+          child.getBoundingClientRect(),
+        );
+        return {
+          bottom: rect.bottom,
+          childBottom: children.length
+            ? Math.max(...children.map((child) => child.bottom))
+            : rect.top,
+          clientHeight: element.clientHeight,
+          height: rect.height,
+          scrollHeight: element.scrollHeight,
+          top: rect.top,
+        };
+      }),
+    );
+
+    expect(rows.length, `${density} queue measurements`).toBeGreaterThan(1);
+    for (const [index, row] of rows.entries()) {
+      expect(row.height, `${density} row ${index} height`).toBeGreaterThanOrEqual(88);
+      expect(
+        row.scrollHeight,
+        `${density} row ${index} content must fit its box`,
+      ).toBeLessThanOrEqual(row.clientHeight + 1);
+      expect(
+        row.childBottom,
+        `${density} row ${index} children must stay inside the row`,
+      ).toBeLessThanOrEqual(row.bottom + 1);
+      if (index > 0) {
+        expect(
+          rows[index - 1]!.bottom,
+          `${density} rows ${index - 1} and ${index} must not overlap`,
+        ).toBeLessThanOrEqual(row.top + 1);
+      }
+    }
+  }
+});
+
+test("Discovery checkboxes keep a 24px target with a 16px visual control", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1666, height: 900 });
+  await page.goto("/discovery");
+
+  const checkbox = page.getByRole("checkbox", {
+    name: "Individual Contributor",
+  });
+  await expect(checkbox).toBeVisible({ timeout: 30_000 });
+
+  for (const density of Object.keys(DENSITY_TOKENS) as Density[]) {
+    await setDensity(page, density);
+    const geometry = await checkbox.evaluate((element) => {
+      const target = element.getBoundingClientRect();
+      const visual = getComputedStyle(element, "::before");
+      const label = element.parentElement?.querySelector("label") ?? null;
+      return {
+        labelLineHeight: label
+          ? Number.parseFloat(getComputedStyle(label).lineHeight)
+          : 0,
+        targetHeight: target.height,
+        targetWidth: target.width,
+        visualHeight: Number.parseFloat(visual.height),
+        visualWidth: Number.parseFloat(visual.width),
+      };
+    });
+
+    expect(geometry.targetHeight, `${density} target height`).toBeCloseTo(24, 1);
+    expect(geometry.targetWidth, `${density} target width`).toBeCloseTo(24, 1);
+    expect(geometry.visualHeight, `${density} visual height`).toBeCloseTo(16, 1);
+    expect(geometry.visualWidth, `${density} visual width`).toBeCloseTo(16, 1);
+    expect(
+      geometry.visualHeight,
+      `${density} visual control should not exceed the label line box`,
+    ).toBeLessThanOrEqual(geometry.labelLineHeight);
+  }
+});
+
 test("density modes, focus rings, filters, forms, and destructive controls remain usable", async ({
   page,
 }) => {
@@ -1611,22 +1732,25 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
     const decisionButtons = [
       ...element.querySelectorAll(".apply-review-decision-buttons button"),
     ].map((node) => node.getBoundingClientRect());
-    const factValues = [
-      ...element.querySelectorAll(".apply-review-audit-facts dd"),
-    ].map((node) => node.getBoundingClientRect());
-    const tags = [
-      ...element.querySelectorAll(".apply-review-audit-facts .tag"),
+    const summaryItems = [
+      ...element.querySelectorAll(".apply-review-audit-summary-list li"),
     ].map((node) => node.getBoundingClientRect());
     return {
       actionWidth: actions?.getBoundingClientRect().width ?? 0,
-      buttonTopSpread:
-        Math.max(...decisionButtons.map((rect) => rect.top)) -
-        Math.min(...decisionButtons.map((rect) => rect.top)),
+      buttonCount: decisionButtons.length,
+      buttonTopSpread: decisionButtons.length
+        ? Math.max(...decisionButtons.map((rect) => rect.top)) -
+          Math.min(...decisionButtons.map((rect) => rect.top))
+        : 0,
       contextWidth: context?.getBoundingClientRect().width ?? 0,
       cardHeight: element.getBoundingClientRect().height,
-      maxTagHeight: Math.max(...tags.map((rect) => rect.height)),
-      minFactValueWidth: Math.min(...factValues.map((rect) => rect.width)),
-      minTagWidth: Math.min(...tags.map((rect) => rect.width)),
+      maxSummaryItemHeight: summaryItems.length
+        ? Math.max(...summaryItems.map((rect) => rect.height))
+        : 0,
+      minSummaryItemWidth: summaryItems.length
+        ? Math.min(...summaryItems.map((rect) => rect.width))
+        : 0,
+      summaryItemCount: summaryItems.length,
       scrollWidth: document.documentElement.scrollWidth,
       viewportWidth: document.documentElement.clientWidth,
     };
@@ -1641,19 +1765,26 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
     "approval controls should use the card width",
   ).toBeGreaterThan(600);
   expect(
+    layout.buttonCount,
+    "the current decision-button selector must match real controls",
+  ).toBeGreaterThan(0);
+  expect(
     layout.buttonTopSpread,
     "decision buttons should remain on one row",
   ).toBeLessThanOrEqual(1);
   expect(
-    layout.minFactValueWidth,
-    "audit fact values should not collapse",
+    layout.summaryItemCount,
+    "the current audit summary selector must match real content",
+  ).toBeGreaterThan(0);
+  expect(
+    layout.minSummaryItemWidth,
+    "audit summary items should not collapse",
   ).toBeGreaterThan(500);
   expect(
-    layout.minTagWidth,
-    "audit chips should not wrap letter-by-letter",
-  ).toBeGreaterThan(250);
-  expect(layout.maxTagHeight, "audit chips should remain compact").toBeLessThan(
-    60,
+    layout.maxSummaryItemHeight,
+    "audit summary items should remain readable",
+  ).toBeLessThan(
+    140,
   );
   expect(
     layout.cardHeight,

@@ -316,6 +316,12 @@ corepack pnpm --filter @jobctrl/web e2e -- tests/responsive-data-surfaces.spec.t
 git diff --check
 ```
 
+Visual evidence is valid only when it is captured from the final integration
+HEAD after the last merge, rebase, or visual-system edit. Screenshots from an
+earlier commit do not satisfy this gate. A final-head rerun must also exercise
+the geometry assertions, because a painted screenshot alone cannot prove that
+composite controls contain their children.
+
 The gate passes only when:
 
 - `base-rhea`, Geist, the semantic token mappings, light/dark contrast, all
@@ -328,6 +334,10 @@ The gate passes only when:
   a compatible deep-link state, hides Sources/Warnings in the default view,
   omits redundant active lifecycle copy, uses destructive deletion, and keeps
   row activation focus-visible without a permanent duplicate action;
+- Jobs keeps workflow-recovery actions visible without opening the maintenance
+  menu; Apply Review queue rows contain their content without overlapping at
+  every density; and Discovery checkboxes keep a 24px hit target around a 16px
+  visual control that does not overpower its label;
 - Jobs, Artifacts, Contacts, Discovery, and Settings record data reflows into
   labelled cards at 900px and below; Profile and Evidence Map stack their work
   regions, while Apply Review keeps a desktop queue rail and wraps decisions in
