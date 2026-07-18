@@ -1272,33 +1272,51 @@ test("Apply Review queue items contain their content at every density", async ({
   }
 });
 
-test("Discovery checkboxes keep a 24px target with a 16px visual control", async ({
+test("Configuration checkboxes share one target, visual, and label alignment", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1666, height: 900 });
   await page.goto("/discovery");
 
-  const checkbox = page.getByRole("checkbox", {
+  const discoveryCheckbox = page.getByRole("checkbox", {
     name: "Individual Contributor",
   });
-  await expect(checkbox).toBeVisible({ timeout: 30_000 });
+  await expect(discoveryCheckbox).toBeVisible({ timeout: 30_000 });
 
-  for (const density of Object.keys(DENSITY_TOKENS) as Density[]) {
-    await setDensity(page, density);
-    const geometry = await checkbox.evaluate((element) => {
+  const readGeometry = async (checkbox: Locator) =>
+    checkbox.evaluate((element) => {
       const target = element.getBoundingClientRect();
       const visual = getComputedStyle(element, "::before");
-      const label = element.parentElement?.querySelector("label") ?? null;
+      const labelledBy = element.getAttribute("aria-labelledby");
+      const label = labelledBy
+        ? document.getElementById(labelledBy)
+        : element.parentElement?.querySelector("label") ?? null;
+      const labelRect = label?.getBoundingClientRect() ?? null;
+      const visualHeight = Number.parseFloat(visual.height);
       return {
         labelLineHeight: label
           ? Number.parseFloat(getComputedStyle(label).lineHeight)
           : 0,
         targetHeight: target.height,
         targetWidth: target.width,
-        visualHeight: Number.parseFloat(visual.height),
+        visualHeight,
+        visualTopFromLabel:
+          labelRect === null
+            ? Number.NaN
+            : target.top + (target.height - visualHeight) / 2 - labelRect.top,
         visualWidth: Number.parseFloat(visual.width),
       };
     });
+
+  const discoveryGeometry = new Map<
+    Density,
+    Awaited<ReturnType<typeof readGeometry>>
+  >();
+
+  for (const density of Object.keys(DENSITY_TOKENS) as Density[]) {
+    await setDensity(page, density);
+    const geometry = await readGeometry(discoveryCheckbox);
+    discoveryGeometry.set(density, geometry);
 
     expect(geometry.targetHeight, `${density} target height`).toBeCloseTo(24, 1);
     expect(geometry.targetWidth, `${density} target width`).toBeCloseTo(24, 1);
@@ -1308,6 +1326,48 @@ test("Discovery checkboxes keep a 24px target with a 16px visual control", async
       geometry.visualHeight,
       `${density} visual control should not exceed the label line box`,
     ).toBeLessThanOrEqual(geometry.labelLineHeight);
+  }
+
+  await page.goto("/preferences");
+  const preferencesCheckbox = page.getByRole("checkbox", {
+    name: "Available full-time",
+  });
+  await expect(preferencesCheckbox).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByRole("button", {
+      name: "Set Available full-time to not answered",
+    }),
+  ).toHaveCount(0);
+
+  for (const density of Object.keys(DENSITY_TOKENS) as Density[]) {
+    await setDensity(page, density);
+    const preferencesGeometry = await readGeometry(preferencesCheckbox);
+    const expectedGeometry = discoveryGeometry.get(density);
+    expect(expectedGeometry, `${density} Discovery geometry`).toBeDefined();
+
+    expect(
+      preferencesGeometry.targetHeight,
+      `${density} Preferences target height`,
+    ).toBeCloseTo(24, 1);
+    expect(
+      preferencesGeometry.targetWidth,
+      `${density} Preferences target width`,
+    ).toBeCloseTo(24, 1);
+    expect(
+      preferencesGeometry.visualHeight,
+      `${density} Preferences visual height`,
+    ).toBeCloseTo(16, 1);
+    expect(
+      preferencesGeometry.visualWidth,
+      `${density} Preferences visual width`,
+    ).toBeCloseTo(16, 1);
+    expect(
+      Math.abs(
+        preferencesGeometry.visualTopFromLabel -
+          expectedGeometry!.visualTopFromLabel,
+      ),
+      `${density} checkbox visuals should align with the same label line`,
+    ).toBeLessThanOrEqual(1);
   }
 });
 

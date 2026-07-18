@@ -703,21 +703,9 @@ export function StructuredProfileEditor({
       />
       <FieldContent>
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
-        <div className="flex flex-wrap items-center gap-2">
-          <FieldDescription id={descriptionId} aria-live="polite">
-            {isUnanswered ? "Not answered" : answer}
-          </FieldDescription>
-          <Button
-            aria-label={`Set ${label} to not answered`}
-            disabled={isUnanswered}
-            onClick={() => updateProfilePath(path, "")}
-            size="sm"
-            type="button"
-            variant="link"
-          >
-            Clear answer
-          </Button>
-        </div>
+        <FieldDescription id={descriptionId} aria-live="polite">
+          {isUnanswered ? "Not answered" : answer}
+        </FieldDescription>
       </FieldContent>
     </Field>
     );

@@ -145,7 +145,7 @@ describe("<StructuredProfileEditor>", () => {
     }
   });
 
-  it("round-trips unanswered preferences without collapsing them to No", async () => {
+  it("renders unanswered preferences honestly without a separate clear action", async () => {
     const user = userEvent.setup();
     const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
     initialProfile.work_authorization = {
@@ -167,31 +167,21 @@ describe("<StructuredProfileEditor>", () => {
     );
 
     const checkbox = screen.getByRole("checkbox", { name: "Legally authorized to work" });
-    const clearAnswer = screen.getByRole("button", {
-      name: "Set Legally authorized to work to not answered",
-    });
 
     expect(checkbox).toHaveAttribute("aria-checked", "mixed");
     expect(checkbox).toHaveAccessibleDescription("Not answered");
-    expect(clearAnswer).toBeDisabled();
+    expect(screen.queryByText("Clear answer")).not.toBeInTheDocument();
     expect(storedValueAt(latestProfile, "work_authorization.legally_authorized_to_work")).toBe("");
 
     await user.click(checkbox);
     expect(checkbox).toHaveAttribute("aria-checked", "true");
     expect(checkbox).toHaveAccessibleDescription("Yes");
-    expect(clearAnswer).toBeEnabled();
     expect(storedValueAt(latestProfile, "work_authorization.legally_authorized_to_work")).toBe("Yes");
 
     await user.click(checkbox);
     expect(checkbox).toHaveAttribute("aria-checked", "false");
     expect(checkbox).toHaveAccessibleDescription("No");
     expect(storedValueAt(latestProfile, "work_authorization.legally_authorized_to_work")).toBe("No");
-
-    await user.click(clearAnswer);
-    expect(checkbox).toHaveAttribute("aria-checked", "mixed");
-    expect(checkbox).toHaveAccessibleDescription("Not answered");
-    expect(clearAnswer).toBeDisabled();
-    expect(storedValueAt(latestProfile, "work_authorization.legally_authorized_to_work")).toBe("");
   });
 
   it("explains currency conversion guidance without changing its stored field", () => {

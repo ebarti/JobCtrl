@@ -619,15 +619,19 @@
 }
 
 .configuration-section .field.check,
-.configuration-section .target-choice.required-choice {
+.configuration-section .target-choice:has(> [data-slot="checkbox"]),
+.profile-layout .target-choice:has(> [data-slot="checkbox"]),
+.discovery-workspace .target-choice:has(> [data-slot="checkbox"]) {
   display: grid;
   grid-template-columns: var(--jh-target-min-size) minmax(0, 1fr);
   align-items: start;
   gap: 8px;
 }
 
-.configuration-section .field.check > button,
-.configuration-section .target-choice.required-choice > button {
+.configuration-section .field.check > [data-slot="checkbox"],
+.configuration-section .target-choice > [data-slot="checkbox"],
+.profile-layout .target-choice > [data-slot="checkbox"],
+.discovery-workspace .target-choice > [data-slot="checkbox"] {
   margin-top: 1px;
 }
 
