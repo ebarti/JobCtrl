@@ -1311,6 +1311,110 @@ test("Discovery checkboxes keep a 24px target with a 16px visual control", async
   }
 });
 
+test("Discovery settings pack related controls and reflow with available width", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1666, height: 900 });
+  await page.goto("/discovery");
+
+  await expect(
+    page.getByRole("group", { name: "Target tracks" }),
+  ).toBeVisible({ timeout: 30_000 });
+
+  const targetGrid = page.locator(".target-preferences-grid");
+  const targetClusters = targetGrid.locator(":scope > .target-preference-cluster");
+  const boardGrid = page.locator(".discovery-board-options");
+  const boardOptions = boardGrid.locator(":scope > .target-choice");
+
+  await expect(targetClusters).toHaveCount(4);
+  await expect(boardOptions).toHaveCount(4);
+
+  const desktopTarget = await targetGrid.evaluate((element) => {
+    const grid = element.getBoundingClientRect();
+    const children = Array.from(element.children).map((child) => {
+      const bounds = child.getBoundingClientRect();
+      return {
+        height: Math.round(bounds.height),
+        top: Math.round(bounds.top),
+      };
+    });
+    return {
+      children,
+      gridHeight: Math.round(grid.height),
+      maxChildHeight: Math.max(...children.map(({ height }) => height)),
+    };
+  });
+  const desktopBoards = await boardGrid.evaluate((element) =>
+    Array.from(element.children).map((child) => {
+      const bounds = child.getBoundingClientRect();
+      return { top: Math.round(bounds.top) };
+    }),
+  );
+
+  expect(new Set(desktopTarget.children.map(({ top }) => top)).size).toBe(1);
+  expect(desktopTarget.gridHeight).toBeLessThanOrEqual(
+    desktopTarget.maxChildHeight + 42,
+  );
+  expect(new Set(desktopBoards.map(({ top }) => top)).size).toBe(1);
+
+  await page.setViewportSize({ width: 900, height: 900 });
+
+  const tabletTarget = await targetGrid.evaluate((element) =>
+    Array.from(element.children).map((child) => {
+      const bounds = child.getBoundingClientRect();
+      return {
+        left: Math.round(bounds.left),
+        top: Math.round(bounds.top),
+      };
+    }),
+  );
+  expect(new Set(tabletTarget.map(({ left }) => left)).size).toBeGreaterThan(1);
+  expect(new Set(tabletTarget.map(({ left }) => left)).size).toBeLessThan(4);
+  expect(new Set(tabletTarget.map(({ top }) => top)).size).toBeGreaterThan(1);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  const narrowGeometry = await page.locator("body").evaluate(() => {
+    const targetClusters = Array.from(
+      document.querySelectorAll(
+        ".target-preferences-grid > .target-preference-cluster",
+      ),
+    ).map((element) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        left: Math.round(bounds.left),
+        top: Math.round(bounds.top),
+      };
+    });
+    const boards = Array.from(
+      document.querySelectorAll(
+        ".discovery-board-options > .target-choice",
+      ),
+    ).map((element) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        left: Math.round(bounds.left),
+        top: Math.round(bounds.top),
+      };
+    });
+    return {
+      boardColumns: new Set(boards.map(({ left }) => left)).size,
+      boardRows: new Set(boards.map(({ top }) => top)).size,
+      documentOverflow:
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+      targetColumns: new Set(targetClusters.map(({ left }) => left)).size,
+      targetRows: new Set(targetClusters.map(({ top }) => top)).size,
+    };
+  });
+
+  expect(narrowGeometry.targetColumns).toBe(1);
+  expect(narrowGeometry.targetRows).toBe(4);
+  expect(narrowGeometry.boardColumns).toBe(1);
+  expect(narrowGeometry.boardRows).toBe(4);
+  expect(narrowGeometry.documentOverflow).toBeLessThanOrEqual(1);
+});
+
 test("density modes, focus rings, filters, forms, and destructive controls remain usable", async ({
   page,
 }) => {

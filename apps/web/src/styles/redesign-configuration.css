@@ -1041,12 +1041,19 @@
   padding: var(--jh-panel-padding);
 }
 
-/* Target-search groups have independent content widths; equal fractional
- * tracks left an empty visual column whenever a long location or role group
- * was paired with a compact option set. */
+/* Target-search groups pack by subject before the outer grid reflows. Keeping
+ * related controls in vertical clusters prevents the tallest option set from
+ * imposing its row height on every shorter group. */
 .discovery-workspace .target-preferences-grid {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
   align-items: start;
+}
+
+.discovery-workspace .target-preference-cluster {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--jh-field-grid-row-gap);
 }
 
 .discovery-workspace .discovery-runtime-settings .config-form {
@@ -1056,6 +1063,12 @@
 .discovery-workspace .discovery-runtime-settings .field-grid {
   gap: var(--jh-field-grid-row-gap) var(--jh-field-grid-column-gap);
   padding: var(--jh-panel-padding);
+}
+
+.discovery-workspace .discovery-board-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  align-items: start;
 }
 
 .discovery-workspace .editor-bulk-actions,

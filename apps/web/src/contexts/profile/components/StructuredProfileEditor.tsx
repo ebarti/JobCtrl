@@ -1266,21 +1266,29 @@ export function StructuredProfileEditor({
     <section className="form-section">
       {showSectionHeading ? <h3>Target search</h3> : null}
       <FieldGroup className="target-preferences-grid">
-        {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS)}
-        {targetSearchCheckboxGroup(
-          "experience.target_seniority_floor",
-          "Seniority floors",
-          TARGET_SENIORITY_GROUPS,
-        )}
-        {delimitedListField("experience.target_functions", ROLE_AREA_LABEL, "Add role area", {
-          compact: true,
-          placeholder: ROLE_AREA_PLACEHOLDER,
-        })}
-        {delimitedListField("experience.target_specializations", "Specializations", "Add specialization", {
-          compact: true,
-        })}
-        {delimitedListField("experience.target_role", "Target roles", "Add role", { compact: true })}
-        {targetLocationWorkModelField()}
+        <FieldGroup className="target-preference-cluster">
+          {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS)}
+          {delimitedListField("experience.target_role", "Target roles", "Add role", { compact: true })}
+        </FieldGroup>
+        <FieldGroup className="target-preference-cluster">
+          {targetSearchCheckboxGroup(
+            "experience.target_seniority_floor",
+            "Seniority floors",
+            TARGET_SENIORITY_GROUPS,
+          )}
+        </FieldGroup>
+        <FieldGroup className="target-preference-cluster">
+          {delimitedListField("experience.target_functions", ROLE_AREA_LABEL, "Add role area", {
+            compact: true,
+            placeholder: ROLE_AREA_PLACEHOLDER,
+          })}
+          {delimitedListField("experience.target_specializations", "Specializations", "Add specialization", {
+            compact: true,
+          })}
+        </FieldGroup>
+        <FieldGroup className="target-preference-cluster">
+          {targetLocationWorkModelField()}
+        </FieldGroup>
       </FieldGroup>
     </section>
   );
