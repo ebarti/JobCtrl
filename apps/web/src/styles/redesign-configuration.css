@@ -1050,10 +1050,39 @@
 }
 
 .discovery-workspace .target-preference-cluster {
+  container: target-preference-cluster / inline-size;
   display: grid;
   min-width: 0;
   align-content: start;
   gap: var(--jh-field-grid-row-gap);
+}
+
+.discovery-workspace .target-preference-cluster .inline-list.compact {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+}
+
+@container target-preference-cluster (max-width: 34rem) {
+  .discovery-workspace .target-location-model-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "location remove"
+      "work-models work-models";
+    align-items: start;
+  }
+
+  .discovery-workspace .target-location-model-row > input {
+    grid-area: location;
+  }
+
+  .discovery-workspace
+    .target-location-model-row
+    > .target-work-model-group {
+    grid-area: work-models;
+  }
+
+  .discovery-workspace .target-location-model-row > .icon-button {
+    grid-area: remove;
+  }
 }
 
 .discovery-workspace .discovery-runtime-settings .config-form {

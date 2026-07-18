@@ -1325,6 +1325,19 @@ test("Discovery settings pack related controls and reflow with available width",
   const targetClusters = targetGrid.locator(":scope > .target-preference-cluster");
   const boardGrid = page.locator(".discovery-board-options");
   const boardOptions = boardGrid.locator(":scope > .target-choice");
+  const assertUsableTargetInputs = async (viewport: string) => {
+    for (const inputKind of ["Target roles", "Target location"] as const) {
+      const inputs = page.locator(`input[aria-label^="${inputKind} "]`);
+      const count = await inputs.count();
+      expect(count, `${viewport} ${inputKind} inputs`).toBeGreaterThan(0);
+      const widths = await inputs.evaluateAll((elements) =>
+        elements.map((element) => Math.round(element.getBoundingClientRect().width)),
+      );
+      for (const [index, width] of widths.entries()) {
+        expect(width, `${viewport} ${inputKind} input ${index + 1}`).toBeGreaterThanOrEqual(180);
+      }
+    }
+  };
 
   await expect(targetClusters).toHaveCount(4);
   await expect(boardOptions).toHaveCount(4);
@@ -1356,6 +1369,7 @@ test("Discovery settings pack related controls and reflow with available width",
     desktopTarget.maxChildHeight + 42,
   );
   expect(new Set(desktopBoards.map(({ top }) => top)).size).toBe(1);
+  await assertUsableTargetInputs("desktop");
 
   await page.setViewportSize({ width: 900, height: 900 });
 
@@ -1371,8 +1385,10 @@ test("Discovery settings pack related controls and reflow with available width",
   expect(new Set(tabletTarget.map(({ left }) => left)).size).toBeGreaterThan(1);
   expect(new Set(tabletTarget.map(({ left }) => left)).size).toBeLessThan(4);
   expect(new Set(tabletTarget.map(({ top }) => top)).size).toBeGreaterThan(1);
+  await assertUsableTargetInputs("tablet");
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await assertUsableTargetInputs("phone");
 
   const narrowGeometry = await page.locator("body").evaluate(() => {
     const targetClusters = Array.from(
