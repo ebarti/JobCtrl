@@ -57,8 +57,9 @@ triggers and keyboard navigation, overlay focus return and Escape dismissal,
 disclosures that preserve mounted form state, destructive confirmations,
 visible focus, and no document-level horizontal overflow. Status must remain an
 icon/dot plus text, while coherent cards retain the shared radius and quiet
-elevation without becoming one card per fact. Verify body copy computes to 16px
-in compact, regular, and comfy density, and every primary route keeps the
+elevation without becoming one card per fact. Verify body copy retains the
+shared body typography role in compact, regular, and comfy density; density
+changes geometry, not typography. Every primary route keeps the
 compact eyebrow/title/subtitle/action hierarchy instead of a route-local hero.
 
 On `/jobs`, verify Active, Deleted, and Hidden are keyboard-operable Tabs and no

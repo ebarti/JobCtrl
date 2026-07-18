@@ -7,7 +7,16 @@ import {
 } from "@jobctrl/contracts";
 import { CONTACT_ROLES } from "@jobctrl/domain-types";
 import { useForm } from "@tanstack/react-form";
+import { useId } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
+import {
+  Field,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import {
   Select,
   SelectContent,
@@ -84,6 +93,7 @@ export function ContactForm({
   errorMessage,
   onCancel,
 }: ContactFormProps) {
+  const formId = useId();
   const form = useForm({
     defaultValues: defaultFormValues(initialValues, lockedJobId),
     validators: {
@@ -121,8 +131,8 @@ export function ContactForm({
       ) : null}
       <form.Field name="role">
         {(field) => (
-          <label className="field">
-            <span>Role</span>
+          <Field className="field">
+            <FieldLabel htmlFor={`${formId}-role`}>Role</FieldLabel>
             <Select
               items={CONTACT_ROLES.map((role) => ({
                 label: contactRoleLabel(role),
@@ -134,6 +144,7 @@ export function ContactForm({
               }}
             >
               <SelectTrigger
+                id={`${formId}-role`}
                 aria-label="Role"
                 className="w-full"
                 onBlur={field.handleBlur}
@@ -150,36 +161,38 @@ export function ContactForm({
                 </SelectGroup>
               </SelectContent>
             </Select>
-          </label>
+          </Field>
         )}
       </form.Field>
       <form.Field name="employer">
         {(field) => (
-          <label className="field">
-            <span>Employer</span>
-            <input
+          <Field className="field">
+            <FieldLabel htmlFor={`${formId}-employer`}>Employer</FieldLabel>
+            <Input
+              id={`${formId}-employer`}
               value={field.state.value}
               onBlur={field.handleBlur}
               onChange={(event) => field.handleChange(event.target.value)}
             />
-          </label>
+          </Field>
         )}
       </form.Field>
       <form.Field name="jobId">
         {(field) => (
-          <label className="field">
-            <span>Job</span>
-            <input
+          <Field className="field">
+            <FieldLabel htmlFor={`${formId}-job`}>Job</FieldLabel>
+            <Input
+              id={`${formId}-job`}
               value={field.state.value}
               disabled={Boolean(lockedJobId)}
               onBlur={field.handleBlur}
               onChange={(event) => field.handleChange(event.target.value)}
             />
-          </label>
+          </Field>
         )}
       </form.Field>
-      <fieldset className="contact-attribute-rows">
-        <legend>Facts</legend>
+      <FieldSet className="contact-attribute-rows">
+        <FieldLegend>Facts</FieldLegend>
         <form.Field name="attributes" mode="array">
           {(attributesField) => (
             <>
@@ -187,8 +200,10 @@ export function ContactForm({
                 <div className="contact-attribute-row" key={index}>
                   <form.Field name={`attributes[${index}].kind`}>
                     {(kindField) => (
-                      <label className="field compact">
-                        <span>Kind</span>
+                      <Field className="field compact">
+                        <FieldLabel htmlFor={`${formId}-attribute-${index}-kind`}>
+                          Kind
+                        </FieldLabel>
                         <Select
                           items={CONTACT_ATTRIBUTE_KINDS.map((kind) => ({
                             label: contactAttributeKindLabel(kind),
@@ -204,6 +219,7 @@ export function ContactForm({
                           }}
                         >
                           <SelectTrigger
+                            id={`${formId}-attribute-${index}-kind`}
                             aria-label="Kind"
                             className="w-full"
                             onBlur={kindField.handleBlur}
@@ -220,46 +236,51 @@ export function ContactForm({
                             </SelectGroup>
                           </SelectContent>
                         </Select>
-                      </label>
+                      </Field>
                     )}
                   </form.Field>
                   <form.Field name={`attributes[${index}].value`}>
                     {(valueField) => (
-                      <label className="field compact">
-                        <span>Value</span>
-                        <input
+                      <Field className="field compact">
+                        <FieldLabel htmlFor={`${formId}-attribute-${index}-value`}>
+                          Value
+                        </FieldLabel>
+                        <Input
+                          id={`${formId}-attribute-${index}-value`}
                           value={valueField.state.value}
                           onBlur={valueField.handleBlur}
                           onChange={(event) =>
                             valueField.handleChange(event.target.value)
                           }
                         />
-                      </label>
+                      </Field>
                     )}
                   </form.Field>
-                  <button
+                  <Button
                     type="button"
-                    className="tab"
+                    size="sm"
+                    variant="ghost"
                     aria-label={`Remove fact ${index + 1}`}
                     onClick={() => attributesField.removeValue(index)}
                   >
-                    remove
-                  </button>
+                    Remove
+                  </Button>
                 </div>
               ))}
-              <button
+              <Button
                 type="button"
-                className="tab"
+                size="sm"
+                variant="outline"
                 onClick={() =>
                   attributesField.pushValue({ kind: "email", value: "" })
                 }
               >
-                add fact
-              </button>
+                Add fact
+              </Button>
             </>
           )}
         </form.Field>
-      </fieldset>
+      </FieldSet>
       <form.Subscribe selector={(state) => state.errors}>
         {(errors) => {
           const message = errors
@@ -274,17 +295,16 @@ export function ContactForm({
       <form.Subscribe selector={(state) => state.isSubmitting}>
         {(isSubmitting) => (
           <div className="form-actions">
-            <button
+            <Button
               type="submit"
-              className="tab on"
               disabled={pending || isSubmitting}
             >
-              {pending || isSubmitting ? "saving" : submitLabel}
-            </button>
+              {pending || isSubmitting ? "Saving…" : submitLabel}
+            </Button>
             {onCancel ? (
-              <button type="button" className="tab" onClick={onCancel}>
-                cancel
-              </button>
+              <Button type="button" variant="outline" onClick={onCancel}>
+                Cancel
+              </Button>
             ) : null}
           </div>
         )}

@@ -34,6 +34,24 @@ describe("<ProfileForm>", () => {
     expect(screen.queryByRole("button", { name: "preferences" })).not.toBeInTheDocument();
   });
 
+  it("uses a stable shared save and discard bar with explicit unchanged state", async () => {
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} />, {
+      withRouter: true,
+    });
+
+    const save = await screen.findByRole("button", { name: "Save changes" });
+    const discard = screen.getByRole("button", { name: "Discard changes" });
+
+    expect(screen.getByRole("link", { name: "Import resume" })).toHaveAttribute(
+      "data-slot",
+      "button",
+    );
+    expect(save).toHaveAttribute("data-slot", "button");
+    expect(save).toBeDisabled();
+    expect(discard).toBeDisabled();
+    expect(screen.getByText("No unsaved changes")).toBeInTheDocument();
+  });
+
   it("keeps the address field editable when Google Maps is not configured", async () => {
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} />, {
       withRouter: true,
@@ -102,7 +120,7 @@ describe("<ProfileForm>", () => {
       await screen.findByRole("combobox", { name: "End year" }),
     );
     await user.click(await screen.findByRole("option", { name: "2021" }));
-    await user.click(screen.getByRole("button", { name: /^save all$/i }));
+    await user.click(screen.getByRole("button", { name: /^save changes$/i }));
 
     expect(await screen.findAllByText(/End date must be after start date/i)).not.toHaveLength(0);
     expect(updateProfile).not.toHaveBeenCalled();
@@ -177,7 +195,7 @@ describe("<ProfileForm>", () => {
     await user.click(screen.getByRole("checkbox", { name: "Executive" }));
     await user.click(screen.getByRole("checkbox", { name: "Senior Engineering Manager / Head of Engineering" }));
     await user.click(screen.getByRole("checkbox", { name: "CTO" }));
-    await user.click(screen.getByRole("button", { name: /^save discovery settings$/i }));
+    await user.click(screen.getByRole("button", { name: /^save changes$/i }));
 
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
     const request = updateProfile.mock.calls[0]?.[0];
@@ -206,7 +224,7 @@ describe("<ProfileForm>", () => {
 
     await user.click(screen.getByRole("button", { name: /stealth/i }));
     await user.click(screen.getByRole("button", { name: /founder/i }));
-    await user.click(screen.getByRole("button", { name: /^save discovery settings$/i }));
+    await user.click(screen.getByRole("button", { name: /^save changes$/i }));
 
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
     const request = updateProfile.mock.calls[0]?.[0];
@@ -279,7 +297,7 @@ describe("<ProfileForm>", () => {
     });
 
     expect(targetRole).toHaveValue("VP of Engineering");
-    expect(screen.getByText("saved; newer changes pending")).toBeInTheDocument();
+    expect(screen.getByText("Saved; newer changes pending")).toBeInTheDocument();
   });
 
   it("does not reset dirty edits when a saved autosave snapshot reaches the initial props", async () => {
@@ -365,7 +383,7 @@ describe("<ProfileForm>", () => {
     await user.clear(salaryRangeMin);
     await user.type(salaryRangeMin, "165001");
     expect(salaryRangeMin).toBeValid();
-    await user.click(screen.getByRole("button", { name: /^save all$/i }));
+    await user.click(screen.getByRole("button", { name: /^save changes$/i }));
 
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
     const request = updateProfile.mock.calls[0]?.[0];

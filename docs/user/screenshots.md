@@ -24,9 +24,9 @@ into the navigation sheet and each workspace reflows in reading order.
 
 Across routes, the compact page header presents the sidebar section and current
 page as a breadcrumb, keeps a short subtitle or count inline when space allows,
-and preserves a level-1 heading for assistive technology. Body copy remains
-16px in compact, regular, and comfy density; density changes row and control
-geometry, not readability.
+and preserves a level-1 heading for assistive technology. Body copy uses the
+shared 14px/20px role in compact, regular, and comfy density; density changes
+row and control geometry, not readability.
 
 ## Intended Screenshot Asset Matrix
 

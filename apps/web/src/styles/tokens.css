@@ -17,6 +17,7 @@
   --accent: oklch(0.943 0.029 294.588);
   --accent-foreground: oklch(0.541 0.281 293.009);
   --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.89 0.012 293);
   --input: oklch(0.82 0.014 293);
   --ring: oklch(0.541 0.281 293.009);
@@ -38,18 +39,30 @@
 
   --success: oklch(0.54 0.13 145);
   --success-foreground: oklch(0.985 0 0);
+  /* Text tokens are deliberately darker than their corresponding fill token. */
+  --success-text: oklch(0.42 0.1 145);
   --success-muted: color-mix(in oklch, var(--success) 14%, var(--card));
   --warning: oklch(0.72 0.15 72);
   --warning-foreground: oklch(0.145 0 0);
+  --warning-text: oklch(0.44 0.1 72);
   --warning-muted: color-mix(in oklch, var(--warning) 16%, var(--card));
+  --destructive-text: oklch(0.46 0.18 27.325);
+  --destructive-muted: color-mix(in oklch, var(--destructive) 12%, var(--card));
   --status-info: oklch(0.56 0.12 242);
   --status-info-foreground: oklch(0.985 0 0);
+  --status-info-text: oklch(0.44 0.1 242);
   --status-info-muted: color-mix(in oklch, var(--status-info) 14%, var(--card));
+  --category-foreground: var(--muted-foreground);
+  --category-muted: color-mix(in oklch, var(--muted) 72%, var(--card));
+  --disabled-background: color-mix(in oklch, var(--muted) 82%, var(--card));
+  --disabled-foreground: var(--muted-foreground);
+  --disabled-border: var(--border);
 
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.05);
   --rail-width: 236px;
   --rail-width-collapsed: 72px;
   --topbar-height: 60px;
+  --jh-target-min-size: 24px;
 
   --jh-font-sans:
     "Geist Variable", ui-sans-serif, system-ui, -apple-system,
@@ -66,14 +79,43 @@
    * modes may tune row/control geometry, but the text inside those surfaces
    * must remain equally readable.
    */
-  --jh-font-size-caption: 0.8125rem;
-  --jh-font-size-code: 0.875rem;
-  --jh-font-size-body-sm: 0.9375rem;
-  --jh-font-size-body: 1rem;
-  --jh-font-size-heading-sm: 1.0625rem;
-  --jh-font-size-page-title: clamp(1.625rem, 1.48rem + 0.7vw, 2rem);
-  --jh-line-height-tight: 1.2;
-  --jh-line-height-body: 1.5;
+  --jh-type-page-title-size: 24px;
+  --jh-type-page-title-line-height: 30px;
+  --jh-type-page-title-weight: 700;
+  --jh-type-section-title-size: 18px;
+  --jh-type-section-title-line-height: 24px;
+  --jh-type-section-title-weight: 600;
+  --jh-type-component-title-size: 16px;
+  --jh-type-component-title-line-height: 22px;
+  --jh-type-component-title-weight: 600;
+  --jh-type-body-size: 14px;
+  --jh-type-body-line-height: 20px;
+  --jh-type-body-weight: 400;
+  --jh-type-strong-body-size: 14px;
+  --jh-type-strong-body-line-height: 20px;
+  --jh-type-strong-body-weight: 600;
+  --jh-type-control-size: 14px;
+  --jh-type-control-line-height: 20px;
+  --jh-type-control-weight: 600;
+  --jh-type-label-size: 12px;
+  --jh-type-label-line-height: 16px;
+  --jh-type-label-weight: 600;
+  --jh-type-metadata-size: 12px;
+  --jh-type-metadata-line-height: 16px;
+  --jh-type-metadata-weight: 400;
+  --jh-type-metric-size: 20px;
+  --jh-type-metric-line-height: 24px;
+  --jh-type-metric-weight: 700;
+
+  /* Compatibility aliases. New code must use a named semantic role above. */
+  --jh-font-size-caption: var(--jh-type-label-size);
+  --jh-font-size-code: var(--jh-type-body-size);
+  --jh-font-size-body-sm: var(--jh-type-body-size);
+  --jh-font-size-body: var(--jh-type-body-size);
+  --jh-font-size-heading-sm: var(--jh-type-component-title-size);
+  --jh-font-size-page-title: var(--jh-type-page-title-size);
+  --jh-line-height-tight: var(--jh-type-component-title-line-height);
+  --jh-line-height-body: var(--jh-type-body-line-height);
 }
 
 :root[data-theme="dark"] {
@@ -94,6 +136,7 @@
   --accent: oklch(0.32 0.075 293.5);
   --accent-foreground: oklch(0.87 0.08 293.5);
   --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.145 0 0);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 18%);
   --ring: oklch(0.702 0.183 293.541);
@@ -115,62 +158,81 @@
 
   --success: oklch(0.66 0.14 145);
   --success-foreground: oklch(0.145 0 0);
+  --success-text: oklch(0.76 0.12 145);
   --success-muted: color-mix(in oklch, var(--success) 18%, var(--card));
   --warning: oklch(0.8 0.15 76);
   --warning-foreground: oklch(0.145 0 0);
+  --warning-text: oklch(0.72 0.13 76);
   --warning-muted: color-mix(in oklch, var(--warning) 20%, var(--card));
+  --destructive-text: oklch(0.76 0.15 27.325);
+  --destructive-muted: color-mix(in oklch, var(--destructive) 18%, var(--card));
   --status-info: oklch(0.72 0.13 242);
   --status-info-foreground: oklch(0.145 0 0);
+  --status-info-text: oklch(0.72 0.1 242);
   --status-info-muted: color-mix(in oklch, var(--status-info) 18%, var(--card));
+  --category-foreground: var(--muted-foreground);
+  --category-muted: color-mix(in oklch, var(--muted) 72%, var(--card));
+  --disabled-background: color-mix(in oklch, var(--muted) 82%, var(--card));
+  --disabled-foreground: var(--muted-foreground);
+  --disabled-border: var(--border);
 
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.28);
 }
 
 :where(.app-shell) {
-  --jh-row-height: 40px;
-  --jh-row-padding-block: 9px;
-  --jh-table-cell-padding-block: 10px;
-  --jh-field-gap: 7px;
-  --jh-field-grid-row-gap: 14px;
-  --jh-field-grid-column-gap: 16px;
+  --jh-row-height: 52px;
+  --jh-row-padding-block: 12px;
+  --jh-table-cell-padding-block: 12px;
+  --jh-panel-padding: 20px;
+  --jh-internal-gap: 12px;
+  --jh-section-gap: 24px;
+  --jh-field-gap: var(--jh-internal-gap);
+  --jh-field-grid-row-gap: var(--jh-internal-gap);
+  --jh-field-grid-column-gap: var(--jh-internal-gap);
   --jh-control-height: 36px;
-  --jh-card-spacing: 20px;
+  --jh-card-spacing: var(--jh-panel-padding);
   --jh-card-spacing-sm: 16px;
-  --jh-section-padding-block: 16px;
-  --jh-section-padding-inline: 18px;
-  --jh-surface-gap: 14px;
-  font-size: var(--jh-font-size-body);
-  line-height: var(--jh-line-height-body);
+  --jh-section-padding-block: var(--jh-section-gap);
+  --jh-section-padding-inline: var(--jh-panel-padding);
+  --jh-surface-gap: var(--jh-internal-gap);
+  font-size: var(--jh-type-body-size);
+  line-height: var(--jh-type-body-line-height);
 }
 
 :where(.app-shell[data-density="compact"]) {
-  --jh-row-height: 32px;
-  --jh-row-padding-block: 6px;
-  --jh-table-cell-padding-block: 7px;
-  --jh-field-gap: 5px;
-  --jh-field-grid-row-gap: 10px;
-  --jh-field-grid-column-gap: 12px;
+  --jh-row-height: 44px;
+  --jh-row-padding-block: 8px;
+  --jh-table-cell-padding-block: 8px;
+  --jh-panel-padding: 16px;
+  --jh-internal-gap: 8px;
+  --jh-section-gap: 16px;
+  --jh-field-gap: var(--jh-internal-gap);
+  --jh-field-grid-row-gap: var(--jh-internal-gap);
+  --jh-field-grid-column-gap: var(--jh-internal-gap);
   --jh-control-height: 32px;
-  --jh-card-spacing: 16px;
-  --jh-card-spacing-sm: 12px;
-  --jh-section-padding-block: 12px;
-  --jh-section-padding-inline: 14px;
-  --jh-surface-gap: 10px;
+  --jh-card-spacing: var(--jh-panel-padding);
+  --jh-card-spacing-sm: var(--jh-internal-gap);
+  --jh-section-padding-block: var(--jh-section-gap);
+  --jh-section-padding-inline: var(--jh-panel-padding);
+  --jh-surface-gap: var(--jh-internal-gap);
 }
 
 :where(.app-shell[data-density="comfy"]) {
-  --jh-row-height: 48px;
-  --jh-row-padding-block: 12px;
-  --jh-table-cell-padding-block: 14px;
-  --jh-field-gap: 10px;
-  --jh-field-grid-row-gap: 18px;
-  --jh-field-grid-column-gap: 20px;
+  --jh-row-height: 60px;
+  --jh-row-padding-block: 16px;
+  --jh-table-cell-padding-block: 16px;
+  --jh-panel-padding: 24px;
+  --jh-internal-gap: 16px;
+  --jh-section-gap: 32px;
+  --jh-field-gap: var(--jh-internal-gap);
+  --jh-field-grid-row-gap: var(--jh-internal-gap);
+  --jh-field-grid-column-gap: var(--jh-internal-gap);
   --jh-control-height: 40px;
-  --jh-card-spacing: 24px;
-  --jh-card-spacing-sm: 20px;
-  --jh-section-padding-block: 20px;
-  --jh-section-padding-inline: 22px;
-  --jh-surface-gap: 18px;
+  --jh-card-spacing: var(--jh-panel-padding);
+  --jh-card-spacing-sm: 16px;
+  --jh-section-padding-block: var(--jh-section-gap);
+  --jh-section-padding-inline: var(--jh-panel-padding);
+  --jh-surface-gap: var(--jh-internal-gap);
 }
 
 /*

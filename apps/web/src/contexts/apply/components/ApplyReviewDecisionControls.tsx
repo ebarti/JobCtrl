@@ -11,6 +11,7 @@ import {
 } from "@tabler/icons-react";
 import { useState } from "react";
 
+import { Alert, AlertDescription, AlertTitle } from "../../../shared/ui/alert.js";
 import { Button } from "../../../shared/ui/button.js";
 import { useApplyReviewDecisionMutation } from "../hooks/useApplyReviewMutations.js";
 
@@ -23,8 +24,8 @@ export interface ApplyReviewDecisionControlsProps {
 }
 
 const DECISION_LABELS: Record<ApplyReviewDecisionValue, string> = {
-  approve_submit: "Approve submit",
-  approve_dry_run: "Approve dry run",
+  approve_submit: "Authorize live submit",
+  approve_dry_run: "Authorize dry run",
   defer: "Defer",
   decline: "Decline",
   reset: "Reset",
@@ -53,28 +54,27 @@ const PRIMARY_DECISIONS: readonly ApplyReviewDecisionValue[] = [
   "decline",
 ];
 
-const DECISION_BUTTON_STYLES: Record<
-  ApplyReviewDecisionValue,
-  {
-    readonly variant: "success" | "warning" | "destructive" | "ghost";
+type DecisionButtonVariant =
+  | "default"
+  | "destructive"
+  | "ghost"
+  | "outline";
+
+function decisionButtonVariant(
+  value: ApplyReviewDecisionValue,
+  liveSubmitAvailable: boolean,
+): DecisionButtonVariant {
+  if (value === "approve_submit") {
+    return liveSubmitAvailable ? "default" : "outline";
   }
-> = {
-  approve_submit: {
-    variant: "success",
-  },
-  approve_dry_run: {
-    variant: "success",
-  },
-  defer: {
-    variant: "warning",
-  },
-  decline: {
-    variant: "destructive",
-  },
-  reset: {
-    variant: "ghost",
-  },
-};
+  if (value === "approve_dry_run") {
+    return liveSubmitAvailable ? "outline" : "default";
+  }
+  if (value === "decline") {
+    return "destructive";
+  }
+  return "ghost";
+}
 
 const GATE_REASON_LABELS: Record<string, string> = {
   awaiting_approval: "approval not recorded",
@@ -115,6 +115,8 @@ export function ApplyReviewDecisionControls({
   const primaryDecisions = PRIMARY_DECISIONS;
   const fullDryRunEvidence = item.approvalGate.dryRunEvidence;
   const partialDryRunEvidence = item.approvalGate.partialDryRunEvidence;
+  const liveSubmitAvailable =
+    fullDryRunEvidence !== null && approvalDisabledReason === null;
   const gateMessage = item.approvalGate.reasons
     .map((reason) => GATE_REASON_LABELS[reason] ?? reason)
     .join(", ");
@@ -162,26 +164,53 @@ export function ApplyReviewDecisionControls({
   };
 
   return (
-    <div className="apply-review-actions">
-      <div className="apply-review-approval-binding" aria-label={`Submit approval binding for ${item.title}`}>
-        <span>Materials generation: {formatBindingValue(item.approvalGate.materialsGeneration)}</span>
-        <span>Profile version: {formatBindingValue(item.approvalGate.profileVersion)}</span>
-        <span>Application URL: {formatBindingValue(item.approvalGate.applicationUrl)}</span>
-        {item.emailApplication ? (
-          <span>Email recipient: {item.emailApplication.recipient}</span>
-        ) : null}
-        <span>Dry-run evidence: {dryRunEvidenceLabel(item)}</span>
+    <div
+      className="apply-review-actions"
+      aria-label={`Authorization decision for ${item.title}`}
+      role="group"
+    >
+      <div className="apply-review-approval-summary">
+        <p data-typography="body">
+          <strong data-typography="strong-body">Authorization only:</strong> this records permission for the
+          worker; it does not start or submit an application immediately.
+        </p>
+        <details className="apply-review-authorization-details">
+          <summary data-typography="control">Technical details</summary>
+          <dl>
+            <div>
+              <dt data-typography="label">Materials generation</dt>
+              <dd data-typography="body">{formatBindingValue(item.approvalGate.materialsGeneration)}</dd>
+            </div>
+            <div>
+              <dt data-typography="label">Profile version</dt>
+              <dd data-typography="body">{formatBindingValue(item.approvalGate.profileVersion)}</dd>
+            </div>
+            <div>
+              <dt data-typography="label">Application URL</dt>
+              <dd data-typography="body">{formatBindingValue(item.approvalGate.applicationUrl)}</dd>
+            </div>
+            {item.emailApplication ? (
+              <div>
+                <dt data-typography="label">Email recipient</dt>
+                <dd data-typography="body">{item.emailApplication.recipient}</dd>
+              </div>
+            ) : null}
+            <div>
+              <dt data-typography="label">Dry-run evidence</dt>
+              <dd data-typography="body">{dryRunEvidenceLabel(item)}</dd>
+            </div>
+          </dl>
+        </details>
       </div>
       <div className="apply-review-decision-buttons">
         {primaryDecisions.map((value) => {
           const DecisionIcon = DECISION_ICONS[value];
-          const buttonStyle = DECISION_BUTTON_STYLES[value];
           return (
             <Button
               key={value}
               size="sm"
               type="button"
-              variant={buttonStyle.variant}
+              variant={decisionButtonVariant(value, liveSubmitAvailable)}
               disabled={
                 pending ||
                 (approvalDisabledReason !== null && value.startsWith("approve_")) ||
@@ -190,7 +219,7 @@ export function ApplyReviewDecisionControls({
               aria-label={`${DECISION_LABELS[value]} for ${item.title}`}
               title={
                 value === "approve_submit" && !fullDryRunEvidence
-                  ? "Full dry-run evidence is required before submit approval."
+                  ? "Full dry-run evidence is required before live-submit authorization."
                   : value.startsWith("approve_")
                     ? approvalMessage ?? undefined
                     : undefined
@@ -220,50 +249,53 @@ export function ApplyReviewDecisionControls({
       </div>
       {!fullDryRunEvidence && partialDryRunEvidence ? (
         <div className="apply-review-partial-approval">
-          <span
-            className="apply-review-approval-block inline-flex items-center justify-end gap-1.5"
-            role="alert"
-          >
+          <Alert className="apply-review-approval-block" variant="warning">
             <IconLock aria-hidden="true" />
-            Partial dry-run evidence only. Blocked channels:{" "}
-            {partialDryRunEvidence.blockedChannels.length
-              ? partialDryRunEvidence.blockedChannels.join(", ")
-              : "not recorded"}
-            .
-          </span>
+            <AlertTitle>Partial dry-run evidence only</AlertTitle>
+            <AlertDescription>
+              Blocked channels: {partialDryRunEvidence.blockedChannels.length
+                ? partialDryRunEvidence.blockedChannels.join(", ")
+                : "not recorded"}
+              .
+            </AlertDescription>
+          </Alert>
           <Button
             size="sm"
             type="button"
-            variant={DECISION_BUTTON_STYLES.approve_submit.variant}
+            variant="outline"
             disabled={pending || approvalDisabledReason !== null}
-            aria-label={`Approve with partial dry-run evidence for ${item.title}`}
+            aria-label={`Authorize live submit with partial dry-run evidence for ${item.title}`}
             onClick={() => {
               void submitDecision("approve_submit", partialDryRunEvidence.runId);
             }}
           >
             <IconCheck aria-hidden="true" data-icon="inline-start" />
-            Approve with partial dry-run evidence
+            Authorize live submit with partial evidence
           </Button>
         </div>
       ) : null}
       {approvalMessage ? (
-        <span
-          className="apply-review-approval-block inline-flex items-center justify-end gap-1.5"
-          role="status"
+        <Alert
+          className="apply-review-approval-block"
+          variant={approvalBlocked ? "warning" : "info"}
+          role={approvalBlocked ? "alert" : "status"}
+          aria-live={approvalBlocked ? "assertive" : "polite"}
         >
           {approvalBlocked ? (
             <IconLock aria-hidden="true" />
           ) : (
             <IconInfoCircle aria-hidden="true" />
           )}
-          {approvalMessage}
-        </span>
+          <AlertTitle>{approvalBlocked ? "Authorization unavailable" : "Authorization status"}</AlertTitle>
+          <AlertDescription>{approvalMessage}</AlertDescription>
+        </Alert>
       ) : null}
       {decision.isError ? (
-        <span className="danger" role="alert">
+        <Alert className="danger" variant="destructive">
           <IconAlertTriangle aria-hidden="true" />
-          Decision failed
-        </span>
+          <AlertTitle>Decision failed</AlertTitle>
+          <AlertDescription>Your authorization decision was not saved. Try again.</AlertDescription>
+        </Alert>
       ) : null}
     </div>
   );

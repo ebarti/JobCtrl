@@ -116,6 +116,21 @@ describe("DiscoveryProductControls", () => {
     expect(sourceTable).toHaveTextContent("2");
     expect(sourceTable).toHaveTextContent("80%");
     expect(sourceTable).toHaveTextContent("70%");
+    const sourceType = within(sourceTable).getByText("Employer careers page");
+    const priority = within(sourceTable).getByText("preferred");
+    const recommendation = within(sourceTable).getByText("trusted");
+    expect(sourceType).toHaveAttribute("data-typography", "label");
+    expect(priority).toHaveClass("source-table-category");
+    expect(recommendation).toHaveClass("source-table-category");
+    expect(priority).not.toHaveClass("good", "warn", "bad");
+    expect(within(sourceTable).getByText("active")).toHaveAttribute(
+      "data-slot",
+      "status-badge",
+    );
+    expect(within(sourceTable).getByText("active")).toHaveAttribute(
+      "data-status-tone",
+      "ok",
+    );
     expect(screen.getByText(/Unconfirmed careers page/i)).toBeInTheDocument();
     expect(
       screen.getByText(/cannot confirm which careers system/i),
@@ -460,7 +475,9 @@ describe("DiscoveryProductControls", () => {
       screen.getByLabelText("Note"),
       "Captured after local login.",
     );
-    await user.click(screen.getByLabelText("Needs manual follow-up"));
+    await user.click(
+      screen.getByRole("checkbox", { name: "Needs manual follow-up" }),
+    );
     await user.click(
       screen.getByRole("button", {
         name: /import https:\/\/example.com\/protected\/job/i,

@@ -10,8 +10,13 @@ import {
   type Stage,
 } from "@jobctrl/contracts";
 import { IconPlayerPlay } from "@tabler/icons-react";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useState } from "react";
 
+import {
+  getApiCapabilityAvailability,
+  LOCAL_INSTALL_GUIDE_URL,
+} from "../../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Button } from "../../../shared/ui/button.js";
 import {
   Card,
@@ -20,6 +25,9 @@ import {
   CardHeader,
   CardTitle,
 } from "../../../shared/ui/card.js";
+import { Checkbox } from "../../../shared/ui/checkbox.js";
+import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import {
   Select,
   SelectContent,
@@ -406,7 +414,9 @@ function StageProgressLine({
       }
       role="status"
     >
-      <span>{stageProgressStatusLine(stage, progress)}</span>
+      <span data-typography="metadata">
+        {stageProgressStatusLine(stage, progress)}
+      </span>
       <progress
         aria-label={`${labelForStage(stage)} progress`}
         className="stage-progress-meter"
@@ -504,6 +514,12 @@ export interface StageTriggerPanelProps {
 export function StageTriggerPanel({
   stagePanels = {},
 }: StageTriggerPanelProps = {}) {
+  const { featureFlags } = usePorts();
+  const runAvailability = getApiCapabilityAvailability(
+    featureFlags,
+    "runPipelineStages",
+  );
+  const unavailableReasonId = useId();
   const runStages = useRunPipelineStagesMutation();
   const [submittedStage, setSubmittedStage] = useState<Stage | null>(null);
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
@@ -572,9 +588,11 @@ export function StageTriggerPanel({
   const patchConfig = (patch: Partial<StageTriggerConfig>) => {
     patchStageConfig(activeStage, patch);
   };
+  const fieldId = (name: string) => `stage-trigger-${activeStage}-${name}`;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!runAvailability.available) return;
     const workerSnapshot = await health.refetch();
     if (workerSnapshot.data?.worker.status !== "healthy") return;
     setSubmittedStage(activeStage);
@@ -616,38 +634,44 @@ export function StageTriggerPanel({
   const stageForm = (
     <form className="stage-trigger-form" onSubmit={submit}>
       <div className="stage-trigger-active">
-        <span className="muted">Configuring</span>
+        <span className="muted" data-typography="metadata">Configuring</span>
         <strong>{labelForStage(activeStage)}</strong>
       </div>
 
       <div className="stage-trigger-grid">
         {controls.limit ? (
-          <label className="field">
-            <span>Limit</span>
-            <input
+          <Field className="field">
+            <FieldLabel htmlFor={fieldId("limit")}>Limit</FieldLabel>
+            <Input
+              id={fieldId("limit")}
+              name="limit"
               min={1}
               max={1000}
               type="number"
               value={config.limit}
               onChange={(event) => patchConfig({ limit: event.target.value })}
             />
-          </label>
+          </Field>
         ) : null}
         {controls.workers ? (
-          <label className="field">
-            <span>Internal concurrency</span>
-            <input
+          <Field className="field">
+            <FieldLabel htmlFor={fieldId("workers")}>
+              Internal concurrency
+            </FieldLabel>
+            <Input
+              id={fieldId("workers")}
+              name="workers"
               min={1}
               max={16}
               type="number"
               value={config.workers}
               onChange={(event) => patchConfig({ workers: event.target.value })}
             />
-          </label>
+          </Field>
         ) : null}
         {controls.discoverySource ? (
-          <label className="field stage-trigger-source-field">
-            <span>Source</span>
+          <Field className="field stage-trigger-source-field">
+            <FieldLabel htmlFor={fieldId("source")}>Source</FieldLabel>
             <Select
               items={[
                 { label: "All runnable sources", value: null },
@@ -675,7 +699,11 @@ export function StageTriggerPanel({
                 patchConfig({ discoverySourceId: value ?? "" })
               }
             >
-              <SelectTrigger aria-label="Source" className="w-full">
+              <SelectTrigger
+                id={fieldId("source")}
+                aria-label="Source"
+                className="w-full"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -704,12 +732,16 @@ export function StageTriggerPanel({
                 </SelectGroup>
               </SelectContent>
             </Select>
-          </label>
+          </Field>
         ) : null}
         {controls.minScore ? (
-          <label className="field">
-            <span>Minimum score</span>
-            <input
+          <Field className="field">
+            <FieldLabel htmlFor={fieldId("min-score")}>
+              Minimum score
+            </FieldLabel>
+            <Input
+              id={fieldId("min-score")}
+              name="min-score"
               min={activeStage === "tailor" ? MIN_TAILORING_FIT_SCORE : 0}
               max={10}
               type="number"
@@ -718,11 +750,13 @@ export function StageTriggerPanel({
                 patchConfig({ minScore: event.target.value })
               }
             />
-          </label>
+          </Field>
         ) : null}
         {controls.validationMode ? (
-          <label className="field">
-            <span>Validation mode</span>
+          <Field className="field">
+            <FieldLabel htmlFor={fieldId("validation-mode")}>
+              Validation mode
+            </FieldLabel>
             <Select
               items={PIPELINE_VALIDATION_MODES.map((mode) => ({
                 label: mode,
@@ -737,7 +771,11 @@ export function StageTriggerPanel({
                 }
               }}
             >
-              <SelectTrigger aria-label="Validation mode" className="w-full">
+              <SelectTrigger
+                id={fieldId("validation-mode")}
+                aria-label="Validation mode"
+                className="w-full"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -750,11 +788,13 @@ export function StageTriggerPanel({
                 </SelectGroup>
               </SelectContent>
             </Select>
-          </label>
+          </Field>
         ) : null}
         {controls.applyModel ? (
-          <label className="field">
-            <span>Apply model</span>
+          <Field className="field">
+            <FieldLabel htmlFor={fieldId("apply-model")}>
+              Apply model
+            </FieldLabel>
             <Select
               items={APPLY_MODEL_OPTIONS.map((model) => ({
                 label: labelForModel(model),
@@ -765,7 +805,11 @@ export function StageTriggerPanel({
                 if (value !== null) patchConfig({ model: value });
               }}
             >
-              <SelectTrigger aria-label="Apply model" className="w-full">
+              <SelectTrigger
+                id={fieldId("apply-model")}
+                aria-label="Apply model"
+                className="w-full"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -778,33 +822,45 @@ export function StageTriggerPanel({
                 </SelectGroup>
               </SelectContent>
             </Select>
-          </label>
+          </Field>
         ) : null}
         {controls.tailorModels ? (
           <>
-            <label className="field">
-              <span>Tailor models</span>
-              <input
+            <Field className="field">
+              <FieldLabel htmlFor={fieldId("tailor-models")}>
+                Tailor models
+              </FieldLabel>
+              <Input
+                id={fieldId("tailor-models")}
+                name="tailor-models"
                 placeholder={DEFAULT_PIPELINE_LLM_MODEL}
                 value={config.tailorModels}
                 onChange={(event) =>
                   patchConfig({ tailorModels: event.target.value })
                 }
               />
-            </label>
-            <label className="field">
-              <span>Judge model</span>
-              <input
+            </Field>
+            <Field className="field">
+              <FieldLabel htmlFor={fieldId("tailor-judge-model")}>
+                Judge model
+              </FieldLabel>
+              <Input
+                id={fieldId("tailor-judge-model")}
+                name="tailor-judge-model"
                 placeholder={DEFAULT_PIPELINE_LLM_MODEL}
                 value={config.tailorJudgeModel}
                 onChange={(event) =>
                   patchConfig({ tailorJudgeModel: event.target.value })
                 }
               />
-            </label>
-            <label className="field">
-              <span>Minimum judge score</span>
-              <input
+            </Field>
+            <Field className="field">
+              <FieldLabel htmlFor={fieldId("tailor-judge-min-score")}>
+                Minimum judge score
+              </FieldLabel>
+              <Input
+                id={fieldId("tailor-judge-min-score")}
+                name="tailor-judge-min-score"
                 min={0}
                 max={1}
                 step={0.01}
@@ -815,76 +871,85 @@ export function StageTriggerPanel({
                   patchConfig({ tailorJudgeMinScore: event.target.value })
                 }
               />
-            </label>
+            </Field>
           </>
         ) : null}
       </div>
 
       <div className="stage-trigger-options">
-        <label className="stage-trigger-check">
-          <input
-            type="checkbox"
+        <Field className="stage-trigger-check" orientation="horizontal">
+          <Checkbox
+            id={fieldId("dry-run")}
+            name="dry-run"
             checked={config.dryRun}
-            onChange={(event) =>
-              patchConfig({ dryRun: event.currentTarget.checked })
-            }
+            onCheckedChange={(checked) => patchConfig({ dryRun: checked })}
           />
-          <span>Dry run</span>
-        </label>
+          <FieldLabel htmlFor={fieldId("dry-run")}>Dry run</FieldLabel>
+        </Field>
         {controls.rescore ? (
-          <label className="stage-trigger-check">
-            <input
-              type="checkbox"
+          <Field className="stage-trigger-check" orientation="horizontal">
+            <Checkbox
+              id={fieldId("rescore")}
+              name="rescore"
               checked={config.rescore}
-              onChange={(event) =>
-                patchConfig({ rescore: event.currentTarget.checked })
-              }
+              onCheckedChange={(checked) => patchConfig({ rescore: checked })}
             />
-            <span>Rescore</span>
-          </label>
+            <FieldLabel htmlFor={fieldId("rescore")}>Rescore</FieldLabel>
+          </Field>
         ) : null}
         {controls.retailor ? (
-          <label className="stage-trigger-check">
-            <input
-              type="checkbox"
+          <Field className="stage-trigger-check" orientation="horizontal">
+            <Checkbox
+              id={fieldId("retailor")}
+              name="retailor"
               checked={config.retailor}
-              onChange={(event) =>
-                patchConfig({ retailor: event.currentTarget.checked })
-              }
+              onCheckedChange={(checked) => patchConfig({ retailor: checked })}
             />
-            <span>Re-tailor</span>
-          </label>
+            <FieldLabel htmlFor={fieldId("retailor")}>Re-tailor</FieldLabel>
+          </Field>
         ) : null}
         {controls.headless ? (
-          <label className="stage-trigger-check">
-            <input
-              type="checkbox"
+          <Field className="stage-trigger-check" orientation="horizontal">
+            <Checkbox
+              id={fieldId("headless")}
+              name="headless"
               checked={config.headless}
-              onChange={(event) =>
-                patchConfig({ headless: event.currentTarget.checked })
-              }
+              onCheckedChange={(checked) => patchConfig({ headless: checked })}
             />
-            <span>Headless browser</span>
-          </label>
+            <FieldLabel htmlFor={fieldId("headless")}>
+              Headless browser
+            </FieldLabel>
+          </Field>
         ) : null}
         {controls.continuous ? (
-          <label className="stage-trigger-check">
-            <input
-              type="checkbox"
+          <Field className="stage-trigger-check" orientation="horizontal">
+            <Checkbox
+              id={fieldId("continuous")}
+              name="continuous"
               checked={config.continuous}
-              onChange={(event) =>
-                patchConfig({ continuous: event.currentTarget.checked })
-              }
+              onCheckedChange={(checked) => patchConfig({ continuous: checked })}
             />
-            <span>Continuous</span>
-          </label>
+            <FieldLabel htmlFor={fieldId("continuous")}>
+              Continuous
+            </FieldLabel>
+          </Field>
         ) : null}
       </div>
 
       <div className="stage-trigger-actions">
-        <Button disabled={runStages.isPending || workerUnhealthy} type="submit">
+        <Button
+          aria-describedby={
+            runAvailability.available ? undefined : unavailableReasonId
+          }
+          disabled={
+            runStages.isPending || workerUnhealthy || !runAvailability.available
+          }
+          type="submit"
+        >
           <IconPlayerPlay aria-hidden="true" data-icon="inline-start" />
-          {workerUnhealthy
+          {!runAvailability.available
+            ? "Run in local app"
+            : workerUnhealthy
             ? health.isPending
               ? "Checking worker"
               : "Worker unavailable"
@@ -898,12 +963,17 @@ export function StageTriggerPanel({
           visibleStageProgress?.status === "running") ? (
           <CancelWorkflowRunButton
             runId={cancelableRunId}
-            className="tab danger-action"
             label={`Stop ${labelForStage(statusStage)}`}
             ariaLabel={`Stop ${labelForStage(statusStage)} run`}
           />
         ) : null}
-        {workerUnhealthy ? (
+        {!runAvailability.available ? (
+          <span className="status-line" id={unavailableReasonId} role="status">
+            Pipeline runs require the local app. <a href="/runs">Review bundled runs</a>
+            {" or "}
+            <a href={LOCAL_INSTALL_GUIDE_URL}>install JobCtrl</a>.
+          </span>
+        ) : workerUnhealthy ? (
           <span className="status-line danger-action" role="alert">
             {workerHealthMessage}
           </span>
@@ -961,7 +1031,7 @@ export function StageTriggerPanel({
       <Card className="pipeline-card stage-trigger-panel">
         <CardHeader className="pipeline-card__header">
           <CardTitle>
-            <h2>Pipeline actions</h2>
+            <h2 data-typography="component-title">Pipeline actions</h2>
           </CardTitle>
           <CardDescription>{headerMeta}</CardDescription>
         </CardHeader>

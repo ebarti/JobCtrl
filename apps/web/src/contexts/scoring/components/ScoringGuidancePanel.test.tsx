@@ -14,7 +14,16 @@ describe("<ScoringGuidancePanel>", () => {
 
   it("exposes both previously hidden scoring guidance fields", async () => {
     renderWithProviders(<ScoringGuidancePanel />);
-    expect(await screen.findByLabelText("Scoring priorities")).toHaveValue("Platform reliability and team leadership.");
-    expect(screen.getByLabelText("Target role guidance")).toHaveValue("Director-plus infrastructure roles.");
+    const scoringPriorities = await screen.findByLabelText("Scoring priorities");
+    const targetGuidance = screen.getByLabelText("Target role guidance");
+
+    expect(scoringPriorities).toHaveValue("Platform reliability and team leadership.");
+    expect(targetGuidance).toHaveValue("Director-plus infrastructure roles.");
+    expect(scoringPriorities).toHaveAttribute("data-slot", "textarea");
+    expect(targetGuidance).toHaveAttribute("data-slot", "textarea");
+    expect(screen.getByRole("button", { name: "Save scoring guidance" })).toHaveAttribute(
+      "data-slot",
+      "button",
+    );
   });
 });

@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
 import { useCancelWorkflowRunMutation } from "../hooks/useCancelWorkflowRunMutation.js";
 
 export interface CancelWorkflowRunButtonProps {
@@ -11,16 +12,18 @@ export interface CancelWorkflowRunButtonProps {
 
 export function CancelWorkflowRunButton({
   runId,
-  className = "tab danger-action",
-  label = "stop",
+  className,
+  label = "Stop",
   ariaLabel,
 }: CancelWorkflowRunButtonProps): JSX.Element {
   const cancelRun = useCancelWorkflowRunMutation();
   const isPending = cancelRun.isPending;
   return (
-    <button
+    <Button
       type="button"
-      className={className}
+      {...(className ? { className } : {})}
+      variant="destructive"
+      size="sm"
       disabled={isPending}
       aria-label={ariaLabel ?? `Stop workflow run ${runId}`}
       title="Stop workflow run"
@@ -29,7 +32,7 @@ export function CancelWorkflowRunButton({
         cancelRun.mutate({ runId });
       }}
     >
-      {isPending ? "stopping" : label}
-    </button>
+      {isPending ? "Stopping" : label}
+    </Button>
   );
 }

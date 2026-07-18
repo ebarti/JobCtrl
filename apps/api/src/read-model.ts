@@ -1151,6 +1151,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   const auditHistory = buildJobAuditHistory(db, listRow.job_id);
   const jobSummary = rowToJobSummary(listRow, db);
   const latestApplyRun = latestApplyRunForJob(db, listRow.job_id);
+  const activeApplyRun = activeApplyRunForJob(db, listRow.job_id);
   return {
     ok: true,
     job: {
@@ -1176,6 +1177,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
           detailRow?.description_preview,
       ),
     }),
+    activeApplyRun,
     stages,
     artifacts,
     auditHistory,
@@ -1201,6 +1203,33 @@ function latestApplyRunForJob(db: SqliteDatabase, jobId: string): ApplyAuditLate
   if (!row) {
     return null;
   }
+  return applyRunProjectionToAuditRun(row);
+}
+
+/**
+ * Cancellation is a job-scoped operation, so its target must not be derived
+ * from the dashboard's intentionally bounded cross-job history. Read every
+ * projection row for this one job and retain the newest non-terminal run.
+ */
+function activeApplyRunForJob(db: SqliteDatabase, jobId: string): ApplyAuditLatestRun | null {
+  if (!tableExists(db, "apply_run_projections")) {
+    return null;
+  }
+  const rows = allRows<ApplyRunProjectionRow>(
+    db,
+    `SELECT * FROM apply_run_projections
+     WHERE tenant_id = ? AND job_id = ?
+     ORDER BY COALESCE(started_at, finished_at, '') DESC, run_id DESC`,
+    [DEFAULT_TENANT, jobId],
+  );
+  return rows
+    .map(applyRunProjectionToAuditRun)
+    .find((run) => ACTIVE_APPLY_RUN_STATUSES.has(run.status)) ?? null;
+}
+
+const ACTIVE_APPLY_RUN_STATUSES = new Set(["starting", "in_progress", "queued", "running"]);
+
+function applyRunProjectionToAuditRun(row: ApplyRunProjectionRow): ApplyAuditLatestRun {
   return {
     runId: stringField(row.run_id),
     status: normalizeWorkflowRunStatus(row.status),

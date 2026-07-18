@@ -29,6 +29,7 @@ function FieldLegend({
     <legend
       data-slot="field-legend"
       data-variant={variant}
+      data-typography={variant === "legend" ? "component-title" : "label"}
       className={cn(
         "mb-3 font-medium data-[variant=label]:text-sm data-[variant=legend]:text-base",
         className,
@@ -105,6 +106,7 @@ function FieldLabel({
   return (
     <Label
       data-slot="field-label"
+      data-typography="label"
       className={cn(
         "group/field-label peer/field-label flex w-fit gap-2 leading-snug group-data-[disabled=true]/field:opacity-50 has-data-checked:bg-muted has-[>[data-slot=field]]:rounded-lg has-[>[data-slot=field]]:border *:data-[slot=field]:p-3",
         "has-[>[data-slot=field]]:w-full has-[>[data-slot=field]]:flex-col",
@@ -119,6 +121,7 @@ function FieldTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="field-label"
+      data-typography="label"
       className={cn(
         "flex w-fit items-center gap-2 text-sm font-medium group-data-[disabled=true]/field:opacity-50",
         className,
@@ -132,6 +135,7 @@ function FieldDescription({ className, ...props }: React.ComponentProps<"p">) {
   return (
     <p
       data-slot="field-description"
+      data-typography="metadata"
       className={cn(
         "text-left text-sm leading-normal font-normal text-muted-foreground group-has-data-horizontal/field:text-balance [[data-variant=legend]+&]:-mt-1.5",
         "last:mt-0 nth-last-2:-mt-1",
@@ -153,6 +157,7 @@ function FieldSeparator({
   return (
     <div
       data-slot="field-separator"
+      data-typography="metadata"
       data-content={Boolean(children)}
       className={cn(
         "relative -my-2 h-5 text-sm group-data-[variant=outline]/field-group:-mb-2",
@@ -165,6 +170,7 @@ function FieldSeparator({
         <span
           className="relative mx-auto block w-fit bg-background px-2 text-muted-foreground"
           data-slot="field-separator-content"
+          data-typography="metadata"
         >
           {children}
         </span>
@@ -211,6 +217,7 @@ function FieldError({
     <div
       role="alert"
       data-slot="field-error"
+      data-typography="body"
       className={cn("text-sm font-normal text-destructive", className)}
       {...props}
     >

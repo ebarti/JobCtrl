@@ -23,7 +23,7 @@ describe("<OutreachThreadPanel>", () => {
     expect(view.getByRole("heading", { name: "Draft under review" })).toBeInTheDocument();
     expect(view.getByRole("heading", { name: "Generation history" })).toBeInTheDocument();
     // The approved draft is retained (copyable) alongside a fresh candidate (INV-5).
-    expect(view.getByRole("button", { name: "copy approved message" })).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "Copy approved message" })).toBeInTheDocument();
     // Every generation is represented by a status badge.
     expect(view.getAllByText("Under review").length).toBeGreaterThan(0);
     expect(view.getAllByText("Approved").length).toBeGreaterThan(0);
@@ -40,7 +40,7 @@ describe("<OutreachThreadPanel>", () => {
     await waitFor(() =>
       expect(view.getByRole("heading", { name: "Draft under review" })).toBeInTheDocument(),
     );
-    fireEvent.click(view.getByRole("button", { name: "revise draft" }));
+    fireEvent.click(view.getByRole("button", { name: "Revise draft" }));
     expect(view.getByRole("textbox")).toBeInTheDocument();
   });
 
@@ -72,14 +72,14 @@ describe("<OutreachThreadPanel>", () => {
       expect(view.getByRole("heading", { name: "Approved message" })).toBeInTheDocument(),
     );
 
-    fireEvent.click(view.getByRole("button", { name: "revise approved message" }));
+    fireEvent.click(view.getByRole("button", { name: "Revise approved message" }));
     expect(view.getByRole("textbox", { name: "Edit message" })).toHaveValue(
       "Hi Dana,\n\nApproved message to revise.\n\nBest,\nJordan",
     );
     fireEvent.change(view.getByRole("textbox", { name: "Edit message" }), {
       target: { value: "Hi Dana,\n\nEdited approved message.\n\nBest,\nJordan" },
     });
-    fireEvent.click(view.getByRole("button", { name: "revise draft" }));
+    fireEvent.click(view.getByRole("button", { name: "Revise draft" }));
 
     await waitFor(() =>
       expect(submittedBody).toBe("Hi Dana,\n\nEdited approved message.\n\nBest,\nJordan"),
@@ -95,7 +95,7 @@ describe("<OutreachThreadPanel>", () => {
     );
     const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
     await waitFor(() => expect(view.getByText(/No outreach drafts yet/i)).toBeInTheDocument());
-    expect(view.getByRole("button", { name: "generate draft" })).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "Generate draft" })).toBeInTheDocument();
   });
 
   it("shows the send history and a log-a-send control when an approved draft exists (INV-1)", async () => {
@@ -103,7 +103,7 @@ describe("<OutreachThreadPanel>", () => {
     await waitFor(() => expect(view.getByRole("heading", { name: "Sends" })).toBeInTheDocument());
     // Default thread has an approved draft (draft-2) and no recorded sends yet.
     expect(view.getByText("No sends recorded yet.")).toBeInTheDocument();
-    fireEvent.click(view.getByRole("button", { name: "log a send" }));
+    fireEvent.click(view.getByRole("button", { name: "Log a send" }));
     // The recording control is explicit that JobCtrl does not send.
     expect(view.getByText(/JobCtrl only records that you sent it/i)).toBeInTheDocument();
   });
@@ -135,7 +135,7 @@ describe("<OutreachThreadPanel>", () => {
     );
     const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
     await waitFor(() => expect(view.getByRole("heading", { name: "Sends" })).toBeInTheDocument());
-    expect(view.queryByRole("button", { name: "log a send" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Log a send" })).toBeNull();
   });
 
   it("renders the follow-up as a surfaced-only reminder that never sends (INV-1)", async () => {
@@ -144,7 +144,7 @@ describe("<OutreachThreadPanel>", () => {
       expect(view.getByRole("heading", { name: "Follow-up" })).toBeInTheDocument(),
     );
     expect(view.getByText(/JobCtrl never sends it or acts on it/i)).toBeInTheDocument();
-    expect(view.getByRole("button", { name: "schedule follow-up" })).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "Schedule follow-up" })).toBeInTheDocument();
   });
 
   it("disables approval until the truthfulness gates pass", async () => {
@@ -159,9 +159,115 @@ describe("<OutreachThreadPanel>", () => {
     await waitFor(() =>
       expect(view.getAllByText("Truthfulness gates blocked this draft").length).toBeGreaterThan(0),
     );
-    expect(view.getByRole("button", { name: "approve draft" })).toBeDisabled();
+    expect(view.getByRole("button", { name: "Approve draft" })).toBeDisabled();
     expect(
       view.getByText(/Approval is disabled until the truthfulness gates pass/i),
     ).toBeInTheDocument();
+  });
+
+  it("holds competing draft decisions while a delayed revision is pending", async () => {
+    const candidateThread = makeCandidateThread();
+    let revisionRequests = 0;
+    let resolveRevision: (response: Response) => void = () => {};
+    server.use(
+      http.get("*/v1/contacts/:contactId/outreach", () =>
+        HttpResponse.json(makeOutreachThreadResponse(candidateThread)),
+      ),
+      http.post("*/v1/outreach/threads/:threadId/drafts", () => {
+        revisionRequests += 1;
+        return new Promise<Response>((resolve) => {
+          resolveRevision = resolve;
+        });
+      }),
+    );
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+    await waitFor(() =>
+      expect(view.getByRole("heading", { name: "Draft under review" })).toBeInTheDocument(),
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Revise draft" }));
+    const approve = view.getByRole("button", { name: "Approve draft" });
+    const reject = view.getByRole("button", { name: "Reject draft" });
+    const submitRevision = view.getByRole("button", { name: "Revise draft" });
+    expect(approve).toBeDisabled();
+    expect(reject).toBeDisabled();
+
+    fireEvent.click(submitRevision);
+    fireEvent.click(submitRevision);
+    await waitFor(() => expect(revisionRequests).toBe(1));
+    expect(view.getByRole("button", { name: "Cancel revision" })).toBeDisabled();
+
+    resolveRevision(HttpResponse.json(makeOutreachThreadResponse(candidateThread)));
+    await waitFor(() =>
+      expect(view.queryByRole("textbox", { name: "Edit message" })).toBeNull(),
+    );
+    await waitFor(() => expect(approve).toBeEnabled());
+    expect(reject).toBeEnabled();
+  });
+
+  it("admits only the first immediate candidate decision", async () => {
+    const candidateThread = makeCandidateThread();
+    let approvalRequests = 0;
+    let rejectionRequests = 0;
+    let resolveApproval: (response: Response) => void = () => {};
+    server.use(
+      http.get("*/v1/contacts/:contactId/outreach", () =>
+        HttpResponse.json(makeOutreachThreadResponse(candidateThread)),
+      ),
+      http.post("*/v1/outreach/threads/:threadId/drafts/:draftId/approve", () => {
+        approvalRequests += 1;
+        return new Promise<Response>((resolve) => {
+          resolveApproval = resolve;
+        });
+      }),
+      http.post("*/v1/outreach/threads/:threadId/drafts/:draftId/reject", () => {
+        rejectionRequests += 1;
+        return HttpResponse.json(makeOutreachThreadResponse(candidateThread));
+      }),
+    );
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+    await waitFor(() =>
+      expect(view.getByRole("heading", { name: "Draft under review" })).toBeInTheDocument(),
+    );
+
+    const approve = view.getByRole("button", { name: "Approve draft" });
+    const reject = view.getByRole("button", { name: "Reject draft" });
+    fireEvent.click(approve);
+    fireEvent.click(reject);
+
+    await waitFor(() => expect(approvalRequests).toBe(1));
+    expect(rejectionRequests).toBe(0);
+
+    resolveApproval(HttpResponse.json(makeOutreachThreadResponse(candidateThread)));
+    await waitFor(() => expect(view.getByRole("button", { name: "Approve draft" })).toBeEnabled());
+  });
+
+  it("restores a candidate decision after a delayed approval failure", async () => {
+    const candidateThread = makeCandidateThread();
+    let approvalRequests = 0;
+    let resolveApproval: (response: Response) => void = () => {};
+    server.use(
+      http.get("*/v1/contacts/:contactId/outreach", () =>
+        HttpResponse.json(makeOutreachThreadResponse(candidateThread)),
+      ),
+      http.post("*/v1/outreach/threads/:threadId/drafts/:draftId/approve", () => {
+        approvalRequests += 1;
+        return new Promise<Response>((resolve) => {
+          resolveApproval = resolve;
+        });
+      }),
+    );
+    const view = renderWithProviders(<OutreachThreadPanel contactId="contact-1" />);
+    await waitFor(() =>
+      expect(view.getByRole("heading", { name: "Draft under review" })).toBeInTheDocument(),
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Approve draft" }));
+    await waitFor(() => expect(approvalRequests).toBe(1));
+    await waitFor(() => expect(view.queryByRole("button", { name: "Approve draft" })).toBeNull());
+
+    resolveApproval(new HttpResponse(JSON.stringify({ ok: false }), { status: 500 }));
+    await waitFor(() => expect(view.getByRole("button", { name: "Approve draft" })).toBeEnabled());
+    expect(view.getByRole("button", { name: "Reject draft" })).toBeEnabled();
   });
 });

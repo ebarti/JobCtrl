@@ -2,6 +2,7 @@ import type { OutreachDraftDto } from "@jobctrl/contracts";
 import { useState, type JSX } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { Button } from "../../../shared/ui/button.js";
 import { formatApprovedDraftForClipboard } from "../lib/draft-copy.js";
 
 export interface CopyDraftButtonProps {
@@ -27,8 +28,8 @@ export function CopyDraftButton({ draft }: CopyDraftButtonProps): JSX.Element {
   };
 
   return (
-    <button type="button" className="tab" disabled={!approved} onClick={onCopy}>
-      {copied ? "copied" : "copy approved message"}
-    </button>
+    <Button type="button" disabled={!approved} variant="outline" onClick={onCopy}>
+      {copied ? "Copied" : "Copy approved message"}
+    </Button>
   );
 }

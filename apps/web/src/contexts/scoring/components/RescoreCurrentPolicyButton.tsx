@@ -1,8 +1,19 @@
 import { IconRefresh } from "@tabler/icons-react";
 import type { JSX } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
 import { useDashboardSummaryQuery } from "../../operations/hooks/useDashboardSummaryQuery.js";
 import { useRescoreCurrentPolicyMutation, useRescoreJobMutation } from "../hooks/useRescoreCurrentPolicyMutation.js";
+
+type RescoreCurrentPolicyActionRender = (props: {
+  readonly "aria-describedby"?: string | undefined;
+  readonly "aria-label": string;
+  readonly children: JSX.Element;
+  readonly className: string;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+  readonly title?: string | undefined;
+}) => JSX.Element;
 
 export interface RescoreJobButtonProps {
   readonly jobId: string;
@@ -14,14 +25,14 @@ export interface RescoreJobButtonProps {
 export function RescoreJobButton({
   jobId,
   className = "tab",
-  label = "rescore current policy",
+  label = "Rescore current policy",
   disabled = false,
 }: RescoreJobButtonProps): JSX.Element {
   const mutation = useRescoreJobMutation();
   const blocked = disabled || mutation.isPending;
 
   return (
-    <button
+    <Button
       aria-label={label}
       className={className}
       disabled={blocked}
@@ -32,8 +43,8 @@ export function RescoreJobButton({
       }}
     >
       <IconRefresh aria-hidden="true" size={14} />
-      <span>{mutation.isPending ? "rescoring" : label}</span>
-    </button>
+      <span>{mutation.isPending ? "Rescoring" : label}</span>
+    </Button>
   );
 }
 
@@ -44,7 +55,13 @@ export interface RescoreCurrentPolicyButtonProps {
   readonly className?: string;
   readonly label?: string;
   readonly disabled?: boolean;
+  readonly ariaDescribedBy?: string;
   readonly onSuccess?: () => void;
+  /**
+   * Renders the action with a caller-owned interactive primitive. This lets a
+   * menu own its item semantics while preserving this control's behavior.
+   */
+  readonly render?: RescoreCurrentPolicyActionRender;
 }
 
 export function RescoreCurrentPolicyButton({
@@ -54,34 +71,55 @@ export function RescoreCurrentPolicyButton({
   className = "tab",
   label,
   disabled = false,
+  ariaDescribedBy,
   onSuccess,
+  render,
 }: RescoreCurrentPolicyButtonProps): JSX.Element {
   const mutation = useRescoreCurrentPolicyMutation();
   const dashboard = useDashboardSummaryQuery();
   const outdatedJobs = outdatedCount ?? dashboard.data?.preparation?.outdatedScoreCount ?? 0;
   const count = jobKeys.length || outdatedJobs;
   const requestLimit = jobKeys.length ? Math.max(limit, jobKeys.length) : limit;
-  const buttonLabel = label ?? (jobKeys.length ? "rescore selected" : "rescore outdated scores");
+  const buttonLabel = label ?? (jobKeys.length ? "Rescore selected" : "Rescore outdated scores");
   const blocked = disabled || mutation.isPending || count <= 0;
+  const buttonContent = (
+    <>
+      <IconRefresh aria-hidden="true" size={14} />
+      <span>{mutation.isPending ? "Rescoring" : buttonLabel}</span>
+    </>
+  );
+  const handleClick = () => {
+    if (blocked) return;
+    const scope = jobKeys.length
+      ? `${count} selected job${count === 1 ? "" : "s"}`
+      : `up to ${limit} jobs not on the current scoring policy`;
+    if (!window.confirm(`Rescore ${scope}?`)) return;
+    mutation.mutate({ jobKeys, limit: requestLimit }, onSuccess ? { onSuccess } : undefined);
+  };
+
+  if (render) {
+    return render({
+      "aria-describedby": ariaDescribedBy,
+      "aria-label": buttonLabel,
+      children: buttonContent,
+      className,
+      disabled: blocked,
+      onClick: handleClick,
+      title: jobKeys.length ? undefined : `${count} jobs are not on the current scoring policy.`,
+    });
+  }
 
   return (
-    <button
+    <Button
+      aria-describedby={ariaDescribedBy}
       aria-label={buttonLabel}
       className={className}
       disabled={blocked}
       title={jobKeys.length ? undefined : `${count} jobs are not on the current scoring policy.`}
       type="button"
-      onClick={() => {
-        if (blocked) return;
-        const scope = jobKeys.length
-          ? `${count} selected job${count === 1 ? "" : "s"}`
-          : `up to ${limit} jobs not on the current scoring policy`;
-        if (!window.confirm(`Rescore ${scope}?`)) return;
-        mutation.mutate({ jobKeys, limit: requestLimit }, onSuccess ? { onSuccess } : undefined);
-      }}
+      onClick={handleClick}
     >
-      <IconRefresh aria-hidden="true" size={14} />
-      <span>{mutation.isPending ? "rescoring" : buttonLabel}</span>
-    </button>
+      {buttonContent}
+    </Button>
   );
 }

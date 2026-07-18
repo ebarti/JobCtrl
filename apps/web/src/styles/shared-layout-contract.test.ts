@@ -35,15 +35,33 @@ const commonCss = readStyle("redesign-common.css");
 const shellCss = readStyle("redesign-shell.css");
 const workspaceCss = readStyle("redesign-route-workspaces.css");
 const pipelinesCss = readStyle("redesign-pipelines.css");
+const visualRolesCss = readStyle("visual-roles.css");
+const sideRailSource = readFileSync(
+  resolve(styleDir, "../shared/layout/SideRail.tsx"),
+  "utf8",
+);
+const inputSource = readFileSync(resolve(sharedUiDir, "input.tsx"), "utf8");
+const inspectorLedgerSource = readFileSync(
+  resolve(sharedUiDir, "inspector-ledger.tsx"),
+  "utf8",
+);
 
 describe("shared typography and layout contract", () => {
   it("keeps the core type scale readable and independent from density", () => {
-    expect(tokensCss).toContain("--jh-font-size-caption: 0.8125rem;");
-    expect(tokensCss).toContain("--jh-font-size-code: 0.875rem;");
-    expect(tokensCss).toContain("--jh-font-size-body-sm: 0.9375rem;");
-    expect(tokensCss).toContain("--jh-font-size-body: 1rem;");
-    expect(tokensCss).toContain("--jh-font-size-heading-sm: 1.0625rem;");
-    expect(tokensCss).toContain("font-size: var(--jh-font-size-body);");
+    expect(tokensCss).toContain("--jh-type-page-title-size: 24px;");
+    expect(tokensCss).toContain("--jh-type-page-title-line-height: 30px;");
+    expect(tokensCss).toContain("--jh-type-page-title-weight: 700;");
+    expect(tokensCss).toContain("--jh-type-section-title-size: 18px;");
+    expect(tokensCss).toContain("--jh-type-section-title-line-height: 24px;");
+    expect(tokensCss).toContain("--jh-type-component-title-size: 16px;");
+    expect(tokensCss).toContain("--jh-type-component-title-line-height: 22px;");
+    expect(tokensCss).toContain("--jh-type-body-size: 14px;");
+    expect(tokensCss).toContain("--jh-type-body-line-height: 20px;");
+    expect(tokensCss).toContain("--jh-type-control-weight: 600;");
+    expect(tokensCss).toContain("--jh-type-label-size: 12px;");
+    expect(tokensCss).toContain("--jh-type-metadata-weight: 400;");
+    expect(tokensCss).toContain("--jh-type-metric-size: 20px;");
+    expect(tokensCss).toContain("font-size: var(--jh-type-body-size);");
 
     const compactRule = tokensCss.match(
       /:where\(\.app-shell\[data-density="compact"\]\)\s*\{(?<body>[^}]*)\}/m,
@@ -54,6 +72,8 @@ describe("shared typography and layout contract", () => {
 
     expect(compactRule?.groups?.["body"]).not.toContain("font-size:");
     expect(comfyRule?.groups?.["body"]).not.toContain("font-size:");
+    expect(compactRule?.groups?.["body"]).toContain("--jh-row-height: 44px;");
+    expect(comfyRule?.groups?.["body"]).toContain("--jh-row-height: 60px;");
   });
 
   it("keeps active route typography on semantic tokens above the product floor", () => {
@@ -92,16 +112,16 @@ describe("shared typography and layout contract", () => {
 
     expect(undersized).toEqual([]);
     expect(readStyle("globals.css")).toMatch(
-      /small\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\);/s,
+      /small\s*\{[^}]*font-size: var\(--jh-type-metadata-size\);/s,
     );
     expect(readStyle("globals.css")).toMatch(
-      /\.field-hint\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\);/s,
+      /\.field-hint\s*\{[^}]*font-size: var\(--jh-type-metadata-size\);/s,
     );
     expect(readStyle("globals.css")).toMatch(
-      /\.provider-choice small,[\s\S]*?\.provider-field \.field-hint\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\);/s,
+      /\.provider-choice small,[\s\S]*?\.provider-field \.field-hint\s*\{[^}]*font-size: var\(--jh-type-metadata-size\);/s,
     );
     expect(commonCss).toMatch(
-      /\.field-hint,[\s\S]*?\.field \.meta,[\s\S]*?\.field small\s*\{[^}]*color: var\(--muted-foreground\);[^}]*font-weight: 400;/s,
+      /\.field-hint,[\s\S]*?\.field \.meta,[\s\S]*?\.field small\s*\{[^}]*color: var\(--muted-foreground\);[^}]*font-weight: var\(--jh-type-metadata-weight\);/s,
     );
   });
 
@@ -203,10 +223,10 @@ describe("shared typography and layout contract", () => {
 
   it("keeps route breadcrumbs compact and lets their content wrap", () => {
     expect(commonCss).toMatch(
-      /\.page-head \[data-slot="breadcrumb-list"\]\s*\{[^}]*font-size: var\(--jh-font-size-body\);/s,
+      /\.page-head \[data-slot="breadcrumb-list"\]\s*\{[^}]*font-size: var\(--jh-type-metadata-size\);/s,
     );
     expect(commonCss).toMatch(
-      /\.page-head \[data-slot="breadcrumb-page"\]\s*\{[^}]*font-size: inherit;/s,
+      /\.page-head \[data-slot="breadcrumb-page"\]\s*\{[^}]*font-size: var\(--jh-type-metadata-size\);/s,
     );
     expect(commonCss).toMatch(/\.page-head\s*\{[^}]*flex-wrap: wrap;/s);
     expect(commonCss).toMatch(/\.page-head\s*\{[^}]*margin-bottom: 12px;/s);
@@ -225,11 +245,12 @@ describe("shared typography and layout contract", () => {
 
   it("uses the shared readable scale in the shell and reflows workspaces", () => {
     expect(shellCss).toMatch(/\.side-rail\s*\{[^}]*border-right: 0;/s);
-    expect(shellCss).toMatch(
-      /\.side-rail__link\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\);/s,
+    expect(sideRailSource).toMatch(
+      /className="side-rail__link"[\s\S]*?data-typography="control"/,
     );
-    expect(shellCss).toMatch(
-      /\.global-search\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\);/s,
+    expect(inputSource).toContain('data-typography="control"');
+    expect(visualRolesCss).toMatch(
+      /\[data-typography="control"\]\s*\{[^}]*font-size: var\(--jh-type-control-size\) !important;[^}]*line-height: var\(--jh-type-control-line-height\) !important;/s,
     );
     expect(workspaceCss).toMatch(
       /\.route-workspace__grid > \*\s*\{[^}]*min-width: 0;/s,
@@ -241,13 +262,28 @@ describe("shared typography and layout contract", () => {
       /\.job-detail-top-actions \.action-panel\s*\{[^}]*border: 0;[^}]*background: transparent;[^}]*padding: 0;/s,
     );
     expect(workspaceCss).toMatch(
+      /\.job-detail-top-actions\s*\{[^}]*align-items: flex-start;/s,
+    );
+    expect(workspaceCss).toMatch(
       /\.job-action-group,[\s\S]*?\.job-detail-handoff-actions\s*\{[^}]*flex-wrap: wrap;[^}]*min-width: 0;/s,
     );
     expect(workspaceCss).toMatch(
       /@media \(max-width: 1000px\)[\s\S]*\.route-workspace__grid[\s\S]*grid-template-columns: minmax\(0, 1fr\);/,
     );
-    expect(pipelinesCss).toMatch(
-      /\.pipeline-operations-inspector[\s\S]*\.pipeline-compact-ledger[\s\S]*> \.inspector-ledger__item[\s\S]*> dt,[\s\S]*> dd\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\);/,
+    expect(workspaceCss).toMatch(
+      /@media \(max-width: 1000px\)[\s\S]*\.job-detail-handoff-actions\s*\{[^}]*order: -1;/,
     );
+    expect(workspaceCss).toMatch(
+      /@media \(max-width: 1000px\)[\s\S]*\.job-detail-top-actions \.action-panel,[\s\S]*?\.job-detail-handoff-actions\s*\{[^}]*flex-basis: 100%;/,
+    );
+    expect(inspectorLedgerSource).toContain('<dt data-typography="label">{label}</dt>');
+    expect(inspectorLedgerSource).toContain('<dd data-typography="body">');
+    expect(visualRolesCss).toMatch(
+      /:is\(label, legend, dt\):not\(\[data-typography\]\)[\s\S]*?font-size: var\(--jh-type-label-size\) !important;/,
+    );
+    expect(visualRolesCss).toMatch(
+      /:is\(p, blockquote, dd\):not\(\[data-typography\]\)[\s\S]*?font-size: var\(--jh-type-body-size\) !important;/,
+    );
+    expect(pipelinesCss).not.toContain("--jh-font-size-body-sm");
   });
 });

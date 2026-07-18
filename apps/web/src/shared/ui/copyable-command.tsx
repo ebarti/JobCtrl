@@ -29,11 +29,13 @@ export function CopyableCommand({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 font-mono text-[13px]",
+        "flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 font-mono",
         className,
       )}
     >
-      <code className="truncate">{command}</code>
+      <code className="truncate" data-typography="code">
+        {command}
+      </code>
       <Button
         type="button"
         variant="ghost"

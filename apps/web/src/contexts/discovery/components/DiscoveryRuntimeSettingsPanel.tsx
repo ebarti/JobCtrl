@@ -11,6 +11,19 @@ import { useCallback, useEffect, useState } from "react";
 
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
+import { Button } from "../../../shared/ui/button.js";
+import { Checkbox } from "../../../shared/ui/checkbox.js";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import { useDiscoverySettingsQuery } from "../../operations/hooks/useDiscoverySettingsQuery.js";
 import { useUpdateDiscoverySettingsMutation } from "../hooks/useUpdateDiscoverySettingsMutation.js";
 
@@ -64,7 +77,11 @@ export function DiscoveryRuntimeSettingsPanel() {
       description="Source execution, lookback, filtering, and schedule"
       title="Runtime settings"
     >
-      {settingsQuery.error ? <div className="banner inline">{settingsQuery.error.message}</div> : null}
+      {settingsQuery.error ? (
+        <Alert className="inline" variant="destructive">
+          <AlertDescription>{settingsQuery.error.message}</AlertDescription>
+        </Alert>
+      ) : null}
       {settingsQuery.data ? (
         <DiscoveryRuntimeSettingsForm initial={settingsQuery.data} />
       ) : (
@@ -121,35 +138,44 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
         setStatusMessage("");
       }}
     >
-      {statusMessage ? <div className="status-line" role="status">{statusMessage}</div> : null}
+      {statusMessage ? (
+        <div className="status-line" data-typography="metadata" role="status">
+          {statusMessage}
+        </div>
+      ) : null}
       <div className="field-grid">
         <form.Field name="boards">
           {(field) => {
             const selected = new Set(field.state.value ?? []);
             return (
-              <fieldset className="field wide checkbox-group-field">
-                <legend>Job boards</legend>
-                <div className="checkbox-options">
+              <FieldSet className="field wide checkbox-group-field">
+                <FieldLegend>Job boards</FieldLegend>
+                <FieldGroup className="checkbox-options">
                   {BOARD_OPTIONS.map((option) => (
-                    <label className="choice target-choice" key={option.value}>
-                      <input
-                        name="boards"
-                        type="checkbox"
+                    <Field
+                      className="choice target-choice"
+                      key={option.value}
+                      orientation="horizontal"
+                    >
+                      <Checkbox
+                        id={`discovery-board-${option.value}`}
                         checked={selected.has(option.value)}
-                        onChange={(event) => {
+                        onCheckedChange={(checked) => {
                           const next = new Set(selected);
-                          event.target.checked ? next.add(option.value) : next.delete(option.value);
+                          checked ? next.add(option.value) : next.delete(option.value);
                           field.handleChange(
                             BOARD_OPTIONS.map(({ value }) => value).filter((value) => next.has(value)),
                           );
                         }}
                       />
-                      <span>{option.label}</span>
-                    </label>
+                      <FieldLabel htmlFor={`discovery-board-${option.value}`}>
+                        {option.label}
+                      </FieldLabel>
+                    </Field>
                   ))}
-                </div>
-                <small>{settingContext(effective.boards)}</small>
-              </fieldset>
+                </FieldGroup>
+                <FieldDescription>{settingContext(effective.boards)}</FieldDescription>
+              </FieldSet>
             );
           }}
         </form.Field>
@@ -176,40 +202,78 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
         </form.Field>
         <form.Field name="schedulingEnabled">
           {(field) => (
-            <div className="field">
-              <label className="choice target-choice">
-                <input name="schedulingEnabled" type="checkbox" checked={Boolean(field.state.value)} onChange={(event) => field.handleChange(event.target.checked)} />
-                <span>Enable scheduled discovery</span>
-              </label>
-              <small>{settingContext(effective.schedulingEnabled)}</small>
-            </div>
+            <Field className="field" orientation="horizontal">
+              <Checkbox
+                id="discovery-scheduling-enabled"
+                checked={Boolean(field.state.value)}
+                onCheckedChange={(checked) => field.handleChange(checked)}
+              />
+              <FieldContent>
+                <FieldLabel htmlFor="discovery-scheduling-enabled">
+                  Enable scheduled discovery
+                </FieldLabel>
+                <FieldDescription>
+                  {settingContext(effective.schedulingEnabled)}
+                </FieldDescription>
+              </FieldContent>
+            </Field>
           )}
         </form.Field>
         <form.Field name="scheduleCron">
           {(field) => (
-            <div className="field">
-              <label htmlFor="discovery-schedule-cron">Schedule cron</label>
-              <input id="discovery-schedule-cron" name="scheduleCron" type="text" value={field.state.value ?? "0 7 * * *"} onChange={(event) => field.handleChange(event.target.value)} />
-              <small>{settingContext(effective.scheduleCron)}</small>
-            </div>
+            <Field className="field">
+              <FieldLabel htmlFor="discovery-schedule-cron">Schedule cron</FieldLabel>
+              <Input
+                id="discovery-schedule-cron"
+                name="scheduleCron"
+                type="text"
+                value={field.state.value ?? "0 7 * * *"}
+                onChange={(event) => field.handleChange(event.target.value)}
+              />
+              <FieldDescription>{settingContext(effective.scheduleCron)}</FieldDescription>
+            </Field>
           )}
         </form.Field>
       </div>
       <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting })}>
         {({ isDirty, isSubmitting }) => (
-          <div className="editor-bulk-actions">
-            <button className="tab on" type="submit" disabled={!isDirty || isSubmitting}>{isSubmitting ? "saving" : "save runtime settings"}</button>
-            <button className="tab" type="reset" disabled={!isDirty || isSubmitting}>discard changes</button>
+          <div className="editor-bulk-actions" data-state={isDirty ? "dirty" : "saved"}>
+            <span data-typography="metadata" role="status">
+              {isDirty ? "Unsaved changes" : "No unsaved changes"}
+            </span>
+            <Button
+              type="submit"
+              disabled={!isDirty || isSubmitting}
+              title={!isDirty ? "No unsaved changes" : undefined}
+            >
+              {isSubmitting ? "Saving changes" : "Save changes"}
+            </Button>
+            <Button
+              type="reset"
+              variant="secondary"
+              disabled={!isDirty || isSubmitting}
+              title={!isDirty ? "No unsaved changes" : undefined}
+            >
+              Discard changes
+            </Button>
           </div>
         )}
       </form.Subscribe>
       <form.Subscribe selector={(state) => state.errors}>
         {(errors) => {
           const message = errors.flat().filter((entry): entry is string => typeof entry === "string").at(0);
-          return message ? <div className="banner inline" role="alert">{message}</div> : null;
+          return message ? (
+            <Alert className="inline" variant="destructive">
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          ) : null;
         }}
       </form.Subscribe>
-      {updateSettings.error ? <div className="banner inline" role="alert">{updateSettings.error.message}</div> : null}
+      {updateSettings.error ? (
+        <Alert className="inline" variant="destructive">
+          <AlertDescription>{updateSettings.error.message}</AlertDescription>
+        </Alert>
+      ) : null}
     </form>
   );
 }
@@ -228,11 +292,11 @@ function NumberControl({ name, id, label, min, max, metadata, value, onChange }:
     return <ReadOnlyField id={id} label={label} value={metadata.value} metadata={metadata} />;
   }
   return (
-    <div className="field">
-      <label htmlFor={id}>{label}</label>
-      <input id={id} name={name} type="number" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />
-      <small>{settingContext(metadata)}</small>
-    </div>
+    <Field className="field">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input id={id} name={name} type="number" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />
+      <FieldDescription>{settingContext(metadata)}</FieldDescription>
+    </Field>
   );
 }
 
@@ -249,11 +313,11 @@ function TextControl({ id, name, label, value, metadata, onChange, optional = fa
     return <ReadOnlyField id={id} label={label} value={metadata.value ?? ""} metadata={metadata} />;
   }
   return (
-    <div className="field">
-      <label htmlFor={id}>{label}</label>
-      <input id={id} name={name} type="text" value={value} onChange={(event) => onChange(event.target.value)} />
-      <small>{optional ? "Optional. " : ""}{settingContext(metadata)}</small>
-    </div>
+    <Field className="field">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input id={id} name={name} type="text" value={value} onChange={(event) => onChange(event.target.value)} />
+      <FieldDescription>{optional ? "Optional. " : ""}{settingContext(metadata)}</FieldDescription>
+    </Field>
   );
 }
 
@@ -263,28 +327,38 @@ function RoleFilterModeControl({ value, metadata, onChange }: {
   onChange: (value: DiscoverySettings["roleFilterMode"]) => void;
 }) {
   return (
-    <fieldset className="field wide checkbox-group-field">
-      <legend>Role title filtering</legend>
-      <div className="checkbox-options">
+    <FieldSet className="field wide checkbox-group-field">
+      <FieldLegend>Role title filtering</FieldLegend>
+      <FieldGroup className="checkbox-options">
         {ROLE_FILTER_MODES.map((option) => (
-          <label className="choice target-choice" key={option.value}>
-            <input name="roleFilterMode" type="radio" value={option.value} checked={value === option.value} disabled={!metadata.editable} onChange={() => onChange(option.value)} />
-            <span>{option.label} — {option.description}</span>
-          </label>
+          <Field className="choice target-choice" key={option.value} orientation="horizontal">
+            <Input
+              checked={value === option.value}
+              disabled={!metadata.editable}
+              id={`discovery-role-filter-${option.value}`}
+              name="roleFilterMode"
+              onChange={() => onChange(option.value)}
+              type="radio"
+              value={option.value}
+            />
+            <FieldLabel htmlFor={`discovery-role-filter-${option.value}`}>
+              {option.label} — {option.description}
+            </FieldLabel>
+          </Field>
         ))}
-      </div>
-      <small>{settingContext(metadata)}</small>
-    </fieldset>
+      </FieldGroup>
+      <FieldDescription>{settingContext(metadata)}</FieldDescription>
+    </FieldSet>
   );
 }
 
 function ReadOnlyField({ id, label, value, metadata }: { id: string; label: string; value: string | number; metadata: EffectiveSetting<unknown> }) {
   return (
-    <div className="field">
-      <label htmlFor={id}>{label}</label>
-      <input id={id} type="text" readOnly aria-readonly="true" value={value} />
-      <small>{settingContext(metadata)}</small>
-    </div>
+    <Field className="field">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input id={id} type="text" readOnly aria-readonly="true" value={value} />
+      <FieldDescription>{settingContext(metadata)}</FieldDescription>
+    </Field>
   );
 }
 

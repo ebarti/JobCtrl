@@ -87,16 +87,20 @@ export function ImportPreviewForm() {
       }}
     >
       <header className="resume-import-step__header">
-        <span className="resume-import-step__eyebrow">Preview options</span>
-        <h2>Review the PDF and choose the import scope</h2>
-        <p>The original document stays visible while you decide which sections to bring across.</p>
+        <span className="resume-import-step__eyebrow" data-typography="label">
+          Preview options
+        </span>
+        <h2 data-typography="section-title">Review the PDF and choose the import scope</h2>
+        <p data-typography="body">
+          The original document stays visible while you decide which sections to bring across.
+        </p>
       </header>
 
       <div className="resume-import-selected-file">
         <IconFileTypePdf size={22} stroke={1.65} aria-hidden="true" />
         <span>
-          <small>Selected PDF</small>
-          <strong>{filename}</strong>
+          <small data-typography="label">Selected PDF</small>
+          <strong data-typography="strong-body">{filename}</strong>
         </span>
       </div>
 
@@ -161,10 +165,12 @@ export function ImportPreviewForm() {
       <section className="resume-import-document-preview" aria-labelledby="resume-import-preview-title">
         <header>
           <div>
-            <h3 id="resume-import-preview-title">Original PDF</h3>
-            <p>Inspect every page before continuing.</p>
+            <h3 id="resume-import-preview-title" data-typography="component-title">
+              Original PDF
+            </h3>
+            <p data-typography="body">Inspect every page before continuing.</p>
           </div>
-          <span>{filename}</span>
+          <span data-typography="metadata">{filename}</span>
         </header>
         <div className="resume-import-document-preview__viewer">
           <PdfPreviewViewer

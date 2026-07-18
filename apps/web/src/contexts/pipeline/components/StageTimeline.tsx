@@ -46,7 +46,10 @@ export function StageTimeline({
             key={stage.stage}
           >
             <div className="timeline-row-head stage-timeline__header">
-              <span className="stage-timeline__stage-name">
+              <span
+                className="stage-timeline__stage-name"
+                data-typography="strong-body"
+              >
                 {stageLabel(stage.stage)}
               </span>
               <StageBadge state={stage.state} />
@@ -225,8 +228,8 @@ function StageDiagnosticList({
     <dl className="timeline-diagnostics" aria-label={`${stage} diagnostics`}>
       {diagnostics.map(([label, value]) => (
         <div key={label}>
-          <dt>{label}</dt>
-          <dd>{value}</dd>
+          <dt data-typography="label">{label}</dt>
+          <dd data-typography="body">{value}</dd>
         </div>
       ))}
     </dl>

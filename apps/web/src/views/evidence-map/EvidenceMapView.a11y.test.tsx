@@ -6,7 +6,8 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { axe } from "jest-axe";
 import { describe, expect, it } from "vitest";
 
@@ -55,7 +56,9 @@ function renderEvidenceMap() {
     ]),
     history: createMemoryHistory({ initialEntries: ["/evidence-map"] }),
   });
-  return render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+  return render(<RouterProvider router={router} />, {
+    wrapper: harness.Wrapper,
+  });
 }
 
 describe("<EvidenceMapView> a11y", () => {
@@ -64,6 +67,24 @@ describe("<EvidenceMapView> a11y", () => {
     expect(
       await screen.findByRole("heading", { name: "Career evidence map" }),
     ).toBeInTheDocument();
+    expect(await axe(view.container)).toHaveNoViolations();
+  });
+
+  it("keeps the technical evidence disclosure keyboard-operable without axe violations", async () => {
+    const user = userEvent.setup();
+    const view = renderEvidenceMap();
+    const detail = await screen.findByRole("complementary", {
+      name: "Reduced incident response time through platform automation",
+    });
+
+    const trigger = within(detail).getByRole("button", {
+      name: "Technical details",
+    });
+    trigger.focus();
+    expect(trigger).toHaveFocus();
+    await user.keyboard("{Enter}");
+
+    expect(within(detail).getByText("Claim confidence")).toBeInTheDocument();
     expect(await axe(view.container)).toHaveNoViolations();
   });
 });

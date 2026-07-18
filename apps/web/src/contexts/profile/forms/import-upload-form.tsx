@@ -7,6 +7,7 @@ import { z } from "zod";
 import { fileToBase64 } from "../../../shared/lib/file.js";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../../shared/ui/button.js";
+import { Input } from "../../../shared/ui/input.js";
 import { useProfileImportStore } from "../stores/profile-import-store.js";
 
 interface UploadFormValues {
@@ -74,9 +75,13 @@ export function ImportUploadForm() {
       }}
     >
       <header className="resume-import-step__header">
-        <span className="resume-import-step__eyebrow">Upload PDF</span>
-        <h2>Choose your source resume</h2>
-        <p>Select the PDF you want to inspect before deciding which information to import.</p>
+        <span className="resume-import-step__eyebrow" data-typography="label">
+          Upload PDF
+        </span>
+        <h2 data-typography="section-title">Choose your source resume</h2>
+        <p data-typography="body">
+          Select the PDF you want to inspect before deciding which information to import.
+        </p>
       </header>
 
       {readError ? (
@@ -109,27 +114,33 @@ export function ImportUploadForm() {
               <IconFileTypePdf size={30} stroke={1.65} />
             </span>
             <span className="resume-import-target__copy">
-              <b>{field.state.value ? "PDF selected" : "Choose a resume PDF"}</b>
-              <small aria-live="polite">
+              <b data-typography="strong-body">
+                {field.state.value ? "PDF selected" : "Choose a resume PDF"}
+              </b>
+              <small data-typography="metadata" aria-live="polite">
                 {reading
                   ? "Reading the selected file…"
                   : field.state.value || "PDF files only"}
               </small>
             </span>
-            <input
+            <Input
               aria-label="Resume PDF"
               type="file"
               accept="application/pdf"
               onChange={(event) => void handleFile(event.target.files?.[0] ?? null)}
             />
-            <span className="resume-import-target__action" aria-hidden="true">
+            <span
+              className="resume-import-target__action"
+              data-typography="control"
+              aria-hidden="true"
+            >
               {reading ? "Reading…" : field.state.value ? "Choose another" : "Choose PDF"}
             </span>
           </label>
         )}
       </form.Field>
 
-      <p className="resume-import-step__hint">
+      <p className="resume-import-step__hint" data-typography="body">
         The selected file is not imported until you review the options and confirm the final step.
       </p>
 

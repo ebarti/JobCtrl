@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../shared/ui/select.js";
+import { Field, FieldLabel } from "../../shared/ui/field.js";
 
 export interface RunsFilterBarProps {
   status: WorkflowRunStatusFilter;
@@ -29,8 +30,8 @@ export function RunsFilterBar({ status, onStatusChange }: RunsFilterBarProps) {
   }));
   return (
     <div className="filter-bar">
-      <label className="field">
-        <span>Status</span>
+      <Field className="field">
+        <FieldLabel htmlFor="workflow-run-status-filter">Status</FieldLabel>
         <Select
           items={statusItems}
           value={status}
@@ -41,6 +42,7 @@ export function RunsFilterBar({ status, onStatusChange }: RunsFilterBarProps) {
           <SelectTrigger
             aria-label="Filter workflow runs by status"
             className="w-full min-w-40"
+            id="workflow-run-status-filter"
           >
             <SelectValue />
           </SelectTrigger>
@@ -54,7 +56,7 @@ export function RunsFilterBar({ status, onStatusChange }: RunsFilterBarProps) {
             </SelectGroup>
           </SelectContent>
         </Select>
-      </label>
+      </Field>
     </div>
   );
 }

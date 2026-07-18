@@ -31,11 +31,13 @@ function ConversionFunnelView({ funnel }: { funnel: ConversionFunnel }) {
     <div className="conversion-funnel">
       {FUNNEL_STAGES.map((stage) => (
         <div className="conversion-stage" key={stage.key}>
-          <span className="conversion-stage-lbl">{stage.label}</span>
+          <span className="conversion-stage-lbl" data-typography="label">
+            {stage.label}
+          </span>
           <SegmentBar total={funnel.applied} values={[[stage.tone, funnel[stage.key]]]} />
           <span className="conversion-stage-val">
-            <b>{funnel[stage.key]}</b>
-            <span>{formatRate(stage.rate(funnel))}</span>
+            <b data-typography="strong-body">{funnel[stage.key]}</b>
+            <span data-typography="metadata">{formatRate(stage.rate(funnel))}</span>
           </span>
         </div>
       ))}
@@ -67,16 +69,16 @@ function ConversionBreakdown({
           {rows.map((row) => (
             <div className="conversion-row" key={row.key}>
               <span className="title-stack">
-                <b>{row.label}</b>
-                <span>
+                <b data-typography="strong-body">{row.label}</b>
+                <span data-typography="metadata">
                   applied {row.funnel.applied} · reply {formatRate(row.funnel.replyRate)} · offer{" "}
                   {formatRate(row.funnel.offerRate)}
                 </span>
               </span>
               <SegmentBar total={row.funnel.applied} values={[["done", row.funnel.interview]]} />
               <span className="conversion-row-metric">
-                <b>{formatRate(row.funnel.interviewRate)}</b>
-                <span>interview</span>
+                <b data-typography="metric">{formatRate(row.funnel.interviewRate)}</b>
+                <span data-typography="metadata">interview</span>
               </span>
             </div>
           ))}

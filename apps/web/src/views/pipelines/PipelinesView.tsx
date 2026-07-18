@@ -23,8 +23,13 @@ import {
 } from "../../contexts/pipeline/components/pipelineOperationsDisplay.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
 import { usePipelineOperationsQuery } from "../../contexts/operations/hooks/usePipelineOperationsQuery.js";
+import {
+  getApiCapabilityAvailability,
+  LOCAL_INSTALL_GUIDE_URL,
+} from "../../shared/lib/apiCapabilityAvailability.js";
 import { cn } from "../../shared/lib/cn.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
+import { usePorts } from "../../shared/providers/PortsProvider.js";
 import {
   Alert,
   AlertAction,
@@ -34,14 +39,6 @@ import {
 import { buttonVariants } from "../../shared/ui/button.js";
 import { DisclosureSection } from "../../shared/ui/disclosure-section.js";
 import { Empty } from "../../shared/ui/empty.js";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "../../shared/ui/card.js";
 import {
   InspectorLedger,
   InspectorLedgerItem,
@@ -170,7 +167,7 @@ function PipelineStatus({
   readonly status: string;
 }) {
   return (
-    <StatusBadge icon={false} tone={statusTone(status)}>
+    <StatusBadge tone={statusTone(status)}>
       {children ?? sentenceCase(status)}
     </StatusBadge>
   );
@@ -215,7 +212,14 @@ function stageProgress(counts: PipelineStageCounts): number {
   return total === 0 ? 0 : Math.min(100, Math.round((completedCount(counts) / total) * 100));
 }
 
-function stageStatus(counts: PipelineStageCounts): string {
+type PipelineStageStatus =
+  | "blocked"
+  | "processing"
+  | "pending"
+  | "completed"
+  | "idle";
+
+function stageStatus(counts: PipelineStageCounts): PipelineStageStatus {
   if (issueCount(counts) > 0) return "blocked";
   if (counts.processing > 0) return "processing";
   if (counts.waiting > 0) return "pending";
@@ -225,21 +229,36 @@ function stageStatus(counts: PipelineStageCounts): string {
   return "idle";
 }
 
+function stageStatusLabel(status: PipelineStageStatus): string {
+  switch (status) {
+    case "blocked":
+      return "Attention required";
+    case "processing":
+      return "In progress";
+    case "pending":
+      return "Waiting to start";
+    case "completed":
+      return "Completed";
+    case "idle":
+      return "Idle";
+  }
+}
+
 function CountSummary({ counts }: { readonly counts: PipelineStageCounts }) {
   const active = counts.waiting + counts.processing;
   const issues = issueCount(counts);
 
   return (
-    <span className="pipeline-count-summary">
+    <span className="pipeline-count-summary" data-typography="body">
       <span>
-        <b>{active}</b> active
+        <b data-typography="strong-body">{active}</b> active
       </span>
       <span>
-        <b>{counts.succeeded}</b> done
+        <b data-typography="strong-body">{counts.succeeded}</b> done
       </span>
       {issues > 0 ? (
         <span>
-          <b>{issues}</b> attention
+          <b data-typography="strong-body">{issues}</b> attention
         </span>
       ) : null}
     </span>
@@ -275,7 +294,7 @@ function CohortLedger({
 }) {
   return (
     <section className="pipeline-inspector-group" aria-label={label}>
-      <h3>{label}</h3>
+      <h3 data-typography="component-title">{label}</h3>
       <InspectorLedger className="pipeline-compact-ledger">
         {COHORT_FIELDS.map(([field, fieldLabel]) => (
           <InspectorLedgerItem
@@ -344,7 +363,7 @@ function QueueStats({
 }) {
   return (
     <section className="pipeline-inspector-group" aria-label={`${label} task queue`}>
-      <h4>{label}</h4>
+      <h4 data-typography="component-title">{label}</h4>
       <InspectorLedger className="pipeline-compact-ledger">
         <InspectorLedgerItem label="Pollers" value={stats.pollerCount} />
         <InspectorLedgerItem
@@ -372,7 +391,7 @@ function TaskQueueLedger({
 }) {
   return (
     <section className="pipeline-inspector-group" aria-label="Task queue facts">
-      <h3>Task queue</h3>
+      <h3 data-typography="component-title">Task queue</h3>
       <InspectorLedger className="pipeline-compact-ledger">
         <InspectorLedgerItem label="Observation" value={sentenceCase(queue.status)} />
         <InspectorLedgerItem label="Observed" value={formatDateTime(queue.observedAt)} />
@@ -404,7 +423,7 @@ function CapacityLedger({
   return (
     <div className="pipeline-capacity-ledger">
       <section className="pipeline-inspector-group" aria-label="Worker capacity facts">
-        <h3>Worker capacity</h3>
+        <h3 data-typography="component-title">Worker capacity</h3>
         <InspectorLedger className="pipeline-compact-ledger">
           <InspectorLedgerItem label="Status" value={sentenceCase(capacity.status)} />
           <InspectorLedgerItem label="Observed" value={formatDateTime(capacity.asOf)} />
@@ -476,7 +495,7 @@ function FreshnessLedger({
 }) {
   return (
     <section className="pipeline-inspector-group" aria-label="Telemetry freshness">
-      <h3>Freshness</h3>
+      <h3 data-typography="component-title">Freshness</h3>
       <InspectorLedger className="pipeline-compact-ledger">
         <InspectorLedgerItem
           label="Telemetry status"
@@ -534,42 +553,50 @@ function StageRows({
   readonly trackingReady: boolean;
 }) {
   const scope = scopeLabel(stage.scope);
+  const status = stageStatus(stage.currentExecution);
 
   return (
     <Fragment>
       <TableRow>
         <TableCell className="pipeline-stage-name">
-          <strong>{stage.label}</strong>
-          <code>{stage.stage}</code>
+          <strong data-typography="strong-body">{stage.label}</strong>
+          <code data-typography="code">{stage.stage}</code>
         </TableCell>
-        <TableCell>
-          <PipelineStatus status={stage.scope === "current_execution" ? "in_progress" : "pending"}>
+        <TableCell className="pipeline-stage-scope">
+          <PipelineStatus
+            status={stage.scope === "current_execution" ? "in_progress" : "pending"}
+          >
             {scopeCompactLabel(stage.scope)}
           </PipelineStatus>
+          <PipelineStatus status={status}>{stageStatusLabel(status)}</PipelineStatus>
         </TableCell>
         <TableCell>
           {trackingReady ? (
             <CountSummary counts={stage.currentExecution} />
           ) : (
-            <span className="pipeline-muted-copy">{recoveryLabel}</span>
+            <span className="pipeline-muted-copy" data-typography="metadata">
+              {recoveryLabel}
+            </span>
           )}
         </TableCell>
         <TableCell>
           {stage.existingBacklog.kind === "domain_jobs" ? (
             <CountSummary counts={stage.existingBacklog.counts} />
           ) : (
-            <span className="pipeline-muted-copy">
+            <span className="pipeline-muted-copy" data-typography="metadata">
               {sentenceCase(stage.existingBacklog.reason)}
             </span>
           )}
         </TableCell>
         <TableCell className="pipeline-stage-runtime">
-          <strong>
+          <strong data-typography="strong-body">
             {trackingReady ? stageEtaDisplay(stage) : recoveryLabel}
           </strong>
         </TableCell>
         <TableCell className="pipeline-stage-observed">
-          <time dateTime={stage.asOf}>{formatDateTime(stage.asOf)}</time>
+          <time data-typography="metadata" dateTime={stage.asOf}>
+            {formatDateTime(stage.asOf)}
+          </time>
         </TableCell>
       </TableRow>
       <TableRow className="pipeline-stage-detail-row">
@@ -586,7 +613,7 @@ function StageRows({
           >
             <div className="pipeline-stage-details__grid">
               <section className="pipeline-inspector-group">
-                <h4>Scoped outcomes</h4>
+                <h4 data-typography="component-title">Scoped outcomes</h4>
                 {trackingReady ? (
                   <CountLedger
                     counts={stage.currentExecution}
@@ -597,7 +624,7 @@ function StageRows({
                 )}
               </section>
               <section className="pipeline-inspector-group">
-                <h4>Existing backlog</h4>
+                <h4 data-typography="component-title">Existing backlog</h4>
                 {stage.existingBacklog.kind === "domain_jobs" ? (
                   <CountLedger
                     counts={stage.existingBacklog.counts}
@@ -614,7 +641,7 @@ function StageRows({
                 )}
               </section>
               <section className="pipeline-inspector-group">
-                <h4>Completion estimate</h4>
+                <h4 data-typography="component-title">Completion estimate</h4>
                 {trackingReady && stageTrackedCount(stage) > 0 ? (
                   <EtaLedger eta={stage.eta} label={`${stage.label} ETA facts`} />
                 ) : (
@@ -650,22 +677,24 @@ function PipelineStageCard({
   const hasProgressDenominator = trackedCount(counts) > 0;
 
   return (
-    <Card
+    <article
       aria-label={`${stage.label} stage`}
       className="pipeline-stage-card"
+      data-stage-status={trackingReady ? status : "recovering"}
       role="region"
-      size="sm"
     >
-      <CardHeader>
-        <CardTitle>{stage.label}</CardTitle>
-        <CardDescription>{sentenceCase(stage.stage)}</CardDescription>
-        <CardAction>
+      <div className="pipeline-stage-card__header">
+        <div>
+          <h3 data-typography="component-title">{stage.label}</h3>
+          <p data-typography="metadata">{sentenceCase(stage.stage)}</p>
+        </div>
+        <div className="pipeline-stage-card__status">
           <PipelineStatus status={trackingReady ? status : "recovering"}>
-            {trackingReady ? undefined : recoveryLabel}
+            {trackingReady ? stageStatusLabel(status) : recoveryLabel}
           </PipelineStatus>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="pipeline-stage-card__content">
+        </div>
+      </div>
+      <div className="pipeline-stage-card__content">
         {trackingReady ? (
           <>
             <dl
@@ -673,36 +702,38 @@ function PipelineStageCard({
               className="pipeline-stage-card__facts"
             >
               <div>
-                <dt>Active</dt>
-                <dd>{activeCount(counts)}</dd>
+                <dt data-typography="label">Active</dt>
+                <dd data-typography="strong-body">{activeCount(counts)}</dd>
               </div>
               <div>
-                <dt>Waiting</dt>
-                <dd>{counts.waiting}</dd>
+                <dt data-typography="label">Waiting</dt>
+                <dd data-typography="strong-body">{counts.waiting}</dd>
               </div>
               <div>
-                <dt>Processing</dt>
-                <dd>{counts.processing}</dd>
+                <dt data-typography="label">Processing</dt>
+                <dd data-typography="strong-body">{counts.processing}</dd>
               </div>
               <div>
-                <dt>Terminal</dt>
-                <dd>{completedCount(counts)}</dd>
+                <dt data-typography="label">Terminal</dt>
+                <dd data-typography="strong-body">{completedCount(counts)}</dd>
               </div>
               <div>
-                <dt>Attention</dt>
-                <dd>{issueCount(counts)}</dd>
+                <dt data-typography="label">Attention</dt>
+                <dd data-typography="strong-body">{issueCount(counts)}</dd>
               </div>
             </dl>
             {hasProgressDenominator ? (
               <Progress value={progress}>
-                <ProgressLabel>Stage progress</ProgressLabel>
-                <ProgressValue>{progress}% terminal</ProgressValue>
+                <ProgressLabel data-typography="label">Stage progress</ProgressLabel>
+                <ProgressValue data-typography="label">
+                  {progress}% terminal
+                </ProgressValue>
               </Progress>
             ) : null}
             {hasProgressDenominator ? (
               <div className="pipeline-stage-card__eta">
-                <span>ETA</span>
-                <strong>{etaLabel(stage.eta)}</strong>
+                <span data-typography="label">ETA</span>
+                <strong data-typography="strong-body">{etaLabel(stage.eta)}</strong>
               </div>
             ) : null}
             <DisclosureSection
@@ -720,13 +751,13 @@ function PipelineStageCard({
             </DisclosureSection>
           </>
         ) : (
-          <p className="pipeline-stage-card__recovery-copy">
+          <p className="pipeline-stage-card__recovery-copy" data-typography="body">
             Exact stage counts and estimates will appear automatically when history
             restoration completes.
           </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </article>
   );
 }
 
@@ -853,13 +884,11 @@ function PipelineOverviewFact({
   readonly value: ReactNode;
 }) {
   return (
-    <Card aria-label={label} className="pipeline-overview-fact" role="region" size="sm">
-      <CardHeader>
-        <CardDescription>{label}</CardDescription>
-        <CardTitle>{value}</CardTitle>
-      </CardHeader>
-      <CardContent>{description}</CardContent>
-    </Card>
+    <div className="pipeline-overview-fact">
+      <p data-typography="label">{label}</p>
+      <p data-typography="metric">{value}</p>
+      <p data-typography="metadata">{description}</p>
+    </div>
   );
 }
 
@@ -1013,8 +1042,10 @@ function PipelineLiveFlow({
     <section className="pipeline-live-flow" aria-labelledby="pipeline-live-flow-title">
       <div className="pipeline-live-flow__heading">
         <div>
-          <h2 id="pipeline-live-flow-title">Live pipeline</h2>
-          <p>
+          <h2 data-typography="section-title" id="pipeline-live-flow-title">
+            Live pipeline
+          </h2>
+          <p data-typography="body">
             {trackingReady
               ? "Current discovery stages, shared workers, and work that needs attention."
               : "Shared workers, queue pressure, and active runtime work remain live during recovery."}
@@ -1039,7 +1070,7 @@ function PipelineLiveFlow({
         onPrepareNewDiscoverRun={onPrepareNewDiscoverRun}
         snapshot={snapshot}
       />
-      <div className="pipeline-overview-grid">
+      <section className="pipeline-overview-strip" aria-label="Live pipeline metrics">
         <PipelineOverviewFact
           description={
             capacity.status === "available"
@@ -1074,7 +1105,7 @@ function PipelineLiveFlow({
           label="Queue backlog"
           value={queueBacklog.value}
         />
-      </div>
+      </section>
       {trackingReady ? (
         currentStages.length > 0 ? (
           <div className="pipeline-stage-card-grid">
@@ -1130,8 +1161,8 @@ function PipelineBacklogDiagnostics({
                 tabIndex={0}
               >
                 <div className="pipeline-scope-ledger__heading">
-                  <h3>{label}</h3>
-                  <span>{rows.length} stages</span>
+                  <h3 data-typography="component-title">{label}</h3>
+                  <span data-typography="metadata">{rows.length} stages</span>
                 </div>
                 <Table>
                   <TableCaption className="sr-only">
@@ -1182,6 +1213,7 @@ function PipelineSources({
   const reconciliation = snapshot.reconciliation;
   const trackingReady = projectionReady(snapshot);
   const recoveryLabel = recoveryStateLabel(snapshot);
+  const sourceIssues = sources ? issueCount(sources.counts) : 0;
   const completion =
     sources && sources.planned > 0
       ? Math.min(
@@ -1189,6 +1221,20 @@ function PipelineSources({
           Math.round((completedCount(sources.counts) / sources.planned) * 100),
         )
       : 0;
+  const sourceStatus =
+    sourceIssues > 0
+      ? "blocked"
+      : sources?.counts.processing
+        ? "processing"
+        : completion === 100
+          ? "completed"
+          : "pending";
+  const sourceStatusLabel =
+    sources && sourceIssues > 0
+      ? `${sources.counts.succeeded}/${sources.planned} succeeded · ${sourceIssues} need${sourceIssues === 1 ? "s" : ""} attention`
+      : sources
+        ? `${sources.counts.succeeded}/${sources.planned} succeeded`
+        : "";
 
   return (
     <DisclosureSection
@@ -1207,21 +1253,15 @@ function PipelineSources({
         <section className="pipeline-ledger-panel" aria-labelledby="source-family-title">
           <div className="pipeline-ledger-panel__heading">
             <div>
-              <h3 id="source-family-title">Source-family plan</h3>
-              <p>Parallel source work within the selected discovery execution.</p>
+              <h3 data-typography="component-title" id="source-family-title">
+                Source-family plan
+              </h3>
+              <p data-typography="body">
+                Parallel source work within the selected discovery execution.
+              </p>
             </div>
             {sources && trackingReady ? (
-              <PipelineStatus
-                status={
-                  sources.counts.processing > 0
-                    ? "processing"
-                    : completion === 100
-                      ? "completed"
-                      : "pending"
-                }
-              >
-                {sources.counts.succeeded}/{sources.planned} succeeded
-              </PipelineStatus>
+              <PipelineStatus status={sourceStatus}>{sourceStatusLabel}</PipelineStatus>
             ) : null}
           </div>
           {sources && trackingReady ? (
@@ -1235,11 +1275,12 @@ function PipelineSources({
               <CountSummary counts={sources.counts} />
               <CountLedger counts={sources.counts} label="Source-family outcomes" />
               <section className="pipeline-inspector-group">
-                <h4>Source-family estimate</h4>
+                <h4 data-typography="component-title">Source-family estimate</h4>
                 <EtaLedger eta={sources.eta} label="Source-family ETA facts" />
               </section>
-              <p className="pipeline-observed-copy">
-                Observed <time dateTime={sources.asOf}>{formatDateTime(sources.asOf)}</time>
+              <p className="pipeline-observed-copy" data-typography="metadata">
+                Observed{" "}
+                <time dateTime={sources.asOf}>{formatDateTime(sources.asOf)}</time>
               </p>
             </>
           ) : !trackingReady ? (
@@ -1251,8 +1292,12 @@ function PipelineSources({
         <section className="pipeline-ledger-panel" aria-labelledby="reconciliation-title">
           <div className="pipeline-ledger-panel__heading">
             <div>
-              <h3 id="reconciliation-title">Reconciliation</h3>
-              <p>Exactly two post-source operations, never additional source families.</p>
+              <h3 data-typography="component-title" id="reconciliation-title">
+                Reconciliation
+              </h3>
+              <p data-typography="body">
+                Exactly two post-source operations, never additional source families.
+              </p>
             </div>
             {reconciliation && trackingReady ? (
               <PipelineStatus status="in_progress">2 steps</PipelineStatus>
@@ -1261,7 +1306,7 @@ function PipelineSources({
           {reconciliation && trackingReady ? (
             <>
               <section className="pipeline-inspector-group">
-                <h4>Enrichment pass</h4>
+                <h4 data-typography="component-title">Enrichment pass</h4>
                 <CountSummary counts={reconciliation.enrichment} />
                 <CountLedger
                   counts={reconciliation.enrichment}
@@ -1269,14 +1314,14 @@ function PipelineSources({
                 />
               </section>
               <section className="pipeline-inspector-group">
-                <h4>Preparation fanout</h4>
+                <h4 data-typography="component-title">Preparation fanout</h4>
                 <CountSummary counts={reconciliation.preparationFanout} />
                 <CountLedger
                   counts={reconciliation.preparationFanout}
                   label="Preparation fanout outcomes"
                 />
               </section>
-              <p className="pipeline-observed-copy">
+              <p className="pipeline-observed-copy" data-typography="metadata">
                 Observed{ }
                 <time dateTime={reconciliation.asOf}>
                   {formatDateTime(reconciliation.asOf)}
@@ -1326,10 +1371,10 @@ function ActiveItemLedger({
     <li className="pipeline-active-item">
       <div className="pipeline-active-item__heading">
         <div>
-          <h3>
+          <h3 data-typography="component-title">
             <ActiveItemTitle item={item} snapshot={snapshot} />
           </h3>
-          <span>{item.activityType}</span>
+          <span data-typography="metadata">{item.activityType}</span>
         </div>
         <PipelineStatus status="in_progress">Attempt {item.attempt}</PipelineStatus>
       </div>
@@ -1396,8 +1441,10 @@ function PipelineInspector({
   const hasExecutionDetails = execution !== null || coverage !== null;
 
   return (
-    <div className="pipeline-operations-inspector">
-      <h2>{hasExecutionDetails ? "Execution inspector" : "Runtime inspector"}</h2>
+    <div className="pipeline-operations-inspector" data-typography="body">
+      <h2 data-typography="section-title">
+        {hasExecutionDetails ? "Execution inspector" : "Runtime inspector"}
+      </h2>
       {hasExecutionDetails ? (
         <DisclosureSection
           defaultOpen={false}
@@ -1552,13 +1599,13 @@ function PipelineHeader({
   return (
     <div className="pipeline-operations-header">
       <output className="pipeline-phase-message" aria-live="polite" aria-atomic="true">
-        <span>Phase</span>
+        <span data-typography="label">Phase</span>
         <PipelineStatus status={phase}>{sentenceCase(phase)}</PipelineStatus>
       </output>
       <dl className="pipeline-summary-strip" aria-label="Pipeline operations summary">
         <div>
           <dt>Current cohort</dt>
-          <dd>
+          <dd data-typography="strong-body">
             {!trackingReady
               ? recoveryLabel
               : execution
@@ -1568,7 +1615,7 @@ function PipelineHeader({
         </div>
         <div>
           <dt>Execution sweep</dt>
-          <dd>
+          <dd data-typography="strong-body">
             {!trackingReady
               ? recoveryLabel
               : execution
@@ -1578,11 +1625,11 @@ function PipelineHeader({
         </div>
         <div>
           <dt>Source families</dt>
-          <dd>{sourceLabel}</dd>
+          <dd data-typography="strong-body">{sourceLabel}</dd>
         </div>
         <div>
           <dt>Overall ETA</dt>
-          <dd>
+          <dd data-typography="strong-body">
             {trackingReady
               ? etaLabel(snapshot.overallEta)
               : recoveryLabel}
@@ -1590,14 +1637,16 @@ function PipelineHeader({
         </div>
         <div>
           <dt>Telemetry</dt>
-          <dd>
+          <dd data-typography="strong-body">
             <PipelineStatus status={snapshot.freshness.status} />
           </dd>
         </div>
         <div>
           <dt>Snapshot</dt>
-          <dd>
-            <time dateTime={snapshot.generatedAt}>{formatDateTime(snapshot.generatedAt)}</time>
+          <dd data-typography="strong-body">
+            <time data-typography="metadata" dateTime={snapshot.generatedAt}>
+              {formatDateTime(snapshot.generatedAt)}
+            </time>
           </dd>
         </div>
       </dl>
@@ -1646,7 +1695,9 @@ function PipelineWorkspace({
               <PipelineStatus status={snapshot.overallEta.status}>
                 {etaLabel(snapshot.overallEta)}
               </PipelineStatus>
-              <span>Estimator {snapshot.etaEstimatorVersion}</span>
+              <span data-typography="metadata">
+                Estimator {snapshot.etaEstimatorVersion}
+              </span>
             </div>
             <EtaLedger eta={snapshot.overallEta} label="Overall ETA facts" />
           </DisclosureSection>
@@ -1676,8 +1727,10 @@ function EmptyPipelineWorkspace({
       contentLabel="Pipeline controls"
       header={
         <div className="pipeline-empty-header">
-          <span>Operations</span>
-          <strong>{isLoading ? "Loading snapshot" : "Snapshot unavailable"}</strong>
+          <span data-typography="label">Operations</span>
+          <strong data-typography="strong-body">
+            {isLoading ? "Loading snapshot" : "Snapshot unavailable"}
+          </strong>
         </div>
       }
     >
@@ -1700,18 +1753,13 @@ function EmptyPipelineWorkspace({
   );
 }
 
-export function PipelinesView() {
+function AvailablePipelineWorkspace() {
   const operations = usePipelineOperationsQuery();
   const errorMessage =
     operations.error instanceof Error ? operations.error.message : null;
 
   return (
-    <div className="pipelines-view route-page route-page--pipelines">
-      <PageHead
-        eyebrow="Pipeline"
-        title="Pipelines"
-        subtitle="Follow the current discovery execution, the backlog around it, and the capacity doing the work."
-      />
+    <>
       {errorMessage ? (
         <Alert className="pipeline-operations-alert" variant="destructive">
           <AlertTitle>Pipeline operations unavailable</AlertTitle>
@@ -1722,6 +1770,49 @@ export function PipelinesView() {
         <PipelineWorkspace snapshot={operations.data} />
       ) : (
         <EmptyPipelineWorkspace isLoading={operations.isLoading} />
+      )}
+    </>
+  );
+}
+
+export function PipelinesView() {
+  const { featureFlags } = usePorts();
+  const operationsAvailability = getApiCapabilityAvailability(
+    featureFlags,
+    "pipelineOperations",
+  );
+
+  return (
+    <div className="pipelines-view route-page route-page--pipelines">
+      <PageHead
+        eyebrow="Pipeline"
+        title="Pipelines"
+        subtitle="Follow the current discovery execution, the backlog around it, and the capacity doing the work."
+      />
+      {!operationsAvailability.available ? (
+        <>
+          <Alert className="pipeline-operations-alert pipeline-capability-alert">
+            <AlertTitle>Live pipeline controls require the local app</AlertTitle>
+            <AlertDescription>
+              The public demo does not start worker-backed pipelines or expose live
+              runtime telemetry. You can still review the bundled workflow history.
+            </AlertDescription>
+            <AlertAction className="pipeline-capability-alert__actions">
+              <a className={buttonVariants({ size: "sm" })} href="/runs">
+                Review demo runs
+              </a>
+              <a
+                className={buttonVariants({ size: "sm", variant: "outline" })}
+                href={LOCAL_INSTALL_GUIDE_URL}
+              >
+                Install JobCtrl
+              </a>
+            </AlertAction>
+          </Alert>
+          <EmptyPipelineWorkspace isLoading={false} />
+        </>
+      ) : (
+        <AvailablePipelineWorkspace />
       )}
     </div>
   );

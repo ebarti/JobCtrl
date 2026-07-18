@@ -8,14 +8,19 @@ import {
 } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { DemoFeatureFlagAdapter } from "../../demo/ports.js";
 import { outreachSearchSchema } from "../../routes/-outreach.search.js";
 import { buildProviderHarness } from "../../test/render.js";
+import { buildTestPorts } from "../../test/testPorts.js";
 import { OutreachView } from "./OutreachView.js";
 
-function renderOutreachView(initialPath = "/outreach") {
-  const harness = buildProviderHarness();
+function renderOutreachView(
+  initialPath = "/outreach",
+  ports = buildTestPorts(),
+) {
+  const harness = buildProviderHarness({ ports });
   const rootRoute = createRootRoute({ component: () => <Outlet /> });
   const outreachRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -91,5 +96,28 @@ describe("<OutreachView>", () => {
     expect(
       await screen.findByRole("heading", { name: "Import contacts from CSV" }),
     ).toBeInTheDocument();
+  });
+
+  it("blocks personal CSV entry in the demo and points to the local app", async () => {
+    const importContacts = vi.fn();
+    const ports = buildTestPorts({ api: { importContacts } });
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+    renderOutreachView("/outreach", ports);
+
+    await waitFor(() => expect(screen.getByText("Dana Reyes")).toBeInTheDocument());
+
+    const importButton = screen.getByRole("button", { name: "Import CSV" });
+    expect(importButton).toBeDisabled();
+    expect(importButton).toHaveAccessibleDescription(
+      /CSV import is available in the local app.*never accepts personal contact data/i,
+    );
+    expect(screen.getByRole("link", { name: "Install JobCtrl" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/getting-started",
+    );
+    expect(
+      screen.queryByRole("heading", { name: "Import contacts from CSV" }),
+    ).not.toBeInTheDocument();
+    expect(importContacts).not.toHaveBeenCalled();
   });
 });

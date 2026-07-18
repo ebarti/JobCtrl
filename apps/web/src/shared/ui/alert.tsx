@@ -9,8 +9,10 @@ const alertVariants = cva(
     variants: {
       variant: {
         default: "bg-card text-card-foreground",
-        destructive:
-          "bg-card text-destructive *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-current",
+        info: "bg-card text-card-foreground",
+        success: "bg-card text-card-foreground",
+        warning: "bg-card text-card-foreground",
+        destructive: "bg-card text-card-foreground",
       },
     },
     defaultVariants: {
@@ -27,6 +29,8 @@ function Alert({
   return (
     <div
       data-slot="alert"
+      data-variant={variant ?? "default"}
+      data-typography="body"
       role="alert"
       className={cn(alertVariants({ variant }), className)}
       {...props}
@@ -38,6 +42,7 @@ function AlertTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="alert-title"
+      data-typography="component-title"
       className={cn(
         "text-base font-medium group-has-[>svg]/alert:col-start-2 [&_a]:underline [&_a]:underline-offset-3 [&_a]:hover:text-foreground",
         className,
@@ -54,6 +59,7 @@ function AlertDescription({
   return (
     <div
       data-slot="alert-description"
+      data-typography="body"
       className={cn(
         "text-sm text-balance text-muted-foreground md:text-pretty [&_a]:underline [&_a]:underline-offset-3 [&_a]:hover:text-foreground [&_p:not(:last-child)]:mb-4",
         className,
@@ -67,6 +73,7 @@ function AlertAction({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="alert-action"
+      data-typography="control"
       className={cn("absolute top-2.5 right-3", className)}
       {...props}
     />

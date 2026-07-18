@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import type { Stage } from "@jobctrl/contracts";
 
+import { Button } from "../../../shared/ui/button.js";
 import { useRetryStageMutation } from "../hooks/useRetryStageMutation.js";
 
 export interface RetryStageButtonProps {
@@ -19,19 +20,20 @@ export function RetryStageButton({
   resetAttempts = false,
   runAfter = false,
   dryRun = false,
-  className = "tab on",
-  label = "retry",
+  className,
+  label = "Retry",
 }: RetryStageButtonProps): JSX.Element {
   const retryStage = useRetryStageMutation();
   const isPending = retryStage.isPending;
   return (
-    <button
+    <Button
       type="button"
-      className={className}
+      {...(className ? { className } : {})}
+      size="sm"
       disabled={isPending}
       onClick={() => retryStage.mutate({ jobId, stage, resetAttempts, runAfter, dryRun })}
     >
-      {isPending ? "retrying" : label}
-    </button>
+      {isPending ? "Retrying" : label}
+    </Button>
   );
 }

@@ -282,7 +282,7 @@ export function SavedTableViewsControl({
   return (
     <div className="saved-table-views-control data-table-views">
       <label className="saved-table-views-select">
-        <span>View</span>
+        <span data-typography="label">View</span>
         <Select
           items={viewItems}
           value={activeView?.id ?? DEFAULT_SAVED_TABLE_VIEW_ID}

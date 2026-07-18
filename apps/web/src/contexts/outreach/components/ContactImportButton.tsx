@@ -1,5 +1,10 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 
+import {
+  getApiCapabilityAvailability,
+  LOCAL_INSTALL_GUIDE_URL,
+} from "../../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Button } from "../../../shared/ui/button.js";
 import {
   Dialog,
@@ -21,6 +26,33 @@ export function ContactImportButton({
   className,
 }: ContactImportButtonProps) {
   const [open, setOpen] = useState(false);
+  const unavailableReasonId = useId();
+  const { featureFlags } = usePorts();
+  const availability = getApiCapabilityAvailability(
+    featureFlags,
+    "importContacts",
+  );
+
+  if (!availability.available) {
+    return (
+      <>
+        <Button
+          aria-describedby={unavailableReasonId}
+          {...(className ? { className } : {})}
+          disabled
+          size="sm"
+          variant="outline"
+        >
+          {label}
+        </Button>
+        <span className="meta" id={unavailableReasonId}>
+          CSV import is available in the local app. This demo never accepts
+          personal contact data. <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
+        </span>
+      </>
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger

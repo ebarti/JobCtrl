@@ -103,17 +103,18 @@ export function DemoGuide() {
 
   if (!open) {
     return (
-      <div className="fixed bottom-4 right-4 z-40 motion-reduce:transition-none">
+      <div className="demo-guide-launcher motion-reduce:transition-none">
         <Button
           ref={launcherRef}
           type="button"
           variant="secondary"
+          className="demo-guide-launcher__button"
           onClick={() => setGuideOpen(true)}
           aria-expanded="false"
           aria-label="Open demo guide"
         >
           <IconSparkles aria-hidden="true" size={16} />
-          Demo guide
+          <span className="demo-guide-launcher__label">Demo guide</span>
         </Button>
       </div>
     );
@@ -121,7 +122,7 @@ export function DemoGuide() {
 
   return (
     <aside
-      className="demo-guide-panel fixed bottom-4 right-4 z-40 grid w-[min(22rem,calc(100vw-2rem))] gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground shadow-[var(--shadow-panel)] motion-reduce:transition-none"
+      className="demo-guide-panel fixed bottom-4 right-4 z-40 grid w-[min(22rem,calc(100vw-2rem))] gap-3 overflow-y-auto rounded-xl border border-border bg-card p-4 text-card-foreground shadow-[var(--shadow-panel)] motion-reduce:transition-none"
       aria-labelledby="demo-guide-title"
     >
       <div className="flex items-start justify-between gap-3">

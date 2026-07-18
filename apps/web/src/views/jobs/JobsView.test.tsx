@@ -120,6 +120,15 @@ function rowForTitle(title: string): HTMLElement {
   return row;
 }
 
+async function openJobOperationsMenu(user: {
+  keyboard: (text: string) => Promise<void>;
+}): Promise<HTMLElement> {
+  const trigger = await screen.findByRole("button", { name: "Job operations" });
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  return screen.findByRole("menu", { name: "Job operations" });
+}
+
 function createColumnDragTransfer() {
   const values = new Map<string, string>();
   return {
@@ -781,6 +790,7 @@ describe("<JobsView> bulk delete integration", () => {
   });
 
   it("does not continue pending preparation just because the jobs page opens", async () => {
+    const user = userEvent.setup();
     const pendingTailor: JobSummary = {
       ...sampleJob,
       jobKey: "job-pending-tailor",
@@ -820,7 +830,9 @@ describe("<JobsView> bulk delete integration", () => {
 
     expect(await screen.findByText("Pending Tailor")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /continue pending prep/i }),
+      within(await openJobOperationsMenu(user)).getByRole("menuitem", {
+        name: /continue pending preparation/i,
+      }),
     ).toBeInTheDocument();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(runPendingPreparation).not.toHaveBeenCalled();
@@ -859,18 +871,16 @@ describe("<JobsView> bulk delete integration", () => {
       ports: buildTestPorts({ api: { jobs, runPendingPreparation } }),
     });
     const { router, Wrapper } = buildRouter(harness);
-    const { container } = render(<RouterProvider router={router} />, {
+    render(<RouterProvider router={router} />, {
       wrapper: Wrapper,
     });
 
     expect(await screen.findByText("Pending Tailor")).toBeInTheDocument();
 
-    const rowCheckboxes = Array.from(
-      container.querySelectorAll<HTMLInputElement>("input[type='checkbox']"),
-    ).filter(
-      (input) =>
-        input.getAttribute("aria-label")?.startsWith("Select ") &&
-        input.getAttribute("aria-label") !== "Select all rows on this page",
+    const rowCheckboxes = screen.getAllByRole("checkbox").filter(
+      (checkbox) =>
+        checkbox.getAttribute("aria-label")?.startsWith("Select ") &&
+        checkbox.getAttribute("aria-label") !== "Select all rows on this page",
     );
     await user.click(rowCheckboxes[0]!);
     await waitFor(() =>
@@ -1025,8 +1035,15 @@ describe("<JobsView> bulk delete integration", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText("discover candidate")).toBeInTheDocument();
+    const firstMoreActions = screen.getByRole("button", {
+      name: "More actions",
+    });
+    firstMoreActions.focus();
+    await user.keyboard("{Enter}");
     await user.click(
-      screen.getByRole("button", { name: /select all matching/i }),
+      within(
+        screen.getByRole("menu", { name: "More actions" }),
+      ).getByRole("menuitem", { name: "Select all matching" }),
     );
     await waitFor(() =>
       expect(screen.getByText("1 selected")).toBeInTheDocument(),
@@ -1045,7 +1062,7 @@ describe("<JobsView> bulk delete integration", () => {
     const user = userEvent.setup();
     const harness = buildProviderHarness();
     const { router, Wrapper } = buildRouter(harness);
-    const { container } = render(<RouterProvider router={router} />, {
+    render(<RouterProvider router={router} />, {
       wrapper: Wrapper,
     });
 
@@ -1056,20 +1073,24 @@ describe("<JobsView> bulk delete integration", () => {
       },
     );
 
+    const secondMoreActions = screen.getByRole("button", {
+      name: "More actions",
+    });
+    secondMoreActions.focus();
+    await user.keyboard("{Enter}");
     await user.click(
-      screen.getByRole("button", { name: /select all matching/i }),
+      within(
+        screen.getByRole("menu", { name: "More actions" }),
+      ).getByRole("menuitem", { name: "Select all matching" }),
     );
     await waitFor(() =>
       expect(screen.getByText(/2 selected/i)).toBeInTheDocument(),
     );
 
-    const checkboxes = Array.from(
-      container.querySelectorAll<HTMLInputElement>("input[type='checkbox']"),
-    );
-    const rowCheckboxes = checkboxes.filter(
-      (input) =>
-        input.getAttribute("aria-label")?.startsWith("Select ") &&
-        input.getAttribute("aria-label") !== "Select all rows on this page",
+    const rowCheckboxes = screen.getAllByRole("checkbox").filter(
+      (checkbox) =>
+        checkbox.getAttribute("aria-label")?.startsWith("Select ") &&
+        checkbox.getAttribute("aria-label") !== "Select all rows on this page",
     );
 
     expect(
@@ -1128,9 +1149,16 @@ describe("<JobsView> bulk delete integration", () => {
       ).not.toBeInTheDocument(),
     );
     await user.keyboard("{Escape}");
+    const filteredMoreActions = screen.getByRole("button", {
+      name: "More actions",
+    });
+    filteredMoreActions.focus();
+    await user.keyboard("{Enter}");
     expect(
-      screen.getByRole("button", { name: /select all matching/i }),
-    ).toBeDisabled();
+      within(
+        screen.getByRole("menu", { name: "More actions" }),
+      ).getByRole("menuitem", { name: "Select all matching" }),
+    ).toHaveAttribute("aria-disabled", "true");
 
     await user.click(screen.getByRole("button", { name: /select page/i }));
     await waitFor(() =>
@@ -1281,7 +1309,11 @@ describe("<JobsView> bulk delete integration", () => {
       expect(screen.getByText(/1 selected/i)).toBeInTheDocument(),
     );
 
-    await user.click(screen.getByRole("button", { name: /hide selected/i }));
+    await user.click(
+      within(await openJobOperationsMenu(user)).getByRole("menuitem", {
+        name: /hide selected/i,
+      }),
+    );
 
     await waitFor(() => expect(calls.length).toBe(1));
     expect(calls[0]?.jobKeys?.length).toBe(1);
@@ -1396,7 +1428,9 @@ describe("<JobsView> bulk delete integration", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: /permanently delete selected/i }),
+      within(await openJobOperationsMenu(user)).getByRole("menuitem", {
+        name: /permanently delete selected/i,
+      }),
     );
 
     await waitFor(() => expect(calls.length).toBe(1));
@@ -1460,7 +1494,9 @@ describe("<JobsView> bulk delete integration", () => {
       ) ?? checkboxes[1]!;
     await user.click(rowCheckbox);
     await user.click(
-      screen.getByRole("button", { name: /reset stale selected/i }),
+      within(await openJobOperationsMenu(user)).getByRole("menuitem", {
+        name: /reset stale selected/i,
+      }),
     );
 
     await waitFor(() =>
@@ -1510,16 +1546,11 @@ describe("<JobsView> bulk delete integration", () => {
     const { router, Wrapper } = buildRouter(harness, failedSearch);
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
-    await waitFor(
-      () =>
-        expect(
-          screen.getByRole("button", { name: /retry all failed/i }),
-        ).toBeInTheDocument(),
-      {
-        timeout: 5_000,
-      },
+    await user.click(
+      within(await openJobOperationsMenu(user)).getByRole("menuitem", {
+        name: /retry all failed/i,
+      }),
     );
-    await user.click(screen.getByRole("button", { name: /retry all failed/i }));
 
     await waitFor(() => expect(calls.length).toBe(1));
     expect(calls[0]).toMatchObject({
@@ -1573,16 +1604,11 @@ describe("<JobsView> bulk delete integration", () => {
     const { router, Wrapper } = buildRouter(harness, pendingSearch);
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
-    await waitFor(
-      () =>
-        expect(
-          screen.getByRole("button", { name: /retry all failed/i }),
-        ).toBeInTheDocument(),
-      {
-        timeout: 5_000,
-      },
+    await user.click(
+      within(await openJobOperationsMenu(user)).getByRole("menuitem", {
+        name: /retry all failed/i,
+      }),
     );
-    await user.click(screen.getByRole("button", { name: /retry all failed/i }));
 
     await waitFor(() => expect(calls.length).toBe(1));
     expect(calls[0]).toMatchObject({
@@ -1628,20 +1654,14 @@ describe("<JobsView> bulk delete integration", () => {
     const { router, Wrapper } = buildRouter(harness, pendingSearch);
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
-    await waitFor(
-      () =>
-        expect(
-          screen.getByRole("button", { name: /continue pending prep/i }),
-        ).toBeInTheDocument(),
-      {
-        timeout: 5_000,
-      },
+    const operationsMenu = await openJobOperationsMenu(user);
+    const continuePendingPreparation = within(operationsMenu).getByRole(
+      "menuitem",
+      { name: /continue pending preparation/i },
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(calls).toHaveLength(0);
-    await user.click(
-      screen.getByRole("button", { name: /continue pending prep/i }),
-    );
+    await user.click(continuePendingPreparation);
 
     await waitFor(() => expect(calls.length).toBe(1));
     expect(calls[0]).toMatchObject({

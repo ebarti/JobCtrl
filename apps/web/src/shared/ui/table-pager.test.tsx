@@ -40,14 +40,14 @@ describe("TablePager", () => {
     const user = userEvent.setup();
     const firstPage = renderPager({ page: 1, totalPages: 3 });
 
-    const previous = screen.getByRole("button", { name: "previous" });
+    const previous = screen.getByRole("button", { name: "Previous" });
     expect(previous).toBeDisabled();
     await user.click(previous);
     expect(firstPage.onPageChange).not.toHaveBeenCalled();
     firstPage.unmount();
 
     const { onPageChange } = renderPager({ page: 3, totalPages: 3 });
-    const next = screen.getByRole("button", { name: "next" });
+    const next = screen.getByRole("button", { name: "Next" });
     expect(next).toBeDisabled();
     await user.click(next!);
     expect(onPageChange).not.toHaveBeenCalled();
@@ -57,10 +57,10 @@ describe("TablePager", () => {
     const { onPageChange } = renderPager({ page: 2, totalPages: 4 });
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole("button", { name: "previous" }));
+    await user.click(screen.getByRole("button", { name: "Previous" }));
     expect(onPageChange).toHaveBeenLastCalledWith(1);
 
-    await user.click(screen.getByRole("button", { name: "next" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
     expect(onPageChange).toHaveBeenLastCalledWith(3);
   });
 

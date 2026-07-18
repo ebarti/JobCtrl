@@ -67,7 +67,7 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
           <StatusBadge icon={false} tone={row.badgeTone}>
             {row.dimension}
           </StatusBadge>
-          <span>{countLabel(row)}</span>
+          <span data-typography="metadata">{countLabel(row)}</span>
         </span>
       </span>
     ),
@@ -91,7 +91,7 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
     render: (row) => (
       <span className={row.replyRate === null && row.applied > 0 ? "analytics-rate suppressed" : "analytics-rate"}>
         <b>{formatRateCell(row, "replyRate")}</b>
-        <span>{row.reply} replies</span>
+        <span data-typography="metadata">{row.reply} replies</span>
       </span>
     ),
     className: "analytics-rate-column",
@@ -105,7 +105,7 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
     render: (row) => (
       <span className={row.interviewRate === null && row.applied > 0 ? "analytics-rate suppressed" : "analytics-rate"}>
         <b>{formatRateCell(row, "interviewRate")}</b>
-        <span>{row.interview} interviews</span>
+        <span data-typography="metadata">{row.interview} interviews</span>
       </span>
     ),
     className: "analytics-rate-column",
@@ -119,7 +119,7 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
     render: (row) => (
       <span className={row.offerRate === null && row.applied > 0 ? "analytics-rate suppressed" : "analytics-rate"}>
         <b>{formatRateCell(row, "offerRate")}</b>
-        <span>{row.offer} offers</span>
+        <span data-typography="metadata">{row.offer} offers</span>
       </span>
     ),
     className: "analytics-rate-column",
@@ -133,7 +133,7 @@ const outcomeRateColumns: Array<DataGridColumn<OutcomeRateRow>> = [
     render: (row) => (
       <span className={row.rejectionRate === null && row.applied > 0 ? "analytics-rate suppressed" : "analytics-rate"}>
         <b>{formatRateCell(row, "rejectionRate")}</b>
-        <span>{row.rejection} rejections</span>
+        <span data-typography="metadata">{row.rejection} rejections</span>
       </span>
     ),
     className: "analytics-rate-column",

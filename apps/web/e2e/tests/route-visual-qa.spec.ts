@@ -21,9 +21,15 @@ interface MobileRouteSurface extends RouteSurface {
 }
 
 const DENSITY_TOKENS: Record<Density, string> = {
-  compact: "32px",
-  regular: "40px",
-  comfy: "48px",
+  compact: "44px",
+  regular: "52px",
+  comfy: "60px",
+};
+
+const DENSITY_LABELS: Record<Density, string> = {
+  compact: "Compact",
+  regular: "Regular",
+  comfy: "Comfortable",
 };
 
 const ROUTE_SURFACES: readonly RouteSurface[] = [
@@ -55,8 +61,8 @@ const ROUTE_SURFACES: readonly RouteSurface[] = [
   {
     path: "/discovery",
     activeLink: "Discovery",
-    proof: (page) => page.getByRole("heading", { name: "Discovery controls" }),
-    surface: (page) => page.locator(".card").first(),
+    proof: (page) => page.getByRole("heading", { name: "Source registry" }),
+    surface: (page) => page.locator(".discovery-control-panel .filterable-data-grid").first(),
   },
   {
     path: "/profile",
@@ -160,6 +166,235 @@ const JOB_FILTER_PARAMS =
   "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
 const PRIMARY_REQUIREMENT_TEXT =
   "Lead platform reliability improvements across critical services.";
+
+const VISUAL_SYSTEM_AUDIT_ROUTES = [
+  { name: "Dashboard", path: "/dashboard" },
+  { name: "Jobs", path: "/jobs" },
+  { name: "Artifacts", path: "/artifacts" },
+  { name: "Artifact detail", path: "/artifacts/2" },
+  { name: "Application review", path: "/apply-review" },
+  { name: "Outcome analytics", path: "/analytics" },
+  { name: "Discovery", path: "/discovery" },
+  { name: "Outreach", path: "/outreach" },
+  {
+    name: "Outreach detail",
+    path: "/outreach/qa-contact-hiring-manager",
+  },
+  { name: "Profile", path: "/profile" },
+  { name: "Preferences", path: "/preferences" },
+  { name: "Resume import entry", path: "/profile/import" },
+  { name: "Resume import upload", path: "/profile/import/upload" },
+  { name: "Resume import preview", path: "/profile/import/preview" },
+  { name: "Resume import confirmation", path: "/profile/import/confirm" },
+  { name: "Settings", path: "/settings" },
+  { name: "Credential settings", path: "/settings/credentials" },
+  { name: "Model settings", path: "/settings/models" },
+  { name: "Browser settings", path: "/settings/browser" },
+  { name: "Runs", path: "/runs" },
+  { name: "Run detail", path: "/runs/qa-run-1" },
+  { name: "Pipelines", path: "/pipelines" },
+  { name: "Debug", path: "/debug" },
+  { name: "Activity detail", path: "/activity/5" },
+  {
+    name: "Job detail",
+    path: `/jobs/${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}?${JOB_FILTER_PARAMS}`,
+  },
+  {
+    name: "Job run detail",
+    path: `/jobs/${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}/run/qa-run-1?${JOB_FILTER_PARAMS}`,
+  },
+  { name: "Requirement evidence", path: "/evidence-map" },
+] as const;
+
+const APPROVED_ROLE_METRICS = {
+  "page-title": "24px/30px/700",
+  "section-title": "18px/24px/600",
+  "component-title": "16px/22px/600",
+  body: "14px/20px/400",
+  "strong-body": "14px/20px/600",
+  control: "14px/20px/600",
+  label: "12px/16px/600",
+  status: "12px/16px/600",
+  "table-header": "12px/16px/600",
+  metadata: "12px/16px/400",
+  metric: "20px/24px/700",
+  code: "14px/20px/400",
+} as const;
+
+type TypographyRole = keyof typeof APPROVED_ROLE_METRICS;
+
+interface TypographyAuditResult {
+  readonly checked: number;
+  readonly roleStyles: Record<string, string[]>;
+  readonly unknown: Array<{ selector: string; text: string }>;
+  readonly violations: Array<{
+    actual: string;
+    expected: string;
+    role: string;
+    selector: string;
+    text: string;
+  }>;
+}
+
+async function collectTypographyAudit(page: Page): Promise<TypographyAuditResult> {
+  return page.locator(".app-shell").evaluate((shell, approvedRoleMetrics) => {
+    const approved = approvedRoleMetrics as Record<string, string>;
+    const metricFallback: Record<string, string> = {
+      "24px/30px/700": "page-title",
+      "18px/24px/600": "section-title",
+      "16px/22px/600": "component-title",
+      "14px/20px/400": "body",
+      "14px/20px/600": "strong-body",
+      "12px/16px/600": "label",
+      "12px/16px/400": "metadata",
+      "20px/24px/700": "metric",
+    };
+    const roleStyles = new Map<string, Set<string>>();
+    const unknown: Array<{ selector: string; text: string }> = [];
+    const violations: Array<{
+      actual: string;
+      expected: string;
+      role: string;
+      selector: string;
+      text: string;
+    }> = [];
+
+    const candidates = [shell, ...shell.querySelectorAll<HTMLElement>("*")];
+    let checked = 0;
+    for (const element of candidates) {
+      if (
+        element.closest('[aria-hidden="true"]') ||
+        element.closest(".sr-only") ||
+        // The generated resume is an artifact preview, not application chrome.
+        // Its document typography is intentionally preserved for output fidelity.
+        element.closest(".resume-plate-page") ||
+        element.matches('input[type="hidden"]')
+      ) {
+        continue;
+      }
+      const style = getComputedStyle(element);
+      const bounds = element.getBoundingClientRect();
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        bounds.width <= 0 ||
+        bounds.height <= 0
+      ) {
+        continue;
+      }
+      const hasDirectText = [...element.childNodes].some(
+        (node) =>
+          node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim()),
+      );
+      const hasControlText =
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLSelectElement;
+      if (!hasDirectText && !hasControlText) continue;
+
+      checked += 1;
+      const tag = element.tagName.toLowerCase();
+      const metric = `${style.fontSize}/${style.lineHeight}/${style.fontWeight}`;
+      const ownRole = element.getAttribute("data-typography");
+      const ancestorRole = element.parentElement
+        ?.closest<HTMLElement>("[data-typography]")
+        ?.getAttribute("data-typography");
+      let role: string | null = ownRole;
+      if (!role && (tag === "label" || tag === "legend" || tag === "dt")) {
+        role = "label";
+      } else if (!role && tag === "th") {
+        role = "table-header";
+      } else if (
+        !role &&
+        (tag === "button" || element.getAttribute("role") === "button")
+      ) {
+        role = "control";
+      } else if (
+        !role &&
+        (tag === "input" || tag === "textarea" || tag === "select")
+      ) {
+        role = "body";
+      } else if (!role && element.matches(".meta, time, small")) {
+        role = "metadata";
+      } else if (
+        !role &&
+        element.matches(".eyebrow, .job-audit-triage-kicker, .text-xs.font-medium")
+      ) {
+        role = "label";
+      } else if (!role && element.matches(".tag, .stage-pill")) {
+        role = "status";
+      } else if (!role && element.matches("code, pre, .mono")) {
+        role = "code";
+      } else if (!role && (tag === "strong" || tag === "b")) {
+        role = "strong-body";
+      } else if (!role && ancestorRole) {
+        role = ancestorRole;
+      } else if (!role && tag === "h1") {
+        role = "page-title";
+      } else if (!role && tag === "h2") {
+        role = "section-title";
+      } else if (!role && /^h[3-6]$/.test(tag)) {
+        role = "component-title";
+      } else if (
+        !role &&
+        ["p", "li", "td", "dd", "blockquote"].includes(tag)
+      ) {
+        role = "body";
+      } else if (!role) {
+        role = metricFallback[metric] ?? null;
+      }
+      if (!role && (tag === "a" || tag === "div" || tag === "span")) {
+        role = "body";
+      }
+
+      const text =
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLSelectElement
+          ? element.value || element.getAttribute("placeholder") || element.getAttribute("aria-label") || ""
+          : element.textContent?.trim() ?? "";
+      const selector = `${tag}${element.id ? `#${element.id}` : ""}${
+        element.classList.length
+          ? `.${[...element.classList].slice(0, 3).join(".")}`
+          : ""
+      }`;
+      if (!role || !(role in approved)) {
+        unknown.push({ selector, text: text.slice(0, 120) });
+        continue;
+      }
+
+      const expected = approved[role]!;
+      const letterSpacingOk =
+        style.letterSpacing === "normal" || style.letterSpacing === "0px";
+      const actual = `${metric}|${style.letterSpacing}|${style.textTransform}|${style.fontFamily}`;
+      const stylesForRole = roleStyles.get(role) ?? new Set<string>();
+      stylesForRole.add(actual);
+      roleStyles.set(role, stylesForRole);
+      if (
+        metric !== expected ||
+        !letterSpacingOk ||
+        style.textTransform !== "none"
+      ) {
+        violations.push({
+          actual,
+          expected,
+          role,
+          selector,
+          text: text.slice(0, 120),
+        });
+      }
+    }
+
+    return {
+      checked,
+      roleStyles: Object.fromEntries(
+        [...roleStyles].map(([role, styles]) => [role, [...styles].sort()]),
+      ),
+      unknown,
+      violations,
+    };
+  }, APPROVED_ROLE_METRICS);
+}
 
 function failedTailoringQueue(): ApplyReviewQueueResponse {
   const base = sampleApplyReviewQueue.items[0]!;
@@ -471,7 +706,7 @@ async function installDeterministicRequirementFitScrollbars(
   await page.addInitScript(() => {
     const style = document.createElement("style");
     style.textContent =
-      ".job-detail-drawer::-webkit-scrollbar,.apply-review-pane-scroll::-webkit-scrollbar{width:15px;height:15px}";
+      ".job-detail-workspace::-webkit-scrollbar,.apply-review-pane-scroll::-webkit-scrollbar{width:15px;height:15px}";
     const attach = () =>
       (document.head ?? document.documentElement).append(style);
     if (document.head) attach();
@@ -608,7 +843,10 @@ async function expectShellForRoute(
 }
 
 async function setDensity(page: Page, density: Density): Promise<void> {
-  const option = page.getByRole("button", { name: density, exact: true });
+  const option = page.getByRole("button", {
+    name: DENSITY_LABELS[density],
+    exact: true,
+  });
   await option.click();
   await expect(option).toHaveAttribute("aria-pressed", "true");
   const shell = page.locator(".app-shell");
@@ -637,7 +875,7 @@ async function readJobDetailDensityGeometry(
   await setDensity(page, density);
 
   const densityControl = page.getByRole("button", {
-    name: density,
+    name: DENSITY_LABELS[density],
     exact: true,
   });
   const action = page.locator(".job-detail-top-actions .jh-control").first();
@@ -731,6 +969,58 @@ async function expectDashboardFunnelContained(page: Page): Promise<void> {
   ).toBeLessThanOrEqual(layout.viewportWidth + 1);
 }
 
+test("target screens use only approved typography roles and identical role metrics", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const allRoleStyles = new Map<TypographyRole, Set<string>>();
+  for (const route of VISUAL_SYSTEM_AUDIT_ROUTES) {
+    await page.goto(route.path);
+    await expect(
+      page.locator('[data-typography="page-title"]').first(),
+      `${route.name} page title`,
+    ).toBeVisible({ timeout: 30_000 });
+    const audit = await collectTypographyAudit(page);
+
+    expect(audit.checked, `${route.name} should expose rendered text`).toBeGreaterThan(0);
+    expect(audit.unknown, `${route.name} unknown typography roles`).toEqual([]);
+    expect(audit.violations, `${route.name} unapproved typography`).toEqual([]);
+    for (const [role, styles] of Object.entries(audit.roleStyles)) {
+      const typedRole = role as TypographyRole;
+      const collected = allRoleStyles.get(typedRole) ?? new Set<string>();
+      styles.forEach((style) => collected.add(style));
+      allRoleStyles.set(typedRole, collected);
+    }
+  }
+
+  for (const [role, styles] of allRoleStyles) {
+    expect(
+      [...styles],
+      `${role} must resolve identically across target screens`,
+    ).toHaveLength(1);
+  }
+});
+
+test("compact, regular, and comfortable modes preserve typography metrics", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await page.goto("/jobs");
+  await expect(page.locator("table.jobs-data-grid-table")).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const metrics = new Map<Density, string>();
+  for (const density of Object.keys(DENSITY_TOKENS) as Density[]) {
+    await setDensity(page, density);
+    const audit = await collectTypographyAudit(page);
+    expect(audit.violations, `${density} typography`).toEqual([]);
+    metrics.set(density, JSON.stringify(audit.roleStyles));
+  }
+  expect(new Set(metrics.values()).size).toBe(1);
+});
+
 test("representative routes stay legible in light and dark themes", async ({
   page,
 }) => {
@@ -754,10 +1044,37 @@ test("representative routes stay legible in light and dark themes", async ({
   }
 });
 
+test("every target screen preserves semantic foreground and surface colors in dark mode", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+
+  await page.goto("/dashboard");
+  await page.getByRole("button", { name: /Switch to dark theme/i }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+  for (const route of VISUAL_SYSTEM_AUDIT_ROUTES) {
+    await page.goto(route.path);
+    const title = page.locator('[data-typography="page-title"]').first();
+    await expect(title, `${route.name} page title`).toBeVisible({ timeout: 30_000 });
+    const colors = await page.locator(".app-shell").evaluate((shell) => {
+      const shellStyle = getComputedStyle(shell);
+      const titleElement = shell.querySelector<HTMLElement>('[data-typography="page-title"]');
+      return {
+        background: shellStyle.backgroundColor,
+        foreground: titleElement ? getComputedStyle(titleElement).color : "",
+      };
+    });
+    expectPainted(colors.background, `${route.name} dark surface`);
+    expectPainted(colors.foreground, `${route.name} dark foreground`);
+  }
+});
+
 test("@mobile key product routes keep navigation, content, and primary controls usable", async ({
   page,
 }) => {
   test.setTimeout(120_000);
+  await page.setViewportSize({ width: 320, height: 800 });
 
   for (const route of MOBILE_ROUTE_SURFACES) {
     await page.goto(route.path);
@@ -801,6 +1118,44 @@ test("@mobile key product routes keep navigation, content, and primary controls 
     await activeLink.click();
     await expect(navigation).toBeHidden();
     await expectNoDocumentInlineOverflow(page);
+  }
+});
+
+test("@mobile every target screen reflows without document overflow at 320 CSS pixels", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 320, height: 800 });
+
+  for (const route of VISUAL_SYSTEM_AUDIT_ROUTES) {
+    await page.goto(route.path);
+    await expect(
+      page.locator('[data-typography="page-title"]').first(),
+      `${route.name} page title`,
+    ).toBeVisible({ timeout: 30_000 });
+    await expectNoDocumentInlineOverflow(page);
+    if (route.path === "/profile") {
+      const actionBar = page.locator(".editor-bulk-actions").first();
+      await expect(actionBar).toBeVisible();
+      const containment = await actionBar.evaluate((element) => {
+        const parent = element.getBoundingClientRect();
+        return [...element.children].map((child) => {
+          const rect = child.getBoundingClientRect();
+          return {
+            bottom: rect.bottom <= parent.bottom + 1,
+            left: rect.left >= parent.left - 1,
+            right: rect.right <= parent.right + 1,
+            top: rect.top >= parent.top - 1,
+          };
+        });
+      });
+      expect(
+        containment.every(
+          ({ bottom, left, right, top }) => bottom && left && right && top,
+        ),
+        "Profile save and discard actions should stay inside their mobile decision bar",
+      ).toBe(true);
+    }
   }
 });
 
@@ -873,7 +1228,7 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
   );
   await expectKeyboardFocusIndicator(
     page,
-    page.getByRole("button", { name: "comfy", exact: true }),
+    page.getByRole("button", { name: "Comfortable", exact: true }),
     "selected row density control",
   );
 

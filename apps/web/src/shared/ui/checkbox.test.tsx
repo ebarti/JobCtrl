@@ -32,6 +32,7 @@ describe("Checkbox", () => {
     const checkbox = screen.getByRole("checkbox", {
       name: "Uncontrolled checkbox",
     });
+    expect(checkbox).toHaveClass("size-6");
     expect(checkbox).toHaveAttribute("data-unchecked");
 
     await user.click(checkbox);

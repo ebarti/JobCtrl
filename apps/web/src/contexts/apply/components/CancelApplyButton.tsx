@@ -1,16 +1,22 @@
 import type { JSX } from "react";
 
 import { useApplyRunsListQuery } from "../../operations/hooks/useApplyRunsListQuery.js";
+import { Button } from "../../../shared/ui/button.js";
 import { useCancelApplyMutation } from "../hooks/useCancelApplyMutation.js";
 
-export const ACTIVE_APPLY_RUN_STATUSES = new Set(["starting", "in_progress", "queued", "running"]);
+export const ACTIVE_APPLY_RUN_STATUSES = new Set([
+  "starting",
+  "in_progress",
+  "queued",
+  "running",
+]);
 
 export interface CancelApplyButtonProps {
   jobId: string;
-  /** Override the auto-detected active run id. If omitted, the button looks
-   *  up the most recently started non-terminal apply run for ``jobId`` and
-   *  forwards its runId to the worker — without a runId the cancel is
-   *  ignored by the Temporal cut-over and the workflow keeps polling. */
+  /**
+   * The authoritative active run from the job-detail projection. When this is
+   * absent, generic action panels retain the bounded dashboard fallback.
+   */
   runId?: string;
   className?: string;
   label?: string;
@@ -20,32 +26,39 @@ export interface CancelApplyButtonProps {
 export function CancelApplyButton({
   jobId,
   runId,
-  className = "tab",
-  label = "cancel apply",
+  className,
+  label = "Stop application run",
   ariaLabel,
-}: CancelApplyButtonProps): JSX.Element {
+}: CancelApplyButtonProps): JSX.Element | null {
   const cancelApply = useCancelApplyMutation();
   const isPending = cancelApply.isPending;
-  // Auto-detect the active run when the caller didn't pass one. Without
-  // this, clicking cancel only writes a SQLite event — the running
-  // Temporal workflow keeps polling Chrome and the stage row drifts
-  // back to running on the next worker_loop cycle.
-  const { data: runs } = useApplyRunsListQuery();
-  const detectedRunId = runId
-    ?? runs?.find(
-      (run) => run.jobKey === jobId && ACTIVE_APPLY_RUN_STATUSES.has(run.status),
+  // A job-detail caller has an exact target from its uncapped, job-scoped
+  // read-model query. Preserve the dashboard lookup only for callers that do
+  // not have that authority yet.
+  const { data: runs } = useApplyRunsListQuery({
+    enabled: runId === undefined,
+  });
+  const detectedRunId =
+    runId ??
+    runs?.find(
+      (run) =>
+        run.jobKey === jobId && ACTIVE_APPLY_RUN_STATUSES.has(run.status),
     )?.runId;
+  if (!detectedRunId) {
+    return null;
+  }
+
   return (
-    <button
+    <Button
       type="button"
-      className={className}
+      {...(className ? { className } : {})}
+      size="sm"
+      variant="warning"
       disabled={isPending}
       aria-label={ariaLabel}
-      onClick={() =>
-        cancelApply.mutate(detectedRunId ? { jobId, runId: detectedRunId } : { jobId })
-      }
+      onClick={() => cancelApply.mutate({ jobId, runId: detectedRunId })}
     >
-      {isPending ? "cancelling" : label}
-    </button>
+      {isPending ? "Stopping application run" : label}
+    </Button>
   );
 }

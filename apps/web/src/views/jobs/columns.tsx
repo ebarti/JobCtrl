@@ -1,4 +1,4 @@
-import { type ChangeEvent, type MouseEvent, useRef } from "react";
+import { type MouseEvent, useRef } from "react";
 import type { RowSelectionState } from "@tanstack/react-table";
 import { STAGE_STATES } from "@jobctrl/contracts";
 
@@ -15,6 +15,7 @@ import type {
   DataGridCellContext,
   DataGridHeaderContext,
 } from "../../shared/ui/filterable-data-grid.js";
+import { Checkbox } from "../../shared/ui/checkbox.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
 import { TitleStack } from "../../shared/ui/title-stack.js";
 
@@ -43,7 +44,12 @@ function pluralize(count: number, singular: string): string {
 
 function MissingCompensationValue({ label }: { readonly label: string }) {
   return (
-    <span className="job-compensation-dash" aria-label={label} title={label}>
+    <span
+      aria-label={label}
+      className="job-compensation-dash"
+      data-typography="metadata"
+      title={label}
+    >
       -
     </span>
   );
@@ -275,7 +281,10 @@ export function SalaryAmountCell({
       aria-label={`${bound === "min" ? "Minimum" : "Maximum"} normalized salary ${formatEurPerYearLabel(amount)}`}
       title={`${bound === "min" ? "Minimum" : "Maximum"} normalized salary ${formatEurPerYearLabel(amount)}`}
     >
-      <span className="job-compensation-primary">
+      <span
+        className="job-compensation-primary"
+        data-typography="strong-body"
+      >
         {formatEurAmount(amount)}
       </span>
     </span>
@@ -321,12 +330,21 @@ export function MarketCompensationCell({
         .filter(Boolean)
         .join(", ")}
     >
-      <span className="job-compensation-primary">{primary}</span>
+      <span
+        className="job-compensation-primary"
+        data-typography="strong-body"
+      >
+        {primary}
+      </span>
       {interval ? (
-        <span className="job-compensation-meta">{interval}</span>
+        <span className="job-compensation-meta" data-typography="metadata">
+          {interval}
+        </span>
       ) : null}
       {sourceCount ? (
-        <span className="job-compensation-meta">{sourceCount}</span>
+        <span className="job-compensation-meta" data-typography="metadata">
+          {sourceCount}
+        </span>
       ) : null}
     </span>
   );
@@ -347,14 +365,23 @@ export function MarketConfidenceCell({
   return (
     <span
       className={`job-compensation-confidence job-compensation-confidence-${market.confidenceBand}`}
+      data-typography="label"
       aria-label={confidenceValueLabel(market)}
       title={confidenceValueLabel(market)}
     >
-      <span className="job-compensation-confidence-label">
+      <span
+        className="job-compensation-confidence-label"
+        data-typography="label"
+      >
         {confidenceDisplayLabel(market.confidenceBand)}
       </span>
       {score ? (
-        <span className="job-compensation-confidence-score">{score}</span>
+        <span
+          className="job-compensation-confidence-score"
+          data-typography="label"
+        >
+          {score}
+        </span>
       ) : null}
     </span>
   );
@@ -368,11 +395,16 @@ export function CompensationWarningsCell({
   const warningCount = summary?.warningCount ?? 0;
   if (warningCount === 0) {
     return (
-      <span className="job-compensation-warning-count muted">No warnings</span>
+      <span
+        className="job-compensation-warning-count muted"
+        data-typography="metadata"
+      >
+        No warnings
+      </span>
     );
   }
   return (
-    <span className="job-compensation-warning-count warn">
+    <span className="job-compensation-warning-count warn" data-typography="status">
       {pluralize(warningCount, "warning")}
     </span>
   );
@@ -450,21 +482,16 @@ function selectHeader(
         }
       }}
     >
-      <input
-        type="checkbox"
+      <Checkbox
         aria-label="Select all rows on this page"
         checked={allSelected}
-        ref={(node) => {
-          if (node) {
-            node.indeterminate = someSelected && !allSelected;
-          }
-        }}
-        onChange={(event: ChangeEvent<HTMLInputElement>) =>
+        indeterminate={someSelected && !allSelected}
+        onCheckedChange={(checked) =>
           updateSelectedRows(
             rowSelection,
             onRowSelectionChange,
             pageRows,
-            event.target.checked,
+            checked,
           )
         }
         onClick={(event: MouseEvent) => event.stopPropagation()}
@@ -499,8 +526,7 @@ function RowSelectionControl({
         }
       }}
     >
-      <input
-        type="checkbox"
+      <Checkbox
         aria-label={`Select ${row.title}`}
         checked={checked}
         onPointerDown={(event) => {
@@ -511,8 +537,8 @@ function RowSelectionControl({
             shiftKeyRef.current = event.shiftKey;
           }
         }}
-        onChange={(event: ChangeEvent<HTMLInputElement>) => {
-          updateRow(event.target.checked, shiftKeyRef.current);
+        onCheckedChange={(nextChecked) => {
+          updateRow(nextChecked, shiftKeyRef.current);
           shiftKeyRef.current = false;
         }}
         onClick={(event: MouseEvent) => event.stopPropagation()}
@@ -542,9 +568,11 @@ export function jobColumns(
       sortable: true,
       getFilterValue: (row) => String(row.fitScore ?? "unscored"),
       render: (row) => (
-        <div className="score-cell">
+        <div className="score-cell" data-typography="strong-body">
           <ScoreBadge score={row.fitScore} />
-          <ScoreStalenessBadge staleness={row.scoreStaleness} />
+          <span data-typography="label">
+            <ScoreStalenessBadge staleness={row.scoreStaleness} />
+          </span>
         </div>
       ),
     },
@@ -556,8 +584,13 @@ export function jobColumns(
       getFilterValue: (row) => row.title,
       render: (row) => (
         <TitleStack
-          primary={row.title}
-          secondary={postingLifecycleLabel(row.activeState)}
+          primary={<span data-typography="strong-body">{row.title}</span>}
+          secondary={(() => {
+            const lifecycle = postingLifecycleLabel(row.activeState);
+            return lifecycle ? (
+              <span data-typography="metadata">{lifecycle}</span>
+            ) : null;
+          })()}
         />
       ),
     },
@@ -566,7 +599,11 @@ export function jobColumns(
       label: "Company",
       sortable: true,
       getFilterValue: (row) => row.company || "-",
-      render: (row) => <span className="muted-cell">{row.company || "-"}</span>,
+      render: (row) => (
+        <span className="muted-cell" data-typography="body">
+          {row.company || "-"}
+        </span>
+      ),
     },
     {
       id: "source",
@@ -581,9 +618,17 @@ export function jobColumns(
           .join(" "),
       render: (row) => (
         <TitleStack
-          primary={row.postingSource ? `posting ${row.postingSource}` : "-"}
+          primary={
+            <span data-typography="body">
+              {row.postingSource ? `Posting ${row.postingSource}` : "-"}
+            </span>
+          }
           secondary={
-            row.discoverySource ? `discovered via ${row.discoverySource}` : null
+            row.discoverySource ? (
+              <span data-typography="metadata">
+                Discovered via {row.discoverySource}
+              </span>
+            ) : null
           }
         />
       ),
@@ -690,7 +735,9 @@ export function jobColumns(
       label: "Location",
       sortable: true,
       getFilterValue: (row) => row.location || "-",
-      render: (row) => <span>{row.location || "-"}</span>,
+      render: (row) => (
+        <span data-typography="body">{row.location || "-"}</span>
+      ),
     },
     {
       id: "current_stage",
@@ -698,7 +745,11 @@ export function jobColumns(
       sortable: true,
       getFilterValue: (row) => row.currentStage,
       filterValues: JOB_TABLE_STAGE_FILTERS,
-      render: (row) => <UserFacingStageBadge stage={row.currentStage} />,
+      render: (row) => (
+        <span data-typography="label">
+          <UserFacingStageBadge stage={row.currentStage} />
+        </span>
+      ),
     },
     {
       id: "current_state",
@@ -711,7 +762,9 @@ export function jobColumns(
       render: (row) => (
         <TitleStack
           primary={<StageBadge state={row.currentState} />}
-          secondary={`${row.currentSubstage} stage`}
+          secondary={
+            <span data-typography="metadata">{row.currentSubstage} stage</span>
+          }
         />
       ),
     },
@@ -729,7 +782,11 @@ export function jobColumns(
       label: "Discovered",
       sortable: true,
       getFilterValue: (row) => row.discoveredAt || "-",
-      render: (row) => <RelativeTime value={row.discoveredAt} />,
+      render: (row) => (
+        <span data-typography="metadata">
+          <RelativeTime value={row.discoveredAt} />
+        </span>
+      ),
     },
     {
       id: "apply_status",

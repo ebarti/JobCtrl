@@ -561,14 +561,15 @@ export function StructuredProfileEditor({
         <FieldTitle>{label}</FieldTitle>
         <div className="month-field-body">
           {monthSelector(label, value, (next) => updateProfilePath(path, formatProfileMonth(next)))}
-          <button
-            className="tab"
-            type="button"
+          <Button
             disabled={!value.month && !value.year}
             onClick={() => updateProfilePath(path, "")}
+            size="sm"
+            type="button"
+            variant="outline"
           >
-            clear
-          </button>
+            Clear
+          </Button>
         </div>
       </Field>
     );
@@ -602,9 +603,7 @@ export function StructuredProfileEditor({
             />
             <FieldLabel htmlFor={presentId}>Present</FieldLabel>
           </Field>
-          <button
-            className="tab"
-            type="button"
+          <Button
             disabled={
               !value.start.month &&
               !value.start.year &&
@@ -613,9 +612,12 @@ export function StructuredProfileEditor({
               !value.present
             }
             onClick={() => updateProfilePath(path, "")}
+            size="sm"
+            type="button"
+            variant="outline"
           >
-            clear
-          </button>
+            Clear
+          </Button>
         </div>
         {hasError ? <FieldError>End date must be after start date.</FieldError> : null}
       </Field>
@@ -876,21 +878,23 @@ export function StructuredProfileEditor({
                   insertValueAfter(index, event.currentTarget.value);
                 }}
               />
-              <button
+              <Button
                 className="icon-button"
-                type="button"
                 aria-label={`Remove ${label.toLowerCase()} ${index + 1}`}
+                size="icon"
                 title="Remove"
+                type="button"
+                variant="ghost"
                 onClick={() => updateValues(values.filter((_, itemIndex) => itemIndex !== index))}
               >
                 <IconTrash size={14} aria-hidden="true" />
-              </button>
+              </Button>
             </div>
           ))}
-          <button className="tab add-bullet" type="button" onClick={appendValue}>
+          <Button className="add-bullet" onClick={appendValue} size="sm" type="button" variant="secondary">
             <IconPlus size={14} aria-hidden="true" />
             {addLabel}
-          </button>
+          </Button>
         </div>
       </Field>
     );
@@ -974,15 +978,16 @@ export function StructuredProfileEditor({
               <span>Unsupported saved values</span>
               <div className="unsupported-target-value-list">
                 {customValues.map((value) => (
-                  <button
-                    className="tab"
-                    type="button"
+                  <Button
                     key={`${path}-${value}`}
                     onClick={() => removeCustomValue(value)}
+                    size="sm"
+                    type="button"
+                    variant="outline"
                   >
                     <IconTrash size={14} aria-hidden="true" />
                     {value}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -1082,25 +1087,29 @@ export function StructuredProfileEditor({
                   })}
                 </FieldGroup>
               </FieldSet>
-              <button
+              <Button
                 className="icon-button"
-                type="button"
                 aria-label={`Remove target location ${index + 1}`}
+                size="icon"
                 title="Remove"
+                type="button"
+                variant="ghost"
                 onClick={() => updateRows(rows.filter((_, itemIndex) => itemIndex !== index))}
               >
                 <IconTrash size={14} aria-hidden="true" />
-              </button>
+              </Button>
             </div>
           ))}
-          <button
-            className="tab add-bullet"
-            type="button"
+          <Button
+            className="add-bullet"
             onClick={appendRow}
+            size="sm"
+            type="button"
+            variant="secondary"
           >
             <IconPlus size={14} aria-hidden="true" />
-            add location
-          </button>
+            Add location
+          </Button>
         </div>
       </Field>
     );
@@ -1111,6 +1120,7 @@ export function StructuredProfileEditor({
       <FieldLegend>Bullet standards</FieldLegend>
       <a
         className="configuration-help-link"
+        data-typography="control"
         href="https://jobctrl.dev/architecture/tailoring#inputs-to-tailoring"
         rel="noreferrer"
         target="_blank"
@@ -1262,14 +1272,14 @@ export function StructuredProfileEditor({
           "Seniority floors",
           TARGET_SENIORITY_GROUPS,
         )}
-        {delimitedListField("experience.target_functions", ROLE_AREA_LABEL, "add role area", {
+        {delimitedListField("experience.target_functions", ROLE_AREA_LABEL, "Add role area", {
           compact: true,
           placeholder: ROLE_AREA_PLACEHOLDER,
         })}
-        {delimitedListField("experience.target_specializations", "Specializations", "add specialization", {
+        {delimitedListField("experience.target_specializations", "Specializations", "Add specialization", {
           compact: true,
         })}
-        {delimitedListField("experience.target_role", "Target roles", "add role", { compact: true })}
+        {delimitedListField("experience.target_role", "Target roles", "Add role", { compact: true })}
         {targetLocationWorkModelField()}
       </FieldGroup>
     </section>
@@ -1455,15 +1465,16 @@ export function StructuredProfileEditor({
                               )
                             }
                           />
-                          <FieldLabel htmlFor={requiredEntryId}>must appear in final resume</FieldLabel>
+                          <FieldLabel htmlFor={requiredEntryId}>Must appear in final resume</FieldLabel>
                         </Field>
-                        <button
-                          className="tab"
-                          type="button"
+                        <Button
                           onClick={() => removeRepeatItem("resume.experience_entries", index)}
+                          size="sm"
+                          type="button"
+                          variant="outline"
                         >
-                          remove experience
-                        </button>
+                          Remove experience
+                        </Button>
                       </div>
                       <AdaptiveFieldGrid>
                         {dateRangeField(`resume.experience_entries.${index}.date_range`, "Date range")}
@@ -1509,34 +1520,37 @@ export function StructuredProfileEditor({
                                   )
                                 }
                               />
-                              <button
+                              <Button
                                 className="icon-button"
-                                type="button"
                                 aria-label={`Remove bullet ${bulletIndex + 1}`}
+                                size="icon"
                                 title="Remove bullet"
+                                type="button"
+                                variant="ghost"
                                 onClick={() => removeBullet(index, bulletIndex)}
                               >
                                 <IconTrash size={14} aria-hidden="true" />
-                              </button>
+                              </Button>
                             </Field>
                           );
                         })}
-                        <button className="tab add-bullet" type="button" onClick={() => addBullet(index)}>
+                        <Button className="add-bullet" onClick={() => addBullet(index)} size="sm" type="button" variant="secondary">
                           <IconPlus size={14} aria-hidden="true" />
-                          add bullet
-                        </button>
+                          Add bullet
+                        </Button>
                       </FieldGroup>
                     </FieldSet>
                   </Fragment>
                 );
               })}
-              <button
-                className="tab"
-                type="button"
+              <Button
                 onClick={() => addRepeatItem("resume.experience_entries")}
+                size="sm"
+                type="button"
+                variant="secondary"
               >
-                add experience
-              </button>
+                Add experience
+              </Button>
             </FieldGroup>
           </DisclosureSection>
 
@@ -1579,15 +1593,16 @@ export function StructuredProfileEditor({
                               )
                             }
                           />
-                          <FieldLabel htmlFor={requiredEntryId}>must appear in final resume</FieldLabel>
+                          <FieldLabel htmlFor={requiredEntryId}>Must appear in final resume</FieldLabel>
                         </Field>
-                        <button
-                          className="tab"
-                          type="button"
+                        <Button
                           onClick={() => removeRepeatItem("resume.education_entries", index)}
+                          size="sm"
+                          type="button"
+                          variant="outline"
                         >
-                          remove education
-                        </button>
+                          Remove education
+                        </Button>
                       </div>
                       <AdaptiveFieldGrid>
                         {monthField(`resume.education_entries.${index}.date`, "Completion month")}
@@ -1599,13 +1614,14 @@ export function StructuredProfileEditor({
                   </Fragment>
                 );
               })}
-              <button
-                className="tab"
-                type="button"
+              <Button
                 onClick={() => addRepeatItem("resume.education_entries")}
+                size="sm"
+                type="button"
+                variant="secondary"
               >
-                add education
-              </button>
+                Add education
+              </Button>
             </FieldGroup>
           </DisclosureSection>
 
@@ -1654,15 +1670,16 @@ export function StructuredProfileEditor({
                               )
                             }
                           />
-                          <FieldLabel htmlFor={requiredEntryId}>must appear in final resume</FieldLabel>
+                          <FieldLabel htmlFor={requiredEntryId}>Must appear in final resume</FieldLabel>
                         </Field>
-                        <button
-                          className="tab"
-                          type="button"
+                        <Button
                           onClick={() => removeRepeatItem("resume.skill_categories", index)}
+                          size="sm"
+                          type="button"
+                          variant="outline"
                         >
-                          remove skill category
-                        </button>
+                          Remove skill category
+                        </Button>
                       </div>
                       <AdaptiveFieldGrid>
                         <AdaptiveFieldSpan span="wide">
@@ -1707,34 +1724,37 @@ export function StructuredProfileEditor({
                                 />
                                 <FieldLabel htmlFor={requiredSkillId}>Required</FieldLabel>
                               </Field>
-                              <button
+                              <Button
                                 className="icon-button"
-                                type="button"
                                 aria-label={`Remove skill ${skillIndex + 1}`}
+                                size="icon"
                                 title="Remove skill"
+                                type="button"
+                                variant="ghost"
                                 onClick={() => removeSkill(index, skillIndex)}
                               >
                                 <IconTrash size={14} aria-hidden="true" />
-                              </button>
+                              </Button>
                             </Field>
                           );
                         })}
-                        <button className="tab add-bullet" type="button" onClick={() => addSkill(index)}>
+                        <Button className="add-bullet" onClick={() => addSkill(index)} size="sm" type="button" variant="secondary">
                           <IconPlus size={14} aria-hidden="true" />
-                          add skill
-                        </button>
+                          Add skill
+                        </Button>
                       </FieldGroup>
                     </FieldSet>
                   </Fragment>
                 );
               })}
-              <button
-                className="tab"
-                type="button"
+              <Button
                 onClick={() => addRepeatItem("resume.skill_categories")}
+                size="sm"
+                type="button"
+                variant="secondary"
               >
-                add skill category
-              </button>
+                Add skill category
+              </Button>
             </FieldGroup>
           </DisclosureSection>
 

@@ -110,7 +110,9 @@ export function RailNav({ className, onNavigate }: RailNavProps) {
           role="group"
           aria-label={group.label}
         >
-          <span className="side-rail__group-label">{group.label}</span>
+          <span className="side-rail__group-label" data-typography="label">
+            {group.label}
+          </span>
           {group.items.map(({ label, to, icon: NavIcon }) => (
             <Link
               key={to}
@@ -118,6 +120,7 @@ export function RailNav({ className, onNavigate }: RailNavProps) {
               className="side-rail__link"
               activeProps={{ className: "on" }}
               aria-label={label}
+              data-typography="control"
               title={label}
               onClick={onNavigate}
             >
@@ -147,7 +150,9 @@ export function LocalModeCard() {
   return (
     <div className="side-rail__footer">
       <span className="side-rail__status-dot" aria-hidden="true" />
-      <span className="side-rail__footer-text">{text}</span>
+      <span className="side-rail__footer-text" data-typography="metadata">
+        {text}
+      </span>
     </div>
   );
 }

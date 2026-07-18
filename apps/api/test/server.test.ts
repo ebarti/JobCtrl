@@ -2962,6 +2962,65 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("keeps a job's active apply-run cancellation target outside the bounded dashboard history", async () => {
+    const jobUrl = "https://example.com/jobs/ready";
+    const db = new Database(options.dbPath);
+    const insertApplyRun = db.prepare(
+      `INSERT INTO apply_run_projections (
+         run_id, job_id, job_title, job_employer, status, result, dry_run, started_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    // These rows legitimately occupy the dashboard's twelve most-recent slots
+    // but belong to other jobs. The in-flight target must remain cancellable
+    // from its own detail view.
+    for (let index = 0; index < 12; index += 1) {
+      insertApplyRun.run(
+        `newer-run-${index}`,
+        `https://example.com/jobs/newer-${index}`,
+        `Newer role ${index}`,
+        "ExampleCo",
+        "succeeded",
+        "applied",
+        0,
+        `2026-06-01T00:${String(index).padStart(2, "0")}:00+00:00`,
+      );
+    }
+    insertApplyRun.run(
+      "active-run-older",
+      jobUrl,
+      "Platform Engineer",
+      "ExampleCo",
+      "in_progress",
+      null,
+      0,
+      "2026-04-28T10:00:00+00:00",
+    );
+    db.close();
+
+    const app = buildApp(options);
+    try {
+      const dashboard = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(dashboard.statusCode, dashboard.body).toBe(200);
+      expect(dashboard.json().applyRuns).toHaveLength(12);
+      expect(
+        dashboard.json().applyRuns.some((run: { runId: string }) => run.runId === "active-run-older"),
+      ).toBe(false);
+
+      const detail = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${encodeURIComponent(jobUrl)}`,
+      });
+      expect(detail.statusCode, detail.body).toBe(200);
+      expect(detail.json().activeApplyRun).toMatchObject({
+        runId: "active-run-older",
+        status: "in_progress",
+        dryRun: false,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("labels apply readiness repairs from the failed preparation substage", async () => {
     const db = new Database(options.dbPath);
     const jobUrl = "https://example.com/jobs/tailor-failed";

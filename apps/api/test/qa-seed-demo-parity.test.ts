@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { QA_DEMO_SHARED_LIFECYCLE_STATES } from "@jobctrl/contracts";
 
+import { buildPipelineOperationsSnapshot } from "../src/pipeline-operations.js";
 import { createQaWorkspace, removeQaWorkspace, type QaWorkspace } from "./qa-seed.js";
 
 describe("QA seed / public demo semantic parity", () => {
@@ -27,6 +28,26 @@ describe("QA seed / public demo semantic parity", () => {
       );
 
       expect([...states]).toEqual(expect.arrayContaining([...QA_DEMO_SHARED_LIFECYCLE_STATES]));
+    } finally {
+      db.close();
+    }
+  });
+
+  it("seeds a complete pipeline recovery checkpoint for visual QA", () => {
+    workspace = createQaWorkspace();
+    const db = new Database(workspace.dbPath);
+    try {
+      const snapshot = buildPipelineOperationsSnapshot(db, {
+        configPath: workspace.configPath,
+        dbPath: workspace.dbPath,
+        now: new Date(),
+      });
+
+      expect(snapshot.projectionCoverage).toMatchObject({
+        membershipCount: 4,
+        status: "ready",
+        stepCount: 7,
+      });
     } finally {
       db.close();
     }

@@ -1,6 +1,12 @@
 import type { OutreachDraftKind } from "@jobctrl/contracts";
-import type { JSX } from "react";
+import { useId, type JSX } from "react";
 
+import {
+  getApiCapabilityAvailability,
+  LOCAL_INSTALL_GUIDE_URL,
+} from "../../../shared/lib/apiCapabilityAvailability.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { Button } from "../../../shared/ui/button.js";
 import { useGenerateDraftMutation } from "../hooks/useGenerateDraftMutation.js";
 
 export interface GenerateDraftButtonProps {
@@ -17,12 +23,22 @@ export function GenerateDraftButton({
   contactId,
   jobId,
   kind,
-  label = "generate draft",
+  label = "Generate draft",
 }: GenerateDraftButtonProps): JSX.Element {
+  const { featureFlags } = usePorts();
+  const availability = getApiCapabilityAvailability(
+    featureFlags,
+    "generateOutreachDraft",
+  );
+  const unavailableReasonId = useId();
   const mutation = useGenerateDraftMutation(contactId);
   const errorMessage = mutation.error instanceof Error ? mutation.error.message : "";
+  const blocked = mutation.isPending || !availability.available;
 
   const onGenerate = () => {
+    if (blocked) {
+      return;
+    }
     mutation.mutate({
       ...(jobId ? { jobId } : {}),
       ...(kind ? { kind } : {}),
@@ -31,9 +47,21 @@ export function GenerateDraftButton({
 
   return (
     <div className="generate-draft">
-      <button type="button" className="primary" disabled={mutation.isPending} onClick={onGenerate}>
-        {mutation.isPending ? "generating…" : label}
-      </button>
+      <Button
+        aria-describedby={availability.available ? undefined : unavailableReasonId}
+        type="button"
+        disabled={blocked}
+        onClick={onGenerate}
+      >
+        {mutation.isPending ? "Generating…" : label}
+      </Button>
+      {!availability.available ? (
+        <span className="meta" id={unavailableReasonId}>
+          Draft generation is available in the local app. This public demo does
+          not create messages or use personal contact information. {" "}
+          <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
+        </span>
+      ) : null}
       {errorMessage ? (
         <span role="alert" className="banner inline">
           {errorMessage}

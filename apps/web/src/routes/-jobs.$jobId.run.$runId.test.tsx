@@ -85,7 +85,7 @@ describe("<JobRunTimelineWorkspace>", () => {
         level: 1,
         name: "Apply run timeline",
       }),
-    ).toBeInTheDocument();
+    ).toHaveAttribute("data-typography", "page-title");
     expect(
       within(workspace).getByRole("link", { name: "Back to job details" }),
     ).toHaveAttribute("href", "/jobs/job-1");

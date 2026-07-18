@@ -32,12 +32,18 @@ import {
 } from "../../operations/hooks/useDiscoveryProductControlsQuery.js";
 import { Button } from "../../../shared/ui/button.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
+import { Checkbox } from "../../../shared/ui/checkbox.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import {
+  Field,
+  FieldLabel,
+} from "../../../shared/ui/field.js";
 import {
   FilterableDataGrid,
   type DataGridColumn,
   type DataGridFilterState,
 } from "../../../shared/ui/filterable-data-grid.js";
+import { Input } from "../../../shared/ui/input.js";
 import {
   Select,
   SelectContent,
@@ -46,7 +52,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../../shared/ui/select.js";
-import { StatusDot } from "../../../shared/ui/status-dot.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
+import { Textarea } from "../../../shared/ui/textarea.js";
 import {
   SourcePolitenessBadges,
   hasPolitenessOutcomes,
@@ -58,7 +65,6 @@ import {
   TabsList,
   TabsTrigger,
 } from "../../../shared/ui/tabs.js";
-import type { StatusDotState } from "../../../shared/ui/status-tokens.js";
 import {
   useDiscoveryFeedbackMutation,
   useDiscoveryQuarantineDecisionMutation,
@@ -77,7 +83,6 @@ type LocatorCandidate = SourceLocatorListResponse["candidates"][number];
 type RoleMatchSuggestion = RoleMatchFeedbackListResponse["suggestions"][number];
 type PreviewLead = DiscoveryPreviewResponse["leads"][number];
 type SourceMetricTone = "good" | "warn" | "bad" | "unknown";
-type SourceChipTone = "good" | "info" | "warn" | "bad" | "neutral";
 type DiscoveryControlsLayout = "grid" | "tabs";
 type SourceRegistryStateFilter = "all" | SourceRegistryEntrySummary["state"];
 
@@ -107,10 +112,21 @@ function pct(value: number | null): string {
   return value === null ? "n/a" : `${Math.round(value * 100)}%`;
 }
 
-function dotState(state: SourceRegistryEntrySummary["state"]): StatusDotState {
-  if (state === "disabled" || state === "quarantined") return "failed";
-  if (state === "experimental") return "running";
-  return "succeeded";
+function sourceStateTone(
+  state: SourceRegistryEntrySummary["state"],
+): "danger" | "info" | "muted" | "ok" | "warn" {
+  switch (state) {
+    case "active":
+      return "ok";
+    case "experimental":
+      return "info";
+    case "quarantined":
+      return "warn";
+    case "disabled":
+      return "muted";
+    default:
+      return "muted";
+  }
 }
 
 function label(value: string): string {
@@ -234,56 +250,6 @@ function sourceRegistryStats(sources: SourceRegistryEntrySummary[]) {
   );
 }
 
-function sourceKindTone(
-  kind: SourceRegistryEntrySummary["kind"],
-): SourceChipTone {
-  switch (kind) {
-    case "ats_api":
-    case "official_api":
-    case "licensed_feed":
-      return "good";
-    case "employer_careers_page":
-    case "niche_board":
-      return "info";
-    case "broad_board":
-    case "smart_extract":
-      return "warn";
-    case "user_mediated_capture":
-      return "neutral";
-  }
-}
-
-function sourcePriorityTone(
-  priority: SourceRegistryEntrySummary["priority"],
-): SourceChipTone {
-  switch (priority) {
-    case "canonical":
-    case "preferred":
-      return "good";
-    case "standard":
-      return "info";
-    case "fallback":
-    case "lead_generator":
-      return "warn";
-  }
-}
-
-function sourceRecommendationTone(
-  state: SourceRegistryEntrySummary["recommendedState"],
-): SourceChipTone {
-  switch (state) {
-    case "trusted":
-      return "good";
-    case "normal":
-      return "info";
-    case "experimental":
-      return "warn";
-    case "quarantined":
-    case "disabled":
-      return "bad";
-  }
-}
-
 function sourceMetricTone(
   value: number | null,
   direction: "higher" | "lower",
@@ -362,6 +328,7 @@ function SourceMetricText({
   return (
     <span
       className={`source-table-metric ${tone}`}
+      data-typography="strong-body"
       aria-label={`${metricLabel}: ${value}, ${sourceMetricStatus(tone)}`}
       title={`${metricLabel}: ${value}, ${sourceMetricStatus(tone)}`}
     >
@@ -527,9 +494,9 @@ function SourceRegistryPanel({
         rowHeader: true,
         render: (source) => (
           <span className="source-company-cell">
-            <b>{sourceCompanyName(source)}</b>
+            <b data-typography="strong-body">{sourceCompanyName(source)}</b>
             {source.displayName !== sourceCompanyName(source) ? (
-              <span>{source.displayName}</span>
+              <span data-typography="metadata">{source.displayName}</span>
             ) : null}
           </span>
         ),
@@ -542,7 +509,9 @@ function SourceRegistryPanel({
         id: "sourceId",
         label: "Source id",
         className: "mono",
-        render: (source) => source.sourceId,
+        render: (source) => (
+          <span data-typography="code">{source.sourceId}</span>
+        ),
         getSortValue: (source) => source.sourceId.toLowerCase(),
         getFilterValue: (source) => source.sourceId,
       },
@@ -550,7 +519,7 @@ function SourceRegistryPanel({
         id: "type",
         label: "Type",
         render: (source) => (
-          <span className={`source-table-tone ${sourceKindTone(source.kind)}`}>
+          <span className="source-table-category" data-typography="label">
             {sourceTypeLabel(source)}
           </span>
         ),
@@ -562,8 +531,9 @@ function SourceRegistryPanel({
         label: "State",
         render: (source) => (
           <span className="source-state-cell">
-            <StatusDot state={dotState(source.state)} />
-            {label(source.state)}
+            <StatusBadge tone={sourceStateTone(source.state)}>
+              {label(source.state)}
+            </StatusBadge>
           </span>
         ),
         getSortValue: (source) => label(source.state),
@@ -573,9 +543,7 @@ function SourceRegistryPanel({
         id: "priority",
         label: "Priority",
         render: (source) => (
-          <span
-            className={`source-table-tone ${sourcePriorityTone(source.priority)}`}
-          >
+          <span className="source-table-category" data-typography="label">
             {label(source.priority)}
           </span>
         ),
@@ -586,11 +554,7 @@ function SourceRegistryPanel({
         id: "recommendedState",
         label: "Recommendation",
         render: (source) => (
-          <span
-            className={`source-table-tone ${sourceRecommendationTone(
-              source.recommendedState,
-            )}`}
-          >
+          <span className="source-table-category" data-typography="label">
             {label(source.recommendedState)}
           </span>
         ),
@@ -708,6 +672,7 @@ function SourceRegistryPanel({
           ) : (
             <span
               className="source-table-metric unknown"
+              data-typography="metadata"
               aria-label="No crawl-access outcomes recorded"
             >
               —
@@ -810,24 +775,30 @@ function SourceRegistryPanel({
   return (
     <div className="discovery-control-panel">
       <div className="discovery-panel-head">
-        <h3>Source registry</h3>
-        <span className="meta">{sources.length} total</span>
+        <h3 data-typography="component-title">Source registry</h3>
+        <span className="meta" data-typography="metadata">
+          {sources.length} total
+        </span>
       </div>
       <div
         className="discovery-source-summary"
         aria-label="Source registry summary"
       >
         <span>
-          <strong>{stats.active}</strong> active
+          <strong data-typography="metric">{stats.active}</strong>{" "}
+          <span data-typography="metadata">active</span>
         </span>
         <span>
-          <strong>{stats.inactive}</strong> inactive
+          <strong data-typography="metric">{stats.inactive}</strong>{" "}
+          <span data-typography="metadata">inactive</span>
         </span>
         <span>
-          <strong>{stats.withObservedJobs}</strong> with leads
+          <strong data-typography="metric">{stats.withObservedJobs}</strong>{" "}
+          <span data-typography="metadata">with leads</span>
         </span>
         <span>
-          <strong>{stats.newJobs}</strong> new leads
+          <strong data-typography="metric">{stats.newJobs}</strong>{" "}
+          <span data-typography="metadata">new leads</span>
         </span>
       </div>
       <FilterableDataGrid
@@ -845,24 +816,26 @@ function SourceRegistryPanel({
         initialPageSize={25}
       />
       <form className="source-upsert-form" onSubmit={submit}>
-        <label className="field">
-          <span>Source id</span>
-          <input
+        <Field className="field">
+          <FieldLabel htmlFor="source-id">Source ID</FieldLabel>
+          <Input
+            id="source-id"
             value={sourceId}
             onChange={(event) => setSourceId(event.target.value)}
             required
           />
-        </label>
-        <label className="field">
-          <span>Name</span>
-          <input
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="source-name">Name</FieldLabel>
+          <Input
+            id="source-name"
             value={displayName}
             onChange={(event) => setDisplayName(event.target.value)}
             required
           />
-        </label>
-        <label className="field">
-          <span>Kind</span>
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="source-kind">Kind</FieldLabel>
           <Select
             items={SOURCE_KINDS.map((value) => ({
               label: label(value),
@@ -875,7 +848,7 @@ function SourceRegistryPanel({
               }
             }}
           >
-            <SelectTrigger aria-label="Kind" className="w-full">
+            <SelectTrigger id="source-kind" aria-label="Kind" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -888,16 +861,17 @@ function SourceRegistryPanel({
               </SelectGroup>
             </SelectContent>
           </Select>
-        </label>
-        <label className="field wide">
-          <span>Seed URL</span>
-          <input
+        </Field>
+        <Field className="field wide">
+          <FieldLabel htmlFor="source-seed-url">Seed URL</FieldLabel>
+          <Input
+            id="source-seed-url"
             type="url"
             value={seedUrl}
             onChange={(event) => setSeedUrl(event.target.value)}
             placeholder="https://example.com/careers"
           />
-        </label>
+        </Field>
         <Button
           type="submit"
           size="sm"
@@ -930,20 +904,22 @@ function SourcePreview({
   return (
     <div className="discovery-source-preview">
       <div className="discovery-panel-head compact">
-        <h3>Preview</h3>
-        <span className="meta">{sourceId}</span>
+        <h3 data-typography="component-title">Preview</h3>
+        <span className="meta" data-typography="metadata">{sourceId}</span>
       </div>
       <div className="rows compact">
         {leads.map((lead) => (
           <div className="discovery-preview-row" key={lead.candidateUrl}>
             <span className="title-stack">
-              <b>{lead.title || lead.candidateUrl}</b>
+              <b data-typography="strong-body">{lead.title || lead.candidateUrl}</b>
               <span>
                 {lead.company || "Unknown company"} ·{" "}
                 {lead.location || "Unknown location"} · confidence{" "}
                 {pct(lead.estimatedConfidence)}
               </span>
-              <span className="mono">{lead.candidateUrl}</span>
+              <span className="mono" data-typography="code">
+                {lead.candidateUrl}
+              </span>
             </span>
           </div>
         ))}
@@ -974,15 +950,17 @@ function SourceLocatorPanel({
   return (
     <div className="discovery-control-panel">
       <div className="discovery-panel-head">
-        <h3>Source locator</h3>
-        <span className="meta">{candidates.length} candidates</span>
+        <h3 data-typography="component-title">Source locator</h3>
+        <span className="meta" data-typography="metadata">
+          {candidates.length} candidates
+        </span>
       </div>
       <div className="rows compact">
         {candidates.map((candidate) => (
           <div className="discovery-review-row" key={candidate.candidateId}>
             <IconExternalLink size={16} aria-hidden="true" />
             <span className="title-stack">
-              <b>{candidate.candidateUrl}</b>
+              <b data-typography="strong-body">{candidate.candidateUrl}</b>
               <span>
                 {label(candidate.sourceKind)} · confidence{" "}
                 {pct(candidate.confidence)} ·{" "}
@@ -1083,15 +1061,17 @@ function QuarantinePanel({
   return (
     <div className="discovery-control-panel">
       <div className="discovery-panel-head">
-        <h3>Quarantine review</h3>
-        <span className="meta">{entries.length} pending</span>
+        <h3 data-typography="component-title">Quarantine review</h3>
+        <span className="meta" data-typography="metadata">
+          {entries.length} pending
+        </span>
       </div>
       <div className="rows compact">
         {entries.map((entry) => (
           <div className="discovery-review-row" key={entry.jobKey}>
             <IconAlertTriangle size={16} aria-hidden="true" />
             <span className="title-stack">
-              <b>{entry.title || entry.jobKey}</b>
+              <b data-typography="strong-body">{entry.title || entry.jobKey}</b>
               <span>
                 {entry.company || "Unknown company"} · {label(entry.reason)} ·
                 confidence{" "}
@@ -1185,8 +1165,8 @@ function RoleMatchFeedbackPanel({
   return (
     <div className="discovery-control-panel">
       <div className="discovery-panel-head">
-        <h3>Role matching</h3>
-        <span className="meta">
+        <h3 data-typography="component-title">Role matching</h3>
+        <span className="meta" data-typography="metadata">
           {pendingCount} pending · {suggestions.length} total
         </span>
       </div>
@@ -1198,7 +1178,9 @@ function RoleMatchFeedbackPanel({
           >
             <IconAlertTriangle size={16} aria-hidden="true" />
             <span className="title-stack">
-              <b>Exclude “{suggestion.titleDisplay}”</b>
+              <b data-typography="strong-body">
+                Exclude “{suggestion.titleDisplay}”
+              </b>
               <span>
                 {label(suggestion.status)} · {suggestion.sampleCount} low-score{" "}
                 {suggestion.sampleCount === 1 ? "example" : "examples"} ·{" "}
@@ -1206,7 +1188,7 @@ function RoleMatchFeedbackPanel({
               </span>
               <span>{suggestion.reason}</span>
               {suggestion.sourceIds.length ? (
-                <span className="mono">
+                <span className="mono" data-typography="code">
                   sources: {suggestion.sourceIds.join(", ")}
                 </span>
               ) : null}
@@ -1297,8 +1279,10 @@ function ManualCapturePanel({
   return (
     <div className="discovery-control-panel">
       <div className="discovery-panel-head">
-        <h3>Manual capture</h3>
-        <span className="meta">{items.length} pending</span>
+        <h3 data-typography="component-title">Manual capture</h3>
+        <span className="meta" data-typography="metadata">
+          {items.length} pending
+        </span>
       </div>
       <div className="rows compact">
         {items.map((item) => (
@@ -1368,17 +1352,21 @@ function ManualCaptureRow({
     <div className="discovery-review-row manual-capture-row">
       <IconExternalLink size={16} aria-hidden="true" />
       <span className="title-stack manual-capture-body">
-        <b>{item.sourceId ?? "Unassigned source"}</b>
+        <b data-typography="strong-body">{item.sourceId ?? "Unassigned source"}</b>
         <span>
           {manualActionLabel(item.reason)} ·{" "}
-          <span className="mono">{item.originatingUrl}</span>
+          <span className="mono" data-typography="code">
+            {item.originatingUrl}
+          </span>
         </span>
         <span className="manual-capture-reason">
           {manualActionDetail(item.reason)}
         </span>
         <form className="manual-capture-form" onSubmit={submit}>
-          <label className="field">
-            <span>Capture mode</span>
+          <Field className="field">
+            <FieldLabel htmlFor={`${item.itemId}-capture-mode`}>
+              Capture mode
+            </FieldLabel>
             <Select
               items={CAPTURE_MODES}
               value={captureMode}
@@ -1390,7 +1378,11 @@ function ManualCaptureRow({
                 }
               }}
             >
-              <SelectTrigger aria-label="Capture mode" className="w-full">
+              <SelectTrigger
+                id={`${item.itemId}-capture-mode`}
+                aria-label="Capture mode"
+                className="w-full"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1403,44 +1395,51 @@ function ManualCaptureRow({
                 </SelectGroup>
               </SelectContent>
             </Select>
-          </label>
-          <label className="field">
-            <span>{urlRequired ? "Captured URL" : "Source URL"}</span>
-            <input
+          </Field>
+          <Field className="field">
+            <FieldLabel htmlFor={`${item.itemId}-captured-url`}>
+              {urlRequired ? "Captured URL" : "Source URL"}
+            </FieldLabel>
+            <Input
+              id={`${item.itemId}-captured-url`}
               type="url"
               value={capturedUrl}
               onChange={(event) => setCapturedUrl(event.target.value)}
               required={urlRequired}
             />
-          </label>
+          </Field>
           {contentRequired ? (
-            <label className="field wide">
-              <span>{contentLabel}</span>
-              <textarea
+            <Field className="field wide">
+              <FieldLabel htmlFor={`${item.itemId}-captured-content`}>
+                {contentLabel}
+              </FieldLabel>
+              <Textarea
+                id={`${item.itemId}-captured-content`}
                 value={content}
                 onChange={(event) => setContent(event.target.value)}
                 required
                 rows={3}
               />
-            </label>
+            </Field>
           ) : null}
-          <label className="field wide">
-            <span>Note</span>
-            <input
+          <Field className="field wide">
+            <FieldLabel htmlFor={`${item.itemId}-capture-note`}>Note</FieldLabel>
+            <Input
+              id={`${item.itemId}-capture-note`}
               value={note}
               onChange={(event) => setNote(event.target.value)}
             />
-          </label>
-          <label className="checkline wide">
-            <input
-              type="checkbox"
+          </Field>
+          <Field className="checkline wide" orientation="horizontal">
+            <Checkbox
+              id={`${item.itemId}-manual-follow-up`}
               checked={futureManualActionRequired}
-              onChange={(event) =>
-                setFutureManualActionRequired(event.target.checked)
-              }
+              onCheckedChange={setFutureManualActionRequired}
             />
-            <span>Needs manual follow-up</span>
-          </label>
+            <FieldLabel htmlFor={`${item.itemId}-manual-follow-up`}>
+              Needs manual follow-up
+            </FieldLabel>
+          </Field>
           <Button
             type="submit"
             size="sm"

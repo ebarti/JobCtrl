@@ -13,11 +13,11 @@ const DIMENSION_LABELS: Record<AnalyticsDimension, string> = {
 };
 
 const DIMENSION_TONES: Record<AnalyticsDimension, OutcomeRateRow["badgeTone"]> = {
-  source: "info",
-  score_band: "ok",
-  fit_band: "warn",
+  source: "muted",
+  score_band: "muted",
+  fit_band: "muted",
   apply_mode: "muted",
-  template: "info",
+  template: "muted",
   policy: "muted",
 };
 

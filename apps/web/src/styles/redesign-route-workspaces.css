@@ -124,9 +124,10 @@
 .job-run-workspace__title h1 {
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: clamp(20px, 2vw, 27px);
-  line-height: 1.15;
-  letter-spacing: -0.025em;
+  font-size: var(--jh-type-page-title-size);
+  font-weight: var(--jh-type-page-title-weight);
+  line-height: var(--jh-type-page-title-line-height);
+  letter-spacing: normal;
   text-wrap: balance;
 }
 
@@ -142,6 +143,7 @@
 
 .job-detail-top-actions {
   align-self: stretch;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--jh-surface-gap);
   border: 0;
@@ -170,9 +172,12 @@
   min-width: 0;
 }
 
-.job-action-group:last-child,
-.job-detail-handoff-actions {
+.job-action-group:last-child {
   margin-left: auto;
+}
+
+.job-detail-handoff-actions {
+  flex: 0 0 auto;
 }
 
 .job-detail-workspace > .route-workspace__grid,
@@ -279,7 +284,10 @@
 
 .activity-detail-workspace__inspector h2 {
   margin: 0;
-  font-size: var(--jh-font-size-heading-sm);
+  font-size: var(--jh-type-section-title-size);
+  font-weight: var(--jh-type-section-title-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-section-title-line-height);
 }
 
 .activity-detail-workspace__payload {
@@ -293,7 +301,10 @@
   padding: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: var(--jh-font-size-code);
+  font-size: var(--jh-type-body-size);
+  font-weight: var(--jh-type-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-body-line-height);
 }
 
 .activity-detail-workspace__timeline-copy {
@@ -331,7 +342,10 @@
 
 .inspector-ledger__source,
 .inspector-ledger__status {
-  font-size: var(--jh-font-size-caption);
+  font-size: var(--jh-type-metadata-size);
+  font-weight: var(--jh-type-metadata-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-metadata-line-height);
 }
 
 @media (max-width: 1000px) {
@@ -365,8 +379,16 @@
     justify-content: flex-start;
   }
 
-  .job-action-group:last-child,
+  .job-detail-top-actions .action-panel,
   .job-detail-handoff-actions {
+    flex-basis: 100%;
+  }
+
+  .job-detail-handoff-actions {
+    order: -1;
+  }
+
+  .job-action-group:last-child {
     margin-left: 0;
   }
 }

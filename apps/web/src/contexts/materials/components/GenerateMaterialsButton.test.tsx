@@ -3,6 +3,7 @@ import { screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DemoFeatureFlagAdapter } from "../../../demo/ports.js";
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { GenerateMaterialsButton } from "./GenerateMaterialsButton.js";
@@ -33,6 +34,7 @@ describe("<GenerateMaterialsButton>", () => {
     const button = container.querySelector("button");
     expect(button).not.toBeDisabled();
     expect(button?.getAttribute("data-job-id")).toBe("job-42");
+    expect(button).toHaveAttribute("data-slot", "button");
   });
 
   it("dispatches per-job material generation after confirmation", async () => {
@@ -44,7 +46,7 @@ describe("<GenerateMaterialsButton>", () => {
       ports: buildTestPorts({ api: { generateMaterials } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "generate materials" }));
+    await user.click(screen.getByRole("button", { name: "Generate materials" }));
 
     await waitFor(() =>
       expect(generateMaterials).toHaveBeenCalledWith("job-1", {
@@ -64,13 +66,39 @@ describe("<GenerateMaterialsButton>", () => {
       ports: buildTestPorts({ api: { generateMaterials } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "generate materials" }));
+    await user.click(screen.getByRole("button", { name: "Generate materials" }));
 
     expect(generateMaterials).not.toHaveBeenCalled();
   });
 
   it("respects the disabled prop", () => {
     renderWithProviders(<GenerateMaterialsButton jobId="job-1" disabled />);
-    expect(screen.getByRole("button", { name: "generate materials" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Generate materials" })).toBeDisabled();
+  });
+
+  it("blocks unavailable demo generation before confirmation or dispatch", async () => {
+    const generateMaterials = vi.fn(async () => queued("job-1"));
+    const confirm = vi.fn(() => true);
+    Object.defineProperty(window, "confirm", {
+      configurable: true,
+      writable: true,
+      value: confirm,
+    });
+    const ports = buildTestPorts({ api: { generateMaterials } });
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+
+    renderWithProviders(<GenerateMaterialsButton jobId="job-1" />, { ports });
+
+    const button = screen.getByRole("button", { name: "Generate materials" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription(
+      /Material generation is available in the local app.*bundled materials remain available/i,
+    );
+    expect(screen.getByRole("link", { name: "Install JobCtrl" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/getting-started",
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    expect(generateMaterials).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,10 @@
 import type { OutreachFollowUp } from "@jobctrl/contracts";
-import { useState, type JSX } from "react";
+import { useId, useState, type JSX } from "react";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";
+import { Button } from "../../../shared/ui/button.js";
+import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import { useCompleteFollowUpMutation } from "../hooks/useCompleteFollowUpMutation.js";
 import { useDismissFollowUpMutation } from "../hooks/useDismissFollowUpMutation.js";
 import { useScheduleFollowUpMutation } from "../hooks/useScheduleFollowUpMutation.js";
@@ -27,6 +30,7 @@ export function FollowUpPanel({
   const schedule = useScheduleFollowUpMutation(threadId, contactId, jobId);
   const complete = useCompleteFollowUpMutation(threadId, contactId, jobId);
   const dismiss = useDismissFollowUpMutation(threadId, contactId, jobId);
+  const dueAtId = useId();
   const [dueAt, setDueAt] = useState(followUp?.dueAt?.slice(0, 10) ?? "");
 
   const isScheduled = followUp?.state === "scheduled";
@@ -49,22 +53,21 @@ export function FollowUpPanel({
             {followUp.basis ? <span className="muted"> · {followUp.basis}</span> : null}
           </p>
           <div className="form-actions">
-            <button
+            <Button
               type="button"
-              className="tab on"
               disabled={complete.isPending}
               onClick={() => complete.mutate()}
             >
-              {complete.isPending ? "updating…" : "mark done"}
-            </button>
-            <button
+              {complete.isPending ? "Updating…" : "Mark done"}
+            </Button>
+            <Button
               type="button"
-              className="tab"
+              variant="outline"
               disabled={dismiss.isPending}
               onClick={() => dismiss.mutate()}
             >
-              {dismiss.isPending ? "updating…" : "dismiss"}
-            </button>
+              {dismiss.isPending ? "Updating…" : "Dismiss"}
+            </Button>
           </div>
         </div>
       ) : (
@@ -72,26 +75,26 @@ export function FollowUpPanel({
           {followUp && followUp.state !== "none" ? (
             <p className="muted">Last follow-up {followUp.state}. Schedule a new reminder:</p>
           ) : null}
-          <label className="field compact">
-            <span>Remind me on</span>
-            <input
+          <Field className="field compact">
+            <FieldLabel htmlFor={dueAtId}>Remind me on</FieldLabel>
+            <Input
+              id={dueAtId}
               type="date"
               value={dueAt}
               onChange={(event) => setDueAt(event.target.value)}
             />
-          </label>
+          </Field>
           <div className="form-actions">
-            <button
+            <Button
               type="button"
-              className="tab on"
               disabled={schedule.isPending}
               onClick={() => {
                 const customDueAt = dueAt.trim();
                 schedule.mutate(customDueAt ? { dueAt: customDueAt } : {});
               }}
             >
-              {schedule.isPending ? "scheduling…" : "schedule follow-up"}
-            </button>
+              {schedule.isPending ? "Scheduling…" : "Schedule follow-up"}
+            </Button>
           </div>
         </div>
       )}

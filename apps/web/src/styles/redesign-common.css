@@ -31,7 +31,9 @@
 .page-head [data-slot="breadcrumb-list"] {
   flex-wrap: nowrap;
   gap: 6px;
-  font-size: var(--jh-font-size-body);
+  font-size: var(--jh-type-metadata-size);
+  font-weight: var(--jh-type-metadata-weight);
+  line-height: var(--jh-type-metadata-line-height);
 }
 
 .page-head [data-slot="breadcrumb-item"] {
@@ -40,17 +42,18 @@
 
 .page-head-section {
   color: var(--muted-foreground);
-  font-weight: 520;
+  font-weight: var(--jh-type-metadata-weight);
+  line-height: var(--jh-type-metadata-line-height);
   white-space: nowrap;
 }
 
 .page-head [data-slot="breadcrumb-page"] {
   overflow: hidden;
   color: var(--foreground);
-  font-size: inherit;
-  font-weight: 650;
+  font-size: var(--jh-type-metadata-size);
+  font-weight: var(--jh-type-metadata-weight);
   letter-spacing: normal;
-  line-height: var(--jh-line-height-body);
+  line-height: var(--jh-type-metadata-line-height);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -60,8 +63,10 @@
   max-width: 76ch;
   padding-left: 10px;
   border-left: 1px solid var(--border);
-  font-size: var(--jh-font-size-body-sm);
-  line-height: 1.4;
+  font-size: var(--jh-type-body-size);
+  font-weight: var(--jh-type-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-body-line-height);
 }
 
 .page-head-actions {
@@ -87,9 +92,10 @@
 }
 
 .card-hd h2 {
-  font-size: var(--jh-font-size-heading-sm);
-  font-weight: 650;
-  letter-spacing: -0.02em;
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-component-title-line-height);
 }
 
 .toolbar {
@@ -104,9 +110,9 @@
   border-radius: calc(var(--radius) * 0.8);
   padding: 7px 12px;
   color: var(--foreground);
-  font-size: var(--jh-font-size-body-sm);
-  font-weight: 600;
-  line-height: 1;
+  font-size: var(--jh-type-control-size);
+  font-weight: var(--jh-type-control-weight);
+  line-height: var(--jh-type-control-line-height);
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
@@ -191,16 +197,20 @@ input[type="radio"] {
 .field {
   gap: 7px;
   color: var(--foreground);
-  font-size: var(--jh-font-size-body-sm);
-  font-weight: 550;
+  font-size: var(--jh-type-label-size);
+  font-weight: var(--jh-type-label-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-label-line-height);
 }
 
 .field-hint,
 .field .meta,
 .field small {
   color: var(--muted-foreground);
-  font-weight: 400;
-  line-height: 1.45;
+  font-size: var(--jh-type-metadata-size);
+  font-weight: var(--jh-type-metadata-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-metadata-line-height);
 }
 
 .settings-tabs {
@@ -230,7 +240,10 @@ input[type="radio"] {
 }
 
 .section h3 {
-  letter-spacing: -0.015em;
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-component-title-line-height);
 }
 
 @media (max-width: 720px) {

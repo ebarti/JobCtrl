@@ -7,8 +7,18 @@ import { useForm } from "@tanstack/react-form";
 import { useEffect, useRef, useState } from "react";
 
 import { AutosaveUndoController } from "../../../shared/ui/autosave-undo-controller.js";
+import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
+import { Button } from "../../../shared/ui/button.js";
+import { Checkbox } from "../../../shared/ui/checkbox.js";
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldLabel,
+} from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import { useDiscoverySettingsQuery } from "../../operations/hooks/useDiscoverySettingsQuery.js";
 import { useUpdateDiscoverySettingsMutation } from "../hooks/useUpdateDiscoverySettingsMutation.js";
 
@@ -35,7 +45,11 @@ export function DiscoveryAutomationSettingsPanel() {
       description="Scoring threshold and supervised apply policy"
       title="Automation settings"
     >
-      {settingsQuery.error ? <div className="banner inline">{settingsQuery.error.message}</div> : null}
+      {settingsQuery.error ? (
+        <Alert className="inline" variant="destructive">
+          <AlertDescription>{settingsQuery.error.message}</AlertDescription>
+        </Alert>
+      ) : null}
       {settingsQuery.data ? (
         <DiscoveryAutomationSettingsForm initial={settingsQuery.data} />
       ) : (
@@ -70,9 +84,9 @@ export function DiscoveryAutomationSettingsForm({
       const response = await updateSettings.mutateAsync(value);
       if (JSON.stringify(formApi.state.values) === submittedValues) {
         formApi.reset(toFormValues(response));
-        setStatusMessage("automation settings saved in SQLite");
+        setStatusMessage("Automation settings saved in SQLite");
       } else {
-        setStatusMessage("saved; newer changes pending");
+        setStatusMessage("Saved; newer changes pending");
       }
     },
   });
@@ -99,7 +113,11 @@ export function DiscoveryAutomationSettingsForm({
         setStatusMessage("");
       }}
     >
-      {statusMessage ? <div className="status-line" role="status">{statusMessage}</div> : null}
+      {statusMessage ? (
+        <div className="status-line" data-typography="metadata" role="status">
+          {statusMessage}
+        </div>
+      ) : null}
       <form.Subscribe
         selector={(state) => ({
           isDirty: state.isDirty,
@@ -122,9 +140,12 @@ export function DiscoveryAutomationSettingsForm({
       </form.Subscribe>
       <form.Field name="minFitScore">
         {(field) => (
-          <label className="field">
-            <span>Minimum fit score</span>
-            <input
+          <Field className="field">
+            <FieldLabel htmlFor="discovery-minimum-fit-score">
+              Minimum fit score
+            </FieldLabel>
+            <Input
+              id="discovery-minimum-fit-score"
               type="number"
               min={0}
               max={10}
@@ -133,45 +154,45 @@ export function DiscoveryAutomationSettingsForm({
               onBlur={field.handleBlur}
               onChange={(event) => field.handleChange(Number(event.target.value))}
             />
-          </label>
+          </Field>
         )}
       </form.Field>
       <form.Field name="autoApply">
         {(field) => (
-          <>
-            <label className="field check">
-              <input
-                type="checkbox"
-                aria-describedby="discovery-auto-apply-help"
-                checked={field.state.value ?? false}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.checked)}
-              />
-              <span>Auto apply</span>
-            </label>
-            <small id="discovery-auto-apply-help" className="field-hint">
-              Keep one standing apply loop running for eligible prepared jobs.
-            </small>
-          </>
+          <Field className="field check" orientation="horizontal">
+            <Checkbox
+              aria-describedby="discovery-auto-apply-help"
+              checked={field.state.value ?? false}
+              id="discovery-auto-apply"
+              onCheckedChange={(checked) => field.handleChange(checked)}
+            />
+            <FieldContent>
+              <FieldLabel htmlFor="discovery-auto-apply">Auto apply</FieldLabel>
+              <FieldDescription id="discovery-auto-apply-help">
+                Keep one standing apply loop running for eligible prepared jobs.
+              </FieldDescription>
+            </FieldContent>
+          </Field>
         )}
       </form.Field>
       <form.Field name="applyApprovalRequired">
         {(field) => (
-          <>
-            <label className="field check">
-              <input
-                type="checkbox"
-                aria-describedby="discovery-apply-approval-help"
-                checked={field.state.value ?? true}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.checked)}
-              />
-              <span>Require approval before live submit</span>
-            </label>
-            <small id="discovery-apply-approval-help" className="field-hint">
-              Live submissions wait for Apply Review approval; dry-runs can still run.
-            </small>
-          </>
+          <Field className="field check" orientation="horizontal">
+            <Checkbox
+              aria-describedby="discovery-apply-approval-help"
+              checked={field.state.value ?? true}
+              id="discovery-apply-approval"
+              onCheckedChange={(checked) => field.handleChange(checked)}
+            />
+            <FieldContent>
+              <FieldLabel htmlFor="discovery-apply-approval">
+                Require approval before live submit
+              </FieldLabel>
+              <FieldDescription id="discovery-apply-approval-help">
+                Live submissions wait for Apply Review approval; dry-runs can still run.
+              </FieldDescription>
+            </FieldContent>
+          </Field>
         )}
       </form.Field>
       <form.Subscribe
@@ -185,10 +206,19 @@ export function DiscoveryAutomationSettingsForm({
             autoApply: Boolean(autoApply),
             applyApprovalRequired: applyApprovalRequired !== false,
           });
+          if (summary.warning) {
+            return (
+              <Alert variant="warning">
+                <AlertDescription>{summary.text}</AlertDescription>
+              </Alert>
+            );
+          }
           return (
             <div
-              className={`status-line ${summary.warning ? "warning" : "info"}`}
-              role={summary.warning ? "alert" : "status"}
+              className="status-line info"
+              data-typography="body"
+              role="status"
+              aria-label="Automation policy summary"
             >
               {summary.text}
             </div>
@@ -203,17 +233,33 @@ export function DiscoveryAutomationSettingsForm({
         })}
       >
         {({ canSubmit, isSubmitting, isDirty }) => (
-          <div className="form-actions">
-            <button className="tab on" type="submit" disabled={!canSubmit || !isDirty || isSubmitting}>
-              {isSubmitting ? "saving" : "save automation settings"}
-            </button>
-            <button className="tab" type="reset" disabled={!isDirty || isSubmitting}>
-              discard changes
-            </button>
+          <div className="form-actions" data-state={isDirty ? "dirty" : "saved"}>
+            <span data-typography="metadata" role="status">
+              {isDirty ? "Unsaved changes" : "No unsaved changes"}
+            </span>
+            <Button
+              type="submit"
+              disabled={!canSubmit || !isDirty || isSubmitting}
+              title={!isDirty ? "No unsaved changes" : undefined}
+            >
+              {isSubmitting ? "Saving changes" : "Save changes"}
+            </Button>
+            <Button
+              type="reset"
+              variant="secondary"
+              disabled={!isDirty || isSubmitting}
+              title={!isDirty ? "No unsaved changes" : undefined}
+            >
+              Discard changes
+            </Button>
           </div>
         )}
       </form.Subscribe>
-      {updateSettings.error ? <div className="banner inline" role="alert">{updateSettings.error.message}</div> : null}
+      {updateSettings.error ? (
+        <Alert className="inline" variant="destructive">
+          <AlertDescription>{updateSettings.error.message}</AlertDescription>
+        </Alert>
+      ) : null}
     </form>
   );
 }

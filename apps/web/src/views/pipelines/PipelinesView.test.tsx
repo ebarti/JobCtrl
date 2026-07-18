@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { DemoFeatureFlagAdapter } from "../../demo/ports.js";
 import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
 import { renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
@@ -34,6 +35,27 @@ async function renderPipelineOperations(snapshot: PipelineOperationsSnapshot) {
 
   await screen.findByRole("heading", { name: "Live pipeline" });
   return { ...view, pipelineOperations };
+}
+
+function getLivePipelineMetrics() {
+  const metrics = screen.getByLabelText("Live pipeline metrics");
+  expect(metrics.tagName).toBe("SECTION");
+  return metrics;
+}
+
+function getLivePipelineMetric(label: string) {
+  const labelElement = within(getLivePipelineMetrics()).getByText(label, {
+    selector: 'p[data-typography="label"]',
+  });
+  const metric = labelElement.closest<HTMLElement>(".pipeline-overview-fact");
+  if (!metric) throw new Error(`Expected ${label} pipeline metric.`);
+  expect(
+    metric.querySelector('p[data-typography="metric"]'),
+  ).toBeInTheDocument();
+  expect(
+    metric.querySelector('p[data-typography="metadata"]'),
+  ).toBeInTheDocument();
+  return metric;
 }
 
 describe("PipelinesView", () => {
@@ -73,15 +95,15 @@ describe("PipelinesView", () => {
     expect(within(tools).getByLabelText("Limit")).toBeInTheDocument();
     expect(within(tools).getByLabelText("Internal concurrency")).toBeInTheDocument();
     expect(within(tools).getByLabelText("Source")).toBeInTheDocument();
-    expect(within(tools).getByLabelText("Dry run")).toBeChecked();
+    expect(within(tools).getByRole("checkbox", { name: "Dry run" })).toBeChecked();
 
     await user.click(within(tools).getByRole("tab", { name: "Apply" }));
 
     expect(within(tools).getByLabelText("Minimum score")).toBeInTheDocument();
     expect(within(tools).getByLabelText("Internal concurrency")).toBeInTheDocument();
     expect(within(tools).getByLabelText("Apply model")).toBeInTheDocument();
-    expect(within(tools).getByLabelText("Headless browser")).toBeInTheDocument();
-    expect(within(tools).getByLabelText("Continuous")).toBeInTheDocument();
+    expect(within(tools).getByRole("checkbox", { name: "Headless browser" })).toBeInTheDocument();
+    expect(within(tools).getByRole("checkbox", { name: "Continuous" })).toBeInTheDocument();
     expect(within(tools).queryByLabelText("Source")).not.toBeInTheDocument();
   });
 
@@ -126,6 +148,51 @@ describe("PipelinesView", () => {
     expect(screen.getAllByRole("table")).toHaveLength(2);
   });
 
+  it("uses one flat metric strip and a repeatable, text-labelled stage grammar", async () => {
+    await renderPipelineOperations(pipelinesDiscoveringSnapshot);
+
+    const metrics = getLivePipelineMetrics();
+    expect(metrics.querySelectorAll(".pipeline-overview-fact")).toHaveLength(4);
+    expect(within(metrics).queryAllByRole("region")).toHaveLength(0);
+    expect(metrics.querySelector("[data-slot='card']")).not.toBeInTheDocument();
+
+    const planned = screen.getByRole("region", { name: "Plan sources stage" });
+    const crawling = screen.getByRole("region", { name: "Crawl sources stage" });
+    const reconciling = screen.getByRole("region", { name: "Reconciliation stage" });
+
+    expect(planned).toHaveAttribute("data-stage-status", "completed");
+    expect(within(planned).getByText("Completed")).toHaveAttribute(
+      "data-status-tone",
+      "ok",
+    );
+    expect(crawling).toHaveAttribute("data-stage-status", "processing");
+    expect(within(crawling).getByText("In progress")).toHaveAttribute(
+      "data-status-tone",
+      "info",
+    );
+    expect(reconciling).toHaveAttribute("data-stage-status", "pending");
+    expect(within(reconciling).getByText("Waiting to start")).toHaveAttribute(
+      "data-status-tone",
+      "muted",
+    );
+  });
+
+  it("makes blocked stages explicit without relying on color alone", async () => {
+    await renderPipelineOperations(pipelinesMixedFailureSnapshot);
+
+    const crawl = screen.getByRole("region", { name: "Crawl sources stage" });
+    expect(crawl).toHaveAttribute("data-stage-status", "blocked");
+    expect(within(crawl).getByText("Attention required")).toHaveAttribute(
+      "data-status-tone",
+      "warn",
+    );
+    expect(
+      within(crawl).getByText("Attention required").querySelector(
+        "[data-status-icon='true']",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("keeps terminal outcomes honest and exposes every exact stage-state count", async () => {
     const user = userEvent.setup();
     await renderPipelineOperations(pipelinesMixedFailureSnapshot);
@@ -157,16 +224,16 @@ describe("PipelinesView", () => {
   it("makes shared worker capacity and active runtime work immediately legible", async () => {
     await renderPipelineOperations(pipelinesMultiWorkerCapacitySnapshot);
 
-    expect(screen.getByRole("region", { name: "Workers online" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Workers online")).toHaveTextContent(
       "Workers online3",
     );
-    expect(
-      screen.getByRole("region", { name: "Worker slots in use" }),
-    ).toHaveTextContent("Worker slots in use9 of 12");
-    expect(screen.getByRole("region", { name: "Active work" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent(
+      "Worker slots in use9 of 12",
+    );
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent(
       "Active work9Crawl sources 2 · Score 7",
     );
-    expect(screen.getByRole("region", { name: "Queue backlog" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Queue backlog")).toHaveTextContent(
       "Queue backlog2 queuedOldest queued task 18 sec",
     );
     expect(screen.queryByText(/Shared pool ·/)).not.toBeInTheDocument();
@@ -188,16 +255,16 @@ describe("PipelinesView", () => {
     expect(summary).toHaveTextContent("Overall ETANo work remaining");
     expect(summary).toHaveTextContent("TelemetryFresh");
 
-    expect(screen.getByRole("region", { name: "Workers online" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Workers online")).toHaveTextContent(
       "Workers online1",
     );
-    expect(
-      screen.getByRole("region", { name: "Worker slots in use" }),
-    ).toHaveTextContent("Worker slots in use0 of 4");
-    expect(screen.getByRole("region", { name: "Active work" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent(
+      "Worker slots in use0 of 4",
+    );
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent(
       "Active workNo active workNo active stages",
     );
-    expect(screen.getByRole("region", { name: "Queue backlog" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Queue backlog")).toHaveTextContent(
       "Queue backlog0 queuedOldest queued task 0 sec",
     );
 
@@ -237,16 +304,16 @@ describe("PipelinesView", () => {
     expect(summary).toHaveTextContent("Overall ETARestoring history");
     expect(summary).toHaveTextContent("TelemetryFresh");
 
-    expect(screen.getByRole("region", { name: "Workers online" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Workers online")).toHaveTextContent(
       "Workers online1",
     );
-    expect(
-      screen.getByRole("region", { name: "Worker slots in use" }),
-    ).toHaveTextContent("Worker slots in use4 of 4");
-    expect(screen.getByRole("region", { name: "Active work" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Worker slots in use")).toHaveTextContent(
+      "Worker slots in use4 of 4",
+    );
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent(
       "Active work4Crawl sources 1 · Tailor 3",
     );
-    expect(screen.getByRole("region", { name: "Queue backlog" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Queue backlog")).toHaveTextContent(
       "Queue backlog41 queuedOldest queued task 2 min",
     );
 
@@ -303,13 +370,13 @@ describe("PipelinesView", () => {
     expect(summary).toHaveTextContent("Overall ETARepair retry scheduled");
     expect(summary).toHaveTextContent("TelemetryFresh");
 
-    expect(screen.getByRole("region", { name: "Workers online" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Workers online")).toHaveTextContent(
       "Workers online1",
     );
-    expect(screen.getByRole("region", { name: "Queue backlog" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Queue backlog")).toHaveTextContent(
       "Queue backlog41 queuedOldest queued task 2 min",
     );
-    expect(screen.getByRole("region", { name: "Active work" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent(
       "Active work4Crawl sources 1 · Tailor 3",
     );
     expect(screen.getByRole("region", { name: "Worker capacity facts" })).toHaveTextContent(
@@ -411,12 +478,10 @@ describe("PipelinesView", () => {
       screen.queryByRole("group", { name: "Pipeline action tools" }),
     ).not.toBeInTheDocument();
 
-    expect(screen.getByRole("region", { name: "Workers online" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("region", { name: "Worker slots in use" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Active work" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Queue backlog" })).toBeInTheDocument();
+    expect(getLivePipelineMetric("Workers online")).toBeInTheDocument();
+    expect(getLivePipelineMetric("Worker slots in use")).toBeInTheDocument();
+    expect(getLivePipelineMetric("Active work")).toBeInTheDocument();
+    expect(getLivePipelineMetric("Queue backlog")).toBeInTheDocument();
     const technicalDetails = screen.getByRole("button", {
       name: /Technical execution details/i,
     });
@@ -450,13 +515,13 @@ describe("PipelinesView", () => {
       screen.queryByRole("button", { name: /Source families and reconciliation/i }),
     ).not.toBeInTheDocument();
 
-    expect(screen.getByRole("region", { name: "Workers online" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Workers online")).toHaveTextContent(
       "Workers online1",
     );
-    expect(screen.getByRole("region", { name: "Active work" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent(
       "Active work4Crawl sources 1 · Tailor 3",
     );
-    expect(screen.getByRole("region", { name: "Queue backlog" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Queue backlog")).toHaveTextContent(
       "Queue backlog41 queuedOldest queued task 2 min",
     );
   });
@@ -540,7 +605,7 @@ describe("PipelinesView", () => {
     );
     expect(await within(tools).findByRole("button", { name: "Run Discover" })).toBeEnabled();
     expect(alert).not.toHaveTextContent("reconciled_not_found");
-    expect(screen.getByRole("region", { name: "Active work" })).toHaveTextContent(
+    expect(getLivePipelineMetric("Active work")).toHaveTextContent(
       "No active work",
     );
     expect(screen.queryByRole("button", { name: "Stop discovery" })).not.toBeInTheDocument();
@@ -599,6 +664,12 @@ describe("PipelinesView", () => {
     expect(alert).toHaveTextContent("exhausted their automatic retries");
     expect(alert).toHaveTextContent("exact stage outcomes");
     expect(alert).not.toHaveTextContent("source_retry_exhausted");
+
+    const sourceStatus = screen.getByText("2/3 succeeded · 1 needs attention", {
+      selector: '[data-slot="status-badge"]',
+    });
+    expect(sourceStatus).toHaveAttribute("data-status-tone", "warn");
+    expect(sourceStatus.querySelector("[data-status-icon='true']")).toBeInTheDocument();
 
     const restart = within(alert).getByRole("link", {
       name: "Set up a new Discover run",
@@ -810,6 +881,40 @@ describe("PipelinesView", () => {
     expect(operationsAlert).toHaveTextContent("Operations snapshot failed.");
     const tools = screen.getByRole("group", { name: "Pipeline action tools" });
     expect(within(tools).getByRole("button", { name: "Run Discover" })).toBeEnabled();
+  });
+
+  it("replaces raw demo capability errors with a disabled control and supported path", async () => {
+    const pipelineOperations = vi.fn();
+    const runPipelineStages = vi.fn();
+    const ports = buildTestPorts({
+      api: { pipelineOperations, runPipelineStages },
+    });
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+    renderWithProviders(<PipelinesView />, { ports });
+
+    const title = await screen.findByText(
+      "Live pipeline controls require the local app",
+    );
+    const alert = title.closest<HTMLElement>("[role='alert']");
+    if (!alert) throw new Error("Expected demo capability alert.");
+    expect(alert).toHaveTextContent(
+      "The public demo does not start worker-backed pipelines",
+    );
+    expect(alert).not.toHaveTextContent("Demo capability pipelineOperations");
+    expect(within(alert).getByRole("link", { name: "Review demo runs" })).toHaveAttribute(
+      "href",
+      "/runs",
+    );
+    expect(within(alert).getByRole("link", { name: "Install JobCtrl" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/getting-started",
+    );
+    const tools = screen.getByRole("group", { name: "Pipeline action tools" });
+    expect(
+      within(tools).getByRole("button", { name: "Run in local app" }),
+    ).toBeDisabled();
+    expect(pipelineOperations).not.toHaveBeenCalled();
+    expect(runPipelineStages).not.toHaveBeenCalled();
   });
 
   it("does not show secondary discovery navigation inside pipeline actions", async () => {

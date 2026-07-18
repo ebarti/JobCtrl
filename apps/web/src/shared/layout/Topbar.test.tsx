@@ -110,13 +110,27 @@ describe("<Topbar>", () => {
 
     const density = screen.getByRole("group", { name: "Row density" });
     expect(density).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "regular" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Regular" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    expect(screen.getByRole("button", { name: "compact" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "comfy" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compact" })).toHaveAttribute(
+      "data-typography",
+      "control",
+    );
+    expect(
+      screen.getByRole("button", { name: "Comfortable" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Copyright © 2026 Eloi Barti")).toBeInTheDocument();
+
+    const navigationButton = screen.getByRole("button", {
+      name: "Open navigation",
+    });
+    expect(navigationButton).toHaveClass("[&>svg]:size-4");
+    expect(navigationButton.querySelector("svg")).toHaveClass("size-4");
+    expect(document.querySelector(".topbar__search-icon")).toHaveClass(
+      "size-4",
+    );
   });
 
   it("opens the responsive navigation sheet with the grouped nav links", async () => {
@@ -180,10 +194,10 @@ describe("<Topbar>", () => {
   it("updates the persisted density store from the row density control", async () => {
     const user = userEvent.setup();
     renderTopbar();
-    await user.click(await screen.findByRole("button", { name: "compact" }));
+    await user.click(await screen.findByRole("button", { name: "Compact" }));
     expect(useUiPreferencesStore.getState().density).toBe("compact");
 
-    await user.click(screen.getByRole("button", { name: "comfy" }));
+    await user.click(screen.getByRole("button", { name: "Comfortable" }));
     expect(useUiPreferencesStore.getState().density).toBe("comfy");
   });
 
@@ -196,8 +210,12 @@ describe("<Topbar>", () => {
       return element;
     });
 
-    for (const density of ["compact", "comfy", "regular"] as const) {
-      const control = screen.getByRole("button", { name: density });
+    for (const [density, label] of [
+      ["compact", "Compact"],
+      ["comfy", "Comfortable"],
+      ["regular", "Regular"],
+    ] as const) {
+      const control = screen.getByRole("button", { name: label });
       await user.click(control);
 
       await waitFor(() => {

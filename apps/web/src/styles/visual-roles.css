@@ -1,0 +1,418 @@
+/*
+ * Canonical visual-role layer. It is imported after route styles so shared
+ * primitives resolve to one semantic type system while route migration is in
+ * progress. Route code may compose these roles but must not redefine them.
+ */
+
+[data-typography] {
+  font-family: var(--jh-font-sans) !important;
+  letter-spacing: normal !important;
+  text-transform: none !important;
+}
+
+[data-typography="page-title"] {
+  font-family: var(--jh-font-heading) !important;
+  font-size: var(--jh-type-page-title-size) !important;
+  font-weight: var(--jh-type-page-title-weight) !important;
+  line-height: var(--jh-type-page-title-line-height) !important;
+}
+
+[data-typography="section-title"] {
+  font-family: var(--jh-font-heading) !important;
+  font-size: var(--jh-type-section-title-size) !important;
+  font-weight: var(--jh-type-section-title-weight) !important;
+  line-height: var(--jh-type-section-title-line-height) !important;
+}
+
+[data-typography="component-title"] {
+  font-family: var(--jh-font-heading) !important;
+  font-size: var(--jh-type-component-title-size) !important;
+  font-weight: var(--jh-type-component-title-weight) !important;
+  line-height: var(--jh-type-component-title-line-height) !important;
+}
+
+[data-typography="body"] {
+  font-size: var(--jh-type-body-size) !important;
+  font-weight: var(--jh-type-body-weight) !important;
+  line-height: var(--jh-type-body-line-height) !important;
+}
+
+[data-typography="strong-body"] {
+  font-size: var(--jh-type-strong-body-size) !important;
+  font-weight: var(--jh-type-strong-body-weight) !important;
+  line-height: var(--jh-type-strong-body-line-height) !important;
+}
+
+[data-typography="control"] {
+  font-size: var(--jh-type-control-size) !important;
+  font-weight: var(--jh-type-control-weight) !important;
+  line-height: var(--jh-type-control-line-height) !important;
+}
+
+[data-typography="label"],
+[data-typography="status"],
+[data-typography="table-header"] {
+  font-size: var(--jh-type-label-size) !important;
+  font-weight: var(--jh-type-label-weight) !important;
+  line-height: var(--jh-type-label-line-height) !important;
+}
+
+[data-typography="metadata"] {
+  font-size: var(--jh-type-metadata-size) !important;
+  font-weight: var(--jh-type-metadata-weight) !important;
+  line-height: var(--jh-type-metadata-line-height) !important;
+}
+
+[data-typography="metric"] {
+  font-family: var(--jh-font-heading) !important;
+  font-size: var(--jh-type-metric-size) !important;
+  font-weight: var(--jh-type-metric-weight) !important;
+  line-height: var(--jh-type-metric-line-height) !important;
+}
+
+[data-typography="code"] {
+  font-family: var(--jh-font-mono) !important;
+  font-size: var(--jh-type-body-size) !important;
+  font-weight: var(--jh-type-body-weight) !important;
+  line-height: var(--jh-type-body-line-height) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(.app-shell, .app-shell *, .app-shell *::before, .app-shell *::after) {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+[data-slot="command-group"] [cmdk-group-heading] {
+  font-size: var(--jh-type-label-size) !important;
+  font-weight: var(--jh-type-label-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-label-line-height) !important;
+  text-transform: none !important;
+}
+
+/* A page heading is the visual focal point; breadcrumbs remain context. */
+.page-head-text {
+  display: flex !important;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.page-head [data-slot="page-head-title"] {
+  display: block;
+  margin: 0;
+}
+
+.page-head [data-slot="breadcrumb"],
+.page-head [data-slot="page-head-subtitle"] {
+  min-width: 0;
+}
+
+.page-head [data-slot="breadcrumb-list"],
+.page-head [data-slot="page-head-subtitle"] {
+  font-size: var(--jh-type-metadata-size) !important;
+  font-weight: var(--jh-type-metadata-weight) !important;
+  line-height: var(--jh-type-metadata-line-height) !important;
+}
+
+.page-head [data-slot="breadcrumb-page"],
+.page-head [data-slot="page-head-eyebrow"] {
+  font: inherit !important;
+}
+
+/* Disabled is a state, never an emphasized action color. */
+[data-slot="button"]:is(:disabled, [aria-disabled="true"]),
+[data-slot="input"]:disabled,
+[data-slot="textarea"]:disabled,
+[data-slot="select-trigger"]:is(:disabled, [aria-disabled="true"]) {
+  border-color: var(--disabled-border) !important;
+  background: var(--disabled-background) !important;
+  box-shadow: none !important;
+  color: var(--disabled-foreground) !important;
+  cursor: not-allowed;
+  opacity: 1 !important;
+}
+
+/* Status labels are concise semantic state; categories use a neutral badge. */
+[data-slot="badge"][data-variant="category"] {
+  border-color: var(--border);
+  background: var(--category-muted);
+  color: var(--category-foreground);
+}
+
+[data-slot="status-badge"][data-status-tone="ok"] {
+  color: var(--success-text) !important;
+}
+
+[data-slot="status-badge"][data-status-tone="warn"] {
+  color: var(--warning-text) !important;
+}
+
+[data-slot="status-badge"][data-status-tone="danger"] {
+  color: var(--destructive-text) !important;
+}
+
+[data-slot="status-badge"][data-status-tone="info"] {
+  color: var(--status-info-text) !important;
+}
+
+/* Alert emphasis is carried by its border, icon, and short title. Body copy
+ * stays in normal foreground color so warnings remain readable. */
+[data-slot="alert"] {
+  --jh-alert-accent: var(--foreground);
+  --jh-alert-surface: var(--card);
+  border-color: var(--border);
+  background: var(--jh-alert-surface);
+  color: var(--foreground);
+}
+
+[data-slot="alert"][data-variant="info"] {
+  --jh-alert-accent: var(--status-info-text);
+  --jh-alert-surface: var(--status-info-muted);
+  border-color: color-mix(in oklch, var(--status-info) 30%, var(--border));
+}
+
+[data-slot="alert"][data-variant="success"] {
+  --jh-alert-accent: var(--success-text);
+  --jh-alert-surface: var(--success-muted);
+  border-color: color-mix(in oklch, var(--success) 30%, var(--border));
+}
+
+[data-slot="alert"][data-variant="warning"] {
+  --jh-alert-accent: var(--warning-text);
+  --jh-alert-surface: var(--warning-muted);
+  border-color: color-mix(in oklch, var(--warning) 30%, var(--border));
+}
+
+[data-slot="alert"][data-variant="destructive"] {
+  --jh-alert-accent: var(--destructive-text);
+  --jh-alert-surface: var(--destructive-muted);
+  border-color: color-mix(in oklch, var(--destructive) 30%, var(--border));
+}
+
+[data-slot="alert"] > svg,
+[data-slot="alert"] [data-slot="alert-title"] {
+  color: var(--jh-alert-accent) !important;
+}
+
+[data-slot="alert"] [data-slot="alert-description"] {
+  color: var(--foreground) !important;
+}
+
+/* The grid exposes icon-sized controls; their hit areas are never icon-sized. */
+.filterable-data-grid :is(
+  [data-grid-control],
+  .data-grid-column-filter-button,
+  .data-grid-column-resizer,
+  .data-grid-column-reorder-handle,
+  .data-grid-sort-button
+) {
+  min-inline-size: var(--jh-target-min-size);
+  min-block-size: var(--jh-target-min-size);
+}
+
+/*
+ * Legacy normalization bridge.
+ *
+ * The application still contains route-era semantic HTML and utility classes.
+ * This bridge maps those existing semantics onto the same canonical roles; it
+ * does not introduce component-specific type values. Explicit data-typography
+ * roles remain the preferred contract and always take precedence.
+ */
+:where(.app-shell) h1:not([data-typography]):not(:where(.resume-plate-document *)) {
+  font-family: var(--jh-font-heading) !important;
+  font-size: var(--jh-type-page-title-size) !important;
+  font-weight: var(--jh-type-page-title-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-page-title-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell) h2:not([data-typography]):not(:where(.resume-plate-document *)) {
+  font-family: var(--jh-font-heading) !important;
+  font-size: var(--jh-type-section-title-size) !important;
+  font-weight: var(--jh-type-section-title-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-section-title-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell)
+  :is(h3, h4, h5, h6):not([data-typography]):not(:where(.resume-plate-document *)) {
+  font-family: var(--jh-font-heading) !important;
+  font-size: var(--jh-type-component-title-size) !important;
+  font-weight: var(--jh-type-component-title-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-component-title-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell)
+  :is(p, blockquote, dd):not([data-typography]):not(:where(.resume-plate-document *)),
+:where(.app-shell)
+  :is(input, textarea, select):not([data-typography]):not(:where(.resume-plate-document *)),
+:where(.app-shell)
+  .leading-relaxed:not([data-typography]):not(:where(.resume-plate-document *)) {
+  font-size: var(--jh-type-body-size) !important;
+  font-weight: var(--jh-type-body-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-body-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell)
+  :is(strong, b):not([data-typography]):not(:where(.resume-plate-document *)),
+:where(.app-shell)
+  .font-medium:not([data-typography]):not(:where(.resume-plate-document *)) {
+  font-size: var(--jh-type-strong-body-size) !important;
+  font-weight: var(--jh-type-strong-body-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-strong-body-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell)
+  :is(label, legend, dt):not([data-typography]):not(:where(.resume-plate-document *)),
+:where(.app-shell)
+  .text-xs.font-medium:not([data-typography]):not(:where(.resume-plate-document *)) {
+  font-size: var(--jh-type-label-size) !important;
+  font-weight: var(--jh-type-label-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-label-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell)
+  :is(small, time):not([data-typography]):not(:where(.resume-plate-document *)),
+:where(.app-shell) .meta:not([data-typography]):not(:where(.resume-plate-document *)) {
+  font-size: var(--jh-type-metadata-size) !important;
+  font-weight: var(--jh-type-metadata-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-metadata-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell)
+  :is(button, [role="button"], .jh-button):not([data-typography]):not(
+    :where(.resume-plate-document *)
+  ) {
+  font-size: var(--jh-type-control-size) !important;
+  font-weight: var(--jh-type-control-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-control-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell)
+  :is(button, [role="button"], .jh-button):not([data-typography]):not(
+    :where(.resume-plate-document *)
+  )
+  > span:not([data-typography]) {
+  font: inherit !important;
+  letter-spacing: inherit !important;
+  line-height: inherit !important;
+  text-transform: inherit !important;
+}
+
+:where(.app-shell)
+  label:not([data-typography]):not(:where(.resume-plate-document *))
+  > span:not([data-typography]),
+:where(.app-shell)
+  [data-slot="card-title"]
+  > :is(h1, h2, h3, h4, h5, h6):not([data-typography]):not(
+    :where(.resume-plate-document *)
+  ) {
+  font: inherit !important;
+  letter-spacing: inherit !important;
+  line-height: inherit !important;
+  text-transform: inherit !important;
+}
+
+:where(.app-shell) :is(.tag, .stage-pill):not([data-typography]) {
+  font-size: var(--jh-type-label-size) !important;
+  font-weight: var(--jh-type-label-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-label-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell) .configuration-section__title {
+  font-family: var(--jh-font-heading) !important;
+  font-size: var(--jh-type-component-title-size) !important;
+  font-weight: var(--jh-type-component-title-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-component-title-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell) .configuration-section__description {
+  font-size: var(--jh-type-body-size) !important;
+  font-weight: var(--jh-type-body-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-body-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell) .configuration-section__summary {
+  font-size: var(--jh-type-metadata-size) !important;
+  font-weight: var(--jh-type-metadata-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-metadata-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell) .apply-review-requirement-meta {
+  font-size: var(--jh-type-metadata-size) !important;
+  font-weight: var(--jh-type-metadata-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-metadata-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell) .apply-review-evidence-token {
+  font-size: var(--jh-type-body-size) !important;
+  font-weight: var(--jh-type-body-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-body-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell) .apply-review-workspace li:not([data-typography]) {
+  font-size: var(--jh-type-body-size) !important;
+  font-weight: var(--jh-type-body-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-body-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell) .compensation-strip-label {
+  font-size: var(--jh-type-label-size) !important;
+  font-weight: var(--jh-type-label-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-label-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell) :is(.eyebrow, .job-audit-triage-kicker) {
+  font-size: var(--jh-type-label-size) !important;
+  font-weight: var(--jh-type-label-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-label-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell) .apply-review-requirement-evidence > span:first-child {
+  font-size: var(--jh-type-strong-body-size) !important;
+  font-weight: var(--jh-type-strong-body-weight) !important;
+  letter-spacing: normal !important;
+  line-height: var(--jh-type-strong-body-line-height) !important;
+  text-transform: none !important;
+}
+
+:where(.app-shell) .leading-snug:not([data-typography]) {
+  line-height: var(--jh-type-strong-body-line-height) !important;
+}

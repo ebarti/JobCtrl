@@ -46,4 +46,15 @@ describe("Apply Review and Contacts responsive layout contracts", () => {
       /@media \(max-width: 720px\)[\s\S]*?\.outreach-due-follow-ups-content\s*\{\s*padding: 12px 16px 16px;/,
     );
   });
+
+  it("keeps contact provenance badges and confirmation metadata distinct at every width", () => {
+    const provenance = rule(dataCss, ".contact-provenance-summary");
+
+    expect(provenance).toContain("display: inline-flex");
+    expect(provenance).toContain("min-width: 0");
+    expect(provenance).toContain("max-width: 100%");
+    expect(provenance).toContain("flex-flow: row wrap");
+    expect(provenance).toContain("align-items: center");
+    expect(provenance).toContain("gap: 4px 6px");
+  });
 });

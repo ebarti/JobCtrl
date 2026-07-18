@@ -142,7 +142,7 @@ describe("<InterviewPrepPanel>", () => {
     renderWithProviders(<InterviewPrepPanel jobId="job-1" prep={null} />);
 
     expect(screen.getByText("No interview prep generated.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "generate interview prep" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Generate interview prep" })).toBeEnabled();
   });
 
   it("renders accepted residual warnings as semantic alerts", () => {

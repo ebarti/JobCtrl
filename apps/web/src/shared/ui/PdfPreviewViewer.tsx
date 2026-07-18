@@ -257,7 +257,9 @@ export function PdfPreviewViewer({
     <div className="pdf-preview-viewer">
       <div className="pdf-preview-toolbar">
         <span>{title}</span>
-        <span className="toolbar-status">{state.message}</span>
+        <span className="toolbar-status" data-typography="metadata">
+          {state.message}
+        </span>
         <a href={url} rel="noreferrer" target="_blank">
           {openLabel}
         </a>
@@ -284,7 +286,9 @@ export function PdfPreviewViewer({
                 src={page.src}
                 width={page.width}
               />
-              <figcaption>Page {page.pageNumber}</figcaption>
+              <figcaption data-typography="metadata">
+                Page {page.pageNumber}
+              </figcaption>
             </figure>
           ))}
         </div>
@@ -418,7 +422,9 @@ export function PdfAuditPreviewViewer({
     <div className="pdf-preview-viewer pdf-audit-preview-viewer">
       <div className="pdf-preview-toolbar">
         <span>{title}</span>
-        <span className="toolbar-status">{state.message}</span>
+        <span className="toolbar-status" data-typography="metadata">
+          {state.message}
+        </span>
         <a href={url} rel="noreferrer" target="_blank">
           {openLabel}
         </a>
@@ -492,7 +498,9 @@ export function PdfAuditPreviewViewer({
                   })}
                 </div>
               </div>
-              <figcaption>Page {page.pageNumber}</figcaption>
+              <figcaption data-typography="metadata">
+                Page {page.pageNumber}
+              </figcaption>
             </figure>
           ))}
         </div>

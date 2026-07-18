@@ -5,9 +5,9 @@ import { useEventStreamStatus } from "../../contexts/operations/providers/EventS
 import type { EventStreamStatus } from "../ports/EventStreamPort.js";
 
 const STATUS_LABEL: Record<EventStreamStatus, string> = {
-  connecting: "connecting",
-  open: "live",
-  closed: "reconnecting",
+  connecting: "Connecting",
+  open: "Live",
+  closed: "Reconnecting",
 };
 
 const CONNECTION_LOST_THRESHOLD_MS = 30_000;
@@ -18,7 +18,11 @@ export function ConnectionStatusPill() {
   const workerStatus = health.data?.worker.status ?? "healthy";
   const workerUnhealthy = workerStatus !== "healthy";
   const lostForLong = useDisconnectedLongerThan(status, CONNECTION_LOST_THRESHOLD_MS);
-  const label = workerUnhealthy ? "worker" : lostForLong ? "offline" : STATUS_LABEL[status];
+  const label = workerUnhealthy
+    ? "Worker unavailable"
+    : lostForLong
+      ? "Offline"
+      : STATUS_LABEL[status];
   const spend = health.data?.llmSpend;
   return (
     <div className="connection-pill-group">
@@ -26,6 +30,7 @@ export function ConnectionStatusPill() {
         className="connection-pill"
         data-status={workerUnhealthy ? "lost" : lostForLong ? "lost" : status}
         aria-live="polite"
+        data-typography="status"
       >
         {label}
       </span>
@@ -34,16 +39,29 @@ export function ConnectionStatusPill() {
           className="connection-spend"
           data-status={spend.status}
           aria-live="polite"
+          data-typography="metadata"
         >
           {formatSpendLine(spend.estimatedUsd, spend.dailyBudgetUsd, spend.unlimited)}
         </span>
       ) : null}
       {workerUnhealthy ? (
-        <div className="connection-banner" role="alert" aria-live="assertive">
+        <div
+          className="connection-banner"
+          data-state="error"
+          data-typography="body"
+          role="alert"
+          aria-live="assertive"
+        >
           {health.data?.worker.message ?? "JobCtrl automation worker health is unavailable."}
         </div>
       ) : lostForLong ? (
-        <div className="connection-banner" role="status" aria-live="polite">
+        <div
+          className="connection-banner"
+          data-state="warning"
+          data-typography="body"
+          role="status"
+          aria-live="polite"
+        >
           Connection lost — events paused; data will refresh when reconnected.
         </div>
       ) : null}

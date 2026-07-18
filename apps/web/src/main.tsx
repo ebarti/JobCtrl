@@ -35,6 +35,7 @@ import "./styles/redesign-profile-import.css";
 import "./styles/redesign-pipelines.css";
 import "./styles/redesign-route-gaps.css";
 import "./styles/redesign-route-workspaces.css";
+import "./styles/visual-roles.css";
 
 const queryClient = createQueryClient();
 const root = createRoot(document.getElementById("root")!);

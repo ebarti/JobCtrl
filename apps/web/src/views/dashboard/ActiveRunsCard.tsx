@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 
 import type { WorkflowRunSummary } from "../../contexts/operations/types.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
+import { Button } from "../../shared/ui/button.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
@@ -63,9 +64,10 @@ export function ActiveRunsCard({ runs, loading, error }: ActiveRunsCardProps) {
       <div className="rows">
         {visibleRuns.length ? (
           visibleRuns.map((run) => (
-            <button
+            <Button
               key={run.workflowId}
               type="button"
+              variant="ghost"
               className="mini-row clickable-row"
               onClick={() =>
                 void navigate({
@@ -81,11 +83,15 @@ export function ActiveRunsCard({ runs, loading, error }: ActiveRunsCardProps) {
                 {activeRunStatusLabel(run.status)}
               </StatusBadge>
               <span className="title-stack">
-                <b>{run.title || run.workflowType || "Workflow"}</b>
-                <span>{run.company || run.workflowType || run.workflowId}</span>
+                <b data-typography="strong-body">
+                  {run.title || run.workflowType || "Workflow"}
+                </b>
+                <span data-typography="metadata">
+                  {run.company || run.workflowType || run.workflowId}
+                </span>
               </span>
               <RelativeTime value={run.startedAt} />
-            </button>
+            </Button>
           ))
         ) : (
           <Empty

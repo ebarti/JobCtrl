@@ -23,6 +23,7 @@ import {
 import {
   makeApplyAudit,
   makeJobDetail,
+  sampleArtifact,
   sampleCompensationAudit,
   sampleCompensationSummary,
   sampleEvidenceMapResponse,
@@ -279,7 +280,7 @@ describe("<JobDetailDrawer>", () => {
     renderJobDetailDrawer("https://example.com/jobs/1");
 
     await user.click(
-      await screen.findByRole("button", { name: "refresh compensation" }),
+      await screen.findByRole("button", { name: "Refresh compensation" }),
     );
 
     await waitFor(() => expect(calls).toEqual([{}]));
@@ -342,6 +343,7 @@ describe("<JobDetailDrawer>", () => {
                   },
                 ],
               }),
+              artifacts: [sampleArtifact],
               employerAnalysis: populatedEmployerAnalysis,
               interviewPrep: {
                 ...sampleInterviewPrep,
@@ -385,6 +387,17 @@ describe("<JobDetailDrawer>", () => {
     const toolbar = within(workspace).getByRole("toolbar", {
       name: "Job actions",
     });
+    expect(
+      within(workspace).getByRole("navigation", {
+        name: "Related job workspaces",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(toolbar).getByRole("button", { name: "Stop current stage" }),
+    ).toBeInTheDocument();
+    expect(
+      within(toolbar).getByRole("button", { name: "Mark as applied" }),
+    ).toBeInTheDocument();
     expect(workspace).toHaveClass("route-workspace", "job-detail-workspace");
     expect(
       workspace.querySelector(".job-detail-workspace__content"),
@@ -449,6 +462,13 @@ describe("<JobDetailDrawer>", () => {
     const handoff = within(workspace).getByRole("link", {
       name: "Open Apply Review for Staff Software Engineer",
     });
+    const handoffGroup = within(workspace).getByLabelText(
+      "Related job workspaces",
+    );
+    expect(
+      handoffGroup.compareDocumentPosition(toolbar) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     const handoffUrl = new URL(
       handoff.getAttribute("href") ?? "",
       "http://localhost",
@@ -466,6 +486,9 @@ describe("<JobDetailDrawer>", () => {
     expect(
       within(toolbar).getByRole("group", { name: "Application actions" }),
     ).toBeInTheDocument();
+    expect(
+      within(toolbar).getByRole("button", { name: "Generate materials" }),
+    ).toHaveClass("border-border", "bg-card", "text-foreground");
     expect(screen.getByText("Preparation diagnostics")).toBeInTheDocument();
     expect(screen.queryByText("Score breakdown")).not.toBeInTheDocument();
     expect(screen.queryByText("Tailoring rationale")).not.toBeInTheDocument();
@@ -749,7 +772,7 @@ describe("<JobDetailDrawer>", () => {
     const user = userEvent.setup();
     renderJobDetailDrawer("job-1");
 
-    const auditSummary = await screen.findByText("Audit history");
+    const auditSummary = await screen.findByText("Technical details");
     const auditDisclosure = auditSummary.closest("details");
     expect(auditDisclosure).not.toBeNull();
     expect(auditDisclosure).not.toHaveAttribute("open");
@@ -757,7 +780,7 @@ describe("<JobDetailDrawer>", () => {
     const workspace = screen.getByRole("article", { name: "Job details" });
     const sections = Array.from(workspace.querySelectorAll("section.section"));
     expect(sections.at(-1)).toContainElement(auditDisclosure);
-    expect(sections.at(-1)).toHaveTextContent("Audit history");
+    expect(sections.at(-1)).toHaveTextContent("Technical details");
     expect(sections[1]).toHaveTextContent("Compensation");
     expect(sections[2]).toHaveTextContent("Description");
 
@@ -815,7 +838,7 @@ describe("<JobDetailDrawer>", () => {
     await screen.findByText(sampleJob.title);
     const workspace = screen.getByRole("article", { name: "Job details" });
     expect(workspace).not.toHaveTextContent("jobctrl retry enrich");
-    expect(screen.getByRole("button", { name: "retry" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
   it("retries the failed internal substage when that stage is retryable", async () => {
@@ -873,7 +896,7 @@ describe("<JobDetailDrawer>", () => {
 
     renderJobDetailDrawer("https://example.com/jobs/1");
 
-    await user.click(await screen.findByRole("button", { name: "retry" }));
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
 
     await waitFor(() =>
       expect(calls).toEqual([

@@ -30,6 +30,14 @@ describe("Command", () => {
       </Command>,
     );
 
+    expect(
+      screen.getByRole("combobox", { name: "Command palette" }),
+    ).toHaveAttribute("data-typography", "control");
+    expect(screen.getByText("Open preview")).toHaveAttribute(
+      "data-typography",
+      "control",
+    );
+
     await user.click(screen.getByRole("combobox", { name: "Command palette" }));
     await waitFor(() => {
       expect(screen.getByRole("option", { name: "Open preview" })).toHaveAttribute(

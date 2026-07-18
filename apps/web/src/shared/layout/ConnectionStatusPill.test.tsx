@@ -30,10 +30,14 @@ describe("<ConnectionStatusPill>", () => {
     const { eventStream } = renderConnectionStatusPill();
 
     await waitFor(() => expect(eventStream.subscriptions.length).toBe(1));
-    const pill = screen.getByText("live");
+    const pill = screen.getByText("Live");
     expect(pill).toHaveAttribute("aria-live", "polite");
     expect(pill).toHaveAttribute("data-status", "open");
-    expect(await screen.findByText("LLM $0.12 / $25.00")).toHaveAttribute("data-status", "ok");
+    expect(pill).toHaveAttribute("data-typography", "status");
+    expect(await screen.findByText("LLM $0.12 / $25.00")).toHaveAttribute(
+      "data-typography",
+      "metadata",
+    );
   });
 
   it("renders unlimited daily LLM budgets in the health line", async () => {
@@ -66,10 +70,11 @@ describe("<ConnectionStatusPill>", () => {
       },
     });
 
-    const pill = await screen.findByText("worker");
+    const pill = await screen.findByText("Worker unavailable");
     expect(pill).toHaveAttribute("data-status", "lost");
     const alert = screen.getByRole("alert");
     expect(alert).toHaveAttribute("aria-live", "assertive");
+    expect(alert).toHaveAttribute("data-typography", "body");
     expect(alert).toHaveTextContent("No JobCtrl automation worker heartbeat has been written to the API database.");
   });
 
@@ -81,13 +86,13 @@ describe("<ConnectionStatusPill>", () => {
     await act(async () => {
       eventStream.setStatus("closed");
     });
-    expect(screen.getByText("reconnecting")).toHaveAttribute("data-status", "closed");
+    expect(screen.getByText("Reconnecting")).toHaveAttribute("data-status", "closed");
 
     await act(async () => {
       vi.advanceTimersByTime(30_001);
     });
 
-    const pill = screen.getByText("offline");
+    const pill = screen.getByText("Offline");
     expect(pill).toHaveAttribute("data-status", "lost");
     const banner = screen.getByRole("status");
     expect(banner).toHaveAttribute("aria-live", "polite");

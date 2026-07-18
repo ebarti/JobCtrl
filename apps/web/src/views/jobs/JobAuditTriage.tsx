@@ -22,7 +22,9 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
       <div className="job-audit-triage-grid">
         <div className="job-audit-triage-column">
           <header className="job-audit-triage-heading">
-            <span className="job-audit-triage-kicker">Assessment</span>
+            <span className="job-audit-triage-kicker" data-typography="label">
+              Assessment
+            </span>
             <h2>Fit & evidence</h2>
           </header>
           <dl className="job-audit-metrics" aria-label="Ranking summary">
@@ -66,12 +68,16 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
             </div>
           ) : null}
           <div className="job-audit-score-correction">
-            <span className="job-audit-triage-kicker">Score correction</span>
+            <span className="job-audit-triage-kicker" data-typography="label">
+              Score correction
+            </span>
             <ScoreCorrectionControl jobId={job.jobKey} currentScore={job.fitScore} />
           </div>
           {factGroups.length ? (
             <div className="job-audit-concerns">
-              <div className="job-audit-triage-kicker">Apply concerns</div>
+              <div className="job-audit-triage-kicker" data-typography="label">
+                Apply concerns
+              </div>
               <dl className="job-audit-fact-list">
                 {factGroups.map((group) => (
                   <div key={group.label}>
@@ -159,7 +165,7 @@ function TagGroup({
   }
   return (
     <div className="job-audit-tag-group">
-      <span>{label}</span>
+      <span data-typography="label">{label}</span>
       <div>
         {values.map((value) => (
           <StatusBadge icon={false} tone={tone} key={value}>

@@ -9,13 +9,13 @@ describe("<OpenArtifactButton>", () => {
   it("invokes the open mutation and toggles label", async () => {
     const user = userEvent.setup();
     renderWithProviders(<OpenArtifactButton artifactId="artifact-1" />);
-    const button = screen.getByRole("button", { name: "open" });
+    const button = screen.getByRole("button", { name: "Open" });
     await user.click(button);
-    await waitFor(() => expect(screen.getByRole("button")).toHaveTextContent(/open|opening/));
+    await waitFor(() => expect(screen.getByRole("button")).toHaveTextContent(/open|opening/i));
   });
 
   it("respects the disabled prop", () => {
     renderWithProviders(<OpenArtifactButton artifactId="artifact-1" disabled />);
-    expect(screen.getByRole("button", { name: "open" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open" })).toBeDisabled();
   });
 });

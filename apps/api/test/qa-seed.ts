@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -387,6 +388,23 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
       PRIMARY KEY (
         tenant_id, discover_workflow_id, discover_run_id, step_kind, item_key
       )
+    );
+    CREATE TABLE discovery_execution_recoveries (
+      tenant_id TEXT NOT NULL,
+      discover_workflow_id TEXT NOT NULL,
+      discover_run_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      decoder_version INTEGER NOT NULL,
+      history_event_id INTEGER NOT NULL,
+      expected_membership_count INTEGER NOT NULL,
+      persisted_membership_count INTEGER NOT NULL,
+      expected_step_count INTEGER NOT NULL,
+      persisted_step_count INTEGER NOT NULL,
+      key_digest TEXT NOT NULL,
+      last_error_code TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, discover_workflow_id, discover_run_id)
     );
     CREATE TABLE operational_attempt_metrics (
       metric_id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1427,6 +1445,45 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
     nowIso,
   );
 
+  const recoveryMemberships = (
+    db
+      .prepare(
+        `SELECT job_url FROM discovery_execution_jobs
+          WHERE tenant_id = 'local' AND discover_workflow_id = ? AND discover_run_id = ?
+          ORDER BY job_url`,
+      )
+      .all(discoverWorkflowId, discoverRunId) as Array<{ job_url: string }>
+  ).map((row) => row.job_url);
+  const recoverySteps = (
+    db
+      .prepare(
+        `SELECT step_kind, item_key FROM pipeline_step_projections
+          WHERE tenant_id = 'local' AND discover_workflow_id = ? AND discover_run_id = ?
+          ORDER BY step_kind, item_key`,
+      )
+      .all(discoverWorkflowId, discoverRunId) as Array<{
+        step_kind: string;
+        item_key: string;
+      }>
+  ).map((row): [string, string] => [row.step_kind, row.item_key]);
+  db.prepare(
+    `INSERT INTO discovery_execution_recoveries (
+      tenant_id, discover_workflow_id, discover_run_id, state, mode,
+      decoder_version, history_event_id, expected_membership_count,
+      persisted_membership_count, expected_step_count, persisted_step_count,
+      key_digest, last_error_code, updated_at
+    ) VALUES ('local', ?, ?, 'ready', 'native', 2, 107, ?, ?, ?, ?, ?, NULL, ?)`,
+  ).run(
+    discoverWorkflowId,
+    discoverRunId,
+    recoveryMemberships.length,
+    recoveryMemberships.length,
+    recoverySteps.length,
+    recoverySteps.length,
+    recoveryKeyDigest(recoveryMemberships, recoverySteps),
+    nowIso,
+  );
+
   const insertMetric = db.prepare(
     `INSERT INTO operational_attempt_metrics (
       tenant_id, occurred_at, stage, attempt_kind, outcome, is_retryable,
@@ -1499,6 +1556,21 @@ function seedPipelineOperations(db: Database.Database, dbPath: string): void {
       activity: queueStats,
     }),
   );
+}
+
+function recoveryKeyDigest(
+  membershipKeys: readonly string[],
+  stepKeys: ReadonlyArray<readonly [string, string]>,
+): string {
+  const memberships = membershipKeys
+    .map((value) => Buffer.from(value, "utf8").toString("hex"))
+    .sort();
+  const steps = stepKeys
+    .map((value) => Buffer.from(JSON.stringify(value), "utf8").toString("hex"))
+    .sort();
+  return createHash("sha256")
+    .update(JSON.stringify({ memberships, steps }))
+    .digest("hex");
 }
 
 function seedResumeReviewDraft(db: Database.Database): void {

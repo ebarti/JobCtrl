@@ -49,7 +49,7 @@ describe("<ModelSelectionPanel>", () => {
     const google = await providerCard("Google");
     expect(claude.getByText(/live availability/i)).toBeInTheDocument();
     expect(codex.getByText(/live availability/i)).toBeInTheDocument();
-    expect(google.getByRole("link", { name: "configure Google" })).toHaveAttribute(
+    expect(google.getByRole("link", { name: "Configure Google" })).toHaveAttribute(
       "href",
       "/settings/credentials",
     );
@@ -81,7 +81,7 @@ describe("<ModelSelectionPanel>", () => {
     expect(select).toHaveTextContent("Sonnet 5");
     await user.click(select);
     await user.click(await screen.findByRole("option", { name: /Opus 4\.8/ }));
-    await user.click(claude.getByRole("button", { name: "save model" }));
+    await user.click(claude.getByRole("button", { name: "Save model" }));
 
     expect(updateSettings).toHaveBeenCalledWith({ preferredModels: { claude: "claude-opus-4-8" } });
     expect(await claude.findByRole("status")).toHaveTextContent(
@@ -133,7 +133,7 @@ describe("<ModelSelectionPanel>", () => {
     const claude = await providerCard("Claude");
     await user.click(await claude.findByRole("combobox", { name: /Preferred model/ }));
     await user.click(await screen.findByRole("option", { name: "Provider default" }));
-    await user.click(claude.getByRole("button", { name: "save model" }));
+    await user.click(claude.getByRole("button", { name: "Save model" }));
 
     expect(updateSettings).toHaveBeenCalledWith({ preferredModels: { claude: null } });
   });
@@ -162,7 +162,7 @@ describe("<ModelSelectionPanel>", () => {
     });
 
     const google = await providerCard("Google");
-    await user.click(await google.findByRole("button", { name: "clear saved model" }));
+    await user.click(await google.findByRole("button", { name: "Clear saved model" }));
     expect(updateSettings).toHaveBeenCalledWith({ preferredModels: { google: null } });
   });
 
@@ -184,7 +184,7 @@ describe("<ModelSelectionPanel>", () => {
     });
 
     const claude = await providerCard("Claude");
-    await user.click(await claude.findByRole("button", { name: "clear saved model" }));
+    await user.click(await claude.findByRole("button", { name: "Clear saved model" }));
     expect(updateSettings).toHaveBeenCalledWith({ preferredModels: { claude: null } });
   });
 
@@ -205,7 +205,7 @@ describe("<ModelSelectionPanel>", () => {
     expect(await screen.findByText(/synthetic model catalog for preview only/i)).toBeInTheDocument();
     const claude = await providerCard("Claude");
     expect(claude.getByRole("combobox", { name: /Preferred model/ })).toBeDisabled();
-    expect(claude.getByRole("button", { name: "save model" })).toBeDisabled();
+    expect(claude.getByRole("button", { name: "Save model" })).toBeDisabled();
     expect(updateSettings).not.toHaveBeenCalled();
   });
 

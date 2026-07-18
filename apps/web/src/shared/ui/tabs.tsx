@@ -92,6 +92,7 @@ export const TabsList = forwardRef<
   return (
     <TabsPrimitive.List
       ref={ref}
+      data-slot="tabs-list"
       activateOnFocus={activateOnFocus ?? activationMode === "automatic"}
       loopFocus={loopFocus ?? loop}
       className={cn(
@@ -117,6 +118,8 @@ export const TabsTrigger = forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.Tab
     ref={ref}
+    data-slot="tabs-trigger"
+    data-typography="control"
     className={cn(
       "inline-flex h-9 items-center justify-center whitespace-nowrap border-b-2 border-transparent px-3 text-sm font-medium transition-[color,border-color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-active:border-primary data-active:text-accent-foreground",
       className,
@@ -140,6 +143,8 @@ export const TabsContent = forwardRef<
 >(({ className, forceMount, keepMounted, ...props }, ref) => (
   <TabsPrimitive.Panel
     ref={ref}
+    data-slot="tabs-content"
+    data-typography="body"
     keepMounted={keepMounted ?? forceMount}
     className={cn(
       "mt-2 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",

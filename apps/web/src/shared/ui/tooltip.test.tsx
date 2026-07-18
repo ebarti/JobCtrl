@@ -92,7 +92,7 @@ describe("Tooltip", () => {
     );
   });
 
-  it("renders the preserved popup styling in a positioned Base UI portal", async () => {
+  it("renders semantic metadata typography in a positioned Base UI portal", async () => {
     const { container } = render(
       <TooltipProvider>
         <Tooltip defaultOpen>
@@ -132,12 +132,11 @@ describe("Tooltip", () => {
       "bg-foreground",
       "px-2.5",
       "py-1.5",
-      "text-[13px]",
-      "leading-4",
       "text-background",
       "shadow-lg",
       "custom-tooltip",
     );
+    expect(content).toHaveAttribute("data-typography", "metadata");
     expect(positioner).toHaveClass("isolate", "z-50");
     expect(positioner).toHaveStyle({ position: "fixed" });
     expect(positioner).toHaveAttribute("data-side", "bottom");

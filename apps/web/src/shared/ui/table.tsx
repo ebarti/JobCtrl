@@ -14,6 +14,8 @@ export const Table = forwardRef<
   <div className="data-table-scroll relative w-full overflow-auto">
     <table
       ref={ref}
+      data-slot="table"
+      data-typography="body"
       className={cn("data-table w-full caption-bottom text-sm", className)}
       {...props}
     />
@@ -27,6 +29,8 @@ export const TableHeader = forwardRef<
 >(({ className, ...props }, ref) => (
   <thead
     ref={ref}
+    data-slot="table-head"
+    data-typography="table-header"
     className={cn("[&_tr]:border-b border-border", className)}
     {...props}
   />
@@ -39,6 +43,8 @@ export const TableBody = forwardRef<
 >(({ className, ...props }, ref) => (
   <tbody
     ref={ref}
+    data-slot="table-cell"
+    data-typography="body"
     className={cn("[&_tr:last-child]:border-0", className)}
     {...props}
   />
@@ -51,6 +57,8 @@ export const TableFooter = forwardRef<
 >(({ className, ...props }, ref) => (
   <tfoot
     ref={ref}
+    data-slot="table-caption"
+    data-typography="metadata"
     className={cn("border-t border-border bg-muted/50 font-medium", className)}
     {...props}
   />
@@ -78,8 +86,10 @@ export const TableHead = forwardRef<
 >(({ className, ...props }, ref) => (
   <th
     ref={ref}
+    data-slot="table-head-cell"
+    data-typography="table-header"
     className={cn(
-      "h-10 px-2 text-left align-middle text-[13px] font-extrabold uppercase tracking-[0.08em] text-muted-foreground [&:has([role=checkbox])]:pr-0",
+      "h-10 px-2 text-left align-middle text-muted-foreground [&:has([role=checkbox])]:pr-0",
       className,
     )}
     {...props}
@@ -93,6 +103,8 @@ export const TableCell = forwardRef<
 >(({ className, ...props }, ref) => (
   <td
     ref={ref}
+    data-slot="table-cell"
+    data-typography="body"
     className={cn("p-2 align-middle [&:has([role=checkbox])]:pr-0", className)}
     {...props}
   />
@@ -105,6 +117,8 @@ export const TableCaption = forwardRef<
 >(({ className, ...props }, ref) => (
   <caption
     ref={ref}
+    data-slot="table-caption"
+    data-typography="metadata"
     className={cn("mt-4 text-sm text-muted-foreground", className)}
     {...props}
   />

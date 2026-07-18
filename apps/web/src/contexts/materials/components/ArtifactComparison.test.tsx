@@ -98,6 +98,11 @@ describe("<ArtifactComparison>", () => {
     expect(screen.getByText("declared")).toBeInTheDocument();
     expect(screen.getByText("gcp")).toBeInTheDocument();
     expect(screen.getByText("missing")).toBeInTheDocument();
+    expect(
+      screen
+        .getAllByText("missing")
+        .some((element) => element.getAttribute("data-typography") === "label"),
+    ).toBe(true);
     expect(screen.getByText("claim risk")).toBeInTheDocument();
     expect(screen.getByText("approved")).toHaveAttribute(
       "data-slot",

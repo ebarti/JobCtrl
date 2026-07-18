@@ -15,7 +15,7 @@ describe("<ActivityDetailDrawer>", () => {
         level: 1,
         name: "Job scored 8/10",
       }),
-    ).toBeInTheDocument();
+    ).toHaveAttribute("data-typography", "page-title");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Back to Debug" }),
@@ -51,6 +51,10 @@ describe("<ActivityDetailDrawer>", () => {
       name: "Activity event timeline",
     });
     expect(within(timeline).getByText("JobScored")).toBeInTheDocument();
+    expect(within(timeline).getByText("JobScored")).toHaveAttribute(
+      "data-typography",
+      "code",
+    );
     expect(within(timeline).getByText("Job scored 8/10")).toBeInTheDocument();
   });
 

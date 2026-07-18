@@ -47,8 +47,39 @@ describe("<AnalyticsView>", () => {
     expect(screen.getByText("4d")).toBeInTheDocument();
     expect(screen.getByText("60%")).toBeInTheDocument();
     expect(screen.getByText("excellent")).toBeInTheDocument();
+    expect(
+      screen
+        .getByText("excellent")
+        .closest("tr")
+        ?.querySelector('[data-slot="status-badge"]'),
+    ).toHaveAttribute("data-status-tone", "muted");
     expect(screen.getByText("stretch")).toBeInTheDocument();
     expect(screen.getAllByText(/too few to rate/i).length).toBeGreaterThan(0);
+  });
+
+  it("assigns named typography roles to outcome summary labels and values", async () => {
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness);
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    await waitFor(() => expect(screen.getByText("11 applied")).toBeInTheDocument());
+
+    const appliedLabel = screen.getAllByText("Applied").find((element) => element.tagName === "DT");
+    expect(appliedLabel).toBeDefined();
+    const summary = appliedLabel!.closest("dl.analytics-summary-strip");
+    expect(summary).not.toBeNull();
+    for (const metric of summary!.querySelectorAll(".analytics-summary-metric")) {
+      expect(metric.querySelector("dt")).toHaveAttribute("data-typography", "label");
+      expect(metric.querySelector("dd")).toHaveAttribute("data-typography", "metric");
+    }
+    expect(screen.getByText("Breakdown")).toHaveAttribute(
+      "data-typography",
+      "label",
+    );
+    expect(document.querySelector(".analytics-controls-copy > strong")).toHaveAttribute(
+      "data-typography",
+      "component-title",
+    );
   });
 
   it("keeps dimension selection in the URL search state", async () => {

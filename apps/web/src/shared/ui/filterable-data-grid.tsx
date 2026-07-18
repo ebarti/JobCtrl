@@ -399,6 +399,7 @@ function ColumnFilterDialog<TData>({
       <DialogTrigger asChild>
         <button
           type="button"
+          data-grid-control="filter"
           className={
             active
               ? "data-grid-column-filter-button active"
@@ -420,7 +421,7 @@ function ColumnFilterDialog<TData>({
         <section className="data-grid-filter-condition">
           <div className="data-grid-filter-condition-head">
             <strong>{column.label}</strong>
-            <button type="button" onClick={onClear}>
+            <button type="button" data-grid-control="clear-filter" onClick={onClear}>
               Clear
             </button>
           </div>
@@ -433,6 +434,7 @@ function ColumnFilterDialog<TData>({
               <button
                 key={operator}
                 type="button"
+                data-grid-control="filter-operator"
                 aria-pressed={filter.operator === operator}
                 className={filter.operator === operator ? "active" : undefined}
                 onClick={() => onOperatorChange(operator)}
@@ -464,7 +466,11 @@ function ColumnFilterDialog<TData>({
             aria-label={`${column.label} values`}
           >
             {visibleValues.map((value) => (
-              <label key={value} className="data-grid-value-option">
+              <label
+                key={value}
+                className="data-grid-value-option"
+                data-grid-control="filter-value"
+              >
                 <input
                   type="checkbox"
                   checked={filter.selectedValues.includes(value)}
@@ -1007,6 +1013,8 @@ export function FilterableDataGrid<TData>({
         {sortable ? (
           <button
             type="button"
+            data-grid-control="sort"
+            data-typography="table-header"
             className="data-grid-sort-button"
             aria-label={sortButtonLabel(
               column.label,
@@ -1088,8 +1096,10 @@ export function FilterableDataGrid<TData>({
       <div className="data-grid-toolbar">
         <div className="data-grid-view-title">
           <IconTable size={15} aria-hidden="true" />
-          <strong>{title}</strong>
-          <span className="meta">{summaryText}</span>
+          <strong data-typography="component-title">{title}</strong>
+          <span className="meta" data-typography="metadata">
+            {summaryText}
+          </span>
         </div>
         <div className="data-grid-tools">
           {summary}
@@ -1105,6 +1115,8 @@ export function FilterableDataGrid<TData>({
             <button
               key={column.id}
               type="button"
+              data-grid-control="active-filter"
+              data-typography="control"
               onClick={() => clearFilter(column.id)}
             >
               <span>{column.label}</span>
@@ -1148,6 +1160,7 @@ export function FilterableDataGrid<TData>({
         <table
           ref={tableRef}
           aria-label={title}
+          data-typography="body"
           className={
             tableClassName
               ? `filterable-data-grid-table ${tableClassName}`
@@ -1178,6 +1191,7 @@ export function FilterableDataGrid<TData>({
                 return (
                   <th
                     key={column.id}
+                    data-typography="table-header"
                     id={`${tableInstanceId}-${column.id}-header`}
                     data-column-id={column.id}
                     aria-sort={
@@ -1235,6 +1249,7 @@ export function FilterableDataGrid<TData>({
                       {onColumnOrderChange && isColumnReorderable(column) ? (
                         <button
                           type="button"
+                          data-grid-control="reorder"
                           className="data-grid-column-reorder-handle"
                           aria-label={`Reorder ${column.label} column`}
                           aria-describedby={`${tableInstanceId}-column-reorder-help`}
@@ -1275,6 +1290,7 @@ export function FilterableDataGrid<TData>({
                     {resizableColumns ? (
                       <button
                         type="button"
+                        data-grid-control="resize"
                         className="data-grid-column-resizer"
                         aria-label={`Resize ${column.label} column`}
                         title={`Resize ${column.label} column`}
@@ -1301,7 +1317,10 @@ export function FilterableDataGrid<TData>({
               <Fragment key={group.key}>
                 {group.label ? (
                   <tr className="data-grid-group-row">
-                    <th colSpan={Math.max(1, displayColumns.length)}>
+                    <th
+                      colSpan={Math.max(1, displayColumns.length)}
+                      data-typography="table-header"
+                    >
                       <span>{group.label}</span>
                       <span>{group.rows.length}</span>
                     </th>
@@ -1361,6 +1380,7 @@ export function FilterableDataGrid<TData>({
                         const activationButton = isActivationCell ? (
                           <button
                             type="button"
+                            data-grid-control="row-activation"
                             className={classNames(
                               "data-grid-row-activation-button",
                               rowActivationAppearance === "focus-only" &&
@@ -1378,6 +1398,7 @@ export function FilterableDataGrid<TData>({
                         return column.rowHeader ? (
                           <th
                             key={column.id}
+                            data-typography="strong-body"
                             className={cellClassName}
                             data-label={column.label}
                             data-row-header="true"
@@ -1390,6 +1411,7 @@ export function FilterableDataGrid<TData>({
                         ) : (
                           <td
                             key={column.id}
+                            data-typography="body"
                             className={cellClassName}
                             data-label={column.label}
                             headers={`${tableInstanceId}-${column.id}-header`}

@@ -3,6 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DemoFeatureFlagAdapter } from "../../demo/ports.js";
 import { renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { JobBulkActions } from "./JobBulkActions.js";
@@ -36,6 +37,13 @@ function queued(
   };
 }
 
+async function openJobOperations(user: ReturnType<typeof userEvent.setup>) {
+  const trigger = screen.getByRole("button", { name: "Job operations" });
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  return screen.getByRole("menu", { name: "Job operations" });
+}
+
 afterEach(() => {
   if (typeof originalConfirm === "function") {
     Object.defineProperty(window, "confirm", {
@@ -47,7 +55,8 @@ afterEach(() => {
 });
 
 describe("<JobBulkActions>", () => {
-  it("renders queue navigation as tabs above the bulk actions", () => {
+  it("renders queue navigation as tabs above the bulk actions", async () => {
+    const user = userEvent.setup();
     renderWithProviders(
       <JobBulkActions
         search={{ ...baseSearch, deleted: "deleted" }}
@@ -80,23 +89,30 @@ describe("<JobBulkActions>", () => {
     const actionsRow = document.querySelector(".jobs-bulk-actions");
     expect(queueRow?.nextElementSibling).toBe(actionsRow);
     expect(
-      screen.getByRole("button", { name: "hide selected" }),
-    ).toHaveTextContent(/^hide$/);
-    const permanentlyDelete = screen.getByRole("button", {
-      name: "permanently delete selected",
+      screen.queryByRole("button", { name: "Hide selected" }),
+    ).not.toBeInTheDocument();
+    const jobOperations = screen.getByRole("button", {
+      name: "Job operations",
     });
-    expect(permanentlyDelete).toHaveTextContent(/^permanently delete$/);
+    jobOperations.focus();
+    await user.keyboard("{Enter}");
+    const operationsMenu = screen.getByRole("menu", {
+      name: "Job operations",
+    });
+    const permanentlyDelete = within(operationsMenu).getByRole("menuitem", {
+      name: "Permanently delete selected",
+    });
     expect(permanentlyDelete).toHaveClass(
-      "bg-destructive",
-      "hover:bg-destructive/90",
-      "focus-visible:ring-destructive",
+      "text-destructive",
+      "focus:bg-destructive/10",
+      "focus:text-destructive",
     );
     expect(
-      screen.getByRole("button", { name: "restore selected" }),
-    ).toHaveTextContent(/^restore$/);
+      screen.getByRole("button", { name: "Restore selected" }),
+    ).toHaveTextContent(/^Restore selected$/);
   });
 
-  it("uses destructive Button states only for destructive lifecycle actions", () => {
+  it("keeps the visible primary lifecycle action destructive", () => {
     renderWithProviders(
       <JobBulkActions
         search={baseSearch}
@@ -115,20 +131,20 @@ describe("<JobBulkActions>", () => {
     );
 
     const deleteSelected = screen.getByRole("button", {
-      name: "delete selected",
+      name: "Delete selected",
     });
     expect(deleteSelected).toBeDisabled();
     expect(deleteSelected).toHaveClass(
       "bg-destructive",
       "hover:bg-destructive/90",
       "focus-visible:ring-destructive",
-      "disabled:bg-destructive/60",
-      "disabled:opacity-100",
+      "jh-button",
+      "disabled:opacity-50",
     );
 
-    const hideSelected = screen.getByRole("button", { name: "hide selected" });
-    expect(hideSelected).toHaveClass("border-border", "bg-card");
-    expect(hideSelected).not.toHaveClass("bg-destructive");
+    expect(
+      screen.queryByRole("button", { name: "Hide selected" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps legacy lifecycle links readable without adding a Closed tab", () => {
@@ -162,9 +178,7 @@ describe("<JobBulkActions>", () => {
       "Viewing posting availability exceptions from a legacy link.",
     );
     expect(legacyContext).toHaveAttribute("role", "status");
-    expect(
-      screen.queryByRole("button", { name: "rescore outdated scores" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Job operations" })).toBeInTheDocument();
   });
 
   it("omits the redundant selection instruction when nothing is selected", () => {
@@ -186,6 +200,76 @@ describe("<JobBulkActions>", () => {
     );
 
     expect(screen.queryByText("select jobs to manage")).not.toBeInTheDocument();
+  });
+
+  it("keeps selection and the primary decision visible while grouping operations in labelled menus", async () => {
+    const user = userEvent.setup();
+    const onSelectAllMatching = vi.fn();
+    const onClearSelection = vi.fn();
+    renderWithProviders(
+      <JobBulkActions
+        search={baseSearch}
+        selectedCount={2}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={onSelectAllMatching}
+        onClearSelection={onClearSelection}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("group", { name: "Selection actions" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Job operations" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: "Selected job lifecycle actions" }),
+    ).toBeInTheDocument();
+    expect(document.querySelector(".jobs-bulk-actions .tab")).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: "Refresh compensation" }),
+    ).not.toBeInTheDocument();
+
+    const jobOperations = screen.getByRole("button", {
+      name: "Job operations",
+    });
+    jobOperations.focus();
+    await user.keyboard("{Enter}");
+    const operationsMenu = screen.getByRole("menu", {
+      name: "Job operations",
+    });
+    expect(
+      within(operationsMenu).getByText("Maintenance"),
+    ).toBeInTheDocument();
+    expect(
+      within(operationsMenu).getByText("Preparation"),
+    ).toBeInTheDocument();
+    expect(
+      within(operationsMenu).getByRole("menuitem", {
+        name: "Refresh compensation",
+      }),
+    ).toBeInTheDocument();
+
+    const moreActions = screen.getByRole("button", { name: "More actions" });
+    moreActions.focus();
+    await user.keyboard("{Enter}");
+    const menu = screen.getByRole("menu", { name: "More actions" });
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "Select all matching" }),
+    );
+    expect(onSelectAllMatching).toHaveBeenCalledTimes(1);
+
+    moreActions.focus();
+    await user.keyboard("{Enter}");
+    await user.click(
+      within(
+        screen.getByRole("menu", { name: "More actions" }),
+      ).getByRole("menuitem", { name: "Clear selection" }),
+    );
+    expect(onClearSelection).toHaveBeenCalledTimes(1);
   });
 
   it("invokes onMutateSelected when the danger button is clicked", async () => {
@@ -299,7 +383,13 @@ describe("<JobBulkActions>", () => {
         onPermanentlyDeleteSelected={() => {}}
       />,
     );
-    await user.click(screen.getByRole("button", { name: /hide selected/i }));
+    const operationsMenu = await openJobOperations(user);
+    await user.click(
+      within(operationsMenu).getByRole(
+        "menuitem",
+        { name: /hide selected/i },
+      ),
+    );
     expect(onHide).toHaveBeenCalledTimes(1);
   });
 
@@ -326,11 +416,80 @@ describe("<JobBulkActions>", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /retry selected/i }));
-    await user.click(screen.getByRole("button", { name: /retry all failed/i }));
+    let operationsMenu = await openJobOperations(user);
+    await user.click(
+      within(operationsMenu).getByRole(
+        "menuitem",
+        { name: /retry selected/i },
+      ),
+    );
+    operationsMenu = await openJobOperations(user);
+    await user.click(
+      within(operationsMenu).getByRole(
+        "menuitem",
+        { name: /retry all failed/i },
+      ),
+    );
 
     expect(onRetrySelected).toHaveBeenCalledTimes(1);
     expect(onRetryAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables unavailable demo automation without blocking local job organization", async () => {
+    const user = userEvent.setup();
+    const ports = buildTestPorts();
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+    renderWithProviders(
+      <JobBulkActions
+        search={{ ...baseSearch, state: "failed" }}
+        selectedCount={2}
+        selectedJobKeys={["job-1", "job-2"]}
+        staleCount={1}
+        selectedStaleKeys={["job-1"]}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
+      />,
+      { ports },
+    );
+
+    const operationsMenu = await openJobOperations(user);
+    for (const name of [
+      "Refresh compensation",
+      "Rescore selected",
+      "Re-tailor selected",
+      "Retry selected",
+      "Continue pending preparation",
+      "Retry all failed",
+    ]) {
+      const menuItem = within(operationsMenu).getByRole("menuitem", { name });
+      expect(menuItem).toHaveAttribute("data-disabled");
+      expect(menuItem).toHaveAccessibleDescription(
+        /Disabled automation actions require the local app.*job organization remains available/i,
+      );
+    }
+    expect(
+      within(operationsMenu).getByRole("menuitem", {
+        name: "Reset stale selected",
+      }),
+    ).not.toHaveAttribute("data-disabled");
+    expect(
+      within(operationsMenu).getByRole("menuitem", {
+        name: "Hide selected",
+      }),
+    ).not.toHaveAttribute("data-disabled");
+    expect(screen.getByRole("button", { name: "Delete selected" })).toBeEnabled();
+    expect(screen.getByRole("link", { name: "Install JobCtrl" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/getting-started",
+    );
   });
 
   it("shows retry all failed for active jobs outside the failed filter", async () => {
@@ -357,7 +516,13 @@ describe("<JobBulkActions>", () => {
     expect(
       screen.queryByRole("button", { name: /retry selected/i }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /retry all failed/i }));
+    const operationsMenu = await openJobOperations(user);
+    await user.click(
+      within(operationsMenu).getByRole(
+        "menuitem",
+        { name: /retry all failed/i },
+      ),
+    );
 
     expect(onRetryAll).toHaveBeenCalledTimes(1);
   });
@@ -383,8 +548,12 @@ describe("<JobBulkActions>", () => {
       />,
     );
 
+    const operationsMenu = await openJobOperations(user);
     await user.click(
-      screen.getByRole("button", { name: /continue pending prep/i }),
+      within(operationsMenu).getByRole(
+        "menuitem",
+        { name: /continue pending prep/i },
+      ),
     );
 
     expect(onRunPendingPreparation).toHaveBeenCalledTimes(1);
@@ -412,13 +581,16 @@ describe("<JobBulkActions>", () => {
       />,
     );
 
+    const operationsMenu = await openJobOperations(user);
     expect(
-      screen.getByRole("button", { name: /continue pending prep/i }),
-    ).toBeDisabled();
-    const retryAllFailed = screen.getByRole("button", {
+      within(operationsMenu).getByRole("menuitem", {
+        name: /continue pending prep/i,
+      }),
+    ).toHaveAttribute("data-disabled");
+    const retryAllFailed = within(operationsMenu).getByRole("menuitem", {
       name: /retry all failed/i,
     });
-    expect(retryAllFailed).not.toBeDisabled();
+    expect(retryAllFailed).not.toHaveAttribute("data-disabled");
 
     await user.click(retryAllFailed);
 
@@ -467,8 +639,12 @@ describe("<JobBulkActions>", () => {
         onPermanentlyDeleteSelected={onPermanentDelete}
       />,
     );
+    const operationsMenu = await openJobOperations(user);
     await user.click(
-      screen.getByRole("button", { name: /permanently delete selected/i }),
+      within(operationsMenu).getByRole(
+        "menuitem",
+        { name: /permanently delete selected/i },
+      ),
     );
     expect(onPermanentDelete).toHaveBeenCalledTimes(1);
   });
@@ -545,7 +721,13 @@ describe("<JobBulkActions>", () => {
       },
     );
 
-    await user.click(screen.getByRole("button", { name: "rescore selected" }));
+    const operationsMenu = await openJobOperations(user);
+    await user.click(
+      within(operationsMenu).getByRole(
+        "menuitem",
+        { name: "Rescore selected" },
+      ),
+    );
 
     await waitFor(() =>
       expect(rescoreJobsNotOnCurrentScoringPolicy).toHaveBeenCalledWith({
@@ -592,8 +774,12 @@ describe("<JobBulkActions>", () => {
       },
     );
 
+    const operationsMenu = await openJobOperations(user);
     await user.click(
-      screen.getByRole("button", { name: "re-tailor selected" }),
+      within(operationsMenu).getByRole(
+        "menuitem",
+        { name: "Re-tailor selected" },
+      ),
     );
 
     await waitFor(() =>
@@ -638,8 +824,12 @@ describe("<JobBulkActions>", () => {
       },
     );
 
+    const operationsMenu = await openJobOperations(user);
     await user.click(
-      screen.getByRole("button", { name: "refresh compensation" }),
+      within(operationsMenu).getByRole(
+        "menuitem",
+        { name: "Refresh compensation" },
+      ),
     );
 
     await waitFor(() =>

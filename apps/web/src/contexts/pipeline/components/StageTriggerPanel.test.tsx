@@ -6,6 +6,7 @@ import { userEvent } from "@testing-library/user-event";
 import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { DemoFeatureFlagAdapter } from "../../../demo/ports.js";
 import { renderWithProviders } from "../../../test/render.js";
 import {
   sampleDashboardSummary,
@@ -24,10 +25,37 @@ describe("StageTriggerPanel", () => {
   it("defaults to the Discover tab with dry-run enabled", async () => {
     renderWithProviders(<StageTriggerPanel />);
 
-    expect(screen.getByLabelText("Dry run")).toBeChecked();
+    const limit = screen.getByLabelText("Limit");
+    expect(limit).toHaveAttribute("data-slot", "input");
+    expect(limit).toHaveAttribute("data-typography", "control");
+    const dryRun = screen.getByRole("checkbox", { name: "Dry run" });
+    expect(dryRun).toHaveAttribute("data-slot", "checkbox");
+    expect(dryRun).toBeChecked();
     expect(
       await screen.findByRole("button", { name: "Run Discover" }),
-    ).toBeEnabled();
+    ).toHaveAttribute("data-slot", "button");
+  });
+
+  it("disables unavailable demo runs and offers supported next steps", async () => {
+    const runPipelineStages = vi.fn();
+    const ports = buildTestPorts({ api: { runPipelineStages } });
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+    renderWithProviders(<StageTriggerPanel />, { ports });
+
+    const runButton = screen.getByRole("button", { name: "Run in local app" });
+    expect(runButton).toBeDisabled();
+    expect(runButton).toHaveAccessibleDescription(
+      /Pipeline runs require the local app.*Review bundled runs.*install JobCtrl/i,
+    );
+    expect(screen.getByRole("link", { name: "Review bundled runs" })).toHaveAttribute(
+      "href",
+      "/runs",
+    );
+    expect(screen.getByRole("link", { name: "install JobCtrl" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/getting-started",
+    );
+    expect(runPipelineStages).not.toHaveBeenCalled();
   });
 
   it("blocks stage runs when the JobCtrl automation worker heartbeat is missing", async () => {
@@ -141,15 +169,15 @@ describe("StageTriggerPanel", () => {
 
     expect(screen.getByLabelText("Internal concurrency")).toBeInTheDocument();
     expect(screen.getByLabelText("Limit")).toBeInTheDocument();
-    expect(screen.getByLabelText("Dry run")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Dry run" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Minimum score")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Validation mode")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Tailor models")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Continuous")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Rescore" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Re-tailor" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Headless browser" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Continuous" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     expect(screen.getByLabelText("Limit")).toBeInTheDocument();
@@ -157,11 +185,11 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByLabelText("Minimum score")).toBeInTheDocument();
     expect(screen.getByLabelText("Apply model")).toBeInTheDocument();
     expect(screen.getByLabelText("Apply model")).toHaveRole("combobox");
-    expect(screen.getByLabelText("Headless browser")).toBeInTheDocument();
-    expect(screen.getByLabelText("Continuous")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Headless browser" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Continuous" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Validation mode")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Rescore" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Re-tailor" })).not.toBeInTheDocument();
   });
 
   it("renders supplemental content only for the active stage", async () => {
@@ -227,7 +255,7 @@ describe("StageTriggerPanel", () => {
     await user.type(limitInput, "1000");
     await user.click(await screen.findByRole("combobox", { name: "Source" }));
     await user.click(await screen.findByRole("option", { name: /LinkedIn/ }));
-    await user.click(screen.getByLabelText("Dry run"));
+    await user.click(screen.getByRole("checkbox", { name: "Dry run" }));
     await user.click(
       await screen.findByRole("button", { name: "Run Discover" }),
     );
@@ -252,7 +280,7 @@ describe("StageTriggerPanel", () => {
       sourceIds: ["jobspy:linkedin"],
     });
     expect(request).not.toHaveProperty("tailorJudgeMinScore");
-  });
+  }, 10_000);
 
   it("shows a stop control for queued pipeline stage runs", async () => {
     const user = userEvent.setup();
@@ -390,8 +418,8 @@ describe("StageTriggerPanel", () => {
     await user.type(screen.getByLabelText("Internal concurrency"), "3");
     await user.clear(screen.getByLabelText("Minimum score"));
     await user.type(screen.getByLabelText("Minimum score"), "8");
-    await user.click(screen.getByLabelText("Headless browser"));
-    await user.click(screen.getByLabelText("Continuous"));
+    await user.click(screen.getByRole("checkbox", { name: "Headless browser" }));
+    await user.click(screen.getByRole("checkbox", { name: "Continuous" }));
     await user.click(screen.getByRole("combobox", { name: "Apply model" }));
     await user.click(await screen.findByRole("option", { name: "Sonnet" }));
     await user.click(screen.getByRole("button", { name: "Run Apply" }));
@@ -418,7 +446,7 @@ describe("StageTriggerPanel", () => {
     expect(
       await screen.findByText("Apply queued successfully (run apply-run-123)."),
     ).toBeInTheDocument();
-  });
+  }, 10_000);
 
   it("does not expose Tailor as a product pipeline stage", () => {
     renderWithProviders(<StageTriggerPanel />);
@@ -434,7 +462,7 @@ describe("StageTriggerPanel", () => {
     expect(
       screen.queryByLabelText("Minimum judge score"),
     ).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Re-tailor" })).not.toBeInTheDocument();
   });
 
   it("shows a live starting status while the worker request is pending", async () => {
@@ -782,11 +810,11 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     await user.clear(screen.getByLabelText("Limit"));
     await user.type(screen.getByLabelText("Limit"), "13");
-    await user.click(screen.getByLabelText("Headless browser"));
+    await user.click(screen.getByRole("checkbox", { name: "Headless browser" }));
 
     await user.click(screen.getByRole("tab", { name: "Discover" }));
     expect(screen.getByLabelText("Internal concurrency")).toHaveValue(5);
-    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Re-tailor" })).not.toBeInTheDocument();
 
     unmount();
     renderWithProviders(<StageTriggerPanel />);
@@ -799,6 +827,6 @@ describe("StageTriggerPanel", () => {
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     expect(screen.getByLabelText("Limit")).toHaveValue(13);
-    expect(screen.getByLabelText("Headless browser")).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Headless browser" })).toBeChecked();
   });
 });

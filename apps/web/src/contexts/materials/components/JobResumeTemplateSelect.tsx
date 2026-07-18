@@ -57,7 +57,7 @@ export function JobResumeTemplateSelect({
   return (
     <div className="resume-template-job-select">
       <label className="field compact">
-        <span>{label}</span>
+        <span data-typography="label">{label}</span>
         <Select
           disabled={disabled}
           items={items}

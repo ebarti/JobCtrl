@@ -17,8 +17,9 @@ describe("PageHead accessibility", () => {
       </main>,
     );
 
-    expect(screen.getByRole("heading", { level: 1, name: "Jobs" })).toHaveClass(
-      "sr-only",
+    expect(screen.getByRole("heading", { level: 1, name: "Jobs" })).toHaveAttribute(
+      "data-typography",
+      "page-title",
     );
     expect(
       screen.getByRole("navigation", { name: "breadcrumb" }),
