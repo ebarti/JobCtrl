@@ -24,6 +24,11 @@ typed provider failures, and explicit acknowledgement mechanics.
 
 ## Delivery stack
 
+- **Phase 1:** published as PR #468; focused verification and independent
+  review passed.
+- **Phase 2:** this stacked change.
+- **Phase 3:** pending on Phase 2.
+
 ### Phase 1 — provider boundary
 
 - Replace `python-jobspy` with the pinned JobStreaming 0.0.2 release.

@@ -32,6 +32,14 @@ from jobctrl.domain.discovery.value_objects import (
     SearchStrategy,
     Source,
 )
+from jobctrl.domain.discovery.search_units import (
+    DISCOVERY_SEARCH_UNIT_STATES,
+    DiscoverySearchSpec,
+    DiscoverySearchUnit,
+    DiscoverySearchUnitLease,
+    DiscoverySearchUnitState,
+    search_unit_id,
+)
 from jobctrl.domain.discovery.source_registry import (
     BROAD_BOARD_LEAD_POLICY,
     SMART_EXTRACT_EXPERIMENTAL_POLICY,
@@ -82,6 +90,12 @@ __all__ = [
     "DiscoveryExecutionRef",
     "DiscoveryExecutionWorkPlanState",
     "DiscoveryPreparationStep",
+    "DISCOVERY_SEARCH_UNIT_STATES",
+    "DiscoverySearchSpec",
+    "DiscoverySearchUnit",
+    "DiscoverySearchUnitLease",
+    "DiscoverySearchUnitState",
+    "search_unit_id",
     "Employer",
     "JobMetadata",
     "PostingUrl",

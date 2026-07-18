@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 
 from jobctrl.database import ensure_posted_compensation_tables
 from jobctrl.domain.compensation import PostedCompensationFact, parse_posted_compensation
@@ -35,7 +35,13 @@ class SqlitePostedCompensationRepository:
         self._conn = conn
         ensure_posted_compensation_tables(conn)
 
-    def save_fact(self, fact: PostedCompensationFact) -> None:
+    def save_fact(
+        self,
+        fact: PostedCompensationFact,
+        *,
+        event_idempotency_key: str | None = None,
+        event_write_fence: Callable[[], None] | None = None,
+    ) -> None:
         self._conn.execute(
             """
             INSERT INTO job_posted_compensation_facts (
@@ -87,7 +93,12 @@ class SqlitePostedCompensationRepository:
             ),
         )
         self._conn.commit()
-        self._record_updated_event(fact)
+        if event_write_fence is not None:
+            event_write_fence()
+        self._record_updated_event(
+            fact,
+            idempotency_key=event_idempotency_key,
+        )
 
     def get_fact(self, tenant_id: str, job_url: str) -> PostedCompensationFact | None:
         row = self._conn.execute(
@@ -112,6 +123,8 @@ class SqlitePostedCompensationRepository:
         tenant_id: str = "local",
         source_field: str = "jobs.salary",
         parsed_at: str | None = None,
+        event_idempotency_key: str | None = None,
+        event_write_fence: Callable[[], None] | None = None,
     ) -> PostedCompensationFact:
         fact = parse_posted_compensation(
             salary,
@@ -120,13 +133,15 @@ class SqlitePostedCompensationRepository:
             source_field=source_field,
             parsed_at=parsed_at,
         )
-        self.save_fact(fact)
+        self.save_fact(
+            fact,
+            event_idempotency_key=event_idempotency_key,
+            event_write_fence=event_write_fence,
+        )
         return fact
 
     def backfill_from_legacy_jobs(self, *, tenant_id: str = "local", parsed_at: str | None = None) -> int:
-        rows = self._conn.execute(
-            "SELECT url, salary, full_description, description FROM jobs ORDER BY url"
-        ).fetchall()
+        rows = self._conn.execute("SELECT url, salary, full_description, description FROM jobs ORDER BY url").fetchall()
         for row in rows:
             source_text, source_field = posted_compensation_source_from_job(row)
             self.parse_and_save_job_salary(
@@ -139,7 +154,12 @@ class SqlitePostedCompensationRepository:
         self._conn.commit()
         return len(rows)
 
-    def _record_updated_event(self, fact: PostedCompensationFact) -> None:
+    def _record_updated_event(
+        self,
+        fact: PostedCompensationFact,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
         try:
             from jobctrl.state import record_job_event
 
@@ -159,6 +179,7 @@ class SqlitePostedCompensationRepository:
                     "marketEstimateState": None,
                     "updatedAt": fact.parsed_at,
                 },
+                idempotency_key=idempotency_key,
             )
             self._conn.commit()
         except sqlite3.OperationalError:
