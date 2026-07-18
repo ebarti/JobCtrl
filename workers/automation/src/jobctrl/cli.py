@@ -2907,7 +2907,7 @@ def backup(
     console.print(f"[green]Database backup written:[/green] {destination} ({size:,} bytes)")
 
 
-# Broad job boards whose internal per-board transport is owned by python-jobspy
+# Broad job boards whose internal per-board transport is owned by JobStreaming
 # (R10, D3): we cannot robots-gate or count their individual requests, only pace
 # and budget at our invocation boundary. ``doctor`` discloses when they are on.
 _BROAD_BOARDS = frozenset({"indeed", "linkedin", "glassdoor", "zip_recruiter"})
@@ -2954,7 +2954,7 @@ def politeness_doctor_notices(conn, search_cfg: dict) -> list[tuple[str, str, st
         rows.append((
             "broad-board discovery",
             "warn",
-            f"active: {', '.join(active_broad)} — python-jobspy owns their transport; "
+            f"active: {', '.join(active_broad)} — JobStreaming owns their transport; "
             "only invocation-boundary budget + pacing apply (D3)",
         ))
     else:
@@ -3126,20 +3126,16 @@ def doctor() -> None:
     except Exception as exc:  # noqa: BLE001 - doctor should report setup issues, not crash.
         results.append(("discovery_settings", warn_mark, f"Unable to load search settings: {exc}"))
 
-    # jobspy (discovery dep installed separately)
-    # The package is intentionally NOT in pyproject.toml so the worker venv
-    # stays slim — it ships only when the user opts into LinkedIn / Indeed
-    # discovery. ``importlib.import_module`` here keeps pyright from
-    # flagging the conditional import as missing on machines that haven't
-    # installed it yet.
+    # JobStreaming is a required, pinned worker dependency because broad-board
+    # discovery and its durable event/checkpoint contract ship together.
     try:
-        import importlib
+        from importlib import import_module, metadata
 
-        importlib.import_module("jobspy")
-        results.append(("python-jobspy", ok_mark, "Job board scraping available"))
+        import_module("jobstreaming")
+        version = metadata.version("jobstreaming")
+        results.append(("JobStreaming", ok_mark, f"Job board streaming available ({version})"))
     except ImportError:
-        results.append(("python-jobspy", warn_mark,
-                        "pip install --no-deps python-jobspy && pip install pydantic tls-client requests markdownify regex"))
+        results.append(("JobStreaming", fail_mark, "Run scripts/install to restore worker dependencies"))
 
     # --- Tier 2 checks ---
     for probe in probe_analysis_setup():

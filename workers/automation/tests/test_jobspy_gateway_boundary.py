@@ -1,6 +1,6 @@
 """jobspy invocation-boundary politeness (R10 P2d, surface #1).
 
-python-jobspy owns its transport, so we enforce a per-run request budget +
+JobStreaming owns its transport, so we enforce a per-run request budget +
 inter-search pacing at OUR call boundary (owner decision D3). This proves the
 budget stops a crawl and records a first-class non-error outcome.
 """
