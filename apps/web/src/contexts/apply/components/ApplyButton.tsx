@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
 import { useApplyJobMutation } from "../hooks/useApplyJobMutation.js";
 
 export interface ApplyButtonProps {
@@ -10,19 +11,20 @@ export interface ApplyButtonProps {
 
 export function ApplyButton({
   jobId,
-  className = "tab on",
-  label = "apply",
+  className,
+  label = "Apply",
 }: ApplyButtonProps): JSX.Element {
   const applyJob = useApplyJobMutation();
   const isPending = applyJob.isPending;
   return (
-    <button
+    <Button
       type="button"
-      className={className}
+      {...(className ? { className } : {})}
+      size="sm"
       disabled={isPending}
       onClick={() => applyJob.mutate({ jobId })}
     >
-      {isPending ? "applying" : label}
-    </button>
+      {isPending ? "Applying" : label}
+    </Button>
   );
 }

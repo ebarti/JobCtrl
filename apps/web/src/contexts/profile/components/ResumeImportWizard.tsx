@@ -70,7 +70,11 @@ export function ResumeImportWizard() {
               Upload, inspect, and confirm one PDF in three clear steps.
             </CardDescription>
           </div>
-          <span className="resume-import-wizard__progress" aria-live="polite">
+          <span
+            className="resume-import-wizard__progress"
+            data-typography="metadata"
+            aria-live="polite"
+          >
             Step {activeStepIndex + 1} of {STEPS.length}
           </span>
         </CardHeader>
@@ -87,12 +91,16 @@ export function ResumeImportWizard() {
                 data-active={active || undefined}
                 data-complete={index < activeStepIndex || undefined}
               >
-                <span className="resume-import-step-link__number" aria-hidden="true">
+                <span
+                  className="resume-import-step-link__number"
+                  data-typography="metadata"
+                  aria-hidden="true"
+                >
                   {String(index + 1).padStart(2, "0")}
                 </span>
                 <span className="resume-import-step-link__copy">
-                  <strong>{step.label}</strong>
-                  <small>{step.description}</small>
+                  <strong data-typography="control">{step.label}</strong>
+                  <small data-typography="metadata">{step.description}</small>
                 </span>
               </Link>
             );

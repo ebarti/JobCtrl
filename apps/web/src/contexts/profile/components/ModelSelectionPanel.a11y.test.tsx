@@ -37,7 +37,7 @@ describe("<ModelSelectionPanel> a11y", () => {
       }),
     });
 
-    await screen.findByRole("button", { name: "retry catalog" });
+    await screen.findByRole("button", { name: "Retry catalog" });
     expect(await axe(view.container)).toHaveNoViolations();
   });
 });

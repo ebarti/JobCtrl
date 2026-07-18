@@ -11,6 +11,14 @@ import {
 } from "../../shared/lib/apiCapabilityAvailability.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { Button } from "../../shared/ui/button.js";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "../../shared/ui/dropdown-menu.js";
 import { Tabs, TabsList, TabsTrigger } from "../../shared/ui/tabs.js";
 
 const JOB_QUEUES = [
@@ -108,10 +116,10 @@ export function JobBulkActions({
   const retryAllFailures = search.deleted === "active";
   const retrySelectedFailures = retryAllFailures && search.state === "failed";
   const primaryLabel = hidden
-    ? "unhide selected"
+    ? "Unhide selected"
     : restoring
-      ? "restore"
-      : "delete selected";
+      ? "Restore selected"
+      : "Delete selected";
   return (
     <>
       <div className="jobs-queue-navigation">
@@ -136,183 +144,233 @@ export function JobBulkActions({
           </TabsList>
         </Tabs>
       </div>
-      <div className="bulk-bar jobs-bulk-actions">
-        {selectedCount ? (
-          <span className="meta">{selectedCount} selected</span>
-        ) : null}
-        {hasUnavailableDemoAutomation ? (
-          <span className="meta" id={unavailableReasonId} role="status">
-            Disabled automation actions require the local app. Browser-local job
-            organization remains available. {" "}
-            <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
-          </span>
-        ) : null}
-        <button
-          className="tab"
-          type="button"
-          disabled={!hasItems}
-          onClick={onSelectPage}
+      <div className="bulk-bar jobs-bulk-actions" aria-label="Job actions" role="group">
+        <div
+          aria-label="Selection actions"
+          className="jobs-action-group jobs-selection-actions"
+          role="group"
         >
-          select page
-        </button>
-        <button
-          className="tab"
-          type="button"
-          disabled={!hasAnyMatching || hasLocalFilters}
-          onClick={onSelectAllMatching}
-        >
-          select all matching
-        </button>
-        <button
-          className="tab"
-          type="button"
-          disabled={!selectedCount}
-          onClick={onClearSelection}
-        >
-          clear selected
-        </button>
-        <RefreshAllCompensationButton
-          {...(!refreshCompensationAvailability.available
-            ? { ariaDescribedBy: unavailableReasonId }
-            : {})}
-          disabled={!refreshCompensationAvailability.available}
-          onSuccess={onMaintenanceSuccess}
-        />
-        {staleCount || selectedStaleKeys.length ? (
-          <ResetStaleScoresButton
-            jobKeys={selectedStaleKeys}
-            staleCount={selectedStaleKeys.length || staleCount}
-            label={
-              selectedStaleKeys.length
-                ? "reset stale selected"
-                : "reset all stale scores"
-            }
-            onSuccess={onResetStaleSuccess}
-          />
-        ) : null}
-        {!restoring && !hidden && !legacyClosed ? (
-          <>
-            <RescoreCurrentPolicyButton
-              {...(!rescoreAvailability.available
-                ? { ariaDescribedBy: unavailableReasonId }
-                : {})}
-              disabled={!rescoreAvailability.available}
-              onSuccess={onMaintenanceSuccess}
-            />
-            <RetailorCurrentPolicyButton
-              {...(!retailorAvailability.available
-                ? { ariaDescribedBy: unavailableReasonId }
-                : {})}
-              disabled={!retailorAvailability.available}
-              onSuccess={onMaintenanceSuccess}
-            />
-            {selectedJobKeys.length ? (
-              <>
-                <RescoreCurrentPolicyButton
-                  jobKeys={selectedJobKeys}
-                  label="rescore selected"
-                  {...(!rescoreAvailability.available
-                    ? { ariaDescribedBy: unavailableReasonId }
-                    : {})}
-                  disabled={!rescoreAvailability.available}
-                  onSuccess={onMaintenanceSuccess}
-                />
-                <RetailorCurrentPolicyButton
-                  jobKeys={selectedJobKeys}
-                  label="re-tailor selected"
-                  {...(!retailorAvailability.available
-                    ? { ariaDescribedBy: unavailableReasonId }
-                    : {})}
-                  disabled={!retailorAvailability.available}
-                  onSuccess={onMaintenanceSuccess}
-                />
-              </>
-            ) : null}
-          </>
-        ) : null}
-        {retrySelectedFailures ? (
-          <button
-            className="tab on"
-            type="button"
-            aria-describedby={
-              retryAvailability.available ? undefined : unavailableReasonId
-            }
-            disabled={
-              !selectedCount || retryLoading || !retryAvailability.available
-            }
-            onClick={onRetryFailedSelected}
-          >
-            retry selected
-          </button>
-        ) : null}
-        {retryAllFailures ? (
-          <>
-            <button
-              className="tab"
-              type="button"
-              aria-describedby={
-                pendingPreparationAvailability.available
-                  ? undefined
-                  : unavailableReasonId
-              }
-              disabled={
-                hasLocalFilters ||
-                pendingPreparationLoading ||
-                !pendingPreparationAvailability.available
-              }
-              onClick={onRunPendingPreparation}
-            >
-              continue pending prep
-            </button>
-            <button
-              className="tab"
-              type="button"
-              aria-describedby={
-                retryAvailability.available ? undefined : unavailableReasonId
-              }
-              disabled={
-                hasLocalFilters || retryLoading || !retryAvailability.available
-              }
-              onClick={onRetryAllFailed}
-            >
-              retry all failed
-            </button>
-          </>
-        ) : null}
-        {!hidden ? (
+          {selectedCount ? (
+            <span data-typography="metadata">{selectedCount} selected</span>
+          ) : null}
           <Button
-            aria-label="hide selected"
             size="sm"
             type="button"
             variant="outline"
-            disabled={!selectedCount || loading}
-            onClick={onHideSelected}
+            disabled={!hasItems}
+            onClick={onSelectPage}
           >
-            hide
+            Select page
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button size="sm" type="button" variant="outline" />}
+            >
+              More actions
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" aria-label="More actions">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Selection</DropdownMenuLabel>
+                <DropdownMenuItem
+                  disabled={!hasAnyMatching || hasLocalFilters}
+                  onClick={onSelectAllMatching}
+                >
+                  Select all matching
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!selectedCount}
+                  onClick={onClearSelection}
+                >
+                  Clear selection
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        {hasUnavailableDemoAutomation ? (
+          <span data-typography="body" id={unavailableReasonId} role="status">
+            Disabled automation actions require the local app. Browser-local job
+            organization remains available.{" "}
+            <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
+          </span>
         ) : null}
-        {restoring || hidden ? (
+        <div
+          aria-label="Job operations"
+          className="jobs-action-group jobs-operations-actions"
+          role="group"
+        >
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button size="sm" type="button" variant="outline" />}
+            >
+              Job operations
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" aria-label="Job operations">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Maintenance</DropdownMenuLabel>
+                <RefreshAllCompensationButton
+                  className=""
+                  label="Refresh compensation"
+                  render={(props) => <DropdownMenuItem {...props} />}
+                  {...(!refreshCompensationAvailability.available
+                    ? { ariaDescribedBy: unavailableReasonId }
+                    : {})}
+                  disabled={!refreshCompensationAvailability.available}
+                  onSuccess={onMaintenanceSuccess}
+                />
+                {staleCount || selectedStaleKeys.length ? (
+                  <ResetStaleScoresButton
+                    className=""
+                    jobKeys={selectedStaleKeys}
+                    label={
+                      selectedStaleKeys.length
+                        ? "Reset stale selected"
+                        : "Reset all stale scores"
+                    }
+                    staleCount={selectedStaleKeys.length || staleCount}
+                    render={(props) => <DropdownMenuItem {...props} />}
+                    onSuccess={onResetStaleSuccess}
+                  />
+                ) : null}
+              </DropdownMenuGroup>
+              {!restoring && !hidden && !legacyClosed ? (
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Preparation</DropdownMenuLabel>
+                  <RescoreCurrentPolicyButton
+                    className=""
+                    label="Rescore outdated scores"
+                    render={(props) => <DropdownMenuItem {...props} />}
+                    {...(!rescoreAvailability.available
+                      ? { ariaDescribedBy: unavailableReasonId }
+                      : {})}
+                    disabled={!rescoreAvailability.available}
+                    onSuccess={onMaintenanceSuccess}
+                  />
+                  <RetailorCurrentPolicyButton
+                    className=""
+                    label="Re-tailor outdated materials"
+                    render={(props) => <DropdownMenuItem {...props} />}
+                    {...(!retailorAvailability.available
+                      ? { ariaDescribedBy: unavailableReasonId }
+                      : {})}
+                    disabled={!retailorAvailability.available}
+                    onSuccess={onMaintenanceSuccess}
+                  />
+                  {selectedJobKeys.length ? (
+                    <>
+                      <RescoreCurrentPolicyButton
+                        className=""
+                        jobKeys={selectedJobKeys}
+                        label="Rescore selected"
+                        render={(props) => <DropdownMenuItem {...props} />}
+                        {...(!rescoreAvailability.available
+                          ? { ariaDescribedBy: unavailableReasonId }
+                          : {})}
+                        disabled={!rescoreAvailability.available}
+                        onSuccess={onMaintenanceSuccess}
+                      />
+                      <RetailorCurrentPolicyButton
+                        className=""
+                        jobKeys={selectedJobKeys}
+                        label="Re-tailor selected"
+                        render={(props) => <DropdownMenuItem {...props} />}
+                        {...(!retailorAvailability.available
+                          ? { ariaDescribedBy: unavailableReasonId }
+                          : {})}
+                        disabled={!retailorAvailability.available}
+                        onSuccess={onMaintenanceSuccess}
+                      />
+                    </>
+                  ) : null}
+                </DropdownMenuGroup>
+              ) : null}
+              {retrySelectedFailures || retryAllFailures ? (
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Workflow recovery</DropdownMenuLabel>
+                  {retryAllFailures ? (
+                    <DropdownMenuItem
+                      aria-describedby={
+                        pendingPreparationAvailability.available
+                          ? undefined
+                          : unavailableReasonId
+                      }
+                      disabled={
+                        hasLocalFilters ||
+                        pendingPreparationLoading ||
+                        !pendingPreparationAvailability.available
+                      }
+                      onClick={onRunPendingPreparation}
+                    >
+                      Continue pending preparation
+                    </DropdownMenuItem>
+                  ) : null}
+                  {retrySelectedFailures ? (
+                    <DropdownMenuItem
+                      aria-describedby={
+                        retryAvailability.available ? undefined : unavailableReasonId
+                      }
+                      disabled={
+                        !selectedCount || retryLoading || !retryAvailability.available
+                      }
+                      onClick={onRetryFailedSelected}
+                    >
+                      Retry selected
+                    </DropdownMenuItem>
+                  ) : null}
+                  {retryAllFailures ? (
+                    <DropdownMenuItem
+                      aria-describedby={
+                        retryAvailability.available ? undefined : unavailableReasonId
+                      }
+                      disabled={
+                        hasLocalFilters || retryLoading || !retryAvailability.available
+                      }
+                      onClick={onRetryAllFailed}
+                    >
+                      Retry all failed
+                    </DropdownMenuItem>
+                  ) : null}
+                </DropdownMenuGroup>
+              ) : null}
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Selection management</DropdownMenuLabel>
+                {!hidden ? (
+                  <DropdownMenuItem
+                    disabled={!selectedCount || loading}
+                    onClick={onHideSelected}
+                  >
+                    Hide selected
+                  </DropdownMenuItem>
+                ) : null}
+                {restoring || hidden ? (
+                  <DropdownMenuItem
+                    className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+                    disabled={!selectedCount || loading}
+                    onClick={onPermanentlyDeleteSelected}
+                  >
+                    Permanently delete selected
+                  </DropdownMenuItem>
+                ) : null}
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        <div
+          aria-label="Selected job lifecycle actions"
+          className="jobs-action-group jobs-lifecycle-actions"
+          role="group"
+        >
           <Button
-            aria-label="permanently delete selected"
+            aria-label={restoring ? "Restore selected" : undefined}
             size="sm"
             type="button"
-            variant="destructive"
+            variant={restoring || hidden ? "default" : "destructive"}
             disabled={!selectedCount || loading}
-            onClick={onPermanentlyDeleteSelected}
+            onClick={onPrimaryAction}
           >
-            permanently delete
+            {primaryLabel}
           </Button>
-        ) : null}
-        <Button
-          aria-label={restoring ? "restore selected" : undefined}
-          size="sm"
-          type="button"
-          variant={restoring || hidden ? "default" : "destructive"}
-          disabled={!selectedCount || loading}
-          onClick={onPrimaryAction}
-        >
-          {primaryLabel}
-        </Button>
+        </div>
       </div>
     </>
   );

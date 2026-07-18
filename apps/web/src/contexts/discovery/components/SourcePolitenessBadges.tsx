@@ -83,10 +83,16 @@ export function SourcePolitenessBadges({ politeness, sourceLabel }: SourcePolite
           <span
             key={badge.reason}
             className="source-politeness-badge"
+            data-typography="label"
             title={`${badge.label}: ${times}${context}`}
           >
             {badge.label}
-            <span className="source-politeness-badge-count">{badge.count}</span>
+            <span
+              className="source-politeness-badge-count"
+              data-typography="metadata"
+            >
+              {badge.count}
+            </span>
           </span>
         );
       })}

@@ -47,7 +47,7 @@ describe("<JobActions>", () => {
       { ports: buildTestPorts({ api: { dashboardSummary, cancelJobAction } }) },
     );
 
-    await userEvent.click(await screen.findByRole("button", { name: /^cancel apply$/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /^stop application run$/i }));
 
     await waitFor(() =>
       expect(cancelJobAction).toHaveBeenCalledWith("job-1", {
@@ -71,7 +71,7 @@ describe("<JobActions>", () => {
     );
 
     const generateMaterials = screen.getByRole("button", {
-      name: "generate materials",
+      name: "Generate materials",
     });
     expect(generateMaterials).toHaveClass(
       "border-border",
@@ -82,7 +82,21 @@ describe("<JobActions>", () => {
 
     await waitFor(() => expect(dashboardSummary).toHaveBeenCalledTimes(1));
     expect(
-      screen.queryByRole("button", { name: /^cancel apply$/i }),
+      screen.queryByRole("button", { name: /^stop application run$/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders an applied state as status rather than a state-transition action", () => {
+    renderWithProviders(
+      <JobActions currentStage="apply" isApplied jobId="job-applied" />,
+    );
+
+    expect(screen.getByLabelText("Application status: Applied")).toHaveAttribute(
+      "data-slot",
+      "status-badge",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Mark as applied" }),
     ).not.toBeInTheDocument();
   });
 });

@@ -898,12 +898,17 @@ describe("<ApplyReviewView>", () => {
       const icon = button.querySelector('svg[data-icon="inline-start"]');
       expect(icon).toHaveAttribute("aria-hidden", "true");
     }
-    const submitGateStatus = screen.getByText("Submit gate: approval not recorded.").closest('[role="status"]');
-    expect(submitGateStatus).toHaveClass("inline-flex", "items-center", "justify-end", "gap-1.5");
-    expect(submitGateStatus?.querySelector(".tabler-icon-lock")).toHaveAttribute("aria-hidden", "true");
+    const submitGateAlert = screen.getByText("Submit gate: approval not recorded.").closest('[role="alert"]');
+    expect(submitGateAlert).toHaveTextContent("Authorization unavailable");
+    expect(submitGateAlert?.querySelector(".tabler-icon-lock")).toHaveAttribute("aria-hidden", "true");
+    const authorizationDetails = decision.getByText("Technical details").closest("details");
+    expect(authorizationDetails).not.toHaveAttribute("open");
+    expect(authorizationDetails).toHaveTextContent("Profile version");
     const reviewWorkspace = screen.getByRole("region", {
       name: /Review evidence for Principal Platform Engineer/i,
     });
+    expect(reviewWorkspace.querySelector("main")).toBeNull();
+    expect(document.querySelector(".apply-review-selected")?.tagName).toBe("SECTION");
     const positionCard = within(reviewWorkspace).getByRole("region", {
       name: "Requirements and original post",
     });
@@ -942,7 +947,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText("covered in tailored resume")).toBeInTheDocument();
     expect(screen.getByText("missing from tailored resume")).toBeInTheDocument();
     expect(screen.getByText("2 resume bullets")).toBeInTheDocument();
-    const firstRequirementSummary = screen.getAllByRole("definition")[0]?.closest("dl");
+    const firstRequirementSummary = document.querySelector(".apply-review-requirement-summary");
     expect(firstRequirementSummary).toHaveClass("apply-review-requirement-summary");
     expect(
       screen.getByText((_, element) =>
@@ -1044,7 +1049,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByRole("button", { name: "Align left" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Align center" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Align right" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "open final file" }).getAttribute("href")).toContain(
+    expect(screen.getByRole("link", { name: "Open final file" }).getAttribute("href")).toContain(
       "/v1/artifacts/resume-pdf-2/preview.pdf",
     );
     const shadow = await findResumeShadowRoot();
@@ -1460,7 +1465,7 @@ describe("<ApplyReviewView>", () => {
     const shadow = await findResumeShadowRoot();
     expect(shadowText(shadow)).toContain("Restored human rewrite for incident response.");
     expect(shadowText(shadow)).not.toContain("Owned platform reliability improvements for incident response.");
-    expect(screen.getByRole("button", { name: "save draft" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
   });
 
   it("renders promoted draft HTML through the same page classes as the profile preview", async () => {
@@ -1590,8 +1595,8 @@ describe("<ApplyReviewView>", () => {
         shadowElementWithText(shadow, "Owned platform reliability improvements for incident response.").querySelector("a"),
       ).toHaveAttribute("href", "https://portfolio.example.test"),
     );
-    await waitFor(() => expect(screen.getByRole("button", { name: "save draft" })).toBeEnabled());
-    await userEvent.click(screen.getByRole("button", { name: "save draft" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(screen.getByText("saved revision 1")).toBeInTheDocument());
 
     const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
@@ -1899,7 +1904,7 @@ describe("<ApplyReviewView>", () => {
     });
 
     await findResumeShadowRoot();
-    const renderButton = await screen.findByRole("button", { name: "render replacement" });
+    const renderButton = await screen.findByRole("button", { name: "Render replacement" });
     await waitFor(() => expect(renderButton).not.toBeDisabled());
     await userEvent.click(renderButton);
     await waitFor(() => expect(applyReviewQueue.mock.calls.length).toBeGreaterThanOrEqual(2));
@@ -2006,7 +2011,7 @@ describe("<ApplyReviewView>", () => {
     });
 
     await findResumeShadowRoot();
-    const renderButton = await screen.findByRole("button", { name: "render replacement" });
+    const renderButton = await screen.findByRole("button", { name: "Render replacement" });
     await waitFor(() => expect(renderButton).not.toBeDisabled());
     await userEvent.click(renderButton);
     const comparison = within(await screen.findByRole("region", { name: "Artifact comparison" }));
@@ -2126,7 +2131,7 @@ describe("<ApplyReviewView>", () => {
 
     const replyBox = inlineThreadContent.getByLabelText("Reply");
     await userEvent.type(replyBox, "This number is supported by the incident response profile bullet.");
-    await userEvent.click(inlineThreadContent.getByRole("button", { name: "reply" }));
+    await userEvent.click(inlineThreadContent.getByRole("button", { name: "Reply" }));
 
     await waitFor(() =>
       expect(replyToResumeReviewComment).toHaveBeenCalledWith("thread-claim-risk", {
@@ -2193,7 +2198,7 @@ describe("<ApplyReviewView>", () => {
     expect(fallbackContent.getByText("Comments without a rendered line")).toBeInTheDocument();
     expect(fallbackContent.getByText("2 threads")).toBeInTheDocument();
     expect(fallbackContent.getByText("This persisted comment has an unresolved anchor.")).toBeInTheDocument();
-    expect(fallbackContent.getByText("anchor unresolved")).toBeInTheDocument();
+    expect(fallbackContent.getByText("Anchor unresolved")).toBeInTheDocument();
     expect(
       fallbackContent.getByText("This persisted comment points to a missing rendered line."),
     ).toBeInTheDocument();
@@ -2939,8 +2944,8 @@ describe("<ApplyReviewView>", () => {
     expect((await screen.findAllByText(/Submit failed: process killed by signal/i)).length).toBeGreaterThan(0);
     expect(screen.getAllByText("submit failed").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Last submit failed: process killed by signal/i).length).toBeGreaterThan(0);
-    const blockerGroup = screen.getByText("Blockers").closest("div");
-    expect(blockerGroup?.querySelector(".tabler-icon-ban")).toHaveAttribute("aria-hidden", "true");
+    const reviewSummary = screen.getByRole("region", { name: "Application review summary" });
+    expect(reviewSummary.querySelector(".tabler-icon-alert-triangle")).toHaveAttribute("aria-hidden", "true");
     expect(screen.queryByText("needs repair")).not.toBeInTheDocument();
   });
 
@@ -3089,8 +3094,102 @@ describe("<ApplyReviewView>", () => {
     expect(
       screen.getByText("Missing apply link: No application or posting URL is recorded, so apply review cannot proceed."),
     ).toBeInTheDocument();
-    expect(screen.getByText("Application target: missing: No application or posting URL is recorded.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Application target: missing: No application or posting URL is recorded."),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Score eligibility: unknown: No score eligibility data is recorded.")).toBeInTheDocument();
+  });
+
+  it("deduplicates review issues and keeps raw source metadata behind Technical details", async () => {
+    const duplicateFact = {
+      code: "missing_resume_pdf",
+      label: "Submit-ready PDF missing",
+      detail: "A submit-ready PDF is still missing.",
+      severity: "warning" as const,
+      source: "materials.pdf",
+    };
+    const reviewQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              applyAudit: makeApplyAudit({
+                state: "blocked",
+                label: "materials need attention",
+                missingPrerequisites: [duplicateFact],
+                hardBlockers: [{ ...duplicateFact, code: "duplicate_resume_pdf" }],
+                sources: [
+                  {
+                    kind: "application_url",
+                    label: "Resume PDF source",
+                    status: "missing",
+                    detail: "https://localhost/artifacts/resume.pdf",
+                  },
+                ],
+              }),
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: { applyReviewQueue: vi.fn(async () => reviewQueue) },
+      }),
+    });
+
+    const summary = await screen.findByRole("region", {
+      name: "Application review summary",
+    });
+    expect(within(summary).getByRole("alert")).toHaveTextContent("1 review issue requires attention");
+    expect(summary.querySelectorAll(".apply-review-audit-summary-list li")).toHaveLength(1);
+    const technicalDetails = within(summary)
+      .getByText("Technical details (1)")
+      .closest("details");
+    expect(technicalDetails).not.toHaveAttribute("open");
+    expect(technicalDetails).toHaveTextContent("https://localhost/artifacts/resume.pdf");
+  });
+
+  it("keeps an evidence-related blocker in the visible review summary", async () => {
+    const reviewQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              applyAudit: makeApplyAudit({
+                state: "blocked",
+                label: "evidence needs review",
+                hardBlockers: [
+                  {
+                    code: "required_ownership_not_evidenced",
+                    label: "Required ownership is not evidenced",
+                    detail: "Profile evidence does not verify the required production ownership.",
+                    severity: "blocking",
+                    source: "profile",
+                  },
+                ],
+                sources: [],
+              }),
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: { applyReviewQueue: vi.fn(async () => reviewQueue) },
+      }),
+    });
+
+    const summary = await screen.findByRole("region", {
+      name: "Application review summary",
+    });
+    expect(within(summary).getByRole("alert")).toHaveTextContent(
+      "Profile evidence does not verify the required production ownership.",
+    );
+    expect(within(summary).queryByText(/Technical details/)).not.toBeInTheDocument();
   });
 
   it("records approval without dispatching apply automation", async () => {
@@ -3244,9 +3343,14 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    const partialEvidenceAlert = await screen.findByRole("alert");
+    const partialEvidenceAlert = (await screen.findAllByRole("alert")).find((candidate) =>
+      candidate.textContent?.includes("Partial dry-run evidence only"),
+    );
+    expect(partialEvidenceAlert).toBeDefined();
+    if (!partialEvidenceAlert) {
+      throw new Error("Expected partial dry-run evidence alert.");
+    }
     expect(partialEvidenceAlert).toHaveTextContent(/Partial dry-run evidence only/i);
-    expect(partialEvidenceAlert).toHaveClass("inline-flex", "items-center", "justify-end", "gap-1.5");
     expect(partialEvidenceAlert.querySelector(".tabler-icon-lock")).toHaveAttribute("aria-hidden", "true");
     expect(
       screen.getByRole("button", {
@@ -3317,10 +3421,14 @@ describe("<ApplyReviewView>", () => {
     render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
 
     const queue = await screen.findByRole("complementary", { name: "Application review queue" });
-    expect(within(queue).getByRole("button", { name: /Staff Software Engineer/i })).toHaveAttribute(
+    const selectedQueueItem = within(queue).getByRole("button", {
+      name: /Staff Software Engineer/i,
+    });
+    expect(selectedQueueItem).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+    expect(selectedQueueItem).toHaveAttribute("data-slot", "button");
     expect(
       await screen.findByRole("region", { name: "Review evidence for Staff Software Engineer" }),
     ).toBeInTheDocument();

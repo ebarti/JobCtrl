@@ -27,16 +27,18 @@
 }
 
 .dashboard-view .kpis [data-slot="stat-label"] {
-  font-size: var(--jh-font-size-caption);
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-size: var(--jh-type-label-size);
+  font-weight: var(--jh-type-label-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-label-line-height);
 }
 
 .dashboard-view .kpis [data-slot="stat-value"] {
   margin-top: auto;
-  font-size: clamp(30px, 2.8vw, 42px);
-  font-weight: 650;
-  letter-spacing: -0.055em;
+  font-size: var(--jh-type-metric-size);
+  font-weight: var(--jh-type-metric-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-metric-line-height);
 }
 
 .dashboard-stack {
@@ -127,6 +129,12 @@
   border-radius: 0;
   padding: 12px 2px;
   border-bottom: 1px solid var(--border);
+  white-space: normal;
+}
+
+.dashboard-view .funnel-row .legend > span {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .dashboard-view .funnel-row:last-child {
@@ -142,8 +150,10 @@
 }
 
 .dashboard-view .funnel-stage {
-  font-size: var(--jh-font-size-body);
-  font-weight: 620;
+  font-size: var(--jh-type-strong-body-size);
+  font-weight: var(--jh-type-strong-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-strong-body-line-height);
   transition: color 140ms ease;
 }
 
@@ -152,7 +162,10 @@
   width: 24px;
   color: var(--muted-foreground);
   font-family: var(--font-mono);
-  font-weight: 500;
+  font-size: var(--jh-type-body-size);
+  font-weight: var(--jh-type-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-body-line-height);
 }
 
 .dashboard-view .bar {
@@ -189,9 +202,10 @@
 
 .dashboard-view .conversion-breakdown-title {
   color: var(--foreground);
-  font-size: var(--jh-font-size-body-sm);
-  font-weight: 620;
-  letter-spacing: 0;
+  font-size: var(--jh-type-strong-body-size);
+  font-weight: var(--jh-type-strong-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-strong-body-line-height);
   text-transform: none;
 }
 
@@ -207,8 +221,10 @@
 }
 
 .dashboard-view .digest-value {
-  font-size: 15px;
-  font-weight: 650;
+  font-size: var(--jh-type-strong-body-size);
+  font-weight: var(--jh-type-strong-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-strong-body-line-height);
 }
 
 .dashboard-view .digest-actions {
@@ -226,13 +242,17 @@
 }
 
 .dashboard-view .title-stack b {
-  font-size: var(--jh-font-size-body);
-  font-weight: 620;
+  font-size: var(--jh-type-strong-body-size);
+  font-weight: var(--jh-type-strong-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-strong-body-line-height);
 }
 
 .dashboard-view .title-stack span {
-  font-size: var(--jh-font-size-body-sm);
-  line-height: 1.35;
+  font-size: var(--jh-type-metadata-size);
+  font-weight: var(--jh-type-metadata-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-metadata-line-height);
 }
 
 .dashboard-view .work-status-card {
@@ -266,33 +286,36 @@
 
 .dashboard-view .work-status-metric dt {
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-caption);
-  font-weight: 680;
-  letter-spacing: 0.075em;
-  text-transform: uppercase;
+  font-size: var(--jh-type-label-size);
+  font-weight: var(--jh-type-label-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-label-line-height);
+  text-transform: none;
 }
 
 .dashboard-view .work-status-metric-value {
   margin: 0;
   color: var(--foreground);
-  font-size: 28px;
+  font-size: var(--jh-type-metric-size);
   font-variant-numeric: tabular-nums;
-  font-weight: 680;
-  letter-spacing: -0.045em;
-  line-height: 1;
+  font-weight: var(--jh-type-metric-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-metric-line-height);
 }
 
 .dashboard-view
   .work-status-metric[data-attention="true"]
   .work-status-metric-value {
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .dashboard-view .work-status-metric-description {
   margin: 0;
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-body-sm);
-  line-height: 1.45;
+  font-size: var(--jh-type-body-size);
+  font-weight: var(--jh-type-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-body-line-height);
 }
 
 .dashboard-view .work-status-metric-separator {

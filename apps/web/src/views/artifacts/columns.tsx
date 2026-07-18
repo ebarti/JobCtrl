@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { RowSelectionState } from "@tanstack/react-table";
-import { type ChangeEvent, type MouseEvent } from "react";
+import { type MouseEvent } from "react";
 
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
 import { ArtifactTypeBadge } from "../../contexts/materials/components/ArtifactTypeBadge.js";
@@ -12,6 +12,7 @@ import type {
   DataGridColumn,
   DataGridHeaderContext,
 } from "../../shared/ui/filterable-data-grid.js";
+import { Checkbox } from "../../shared/ui/checkbox.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
 import { TitleStack } from "../../shared/ui/title-stack.js";
 
@@ -62,21 +63,16 @@ function selectHeader(
         }
       }}
     >
-      <input
-        type="checkbox"
+      <Checkbox
         aria-label="Select all rows on this page"
         checked={allSelected}
-        ref={(node) => {
-          if (node) {
-            node.indeterminate = someSelected && !allSelected;
-          }
-        }}
-        onChange={(event: ChangeEvent<HTMLInputElement>) =>
+        indeterminate={someSelected && !allSelected}
+        onCheckedChange={(checked) =>
           updateSelectedRows(
             rowSelection,
             onRowSelectionChange,
             pageRows,
-            event.target.checked,
+            checked,
           )
         }
         onClick={(event: MouseEvent) => event.stopPropagation()}
@@ -119,16 +115,15 @@ export function artifactColumns(
             }
           }}
         >
-          <input
-            type="checkbox"
+          <Checkbox
             aria-label={`Select ${row.title || row.type}`}
             checked={Boolean(options.rowSelection[row.artifactId])}
-            onChange={(event: ChangeEvent<HTMLInputElement>) =>
+            onCheckedChange={(checked) =>
               updateSelectedRow(
                 options.rowSelection,
                 options.onRowSelectionChange,
                 row,
-                event.target.checked,
+                checked,
               )
             }
             onClick={(event: MouseEvent) => event.stopPropagation()}

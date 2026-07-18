@@ -14,6 +14,7 @@ import {
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
+import { Button } from "../../shared/ui/button.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
 
@@ -163,15 +164,16 @@ export function DigestPanel() {
           </div>
           <div className="digest-actions">
             <span className="meta">Generated {formatDateTime(data.generatedAt)}</span>
-            <button
+            <Button
               className="tab on"
               type="button"
+              variant="secondary"
               disabled={acknowledge.isPending}
               onClick={() => acknowledge.mutate({ acknowledgedAt: data.generatedAt })}
             >
               <IconCheck size={14} aria-hidden="true" />
-              <span>{acknowledge.isPending ? "marking" : "mark reviewed"}</span>
-            </button>
+              <span>{acknowledge.isPending ? "Marking" : "Mark reviewed"}</span>
+            </Button>
           </div>
         </>
       ) : (

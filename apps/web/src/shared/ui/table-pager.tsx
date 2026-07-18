@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { Button } from "./button.js";
 import {
   Select,
   SelectContent,
@@ -37,26 +38,28 @@ export function TablePager({
   }));
   return (
     <div className="pager data-table-pager">
-      <button
-        className="tab"
+      <Button
+        size="sm"
+        variant="ghost"
         type="button"
         disabled={page <= 1}
         onClick={() => onPageChange(page - 1)}
       >
-        previous
-      </button>
-      <span className="meta">
-        page {page} / {pages}
+        Previous
+      </Button>
+      <span className="meta" data-typography="metadata">
+        Page {page} of {pages}
         {typeof totalRows === "number" ? ` · ${totalRows} rows` : ""}
       </span>
-      <button
-        className="tab"
+      <Button
+        size="sm"
+        variant="ghost"
         type="button"
         disabled={page >= pages}
         onClick={() => onPageChange(page + 1)}
       >
-        next
-      </button>
+        Next
+      </Button>
       <Select
         items={pageSizeItems}
         value={pageSize}

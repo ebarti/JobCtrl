@@ -5,6 +5,7 @@ import type {
   DemoConsentClient,
   DemoConsentDecision,
 } from "./DemoConsentClient.js";
+import { Button } from "../../shared/ui/button.js";
 import "./DemoConsentGate.css";
 
 export interface DemoConsentGateProps {
@@ -76,22 +77,27 @@ export function DemoConsentGate({
         </p>
         {error ? <p className="demo-consent-error" role="alert">{error}</p> : null}
         <div className="demo-consent-actions">
-          <button
+          <Button
             className="demo-consent-accept"
+            size="lg"
             disabled={pending !== null}
+            aria-busy={pending === "granted" || undefined}
             onClick={() => void accept()}
             type="button"
           >
             {pending === "granted" ? "Confirming…" : "Accept cookies and enter demo"}
-          </button>
-          <button
+          </Button>
+          <Button
             className="demo-consent-decline"
+            size="lg"
+            variant="outline"
             disabled={pending !== null}
+            aria-busy={pending === "denied" || undefined}
             onClick={() => void decline()}
             type="button"
           >
             {pending === "denied" ? "Leaving…" : "Decline and return to jobctrl.dev"}
-          </button>
+          </Button>
         </div>
       </section>
     </main>

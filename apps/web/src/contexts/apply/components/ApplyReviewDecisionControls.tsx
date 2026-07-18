@@ -11,6 +11,7 @@ import {
 } from "@tabler/icons-react";
 import { useState } from "react";
 
+import { Alert, AlertDescription, AlertTitle } from "../../../shared/ui/alert.js";
 import { Button } from "../../../shared/ui/button.js";
 import { useApplyReviewDecisionMutation } from "../hooks/useApplyReviewMutations.js";
 
@@ -163,24 +164,43 @@ export function ApplyReviewDecisionControls({
   };
 
   return (
-    <div className="apply-review-actions">
-      <div
-        className="apply-review-approval-binding"
-        aria-label={`Approval effect and binding for ${item.title}`}
-      >
-        <span>
-          <strong>Authorization only:</strong> this records permission for the
+    <div
+      className="apply-review-actions"
+      aria-label={`Authorization decision for ${item.title}`}
+      role="group"
+    >
+      <div className="apply-review-approval-summary">
+        <p data-typography="body">
+          <strong data-typography="strong-body">Authorization only:</strong> this records permission for the
           worker; it does not start or submit an application immediately.
-        </span>
-        <span>
-          Materials generation: {formatBindingValue(item.approvalGate.materialsGeneration)}
-        </span>
-        <span>Profile version: {formatBindingValue(item.approvalGate.profileVersion)}</span>
-        <span>Application URL: {formatBindingValue(item.approvalGate.applicationUrl)}</span>
-        {item.emailApplication ? (
-          <span>Email recipient: {item.emailApplication.recipient}</span>
-        ) : null}
-        <span>Dry-run evidence: {dryRunEvidenceLabel(item)}</span>
+        </p>
+        <details className="apply-review-authorization-details">
+          <summary data-typography="control">Technical details</summary>
+          <dl>
+            <div>
+              <dt data-typography="label">Materials generation</dt>
+              <dd data-typography="body">{formatBindingValue(item.approvalGate.materialsGeneration)}</dd>
+            </div>
+            <div>
+              <dt data-typography="label">Profile version</dt>
+              <dd data-typography="body">{formatBindingValue(item.approvalGate.profileVersion)}</dd>
+            </div>
+            <div>
+              <dt data-typography="label">Application URL</dt>
+              <dd data-typography="body">{formatBindingValue(item.approvalGate.applicationUrl)}</dd>
+            </div>
+            {item.emailApplication ? (
+              <div>
+                <dt data-typography="label">Email recipient</dt>
+                <dd data-typography="body">{item.emailApplication.recipient}</dd>
+              </div>
+            ) : null}
+            <div>
+              <dt data-typography="label">Dry-run evidence</dt>
+              <dd data-typography="body">{dryRunEvidenceLabel(item)}</dd>
+            </div>
+          </dl>
+        </details>
       </div>
       <div className="apply-review-decision-buttons">
         {primaryDecisions.map((value) => {
@@ -229,17 +249,16 @@ export function ApplyReviewDecisionControls({
       </div>
       {!fullDryRunEvidence && partialDryRunEvidence ? (
         <div className="apply-review-partial-approval">
-          <span
-            className="apply-review-approval-block inline-flex items-center justify-end gap-1.5"
-            role="alert"
-          >
+          <Alert className="apply-review-approval-block" variant="warning">
             <IconLock aria-hidden="true" />
-            Partial dry-run evidence only. Blocked channels:{" "}
-            {partialDryRunEvidence.blockedChannels.length
-              ? partialDryRunEvidence.blockedChannels.join(", ")
-              : "not recorded"}
-            .
-          </span>
+            <AlertTitle>Partial dry-run evidence only</AlertTitle>
+            <AlertDescription>
+              Blocked channels: {partialDryRunEvidence.blockedChannels.length
+                ? partialDryRunEvidence.blockedChannels.join(", ")
+                : "not recorded"}
+              .
+            </AlertDescription>
+          </Alert>
           <Button
             size="sm"
             type="button"
@@ -256,23 +275,27 @@ export function ApplyReviewDecisionControls({
         </div>
       ) : null}
       {approvalMessage ? (
-        <span
-          className="apply-review-approval-block inline-flex items-center justify-end gap-1.5"
-          role="status"
+        <Alert
+          className="apply-review-approval-block"
+          variant={approvalBlocked ? "warning" : "info"}
+          role={approvalBlocked ? "alert" : "status"}
+          aria-live={approvalBlocked ? "assertive" : "polite"}
         >
           {approvalBlocked ? (
             <IconLock aria-hidden="true" />
           ) : (
             <IconInfoCircle aria-hidden="true" />
           )}
-          {approvalMessage}
-        </span>
+          <AlertTitle>{approvalBlocked ? "Authorization unavailable" : "Authorization status"}</AlertTitle>
+          <AlertDescription>{approvalMessage}</AlertDescription>
+        </Alert>
       ) : null}
       {decision.isError ? (
-        <span className="danger" role="alert">
+        <Alert className="danger" variant="destructive">
           <IconAlertTriangle aria-hidden="true" />
-          Decision failed
-        </span>
+          <AlertTitle>Decision failed</AlertTitle>
+          <AlertDescription>Your authorization decision was not saved. Try again.</AlertDescription>
+        </Alert>
       ) : null}
     </div>
   );

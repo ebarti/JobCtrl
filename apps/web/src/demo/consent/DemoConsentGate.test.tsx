@@ -24,7 +24,9 @@ describe("DemoConsentGate", () => {
     const user = userEvent.setup();
 
     expect(screen.getByText(/demo can only be used after accepting first-party analytics cookies/i)).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Accept cookies and enter demo" }));
+    const acceptButton = screen.getByRole("button", { name: "Accept cookies and enter demo" });
+    expect(acceptButton).toHaveAttribute("data-slot", "button");
+    await user.click(acceptButton);
     expect(await screen.findByRole("alert")).toHaveTextContent(/try again/i);
     expect(onGranted).not.toHaveBeenCalled();
 

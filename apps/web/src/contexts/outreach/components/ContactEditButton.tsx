@@ -9,6 +9,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../../../shared/ui/dialog.js";
+import { Button } from "../../../shared/ui/button.js";
 import { ContactForm, type ContactFormValues } from "../forms/contact-form.js";
 import { useUpdateContactMutation } from "../hooks/useUpdateContactMutation.js";
 import { toContactAttributeKind } from "../lib/contact-copy.js";
@@ -31,7 +32,7 @@ function toFormValues(contact: ContactDetail): Partial<ContactFormValues> {
   };
 }
 
-export function ContactEditButton({ contact, label = "edit", className }: ContactEditButtonProps) {
+export function ContactEditButton({ contact, label = "Edit", className }: ContactEditButtonProps) {
   const [open, setOpen] = useState(false);
   const updateContact = useUpdateContactMutation();
 
@@ -51,9 +52,9 @@ export function ContactEditButton({ contact, label = "edit", className }: Contac
       }}
     >
       <DialogTrigger asChild>
-        <button type="button" className={className ?? "tab"}>
+        <Button type="button" variant="outline" {...(className ? { className } : {})}>
           {label}
-        </button>
+        </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>

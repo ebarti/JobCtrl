@@ -48,25 +48,31 @@ describe("<ApplyReviewDecisionControls>", () => {
     );
     expect(declineButton).toHaveClass(
       "bg-destructive",
-      "text-white",
+      "text-destructive-foreground",
       "hover:bg-destructive/90",
     );
 
-    const submitGateStatus = screen
-      .getByText("Submit gate: approval not recorded.")
-      .closest('[role="status"]');
-    expect(submitGateStatus).toHaveClass(
-      "inline-flex",
-      "items-center",
-      "justify-end",
-      "gap-1.5",
-    );
     expect(
-      submitGateStatus?.querySelector(".tabler-icon-lock"),
+      screen.getByRole("group", {
+        name: `Authorization decision for ${item.title}`,
+      }),
+    ).toBeInTheDocument();
+
+    const submitGateAlert = screen
+      .getByText("Submit gate: approval not recorded.")
+      .closest('[role="alert"]');
+    expect(submitGateAlert).toHaveTextContent("Authorization unavailable");
+    expect(
+      submitGateAlert?.querySelector(".tabler-icon-lock"),
     ).toHaveAttribute("aria-hidden", "true");
     expect(
-      screen.getByText(/Authorization only:/i).closest("span"),
+      screen.getByText(/Authorization only:/i).closest("p"),
     ).toHaveTextContent(/does not start or submit an application immediately/i);
+
+    const technicalDetails = screen.getByText("Technical details").closest("details");
+    expect(technicalDetails).not.toHaveAttribute("open");
+    expect(technicalDetails).toHaveTextContent("Profile version");
+    expect(technicalDetails).toHaveTextContent("Application URL");
   });
 
   it("keeps partial-evidence blocker icon and copy in one semantic row", () => {
@@ -87,14 +93,14 @@ describe("<ApplyReviewDecisionControls>", () => {
 
     renderWithProviders(<ApplyReviewDecisionControls item={item} />);
 
-    const alert = screen.getByRole("alert");
+    const alert = screen
+      .getAllByRole("alert")
+      .find((candidate) => candidate.textContent?.includes("Partial dry-run evidence only"));
+    expect(alert).toBeDefined();
+    if (!alert) {
+      throw new Error("Expected partial dry-run evidence alert.");
+    }
     expect(alert).toHaveTextContent(/Partial dry-run evidence only/i);
-    expect(alert).toHaveClass(
-      "inline-flex",
-      "items-center",
-      "justify-end",
-      "gap-1.5",
-    );
     expect(alert.querySelector(".tabler-icon-lock")).toHaveAttribute(
       "aria-hidden",
       "true",
@@ -139,6 +145,7 @@ describe("<ApplyReviewDecisionControls>", () => {
     const status = screen
       .getByText("The saved draft will be rendered before approval.")
       .closest('[role="status"]');
+    expect(status).toHaveAttribute("aria-live", "polite");
     expect(status?.querySelector(".tabler-icon-info-circle")).toHaveAttribute(
       "aria-hidden",
       "true",

@@ -72,6 +72,6 @@ describe("<DebugView>", () => {
     const { router, Wrapper } = buildRouter(harness, "/debug?page=2&pageSize=50");
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
-    await waitFor(() => expect(screen.getByText("page 2 / 2 · 51 rows")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Page 2 of 2 · 51 rows")).toBeInTheDocument());
   });
 });

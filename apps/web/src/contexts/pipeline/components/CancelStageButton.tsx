@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import type { Stage } from "@jobctrl/contracts";
 
+import { Button } from "../../../shared/ui/button.js";
 import { useCancelStageMutation } from "../hooks/useCancelStageMutation.js";
 
 export interface CancelStageButtonProps {
@@ -13,19 +14,23 @@ export interface CancelStageButtonProps {
 export function CancelStageButton({
   jobId,
   stage,
-  className = "tab",
-  label = "cancel",
+  className,
+  label = "Stop current stage",
 }: CancelStageButtonProps): JSX.Element {
   const cancelStage = useCancelStageMutation();
   const isPending = cancelStage.isPending;
   return (
-    <button
+    <Button
       type="button"
-      className={className}
+      {...(className ? { className } : {})}
       disabled={isPending}
+      aria-label={label}
+      title={`Stop the current ${stage} stage for this job.`}
+      size="sm"
+      variant="warning"
       onClick={() => cancelStage.mutate({ jobId, stage })}
     >
-      {isPending ? "cancelling" : label}
-    </button>
+      {isPending ? "Stopping current stage" : label}
+    </Button>
   );
 }

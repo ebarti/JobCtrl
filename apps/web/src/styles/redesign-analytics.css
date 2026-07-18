@@ -41,17 +41,18 @@
 
 .analytics-controls-copy > span {
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-caption);
-  font-weight: 650;
-  letter-spacing: 0.08em;
-  line-height: 1.2;
-  text-transform: uppercase;
+  font-size: var(--jh-type-label-size);
+  font-weight: var(--jh-type-label-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-label-line-height);
+  text-transform: none;
 }
 
 .analytics-controls-copy > strong {
-  font-size: var(--jh-font-size-heading-sm);
-  font-weight: 650;
-  letter-spacing: -0.015em;
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-component-title-line-height);
 }
 
 .analytics-view .analytics-toolbar {
@@ -81,9 +82,10 @@
   background: transparent;
   padding: 0;
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-body-sm);
-  font-weight: 520;
-  letter-spacing: 0;
+  font-size: var(--jh-type-control-size);
+  font-weight: var(--jh-type-control-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-control-line-height);
 }
 
 .analytics-view
@@ -121,7 +123,7 @@
   border: 0;
   background: transparent;
   color: var(--foreground);
-  font-weight: 650;
+  font-weight: var(--jh-type-control-weight);
 }
 
 .analytics-view
@@ -164,24 +166,24 @@
 
 .analytics-summary-metric dt {
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-caption);
-  font-weight: 650;
-  letter-spacing: 0.075em;
-  line-height: 1.3;
-  text-transform: uppercase;
+  font-size: var(--jh-type-label-size);
+  font-weight: var(--jh-type-label-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-label-line-height);
+  text-transform: none;
 }
 
 .analytics-summary-metric dd {
   color: var(--foreground);
-  font-size: clamp(24px, 2vw, 30px);
+  font-size: var(--jh-type-metric-size);
   font-variant-numeric: tabular-nums;
-  font-weight: 680;
-  letter-spacing: -0.045em;
-  line-height: 1;
+  font-weight: var(--jh-type-metric-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-metric-line-height);
 }
 
 .analytics-summary-metric-secondary dd {
-  font-size: clamp(20px, 1.7vw, 25px);
+  font-size: var(--jh-type-metric-size);
 }
 
 .analytics-caption {
@@ -195,13 +197,18 @@
 
 .analytics-caption [data-slot="alert-title"] {
   color: var(--foreground);
-  font-size: var(--jh-font-size-body-sm);
+  font-size: var(--jh-type-strong-body-size);
+  font-weight: var(--jh-type-strong-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-strong-body-line-height);
 }
 
 .analytics-caption [data-slot="alert-description"] {
   max-width: 112ch;
-  font-size: var(--jh-font-size-body-sm);
-  line-height: 1.5;
+  font-size: var(--jh-type-body-size);
+  font-weight: var(--jh-type-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-body-line-height);
 }
 
 .analytics-breakdown-region {
@@ -218,8 +225,10 @@
 }
 
 .analytics-breakdown-region .data-grid-view-title {
-  font-size: var(--jh-font-size-heading-sm);
-  font-weight: 650;
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-component-title-line-height);
 }
 
 .analytics-breakdown-region .filterable-data-grid-scroll {
@@ -251,9 +260,10 @@
 }
 
 .analytics-group-cell > b {
-  font-size: var(--jh-font-size-body);
-  font-weight: 630;
-  letter-spacing: -0.01em;
+  font-size: var(--jh-type-strong-body-size);
+  font-weight: var(--jh-type-strong-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-strong-body-line-height);
 }
 
 .analytics-group-meta {
@@ -262,7 +272,10 @@
   align-items: center;
   gap: 6px;
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-body-sm);
+  font-size: var(--jh-type-metadata-size);
+  font-weight: var(--jh-type-metadata-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-metadata-line-height);
 }
 
 .analytics-data-grid-table .analytics-rate {
@@ -274,21 +287,24 @@
 
 .analytics-data-grid-table .analytics-rate b {
   color: var(--foreground);
-  font-size: var(--jh-font-size-body-sm);
+  font-size: var(--jh-type-strong-body-size);
   font-variant-numeric: tabular-nums;
-  font-weight: 630;
-  line-height: 1.35;
+  font-weight: var(--jh-type-strong-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-strong-body-line-height);
 }
 
 .analytics-data-grid-table .analytics-rate > span {
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-body-sm);
-  line-height: 1.3;
+  font-size: var(--jh-type-metadata-size);
+  font-weight: var(--jh-type-metadata-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-metadata-line-height);
 }
 
 .analytics-data-grid-table .analytics-row-small .analytics-rate.suppressed b {
   color: var(--muted-foreground);
-  font-weight: 520;
+  font-weight: var(--jh-type-body-weight);
 }
 
 .analytics-breakdown-empty {

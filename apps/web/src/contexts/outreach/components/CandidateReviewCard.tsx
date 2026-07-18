@@ -2,6 +2,7 @@ import type { ContactCandidateDto } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { Button } from "../../../shared/ui/button.js";
 import { contactRoleLabel, contactSourceKindLabel } from "../lib/contact-copy.js";
 import { ConfirmCandidateButton } from "./ConfirmCandidateButton.js";
 import { ContactProvenanceList } from "./ContactProvenanceList.js";
@@ -58,9 +59,9 @@ export function CandidateReviewCard({ taskId, candidate }: CandidateReviewCardPr
       <ContactProvenanceList attributes={candidate.attributes} />
       <div className="candidate-review-actions">
         {email ? (
-          <button type="button" className="tab" onClick={() => void clipboard.write(email)}>
-            copy email
-          </button>
+          <Button type="button" size="sm" variant="outline" onClick={() => void clipboard.write(email)}>
+            Copy email
+          </Button>
         ) : null}
         {confirmed ? (
           <span className="candidate-confirmed-note">Confirmed into your contacts.</span>

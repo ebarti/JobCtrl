@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
 import { useApproveDraftMutation } from "../hooks/useApproveDraftMutation.js";
 
 export interface ApproveDraftButtonProps {
@@ -40,14 +41,13 @@ export function ApproveDraftButton({
 
   return (
     <div className="approve-draft">
-      <button
+      <Button
         type="button"
-        className="primary"
         disabled={disabled || mutation.isPending}
         onClick={onApprove}
       >
-        {mutation.isPending ? "approving…" : "approve draft"}
-      </button>
+        {mutation.isPending ? "Approving…" : "Approve draft"}
+      </Button>
       {errorMessage ? (
         <span role="alert" className="banner inline">
           {errorMessage}

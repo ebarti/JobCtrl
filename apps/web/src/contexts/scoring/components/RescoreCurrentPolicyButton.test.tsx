@@ -37,7 +37,10 @@ describe("rescore current-policy buttons", () => {
       ports: buildTestPorts({ api: { rescoreJob } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "rescore current policy" }));
+    const button = screen.getByRole("button", { name: "Rescore current policy" });
+    expect(button).toHaveAttribute("data-slot", "button");
+
+    await user.click(button);
 
     await waitFor(() => expect(rescoreJob).toHaveBeenCalledWith("job-1", { dryRun: false }));
   });

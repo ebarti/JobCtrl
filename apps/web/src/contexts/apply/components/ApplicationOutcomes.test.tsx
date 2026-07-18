@@ -25,9 +25,34 @@ describe("application outcome components", () => {
     expect(
       screen.getByText("Confirmed in the ATS portal."),
     ).toBeInTheDocument();
+    const submitButton = screen.getByRole("button", {
+      name: /record outcome/i,
+    });
+    expect(submitButton).toHaveAttribute("data-slot", "button");
+    const manualForm = submitButton.closest("form");
+    expect(manualForm).not.toBeNull();
+    expect(manualForm?.querySelectorAll('[data-slot="field"]')).toHaveLength(3);
     expect(
-      screen.getByRole("button", { name: /record outcome/i }),
-    ).toBeInTheDocument();
+      manualForm?.querySelectorAll('input[data-slot="input"]'),
+    ).toHaveLength(1);
+    expect(
+      manualForm?.querySelectorAll('textarea[data-slot="textarea"]'),
+    ).toHaveLength(1);
+  });
+
+  it("uses shared primitives for visible reflection fields and keeps named metadata hidden", () => {
+    const { container } = renderWithProviders(
+      <InterviewReflectionForm jobId="job-2" prepGeneration={2} />,
+    );
+
+    expect(container.querySelectorAll('[data-slot="field"]')).toHaveLength(2);
+    expect(container.querySelectorAll('input[data-slot="input"]')).toHaveLength(
+      1,
+    );
+    expect(
+      container.querySelectorAll('textarea[data-slot="textarea"]'),
+    ).toHaveLength(1);
+    expect(container.querySelectorAll('input[type="hidden"]')).toHaveLength(2);
   });
 
   it("records a manual outcome with a canonical timestamp payload", async () => {
@@ -71,6 +96,35 @@ describe("application outcome components", () => {
         note: "Talked to recruiting.",
         occurredAt: expect.stringMatching(/Z$/),
       }),
+    );
+    expect(
+      await screen.findByText("Outcome recorded"),
+    ).toHaveAttribute("role", "status");
+    expect(await screen.findByText("Outcome recorded")).toHaveAttribute(
+      "aria-live",
+      "polite",
+    );
+  });
+
+  it("announces manual outcome save failures assertively", async () => {
+    const user = userEvent.setup();
+    const recordManualApplicationOutcome = vi.fn(async () => {
+      throw new Error("Save failed");
+    });
+
+    renderWithProviders(<ManualOutcomeForm jobId="job-2" />, {
+      ports: buildTestPorts({ api: { recordManualApplicationOutcome } }),
+    });
+
+    await user.type(screen.getByLabelText(/occurred at/i), "2026-05-06T08:35");
+    await user.click(screen.getByRole("button", { name: /record outcome/i }));
+
+    expect(
+      await screen.findByText("Outcome save failed"),
+    ).toHaveAttribute("role", "alert");
+    expect(await screen.findByText("Outcome save failed")).toHaveAttribute(
+      "aria-live",
+      "assertive",
     );
   });
 
@@ -123,6 +177,13 @@ describe("application outcome components", () => {
         occurredAt: expect.stringMatching(/Z$/),
       }),
     );
+    expect(
+      await screen.findByText("Reflection recorded"),
+    ).toHaveAttribute("role", "status");
+    expect(await screen.findByText("Reflection recorded")).toHaveAttribute(
+      "aria-live",
+      "polite",
+    );
   });
 
   it("accepts and ignores pending outcome suggestions", async () => {
@@ -161,6 +222,13 @@ describe("application outcome components", () => {
         expect.objectContaining({ decision: "accept" }),
       ),
     );
+    expect(
+      await screen.findByText("Suggestion accepted"),
+    ).toHaveAttribute("role", "status");
+    expect(await screen.findByText("Suggestion accepted")).toHaveAttribute(
+      "aria-live",
+      "polite",
+    );
 
     await user.click(screen.getByRole("button", { name: /ignore/i }));
     await waitFor(() =>
@@ -168,6 +236,13 @@ describe("application outcome components", () => {
         "suggestion-1",
         expect.objectContaining({ decision: "ignore" }),
       ),
+    );
+    expect(
+      await screen.findByText("Suggestion ignored"),
+    ).toHaveAttribute("role", "status");
+    expect(await screen.findByText("Suggestion ignored")).toHaveAttribute(
+      "aria-live",
+      "polite",
     );
   });
 
@@ -261,6 +336,13 @@ describe("application outcome components", () => {
           reason: "Assessment, not interview.",
         }),
       ),
+    );
+    expect(
+      await screen.findByText("Suggestion corrected"),
+    ).toHaveAttribute("role", "status");
+    expect(await screen.findByText("Suggestion corrected")).toHaveAttribute(
+      "aria-live",
+      "polite",
     );
   });
 });

@@ -272,8 +272,9 @@ export const TooltipContent = forwardRef<
           <TooltipPrimitive.Popup
             ref={ref}
             data-slot="tooltip-content"
+            data-typography="metadata"
             className={cn(
-              "z-50 max-w-xs origin-(--transform-origin) overflow-hidden rounded-md bg-foreground px-2.5 py-1.5 text-[13px] leading-4 text-background shadow-lg outline-none duration-100 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+              "z-50 max-w-xs origin-(--transform-origin) overflow-hidden rounded-md bg-foreground px-2.5 py-1.5 text-background shadow-lg outline-none duration-100 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
               className,
             )}
             id={effectiveId}

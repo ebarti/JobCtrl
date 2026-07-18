@@ -54,8 +54,11 @@ import {
 } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
+import { Button } from "../../../shared/ui/button.js";
+import { Input } from "../../../shared/ui/input.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../../shared/ui/PdfPreviewViewer.js";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
+import { Textarea } from "../../../shared/ui/textarea.js";
 import { useArtifactDetailQuery } from "../../operations/hooks/useArtifactDetailQuery.js";
 import { formatToken, scorePercent } from "../lib/audit-format.js";
 
@@ -1701,14 +1704,14 @@ function ResumePlateCommentBubble({ comment }: { readonly comment: ResumePlateCo
     >
       <span className="resume-plate-comment-head">
         <b>JobCtrl</b>
-        <span>{comment.status}</span>
+        <span data-typography="status">{comment.status}</span>
       </span>
       {comment.sourceText ? (
-        <span>
+        <span data-typography="body">
           <b>{comment.sourceLabel ?? "Source"}</b>: {comment.sourceText}
         </span>
       ) : null}
-      {comment.why ? <span>{comment.why}</span> : null}
+      {comment.why ? <span data-typography="body">{comment.why}</span> : null}
     </span>
   );
 }
@@ -1753,7 +1756,7 @@ function ResumeCommentReplyForm({
       onClick={(event) => event.stopPropagation()}
     >
       <label htmlFor={`${formId}-body`}>Reply</label>
-      <textarea
+      <Textarea
         id={`${formId}-body`}
         maxLength={4000}
         rows={3}
@@ -1773,9 +1776,9 @@ function ResumeCommentReplyForm({
           <SelectTrigger id={`${formId}-decision`} aria-label="Decision" className="min-w-40"><SelectValue /></SelectTrigger>
           <SelectContent><SelectGroup>{COMMENT_REPLY_DECISION_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
         </Select>
-        <button className="tab" type="button" disabled={disabled || !body.trim()} onClick={submit}>
-          reply
-        </button>
+        <Button className="tab" size="sm" type="button" disabled={disabled || !body.trim()} onClick={submit}>
+          Reply
+        </Button>
       </span>
     </span>
   );
@@ -1797,24 +1800,41 @@ function ResumeCommentThreadDetails({
   return (
     <>
       <span className="resume-comment-thread-meta">
-        <span className="resume-comment-thread-state">{commentThreadStateLabel(thread)}</span>
-        {thread.riskLabel ? <span className="resume-comment-thread-risk">{thread.riskLabel}</span> : null}
+        <span className="resume-comment-thread-state" data-typography="status">
+          {commentThreadStateLabel(thread)}
+        </span>
+        {thread.riskLabel ? (
+          <span className="resume-comment-thread-risk" data-typography="status">
+            {thread.riskLabel}
+          </span>
+        ) : null}
         {showAnchorStatus && thread.lineAnchor?.lineNumber ? (
-          <span className="mono">line {thread.lineAnchor.lineNumber}</span>
+          <span className="mono" data-typography="code">
+            line {thread.lineAnchor.lineNumber}
+          </span>
         ) : null}
         {showAnchorStatus && !thread.anchorResolved ? (
-          <span className="resume-comment-thread-risk">anchor unresolved</span>
+          <span className="resume-comment-thread-risk" data-typography="status">
+            Anchor unresolved
+          </span>
         ) : null}
       </span>
-      <span className="resume-comment-thread-body">{thread.commentBody}</span>
+      <span className="resume-comment-thread-body" data-typography="body">
+        {thread.commentBody}
+      </span>
       {showSourceIdentifiers && (thread.sourcePinId || thread.semanticId) ? (
-        <span className="resume-comment-thread-source">
+        <span className="resume-comment-thread-source" data-typography="metadata">
           {thread.sourcePinId ? <span>Source pin: {thread.sourcePinId}</span> : null}
           {thread.semanticId ? <span>Semantic id: {thread.semanticId}</span> : null}
         </span>
       ) : null}
       {thread.replies.length ? (
-        <span className="resume-comment-replies" aria-label="Comment replies" role="list">
+        <span
+          className="resume-comment-replies"
+          aria-label="Comment replies"
+          data-typography="body"
+          role="list"
+        >
           {thread.replies.map((reply) => (
             <span key={reply.replyId} role="listitem">
               <b>{formatToken(reply.decision)}</b>
@@ -1850,7 +1870,9 @@ function ResumePlateCommentThreadBubble({
     >
       <span className="resume-plate-comment-head">
         <b>JobCtrl</b>
-        <span>{threads.length} comment{threads.length === 1 ? "" : "s"}</span>
+        <span data-typography="metadata">
+          {threads.length} comment{threads.length === 1 ? "" : "s"}
+        </span>
       </span>
       <span className="resume-plate-thread-list">
         {threads.map((thread) => (
@@ -1885,7 +1907,9 @@ function ResumeCommentThreadPanel({
     <aside className="resume-comment-thread-panel" aria-label="Unanchored JobCtrl comments">
       <div className="resume-comment-thread-head">
         <b>Comments without a rendered line</b>
-        <span>{threads.length} thread{threads.length === 1 ? "" : "s"}</span>
+        <span data-typography="metadata">
+          {threads.length} thread{threads.length === 1 ? "" : "s"}
+        </span>
       </div>
       {error ? <div className="banner inline">{error}</div> : null}
       {threads.map((thread) => (
@@ -2359,43 +2383,46 @@ function ResumeEditorToolbarControls({
       data-resume-editor-chrome="true"
     >
       <div className="resume-format-button-group" aria-label="Text style">
-        <button
+        <Button
           aria-label="Bold"
           className="resume-format-button"
           disabled={disabled}
+          size="icon"
           title="Bold"
           type="button"
           onClick={onToggleBold}
           onMouseDown={keepEditorSelection}
         >
           <IconBold aria-hidden="true" size={16} stroke={2.2} />
-        </button>
-        <button
+        </Button>
+        <Button
           aria-label="Italic"
           className="resume-format-button"
           disabled={disabled}
+          size="icon"
           title="Italic"
           type="button"
           onClick={onToggleItalic}
           onMouseDown={keepEditorSelection}
         >
           <IconItalic aria-hidden="true" size={16} stroke={2.2} />
-        </button>
-        <button
+        </Button>
+        <Button
           aria-label="Underline"
           className="resume-format-button"
           disabled={disabled}
+          size="icon"
           title="Underline"
           type="button"
           onClick={onToggleUnderline}
           onMouseDown={keepEditorSelection}
         >
           <IconUnderline aria-hidden="true" size={16} stroke={2.2} />
-        </button>
+        </Button>
       </div>
       <div className="resume-link-popover-anchor">
         <div className="resume-format-button-group" aria-label="Hyperlink actions">
-          <button
+          <Button
             ref={linkTriggerRef}
             aria-controls={linkPopoverOpen ? linkPopoverId : undefined}
             aria-expanded={linkPopoverOpen}
@@ -2403,6 +2430,7 @@ function ResumeEditorToolbarControls({
             aria-label="Insert link"
             className={`resume-format-button${linkPopoverOpen ? " active" : ""}`}
             disabled={disabled}
+            size="icon"
             title="Insert link (⌘K)"
             type="button"
             onClick={openLinkPopover}
@@ -2412,11 +2440,12 @@ function ResumeEditorToolbarControls({
             }}
           >
             <IconLink aria-hidden="true" size={16} stroke={2.2} />
-          </button>
-          <button
+          </Button>
+          <Button
             aria-label="Remove link"
             className="resume-format-button"
             disabled={disabled}
+            size="icon"
             title="Remove link from selected text or selected resume line"
             type="button"
             onClick={() => {
@@ -2426,7 +2455,7 @@ function ResumeEditorToolbarControls({
             onMouseDown={keepEditorSelection}
           >
             <IconUnlink aria-hidden="true" size={16} stroke={2.2} />
-          </button>
+          </Button>
         </div>
         {linkPopoverOpen ? (
           <form
@@ -2439,7 +2468,7 @@ function ResumeEditorToolbarControls({
           >
             <label className="resume-format-select" htmlFor={linkInputId}>
               <span>URL</span>
-              <input
+              <Input
                 ref={linkInputRef}
                 aria-describedby={linkError ? linkErrorId : undefined}
                 aria-invalid={linkError ? "true" : undefined}
@@ -2457,27 +2486,29 @@ function ResumeEditorToolbarControls({
               />
             </label>
             <div className="resume-format-button-group" aria-label="Link popover actions">
-              <button
+              <Button
                 aria-label="Apply link"
                 className="resume-format-button"
                 disabled={disabled || !linkUrl.trim()}
+                size="icon"
                 title="Apply link"
                 type="submit"
                 onMouseDown={keepEditorSelection}
               >
                 <IconCheck aria-hidden="true" size={16} stroke={2.2} />
-              </button>
-              <button
-                aria-label="Cancel link"
+              </Button>
+              <Button
+                aria-label="Close link editor"
                 className="resume-format-button"
                 disabled={disabled}
+                size="icon"
                 title="Cancel"
                 type="button"
                 onClick={closeLinkPopover}
                 onMouseDown={keepEditorSelection}
               >
                 <IconX aria-hidden="true" size={16} stroke={2.2} />
-              </button>
+              </Button>
             </div>
             {linkError ? (
               <span className="resume-link-error" id={linkErrorId} role="status">
@@ -2501,7 +2532,7 @@ function ResumeEditorToolbarControls({
       </label>
       <label className="resume-format-select" htmlFor={fontSizeId}>
         <span>Size</span>
-        <input
+        <Input
           aria-label="Size"
           disabled={disabled}
           id={fontSizeId}
@@ -2519,39 +2550,42 @@ function ResumeEditorToolbarControls({
         />
       </label>
       <div className="resume-format-button-group" aria-label="Alignment">
-        <button
+        <Button
           aria-label="Align left"
           className="resume-format-button"
           disabled={disabled}
+          size="icon"
           title="Align left"
           type="button"
           onClick={() => onAlign("left")}
           onMouseDown={keepEditorSelection}
         >
           <IconAlignLeft aria-hidden="true" size={16} stroke={2.2} />
-        </button>
-        <button
+        </Button>
+        <Button
           aria-label="Align center"
           className="resume-format-button"
           disabled={disabled}
+          size="icon"
           title="Align center"
           type="button"
           onClick={() => onAlign("center")}
           onMouseDown={keepEditorSelection}
         >
           <IconAlignCenter aria-hidden="true" size={16} stroke={2.2} />
-        </button>
-        <button
+        </Button>
+        <Button
           aria-label="Align right"
           className="resume-format-button"
           disabled={disabled}
+          size="icon"
           title="Align right"
           type="button"
           onClick={() => onAlign("right")}
           onMouseDown={keepEditorSelection}
         >
           <IconAlignRight aria-hidden="true" size={16} stroke={2.2} />
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -2875,7 +2909,9 @@ export function ResumeStandalonePlateEditor({
       ) : null}
       <div className="resume-plate-toolbar" data-resume-editor-chrome="true">
         <b>{title}</b>
-        <span className="toolbar-status">Plate HTML/CSS editor</span>
+        <span className="toolbar-status" data-typography="metadata">
+          Plate HTML/CSS editor
+        </span>
         <ResumeEditorToolbarControls
           disabled={!canFormat}
           onAlign={handleAlign}
@@ -2887,15 +2923,20 @@ export function ResumeStandalonePlateEditor({
           onToggleItalic={handleToggleItalic}
           onToggleUnderline={handleToggleUnderline}
         />
-        <button
+        <Button
           className="tab"
           disabled={!dirty || !initialPlateValue}
+          size="sm"
           type="button"
           onClick={handleReset}
         >
-          reset
-        </button>
-        <span className={`resume-plate-draft-status${dirty ? " dirty" : ""}`} role="status">
+          Reset
+        </Button>
+        <span
+          className={`resume-plate-draft-status${dirty ? " dirty" : ""}`}
+          data-typography="status"
+          role="status"
+        >
           {htmlState.status === "loading" ? "loading baseline" : dirty ? "local edits" : "baseline current"}
         </span>
       </div>
@@ -3221,7 +3262,9 @@ export function ResumePlateEditor({
     <section className="resume-plate-editor" aria-label={title} data-layout-box-count={layoutBoxes.length}>
       <div className="resume-plate-toolbar" data-resume-editor-chrome="true">
         <b>{title}</b>
-        <span className="toolbar-status">Plate HTML/CSS editor</span>
+        <span className="toolbar-status" data-typography="metadata">
+          Plate HTML/CSS editor
+        </span>
         <ResumeEditorToolbarControls
           disabled={!canFormat}
           onAlign={handleAlign}
@@ -3233,9 +3276,10 @@ export function ResumePlateEditor({
           onToggleItalic={handleToggleItalic}
           onToggleUnderline={handleToggleUnderline}
         />
-        <button
+        <Button
           className="tab"
           disabled={saveDisabled}
+          size="sm"
           type="button"
           onClick={() => {
             if (!currentPlateValue) return;
@@ -3246,21 +3290,26 @@ export function ResumePlateEditor({
             });
           }}
         >
-          save draft
-        </button>
-        <button
+          Save draft
+        </Button>
+        <Button
           className="tab"
           disabled={renderDisabled}
+          size="sm"
           type="button"
           onClick={() => onRenderDraft?.()}
         >
-          render replacement
-        </button>
-        <span className={`resume-plate-draft-status${draftDirty ? " dirty" : ""}`} role="status">
+          Render replacement
+        </Button>
+        <span
+          className={`resume-plate-draft-status${draftDirty ? " dirty" : ""}`}
+          data-typography="status"
+          role="status"
+        >
           {draftStatus}
         </span>
         <a href={finalUrl} rel="noreferrer" target="_blank">
-          open final file
+          Open final file
         </a>
       </div>
       {draftError ? <div className="banner inline">{draftError}</div> : null}

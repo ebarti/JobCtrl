@@ -41,7 +41,7 @@ describe("re-tailor current-policy buttons", () => {
       ports: buildTestPorts({ api: { tailorJob } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "tailor this job" }));
+    await user.click(screen.getByRole("button", { name: "Tailor this job" }));
 
     await waitFor(() =>
       expect(tailorJob).toHaveBeenCalledWith("job-1", {
@@ -61,7 +61,7 @@ describe("re-tailor current-policy buttons", () => {
       ports: buildTestPorts({ api: { retailorJob } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "re-tailor current policy" }));
+    await user.click(screen.getByRole("button", { name: "Re-tailor current policy" }));
 
     await waitFor(() =>
       expect(retailorJob).toHaveBeenCalledWith("job-1", {
@@ -78,13 +78,13 @@ describe("re-tailor current-policy buttons", () => {
     Object.defineProperty(window, "confirm", { configurable: true, writable: true, value: () => true });
 
     renderWithProviders(
-      <RetailorCurrentPolicyButton jobKeys={["job-1"]} label="re-tailor selected" />,
+      <RetailorCurrentPolicyButton jobKeys={["job-1"]} label="Re-tailor selected" />,
       {
         ports: buildTestPorts({ api: { retailorCurrentPolicy } }),
       },
     );
 
-    await user.click(screen.getByRole("button", { name: "re-tailor selected" }));
+    await user.click(screen.getByRole("button", { name: "Re-tailor selected" }));
 
     await waitFor(() =>
       expect(retailorCurrentPolicy).toHaveBeenCalledWith({

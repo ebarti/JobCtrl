@@ -12,7 +12,7 @@ test("Settings update: change application concurrency -> save -> reload -> persi
   const newValue = currentValue === "4" ? "3" : "4";
   await page.getByLabel("Concurrent applications").fill(newValue);
 
-  const saveButton = page.getByRole("button", { name: /^save$/i });
+  const saveButton = page.getByRole("button", { name: "Save changes" });
   await expect(saveButton).toBeEnabled({ timeout: 10_000 });
   await saveButton.click();
 
@@ -32,13 +32,13 @@ test("Settings pairing: trusted split-port app loads and rotates the extension t
   await expect(page.getByText("JobCtrl API request failed: 403 Forbidden", { exact: true })).toHaveCount(0);
 
   const initialToken = await tokenField.inputValue();
-  await page.getByRole("button", { name: "rotate token" }).click();
+  await page.getByRole("button", { name: "Rotate token" }).click();
   await expect(page.getByRole("status")).toHaveText(
     "Confirm rotation below; existing extension pairing will disconnect.",
   );
-  await page.getByRole("button", { name: "confirm rotate and disconnect" }).click();
+  await page.getByRole("button", { name: "Confirm rotation and disconnect" }).click();
 
-  await expect(page.getByRole("status")).toHaveText("token rotated", { timeout: 30_000 });
+  await expect(page.getByRole("status")).toHaveText("Token rotated", { timeout: 30_000 });
   await expect.poll(() => tokenField.inputValue()).not.toBe(initialToken);
   await expect(page.getByText("JobCtrl API request failed: 403 Forbidden", { exact: true })).toHaveCount(0);
 });

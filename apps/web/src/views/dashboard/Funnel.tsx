@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 
 import type { DashboardSummary, Stage } from "../../contexts/operations/types.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
+import { Button } from "../../shared/ui/button.js";
 import { SegmentBar } from "../../shared/ui/segment-bar.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
 import { kpiSearchFor } from "./KpiGrid.js";
@@ -95,14 +96,18 @@ export function Funnel({ summary }: FunnelProps) {
       <CardHeader title="Pipeline" meta={`${summary.totals.jobs} jobs`} />
       <div className="funnel">
         {rows.map((stage, index) => (
-          <button
+          <Button
             key={stage.stage}
             type="button"
+            variant="ghost"
             className="funnel-row"
             onClick={() => void navigate({ to: "/jobs", search: kpiSearchFor("all") })}
           >
-            <span className="funnel-stage">
-              <span className="funnel-num">{String(index + 1).padStart(2, "0")}</span> {stage.label}
+            <span className="funnel-stage" data-typography="strong-body">
+              <span className="funnel-num" data-typography="code">
+                {String(index + 1).padStart(2, "0")}
+              </span>{" "}
+              {stage.label}
             </span>
             <SegmentBar
               total={stage.total}
@@ -123,11 +128,15 @@ export function Funnel({ summary }: FunnelProps) {
                   {stage.blocked} blocked
                 </StatusBadge>
               ) : null}
-              {stage.running ? <span>{stage.running} running</span> : null}
-              <span>{stage.pending} pending</span>
-              {stage.diagnostic ? <span>{stage.diagnostic}</span> : null}
+              {stage.running ? (
+                <span data-typography="status">{stage.running} running</span>
+              ) : null}
+              <span data-typography="status">{stage.pending} pending</span>
+              {stage.diagnostic ? (
+                <span data-typography="metadata">{stage.diagnostic}</span>
+              ) : null}
             </span>
-          </button>
+          </Button>
         ))}
       </div>
     </section>

@@ -2,19 +2,22 @@ import { IconBan, IconClock, type TablerIcon } from "@tabler/icons-react";
 import type { JSX } from "react";
 
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
+import { Badge } from "../../../shared/ui/badge.js";
 import type { Stage, StageState } from "../../operations/types.js";
 import {
   stageStateTone,
   type StageStateTone,
 } from "../lib/stage-state-tone.js";
-import { stageTone, type StageTone } from "../lib/stage-tone.js";
 
 export type StageBadgeProps = { stage: Stage } | { state: StageState };
 
 export function StageBadge(props: StageBadgeProps): JSX.Element {
   if ("stage" in props) {
-    const tone: StageTone = stageTone(props.stage);
-    return <span className={`stage-pill ${tone}`}>{props.stage}</span>;
+    return (
+      <Badge aria-label={`Stage: ${stageLabel(props.stage)}`} variant="category">
+        {stageLabel(props.stage)}
+      </Badge>
+    );
   }
   const tone: StageStateTone = stageStateTone(props.state);
   return (
@@ -22,6 +25,10 @@ export function StageBadge(props: StageBadgeProps): JSX.Element {
       {props.state}
     </StatusBadge>
   );
+}
+
+function stageLabel(stage: Stage): string {
+  return `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;
 }
 
 function stageStateIcon(state: StageState): TablerIcon | undefined {

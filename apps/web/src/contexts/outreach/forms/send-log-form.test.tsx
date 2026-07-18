@@ -22,7 +22,7 @@ describe("<SendLogForm>", () => {
       { ports },
     );
 
-    const submit = view.getByRole("button", { name: "record send" });
+    const submit = view.getByRole("button", { name: "Record send" });
     expect(view.getByRole("combobox", { name: "Channel" })).toBeDisabled();
     expect(view.getByLabelText("Date you sent it")).toBeDisabled();
     expect(submit).toBeDisabled();
@@ -53,7 +53,7 @@ describe("<SendLogForm>", () => {
     fireEvent.change(view.getByLabelText("Date you sent it"), {
       target: { value: "2026-07-07" },
     });
-    fireEvent.click(view.getByRole("button", { name: "record send" }));
+    fireEvent.click(view.getByRole("button", { name: "Record send" }));
 
     await waitFor(() =>
       expect(logOutreachSend).toHaveBeenCalledWith("thread-1", {

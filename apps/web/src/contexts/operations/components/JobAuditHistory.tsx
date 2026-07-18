@@ -55,7 +55,11 @@ export function JobAuditHistory({ entries }: JobAuditHistoryProps) {
             {entry.description ? (
               <span className="job-audit-description">{entry.description}</span>
             ) : null}
-            {entry.actor ? <span className="job-audit-actor">Actor: {entry.actor}</span> : null}
+            {entry.actor ? (
+              <span className="job-audit-actor" data-typography="metadata">
+                Actor: {entry.actor}
+              </span>
+            ) : null}
             {entry.details.length ? (
               <dl className="job-audit-details">
                 {entry.details.map((detail) => (

@@ -7,6 +7,8 @@ import { DryRunButton } from "./DryRunButton.js";
 describe("<DryRunButton>", () => {
   it("renders the configured label", () => {
     renderWithProviders(<DryRunButton jobId="job-1" />);
-    expect(screen.getByRole("button", { name: "dry-run" })).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Dry run" });
+    expect(button).toHaveAttribute("data-slot", "button");
+    expect(button).toHaveAttribute("data-typography", "control");
   });
 });

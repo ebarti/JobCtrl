@@ -65,7 +65,7 @@ export function JobRunTimelineWorkspace({
             )}
             <div className="job-run-workspace__title">
               <small>{run?.workflowType || "apply workflow"}</small>
-              <h1>Apply run timeline</h1>
+              <h1 data-typography="page-title">Apply run timeline</h1>
               <p>
                 {run?.title ? `${run.title} · ` : ""}
                 <span className="mono">{runId}</span>

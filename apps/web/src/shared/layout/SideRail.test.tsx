@@ -69,7 +69,7 @@ describe("<SideRail>", () => {
       "Activity",
       "Setup",
     ]) {
-      expect(screen.getByText(label)).toBeInTheDocument();
+      expect(screen.getByText(label)).toHaveAttribute("data-typography", "label");
     }
 
     const expectedLabels = NAV_GROUPS.flatMap((group) =>
@@ -77,7 +77,10 @@ describe("<SideRail>", () => {
     );
     expect(expectedLabels).toHaveLength(14);
     for (const label of expectedLabels) {
-      expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: label })).toHaveAttribute(
+        "data-typography",
+        "control",
+      );
     }
   });
 
@@ -87,9 +90,10 @@ describe("<SideRail>", () => {
     expect(
       await screen.findByRole("link", { name: "JobCtrl" }),
     ).toHaveAttribute("href", "/dashboard");
-    expect(
-      screen.getByText("Local mode — all data stays on device"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Local mode — all data stays on device")).toHaveAttribute(
+      "data-typography",
+      "metadata",
+    );
     expect(screen.getByText("Copyright © 2026 Eloi Barti")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "AGPL-3.0-only" })).toHaveAttribute(
       "href",

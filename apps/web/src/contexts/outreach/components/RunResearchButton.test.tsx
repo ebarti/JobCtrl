@@ -15,7 +15,7 @@ describe("<RunResearchButton>", () => {
     const view = renderWithProviders(<RunResearchButton jobId="job-1" />, { ports });
 
     const url = screen.getByRole("textbox", { name: "Public source URL (optional)" });
-    const submit = screen.getByRole("button", { name: "run research" });
+    const submit = screen.getByRole("button", { name: "Run research" });
     expect(url).toBeDisabled();
     expect(submit).toBeDisabled();
     expect(submit).toHaveAccessibleDescription(

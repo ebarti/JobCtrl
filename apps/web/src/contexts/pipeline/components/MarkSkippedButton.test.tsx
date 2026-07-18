@@ -5,8 +5,10 @@ import { renderWithProviders } from "../../../test/render.js";
 import { MarkSkippedButton } from "./MarkSkippedButton.js";
 
 describe("<MarkSkippedButton>", () => {
-  it("renders the skip label", () => {
+  it("renders its shared control primitive", () => {
     renderWithProviders(<MarkSkippedButton jobId="job-1" />);
-    expect(screen.getByRole("button", { name: "skip" })).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Skip" });
+    expect(button).toHaveAttribute("data-slot", "button");
+    expect(button).toHaveAttribute("data-typography", "control");
   });
 });

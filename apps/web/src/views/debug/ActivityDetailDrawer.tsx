@@ -64,7 +64,12 @@ export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
                 <small>
                   {activity.stage} · {activity.eventType}
                 </small>
-                <h1 id="activity-detail-heading">{activity.message}</h1>
+                <h1
+                  data-typography="page-title"
+                  id="activity-detail-heading"
+                >
+                  {activity.message}
+                </h1>
                 <p>
                   <time dateTime={activity.at ?? undefined}>
                     {formatDateTime(activity.at)}
@@ -166,7 +171,9 @@ export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
                       <span className="stage-pill">{activity.stage}</span>
                     </span>
                     <span className="activity-detail-workspace__timeline-copy">
-                      <strong className="mono">{activity.eventType}</strong>
+                      <strong className="mono" data-typography="code">
+                        {activity.eventType}
+                      </strong>
                       <span>{activity.message}</span>
                       <time dateTime={activity.at ?? undefined}>
                         {formatDateTime(activity.at)}

@@ -21,7 +21,14 @@ describe("<OutcomeRateTable>", () => {
 
     expect(scoped.getAllByText(/too few to rate/i).length).toBeGreaterThan(0);
     expect(scoped.getByText(/1 replies · n=1 · too few to rate/i)).toBeInTheDocument();
-    expect(row).toHaveTextContent("1 applied");
+    expect(scoped.getByText("1 applied")).toHaveAttribute(
+      "data-typography",
+      "metadata",
+    );
+    expect(scoped.getByText("1 replies")).toHaveAttribute(
+      "data-typography",
+      "metadata",
+    );
     expect(row).not.toHaveTextContent("100%");
   });
 

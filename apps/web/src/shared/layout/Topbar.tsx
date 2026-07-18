@@ -24,7 +24,14 @@ import { LegalNotice } from "./LegalNotice.js";
 import { RailNav } from "./SideRail.js";
 import { ThemeToggle } from "./ThemeToggle.js";
 
-const DENSITY_OPTIONS: ReadonlyArray<Density> = ["compact", "regular", "comfy"];
+const DENSITY_OPTIONS: ReadonlyArray<{
+  readonly label: string;
+  readonly value: Density;
+}> = [
+  { label: "Compact", value: "compact" },
+  { label: "Regular", value: "regular" },
+  { label: "Comfortable", value: "comfy" },
+];
 
 interface TopbarProps {
   readonly navigationToggle?: ReactNode;
@@ -49,7 +56,7 @@ export function Topbar({ navigationToggle }: TopbarProps = {}) {
             />
           }
         >
-          <IconMenu2 aria-hidden="true" />
+          <IconMenu2 aria-hidden="true" className="size-4" />
         </SheetTrigger>
         <SheetContent
           className="bg-sidebar text-sidebar-foreground"
@@ -67,7 +74,10 @@ export function Topbar({ navigationToggle }: TopbarProps = {}) {
       </Sheet>
       <InputGroup className="topbar__search">
         <InputGroupAddon>
-          <IconSearch className="topbar__search-icon" aria-hidden="true" />
+          <IconSearch
+            aria-hidden="true"
+            className="topbar__search-icon size-4"
+          />
         </InputGroupAddon>
         <InputGroupInput
           aria-label="Global search"
@@ -97,9 +107,9 @@ export function Topbar({ navigationToggle }: TopbarProps = {}) {
           if (value) setDensity(value as Density);
         }}
       >
-        {DENSITY_OPTIONS.map((option) => (
-          <ToggleGroupItem key={option} value={option}>
-            {option}
+        {DENSITY_OPTIONS.map(({ label, value }) => (
+          <ToggleGroupItem key={value} data-typography="control" value={value}>
+            {label}
           </ToggleGroupItem>
         ))}
       </ToggleGroup>

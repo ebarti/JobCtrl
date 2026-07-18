@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../shared/ui/select.js";
+import { Field, FieldLabel } from "../../shared/ui/field.js";
 
 export interface ArtifactFilterBarProps {
   search: ArtifactsSearch;
@@ -30,8 +31,8 @@ export function ArtifactFilterBar({ search }: ArtifactFilterBarProps) {
   };
   return (
     <div className="toolbar">
-      <label className="field">
-        <span>Status</span>
+      <Field className="field">
+        <FieldLabel htmlFor="artifact-status-filter">Status</FieldLabel>
         <Select
           items={statusItems}
           value={search.status}
@@ -39,7 +40,7 @@ export function ArtifactFilterBar({ search }: ArtifactFilterBarProps) {
             if (status !== null) apply({ status });
           }}
         >
-          <SelectTrigger aria-label="Status" className="w-full min-w-40">
+          <SelectTrigger aria-label="Status" className="w-full min-w-40" id="artifact-status-filter">
             <SelectValue />
           </SelectTrigger>
           <SelectContent alignItemWithTrigger={false}>
@@ -52,7 +53,7 @@ export function ArtifactFilterBar({ search }: ArtifactFilterBarProps) {
             </SelectGroup>
           </SelectContent>
         </Select>
-      </label>
+      </Field>
     </div>
   );
 }

@@ -11,7 +11,8 @@ describe("<PageHead>", () => {
       level: 1,
       name: "Workflow runs",
     });
-    expect(heading).toHaveClass("sr-only");
+    expect(heading).toHaveAttribute("data-typography", "page-title");
+    expect(heading).not.toHaveClass("sr-only");
     expect(
       screen.getByRole("navigation", { name: "breadcrumb" }),
     ).toBeInTheDocument();

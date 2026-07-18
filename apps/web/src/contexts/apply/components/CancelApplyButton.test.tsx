@@ -1,4 +1,7 @@
-import type { ActionRunResponse, CancelJobActionRequest } from "@jobctrl/contracts";
+import type {
+  ActionRunResponse,
+  CancelJobActionRequest,
+} from "@jobctrl/contracts";
 import { screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -9,9 +12,14 @@ import { buildTestPorts } from "../../../test/testPorts.js";
 import { CancelApplyButton } from "./CancelApplyButton.js";
 
 describe("<CancelApplyButton>", () => {
-  it("renders the cancel label and is enabled by default", () => {
+  it("renders the explicit stop label and is enabled by default", () => {
     renderWithProviders(<CancelApplyButton jobId="job-1" runId="run-1" />);
-    expect(screen.getByRole("button", { name: /cancel apply/i })).toBeEnabled();
+    const button = screen.getByRole("button", {
+      name: "Stop application run",
+    });
+    expect(button).toBeEnabled();
+    expect(button).toHaveAttribute("data-slot", "button");
+    expect(button).toHaveAttribute("data-typography", "control");
   });
 
   it("uses an authoritative job-scoped target without consulting dashboard history", async () => {
@@ -40,7 +48,9 @@ describe("<CancelApplyButton>", () => {
       { ports: buildTestPorts({ api: { dashboardSummary, cancelJobAction } }) },
     );
 
-    await userEvent.click(screen.getByRole("button", { name: /cancel apply/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Stop application run" }),
+    );
 
     await waitFor(() =>
       expect(cancelJobAction).toHaveBeenCalledWith("job-1", {
@@ -65,7 +75,7 @@ describe("<CancelApplyButton>", () => {
 
     await waitFor(() => expect(dashboardSummary).toHaveBeenCalledTimes(1));
     expect(
-      screen.queryByRole("button", { name: /cancel apply/i }),
+      screen.queryByRole("button", { name: "Stop application run" }),
     ).not.toBeInTheDocument();
   });
 
@@ -99,7 +109,7 @@ describe("<CancelApplyButton>", () => {
     });
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /cancel apply/i }),
+      await screen.findByRole("button", { name: "Stop application run" }),
     );
 
     await waitFor(() =>

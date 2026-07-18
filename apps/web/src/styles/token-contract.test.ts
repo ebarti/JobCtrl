@@ -51,6 +51,7 @@ const requiredSemanticTokens = [
   "accent",
   "accent-foreground",
   "destructive",
+  "destructive-foreground",
   "border",
   "input",
   "ring",
@@ -72,13 +73,23 @@ const requiredSemanticTokens = [
 const requiredExtensionTokens = [
   "success",
   "success-foreground",
+  "success-text",
   "success-muted",
   "warning",
   "warning-foreground",
+  "warning-text",
   "warning-muted",
+  "destructive-text",
+  "destructive-muted",
   "status-info",
   "status-info-foreground",
+  "status-info-text",
   "status-info-muted",
+  "category-foreground",
+  "category-muted",
+  "disabled-background",
+  "disabled-foreground",
+  "disabled-border",
 ] as const;
 
 const requiredThemeMappings = [
@@ -215,9 +226,9 @@ describe("shadcn token contract", () => {
     expect(tokensCss, "expected dark variables under the existing ThemeProvider selector").toContain(
       ':root[data-theme="dark"]',
     );
-    expect(tokensCss, "expected regular density row height").toContain("--jh-row-height: 40px;");
-    expect(tokensCss, "expected compact density row height").toContain("--jh-row-height: 32px;");
-    expect(tokensCss, "expected comfy density row height").toContain("--jh-row-height: 48px;");
+    expect(tokensCss, "expected regular density row height").toContain("--jh-row-height: 52px;");
+    expect(tokensCss, "expected compact density row height").toContain("--jh-row-height: 44px;");
+    expect(tokensCss, "expected comfy density row height").toContain("--jh-row-height: 60px;");
   });
 
   it("applies global density to shared rows, tables, fields, and controls", () => {
@@ -240,7 +251,7 @@ describe("shadcn token contract", () => {
       "--card-spacing: var(--jh-card-spacing);",
     );
     expect(tokensCss, "expected route sections to expose density padding").toContain(
-      "--jh-section-padding-block: 16px;",
+      "--jh-section-gap: 16px;",
     );
 
     const style = document.createElement("style");
@@ -260,31 +271,31 @@ describe("shadcn token contract", () => {
     try {
       for (const [density, expected] of Object.entries({
         compact: {
-          cardSpacing: "16px",
+          cardSpacing: "var(--jh-panel-padding)",
           controlHeight: "32px",
-          fieldGap: "5px",
-          rowHeight: "32px",
-          rowPadding: "6px",
-          sectionPaddingBlock: "12px",
-          tablePadding: "7px",
+          fieldGap: "var(--jh-internal-gap)",
+          rowHeight: "44px",
+          rowPadding: "8px",
+          sectionPaddingBlock: "var(--jh-section-gap)",
+          tablePadding: "8px",
         },
         regular: {
-          cardSpacing: "20px",
+          cardSpacing: "var(--jh-panel-padding)",
           controlHeight: "36px",
-          fieldGap: "7px",
-          rowHeight: "40px",
-          rowPadding: "9px",
-          sectionPaddingBlock: "16px",
-          tablePadding: "10px",
+          fieldGap: "var(--jh-internal-gap)",
+          rowHeight: "52px",
+          rowPadding: "12px",
+          sectionPaddingBlock: "var(--jh-section-gap)",
+          tablePadding: "12px",
         },
         comfy: {
-          cardSpacing: "24px",
+          cardSpacing: "var(--jh-panel-padding)",
           controlHeight: "40px",
-          fieldGap: "10px",
-          rowHeight: "48px",
-          rowPadding: "12px",
-          sectionPaddingBlock: "20px",
-          tablePadding: "14px",
+          fieldGap: "var(--jh-internal-gap)",
+          rowHeight: "60px",
+          rowPadding: "16px",
+          sectionPaddingBlock: "var(--jh-section-gap)",
+          tablePadding: "16px",
         },
       })) {
         shell.dataset["density"] = density;
@@ -371,7 +382,7 @@ describe("shadcn token contract", () => {
       "box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--success) 52%, transparent);",
     );
     expect(tagOkRule, "expected success badge text to stay green").toContain(
-      "color: color-mix(in oklab, var(--success) 78%, var(--foreground));",
+      "color: color-mix(in oklab, var(--success-text) 78%, var(--foreground));",
     );
     expect(stagePillOkRule, "stage pills should use the same success rule as tags").toBe(tagOkRule);
   });

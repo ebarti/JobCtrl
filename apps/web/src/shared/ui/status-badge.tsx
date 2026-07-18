@@ -13,7 +13,7 @@ import { Badge, type BadgeProps } from "./badge.js";
 import type { StatusTagTone } from "./status-tokens.js";
 
 const statusBadgeVariants = cva(
-  "min-h-0 gap-1.5 rounded-none border-0 bg-transparent p-0 text-[13px] font-semibold leading-5 shadow-none before:size-1.5 before:shrink-0 before:rounded-full before:bg-current before:content-[''] has-[>svg]:before:hidden",
+  "min-h-0 gap-1.5 rounded-none border-0 bg-transparent p-0 shadow-none before:size-1.5 before:shrink-0 before:rounded-full before:bg-current before:content-[''] has-[>svg]:before:hidden",
   {
     variants: {
       tone: {
@@ -64,6 +64,7 @@ export function StatusBadge({
     <Badge
       data-slot="status-badge"
       data-status-tone={resolvedTone}
+      data-typography="status"
       variant="outline"
       className={cn(statusBadgeVariants({ tone: resolvedTone }), className)}
       {...props}

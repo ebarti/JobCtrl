@@ -83,9 +83,13 @@ export function ImportConfirmForm() {
       }}
     >
       <header className="resume-import-step__header">
-        <span className="resume-import-step__eyebrow">Confirm import</span>
-        <h2>Review the final import</h2>
-        <p>Check the source and selected scope once more before applying the import.</p>
+        <span className="resume-import-step__eyebrow" data-typography="label">
+          Confirm import
+        </span>
+        <h2 data-typography="section-title">Review the final import</h2>
+        <p data-typography="body">
+          Check the source and selected scope once more before applying the import.
+        </p>
       </header>
 
       {errorMessage ? (
@@ -114,15 +118,15 @@ export function ImportConfirmForm() {
 
       <dl className="resume-import-confirmation-summary">
         <div>
-          <dt>Source PDF</dt>
-          <dd>
+          <dt data-typography="label">Source PDF</dt>
+          <dd data-typography="strong-body">
             <IconFileTypePdf size={20} stroke={1.65} aria-hidden="true" />
             <span>{filename}</span>
           </dd>
         </div>
         <div>
-          <dt>Import scope</dt>
-          <dd>{summary}</dd>
+          <dt data-typography="label">Import scope</dt>
+          <dd data-typography="strong-body">{summary}</dd>
         </div>
       </dl>
 
@@ -138,8 +142,10 @@ export function ImportConfirmForm() {
             <IconMinus size={18} stroke={2} aria-hidden="true" />
           )}
           <span>
-            <strong>Profile data</strong>
-            <small>{importProfile ? "Included in this import" : "Not selected"}</small>
+            <strong data-typography="strong-body">Profile data</strong>
+            <small data-typography="metadata">
+              {importProfile ? "Included in this import" : "Not selected"}
+            </small>
           </span>
         </div>
         <div data-selected={importStyle || undefined}>
@@ -149,8 +155,10 @@ export function ImportConfirmForm() {
             <IconMinus size={18} stroke={2} aria-hidden="true" />
           )}
           <span>
-            <strong>Style data</strong>
-            <small>{importStyle ? "Included in this import" : "Not selected"}</small>
+            <strong data-typography="strong-body">Style data</strong>
+            <small data-typography="metadata">
+              {importStyle ? "Included in this import" : "Not selected"}
+            </small>
           </span>
         </div>
       </div>

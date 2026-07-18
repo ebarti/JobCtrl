@@ -47,6 +47,12 @@ describe("<Funnel>", () => {
     expect(screen.queryByText(/^score$/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^tailor$/i)).not.toBeInTheDocument();
     expect(screen.getByText("1 score update, 1 material update")).toBeInTheDocument();
+    expect(screen.getByText("01")).toHaveAttribute("data-typography", "code");
+    const discover = screen.getByRole("button", { name: /01 discover/i });
+    const pendingStatus = Array.from(
+      discover.querySelectorAll('[data-typography="status"]'),
+    ).find((element) => element.textContent?.endsWith("pending"));
+    expect(pendingStatus).toBeDefined();
   });
 
   it("keeps hidden preparation-stage failures visible when preparation work items exist", async () => {

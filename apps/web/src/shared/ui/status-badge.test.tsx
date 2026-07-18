@@ -15,6 +15,7 @@ describe("<StatusBadge>", () => {
 
     const badge = screen.getByText("Status label");
     expect(badge).toHaveAttribute("data-status-tone", tone);
+    expect(badge).toHaveAttribute("data-typography", "status");
     expect(badge.querySelector("svg")).toHaveClass(`tabler-icon-${iconName}`);
     expect(badge.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     expect(badge.querySelector("svg")).toHaveAttribute("data-icon", "inline-start");

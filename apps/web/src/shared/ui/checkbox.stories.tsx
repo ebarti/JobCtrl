@@ -61,9 +61,9 @@ export const Geometry: Story = {
       }
 
       const { height, width } = checkbox.getBoundingClientRect();
-      if (height !== 16 || width !== 16) {
+      if (height !== 24 || width !== 24) {
         throw new Error(
-          `Expected fixed 16x16 checkbox geometry, received ${width}x${height}.`,
+          `Expected approved 24x24 checkbox target geometry, received ${width}x${height}.`,
         );
       }
     }

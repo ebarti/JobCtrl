@@ -20,7 +20,7 @@ describe("DiscoveryView", () => {
     expect(screen.getByRole("checkbox", { name: "Director of Engineering" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Automation settings" })).toBeInTheDocument();
     expect(screen.getByLabelText("Minimum fit score")).toBeInTheDocument();
-    expect(screen.getByLabelText("Auto apply")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Auto apply" })).toBeInTheDocument();
     expect(screen.queryByText("Ranking priorities")).not.toBeInTheDocument();
     expect(screen.queryByText("Exclusions")).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Runtime settings" })).toBeInTheDocument();

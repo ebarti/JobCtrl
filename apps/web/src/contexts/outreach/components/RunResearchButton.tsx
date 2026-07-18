@@ -6,6 +6,9 @@ import {
   LOCAL_INSTALL_GUIDE_URL,
 } from "../../../shared/lib/apiCapabilityAvailability.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { Button } from "../../../shared/ui/button.js";
+import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import { useRunResearchMutation } from "../hooks/useRunResearchMutation.js";
 
 export interface RunResearchButtonProps {
@@ -25,6 +28,7 @@ export function RunResearchButton({ jobId, employer }: RunResearchButtonProps): 
     "runContactResearch",
   );
   const unavailableReasonId = useId();
+  const sourceUrlId = useId();
   const mutation = useRunResearchMutation();
   const errorMessage = mutation.error instanceof Error ? mutation.error.message : "";
   const blocked = mutation.isPending || !availability.available;
@@ -45,9 +49,12 @@ export function RunResearchButton({ jobId, employer }: RunResearchButtonProps): 
 
   return (
     <form className="run-research" onSubmit={onSubmit}>
-      <label className="run-research-field">
-        <span className="run-research-label">Public source URL (optional)</span>
-        <input
+      <Field className="run-research-field">
+        <FieldLabel className="run-research-label" htmlFor={sourceUrlId}>
+          Public source URL (optional)
+        </FieldLabel>
+        <Input
+          id={sourceUrlId}
           aria-describedby={availability.available ? undefined : unavailableReasonId}
           disabled={!availability.available}
           type="url"
@@ -55,15 +62,14 @@ export function RunResearchButton({ jobId, employer }: RunResearchButtonProps): 
           placeholder="https://company.example/team"
           onChange={(event) => setUrl(event.target.value)}
         />
-      </label>
-      <button
+      </Field>
+      <Button
         aria-describedby={availability.available ? undefined : unavailableReasonId}
         type="submit"
-        className="primary"
         disabled={blocked}
       >
-        {mutation.isPending ? "starting…" : "run research"}
-      </button>
+        {mutation.isPending ? "Starting…" : "Run research"}
+      </Button>
       {!availability.available ? (
         <span className="meta" id={unavailableReasonId}>
           Contact research is available in the local app. This public demo does

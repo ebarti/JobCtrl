@@ -3,6 +3,7 @@ import { useState, type JSX } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
 import { formatDateTime } from "../../../shared/lib/formatters.js";
+import { Button } from "../../../shared/ui/button.js";
 import { useResearchTaskQuery } from "../hooks/useResearchTaskQuery.js";
 import { useResearchTasksListQuery } from "../hooks/useResearchTasksListQuery.js";
 import { researchTaskStatusLabel } from "../lib/research-copy.js";
@@ -35,14 +36,15 @@ function ResearchTaskRow({ task }: { task: ContactResearchTaskSummary }): JSX.El
           {task.candidateCount} proposed · {task.needsReviewCount} awaiting review
         </span>
         <span className="research-task-time">{formatDateTime(task.updatedAt ?? "")}</span>
-        <button
+        <Button
           type="button"
-          className="tab"
+          size="sm"
+          variant="outline"
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
         >
-          {open ? "hide candidates" : "review candidates"}
-        </button>
+          {open ? "Hide candidates" : "Review candidates"}
+        </Button>
       </div>
       {open ? <ResearchTaskDetail taskId={task.taskId} /> : null}
     </li>

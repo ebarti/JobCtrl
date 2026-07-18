@@ -24,7 +24,7 @@ describe("<ReviseDraftForm>", () => {
     );
 
     const textarea = view.getByRole("textbox", { name: "Edit message" });
-    const submit = view.getByRole("button", { name: "revise draft" });
+    const submit = view.getByRole("button", { name: "Revise draft" });
     expect(textarea).toBeDisabled();
     expect(submit).toBeDisabled();
     expect(submit).toHaveAccessibleDescription(
@@ -57,12 +57,12 @@ describe("<ReviseDraftForm>", () => {
         />,
       );
       const textarea = view.getByRole("textbox", { name: "Edit message" });
-      const submit = view.getByRole("button", { name: "revise draft" });
+      const submit = view.getByRole("button", { name: "Revise draft" });
       const editedBodyText = "Hi Dana,\n\nEdited message to retry.\n\nBest,\nJordan";
 
       fireEvent.change(textarea, { target: { value: editedBodyText } });
       fireEvent.click(submit);
-      await waitFor(() => expect(submit).toHaveTextContent("revising…"));
+      await waitFor(() => expect(submit).toHaveTextContent("Revising…"));
 
       settleFailure(
         HttpResponse.json({ message: "Revision service is temporarily unavailable." }, { status: 500 }),

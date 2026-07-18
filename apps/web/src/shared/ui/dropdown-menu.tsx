@@ -83,6 +83,7 @@ export const DropdownMenuSubTrigger = forwardRef<
   <MenuPrimitive.SubmenuTrigger
     ref={ref}
     data-slot="dropdown-menu-sub-trigger"
+    data-typography="control"
     className={cn(
       "flex min-h-8 cursor-default select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none transition-colors focus:bg-muted focus:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground",
       inset && "pl-8",
@@ -236,6 +237,7 @@ export const DropdownMenuItem = forwardRef<
   <MenuPrimitive.Item
     ref={ref}
     data-slot="dropdown-menu-item"
+    data-typography="control"
     className={cn(
       "relative flex min-h-8 cursor-default select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none transition-colors focus:bg-muted focus:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:shrink-0",
       inset && "pl-8",
@@ -253,6 +255,7 @@ export const DropdownMenuCheckboxItem = forwardRef<
   <MenuPrimitive.CheckboxItem
     ref={ref}
     data-slot="dropdown-menu-checkbox-item"
+    data-typography="control"
     className={cn(
       "relative flex min-h-8 cursor-default select-none items-center rounded-md py-1.5 pl-8 pr-2.5 text-sm outline-none transition-colors focus:bg-muted focus:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50",
       className,
@@ -276,6 +279,7 @@ export const DropdownMenuRadioItem = forwardRef<
   <MenuPrimitive.RadioItem
     ref={ref}
     data-slot="dropdown-menu-radio-item"
+    data-typography="control"
     className={cn(
       "relative flex min-h-8 cursor-default select-none items-center rounded-md py-1.5 pl-8 pr-2.5 text-sm outline-none transition-colors focus:bg-muted focus:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50",
       className,
@@ -299,8 +303,9 @@ export const DropdownMenuLabel = forwardRef<
   <MenuPrimitive.GroupLabel
     ref={ref}
     data-slot="dropdown-menu-label"
+    data-typography="label"
     className={cn(
-      "px-2.5 py-1.5 text-[13px] font-semibold uppercase tracking-[0.08em] text-muted-foreground",
+      "px-2.5 py-1.5 text-muted-foreground",
       inset && "pl-8",
       className,
     )}
@@ -329,10 +334,8 @@ export function DropdownMenuShortcut({
   return (
     <span
       data-slot="dropdown-menu-shortcut"
-      className={cn(
-        "ml-auto text-[13px] tracking-wider text-muted-foreground",
-        className,
-      )}
+      data-typography="metadata"
+      className={cn("ml-auto text-muted-foreground", className)}
       {...props}
     />
   );

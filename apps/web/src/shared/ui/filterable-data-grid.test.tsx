@@ -164,7 +164,7 @@ describe("FilterableDataGrid", () => {
     expect(screen.getByText("BoardCo")).toBeInTheDocument();
     expect(screen.queryByText("Salesforce")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "next" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.queryByText("Acme")).not.toBeInTheDocument();
     expect(screen.getByText("Salesforce")).toBeInTheDocument();
   });
@@ -350,7 +350,7 @@ describe("FilterableDataGrid", () => {
     await user.click(screen.getByRole("button", { name: /sort by observed/i }));
     await user.click(screen.getByRole("combobox", { name: "Page size" }));
     await user.click(await screen.findByRole("option", { name: "1/page" }));
-    await user.click(screen.getByRole("button", { name: "next" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
 
     expect(screen.queryByText("Salesforce")).not.toBeInTheDocument();
     expect(screen.getByText("Acme")).toBeInTheDocument();
@@ -564,8 +564,8 @@ describe("FilterableDataGrid", () => {
     );
 
     const quietTableStatuses = redesignCss.slice(
-      redesignCss.indexOf(".filterable-data-grid-table .tag,"),
-      redesignCss.indexOf(".filterable-data-grid-table .tag::before"),
+      redesignCss.indexOf(".filterable-data-grid-table .stage-pill,"),
+      redesignCss.indexOf(".filterable-data-grid-table .stage-pill::before"),
     );
     expect(quietTableStatuses).toContain(
       ".filterable-data-grid-table .stage-pill",
@@ -581,10 +581,10 @@ describe("FilterableDataGrid", () => {
     const responsiveRules = css.slice(css.indexOf("Dense records reflow"));
 
     expect(css).toMatch(
-      /\.filterable-data-grid-table thead th\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\)/s,
+      /\.filterable-data-grid-table thead th\s*\{[^}]*font-size: var\(--jh-type-label-size\)/s,
     );
     expect(css).toMatch(
-      /\.responsive-record-table thead th\s*\{[^}]*font-size: var\(--jh-font-size-body-sm\)/s,
+      /\.responsive-record-table thead th\s*\{[^}]*font-size: var\(--jh-type-label-size\)/s,
     );
     expect(responsiveRules).toMatch(/@media \(max-width: 900px\)/);
     expect(responsiveRules).toMatch(

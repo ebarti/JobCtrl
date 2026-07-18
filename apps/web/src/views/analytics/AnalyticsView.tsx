@@ -84,8 +84,10 @@ export function AnalyticsView() {
       <Card className="analytics-view data-list-card" aria-label="Outcome analytics workspace">
         <CardHeader className="analytics-controls">
           <CardTitle className="analytics-controls-copy">
-            <span>Breakdown</span>
-            <strong>{activeDimensionLabel}</strong>
+            <span data-typography="label">Breakdown</span>
+            <strong data-typography="component-title">
+              {activeDimensionLabel}
+            </strong>
           </CardTitle>
           <CardAction className="analytics-toolbar">
             <ToggleGroup
@@ -139,24 +141,24 @@ export function AnalyticsView() {
           ) : null}
           <dl className="analytics-summary-strip" aria-label="Outcome summary">
             <div className="analytics-summary-metric analytics-summary-metric-primary">
-              <dt>Applied</dt>
-              <dd>{analytics?.totals.applied ?? "-"}</dd>
+              <dt data-typography="label">Applied</dt>
+              <dd data-typography="metric">{analytics?.totals.applied ?? "-"}</dd>
             </div>
             <div className="analytics-summary-metric analytics-summary-metric-primary">
-              <dt>Replies</dt>
-              <dd>{analytics?.totals.reply ?? "-"}</dd>
+              <dt data-typography="label">Replies</dt>
+              <dd data-typography="metric">{analytics?.totals.reply ?? "-"}</dd>
             </div>
             <div className="analytics-summary-metric analytics-summary-metric-primary">
-              <dt>Interviews</dt>
-              <dd>{analytics?.totals.interview ?? "-"}</dd>
+              <dt data-typography="label">Interviews</dt>
+              <dd data-typography="metric">{analytics?.totals.interview ?? "-"}</dd>
             </div>
             <div className="analytics-summary-metric analytics-summary-metric-primary">
-              <dt>Offers</dt>
-              <dd>{analytics?.totals.offer ?? "-"}</dd>
+              <dt data-typography="label">Offers</dt>
+              <dd data-typography="metric">{analytics?.totals.offer ?? "-"}</dd>
             </div>
             <div className="analytics-summary-metric analytics-summary-metric-secondary">
-              <dt>Median response</dt>
-              <dd>
+              <dt data-typography="label">Median response</dt>
+              <dd data-typography="metric">
                 {analytics
                   ? formatDuration(
                       analytics.timeToResponse.medianMinutes,
@@ -167,8 +169,8 @@ export function AnalyticsView() {
               </dd>
             </div>
             <div className="analytics-summary-metric analytics-summary-metric-secondary">
-              <dt>Suggestions accepted</dt>
-              <dd>
+              <dt data-typography="label">Suggestions accepted</dt>
+              <dd data-typography="metric">
                 {analytics
                   ? formatAcceptance(
                       analytics.suggestionAccuracy.acceptanceRate,

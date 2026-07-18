@@ -27,17 +27,18 @@ export function PageHead({
   return (
     <header className={cn("page-head", className)} data-slot="page-head">
       <div className="page-head-text" data-slot="page-head-text">
-        <h1 className="sr-only" data-slot="page-head-title">
+        <h1 data-slot="page-head-title" data-typography="page-title">
           {title}
         </h1>
         <Breadcrumb>
-          <BreadcrumbList>
+          <BreadcrumbList data-typography="metadata">
             {eyebrow ? (
               <>
                 <BreadcrumbItem>
                   <span
                     className="page-head-section"
                     data-slot="page-head-eyebrow"
+                    data-typography="metadata"
                   >
                     {eyebrow}
                   </span>
@@ -46,14 +47,22 @@ export function PageHead({
               </>
             ) : null}
             <BreadcrumbItem>
-              <BreadcrumbPage aria-disabled={undefined} role={undefined}>
+              <BreadcrumbPage
+                aria-disabled={undefined}
+                data-typography="metadata"
+                role={undefined}
+              >
                 {title}
               </BreadcrumbPage>
             </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
         {subtitle ? (
-          <p className="page-head-subtitle" data-slot="page-head-subtitle">
+          <p
+            className="page-head-subtitle"
+            data-slot="page-head-subtitle"
+            data-typography="metadata"
+          >
             {subtitle}
           </p>
         ) : null}

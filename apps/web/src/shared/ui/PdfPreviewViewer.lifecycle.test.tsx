@@ -107,9 +107,17 @@ describe("PdfPreviewViewer resource lifecycle", () => {
     const { destroy } = installPdfDocument([page]);
     const view = render(<PdfPreviewViewer {...viewerProps} />);
 
+    expect(view.container.querySelector(".toolbar-status")).toHaveAttribute(
+      "data-typography",
+      "metadata",
+    );
+
     const image = await screen.findByRole("img", { name: "Tailored resume page 1" });
     expect(image).toHaveAttribute("src", "blob:pdf-page-1");
-    expect(screen.getByText("Page 1")).toBeVisible();
+    expect(screen.getByText("Page 1")).toHaveAttribute(
+      "data-typography",
+      "metadata",
+    );
     await waitFor(() => {
       expect(page.cleanup).toHaveBeenCalledTimes(1);
       expect(destroy).toHaveBeenCalledTimes(1);

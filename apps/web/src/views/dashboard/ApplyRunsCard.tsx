@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import type { DashboardSummary } from "../../contexts/operations/types.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
+import { Button } from "../../shared/ui/button.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
 import { StatusDot } from "../../shared/ui/status-dot.js";
@@ -22,16 +23,17 @@ export function ApplyRunsCard({ summary }: ApplyRunsCardProps) {
       <div className="rows">
         {summary.applyRuns.length ? (
           summary.applyRuns.map((run: ApplyRunSummary) => (
-            <button
+            <Button
               key={run.runId}
               type="button"
+              variant="ghost"
               className="mini-row clickable-row"
               onClick={() => void navigate({ to: "/runs/$runId", params: { runId: run.runId } })}
             >
               <StatusDot state={applyRunDotState(run.status)} />
               <span className="title-stack">
-                <b>{run.title}</b>
-                <span>
+                <b data-typography="strong-body">{run.title}</b>
+                <span data-typography="metadata">
                   {run.company} · {formatDateTime(run.startedAt)}
                 </span>
               </span>
@@ -40,7 +42,7 @@ export function ApplyRunsCard({ summary }: ApplyRunsCardProps) {
                   dry-run
                 </StatusBadge>
               ) : null}
-            </button>
+            </Button>
           ))
         ) : (
           <Empty title="No apply runs." />

@@ -170,6 +170,10 @@ describe("<ArtifactDetailPanel>", () => {
     expect(
       await screen.findByRole("article", { name: "Artifact details" }),
     ).toHaveClass("route-workspace", "artifact-detail-workspace");
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveAttribute(
+      "data-typography",
+      "page-title",
+    );
     expect(
       screen.getByRole("heading", { level: 2, name: "Artifact audit" }),
     ).toHaveClass("sr-only");
@@ -200,7 +204,7 @@ describe("<ArtifactDetailPanel>", () => {
     );
 
     const button = await screen.findByRole("button", {
-      name: "preview in browser",
+      name: "Preview in browser",
     });
     fireEvent.click(button);
 
@@ -211,7 +215,7 @@ describe("<ArtifactDetailPanel>", () => {
     ).toBeInTheDocument();
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "preview in browser" }),
+        screen.getByRole("button", { name: "Preview in browser" }),
       ).toBeEnabled(),
     );
     expect(openArtifact).toHaveBeenCalledWith("artifact-preview");

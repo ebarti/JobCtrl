@@ -192,7 +192,7 @@ function TagGroup({
 }) {
   return (
     <div className="artifact-comparison-tag-group">
-      <span>{label}</span>
+      <span data-typography="label">{label}</span>
       <div>
         {values.length ? (
           values.map((value) => (

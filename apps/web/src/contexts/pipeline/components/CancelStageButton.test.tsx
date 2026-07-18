@@ -5,8 +5,8 @@ import { renderWithProviders } from "../../../test/render.js";
 import { CancelStageButton } from "./CancelStageButton.js";
 
 describe("<CancelStageButton>", () => {
-  it("renders the cancel label", () => {
+  it("names the affected workflow operation", () => {
     renderWithProviders(<CancelStageButton jobId="job-1" stage="apply" />);
-    expect(screen.getByRole("button", { name: "cancel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop current stage" })).toBeInTheDocument();
   });
 });

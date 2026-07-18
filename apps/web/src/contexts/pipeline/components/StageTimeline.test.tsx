@@ -103,7 +103,7 @@ describe("<StageTimeline>", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "tailor this job" }),
+      screen.getByRole("button", { name: "Tailor this job" }),
     ).toBeInTheDocument();
   });
 
@@ -116,7 +116,7 @@ describe("<StageTimeline>", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: "tailor this job" }),
+      screen.queryByRole("button", { name: "Tailor this job" }),
     ).not.toBeInTheDocument();
   });
 

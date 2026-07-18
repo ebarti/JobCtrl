@@ -12,10 +12,14 @@ export function BrandMark({ showWordmark = true, showTagline = false, className 
       <BrandGlyph />
       {showWordmark ? (
         <span className="brand-lockup__text">
-          <span className="side-rail__wordmark">
+          <span className="side-rail__wordmark" data-typography="component-title">
             Job<span className="side-rail__wordmark-accent">Ctrl</span>
           </span>
-          {showTagline ? <span className="side-rail__tagline">Plan. Apply. Track. Succeed.</span> : null}
+          {showTagline ? (
+            <span className="side-rail__tagline" data-typography="metadata">
+              Plan. Apply. Track. Succeed.
+            </span>
+          ) : null}
         </span>
       ) : null}
     </span>

@@ -164,7 +164,7 @@ evidence, qualifications, and the complete capability matrix.
   [Local Data And Safety](#local-data-and-safety)).
 - Capture a current browser job page through the optional local browser
   extension, which feeds the existing manual-capture import path.
-- Work through one compact route hierarchy with 16px body copy in every density.
+- Work through one compact route hierarchy with 14px/20px body copy in every density.
   Compact, regular, and comfy modes change row/control spacing, while
   record-heavy Jobs, Artifacts, Contacts, Discovery, and Settings surfaces
   reflow into labelled cards at narrower widths.

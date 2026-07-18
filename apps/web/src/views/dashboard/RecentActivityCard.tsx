@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 
 import type { DashboardSummary } from "../../contexts/operations/types.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
+import { Button } from "../../shared/ui/button.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
@@ -37,9 +38,10 @@ export function RecentActivityCard({ summary }: { summary: DashboardSummary }) {
       <div className="rows">
         {activity.length ? (
           activity.map((entry) => (
-            <button
+            <Button
               key={entry.eventId}
               type="button"
+              variant="ghost"
               className="mini-row clickable-row"
               onClick={() =>
                 void navigate({
@@ -50,13 +52,13 @@ export function RecentActivityCard({ summary }: { summary: DashboardSummary }) {
             >
               <StatusBadge tone={activityTone(entry)}>{entry.level}</StatusBadge>
               <span className="title-stack">
-                <b>{entry.message}</b>
-                <span>
+                <b data-typography="strong-body">{entry.message}</b>
+                <span data-typography="metadata">
                   {entry.stage} · {activityContext(entry)}
                 </span>
               </span>
               <RelativeTime value={entry.at} />
-            </button>
+            </Button>
           ))
         ) : (
           <Empty title="No activity yet." />

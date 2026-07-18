@@ -1,6 +1,9 @@
 import { IconCheck } from "@tabler/icons-react";
 import { useState, type FormEvent } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
+import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import { useCorrectScoreMutation } from "../hooks/useCorrectScoreMutation.js";
 
 export interface ScoreCorrectionControlProps {
@@ -30,9 +33,10 @@ export function ScoreCorrectionControl({ jobId, currentScore }: ScoreCorrectionC
 
   return (
     <form className="score-correction" onSubmit={submit}>
-      <label>
-        <span>Correct score</span>
-        <input
+      <Field>
+        <FieldLabel htmlFor="score-correction-score">Correct score</FieldLabel>
+        <Input
+          id="score-correction-score"
           min={1}
           max={10}
           step={1}
@@ -41,19 +45,20 @@ export function ScoreCorrectionControl({ jobId, currentScore }: ScoreCorrectionC
           aria-invalid={!scoreIsValid}
           onChange={(event) => setCorrectedScore(event.target.value)}
         />
-      </label>
-      <label>
-        <span>Reason</span>
-        <input
+      </Field>
+      <Field>
+        <FieldLabel htmlFor="score-correction-reason">Reason</FieldLabel>
+        <Input
+          id="score-correction-reason"
           maxLength={1000}
           type="text"
           value={reason}
           onChange={(event) => setReason(event.target.value)}
         />
-      </label>
-      <button aria-label="Save score correction" disabled={disabled} type="submit">
+      </Field>
+      <Button aria-label="Save score correction" disabled={disabled} size="icon" type="submit">
         <IconCheck aria-hidden="true" size={16} />
-      </button>
+      </Button>
       {mutation.isSuccess ? (
         <small role="status">Scoring policy updated; comparable scores may be stale.</small>
       ) : null}
