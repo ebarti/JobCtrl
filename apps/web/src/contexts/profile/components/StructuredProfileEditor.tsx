@@ -115,33 +115,39 @@ const TARGET_TRACK_GROUPS: readonly TargetSearchOptionGroup[] = [
 
 const TARGET_SENIORITY_GROUPS: readonly TargetSearchOptionGroup[] = [
   {
-    label: "IC",
+    label: "",
     options: [
-      { value: "junior", label: "Junior Engineer" },
-      { value: "engineer", label: "Engineer", aliases: ["mid engineer", "mid-level engineer"] },
-      { value: "senior", label: "Senior Engineer" },
-      { value: "staff", label: "Staff Engineer" },
-      { value: "principal", label: "Principal Engineer" },
-    ],
-  },
-  {
-    label: "Management",
-    options: [
-      { value: "manager", label: "Engineering Manager" },
+      { value: "junior", label: "Junior IC", aliases: ["junior engineer"] },
+      {
+        value: "mid",
+        label: "Mid IC",
+        aliases: ["engineer", "mid engineer", "mid-level engineer"],
+      },
+      { value: "senior", label: "Senior IC", aliases: ["senior engineer"] },
+      { value: "staff", label: "Staff IC", aliases: ["staff engineer"] },
+      { value: "principal", label: "Principal IC", aliases: ["principal engineer"] },
+      { value: "manager", label: "Manager", aliases: ["engineering manager"] },
       {
         value: "senior_manager",
-        label: "Senior Engineering Manager / Head of Engineering",
+        label: "Senior Manager",
         aliases: ["senior manager", "senior engineering manager", "head of engineering"],
       },
-      { value: "director", label: "Director of Engineering" },
-    ],
-  },
-  {
-    label: "Executive",
-    options: [
-      { value: "vp", label: "VP of Engineering", aliases: ["vice president engineering", "vp engineering"] },
-      { value: "svp", label: "SVP Engineering", aliases: ["senior vice president engineering"] },
-      { value: "cto", label: "CTO", aliases: ["chief technology officer"] },
+      { value: "director", label: "Director", aliases: ["director of engineering"] },
+      {
+        value: "vp",
+        label: "VP",
+        aliases: ["vice president", "vice president engineering", "vp engineering"],
+      },
+      {
+        value: "svp",
+        label: "SVP",
+        aliases: ["senior vice president", "senior vice president engineering", "svp engineering"],
+      },
+      {
+        value: "c_level",
+        label: "C-Level",
+        aliases: ["c level", "c suite", "chief", "cto", "chief technology officer"],
+      },
     ],
   },
 ];
@@ -703,21 +709,9 @@ export function StructuredProfileEditor({
       />
       <FieldContent>
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
-        <div className="flex flex-wrap items-center gap-2">
-          <FieldDescription id={descriptionId} aria-live="polite">
-            {isUnanswered ? "Not answered" : answer}
-          </FieldDescription>
-          <Button
-            aria-label={`Set ${label} to not answered`}
-            disabled={isUnanswered}
-            onClick={() => updateProfilePath(path, "")}
-            size="sm"
-            type="button"
-            variant="link"
-          >
-            Clear answer
-          </Button>
-        </div>
+        <FieldDescription id={descriptionId} aria-live="polite">
+          {isUnanswered ? "Not answered" : answer}
+        </FieldDescription>
       </FieldContent>
     </Field>
     );
@@ -1266,21 +1260,29 @@ export function StructuredProfileEditor({
     <section className="form-section">
       {showSectionHeading ? <h3>Target search</h3> : null}
       <FieldGroup className="target-preferences-grid">
-        {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS)}
-        {targetSearchCheckboxGroup(
-          "experience.target_seniority_floor",
-          "Seniority floors",
-          TARGET_SENIORITY_GROUPS,
-        )}
-        {delimitedListField("experience.target_functions", ROLE_AREA_LABEL, "Add role area", {
-          compact: true,
-          placeholder: ROLE_AREA_PLACEHOLDER,
-        })}
-        {delimitedListField("experience.target_specializations", "Specializations", "Add specialization", {
-          compact: true,
-        })}
-        {delimitedListField("experience.target_role", "Target roles", "Add role", { compact: true })}
-        {targetLocationWorkModelField()}
+        <FieldGroup className="target-preference-cluster">
+          {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS)}
+          {delimitedListField("experience.target_role", "Target roles", "Add role", { compact: true })}
+        </FieldGroup>
+        <FieldGroup className="target-preference-cluster">
+          {targetSearchCheckboxGroup(
+            "experience.target_seniority_floor",
+            "Seniority floors",
+            TARGET_SENIORITY_GROUPS,
+          )}
+        </FieldGroup>
+        <FieldGroup className="target-preference-cluster">
+          {delimitedListField("experience.target_functions", ROLE_AREA_LABEL, "Add role area", {
+            compact: true,
+            placeholder: ROLE_AREA_PLACEHOLDER,
+          })}
+          {delimitedListField("experience.target_specializations", "Specializations", "Add specialization", {
+            compact: true,
+          })}
+        </FieldGroup>
+        <FieldGroup className="target-preference-cluster">
+          {targetLocationWorkModelField()}
+        </FieldGroup>
       </FieldGroup>
     </section>
   );

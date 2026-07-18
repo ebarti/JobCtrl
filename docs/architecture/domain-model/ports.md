@@ -45,7 +45,7 @@ swap it for a hosted service.
 
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
-| `JobBoardScraperPort` | `JobSpyAdapter`, `WorkdayApiAdapter`, `SmartExtractAdapter` (Playwright + LLM) | Same adapters, deployed as Kubernetes Jobs behind **AWS SQS** task queue with per-tenant rate limiting |
+| `JobBoardScraperPort` | `JobStreamingGateway`, `WorkdayApiAdapter`, `SmartExtractAdapter` (Playwright + LLM) | Same adapters, deployed as Kubernetes Jobs behind **AWS SQS** task queue with per-tenant rate limiting |
 | `JobRepository` | `SqliteJobRepository` | `PostgresJobRepository` (**AWS RDS Postgres 16** with pgbouncer connection pooling, tenant-scoped via `tenant_id` column + RLS) |
 | `EventPublisher` | `InProcessEventBus` (synchronous) | `SqsEventPublisher` (**AWS SQS FIFO** queues, one per bounded context, with message group = tenantId for ordered per-tenant delivery) |
 

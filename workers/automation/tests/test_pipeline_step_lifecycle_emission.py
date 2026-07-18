@@ -232,6 +232,7 @@ async def test_discovery_activities_use_stable_scopes_and_terminal_counts(
 ) -> None:
     execution = _execution()
     scopes: list[tuple[PipelineStepScope, dict[str, Any], _LifecycleRecorder]] = []
+    source_kwargs: dict[str, Any] = {}
 
     def fake_begin(scope: PipelineStepScope | None, **kwargs: Any):
         assert scope is not None
@@ -245,6 +246,15 @@ async def test_discovery_activities_use_stable_scopes_and_terminal_counts(
     monkeypatch.setattr(discovery_activities, "begin_pipeline_step_attempt", fake_begin)
     monkeypatch.setattr(discovery_activities.activity, "heartbeat", lambda *_args: None)
     monkeypatch.setattr(
+        discovery_activities.activity,
+        "info",
+        lambda: SimpleNamespace(
+            attempt=2,
+            activity_id="source-family",
+            activity_run_id="activity-run-2",
+        ),
+    )
+    monkeypatch.setattr(
         "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime",
         lambda **_kwargs: None,
     )
@@ -252,14 +262,18 @@ async def test_discovery_activities_use_stable_scopes_and_terminal_counts(
         "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat",
         fake_run_blocking,
     )
-    monkeypatch.setattr(
-        "jobctrl.pipeline.runner.run_discovery_source_family",
-        lambda family, **_kwargs: {
+    def fake_source_family(family: str, **kwargs: Any) -> dict[str, Any]:
+        source_kwargs.update(kwargs)
+        return {
             "family": family,
             "status": "ok",
             "result": {},
             "source_ids": [],
-        },
+        }
+
+    monkeypatch.setattr(
+        "jobctrl.pipeline.runner.run_discovery_source_family",
+        fake_source_family,
     )
     monkeypatch.setattr(
         "jobctrl.pipeline.runner.run_discovery_enrichment_stage",
@@ -317,6 +331,10 @@ async def test_discovery_activities_use_stable_scopes_and_terminal_counts(
         ("existing_backlog_sweep", "existing_backlog", "existing_backlog"),
     ]
     assert scopes[0][1] == {"item_count": 1}
+    assert source_kwargs["activity_attempt"] == 2
+    assert source_kwargs["activity_owner_token"] == (
+        "source-family:activity-run-2:2"
+    )
     assert [recorder.completed_counts for _, _, recorder in scopes] == [
         [1],
         [2],

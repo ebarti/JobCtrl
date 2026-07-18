@@ -128,3 +128,28 @@ test("Job operations menu hides a selected job and exposes it in the Hidden queu
     page.getByRole("checkbox", { name: selectedRowLabel }),
   ).toBeVisible({ timeout: 15_000 });
 });
+
+test("workflow recovery controls stay visible without opening Job operations", async ({
+  page,
+}) => {
+  await page.goto("/jobs");
+  await expect(page.locator("table.jobs-data-grid-table")).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const recoveryActions = page.getByRole("group", {
+    name: "Workflow recovery actions",
+  });
+  await expect(recoveryActions).toBeVisible();
+  await expect(
+    recoveryActions.getByRole("button", {
+      name: "Continue pending preparation",
+    }),
+  ).toBeVisible();
+  await expect(
+    recoveryActions.getByRole("button", { name: "Retry all failed" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menu", { name: "Job operations" }),
+  ).toHaveCount(0);
+});

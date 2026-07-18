@@ -25,6 +25,8 @@ const buttonVariants = cva(
       size: {
         default:
           "jh-control-default h-9 px-3.5 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:pointer-events-none",
+        content:
+          "jh-control-content h-auto min-h-0 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:pointer-events-none",
         sm: "jh-control-sm h-8 px-3 text-sm [&>svg]:size-3.5 [&>svg]:shrink-0 [&>svg]:pointer-events-none",
         lg: "jh-control-lg h-10 px-4 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:pointer-events-none",
         icon: "jh-control-icon size-9 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:pointer-events-none",

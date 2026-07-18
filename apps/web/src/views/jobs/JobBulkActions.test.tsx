@@ -202,7 +202,7 @@ describe("<JobBulkActions>", () => {
     expect(screen.queryByText("select jobs to manage")).not.toBeInTheDocument();
   });
 
-  it("keeps selection and the primary decision visible while grouping operations in labelled menus", async () => {
+  it("keeps selection, workflow recovery, and the primary decision visible while grouping maintenance in a labelled menu", async () => {
     const user = userEvent.setup();
     const onSelectAllMatching = vi.fn();
     const onClearSelection = vi.fn();
@@ -226,12 +226,21 @@ describe("<JobBulkActions>", () => {
     expect(screen.getByRole("group", { name: "Selection actions" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Job operations" })).toBeInTheDocument();
     expect(
+      screen.getByRole("group", { name: "Workflow recovery actions" }),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("group", { name: "Selected job lifecycle actions" }),
     ).toBeInTheDocument();
     expect(document.querySelector(".jobs-bulk-actions .tab")).toBeNull();
     expect(
       screen.queryByRole("menuitem", { name: "Refresh compensation" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Continue pending preparation" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Retry all failed" }),
+    ).toBeVisible();
 
     const jobOperations = screen.getByRole("button", {
       name: "Job operations",
@@ -416,20 +425,8 @@ describe("<JobBulkActions>", () => {
       />,
     );
 
-    let operationsMenu = await openJobOperations(user);
-    await user.click(
-      within(operationsMenu).getByRole(
-        "menuitem",
-        { name: /retry selected/i },
-      ),
-    );
-    operationsMenu = await openJobOperations(user);
-    await user.click(
-      within(operationsMenu).getByRole(
-        "menuitem",
-        { name: /retry all failed/i },
-      ),
-    );
+    await user.click(screen.getByRole("button", { name: /retry selected/i }));
+    await user.click(screen.getByRole("button", { name: /retry all failed/i }));
 
     expect(onRetrySelected).toHaveBeenCalledTimes(1);
     expect(onRetryAll).toHaveBeenCalledTimes(1);
@@ -465,13 +462,21 @@ describe("<JobBulkActions>", () => {
       "Refresh compensation",
       "Rescore selected",
       "Re-tailor selected",
-      "Retry selected",
-      "Continue pending preparation",
-      "Retry all failed",
     ]) {
       const menuItem = within(operationsMenu).getByRole("menuitem", { name });
       expect(menuItem).toHaveAttribute("data-disabled");
       expect(menuItem).toHaveAccessibleDescription(
+        /Disabled automation actions require the local app.*job organization remains available/i,
+      );
+    }
+    for (const name of [
+      "Retry selected",
+      "Continue pending preparation",
+      "Retry all failed",
+    ]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAccessibleDescription(
         /Disabled automation actions require the local app.*job organization remains available/i,
       );
     }
@@ -516,13 +521,7 @@ describe("<JobBulkActions>", () => {
     expect(
       screen.queryByRole("button", { name: /retry selected/i }),
     ).not.toBeInTheDocument();
-    const operationsMenu = await openJobOperations(user);
-    await user.click(
-      within(operationsMenu).getByRole(
-        "menuitem",
-        { name: /retry all failed/i },
-      ),
-    );
+    await user.click(screen.getByRole("button", { name: /retry all failed/i }));
 
     expect(onRetryAll).toHaveBeenCalledTimes(1);
   });
@@ -548,12 +547,8 @@ describe("<JobBulkActions>", () => {
       />,
     );
 
-    const operationsMenu = await openJobOperations(user);
     await user.click(
-      within(operationsMenu).getByRole(
-        "menuitem",
-        { name: /continue pending prep/i },
-      ),
+      screen.getByRole("button", { name: /continue pending prep/i }),
     );
 
     expect(onRunPendingPreparation).toHaveBeenCalledTimes(1);
@@ -581,16 +576,13 @@ describe("<JobBulkActions>", () => {
       />,
     );
 
-    const operationsMenu = await openJobOperations(user);
     expect(
-      within(operationsMenu).getByRole("menuitem", {
-        name: /continue pending prep/i,
-      }),
-    ).toHaveAttribute("data-disabled");
-    const retryAllFailed = within(operationsMenu).getByRole("menuitem", {
+      screen.getByRole("button", { name: /continue pending prep/i }),
+    ).toBeDisabled();
+    const retryAllFailed = screen.getByRole("button", {
       name: /retry all failed/i,
     });
-    expect(retryAllFailed).not.toHaveAttribute("data-disabled");
+    expect(retryAllFailed).toBeEnabled();
 
     await user.click(retryAllFailed);
 

@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -164,10 +164,27 @@ describe("<ProfileForm>", () => {
     expect(screen.getByRole("checkbox", { name: "Individual Contributor" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Management" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Executive" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Seniority floors" })).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Junior Engineer" })).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Senior Engineering Manager / Head of Engineering" })).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "CTO" })).toBeInTheDocument();
+    const seniorityGroup = screen.getByRole("group", { name: "Seniority floors" });
+    const seniorityLevels = [
+      "Junior IC",
+      "Mid IC",
+      "Senior IC",
+      "Staff IC",
+      "Principal IC",
+      "Manager",
+      "Senior Manager",
+      "Director",
+      "VP",
+      "SVP",
+      "C-Level",
+    ];
+    for (const level of seniorityLevels) {
+      expect(screen.getByRole("checkbox", { name: level })).toBeInTheDocument();
+    }
+    expect(within(seniorityGroup).getAllByRole("checkbox")).toEqual(
+      seniorityLevels.map((level) => screen.getByRole("checkbox", { name: level })),
+    );
+    expect(screen.queryByRole("checkbox", { name: /\b(?:engineer|engineering|cto)\b/i })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Role areas 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Role areas 1")).toHaveAttribute("placeholder", "Engineering, security, platform");
     expect(screen.getByLabelText("Specializations 1")).toBeInTheDocument();
@@ -193,15 +210,42 @@ describe("<ProfileForm>", () => {
 
     await user.click(await screen.findByRole("checkbox", { name: "Management" }));
     await user.click(screen.getByRole("checkbox", { name: "Executive" }));
-    await user.click(screen.getByRole("checkbox", { name: "Senior Engineering Manager / Head of Engineering" }));
-    await user.click(screen.getByRole("checkbox", { name: "CTO" }));
+    await user.click(screen.getByRole("checkbox", { name: "Senior Manager" }));
+    await user.click(screen.getByRole("checkbox", { name: "C-Level" }));
     await user.click(screen.getByRole("button", { name: /^save changes$/i }));
 
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
     const request = updateProfile.mock.calls[0]?.[0];
     const profile = JSON.parse(request.profileText);
     expect(profile.experience.target_track).toBe("management; executive");
-    expect(profile.experience.target_seniority_floor).toBe("senior_manager; cto");
+    expect(profile.experience.target_seniority_floor).toBe("senior_manager; c_level");
+  });
+
+  it("maps legacy engineering-specific seniority values onto the canonical ladder", async () => {
+    const user = userEvent.setup();
+    const initial = JSON.parse(JSON.stringify(sampleProfileResponse));
+    initial.profile.experience = {
+      target_seniority_floor: "engineer; cto",
+    };
+    const updateProfile = vi.fn(async (request) => ({
+      ...sampleProfileResponse,
+      profile: JSON.parse(request.profileText),
+    }));
+    renderWithProviders(<ProfileForm initial={initial} section="target-search" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+
+    expect(screen.getByRole("checkbox", { name: "Mid IC" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "C-Level" })).toBeChecked();
+    expect(screen.queryByText("Unsupported saved values")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: "Senior IC" }));
+    await user.click(screen.getByRole("button", { name: /^save changes$/i }));
+
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const request = updateProfile.mock.calls[0]?.[0];
+    const profile = JSON.parse(request.profileText);
+    expect(profile.experience.target_seniority_floor).toBe("mid; senior; c_level");
   });
 
   it("shows unsupported target values so they can be removed", async () => {

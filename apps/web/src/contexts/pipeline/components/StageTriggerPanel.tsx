@@ -271,7 +271,7 @@ function formatProgressNumber(value: number): string {
 }
 
 const DISCOVERY_SOURCE_LABELS: Record<string, string> = {
-  jobspy: "JobSpy",
+  jobspy: "Broad boards",
   workday: "Workday",
   smartextract: "Smart extract",
 };
@@ -344,6 +344,8 @@ function sourceProgressStatusDetail(progress: StageProgress): string | null {
     counters.push(`${formatProgressNumber(source.errorCount)} errors`);
   if (source.rawTotal != null)
     counters.push(`${formatProgressNumber(source.rawTotal)} found`);
+  if (source.recoveredUnits != null && source.recoveredUnits > 0)
+    counters.push(`${formatProgressNumber(source.recoveredUnits)} resumed`);
   const counterText = counters.length > 0 ? `; ${counters.join(", ")}` : "";
   return `${currentStep}${count} ${unit} done${searchLabel}${counterText}`;
 }

@@ -3429,6 +3429,8 @@ describe("<ApplyReviewView>", () => {
       "true",
     );
     expect(selectedQueueItem).toHaveAttribute("data-slot", "button");
+    expect(selectedQueueItem).toHaveAttribute("data-size", "content");
+    expect(selectedQueueItem).not.toHaveClass("jh-control-default");
     expect(
       await screen.findByRole("region", { name: "Review evidence for Staff Software Engineer" }),
     ).toBeInTheDocument();

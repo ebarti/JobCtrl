@@ -60,10 +60,27 @@ export const Geometry: Story = {
         throw new Error(`Missing ${name} checkbox.`);
       }
 
-      const { height, width } = checkbox.getBoundingClientRect();
-      if (height !== 24 || width !== 24) {
+      const { height: targetHeight, width: targetWidth } =
+        checkbox.getBoundingClientRect();
+      if (
+        Math.abs(targetHeight - 24) > 0.25 ||
+        Math.abs(targetWidth - 24) > 0.25
+      ) {
         throw new Error(
-          `Expected approved 24x24 checkbox target geometry, received ${width}x${height}.`,
+          `Expected approved 24x24 checkbox target geometry, received ${targetWidth}x${targetHeight}.`,
+        );
+      }
+
+      const view = canvasElement.ownerDocument.defaultView;
+      const visual = view?.getComputedStyle(checkbox, "::before");
+      const visualHeight = Number.parseFloat(visual?.height ?? "0");
+      const visualWidth = Number.parseFloat(visual?.width ?? "0");
+      if (
+        Math.abs(visualHeight - 16) > 0.25 ||
+        Math.abs(visualWidth - 16) > 0.25
+      ) {
+        throw new Error(
+          `Expected approved 16x16 visible checkbox geometry, received ${visualWidth}x${visualHeight}.`,
         );
       }
     }

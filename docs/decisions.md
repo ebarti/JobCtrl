@@ -77,6 +77,7 @@ the Historical Spec Ledger in `plans/README.md`.
 
 - [Compensation Is Warning-Only Evidence From Reported Company-Role Observations](#_2026-06-20-compensation-is-warning-only-evidence-from-reported-company-role-observations) · 2026-06-20
 - [Cross-Source Deduplication By Content Identity](#_2026-07-02-cross-source-deduplication-by-content-identity) · 2026-07-02
+- [Caller-Owned Search Units Make JobStreaming Resumable](#_2026-07-17-caller-owned-search-units-make-jobstreaming-resumable) · 2026-07-17
 
 **Apply safety & outcomes**
 
@@ -1683,6 +1684,11 @@ Cites: R10 crawl-politeness train (PRs #297 → #315); plan
 `docs/plans/implemented/2026-07-05-crawl-politeness-plan.md`; gate G1 in
 `docs/plans/2026-07-03-oss-release-remediation-spec.md` §5.
 
+Amended (2026-07-17): JobStreaming 0.0.2 replaced `python-jobspy` at the
+broad-board provider boundary. The invocation-level politeness exception is
+unchanged because JobStreaming still owns the internal board transports. The
+caller/provider durability split is recorded in the 2026-07-17 ADR below.
+
 ## 2026-07-06: Contact and Outreach Bounded Context With No Auto-Send
 
 Status: accepted
@@ -1985,3 +1991,62 @@ Consequences:
 Cites: `docs/architecture/frontend/patterns.md`;
 `docs/architecture/frontend/testing.md`;
 `apps/web/src/shared/ui/base-ui-migration-boundary.test.ts`.
+
+## 2026-07-17: Caller-Owned Search Units Make JobStreaming Resumable
+
+Status: accepted
+
+Decision: replace the `python-jobspy` provider with pinned JobStreaming 0.0.2,
+but keep execution reliability in JobCtrl. For Temporal-backed broad-board
+discovery, JobCtrl persists one immutable query/location/board unit under the
+exact Discover workflow/run identity. It stores accepted facts and an
+idempotent unit receipt before explicitly acknowledging each provider event.
+The JobStreaming checkpoint advances only after that acknowledgement.
+
+Every unit claim carries the current Temporal activity attempt and a monotonic
+lease epoch. A newer attempt may reclaim unfinished work and fences the older
+owner from checkpoints, job writes, and cancellation. Retryable provider
+failures resume from the provider checkpoint; an expired cursor is cleared only
+after the corresponding error event's checkpoint revision is acknowledged.
+Request-fingerprint and cursor-schema incompatibilities fail explicitly.
+Cooperative cancellation is terminal and is not a resumable stale state.
+
+JobStreaming owns board adapters/transports, stable job keys, cursor state,
+typed errors, cancellation-aware waits, and the explicit-ack event protocol.
+JobCtrl owns plan identity, target/provider location separation, acceptance,
+deduplication, durable counts and limits, lifecycle, attempt fencing,
+checkpoint storage, partial-failure evidence, and the user-visible resumed-unit
+count. The internal `jobspy` family/module/source-ID names remain compatibility
+identifiers; they do not identify the provider dependency.
+
+Rationale:
+
+- a provider checkpoint proves delivery position, not that JobCtrl committed
+  the job and its product-side evidence;
+- Temporal retry alone does not make a multi-step activity safe when an older
+  worker can finish after its replacement;
+- store-before-ack gives at-least-once replay with no accepted-work loss, while
+  stable provider keys and receipts make replay idempotent;
+- board-specific units isolate cursor reset and typed failure evidence without
+  discarding a healthy board's progress; and
+- explicit cancellation must preserve user intent instead of being mistaken
+  for a killed worker.
+
+Consequences:
+
+- `discovery_search_units`, `discovery_search_unit_jobs`, and hashed
+  `discovery_search_unit_filtered_events` are canonical local authorities and
+  advance the guarded SQLite schema;
+- broad-board query/location/board units run sequentially inside one source
+  activity today; parallel durable-unit scheduling is a separate future change;
+- the existing non-Temporal compatibility collector can still consume a
+  multi-board JobStreaming stream, but it does not claim durable resume;
+- Pipelines may show `N resumed`; raw checkpoints, provider payloads, owner
+  tokens, and exception text stay out of the read model; and
+- the final stack gate must kill a worker after durable storage but before
+  acknowledgement, start a fresh worker, and prove exactly-once product counts
+  over at-least-once provider delivery.
+
+Cites: `docs/plans/2026-07-17-resumable-jobstreaming-discovery-plan.md`;
+`docs/architecture/pipeline/envelope.md`; `docs/architecture/storage.md`;
+`workers/automation/tests/test_jobstreaming_resumable_discovery.py`.

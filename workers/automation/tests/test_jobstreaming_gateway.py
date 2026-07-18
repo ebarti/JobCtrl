@@ -144,6 +144,26 @@ def test_durable_stream_does_not_checkpoint_until_the_consumer_acknowledges() ->
         resumed.ack(replayed)
 
 
+def test_job_event_projection_preserves_the_provider_idempotency_key() -> None:
+    registry = AdapterRegistry()
+    registry.register(Site.INDEED, _PostingAdapter)
+    gateway = JobStreamingGateway()
+    spec = JobStreamingSearchSpec(
+        sites=("indeed",),
+        query="Director of Engineering",
+        location="Remote",
+        results_per_site=10,
+    )
+
+    with gateway.open_stream(spec, registry=registry, resume=False) as stream:
+        event = next(stream)
+        assert isinstance(event, JobEvent)
+        frame = gateway.frame_for_job_event(event, spec)
+
+    assert frame.loc[0, "job_url"] == "https://example.test/jobs/1"
+    assert frame.loc[0, "jobstreaming_job_key"] == event.job_key
+
+
 def test_proxy_and_user_agent_reach_the_provider_constructor() -> None:
     seen: dict[str, object] = {}
 

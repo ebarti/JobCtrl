@@ -1386,6 +1386,8 @@ def run_discovery_source_family(
     cancel_event: threading.Event | None = None,
     next_run_settings: dict[str, Any] | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    activity_attempt: int | None = None,
+    activity_owner_token: str | None = None,
 ) -> dict[str, Any]:
     """Run one discovery source family and persist its lifecycle events."""
     selected_source_ids = tuple(dict.fromkeys(source_id.strip() for source_id in source_ids if source_id.strip()))
@@ -1434,17 +1436,17 @@ def run_discovery_source_family(
 
         def run_jobspy(run_id: str | None = None) -> dict:
             if search_cfg.get("disable_jobspy", False):
-                console.print("  [dim]JobSpy disabled in discovery settings[/dim]")
+                console.print("  [dim]Broad-board discovery disabled in settings[/dim]")
                 return {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
-            console.print("  [cyan]JobSpy full crawl...[/cyan]")
+            console.print("  [cyan]Broad-board JobStreaming crawl...[/cyan]")
             try:
                 from jobctrl.discovery.jobspy import run_discovery
             except ImportError:
-                console.print("  [dim]JobSpy not installed — skipping[/dim]")
+                console.print("  [dim]JobStreaming not installed — skipping[/dim]")
                 return {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             jobspy_cfg = _jobspy_config_for_sources(search_cfg, jobspy_sources)
             if not jobspy_cfg.get("boards"):
-                console.print("  [dim]No runnable JobSpy boards scheduled[/dim]")
+                console.print("  [dim]No runnable broad boards scheduled[/dim]")
                 return {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             run_kwargs: dict[str, Any] = {
                 "cfg": jobspy_cfg,
@@ -1452,6 +1454,8 @@ def run_discovery_source_family(
             }
             if discovery_execution is not None:
                 run_kwargs["discovery_execution"] = discovery_execution
+                run_kwargs["activity_attempt"] = activity_attempt
+                run_kwargs["activity_owner_token"] = activity_owner_token
             _add_supported_discovery_kwargs(
                 run_discovery,
                 run_kwargs,
@@ -1466,15 +1470,26 @@ def run_discovery_source_family(
             )
             return run_discovery(**run_kwargs)
 
+        result_holder: dict[str, Any] = {}
+
+        def capture_jobstreaming(run_id: str | None = None) -> dict:
+            result_holder.update(run_jobspy(run_id))
+            return result_holder
+
         status = _run_discovery_source(
             "jobspy",
-            "JobSpy",
+            "Broad boards",
             jobspy_sources,
-            run_jobspy,
+            capture_jobstreaming,
             progress_completed=progress_completed,
             progress_total=progress_total,
         )
-        return {"family": family, "status": status, "result": {}, "source_ids": [s.source_id for s in jobspy_sources]}
+        return {
+            "family": family,
+            "status": status,
+            "result": dict(result_holder),
+            "source_ids": [s.source_id for s in jobspy_sources],
+        }
 
     if family == "ats_api":
         if not ats_sources:
@@ -1761,7 +1776,7 @@ def _sources_for_discovery_family(
 
 def _discovery_family_label(family: str) -> str:
     return {
-        "jobspy": "JobSpy",
+        "jobspy": "Broad boards",
         "ats_api": "Canonical ATS APIs",
         "workday": "Workday scraper",
         "smartextract": "Smart extract",
@@ -1808,7 +1823,7 @@ def _jobspy_progress_callback(
         )
         _record_discovery_source_progress(
             source="jobspy",
-            label="JobSpy",
+            label="Broad boards",
             run_id=run_id,
             source_ids=source_ids,
             progress_completed=progress_completed,
@@ -1832,8 +1847,14 @@ def _jobspy_progress_callback(
                 ),
                 error_count=_optional_int(error_count),
                 raw_total=_optional_int(_first_present(snapshot.get("raw_total"), snapshot.get("rawTotal"))),
+                recovered_units=_optional_int(
+                    _first_present(
+                        snapshot.get("recovered_units"),
+                        snapshot.get("recoveredUnits"),
+                    )
+                ),
             ),
-            message=str(snapshot.get("message") or "JobSpy progress updated"),
+            message=str(snapshot.get("message") or "JobStreaming progress updated"),
         )
 
     return record_jobspy_progress
@@ -1855,7 +1876,7 @@ def run_discovery_legacy_once(
     source_ids: tuple[str, ...] = (),
     cancel_event: threading.Event | None = None,
 ) -> dict:
-    """Stage: Job discovery — JobSpy, Workday, and smart-extract scrapers."""
+    """Stage: broad-board, Workday, and smart-extract discovery."""
     stats: dict = {"jobspy": None, "workday": None, "smartextract": None}
     source_results: dict[str, Any] = {}
     source_failures: dict[str, str] = {}
@@ -1889,7 +1910,7 @@ def run_discovery_legacy_once(
     progress_total = source_step_count + 2
     progress_completed = 0
 
-    # JobSpy — skip if disabled in config or module not installed
+    # Broad-board JobStreaming — skip if disabled or unavailable.
     search_cfg = config.load_search_config() or {}
     def run_hygiene(label: str) -> int:
         hygiene = retire_invalid_source_jobs(
@@ -2053,21 +2074,21 @@ def run_discovery_legacy_once(
 
     def run_jobspy(run_id: str | None = None) -> dict:
         if search_cfg.get("disable_jobspy", False):
-            console.print("  [dim]JobSpy disabled in discovery settings[/dim]")
+            console.print("  [dim]Broad-board discovery disabled in settings[/dim]")
             result = {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             source_results["jobspy"] = result
             return result
-        console.print("  [cyan]JobSpy full crawl...[/cyan]")
+        console.print("  [cyan]Broad-board JobStreaming crawl...[/cyan]")
         try:
             from jobctrl.discovery.jobspy import run_discovery
         except ImportError:
-            console.print("  [dim]JobSpy not installed — skipping[/dim]")
+            console.print("  [dim]JobStreaming not installed — skipping[/dim]")
             result = {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             source_results["jobspy"] = result
             return result
         jobspy_cfg = _jobspy_config_for_sources(search_cfg, jobspy_sources)
         if not jobspy_cfg.get("boards"):
-            console.print("  [dim]No runnable JobSpy boards scheduled[/dim]")
+            console.print("  [dim]No runnable broad boards scheduled[/dim]")
             result = {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             source_results["jobspy"] = result
             return result
@@ -2113,7 +2134,7 @@ def run_discovery_legacy_once(
                 )
                 _record_discovery_source_progress(
                     source="jobspy",
-                    label="JobSpy",
+                    label="Broad boards",
                     run_id=run_id,
                     source_ids=tuple(item.source_id for item in jobspy_sources if item.should_run),
                     progress_completed=progress_completed,
@@ -2137,8 +2158,14 @@ def run_discovery_legacy_once(
                         ),
                         error_count=_optional_int(error_count),
                         raw_total=_optional_int(_first_present(snapshot.get("raw_total"), snapshot.get("rawTotal"))),
+                        recovered_units=_optional_int(
+                            _first_present(
+                                snapshot.get("recovered_units"),
+                                snapshot.get("recoveredUnits"),
+                            )
+                        ),
                     ),
-                    message=str(snapshot.get("message") or "JobSpy progress updated"),
+                    message=str(snapshot.get("message") or "JobStreaming progress updated"),
                 )
 
             run_kwargs["progress_callback"] = record_jobspy_progress
@@ -2148,7 +2175,7 @@ def run_discovery_legacy_once(
         return source_results["jobspy"]
 
     if not source_filter_active or jobspy_sources:
-        _run_source_isolated("jobspy", "JobSpy", jobspy_sources, run_jobspy)
+        _run_source_isolated("jobspy", "Broad boards", jobspy_sources, run_jobspy)
     if _discover_limit_consumed(start_count, limit, source_results.get("jobspy")):
         if ats_sources:
             stats["ats_api"] = _skip_discovery_source(

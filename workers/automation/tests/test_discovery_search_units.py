@@ -178,6 +178,8 @@ def test_retryable_failure_defers_cursor_reset_until_reclaimed(search_db) -> Non
     assert failed.last_error_code == "cursor_expired"
     assert failed.last_error_retryable is True
     assert failed.reset_checkpoint is True
+    assert failed.reset_checkpoint_after_revision == 1
+    assert repository.reset_checkpoint_if_requested(lease) is False
 
     # JobStreaming acknowledges the persisted ErrorEvent against the current
     # revision before the next activity attempt applies the requested reset.
@@ -196,6 +198,93 @@ def test_retryable_failure_defers_cursor_reset_until_reclaimed(search_db) -> Non
     assert reset is not None
     assert reset.reset_checkpoint is False
     assert repository.reset_checkpoint_if_requested(retry) is False
+
+
+def test_unacknowledged_cursor_reset_intent_does_not_clear_on_reclaim(
+    search_db,
+) -> None:
+    repository = SqliteDiscoverySearchUnitRepository(search_db)
+    execution = _execution()
+    repository.plan_units(execution, [_spec()])
+    first = repository.claim_next(execution, "attempt-1", 1)
+    assert first is not None
+    checkpoint = SearchCheckpoint.for_request(
+        build_search_request(
+            site_name="indeed",
+            search_term="Director of Engineering",
+            location="Barcelona, Spain",
+        )
+    )
+    repository.checkpoint_store(first).save(checkpoint)
+    repository.record_failure(
+        first,
+        error_code="cursor_expired",
+        error_type="CursorExpiredError",
+        retryable=False,
+        reset_checkpoint=True,
+        terminal=False,
+    )
+
+    reclaimed = repository.claim_next(execution, "attempt-2", 2)
+    assert reclaimed is not None
+    assert repository.reset_checkpoint_if_requested(reclaimed) is False
+    still_present = repository.checkpoint_store(reclaimed).load()
+    assert still_present is not None
+    assert still_present.revision == 0
+
+    repository.record_failure(
+        reclaimed,
+        error_code="cursor_expired",
+        error_type="CursorExpiredError",
+        retryable=False,
+        reset_checkpoint=True,
+        terminal=False,
+    )
+    repository.checkpoint_store(reclaimed).save(
+        still_present.model_copy(update={"revision": 1})
+    )
+    next_attempt = repository.claim_next(execution, "attempt-3", 3)
+    assert next_attempt is not None
+    assert repository.reset_checkpoint_if_requested(next_attempt) is True
+    assert repository.checkpoint_store(next_attempt).load() is None
+
+
+def test_v4_search_unit_tables_migrate_consumption_ordering(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "v4-jobctrl.db"
+    conn = init_db(db_path)
+    conn.execute(
+        """
+        ALTER TABLE discovery_search_units
+        DROP COLUMN reset_checkpoint_after_revision
+        """
+    )
+    conn.execute("DROP TABLE discovery_search_unit_filtered_events")
+    conn.execute("PRAGMA user_version = 4")
+    conn.commit()
+    close_connection(db_path)
+
+    migrated = init_db(db_path)
+    try:
+        columns = {
+            str(row[1])
+            for row in migrated.execute(
+                "PRAGMA table_info(discovery_search_units)"
+            ).fetchall()
+        }
+        assert "reset_checkpoint_after_revision" in columns
+        assert migrated.execute(
+            """
+            SELECT COUNT(*)
+              FROM sqlite_master
+             WHERE type = 'table'
+               AND name = 'discovery_search_unit_filtered_events'
+            """
+        ).fetchone()[0] == 1
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5
+    finally:
+        close_connection(db_path)
 
 
 def test_execution_attempt_watermark_fences_old_owner_from_pending_unit(
@@ -249,6 +338,23 @@ def test_terminal_failure_and_cancel_are_not_reclaimed(search_db) -> None:
         "failed",
         "canceled",
     ]
+
+
+def test_late_cancel_from_stale_attempt_cannot_cancel_new_owner(search_db) -> None:
+    repository = SqliteDiscoverySearchUnitRepository(search_db)
+    execution = _execution()
+    repository.plan_units(execution, [_spec(), _spec(query="VP Engineering")])
+    stale = repository.claim_next(execution, "attempt-1", 1)
+    assert stale is not None
+    current = repository.claim_next(execution, "attempt-2", 2)
+    assert current is not None
+
+    with pytest.raises(StaleDiscoverySearchUnitLease):
+        repository.mark_execution_canceled(stale)
+
+    units = repository.list_units(execution)
+    assert [unit.state for unit in units] == ["running", "pending"]
+    assert units[0].lease_owner == "attempt-2"
 
 
 def test_result_limit_marks_only_unclaimed_units_skipped(search_db) -> None:

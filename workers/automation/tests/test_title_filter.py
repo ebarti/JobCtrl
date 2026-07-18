@@ -153,6 +153,37 @@ def test_recall_title_matching_normalizes_c_level_seniority_floor() -> None:
     )
 
 
+def test_recall_title_matching_distinguishes_vp_svp_and_c_level_floors() -> None:
+    assert title_matches_query(
+        "Senior Vice President, Technology",
+        "VP Technology",
+        match_mode="recall",
+        target_track="executive",
+        seniority_floor="vp",
+    )
+    assert not title_matches_query(
+        "VP Technology",
+        "SVP Technology",
+        match_mode="recall",
+        target_track="executive",
+        seniority_floor="svp",
+    )
+    assert title_matches_query(
+        "Chief Technology Officer",
+        "SVP Technology",
+        match_mode="recall",
+        target_track="executive",
+        seniority_floor="svp",
+    )
+    assert not title_matches_query(
+        "SVP Technology",
+        "Chief Technology Officer",
+        match_mode="recall",
+        target_track="executive",
+        seniority_floor="c_level",
+    )
+
+
 def test_loose_recall_title_matching_uses_role_adjudicator() -> None:
     matcher = _FakeRoleMatcher(False)
 

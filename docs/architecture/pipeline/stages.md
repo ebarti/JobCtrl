@@ -58,7 +58,7 @@ flowchart TD
     RS@{ icon: "tabler:brand-python", form: "rounded", h: 64, label: "pipeline.runner<br/>run source family" }
     RE@{ icon: "tabler:brand-python", form: "rounded", h: 64, label: "pipeline.runner<br/>run enrichment" }
     P@{ icon: "tabler:brand-python", form: "rounded", h: 64, label: "pipeline.preparation<br/>start root workflows" }
-    ADT@{ icon: "tabler:plug-connected", form: "rounded", h: 64, label: "JobSpy · ATS · Workday<br/>Smart Extract adapters" }
+    ADT@{ icon: "tabler:plug-connected", form: "rounded", h: 64, label: "JobStreaming · ATS · Workday<br/>Smart Extract adapters" }
     PREP@{ icon: "tabler:clipboard-check", form: "rounded", h: 64, label: "JobPreparationWorkflow<br/>root starts" }
     WF --> A1 & A2 & A3 & A4
     A1 --> R
@@ -78,7 +78,7 @@ Key facts about the four activities:
   target-role intent, enforcing track and seniority before scoring).
 - **`discovery_source_family`** runs *one* source family under
   `run_blocking_with_heartbeat` with a cooperative `cancel_event` and a 6-hour
-  window (crawls legitimately run long). Each family is isolated: a JobSpy, ATS,
+  window (crawls legitimately run long). Each family is isolated: a broad-board, ATS,
   Workday, or Smart Extract failure records failure info and lets the workflow
   see a partial result rather than failing the whole batch. If only some source
   families fail, `DiscoverWorkflow` still proceeds through detail enrichment and
@@ -89,6 +89,16 @@ Key facts about the four activities:
   placeholder like `failed: failed`. With `limit > 0` the cap is a **new-job
   budget** — rediscoveries record observations but do not consume the budget, so
   exact-query duplicates never starve later recall queries or sources.
+
+  The broad-board family further decomposes the immutable search plan into one
+  query/location/board unit per JobStreaming stream. Each posting is durably
+  accepted before explicit provider acknowledgement. The unit checkpoint,
+  accepted-job receipts, result-limit count, typed board failure, and current
+  Temporal activity-attempt fence live in SQLite. A hard worker loss leaves the
+  unit `running` for the next activity attempt to reclaim; replay is idempotent.
+  Cooperative cancellation instead marks all unfinished units `canceled` and
+  they are not resumed. The internal `jobspy` family/source-ID name remains a
+  compatibility key only.
 - **`discovery_enrichment`** drains detail enrichment (below) and then runs
   post-discovery hygiene.
 - **`discovery_preparation_fanout`** derives targets and starts per-job
@@ -115,8 +125,9 @@ rather than replaces canonical per-job stage state.
 
 Source steps additionally emit `DiscoveryRunStarted` / `DiscoveryRunCompleted` /
 `DiscoveryRunFailed` for source-quality aggregation, and heartbeat a
-**`DiscoveryRunProgress` payload** (completed combinations, current
-query/location, raw/accepted/duplicate/filtered counts, source errors). That
+**`DiscoveryRunProgress` payload** (completed search units, current
+query/location, raw/accepted/duplicate/filtered counts, source errors, and
+recovered-unit count). That
 progress is a heartbeat payload persisted onto the `discovery_runs` aggregate —
 it is not a domain event. Discovery uses a no-overlap Temporal policy and
 preserves source order so global-limit and source-budget semantics stay stable.

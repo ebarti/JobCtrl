@@ -485,10 +485,34 @@ provider separately from model selection, so explicit and saved-model
 precedence is preserved while the actual synthesizer provider always has a
 draft leg.
 
+### Broad-Board Provider Boundary
+
+JobStreaming 0.0.2 is the provider boundary for Indeed, LinkedIn, Glassdoor,
+and ZipRecruiter. The infrastructure gateway translates JobCtrl-owned immutable
+search specifications into provider requests and projects typed provider events
+back into the existing discovery ingestion shape. Provider types do not enter
+the Discovery domain model.
+
+The responsibility split is deliberate:
+
+- JobCtrl owns the exact Discover execution, one immutable
+  query/location/board unit per provider stream, title/location acceptance,
+  durable accepted counts, run-wide limits, lifecycle state, Temporal-attempt
+  fencing, checkpoint storage, and product-visible recovery.
+- JobStreaming owns the board adapter and transport, cursor/resume state,
+  stable job keys, typed error classification, cancellation-aware waits, and
+  explicit event acknowledgement.
+
+The consumer stores an accepted posting and its idempotent unit receipt before
+acknowledging the event. A newer activity attempt increments the unit lease
+epoch and fences the older process. Hard interruption therefore leaves a
+running unit available for Temporal reclaim; cooperative cancellation marks the
+execution's unfinished units canceled and terminal.
+
 ### Crawl Politeness Gateway (R10)
 
 Every outbound discovery/enrichment fetch — the `urllib` client
-(`infrastructure/network/http_client.py`), the `python-jobspy` invocation
+(`infrastructure/network/http_client.py`), the JobStreaming invocation
 boundary, and every Playwright navigation — routes through one process-shared
 choke point in `infrastructure/network/`:
 
@@ -507,7 +531,7 @@ choke point in `infrastructure/network/`:
   `is_operational_failure=0`) via `record_politeness_outcome`, and projected to
   the source-quality read model the discovery UI reads
   (`SourceHealthCard` / `SourcePolitenessBadges`). Documented (undocumented-API)
-  boards fetched by `python-jobspy` are policed only at the invocation boundary
+  boards fetched by JobStreaming are policed only at the invocation boundary
   (budget + pacing), since that library owns its internal transport.
 
 The plan and phase-by-phase surface inventory live in
@@ -631,8 +655,9 @@ Production workflows live alongside the activities:
   to child `DiscoverWorkflow`; passing `"apply"` delegates to child
   `ApplyWorkflow`.
 - `DiscoverWorkflow` (`jobctrl/discovery/workflow.py`) — deterministic
-  tenant workflow with id `discover-{tenantId}`. It plans JobSpy, canonical ATS,
-  Workday, and Smart Extract source-family activities, preserves the legacy
+  tenant workflow with id `discover-{tenantId}`. It plans JobStreaming-backed
+  broad-board, canonical ATS, Workday, and Smart Extract source-family
+  activities, preserves the legacy
   source ordering for limit/budget semantics, emits real activity heartbeats
   from `DiscoveryRunProgress`, then runs discovery enrichment and starts
   preparation root workflows in batches of 25. Source-family failures are attributed

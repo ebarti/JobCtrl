@@ -218,7 +218,7 @@ Playwright fetches:
 - denied/rate-limited/budget/unsafe destinations are recorded as outcomes, not
   generic scrape errors.
 
-`python-jobspy` owns its internal board transport, so JobCtrl can apply only
+JobStreaming owns its internal board transports, so JobCtrl can apply only
 invocation-level pacing/budget there. Authenticated LinkedIn is an explicit
 owner-session carve-out: only after browser capability enablement and separate
 profile-copy consent may it recover the full posting and external application

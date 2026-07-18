@@ -150,7 +150,7 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
             return (
               <FieldSet className="field wide checkbox-group-field">
                 <FieldLegend>Job boards</FieldLegend>
-                <FieldGroup className="checkbox-options">
+                <FieldGroup className="checkbox-options discovery-board-options">
                   {BOARD_OPTIONS.map((option) => (
                     <Field
                       className="choice target-choice"

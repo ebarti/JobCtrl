@@ -619,15 +619,19 @@
 }
 
 .configuration-section .field.check,
-.configuration-section .target-choice.required-choice {
+.configuration-section .target-choice:has(> [data-slot="checkbox"]),
+.profile-layout .target-choice:has(> [data-slot="checkbox"]),
+.discovery-workspace .target-choice:has(> [data-slot="checkbox"]) {
   display: grid;
   grid-template-columns: var(--jh-target-min-size) minmax(0, 1fr);
   align-items: start;
   gap: 8px;
 }
 
-.configuration-section .field.check > button,
-.configuration-section .target-choice.required-choice > button {
+.configuration-section .field.check > [data-slot="checkbox"],
+.configuration-section .target-choice > [data-slot="checkbox"],
+.profile-layout .target-choice > [data-slot="checkbox"],
+.discovery-workspace .target-choice > [data-slot="checkbox"] {
   margin-top: 1px;
 }
 
@@ -1041,12 +1045,48 @@
   padding: var(--jh-panel-padding);
 }
 
-/* Target-search groups have independent content widths; equal fractional
- * tracks left an empty visual column whenever a long location or role group
- * was paired with a compact option set. */
+/* Target-search groups pack by subject before the outer grid reflows. Keeping
+ * related controls in vertical clusters prevents the tallest option set from
+ * imposing its row height on every shorter group. */
 .discovery-workspace .target-preferences-grid {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
   align-items: start;
+}
+
+.discovery-workspace .target-preference-cluster {
+  container: target-preference-cluster / inline-size;
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--jh-field-grid-row-gap);
+}
+
+.discovery-workspace .target-preference-cluster .inline-list.compact {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+}
+
+@container target-preference-cluster (max-width: 34rem) {
+  .discovery-workspace .target-location-model-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "location remove"
+      "work-models work-models";
+    align-items: start;
+  }
+
+  .discovery-workspace .target-location-model-row > input {
+    grid-area: location;
+  }
+
+  .discovery-workspace
+    .target-location-model-row
+    > .target-work-model-group {
+    grid-area: work-models;
+  }
+
+  .discovery-workspace .target-location-model-row > .icon-button {
+    grid-area: remove;
+  }
 }
 
 .discovery-workspace .discovery-runtime-settings .config-form {
@@ -1056,6 +1096,12 @@
 .discovery-workspace .discovery-runtime-settings .field-grid {
   gap: var(--jh-field-grid-row-gap) var(--jh-field-grid-column-gap);
   padding: var(--jh-panel-padding);
+}
+
+.discovery-workspace .discovery-board-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  align-items: start;
 }
 
 .discovery-workspace .editor-bulk-actions,

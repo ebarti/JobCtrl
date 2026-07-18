@@ -47,6 +47,25 @@ Use the workflow-by-workflow matrix in the
 [Regression Catalog](developer/qa/regression-catalog.md#temporal-fault-injection)
 or the [complete checklist](developer/qa/complete-checklist.md#temporal-fault-injection-matrix).
 
+### Broad-board commit/ack recovery
+
+Broad-board discovery adds a stricter fault boundary inside the source-family
+activity. The hermetic fixture commits the first JobStreaming posting and its
+acceptance receipt, blocks the provider acknowledgement, kills that worker,
+starts a fresh worker on the same Temporal task queue, and verifies the same
+Discover execution completes from the stored checkpoint. It also covers
+unacknowledged replay, durable result and filtered counts, activity-attempt
+fencing, cursor reset ordering, partial board failure, incompatible cursor
+schemas, and cooperative cancellation. It uses fake local adapters and performs
+no external crawl:
+
+```bash
+uv --project workers/automation run pytest -q \
+  workers/automation/tests/test_jobstreaming_resumable_discovery.py \
+  workers/automation/tests/test_discovery_search_units.py \
+  workers/automation/tests/test_jobstreaming_gateway.py
+```
+
 <a id="durable-execution-recovery-demo"></a>
 
 ## High-Risk Regression Areas
@@ -297,6 +316,12 @@ corepack pnpm --filter @jobctrl/web e2e -- tests/responsive-data-surfaces.spec.t
 git diff --check
 ```
 
+Visual evidence is valid only when it is captured from the final integration
+HEAD after the last merge, rebase, or visual-system edit. Screenshots from an
+earlier commit do not satisfy this gate. A final-head rerun must also exercise
+the geometry assertions, because a painted screenshot alone cannot prove that
+composite controls contain their children.
+
 The gate passes only when:
 
 - `base-rhea`, Geist, the semantic token mappings, light/dark contrast, all
@@ -309,6 +334,10 @@ The gate passes only when:
   a compatible deep-link state, hides Sources/Warnings in the default view,
   omits redundant active lifecycle copy, uses destructive deletion, and keeps
   row activation focus-visible without a permanent duplicate action;
+- Jobs keeps workflow-recovery actions visible without opening the maintenance
+  menu; Apply Review queue rows contain their content without overlapping at
+  every density; and Discovery checkboxes keep a 24px hit target around a 16px
+  visual control that does not overpower its label;
 - Jobs, Artifacts, Contacts, Discovery, and Settings record data reflows into
   labelled cards at 900px and below; Profile and Evidence Map stack their work
   regions, while Apply Review keeps a desktop queue rail and wraps decisions in

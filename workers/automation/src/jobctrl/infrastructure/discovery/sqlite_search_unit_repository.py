@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ _SELECT_UNIT = """
            u.state, u.lease_owner, u.lease_attempt, u.lease_epoch, u.recovery_count,
            u.checkpoint_revision, u.last_error_code, u.last_error_type,
            u.last_error_retryable, u.reset_checkpoint,
+           u.reset_checkpoint_after_revision,
            u.created_at, u.updated_at, u.completed_at,
            COUNT(j.job_url) AS accepted_jobs,
            COALESCE(SUM(j.was_new), 0) AS new_jobs
@@ -51,6 +53,7 @@ _GROUP_UNIT = """
              u.state, u.lease_owner, u.lease_attempt, u.lease_epoch, u.recovery_count,
              u.checkpoint_revision, u.last_error_code, u.last_error_type,
              u.last_error_retryable, u.reset_checkpoint,
+             u.reset_checkpoint_after_revision,
              u.created_at, u.updated_at, u.completed_at
 """
 
@@ -368,6 +371,7 @@ class SqliteDiscoverySearchUnitRepository:
                    SET checkpoint_json = NULL,
                        checkpoint_revision = NULL,
                        reset_checkpoint = 0,
+                       reset_checkpoint_after_revision = NULL,
                        updated_at = ?
                  WHERE tenant_id = ?
                    AND discover_workflow_id = ?
@@ -387,8 +391,17 @@ class SqliteDiscoverySearchUnitRepository:
     ) -> bool:
         """Apply a durable provider reset request before opening the next stream."""
 
-        row = self._lease_row(lease, "reset_checkpoint")
+        row = self._lease_row(
+            lease,
+            "reset_checkpoint, checkpoint_revision, reset_checkpoint_after_revision",
+        )
         if not bool(row[0]):
+            return False
+        current_revision = int(row[1]) if row[1] is not None else None
+        required_revision = int(row[2]) if row[2] is not None else None
+        if required_revision is not None and (
+            current_revision is None or current_revision < required_revision
+        ):
             return False
         self.clear_checkpoint(lease)
         return True
@@ -429,6 +442,37 @@ class SqliteDiscoverySearchUnitRepository:
                 ),
             )
 
+    def record_filtered_result(
+        self,
+        lease: DiscoverySearchUnitLease,
+        provider_event_key: str,
+        *,
+        filtered_at: str | None = None,
+    ) -> None:
+        """Record one replay-idempotent caller-filtered provider result."""
+
+        normalized_key = provider_event_key.strip()
+        if not normalized_key:
+            raise ValueError("provider_event_key must be non-empty")
+        key_hash = hashlib.sha256(normalized_key.encode("utf-8")).hexdigest()
+        with self._conn:
+            self.fence_write(lease)
+            self._conn.execute(
+                """
+                INSERT INTO discovery_search_unit_filtered_events (
+                    tenant_id, discover_workflow_id, discover_run_id,
+                    unit_id, provider_event_key_hash, filtered_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    *_execution_params(lease.execution),
+                    lease.unit_id,
+                    key_hash,
+                    filtered_at or _utc_now(),
+                ),
+            )
+
     def record_failure(
         self,
         lease: DiscoverySearchUnitLease,
@@ -437,22 +481,47 @@ class SqliteDiscoverySearchUnitRepository:
         error_type: str,
         retryable: bool,
         reset_checkpoint: bool,
+        terminal: bool = True,
         failed_at: str | None = None,
     ) -> None:
-        """Persist a bounded failure; retryable failures remain reclaimable.
+        """Persist a bounded failure and optional terminal disposition.
 
         A requested cursor reset is durable intent, not an immediate deletion.
         The caller must acknowledge the provider error against the current
         revision first. The next fenced attempt applies the reset with
         :meth:`reset_checkpoint_if_requested` before it opens a stream.
+
+        A concurrent provider stream can report one board failure while another
+        board is still producing jobs. Such an event is recorded with
+        ``terminal=False`` so later events remain writable; the caller decides
+        the unit's final state only after acknowledging ``SearchComplete``.
         """
 
         code = _safe_error_identifier(error_code, "error_code")
         kind = _safe_error_identifier(error_type, "error_type")
-        terminal_state = "running" if retryable else "failed"
+        terminal_state = "failed" if terminal and not retryable else "running"
         now = failed_at or _utc_now()
         with self._conn:
             self.fence_write(lease)
+            checkpoint_row = self._conn.execute(
+                """
+                SELECT checkpoint_revision
+                  FROM discovery_search_units
+                 WHERE tenant_id = ?
+                   AND discover_workflow_id = ?
+                   AND discover_run_id = ?
+                   AND unit_id = ?
+                """,
+                (*_execution_params(lease.execution), lease.unit_id),
+            ).fetchone()
+            current_revision = (
+                int(checkpoint_row[0])
+                if checkpoint_row is not None and checkpoint_row[0] is not None
+                else None
+            )
+            reset_after_revision = (
+                (current_revision + 1) if current_revision is not None else 1
+            ) if reset_checkpoint else None
             self._conn.execute(
                 """
                 UPDATE discovery_search_units
@@ -461,6 +530,7 @@ class SqliteDiscoverySearchUnitRepository:
                        last_error_type = ?,
                        last_error_retryable = ?,
                        reset_checkpoint = ?,
+                       reset_checkpoint_after_revision = ?,
                        updated_at = ?
                  WHERE tenant_id = ?
                    AND discover_workflow_id = ?
@@ -473,16 +543,43 @@ class SqliteDiscoverySearchUnitRepository:
                     kind,
                     int(retryable),
                     int(reset_checkpoint),
+                    reset_after_revision,
                     now,
                     *_execution_params(lease.execution),
                     lease.unit_id,
                 ),
             )
 
+    def mark_skipped(
+        self,
+        lease: DiscoverySearchUnitLease,
+        *,
+        skipped_at: str | None = None,
+    ) -> None:
+        """Close the active unit after the durable result limit is reached."""
+
+        now = skipped_at or _utc_now()
+        with self._conn:
+            self.fence_write(lease)
+            self._conn.execute(
+                """
+                UPDATE discovery_search_units
+                   SET state = 'skipped',
+                       updated_at = ?,
+                       completed_at = ?
+                 WHERE tenant_id = ?
+                   AND discover_workflow_id = ?
+                   AND discover_run_id = ?
+                   AND unit_id = ?
+                """,
+                (now, now, *_execution_params(lease.execution), lease.unit_id),
+            )
+
     def mark_completed(
         self,
         lease: DiscoverySearchUnitLease,
         *,
+        clear_error: bool = False,
         completed_at: str | None = None,
     ) -> None:
         now = completed_at or _utc_now()
@@ -494,14 +591,24 @@ class SqliteDiscoverySearchUnitRepository:
                    SET state = 'completed',
                        updated_at = ?,
                        completed_at = ?,
+                       last_error_code = CASE WHEN ? THEN NULL ELSE last_error_code END,
+                       last_error_type = CASE WHEN ? THEN NULL ELSE last_error_type END,
                        last_error_retryable = NULL,
-                       reset_checkpoint = 0
+                       reset_checkpoint = 0,
+                       reset_checkpoint_after_revision = NULL
                  WHERE tenant_id = ?
                    AND discover_workflow_id = ?
                    AND discover_run_id = ?
                    AND unit_id = ?
                 """,
-                (now, now, *_execution_params(lease.execution), lease.unit_id),
+                (
+                    now,
+                    now,
+                    int(clear_error),
+                    int(clear_error),
+                    *_execution_params(lease.execution),
+                    lease.unit_id,
+                ),
             )
 
     def mark_canceled(
@@ -552,6 +659,37 @@ class SqliteDiscoverySearchUnitRepository:
             )
         return updated.rowcount
 
+    def mark_execution_canceled(
+        self,
+        lease: DiscoverySearchUnitLease,
+        *,
+        canceled_at: str | None = None,
+    ) -> int:
+        """Cancel the fenced active unit and every unclaimed sibling unit.
+
+        The initial fence is intentionally inside the same writer transaction.
+        A superseded activity therefore cannot convert a newer attempt's work
+        into cancellation after its cooperative cancel signal arrives late.
+        """
+
+        now = canceled_at or _utc_now()
+        with self._conn:
+            self.fence_write(lease)
+            updated = self._conn.execute(
+                """
+                UPDATE discovery_search_units
+                   SET state = 'canceled',
+                       updated_at = ?,
+                       completed_at = ?
+                 WHERE tenant_id = ?
+                   AND discover_workflow_id = ?
+                   AND discover_run_id = ?
+                   AND state IN ('pending', 'running')
+                """,
+                (now, now, *_execution_params(lease.execution)),
+            )
+        return updated.rowcount
+
     def execution_counts(self, execution: DiscoveryExecutionRef) -> dict[str, int]:
         row = self._conn.execute(
             """
@@ -571,6 +709,59 @@ class SqliteDiscoverySearchUnitRepository:
             "new": new_jobs,
             "existing": accepted - new_jobs,
         }
+
+    def execution_provider_job_count(
+        self,
+        execution: DiscoveryExecutionRef,
+    ) -> int:
+        """Return the durable provider-emitted job count for an execution.
+
+        JobStreaming stores the acknowledged, de-duplicated provider job keys
+        in each checkpoint. Reading that state keeps ``rawTotal`` stable across
+        activity retries instead of rebuilding it from process-local counters.
+        """
+
+        rows = self._conn.execute(
+            """
+            SELECT unit_id, checkpoint_json
+              FROM discovery_search_units
+             WHERE tenant_id = ?
+               AND discover_workflow_id = ?
+               AND discover_run_id = ?
+               AND checkpoint_json IS NOT NULL
+            """,
+            _execution_params(execution),
+        ).fetchall()
+        total = 0
+        for row in rows:
+            try:
+                checkpoint = SearchCheckpoint.model_validate_json(str(row[1]))
+            except Exception as exc:
+                raise CheckpointError(
+                    f"unable to read checkpoint for search unit {row[0]}"
+                ) from exc
+            total += sum(
+                adapter.emitted_count for adapter in checkpoint.adapters.values()
+            )
+        return total
+
+    def execution_filtered_count(
+        self,
+        execution: DiscoveryExecutionRef,
+    ) -> int:
+        """Return the durable number of caller-filtered provider results."""
+
+        row = self._conn.execute(
+            """
+            SELECT COUNT(*)
+              FROM discovery_search_unit_filtered_events
+             WHERE tenant_id = ?
+               AND discover_workflow_id = ?
+               AND discover_run_id = ?
+            """,
+            _execution_params(execution),
+        ).fetchone()
+        return int(row[0] or 0)
 
     def _lease_row(self, lease: DiscoverySearchUnitLease, columns: str) -> sqlite3.Row:
         row = self._conn.execute(
@@ -635,11 +826,14 @@ class SqliteDiscoverySearchUnitRepository:
             last_error_type=str(row[14]) if row[14] is not None else None,
             last_error_retryable=(bool(row[15]) if row[15] is not None else None),
             reset_checkpoint=bool(row[16]),
-            created_at=str(row[17]),
-            updated_at=str(row[18]),
-            completed_at=str(row[19]) if row[19] is not None else None,
-            accepted_jobs=int(row[20]),
-            new_jobs=int(row[21]),
+            reset_checkpoint_after_revision=(
+                int(row[17]) if row[17] is not None else None
+            ),
+            created_at=str(row[18]),
+            updated_at=str(row[19]),
+            completed_at=str(row[20]) if row[20] is not None else None,
+            accepted_jobs=int(row[21]),
+            new_jobs=int(row[22]),
         )
 
 

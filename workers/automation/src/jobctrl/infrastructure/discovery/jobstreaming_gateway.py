@@ -157,6 +157,26 @@ class JobStreamingGateway:
             registry=registry,
         )
 
+    @classmethod
+    def frame_for_job_event(
+        cls,
+        event: JobEvent,
+        spec: JobStreamingSearchSpec,
+    ) -> pd.DataFrame:
+        """Project one provider event into the legacy storage frame.
+
+        The stable provider key travels with the row so replayed deliveries use
+        the same JobCtrl idempotency keys even when the Temporal activity run
+        and its operational discovery run id have changed.
+        """
+
+        frame = jobs_to_dataframe(
+            [(event.site, event.job)],
+            cls.build_request(spec),
+        )
+        frame["jobstreaming_job_key"] = event.job_key
+        return frame
+
     def collect(
         self,
         spec: JobStreamingSearchSpec,

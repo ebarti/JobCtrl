@@ -62,21 +62,31 @@ _SENIORITY_RANKS = {
     "director": 6,
     "head": 6,
     "vp": 7,
-    "svp": 7,
-    "evp": 7,
+    "svp": 8,
+    "evp": 8,
     "vice": 7,
     "president": 7,
-    "chief": 8,
-    "cio": 8,
-    "ciso": 8,
-    "cto": 8,
+    "c_level": 9,
+    "chief": 9,
+    "cio": 9,
+    "ciso": 9,
+    "cto": 9,
 }
 
 _SENIORITY_ALIASES = {
-    "c level": "chief",
-    "c suite": "chief",
-    "chief level": "chief",
-    "csuite": "chief",
+    "c level": "c_level",
+    "c suite": "c_level",
+    "chief": "c_level",
+    "chief level": "c_level",
+    "cio": "c_level",
+    "ciso": "c_level",
+    "csuite": "c_level",
+    "cto": "c_level",
+    "engineer": "mid",
+    "evp": "svp",
+    "executive vice president": "svp",
+    "mid engineer": "mid",
+    "mid ic": "mid",
     "senior manager": "senior_manager",
     "senior engineering manager": "senior_manager",
     "head of engineering": "senior_manager",
@@ -88,7 +98,8 @@ _SENIORITY_LABELS = {
     5: "Staff",
     6: "Principal",
     7: "VP",
-    8: "Chief",
+    8: "SVP",
+    9: "Chief",
 }
 
 _ENGINEERING_TOKENS = {
@@ -165,7 +176,9 @@ _ABBREVIATION_EXPANSIONS = {
     "cio": ("chief", "information", "officer", "technology"),
     "ciso": ("chief", "information", "security", "officer"),
     "cto": ("chief", "technology", "officer"),
+    "evp": ("executive", "vice", "president"),
     "sre": ("site", "reliability", "engineering"),
+    "svp": ("senior", "vice", "president"),
     "vp": ("vice", "president"),
 }
 
@@ -294,7 +307,9 @@ def _recall_queries_for_roles(
     functions: Iterable[str] = (),
     specializations: Iterable[str] = (),
 ) -> list[dict[str, object]]:
-    intents = _role_intents(exact_queries, tracks=tracks, seniority=seniority, functions=functions, specializations=specializations)
+    intents = _role_intents(
+        exact_queries, tracks=tracks, seniority=seniority, functions=functions, specializations=specializations
+    )
     candidates: list[dict[str, object]] = []
     for intent in intents:
         if not intent.track or not intent.domains:
@@ -320,9 +335,17 @@ def _queries_for_intent(intent: _RoleIntent) -> list[str]:
         label = _domain_label(domain)
         if intent.track == "ic":
             ic_label = "Software" if domain == "engineering" else label
-            for rank, seniority_label in ((3, "Senior"), (4, "Lead"), (5, "Staff"), (6, "Principal")):
+            for rank, seniority_label in (
+                (1, "Junior"),
+                (2, "Mid"),
+                (2, ""),
+                (3, "Senior"),
+                (4, "Lead"),
+                (5, "Staff"),
+                (6, "Principal"),
+            ):
                 if rank >= floor_rank:
-                    candidates.append(f"{seniority_label} {ic_label} Engineer")
+                    candidates.append(" ".join(part for part in (seniority_label, ic_label, "Engineer") if part))
             if floor_rank <= 6 and domain in {"platform", "technology"}:
                 candidates.append(f"Principal {ic_label} Architect")
         elif intent.track == "management":
@@ -339,6 +362,8 @@ def _queries_for_intent(intent: _RoleIntent) -> list[str]:
             if floor_rank <= 7:
                 candidates.append(f"VP {label}")
             if floor_rank <= 8:
+                candidates.extend([f"SVP {label}", f"EVP {label}"])
+            if floor_rank <= 9:
                 candidates.extend(_chief_queries_for_domain(domain))
     return _dedupe_recall_queries(candidates)
 
@@ -384,7 +409,9 @@ def _role_intents(
         floor = _value_at(seniority_values, index) or _seniority_from_tokens(tokens)
         inferred_domains = _domains_from_tokens(tokens)
         if shared_domains:
-            inferred_domains = [domain for domain in inferred_domains if domain in shared_domains] or list(shared_domains)
+            inferred_domains = [domain for domain in inferred_domains if domain in shared_domains] or list(
+                shared_domains
+            )
         domains = tuple(inferred_domains or shared_domains)
         intents.append(_RoleIntent(role=query, track=track, seniority_floor=floor, domains=domains))
     return intents
@@ -504,6 +531,10 @@ def _classify_track(tokens: set[str]) -> str | None:
 def _seniority_from_tokens(tokens: set[str]) -> str | None:
     if "senior" in tokens and "manager" in tokens:
         return "senior_manager"
+    if "executive" in tokens and "vice" in tokens and "president" in tokens:
+        return "svp"
+    if "senior" in tokens and "vice" in tokens and "president" in tokens:
+        return "svp"
     if "vice" in tokens and "president" in tokens:
         return "vp"
     ranked = sorted(
@@ -514,7 +545,7 @@ def _seniority_from_tokens(tokens: set[str]) -> str | None:
         return None
     rank, token = ranked[0]
     if rank <= 2 and tokens.intersection(_IC_TOKENS):
-        return "engineer"
+        return "mid"
     return token
 
 
@@ -525,6 +556,10 @@ def _seniority_rank(value: str | None) -> int:
     if seniority_alias:
         return _SENIORITY_RANKS[seniority_alias]
     tokens = _expanded_tokens([value])
+    if "executive" in tokens and "vice" in tokens and "president" in tokens:
+        return _SENIORITY_RANKS["svp"]
+    if "senior" in tokens and "vice" in tokens and "president" in tokens:
+        return _SENIORITY_RANKS["svp"]
     if "vice" in tokens and "president" in tokens:
         return _SENIORITY_RANKS["vp"]
     if "senior" in tokens and "manager" in tokens:

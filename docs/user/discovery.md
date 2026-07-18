@@ -63,7 +63,8 @@ The workspace deliberately keeps different scopes and units separate:
   selected execution's completion claim.
 - **Source-family progress** reports source intake; enrichment and preparation
   reconciliation report the downstream drain. A finished crawl can therefore
-  coexist with preparation that is still running.
+  coexist with preparation that is still running. Broad-board progress also
+  reports how many interrupted search units resumed.
 - **Worker capacity** reports Temporal workers and shared activity slots.
   Source-family internal concurrency is a separate control, and approximate
   task-queue depth is not a count of domain jobs.
@@ -108,6 +109,39 @@ workflow identifiers, the exact
 Temporal run ID, and the bounded repair reason code remain available under
 **Technical details**.
 
+### Resumable Broad-Board Searches
+
+Broad-board discovery uses JobStreaming 0.0.2. At the beginning of the source
+activity, JobCtrl compiles an immutable unit for every query, target/provider
+location, and board under the exact Discover workflow/run identity. JobCtrl,
+not the provider, owns whether that unit is pending, running, completed, failed,
+skipped, or canceled.
+
+For each posting event, JobCtrl applies the title/location policy and commits
+the accepted job, source observation, event records, and an idempotent unit
+receipt before acknowledging the JobStreaming event. The acknowledgement then
+advances the provider checkpoint. If the process stops in that gap, the event
+is delivered again and the durable receipt makes the replay harmless. Results
+rejected by the caller's title/location policy get a separate hashed receipt
+before acknowledgement. Accepted new/existing counts, filtered counts, and the
+run-wide new-job limit are therefore read from durable receipts, so a retry
+cannot lose progress or start the limit over.
+
+Temporal retries reclaim only unfinished units with a newer activity-attempt
+fence. Retryable board errors resume from their checkpoint; an expired board
+cursor is reset only after its error event has been acknowledged. Request or
+cursor-schema incompatibility fails explicitly instead of silently starting a
+different search. Healthy boards and already accepted postings remain useful
+when another board fails. Pipelines shows `N resumed` when recovery happened.
+
+**Stop discovery** is different from interruption: cooperative cancellation
+interrupts provider waits and marks active and pending units canceled. Canceled
+units are terminal and are not reclaimed as stale work. Changes to boards,
+queries, or locations apply to the next Discover execution; they cannot rewrite
+the persisted plan of an execution that is retrying. The internal `jobspy:`
+source-ID prefix remains a compatibility identifier for existing local data and
+API selections; it no longer names the provider library.
+
 ### How target search controls are used
 
 These controls do not divide cleanly into “search fields” and “filter fields.”
@@ -118,9 +152,16 @@ different kind of intent:
 | --- | --- | --- |
 | **Target roles** | Specific job titles you want, such as “Director of Engineering.” | Become the primary exact search queries, replace the fallback query list, and act as strict title checks on returned postings. They also seed broader recall queries. |
 | **Role areas** | Broad domains such as engineering, security, or platform. | Combine with tracks and floors to generate additional title queries and supply the domain signal required by recall matches. They are not a standalone post-storage filter. |
-| **Seniority floors** | The minimum acceptable level, not a list of exact levels. | Limit generated recall queries to that level or higher and reject lower-ranked recall titles. A Staff floor can include Staff and Principal; a VP floor can include VP and Chief. |
+| **Seniority floors** | A role-area-independent minimum career level: Junior IC, Mid IC, Senior IC, Staff IC, Principal IC, Manager, Senior Manager, Director, VP, SVP, or C-Level. | Limit generated recall queries to that level or higher and reject lower-ranked recall titles. A Staff IC floor can include Staff and Principal IC roles; a VP floor can include VP, SVP, and C-Level roles; an SVP floor excludes VP roles and treats EVP titles as the same floor. |
 | **Target tracks** | The career lane: individual contributor, management, or executive. | Keep recall within the selected lane so, for example, an IC recall query does not accept a management title. |
 | **Specializations** | Additional, narrower domain hints. | Contribute to recall-domain inference when they contain recognized domain vocabulary. Unrecognized free text may not change the generated plan. |
+
+Seniority is deliberately separate from role area. The ladder describes career
+scope, while **Role areas** supplies domains such as engineering, security, or
+platform. Existing saved `engineer` and `cto` values remain compatible and are
+shown as **Mid IC** and **C-Level**; the next seniority edit writes the
+canonical `mid` and `c_level` values. VP, SVP, and C-Level are distinct floors
+in both query generation and title acceptance; EVP titles map to SVP.
 
 Discovery then applies that plan in four steps:
 
@@ -207,7 +248,7 @@ surface:
   ride the existing `SourceRegistryEntry` rows; a registry policy editor is a
   planned addition, not yet in the UI.
 - **Broad boards** (`indeed`, `linkedin`, `glassdoor`, `zip_recruiter`) are
-  fetched by `python-jobspy`, which owns its own transport — JobCtrl cannot
+  fetched by JobStreaming, which owns its board transports — JobCtrl cannot
   robots-gate or count its per-board requests, so it applies budget + pacing at
   the invocation boundary only, and `jobctrl doctor` warns when they are on.
 - A malformed `proxy` value (the SQLite discovery setting, `host:port[:user:pass]`)

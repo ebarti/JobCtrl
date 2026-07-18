@@ -99,6 +99,7 @@ class DiscoveryRunProgress:
     filtered_jobs: int | None = None
     error_count: int | None = None
     raw_total: int | None = None
+    recovered_units: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -119,6 +120,8 @@ class DiscoveryRunProgress:
             "errorCount": self.error_count,
             "raw_total": self.raw_total,
             "rawTotal": self.raw_total,
+            "recovered_units": self.recovered_units,
+            "recoveredUnits": self.recovered_units,
         }
 
 

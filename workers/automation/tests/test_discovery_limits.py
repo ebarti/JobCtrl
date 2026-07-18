@@ -110,7 +110,7 @@ def test_jobspy_emits_source_progress(monkeypatch):
         "filtered_jobs": 0,
         "errors": 0,
         "raw_total": 0,
-        "message": "JobSpy search started",
+        "message": "JobStreaming search started",
         "current_query": "platform engineer",
         "current_location": "Barcelona, Spain",
     }
@@ -123,7 +123,7 @@ def test_jobspy_emits_source_progress(monkeypatch):
         "filtered_jobs": 2,
         "errors": 0,
         "raw_total": 4,
-        "message": "JobSpy search completed",
+        "message": "JobStreaming search completed",
         "current_query": "product engineer",
         "current_location": "Barcelona, Spain",
     }

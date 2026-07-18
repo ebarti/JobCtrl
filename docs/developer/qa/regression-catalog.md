@@ -36,6 +36,17 @@ The [complete matrix](complete-checklist.md#temporal-fault-injection-matrix)
 lists the exact tests for Discover, Pipeline, Preparation, Apply, Profile Import,
 Compensation Refresh, and Interview Prep workflows.
 
+For JobStreaming broad-board discovery, killing the activity is not enough: the
+fault must land after JobCtrl commits an accepted posting and unit receipt but
+before provider acknowledgement. A fresh worker must reclaim the same immutable
+query/location/board unit, replay without a second job/event/count, preserve the
+run-wide result limit, and expose the recovered-unit count. Cursor reset must
+wait for the error acknowledgement revision; a stale activity owner must lose
+its write fence; request/cursor-schema incompatibility must fail explicitly;
+and cancellation must terminalize unfinished units. The hermetic proof is
+`workers/automation/tests/test_jobstreaming_resumable_discovery.py`, backed by
+`test_discovery_search_units.py` and `test_jobstreaming_gateway.py`.
+
 ## Durable-Execution Recovery Demo
 
 `scripts/reliability-demo.sh` runs an isolated, no-crawl, no-LLM, no-browser

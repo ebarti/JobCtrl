@@ -503,9 +503,10 @@ type and policy metadata are visible as columns instead of compact badges:
   parseable source candidates are auto-promoted into the active source registry;
   these queues are for blocked, ambiguous, unparseable, or compatibility pending
   work.
-  JobSpy direct URLs feed this same loop: runnable ATS URLs are promoted into
-  the source registry, while unknown owner URLs or ATS URLs that still need
-  adapter configuration remain visible for review.
+  Direct URLs returned by the JobStreaming broad-board adapter feed this same
+  loop: runnable ATS URLs are promoted into the source registry, while unknown
+  owner URLs or ATS URLs that still need adapter configuration remain visible
+  for review.
 - `POST /v1/discovery/locator-candidates/:candidateId/promote` promotes a
   source locator candidate into an active source registry entry and emits
   `SourceLocationCandidatePromoted`.
@@ -725,6 +726,12 @@ job row, such as global Discover or Apply runs started from the Pipelines tab.
 from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
 the run detail workspace renders persisted history without exposing raw event
 payloads.
+
+Dashboard pipeline progress can include an optional
+`sourceProgress.recoveredUnits: number | null`. For broad-board discovery it is
+the number of JobStreaming query/location/board units reclaimed after an
+interrupted activity. The field is omitted for older progress payloads and
+non-applicable sources; positive values render as `N resumed` in Pipelines.
 
 ## Profile resume preview
 
@@ -1059,8 +1066,9 @@ fanout.
   preparation backlogs are not dependent on page-local pickup.
 
 The `limit` field is forwarded to every selected stage. For `discover`, the
-Python runner passes it into JobSpy, Workday, Smart Extract, Discovery's detail
-enrichment, and preparation derivation. Source families run in deterministic
+Python runner passes it into JobStreaming broad-board search, Workday, Smart
+Extract, Discovery's detail enrichment, and preparation derivation. Source
+families run in deterministic
 batches bounded by the saved `max_parallel_families` setting (default `1`);
 families inside one batch may crawl concurrently, while the batch's enrichment
 and preparation fan-out run once afterward. The source limit still skips
@@ -1190,7 +1198,12 @@ Target roles replace the active discovery query list with exact role queries;
 target tracks, seniority floors, role areas, and specializations add structured
 intent for deterministic recall expansion. The Profile Target Search UI constrains target
 tracks to IC, management, and executive, and constrains seniority floors to the
-engineering IC, management, and executive ladder choices. Recall queries keep
+role-area-independent Junior IC, Mid IC, Senior IC, Staff IC, Principal IC,
+Manager, Senior Manager, Director, VP, SVP, and C-Level ladder. Legacy
+`engineer` and `cto` profile values remain accepted as aliases for `mid` and
+`c_level`. VP, SVP, and C-Level have distinct ranks, so an SVP floor excludes VP
+titles while accepting EVP as the same floor, and a C-Level floor accepts only
+chief-level titles. Recall queries keep
 the same search tier as exact queries because relevance is determined after
 discovery by scoring, not by query generation. Recall matching enforces both
 track and seniority: IC targets stay IC, management targets stay management,
@@ -1198,7 +1211,7 @@ executive targets stay executive, and a candidate who configures multiple
 tracks gets per-track recall. Board discovery settings live in SQLite
 `discovery_settings`; source adapters normalize scraped postings into the
 shared discovery intake and apply query/location acceptance before a job row or
-delete tombstone can be persisted. JobSpy uses
+delete tombstone can be persisted. JobStreaming broad-board discovery uses
 exact-plus-recall queries as broad-board retrieval probes. Direct ATS and
 Workday, and source-first Smart Extract sources enumerate
 their known board/source and apply that same title intent internally, avoiding
@@ -1209,7 +1222,7 @@ inserted; Greenhouse reads the public board content payload for that text. Each
 discover run also performs posting staleness checks that move verified
 unavailable, expired, removed, or location-incompatible postings to the closed
 lifecycle state, and applies the current title, location, and description
-contract to active JobSpy, direct ATS, Workday, and Smart Extract rows so rows
+contract to active broad-board, direct ATS, Workday, and Smart Extract rows so rows
 that no longer pass those source-family filters are soft-deleted.
 Approved role-match feedback adds a user-reviewed title-exclusion layer on top
 of that matcher. The rule scope is exact normalized title text, so approving a
@@ -1222,8 +1235,8 @@ Hybrid and on-site target work models search and filter only the target
 location. Remote target work models search and filter the target country, and
 European countries also add an Europe-remote search and accept pattern.
 Profile-driven discovery searches at least the last 30 days unless local config
-sets a larger window. Spain or Europe targets set JobSpy's Indeed country to
-Spain, reject America-only non-remote locations, and filter API-visible
+sets a larger window. Spain or Europe targets pass Spain as JobStreaming's
+Indeed country, reject America-only non-remote locations, and filter API-visible
 America-only source rows from `GET /v1/discovery/sources`. Discover limits are
 new-job budgets: duplicate/rediscovered observations do not consume the cap.
 The Pipelines tab uses the same source registry response to offer an optional
@@ -1258,8 +1271,8 @@ ID, while synchronous local results return `200`.
 Non-apply pipeline runs also emit pipeline-level
 `StageStarted` / `StageCompleted` / `StageFailed` rows, and Discover emits
 the same lifecycle rows plus `DiscoveryRunStarted`,
-`DiscoveryRunCompleted`, and `DiscoveryRunFailed` for its JobSpy, Workday, and
-Smart Extract source steps. Those event types are part of the SSE domain
+`DiscoveryRunCompleted`, and `DiscoveryRunFailed` for its broad-board, Workday,
+and Smart Extract source steps. Those event types are part of the SSE domain
 catalog, so the dashboard can refresh recent activity and source health while a
 long synchronous stage request is still running.
 
