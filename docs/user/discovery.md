@@ -152,9 +152,16 @@ different kind of intent:
 | --- | --- | --- |
 | **Target roles** | Specific job titles you want, such as “Director of Engineering.” | Become the primary exact search queries, replace the fallback query list, and act as strict title checks on returned postings. They also seed broader recall queries. |
 | **Role areas** | Broad domains such as engineering, security, or platform. | Combine with tracks and floors to generate additional title queries and supply the domain signal required by recall matches. They are not a standalone post-storage filter. |
-| **Seniority floors** | The minimum acceptable level, not a list of exact levels. | Limit generated recall queries to that level or higher and reject lower-ranked recall titles. A Staff floor can include Staff and Principal; a VP floor can include VP and Chief. |
+| **Seniority floors** | A role-area-independent minimum career level: Junior IC, Mid IC, Senior IC, Staff IC, Principal IC, Manager, Senior Manager, Director, VP, SVP, or C-Level. | Limit generated recall queries to that level or higher and reject lower-ranked recall titles. A Staff IC floor can include Staff and Principal IC roles; a VP floor can include VP, SVP, and C-Level roles; an SVP floor excludes VP roles and treats EVP titles as the same floor. |
 | **Target tracks** | The career lane: individual contributor, management, or executive. | Keep recall within the selected lane so, for example, an IC recall query does not accept a management title. |
 | **Specializations** | Additional, narrower domain hints. | Contribute to recall-domain inference when they contain recognized domain vocabulary. Unrecognized free text may not change the generated plan. |
+
+Seniority is deliberately separate from role area. The ladder describes career
+scope, while **Role areas** supplies domains such as engineering, security, or
+platform. Existing saved `engineer` and `cto` values remain compatible and are
+shown as **Mid IC** and **C-Level**; the next seniority edit writes the
+canonical `mid` and `c_level` values. VP, SVP, and C-Level are distinct floors
+in both query generation and title acceptance; EVP titles map to SVP.
 
 Discovery then applies that plan in four steps:
 

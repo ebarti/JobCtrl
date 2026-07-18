@@ -115,33 +115,39 @@ const TARGET_TRACK_GROUPS: readonly TargetSearchOptionGroup[] = [
 
 const TARGET_SENIORITY_GROUPS: readonly TargetSearchOptionGroup[] = [
   {
-    label: "IC",
+    label: "",
     options: [
-      { value: "junior", label: "Junior Engineer" },
-      { value: "engineer", label: "Engineer", aliases: ["mid engineer", "mid-level engineer"] },
-      { value: "senior", label: "Senior Engineer" },
-      { value: "staff", label: "Staff Engineer" },
-      { value: "principal", label: "Principal Engineer" },
-    ],
-  },
-  {
-    label: "Management",
-    options: [
-      { value: "manager", label: "Engineering Manager" },
+      { value: "junior", label: "Junior IC", aliases: ["junior engineer"] },
+      {
+        value: "mid",
+        label: "Mid IC",
+        aliases: ["engineer", "mid engineer", "mid-level engineer"],
+      },
+      { value: "senior", label: "Senior IC", aliases: ["senior engineer"] },
+      { value: "staff", label: "Staff IC", aliases: ["staff engineer"] },
+      { value: "principal", label: "Principal IC", aliases: ["principal engineer"] },
+      { value: "manager", label: "Manager", aliases: ["engineering manager"] },
       {
         value: "senior_manager",
-        label: "Senior Engineering Manager / Head of Engineering",
+        label: "Senior Manager",
         aliases: ["senior manager", "senior engineering manager", "head of engineering"],
       },
-      { value: "director", label: "Director of Engineering" },
-    ],
-  },
-  {
-    label: "Executive",
-    options: [
-      { value: "vp", label: "VP of Engineering", aliases: ["vice president engineering", "vp engineering"] },
-      { value: "svp", label: "SVP Engineering", aliases: ["senior vice president engineering"] },
-      { value: "cto", label: "CTO", aliases: ["chief technology officer"] },
+      { value: "director", label: "Director", aliases: ["director of engineering"] },
+      {
+        value: "vp",
+        label: "VP",
+        aliases: ["vice president", "vice president engineering", "vp engineering"],
+      },
+      {
+        value: "svp",
+        label: "SVP",
+        aliases: ["senior vice president", "senior vice president engineering", "svp engineering"],
+      },
+      {
+        value: "c_level",
+        label: "C-Level",
+        aliases: ["c level", "c suite", "chief", "cto", "chief technology officer"],
+      },
     ],
   },
 ];

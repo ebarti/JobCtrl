@@ -1198,7 +1198,12 @@ Target roles replace the active discovery query list with exact role queries;
 target tracks, seniority floors, role areas, and specializations add structured
 intent for deterministic recall expansion. The Profile Target Search UI constrains target
 tracks to IC, management, and executive, and constrains seniority floors to the
-engineering IC, management, and executive ladder choices. Recall queries keep
+role-area-independent Junior IC, Mid IC, Senior IC, Staff IC, Principal IC,
+Manager, Senior Manager, Director, VP, SVP, and C-Level ladder. Legacy
+`engineer` and `cto` profile values remain accepted as aliases for `mid` and
+`c_level`. VP, SVP, and C-Level have distinct ranks, so an SVP floor excludes VP
+titles while accepting EVP as the same floor, and a C-Level floor accepts only
+chief-level titles. Recall queries keep
 the same search tier as exact queries because relevance is determined after
 discovery by scoring, not by query generation. Recall matching enforces both
 track and seniority: IC targets stay IC, management targets stay management,

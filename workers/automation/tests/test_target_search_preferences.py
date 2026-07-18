@@ -330,9 +330,7 @@ def test_load_search_config_reads_profile_target_search_from_db(tmp_path, monkey
     assert loaded["target_region"] == "europe"
 
 
-def test_legacy_config_target_fields_are_ignored_when_profile_target_is_empty(
-    tmp_path, monkeypatch
-) -> None:
+def test_legacy_config_target_fields_are_ignored_when_profile_target_is_empty(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "jobctrl.db"
     dashboard_path = tmp_path / "config.json"
     dashboard_path.write_text(
@@ -363,11 +361,13 @@ def test_legacy_config_target_fields_are_ignored_when_profile_target_is_empty(
     loaded = config.load_search_config()
 
     assert loaded["queries"][0]["query"] == "Software Engineer"
-    assert loaded["locations"] == [{
-        "label": "home-city-home-country",
-        "location": "Home City, Home Country",
-        "remote": False,
-    }]
+    assert loaded["locations"] == [
+        {
+            "label": "home-city-home-country",
+            "location": "Home City, Home Country",
+            "remote": False,
+        }
+    ]
 
 
 def test_load_search_config_prefers_database_discovery_settings(tmp_path, monkeypatch) -> None:
@@ -450,6 +450,73 @@ def test_structured_management_senior_manager_floor_excludes_manager_level_queri
     assert title_matches_any_query("Senior Engineering Manager", queries)
     assert title_matches_any_query("Head of Engineering", queries)
     assert not title_matches_any_query("Engineering Manager", queries)
+
+
+def test_role_agnostic_mid_ic_floor_includes_mid_and_preserves_legacy_engineer_alias() -> None:
+    canonical = build_target_role_queries(
+        [],
+        tracks=["ic"],
+        seniority=["mid"],
+        functions=["Engineering"],
+    )
+    legacy = build_target_role_queries(
+        [],
+        tracks=["ic"],
+        seniority=["engineer"],
+        functions=["Engineering"],
+    )
+
+    assert [item["query"] for item in canonical] == [
+        "Mid Software Engineer",
+        "Software Engineer",
+        "Senior Software Engineer",
+        "Lead Software Engineer",
+        "Staff Software Engineer",
+        "Principal Software Engineer",
+    ]
+    assert legacy == canonical
+
+
+def test_role_agnostic_executive_floors_distinguish_vp_svp_and_c_level() -> None:
+    def queries_for(floor: str) -> list[str]:
+        return [
+            item["query"]
+            for item in build_target_role_queries(
+                [],
+                tracks=["executive"],
+                seniority=[floor],
+                functions=["Technology"],
+            )
+        ]
+
+    assert queries_for("vp") == [
+        "VP Technology",
+        "SVP Technology",
+        "EVP Technology",
+        "CTO",
+        "Chief Technology Officer",
+    ]
+    assert queries_for("svp") == ["SVP Technology", "EVP Technology", "CTO", "Chief Technology Officer"]
+    assert queries_for("c_level") == ["CTO", "Chief Technology Officer"]
+    assert queries_for("cto") == queries_for("c_level")
+
+    vp_plan = build_target_role_queries(
+        [],
+        tracks=["executive"],
+        seniority=["vp"],
+        functions=["Technology"],
+    )
+    assert title_matches_any_query("Executive Vice President, Technology", vp_plan)
+    assert title_matches_any_query("EVP Technology", vp_plan)
+
+    svp_plan = build_target_role_queries(
+        [],
+        tracks=["executive"],
+        seniority=["svp"],
+        functions=["Technology"],
+    )
+    assert title_matches_any_query("Executive Vice President, Technology", svp_plan)
+    assert title_matches_any_query("EVP Technology", svp_plan)
 
 
 def test_partial_structured_target_search_preserves_configured_queries_when_planner_is_empty() -> None:

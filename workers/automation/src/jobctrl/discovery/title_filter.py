@@ -19,8 +19,7 @@ class RoleTitleMatchAdjudicator(Protocol):
         match_mode: str,
         target_track: str | None = None,
         seniority_floor: str | None = None,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
 
 _STOPWORDS = {
@@ -105,6 +104,7 @@ _RECALL_LEADERSHIP_TOKENS = {
     "ciso",
     "cto",
     "director",
+    "evp",
     "head",
     "lead",
     "leader",
@@ -112,6 +112,7 @@ _RECALL_LEADERSHIP_TOKENS = {
     "manager",
     "principal",
     "staff",
+    "svp",
     "vp",
 }
 
@@ -150,21 +151,31 @@ _SENIORITY_RANKS = {
     "director": 6,
     "head": 6,
     "vp": 7,
-    "svp": 7,
-    "evp": 7,
+    "svp": 8,
+    "evp": 8,
     "vice": 7,
     "president": 7,
-    "chief": 8,
-    "cio": 8,
-    "ciso": 8,
-    "cto": 8,
+    "c_level": 9,
+    "chief": 9,
+    "cio": 9,
+    "ciso": 9,
+    "cto": 9,
 }
 
 _SENIORITY_ALIASES = {
-    "c level": "chief",
-    "c suite": "chief",
-    "chief level": "chief",
-    "csuite": "chief",
+    "c level": "c_level",
+    "c suite": "c_level",
+    "chief": "c_level",
+    "chief level": "c_level",
+    "cio": "c_level",
+    "ciso": "c_level",
+    "csuite": "c_level",
+    "cto": "c_level",
+    "engineer": "mid",
+    "evp": "svp",
+    "executive vice president": "svp",
+    "mid engineer": "mid",
+    "mid ic": "mid",
     "senior manager": "senior_manager",
     "senior engineering manager": "senior_manager",
     "head of engineering": "senior_manager",
@@ -213,9 +224,11 @@ _RECALL_TOKEN_EXPANSIONS = {
     "cio": ("chief", "information", "officer", "technology"),
     "ciso": ("chief", "information", "security", "officer"),
     "cto": ("chief", "technology", "officer"),
+    "evp": ("executive", "vice", "president"),
     "infosec": ("information", "security"),
     "it": ("information", "technology"),
     "sre": ("site", "reliability", "engineering"),
+    "svp": ("senior", "vice", "president"),
     "vp": ("vice", "president"),
 }
 
@@ -274,11 +287,7 @@ def title_matches_query(
         )
     verbatim_match = _query_tokens_match_verbatim(query_tokens, title_sequence)
     alias_match = _query_alias_matches(query_tokens, title_sequence)
-    if not (
-        verbatim_match
-        or alias_match
-        or _query_tokens_match_compactly(query_tokens, title_sequence)
-    ):
+    if not (verbatim_match or alias_match or _query_tokens_match_compactly(query_tokens, title_sequence)):
         return False
     return _adjudicate_loose_match(
         title=title,
@@ -365,8 +374,7 @@ def _query_alias_matches(query_tokens: Sequence[str], title_sequence: Sequence[s
     query_token_set = frozenset(query_tokens)
     for required_query_tokens, title_aliases in _QUERY_ALIASES:
         if required_query_tokens.issubset(query_token_set) and any(
-            _query_tokens_match_compactly(title_alias, title_sequence)
-            for title_alias in title_aliases
+            _query_tokens_match_compactly(title_alias, title_sequence) for title_alias in title_aliases
         ):
             return True
     return False
@@ -393,9 +401,7 @@ def _has_business_function_false_positive(
     title_tokens = set(title_sequence)
     query_token_set = set(query_tokens)
     excluded_tokens = _EXCLUDED_BUSINESS_FALSE_POSITIVE_TOKENS.difference(query_token_set)
-    if title_tokens.intersection(excluded_tokens) and not _has_engineering_role_head(
-        title_sequence, excluded_tokens
-    ):
+    if title_tokens.intersection(excluded_tokens) and not _has_engineering_role_head(title_sequence, excluded_tokens):
         return True
     return any(
         phrase.issubset(title_tokens) and not phrase.intersection(query_token_set)
@@ -539,10 +545,14 @@ def _recall_title_matches_query(
         }
     title_leadership_tokens = expanded_title.intersection(_RECALL_LEADERSHIP_TOKENS)
     title_domain_tokens = expanded_title.intersection(domain_tokens)
-    return bool(title_leadership_tokens) and bool(title_domain_tokens) and _has_compact_recall_signal(
-        title_sequence,
-        title_leadership_tokens,
-        title_domain_tokens,
+    return (
+        bool(title_leadership_tokens)
+        and bool(title_domain_tokens)
+        and _has_compact_recall_signal(
+            title_sequence,
+            title_leadership_tokens,
+            title_domain_tokens,
+        )
     )
 
 
@@ -570,6 +580,10 @@ def _normalize_track(value: str | None) -> str | None:
 def _rank_from_tokens(tokens: set[str]) -> int:
     if not tokens:
         return 0
+    if "executive" in tokens and "vice" in tokens and "president" in tokens:
+        return _SENIORITY_RANKS["svp"]
+    if "senior" in tokens and "vice" in tokens and "president" in tokens:
+        return _SENIORITY_RANKS["svp"]
     if "vice" in tokens and "president" in tokens:
         return _SENIORITY_RANKS["vp"]
     if "senior" in tokens and "manager" in tokens:
