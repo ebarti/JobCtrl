@@ -7,7 +7,7 @@ import type {
   ResumeReviewDraft,
   ResumeReviewDraftRenderResponse,
 } from "@jobctrl/contracts";
-import { IconAlertTriangle, IconBan, IconChevronDown, IconExternalLink } from "@tabler/icons-react";
+import { IconAlertTriangle, IconChevronDown, IconExternalLink } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
@@ -401,51 +401,96 @@ function sourceDetail(source: ApplyAuditSource): string {
   return source.detail ? `${status}: ${source.detail}` : status;
 }
 
-function ApplyAuditFacts({ item }: { readonly item: ApplyReviewQueueItem }) {
+type ReviewAuditFact = {
+  readonly category: string;
+  readonly fact: ApplyAuditFact;
+  readonly message: string;
+};
+
+function reviewAuditMessage(fact: ApplyAuditFact): string {
+  return formatAuditMessage(fact.detail ? `${fact.label}: ${fact.detail}` : fact.label);
+}
+
+function isTechnicalAuditMessage(message: string): boolean {
+  return /\b(?:https?:\/\/|profile[_\s-]?version\b|(?:evidence|artifact|run|source|trace|request)[_\s-]?id\b|diagnostic(?:[_\s-]?(?:id|code|detail))?\b|version\s*[:=])/i.test(
+    message,
+  );
+}
+
+function reviewAuditFacts(item: ApplyReviewQueueItem): readonly ReviewAuditFact[] {
   const groups = [
     { label: "Missing", facts: item.applyAudit.missingPrerequisites },
     { label: "Blockers", facts: item.applyAudit.hardBlockers },
     { label: "Eligibility", facts: item.applyAudit.eligibilityConcerns },
     { label: "Sources", facts: sourceFacts(item) },
-  ].filter((group) => group.facts.length > 0);
+  ];
+  const seen = new Set<string>();
+  const actionableSources = new Set(
+    groups
+      .filter((group) => group.label !== "Sources")
+      .flatMap((group) => group.facts.map((fact) => fact.source)),
+  );
 
-  if (!groups.length) {
+  return groups.flatMap((group) =>
+    group.facts.flatMap((fact) => {
+      if (group.label === "Sources" && actionableSources.has(fact.source)) {
+        return [];
+      }
+      const message = reviewAuditMessage(fact);
+      const key = message.toLocaleLowerCase();
+      if (seen.has(key)) {
+        return [];
+      }
+      seen.add(key);
+      return [{ category: group.label, fact, message }];
+    }),
+  );
+}
+
+function ApplyAuditFacts({ item }: { readonly item: ApplyReviewQueueItem }) {
+  const facts = reviewAuditFacts(item);
+  const summaryFacts = facts.filter((entry) => !isTechnicalAuditMessage(entry.message));
+  const technicalFacts = facts.filter((entry) => isTechnicalAuditMessage(entry.message));
+
+  if (!facts.length) {
     return null;
   }
 
   return (
-    <dl className="apply-review-audit-facts">
-      {groups.map((group) => (
-        <div key={group.label}>
-          <dt>{group.label}</dt>
-          <dd>
-            {group.facts.map((fact) => (
-              <StatusBadge
-                {...(group.label === "Blockers" ? { icon: IconBan } : {})}
-                tone={factTone(fact)}
-                key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}
-              >
-                {formatAuditMessage(fact.detail ? `${fact.label}: ${fact.detail}` : fact.label)}
-              </StatusBadge>
+    <section className="apply-review-attention-summary" aria-label="Application review summary">
+      {summaryFacts.length ? (
+        <Alert variant="warning">
+          <IconAlertTriangle aria-hidden="true" />
+          <AlertTitle>
+            {summaryFacts.length} review issue{summaryFacts.length === 1 ? "" : "s"}{" "}
+            {summaryFacts.length === 1 ? "requires" : "require"} attention
+          </AlertTitle>
+          <AlertDescription>
+            <ul className="apply-review-audit-summary-list">
+              {summaryFacts.map(({ category, fact, message }) => (
+                <li key={`${category}:${fact.code}:${fact.detail ?? ""}`}>
+                  <strong data-typography="strong-body">{category}:</strong> {message}
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {technicalFacts.length ? (
+        <details className="apply-review-technical-details">
+          <summary data-typography="control">Technical details ({technicalFacts.length})</summary>
+          <dl>
+            {technicalFacts.map(({ category, fact, message }) => (
+              <div key={`${category}:${fact.code}:${fact.detail ?? ""}`}>
+                <dt data-typography="label">{category}</dt>
+                <dd data-typography="body">{message}</dd>
+              </div>
             ))}
-          </dd>
-        </div>
-      ))}
-    </dl>
+          </dl>
+        </details>
+      ) : null}
+    </section>
   );
-}
-
-function factTone(fact: ApplyAuditFact): "muted" | "info" | "ok" | "warn" {
-  if (fact.severity === "unknown") {
-    return "muted";
-  }
-  if (fact.severity === "success") {
-    return "ok";
-  }
-  if (fact.severity === "info") {
-    return "info";
-  }
-  return "warn";
 }
 
 function ApplyReviewQueue({
@@ -462,7 +507,7 @@ function ApplyReviewQueue({
       <Card className="apply-review-queue-card" size="sm">
         <CardHeader className="apply-review-queue-head border-b">
           <CardTitle>
-            <h2>Review queue</h2>
+            <h2 data-typography="component-title">Review queue</h2>
           </CardTitle>
           <CardDescription>Select the next application decision.</CardDescription>
           <CardAction className="apply-review-queue-count">
@@ -473,9 +518,10 @@ function ApplyReviewQueue({
           {items.map((item) => {
             const status = materialStatus(item);
             return (
-              <button
+              <Button
                 key={item.jobKey}
                 type="button"
+                variant="ghost"
                 className={`apply-review-queue-item${item.jobKey === selected.jobKey ? " selected" : ""}`}
                 aria-pressed={item.jobKey === selected.jobKey}
                 onClick={() => onSelect(item.jobKey)}
@@ -483,6 +529,7 @@ function ApplyReviewQueue({
                 <span className="apply-review-queue-title">
                   <span
                     className="apply-review-queue-fit"
+                    data-typography="strong-body"
                     data-score-tone={fitTone(item.fitScore)}
                     aria-label={
                       item.fitScore === null
@@ -492,13 +539,13 @@ function ApplyReviewQueue({
                   >
                     {item.fitScore ?? "–"}
                   </span>
-                  <b>{item.title}</b>
+                  <b data-typography="strong-body">{item.title}</b>
                 </span>
-                <span className="meta">
+                <span className="meta" data-typography="metadata">
                   {item.company} · {item.source}
                 </span>
                 <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
-              </button>
+              </Button>
             );
           })}
         </CardContent>
@@ -681,7 +728,13 @@ function TextPreview({
   return (
     <section className="apply-review-preview-block">
       <h3>{title}</h3>
-      {text ? <div className="apply-review-document preformatted">{text}</div> : <Empty title={emptyTitle} />}
+      {text ? (
+        <div className="apply-review-document preformatted" data-typography="body">
+          {text}
+        </div>
+      ) : (
+        <Empty title={emptyTitle} />
+      )}
     </section>
   );
 }
@@ -708,7 +761,9 @@ function EmailApplicationPreview({ item }: { readonly item: ApplyReviewQueueItem
           <dd>{preview.attachmentName}</dd>
         </div>
       </dl>
-      <div className="apply-review-document preformatted">{preview.body}</div>
+      <div className="apply-review-document preformatted" data-typography="body">
+        {preview.body}
+      </div>
     </section>
   );
 }
@@ -761,7 +816,7 @@ function AuditTagGroup({
   }
   return (
     <div className="apply-review-audit-tags">
-      <span>{label}</span>
+      <span data-typography="label">{label}</span>
       <span>
         {values.map((value) => (
           <StatusBadge tone={tone} key={`${label}:${value}`}>
@@ -1244,7 +1299,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   );
 
   return (
-    <main className="apply-review-selected">
+    <section className="apply-review-selected" aria-label={`Application decision for ${item.title}`}>
       <Card className="apply-review-decision-card">
         <CardHeader
           className="apply-review-selected-head border-b"
@@ -1253,7 +1308,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           <div className="apply-review-selected-context">
             <div className="apply-review-selected-identity">
               <CardTitle>
-                <h2>{item.title}</h2>
+                <h2 data-typography="section-title">{item.title}</h2>
               </CardTitle>
               <CardDescription>
                 {item.company} · discovered via {item.source}
@@ -1263,8 +1318,8 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           <CardAction className="apply-review-selected-card-action">
             <div className="apply-review-selected-summary" aria-label="Selected job status">
               <span className="apply-review-selected-score" data-score-tone={fitTone(item.fitScore)}>
-                <b>{item.fitScore ?? "–"}</b>
-                <span>fit</span>
+                <b data-typography="metric">{item.fitScore ?? "–"}</b>
+                <span data-typography="label">fit</span>
               </span>
               <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
               {reviewState ? <StatusBadge tone="muted">{reviewState}</StatusBadge> : null}
@@ -1321,9 +1376,16 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             aria-labelledby="apply-review-position-heading"
           >
             <CardHeader className="apply-review-pane-heading border-b">
-              <CardDescription className="eyebrow">Job Position</CardDescription>
+              <CardDescription className="eyebrow" data-typography="label">
+                Job position
+              </CardDescription>
               <CardTitle>
-                <h2 id="apply-review-position-heading">Requirements and original post</h2>
+                <h2
+                  data-typography="component-title"
+                  id="apply-review-position-heading"
+                >
+                  Requirements and original post
+                </h2>
               </CardTitle>
               <CardAction>
                 <CollapsibleTrigger
@@ -1374,9 +1436,16 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           aria-labelledby="apply-review-materials-heading"
         >
           <CardHeader className="apply-review-pane-heading border-b">
-            <CardDescription className="eyebrow">Application Materials</CardDescription>
+            <CardDescription className="eyebrow" data-typography="label">
+              Application materials
+            </CardDescription>
             <CardTitle>
-              <h2 id="apply-review-materials-heading">Tailored resume and cover</h2>
+              <h2
+                data-typography="component-title"
+                id="apply-review-materials-heading"
+              >
+                Tailored resume and cover
+              </h2>
             </CardTitle>
           </CardHeader>
           <CardContent className="apply-review-pane-scroll apply-review-materials-scroll">
@@ -1419,7 +1488,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           </CardContent>
         </Card>
       </section>
-    </main>
+    </section>
   );
 }
 

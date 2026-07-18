@@ -173,6 +173,93 @@ test.beforeEach(async ({ page }) => {
   await page.goto(STATIC_HOST);
 });
 
+scenarioTest("pipeline demo capability actions stay contained at 320 CSS pixels", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto("/pipelines");
+
+  const alert = page
+    .getByRole("alert")
+    .filter({ hasText: "Live pipeline controls require the local app" });
+  const title = alert.getByText("Live pipeline controls require the local app");
+  const description = alert.locator('[data-slot="alert-description"]');
+  const actions = alert.locator('[data-slot="alert-action"]');
+  const actionLinks = actions.getByRole("link");
+
+  await expect(alert).toBeVisible();
+  await expect(title).toBeVisible();
+  await expect(description).toBeVisible();
+  await expect(actions).toBeVisible();
+  await expect(actionLinks).toHaveCount(2);
+
+  const layout = await alert.evaluate((element) => {
+    const rect = (target: Element) => {
+      const box = target.getBoundingClientRect();
+      return {
+        bottom: box.bottom,
+        left: box.left,
+        right: box.right,
+        top: box.top,
+      };
+    };
+    const title = element.querySelector('[data-slot="alert-title"]');
+    const description = element.querySelector('[data-slot="alert-description"]');
+    const actions = element.querySelector('[data-slot="alert-action"]');
+    if (!title || !description || !actions) {
+      throw new Error("Expected pipeline capability alert structure.");
+    }
+    const alert = rect(element);
+    return {
+      actions: [...actions.querySelectorAll("a")].map(rect),
+      container: rect(actions),
+      description: rect(description),
+      scrollWidth: document.documentElement.scrollWidth,
+      title: rect(title),
+      viewportWidth: document.documentElement.clientWidth,
+      alert,
+    };
+  });
+  const contained = (box: typeof layout.title) =>
+    box.left >= layout.alert.left - 1 &&
+    box.right <= layout.alert.right + 1 &&
+    box.top >= layout.alert.top - 1 &&
+    box.bottom <= layout.alert.bottom + 1;
+
+  expect(contained(layout.title), "capability alert title should be contained").toBe(true);
+  expect(
+    contained(layout.description),
+    "capability alert description should be contained",
+  ).toBe(true);
+  expect(
+    contained(layout.container),
+    "capability action group should be contained",
+  ).toBe(true);
+  expect(
+    layout.actions.every(contained),
+    "each capability action should be contained",
+  ).toBe(true);
+  expect(
+    layout.description.top,
+    "capability alert description should follow the title",
+  ).toBeGreaterThanOrEqual(layout.title.bottom - 1);
+  expect(
+    layout.container.top,
+    "capability actions should follow the description in normal flow",
+  ).toBeGreaterThanOrEqual(layout.description.bottom - 1);
+  expect(
+    layout.actions[0]!.right <= layout.actions[1]!.left + 1 ||
+      layout.actions[0]!.bottom <= layout.actions[1]!.top + 1 ||
+      layout.actions[1]!.right <= layout.actions[0]!.left + 1 ||
+      layout.actions[1]!.bottom <= layout.actions[0]!.top + 1,
+    "capability actions should not overlap",
+  ).toBe(true);
+  expect(
+    layout.scrollWidth,
+    "pipeline capability alert should not create horizontal overflow",
+  ).toBeLessThanOrEqual(layout.viewportWidth + 1);
+});
+
 test("consent grant precedes IndexedDB, health, telemetry, and populated demo entry", async ({
   page,
   context,
@@ -377,7 +464,7 @@ scenarioTest(
 
     acceptNextConfirmation(page);
     await page
-      .getByRole("button", { name: "run current stage", exact: true })
+      .getByRole("button", { name: "Run current stage", exact: true })
       .click();
 
     await expectJobState(second, "Systems delivery director", "queued", 1_000);
@@ -411,7 +498,7 @@ scenarioTest(
 
     acceptNextConfirmation(page);
     await drawer
-      .getByRole("button", { name: "re-tailor current policy", exact: true })
+      .getByRole("button", { name: "Re-tailor current policy", exact: true })
       .click();
     await expect(drawer.getByText("failed", { exact: true })).toBeVisible({
       timeout: 3_000,
@@ -421,7 +508,7 @@ scenarioTest(
       0,
     );
 
-    await drawer.getByRole("button", { name: "retry", exact: true }).click();
+    await drawer.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(drawer.getByText("succeeded", { exact: true })).toBeVisible({
       timeout: 3_000,
     });
@@ -485,7 +572,7 @@ scenarioTest(
     await expectReceiptCount(second, initialCount);
 
     await drawer
-      .getByRole("button", { name: "rehearse application", exact: true })
+      .getByRole("button", { name: "Rehearse application", exact: true })
       .click();
     await expectReceiptCount(page, initialCount + 1);
     const applyReceipt = await latestReceipt(page);
@@ -495,7 +582,7 @@ scenarioTest(
     );
 
     await drawer
-      .getByRole("button", { name: "record simulated applied", exact: true })
+      .getByRole("button", { name: "Record simulated application", exact: true })
       .click();
     await expectReceiptCount(page, initialCount + 2);
     const markAppliedReceipt = await latestReceipt(page);
@@ -531,7 +618,7 @@ scenarioTest(
 
     const popupPromise = context.waitForEvent("page");
     await drawer
-      .getByRole("button", { name: "preview in browser", exact: true })
+      .getByRole("button", { name: "Preview in browser", exact: true })
       .click();
     const popup = await popupPromise;
     await expect
@@ -823,8 +910,13 @@ scenarioTest("eventless discovery and settings writes resync across tabs and sur
   await expect(page.getByLabel("Results per board")).toHaveValue("12");
   await expect(second.getByLabel("Results per board")).toHaveValue("12");
   await page.getByLabel("Results per board").fill("23");
-  await page.getByRole("button", { name: "save runtime settings" }).click();
-  await expect(page.getByText("runtime settings saved")).toBeVisible();
+  const discoveryForm = page.locator("form").filter({
+    has: page.getByLabel("Results per board"),
+  });
+  await discoveryForm
+    .getByRole("button", { name: "Save changes", exact: true })
+    .click();
+  await expect(page.getByText("Runtime settings saved.")).toBeVisible();
   await expect(second.getByLabel("Results per board")).toHaveValue("23");
   await second.reload();
   await expect(second.getByLabel("Results per board")).toHaveValue("23");
@@ -836,7 +928,7 @@ scenarioTest("eventless discovery and settings writes resync across tabs and sur
   const executionForm = page.locator("form").filter({
     has: page.getByLabel("Concurrent applications"),
   });
-  await executionForm.getByRole("button", { name: "save", exact: true }).click();
+  await executionForm.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.getByText("settings saved", { exact: true })).toBeVisible();
   await expect(second.getByLabel("Concurrent applications")).toHaveValue("3");
   await second.reload();

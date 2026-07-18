@@ -9,8 +9,10 @@
   padding: 24px;
   background: transparent;
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-body);
-  line-height: 1.5;
+  font-size: var(--jh-type-body-size);
+  font-weight: var(--jh-type-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-body-line-height);
   text-align: center;
 }
 
@@ -28,8 +30,10 @@
   background: var(--card);
   padding: 11px 13px;
   color: var(--foreground);
-  font-size: var(--jh-font-size-body-sm);
-  line-height: 1.5;
+  font-size: var(--jh-type-body-size);
+  font-weight: var(--jh-type-body-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-body-line-height);
   text-align: left;
 }
 

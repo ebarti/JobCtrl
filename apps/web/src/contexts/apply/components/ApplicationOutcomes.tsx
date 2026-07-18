@@ -16,6 +16,8 @@ import type { JobId } from "../../operations/types.js";
 import { formatDateTime } from "../../../shared/lib/formatters.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import {
   Select,
   SelectContent,
@@ -26,6 +28,7 @@ import {
 } from "../../../shared/ui/select.js";
 import { StatusDot } from "../../../shared/ui/status-dot.js";
 import type { StatusDotState } from "../../../shared/ui/status-tokens.js";
+import { Textarea } from "../../../shared/ui/textarea.js";
 import {
   useOutcomeSuggestionDecisionMutation,
   useRecordManualApplicationOutcomeMutation,
@@ -47,6 +50,11 @@ interface SuggestionCorrectionFormValues {
   readonly occurredAt: string;
   readonly note: string;
   readonly reason: string;
+}
+
+interface FeedbackMessage {
+  readonly message: string;
+  readonly role: "alert" | "status";
 }
 
 const OUTCOME_LABELS: Record<ApplicationOutcomeKind, string> = {
@@ -168,7 +176,9 @@ export interface ManualOutcomeFormProps {
 
 export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
   const recordOutcome = useRecordManualApplicationOutcomeMutation();
-  const [statusMessage, setStatusMessage] = useState("");
+  const [statusMessage, setStatusMessage] = useState<FeedbackMessage | null>(
+    null,
+  );
   const form = useForm({
     defaultValues: {
       kind: "applied_confirmation" as ApplicationOutcomeKind,
@@ -186,21 +196,28 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
       },
     },
     onSubmit: async ({ value, formApi }) => {
-      setStatusMessage("");
+      setStatusMessage(null);
       const result = ManualApplicationOutcomeRequestSchema.safeParse(
         manualOutcomePayload(value),
       );
       if (!result.success) {
-        setStatusMessage(result.error.issues[0]?.message ?? "Invalid outcome");
+        setStatusMessage({
+          message: result.error.issues[0]?.message ?? "Invalid outcome",
+          role: "alert",
+        });
         return;
       }
-      await recordOutcome.mutateAsync({ jobId, body: result.data });
+      try {
+        await recordOutcome.mutateAsync({ jobId, body: result.data });
+      } catch {
+        return;
+      }
       formApi.reset({
         kind: "applied_confirmation",
         occurredAt: "",
         note: "",
       });
-      setStatusMessage("Outcome recorded");
+      setStatusMessage({ message: "Outcome recorded", role: "status" });
     },
   });
 
@@ -215,8 +232,8 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
     >
       <form.Field name="kind">
         {(field) => (
-          <label className="field">
-            <span>Outcome</span>
+          <Field className="field">
+            <FieldLabel htmlFor="manual-outcome-kind">Outcome</FieldLabel>
             <Select
               items={APPLICATION_OUTCOME_KINDS.map((kind) => ({
                 label: outcomeLabel(kind),
@@ -229,6 +246,7 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
               }}
             >
               <SelectTrigger
+                id="manual-outcome-kind"
                 aria-label="Outcome"
                 className="w-full"
                 onBlur={field.handleBlur}
@@ -245,39 +263,51 @@ export function ManualOutcomeForm({ jobId }: ManualOutcomeFormProps) {
                 </SelectGroup>
               </SelectContent>
             </Select>
-          </label>
+          </Field>
         )}
       </form.Field>
       <form.Field name="occurredAt">
         {(field) => (
-          <label className="field">
-            <span>Occurred at</span>
-            <input
+          <Field className="field">
+            <FieldLabel htmlFor="manual-outcome-occurred-at">
+              Occurred at
+            </FieldLabel>
+            <Input
+              id="manual-outcome-occurred-at"
               type="datetime-local"
               value={field.state.value}
               onBlur={field.handleBlur}
               onChange={(event) => field.handleChange(event.target.value)}
             />
-          </label>
+          </Field>
         )}
       </form.Field>
       <form.Field name="note">
         {(field) => (
-          <label className="field wide">
-            <span>Local note</span>
-            <textarea
+          <Field className="field wide">
+            <FieldLabel htmlFor="manual-outcome-note">Local note</FieldLabel>
+            <Textarea
+              id="manual-outcome-note"
               value={field.state.value}
               onBlur={field.handleBlur}
               onChange={(event) => field.handleChange(event.target.value)}
             />
-          </label>
+          </Field>
         )}
       </form.Field>
       {recordOutcome.isError ? (
-        <div className="danger">Outcome save failed</div>
+        <div aria-live="assertive" className="danger" role="alert">
+          Outcome save failed
+        </div>
       ) : null}
       {statusMessage ? (
-        <div className="status-line">{statusMessage}</div>
+        <div
+          aria-live={statusMessage.role === "alert" ? "assertive" : "polite"}
+          className="status-line"
+          role={statusMessage.role}
+        >
+          {statusMessage.message}
+        </div>
       ) : null}
       <form.Subscribe
         selector={(state) => ({
@@ -346,7 +376,9 @@ export function InterviewReflectionForm({
   prepGeneration,
 }: InterviewReflectionFormProps) {
   const recordOutcome = useRecordManualApplicationOutcomeMutation();
-  const [statusMessage, setStatusMessage] = useState("");
+  const [statusMessage, setStatusMessage] = useState<FeedbackMessage | null>(
+    null,
+  );
   const form = useForm({
     defaultValues: {
       occurredAt: "",
@@ -363,22 +395,27 @@ export function InterviewReflectionForm({
       },
     },
     onSubmit: async ({ value, formApi }) => {
-      setStatusMessage("");
+      setStatusMessage(null);
       const result = ManualApplicationOutcomeRequestSchema.safeParse(
         interviewReflectionPayload(value, prepGeneration),
       );
       if (!result.success) {
-        setStatusMessage(
-          result.error.issues[0]?.message ?? "Invalid reflection",
-        );
+        setStatusMessage({
+          message: result.error.issues[0]?.message ?? "Invalid reflection",
+          role: "alert",
+        });
         return;
       }
-      await recordOutcome.mutateAsync({ jobId, body: result.data });
+      try {
+        await recordOutcome.mutateAsync({ jobId, body: result.data });
+      } catch {
+        return;
+      }
       formApi.reset({
         occurredAt: "",
         note: "",
       });
-      setStatusMessage("Reflection recorded");
+      setStatusMessage({ message: "Reflection recorded", role: "status" });
     },
   });
 
@@ -391,6 +428,7 @@ export function InterviewReflectionForm({
         void form.handleSubmit();
       }}
     >
+      {/* Native hidden controls preserve the named reflection metadata. */}
       <input name="kind" readOnly type="hidden" value="interview" />
       <input
         name="interviewPrepGeneration"
@@ -400,36 +438,50 @@ export function InterviewReflectionForm({
       />
       <form.Field name="occurredAt">
         {(field) => (
-          <label className="field">
-            <span>Interview date</span>
-            <input
+          <Field className="field">
+            <FieldLabel htmlFor="interview-reflection-occurred-at">
+              Interview date
+            </FieldLabel>
+            <Input
+              id="interview-reflection-occurred-at"
               name="occurredAt"
               type="datetime-local"
               value={field.state.value}
               onBlur={field.handleBlur}
               onChange={(event) => field.handleChange(event.target.value)}
             />
-          </label>
+          </Field>
         )}
       </form.Field>
       <form.Field name="note">
         {(field) => (
-          <label className="field wide">
-            <span>Reflection note</span>
-            <textarea
+          <Field className="field wide">
+            <FieldLabel htmlFor="interview-reflection-note">
+              Reflection note
+            </FieldLabel>
+            <Textarea
+              id="interview-reflection-note"
               name="note"
               value={field.state.value}
               onBlur={field.handleBlur}
               onChange={(event) => field.handleChange(event.target.value)}
             />
-          </label>
+          </Field>
         )}
       </form.Field>
       {recordOutcome.isError ? (
-        <div className="danger">Reflection save failed</div>
+        <div aria-live="assertive" className="danger" role="alert">
+          Reflection save failed
+        </div>
       ) : null}
       {statusMessage ? (
-        <div className="status-line">{statusMessage}</div>
+        <div
+          aria-live={statusMessage.role === "alert" ? "assertive" : "polite"}
+          className="status-line"
+          role={statusMessage.role}
+        >
+          {statusMessage.message}
+        </div>
       ) : null}
       <form.Subscribe
         selector={(state) => ({
@@ -522,7 +574,9 @@ function OutcomeSuggestionCard({
   readonly suggestion: OutcomeSuggestion;
 }) {
   const decideSuggestion = useOutcomeSuggestionDecisionMutation();
-  const [statusMessage, setStatusMessage] = useState("");
+  const [statusMessage, setStatusMessage] = useState<FeedbackMessage | null>(
+    null,
+  );
   const suggestionTitleId = `outcome-suggestion-${suggestion.suggestionId}-title`;
   const suggestionContext = `suggestion ${suggestion.suggestionId} (${outcomeLabel(
     suggestion.suggestedKind,
@@ -545,27 +599,32 @@ function OutcomeSuggestionCard({
       },
     },
     onSubmit: async ({ value }) => {
-      setStatusMessage("");
+      setStatusMessage(null);
       const result = OutcomeSuggestionDecisionRequestSchema.safeParse(
         suggestionPayload(value),
       );
       if (!result.success) {
-        setStatusMessage(
-          result.error.issues[0]?.message ?? "Invalid correction",
-        );
+        setStatusMessage({
+          message: result.error.issues[0]?.message ?? "Invalid correction",
+          role: "alert",
+        });
         return;
       }
-      await decideSuggestion.mutateAsync({
-        suggestionId: suggestion.suggestionId,
-        jobId: suggestion.jobKey,
-        body: result.data,
-      });
-      setStatusMessage("Suggestion corrected");
+      try {
+        await decideSuggestion.mutateAsync({
+          suggestionId: suggestion.suggestionId,
+          jobId: suggestion.jobKey,
+          body: result.data,
+        });
+      } catch {
+        return;
+      }
+      setStatusMessage({ message: "Suggestion corrected", role: "status" });
     },
   });
 
   const decide = (body: OutcomeSuggestionDecisionRequest) => {
-    setStatusMessage("");
+    setStatusMessage(null);
     decideSuggestion.mutate(
       {
         suggestionId: suggestion.suggestionId,
@@ -574,11 +633,13 @@ function OutcomeSuggestionCard({
       },
       {
         onSuccess: () => {
-          setStatusMessage(
-            body.decision === "ignore"
-              ? "Suggestion ignored"
-              : "Suggestion accepted",
-          );
+          setStatusMessage({
+            message:
+              body.decision === "ignore"
+                ? "Suggestion ignored"
+                : "Suggestion accepted",
+            role: "status",
+          });
         },
       },
     );
@@ -640,8 +701,12 @@ function OutcomeSuggestionCard({
           <legend>Correct {suggestionContext}</legend>
           <form.Field name="outcomeKind">
             {(field) => (
-              <label className="field">
-                <span>Correct to</span>
+              <Field className="field">
+                <FieldLabel
+                  htmlFor={`suggestion-${suggestion.suggestionId}-outcome-kind`}
+                >
+                  Correct to
+                </FieldLabel>
                 <Select
                   items={APPLICATION_OUTCOME_KINDS.map((kind) => ({
                     label: outcomeLabel(kind),
@@ -654,6 +719,7 @@ function OutcomeSuggestionCard({
                   }}
                 >
                   <SelectTrigger
+                    id={`suggestion-${suggestion.suggestionId}-outcome-kind`}
                     aria-label="Correct to"
                     className="w-full"
                     onBlur={field.handleBlur}
@@ -670,51 +736,76 @@ function OutcomeSuggestionCard({
                     </SelectGroup>
                   </SelectContent>
                 </Select>
-              </label>
+              </Field>
             )}
           </form.Field>
           <form.Field name="occurredAt">
             {(field) => (
-              <label className="field">
-                <span>Occurred at</span>
-                <input
+              <Field className="field">
+                <FieldLabel
+                  htmlFor={`suggestion-${suggestion.suggestionId}-occurred-at`}
+                >
+                  Occurred at
+                </FieldLabel>
+                <Input
+                  id={`suggestion-${suggestion.suggestionId}-occurred-at`}
                   type="datetime-local"
                   value={field.state.value}
                   onBlur={field.handleBlur}
                   onChange={(event) => field.handleChange(event.target.value)}
                 />
-              </label>
+              </Field>
             )}
           </form.Field>
           <form.Field name="reason">
             {(field) => (
-              <label className="field">
-                <span>Reason</span>
-                <input
+              <Field className="field">
+                <FieldLabel
+                  htmlFor={`suggestion-${suggestion.suggestionId}-reason`}
+                >
+                  Reason
+                </FieldLabel>
+                <Input
+                  id={`suggestion-${suggestion.suggestionId}-reason`}
                   value={field.state.value}
                   onBlur={field.handleBlur}
                   onChange={(event) => field.handleChange(event.target.value)}
                 />
-              </label>
+              </Field>
             )}
           </form.Field>
           <form.Field name="note">
             {(field) => (
-              <label className="field wide">
-                <span>Local note</span>
-                <textarea
+              <Field className="field wide">
+                <FieldLabel
+                  htmlFor={`suggestion-${suggestion.suggestionId}-note`}
+                >
+                  Local note
+                </FieldLabel>
+                <Textarea
+                  id={`suggestion-${suggestion.suggestionId}-note`}
                   value={field.state.value}
                   onBlur={field.handleBlur}
                   onChange={(event) => field.handleChange(event.target.value)}
                 />
-              </label>
+              </Field>
             )}
           </form.Field>
           {decideSuggestion.isError ? (
-            <div className="danger">Suggestion decision failed</div>
+            <div aria-live="assertive" className="danger" role="alert">
+              Suggestion decision failed
+            </div>
           ) : null}
           {statusMessage ? (
-            <div className="status-line">{statusMessage}</div>
+            <div
+              aria-live={
+                statusMessage.role === "alert" ? "assertive" : "polite"
+              }
+              className="status-line"
+              role={statusMessage.role}
+            >
+              {statusMessage.message}
+            </div>
           ) : null}
           <form.Subscribe
             selector={(state) => ({

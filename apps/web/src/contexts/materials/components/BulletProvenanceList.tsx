@@ -71,7 +71,11 @@ function TagList({
       <dd>
         {items.length ? (
           items.map((item) => (
-            <span className={`tag ${tone}`} key={item}>
+            <span
+              className={`tag ${tone}`}
+              data-typography="body"
+              key={item}
+            >
               {item}
             </span>
           ))
@@ -131,7 +135,7 @@ function EvidenceReferenceList({
       <dd>
         {references.length ? (
           references.map(({ id, label, reference }) => (
-            <span className="tag muted" key={id}>
+            <span className="tag muted" data-typography="body" key={id}>
               {reference && renderEvidenceReference
                 ? renderEvidenceReference(reference)
                 : label}
@@ -173,7 +177,11 @@ function RequirementReferenceList({
           const reference = resolveRequirementReference?.(requirementId);
           const label = reference?.trim();
           return (
-            <span className="tag muted" key={requirementId}>
+            <span
+              className="tag muted"
+              data-typography="body"
+              key={requirementId}
+            >
               {label ||
                 (resolveRequirementReference && reference === undefined
                   ? "Loading requirement details"

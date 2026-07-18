@@ -23,13 +23,13 @@ describe("demo action copy", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "rehearse application" }),
+      screen.getByRole("button", { name: "Rehearse application" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "record simulated applied" }),
+      screen.getByRole("button", { name: "Record simulated application" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "preview in browser" }),
+      screen.getByRole("button", { name: "Preview in browser" }),
     ).toBeInTheDocument();
   });
 });

@@ -2,6 +2,7 @@ import type { ContactSummary } from "@jobctrl/contracts";
 import { useState } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
+import { Button } from "../../../shared/ui/button.js";
 import { useContactDetailQuery } from "../hooks/useContactDetailQuery.js";
 import { useContactsListQuery } from "../hooks/useContactsListQuery.js";
 import { ContactCreateButton } from "./ContactCreateButton.js";
@@ -34,14 +35,15 @@ function JobContactCard({ contact }: { contact: ContactSummary }) {
         <ContactRoleBadge role={contact.role} />
         <span className="job-contact-name">{contact.displayName}</span>
         <ContactProvenanceSummary contact={contact} />
-        <button
+        <Button
           type="button"
-          className="tab"
+          size="sm"
+          variant="outline"
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
         >
-          {open ? "hide provenance" : "show provenance"}
-        </button>
+          {open ? "Hide provenance" : "Show provenance"}
+        </Button>
       </div>
       {open ? <JobContactProvenance contactId={contact.contactId} /> : null}
     </li>
@@ -57,7 +59,7 @@ export function JobContactsPanel({ jobId, employer }: JobContactsPanelProps) {
     <section className="section job-contacts-section" aria-label="Contacts">
       <div className="job-contacts-head">
         <h3>Contacts</h3>
-        <ContactCreateButton jobId={jobId} {...(employer ? { employer } : {})} label="add contact" />
+        <ContactCreateButton jobId={jobId} {...(employer ? { employer } : {})} label="Add contact" />
       </div>
       {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
       {contacts.length === 0 && !errorMessage ? (

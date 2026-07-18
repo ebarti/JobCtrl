@@ -50,7 +50,7 @@ describe("<WorkflowRunDrawer>", () => {
         level: 1,
         name: "JobPipelineWorkflow",
       }),
-    ).toBeInTheDocument();
+    ).toHaveAttribute("data-typography", "page-title");
     expect(
       within(workspace)
         .getByRole("link", { name: "Back to workflow runs" })

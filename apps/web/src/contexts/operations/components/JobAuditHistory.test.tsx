@@ -30,5 +30,10 @@ describe("<JobAuditHistory>", () => {
 
     expect(screen.getByText("No audit history recorded for this job.")).toBeInTheDocument();
   });
-});
 
+  it("maps actor attribution to the metadata typography role", () => {
+    render(<JobAuditHistory entries={[{ ...auditEntry("info"), actor: "system" }]} />);
+
+    expect(screen.getByText("Actor: system")).toHaveAttribute("data-typography", "metadata");
+  });
+});

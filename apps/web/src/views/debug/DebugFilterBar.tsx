@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 
 import type { DebugSearch } from "../../routes/-debug.search.js";
+import { Button } from "../../shared/ui/button.js";
+import { Input } from "../../shared/ui/input.js";
 import {
   Select,
   SelectContent,
@@ -37,7 +39,7 @@ export function DebugFilterBar({ search, onChange }: DebugFilterBarProps) {
         onChange({ q: query.trim(), page: 1 });
       }}
     >
-      <input
+      <Input
         aria-label="Activity search"
         placeholder="Filter events, jobs, companies..."
         value={query}
@@ -61,7 +63,7 @@ export function DebugFilterBar({ search, onChange }: DebugFilterBarProps) {
           </SelectGroup>
         </SelectContent>
       </Select>
-      <input
+      <Input
         aria-label="Activity stage"
         placeholder="stage"
         value={search.stage}
@@ -69,7 +71,7 @@ export function DebugFilterBar({ search, onChange }: DebugFilterBarProps) {
           onChange({ stage: event.target.value.trim(), page: 1 })
         }
       />
-      <input
+      <Input
         aria-label="Activity event type"
         placeholder="event type"
         value={search.eventType}
@@ -77,17 +79,18 @@ export function DebugFilterBar({ search, onChange }: DebugFilterBarProps) {
           onChange({ eventType: event.target.value.trim(), page: 1 })
         }
       />
-      <button type="submit">search</button>
+      <Button type="submit">Search</Button>
       {search.q || search.level || search.stage || search.eventType ? (
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={() => {
             setQuery("");
             onChange({ q: "", level: "", stage: "", eventType: "", page: 1 });
           }}
         >
-          clear
-        </button>
+          Clear
+        </Button>
       ) : null}
     </form>
   );

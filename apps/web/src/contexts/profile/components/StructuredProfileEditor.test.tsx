@@ -355,7 +355,7 @@ describe("<StructuredProfileEditor>", () => {
     render(<StatefulEditor />);
 
     expect(screen.getByRole("heading", { name: "Experience entries" })).toBeInTheDocument();
-    expect(screen.getAllByText("must appear in final resume").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Must appear in final resume").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Required").length).toBeGreaterThan(0);
   });
 
@@ -364,7 +364,10 @@ describe("<StructuredProfileEditor>", () => {
 
     expect(screen.queryByLabelText("Bullet style")).not.toBeInTheDocument();
     const bulletStandards = screen.getByRole("group", { name: "Bullet standards" });
-    expect(within(bulletStandards).getByRole("link", { name: "Guide" })).toBeInTheDocument();
+    expect(within(bulletStandards).getByRole("link", { name: "Guide" })).toHaveAttribute(
+      "data-typography",
+      "control",
+    );
     for (const name of ["Impact", "Technical depth", "Leadership"]) {
       const standard = within(bulletStandards).getByRole("checkbox", { name });
       expect(standard).toBeChecked();

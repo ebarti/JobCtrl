@@ -18,6 +18,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../../../shared/ui/dialog.js";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import { useUpdateCredentialsBatchMutation } from "../hooks/useUpdateCredentialsBatchMutation.js";
 import {
   buildClaudeCredentialBatch,
@@ -564,15 +573,15 @@ function ProviderChoices<T extends string>({
   disabledValues?: readonly T[];
 }) {
   return (
-    <fieldset className="provider-choice-fieldset">
-      <legend>{legend}</legend>
-      <div className="provider-choice-list">
+    <FieldSet className="provider-choice-fieldset">
+      <FieldLegend>{legend}</FieldLegend>
+      <FieldGroup className="provider-choice-list">
         {options.map((option) => {
           const id = `${name}-${option.value}`;
           const optionDisabled = disabled || disabledValues.includes(option.value);
           return (
-            <label
-              className="provider-choice"
+            <FieldLabel
+              className="provider-choice w-full"
               htmlFor={id}
               key={option.value}
               onClick={(event) => {
@@ -583,7 +592,7 @@ function ProviderChoices<T extends string>({
                 control.click();
               }}
             >
-              <input
+              <Input
                 checked={value === option.value}
                 id={id}
                 name={name}
@@ -593,14 +602,14 @@ function ProviderChoices<T extends string>({
                 onChange={() => onChange(option.value)}
               />
               <span>
-                <b>{option.label}</b>
-                <small>{option.description}</small>
+                <strong data-typography="strong-body">{option.label}</strong>
+                <span data-typography="metadata">{option.description}</span>
               </span>
-            </label>
+            </FieldLabel>
           );
         })}
-      </div>
-    </fieldset>
+      </FieldGroup>
+    </FieldSet>
   );
 }
 
@@ -628,10 +637,10 @@ function SecretField({
   const [revealed, setRevealed] = useState(false);
   const helpId = `${id}-help`;
   return (
-    <div className="field provider-field">
-      <label htmlFor={id}>{label}{required ? " (required)" : ""}</label>
+    <Field className="field provider-field">
+      <FieldLabel htmlFor={id}>{label}{required ? " (required)" : ""}</FieldLabel>
       <div className="secret-input-row">
-        <input
+        <Input
           aria-describedby={helpId}
           autoComplete="off"
           id={id}
@@ -643,18 +652,18 @@ function SecretField({
           onBlur={onBlur}
           onChange={(event) => onChange(event.target.value)}
         />
-        <button
+        <Button
           aria-pressed={revealed}
-          className="tab secret-reveal"
+          className="secret-reveal"
           type="button"
           disabled={disabled}
           onClick={() => setRevealed((current) => !current)}
         >
           {revealed ? "Hide" : "Show"}
-        </button>
+        </Button>
       </div>
-      <small className="field-hint" id={helpId}>{help}</small>
-    </div>
+      <FieldDescription className="field-hint" id={helpId}>{help}</FieldDescription>
+    </Field>
   );
 }
 
@@ -678,9 +687,9 @@ function TextField({
 }) {
   const helpId = help ? `${id}-help` : undefined;
   return (
-    <div className="field provider-field">
-      <label htmlFor={id}>{label}{required ? " (required)" : ""}</label>
-      <input
+    <Field className="field provider-field">
+      <FieldLabel htmlFor={id}>{label}{required ? " (required)" : ""}</FieldLabel>
+      <Input
         aria-describedby={helpId}
         id={id}
         name={field.name}
@@ -690,8 +699,8 @@ function TextField({
         onBlur={field.handleBlur}
         onChange={(event) => field.handleChange(event.target.value)}
       />
-      {help ? <small className="field-hint" id={helpId}>{help}</small> : null}
-    </div>
+      {help ? <FieldDescription className="field-hint" id={helpId}>{help}</FieldDescription> : null}
+    </Field>
   );
 }
 
@@ -719,9 +728,9 @@ function ProviderFormActions({
 }) {
   return (
     <div className="provider-form-footer">
-      <button className="tab on" disabled={pending || readOnly} type="submit">
+      <Button disabled={pending || readOnly} type="submit">
         {pending ? "Saving…" : saveLabel}
-      </button>
+      </Button>
       {removeAction}
       <div aria-live="polite" className="provider-form-message" role="status">
         {message}

@@ -11,6 +11,25 @@ import { RecentActivityCard } from "./RecentActivityCard.js";
 import { WorkStatusCard } from "./WorkStatusCard.js";
 
 describe("dashboard operations surfaces a11y", () => {
+  it("assigns named typography roles to work-status labels, values, and explanations", () => {
+    const view = renderWithProviders(
+      <WorkStatusCard summary={sampleDashboardSummary} />,
+      { withRouter: true },
+    );
+
+    for (const metric of view.container.querySelectorAll(".work-status-metric")) {
+      expect(metric.querySelector("dt")).toHaveAttribute("data-typography", "label");
+      expect(metric.querySelector(".work-status-metric-value")).toHaveAttribute(
+        "data-typography",
+        "metric",
+      );
+      expect(metric.querySelector(".work-status-metric-description")).toHaveAttribute(
+        "data-typography",
+        "body",
+      );
+    }
+  });
+
   it("has no axe violations with active, stuck, and recent work", async () => {
     const view = renderWithProviders(
       <main>

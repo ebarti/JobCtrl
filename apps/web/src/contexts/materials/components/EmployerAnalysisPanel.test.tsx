@@ -66,7 +66,10 @@ describe("<EmployerAnalysisPanel>", () => {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
     expect(within(matched).getByText("Requirement fit")).toBeInTheDocument();
-    expect(within(matched).getByText("matched")).toBeInTheDocument();
+    expect(within(matched).getByText("matched")).toHaveAttribute(
+      "data-status-tone",
+      "ok",
+    );
     expect(within(matched).getByText("Score contribution")).toBeInTheDocument();
     expect(
       within(matched).getByText("1.125 / 1.125 points"),
@@ -89,7 +92,10 @@ describe("<EmployerAnalysisPanel>", () => {
       within(matched).getByRole("button", { name: "Technical details" }),
     );
 
-    expect(within(matched).getByText("ev-platform")).toBeInTheDocument();
+    expect(within(matched).getByText("ev-platform")).toHaveAttribute(
+      "data-typography",
+      "code",
+    );
 
     await user.click(
       within(matched).getByRole("button", { name: "Additional audit details" }),
@@ -103,7 +109,10 @@ describe("<EmployerAnalysisPanel>", () => {
     const transferable = screen.getByRole("article", {
       name: "Requirement: Experience with Kubernetes-based developer platforms",
     });
-    expect(within(transferable).getByText("transferable")).toBeInTheDocument();
+    expect(within(transferable).getByText("transferable")).toHaveAttribute(
+      "data-status-tone",
+      "info",
+    );
     expect(
       within(transferable).getByText("Bridge Gap · priority 55%"),
     ).toBeInTheDocument();
@@ -361,7 +370,10 @@ describe("<EmployerAnalysisPanel>", () => {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
     expect(within(matched).getByText("Requirement fit")).toBeInTheDocument();
-    expect(within(matched).getByText("not assessed")).toBeInTheDocument();
+    expect(within(matched).getByText("not assessed")).toHaveAttribute(
+      "data-status-tone",
+      "muted",
+    );
     expect(
       within(matched).getByText(
         "Re-score this job with the current policy to produce requirement-level candidate fit.",
@@ -372,7 +384,57 @@ describe("<EmployerAnalysisPanel>", () => {
       name: "Requirement: Experience with Kubernetes-based developer platforms",
     });
     expect(within(missing).getByText("Requirement fit")).toBeInTheDocument();
-    expect(within(missing).getByText("not assessed")).toBeInTheDocument();
+    expect(within(missing).getByText("not assessed")).toHaveAttribute(
+      "data-status-tone",
+      "muted",
+    );
+  });
+
+  it("uses warning status badges for missing and blocked requirement fit", () => {
+    const directAssessment = populatedRequirementFitReport.assessments[0]!;
+    const transferableAssessment =
+      populatedRequirementFitReport.assessments[1]!;
+
+    render(
+      <EmployerAnalysisPanel
+        analysis={populatedEmployerAnalysis}
+        requirementFitReport={{
+          ...populatedRequirementFitReport,
+          assessments: [
+            {
+              ...directAssessment,
+              fit: {
+                kind: "missing",
+                reason: "No direct platform reliability evidence is recorded.",
+              },
+            },
+            {
+              ...transferableAssessment,
+              fit: {
+                kind: "blocked",
+                blocker: "This role requires direct platform ownership evidence.",
+              },
+            },
+          ],
+        }}
+      />,
+    );
+
+    const missing = screen.getByRole("article", {
+      name: "Requirement: Lead platform reliability programs across multiple teams",
+    });
+    expect(within(missing).getByText("missing")).toHaveAttribute(
+      "data-status-tone",
+      "warn",
+    );
+
+    const blocked = screen.getByRole("article", {
+      name: "Requirement: Experience with Kubernetes-based developer platforms",
+    });
+    expect(within(blocked).getByText("blocked")).toHaveAttribute(
+      "data-status-tone",
+      "warn",
+    );
   });
 
   it("renders reasoned keywords with evidence spans and flags orphans", () => {
@@ -405,14 +467,33 @@ describe("<EmployerAnalysisPanel>", () => {
       keywordView.getByRole("button", { name: "Technical details" }),
     );
 
-    expect(keywordView.getByText("req-1")).toBeInTheDocument();
+    expect(keywordView.getByText("req-1")).toHaveAttribute(
+      "data-typography",
+      "code",
+    );
   });
 
-  it("surfaces a degraded ensemble with the succeeded/attempted ratio and failure", () => {
+  it("keeps ensemble divergence neutral in technical details", async () => {
+    const user = userEvent.setup();
     render(<EmployerAnalysisPanel analysis={degradedEmployerAnalysis} />);
 
     expect(screen.getByText("degraded (1/2)")).toBeInTheDocument();
-    expect(screen.getByText("ensemble divergence")).toBeInTheDocument();
+    const flaggedRequirement = screen.getByRole("article", {
+      name: "Requirement: Lead platform reliability programs across multiple teams",
+    });
+    expect(
+      within(flaggedRequirement).queryByText("Ensemble divergence"),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(flaggedRequirement).getByRole("button", {
+        name: "Technical details",
+      }),
+    );
+
+    expect(
+      within(flaggedRequirement).getByText("Ensemble divergence"),
+    ).toHaveAttribute("data-status-tone", "muted");
     expect(screen.getByText("codex: timeout after 60s")).toBeInTheDocument();
   });
 

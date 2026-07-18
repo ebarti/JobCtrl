@@ -67,6 +67,8 @@ const HEADING_SELECT_ITEMS: Array<{ label: string; value: ResumeTemplateTheme["s
 const ALIGNMENT_SELECT_ITEMS: Array<{ label: string; value: ResumeTemplateTheme["alignment"] }> = [{ label: "Justified", value: "justified" }, { label: "Left", value: "left" }];
 const BULLET_SELECT_ITEMS: Array<{ label: string; value: ResumeTemplateTheme["bulletSpacing"] }> = [{ label: "Tight", value: "tight" }, { label: "Normal", value: "normal" }, { label: "Loose", value: "loose" }];
 
+// These values belong to the generated resume document, not application chrome.
+// The visual-role contract keeps this bounded output-fidelity exception explicit.
 const DENSITY_TOKENS: Record<
   ResumeTemplateTheme["density"],
   {

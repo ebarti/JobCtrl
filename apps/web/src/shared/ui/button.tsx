@@ -16,17 +16,18 @@ const buttonVariants = cva(
         warning:
           "bg-warning text-warning-foreground shadow-[0_1px_2px_rgb(0_0_0_/_0.1)] hover:bg-warning/90 focus-visible:ring-warning active:translate-y-px",
         destructive:
-          "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive disabled:bg-destructive/60 disabled:text-white disabled:opacity-100 active:translate-y-px",
+          "bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive active:translate-y-px",
         outline: "border-border bg-card text-foreground hover:bg-muted",
         secondary: "bg-secondary text-secondary-foreground hover:bg-accent",
         ghost: "text-muted-foreground hover:bg-muted hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
-        default: "jh-control-default h-9 px-3.5",
-        sm: "jh-control-sm h-8 px-3 text-sm",
-        lg: "jh-control-lg h-10 px-4",
-        icon: "jh-control-icon size-9",
+        default:
+          "jh-control-default h-9 px-3.5 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:pointer-events-none",
+        sm: "jh-control-sm h-8 px-3 text-sm [&>svg]:size-3.5 [&>svg]:shrink-0 [&>svg]:pointer-events-none",
+        lg: "jh-control-lg h-10 px-4 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:pointer-events-none",
+        icon: "jh-control-icon size-9 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:pointer-events-none",
       },
     },
     defaultVariants: {
@@ -48,6 +49,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     <ButtonPrimitive
       data-size={size ?? "default"}
       data-slot="button"
+      data-typography="control"
       className={cn(buttonVariants({ variant, size, className }))}
       ref={ref}
       {...props}

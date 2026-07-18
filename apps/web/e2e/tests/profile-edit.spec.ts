@@ -39,7 +39,7 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   await fullNameInput.click();
   await fullNameInput.fill("QA Candidate Updated");
 
-  const saveButton = page.getByRole("button", { name: /^save all$/i });
+  const saveButton = page.getByRole("button", { name: "Save changes" });
   await expect(saveButton).toBeEnabled({ timeout: 10_000 });
   await saveButton.click();
 
@@ -91,35 +91,45 @@ test("Credential notices keep a real, contained layout box at mobile width", asy
   for (const expected of [
     {
       scenario: "available" as const,
-      copy: "Provider settings saved here stay in macOS Keychain.",
+      copy: "Claude and Google values saved here stay on this Mac in Keychain.",
       display: "block",
-      guidance: true,
+      guidance: false,
+      privacy: true,
     },
     {
       scenario: "unsupported_platform" as const,
-      copy: "Guided secret storage is available only with macOS Keychain.",
+      copy: "Non-secret provider settings remain editable in config.json.",
       display: "block",
       guidance: true,
+      privacy: false,
     },
     {
       scenario: "inspection_failed" as const,
       copy: "JobCtrl could not safely inspect Keychain.",
       display: "block",
       guidance: false,
+      privacy: false,
     },
   ]) {
     scenario = expected.scenario;
     await page.goto(`/settings/credentials?qa=${expected.scenario}`);
 
+    if (expected.privacy) {
+      await page
+        .locator(".credential-privacy-disclosure .configuration-section__trigger")
+        .click();
+    }
     const notice = page
-      .locator(".credential-store-notice")
+      .locator(expected.privacy ? ".privacy-box-copy" : ".credential-store-notice")
       .filter({ hasText: expected.copy })
       .first();
     await expect(notice).toBeVisible({ timeout: 30_000 });
 
     const geometry = await notice.evaluate((element) => {
       const noticeBox = element.getBoundingClientRect();
-      const cardBox = element.closest(".card")?.getBoundingClientRect();
+      const containerBox = element
+        .closest(".credential-privacy-disclosure, .provider-setup-shell")
+        ?.getBoundingClientRect();
       const textRange = document.createRange();
       textRange.selectNodeContents(element);
       const textBoxes = [...textRange.getClientRects()];
@@ -140,10 +150,10 @@ test("Credential notices keep a real, contained layout box at mobile width", asy
         expectedInfoBackground,
         clientHeight: element.clientHeight,
         scrollHeight: element.scrollHeight,
-        cardContained: Boolean(
-          cardBox &&
-            noticeBox.left >= cardBox.left - 1 &&
-            noticeBox.right <= cardBox.right + 1,
+        containerContained: Boolean(
+          containerBox &&
+            noticeBox.left >= containerBox.left - 1 &&
+            noticeBox.right <= containerBox.right + 1,
         ),
         viewportContained:
           noticeBox.left >= -1 && noticeBox.right <= window.innerWidth + 1,
@@ -161,7 +171,7 @@ test("Credential notices keep a real, contained layout box at mobile width", asy
     expect(geometry.display).toBe(expected.display);
     expect(geometry.clientHeight).toBeGreaterThan(0);
     expect(geometry.scrollHeight).toBeLessThanOrEqual(geometry.clientHeight + 1);
-    expect(geometry.cardContained).toBe(true);
+    expect(geometry.containerContained).toBe(true);
     expect(geometry.viewportContained).toBe(true);
     expect(geometry.textContained).toBe(true);
     expect(geometry.pageOverflows).toBe(false);
@@ -188,6 +198,9 @@ test("Guided Claude and Google setup can be removed through confirmed provider b
     credentials: sampleCredentialsResponse.credentials.map((credential) => ({
       ...credential,
       configured: configuredKeys.has(credential.key),
+      effectiveSource: configuredKeys.has(credential.key)
+        ? ("keychain" as const)
+        : ("absent" as const),
     })),
   });
 
@@ -216,7 +229,13 @@ test("Guided Claude and Google setup can be removed through confirmed provider b
   await page.goto("/settings/credentials");
 
   for (const provider of ["Claude", "Google"] as const) {
-    await page.getByRole("button", { name: `Remove ${provider} setup` }).click();
+    const providerCard = page.locator(
+      `article[data-provider="${provider.toLowerCase()}"]`,
+    );
+    await providerCard.locator(".configuration-section__trigger").click();
+    await providerCard
+      .getByRole("button", { name: `Remove ${provider} setup` })
+      .click();
     const dialog = page.getByRole("dialog", {
       name: `Remove ${provider} provider setup?`,
     });
@@ -227,7 +246,9 @@ test("Guided Claude and Google setup can be removed through confirmed provider b
         new RegExp(`${provider} provider settings removed\\. Restart JobCtrl`, "i"),
       ),
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: `Remove ${provider} setup` })).toHaveCount(0);
+    await expect(
+      providerCard.getByRole("button", { name: `Remove ${provider} setup` }),
+    ).toHaveCount(0);
   }
 
   expect(submittedBatches).toEqual([
@@ -273,18 +294,23 @@ test("Model Selection requires a ready provider and saves one provider preferenc
   await page.goto("/settings/models");
 
   const google = page.locator('article[data-provider="google"]');
-  await google.getByRole("link", { name: "configure Google" }).click();
+  await google.locator(".configuration-section__trigger").click();
+  await google.getByRole("link", { name: "Configure Google" }).click();
   await expect(page).toHaveURL(/\/settings\/credentials$/);
 
   await page.goto("/settings/models");
   const claude = page.locator('article[data-provider="claude"]');
-  await claude.getByLabel("Preferred model").selectOption("opus");
-  await claude.getByRole("button", { name: "save model" }).click();
+  await claude.locator(".configuration-section__trigger").click();
+  await claude.getByRole("combobox", { name: "Preferred model" }).click();
+  await page.getByRole("option", { name: /Opus 4\.8/ }).click();
+  await claude.getByRole("button", { name: "Save model" }).click();
 
   await expect(claude.getByRole("status")).toContainText(
     "Claude preference saved for newly started work.",
   );
-  expect(submittedSettings).toEqual([{ preferredModels: { claude: "opus" } }]);
+  expect(submittedSettings).toEqual([
+    { preferredModels: { claude: "claude-opus-4-8" } },
+  ]);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBe(true);

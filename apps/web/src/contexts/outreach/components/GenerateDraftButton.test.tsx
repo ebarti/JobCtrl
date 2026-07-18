@@ -15,7 +15,7 @@ describe("<GenerateDraftButton>", () => {
 
     renderWithProviders(<GenerateDraftButton contactId="contact-1" />, { ports });
 
-    const button = screen.getByRole("button", { name: "generate draft" });
+    const button = screen.getByRole("button", { name: "Generate draft" });
     expect(button).toBeDisabled();
     expect(button).toHaveAccessibleDescription(
       /Draft generation is available in the local app.*does not create messages or use personal contact information/i,

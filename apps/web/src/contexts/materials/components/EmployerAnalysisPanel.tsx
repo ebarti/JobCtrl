@@ -11,6 +11,7 @@ import type { JSX } from "react";
 
 import { Badge } from "../../../shared/ui/badge.js";
 import { Button } from "../../../shared/ui/button.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import {
   Card,
   CardAction,
@@ -405,7 +406,10 @@ function ProfileEvidenceReferences({
         <ul className="m-0 flex list-none flex-col gap-1 p-0">
           {evidenceIds.map((evidenceId) => (
             <li key={evidenceId}>
-              <code className="break-all text-[13px] text-muted-foreground">
+              <code
+                className="break-all text-muted-foreground"
+                data-typography="code"
+              >
                 {evidenceId}
               </code>
             </li>
@@ -414,15 +418,6 @@ function ProfileEvidenceReferences({
       </AuditTechnicalDetails>
     </div>
   );
-}
-
-function fitBadgeVariant(
-  tone: RequirementAssessment["tone"],
-): "default" | "secondary" | "destructive" | "outline" {
-  if (tone === "ok") return "default";
-  if (tone === "info") return "secondary";
-  if (tone === "warn") return "destructive";
-  return "outline";
 }
 
 function RequirementFitMetric({
@@ -467,7 +462,7 @@ function RequirementAuditDetails({
         }
       >
         <span>Additional audit details</span>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs text-muted-foreground" data-typography="label">
           {rows.length} signal{rows.length === 1 ? "" : "s"}
         </span>
       </CollapsibleTrigger>
@@ -539,12 +534,14 @@ function RequirementItem({
             importance {weightPercent(requirement.weight)}
           </Badge>
           {flagged ? (
-            <Badge
-              title="The ensemble agreement marked this requirement as non-unanimous across model legs."
-              variant="destructive"
-            >
-              ensemble divergence
-            </Badge>
+            <AuditTechnicalDetails>
+              <StatusBadge
+                title="The ensemble agreement marked this requirement as non-unanimous across model legs."
+                tone="muted"
+              >
+                Ensemble divergence
+              </StatusBadge>
+            </AuditTechnicalDetails>
           ) : null}
         </div>
         <CardTitle>
@@ -554,7 +551,7 @@ function RequirementItem({
         </CardTitle>
         {requirement.evidence_span ? (
           <CardDescription>
-            <blockquote className="employer-analysis-evidence">
+            <blockquote className="employer-analysis-evidence" data-typography="body">
               {requirement.evidence_span}
             </blockquote>
           </CardDescription>
@@ -564,12 +561,12 @@ function RequirementItem({
           </CardDescription>
         )}
         <CardAction>
-          <Badge
+          <StatusBadge
             title={assessment.title}
-            variant={fitBadgeVariant(assessment.tone)}
+            tone={assessment.tone}
           >
             {assessment.label}
-          </Badge>
+          </StatusBadge>
         </CardAction>
       </CardHeader>
       <Separator />
@@ -639,7 +636,7 @@ function KeywordItem({
         ) : null}
       </header>
       {keyword.evidence_span ? (
-        <blockquote className="employer-analysis-evidence">
+        <blockquote className="employer-analysis-evidence" data-typography="body">
           {keyword.evidence_span}
         </blockquote>
       ) : (
@@ -657,7 +654,10 @@ function KeywordItem({
             {requirement?.text ?? "Requirement reference unavailable."}
           </span>
           <AuditTechnicalDetails>
-            <code className="break-all text-[13px] text-muted-foreground">
+            <code
+              className="break-all text-muted-foreground"
+              data-typography="code"
+            >
               {keyword.requirement_ref}
             </code>
           </AuditTechnicalDetails>

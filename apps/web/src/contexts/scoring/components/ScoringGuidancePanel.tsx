@@ -3,7 +3,10 @@ import { useForm } from "@tanstack/react-form";
 import { useEffect, useState } from "react";
 
 import { CardHeader } from "../../../shared/ui/card-header.js";
+import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import { Field, FieldDescription, FieldLabel } from "../../../shared/ui/field.js";
+import { Textarea } from "../../../shared/ui/textarea.js";
 import { useSettingsPolicyQuery } from "../../operations/hooks/useSettingsPolicyQueries.js";
 import { useUpdateScoringGuidanceMutation } from "../hooks/useUpdateScoringGuidanceMutation.js";
 
@@ -30,10 +33,10 @@ export function ScoringGuidancePanel() {
       <CardHeader title="Scoring guidance" />
       <form className="config-form" onSubmit={(event) => { event.preventDefault(); void form.handleSubmit(); }}>
         {status ? <div className="status-line" role="status">{status}</div> : null}
-        <form.Field name="scoreCriteria">{(field) => <div className="field"><label htmlFor="score-guidance">Scoring priorities</label><textarea id="score-guidance" name="scoreCriteria" maxLength={8000} aria-describedby="score-guidance-help" value={field.state.value} onChange={(event) => field.handleChange(event.target.value)} /><small id="score-guidance-help">What strong-fit jobs should demonstrate. Applies to new scoring work.</small></div>}</form.Field>
-        <form.Field name="targetCriteria">{(field) => <div className="field"><label htmlFor="target-guidance">Target role guidance</label><textarea id="target-guidance" name="targetCriteria" maxLength={8000} aria-describedby="target-guidance-help" value={field.state.value} onChange={(event) => field.handleChange(event.target.value)} /><small id="target-guidance-help">Additional role and company targeting guidance.</small></div>}</form.Field>
+        <form.Field name="scoreCriteria">{(field) => <Field className="field"><FieldLabel htmlFor="score-guidance">Scoring priorities</FieldLabel><Textarea id="score-guidance" name="scoreCriteria" maxLength={8000} aria-describedby="score-guidance-help" value={field.state.value} onChange={(event) => field.handleChange(event.target.value)} /><FieldDescription id="score-guidance-help">What strong-fit jobs should demonstrate. Applies to new scoring work.</FieldDescription></Field>}</form.Field>
+        <form.Field name="targetCriteria">{(field) => <Field className="field"><FieldLabel htmlFor="target-guidance">Target role guidance</FieldLabel><Textarea id="target-guidance" name="targetCriteria" maxLength={8000} aria-describedby="target-guidance-help" value={field.state.value} onChange={(event) => field.handleChange(event.target.value)} /><FieldDescription id="target-guidance-help">Additional role and company targeting guidance.</FieldDescription></Field>}</form.Field>
         <div className="form-actions">
-          <button className="tab on" type="submit" disabled={updateSettings.isPending}>{updateSettings.isPending ? "saving" : "save scoring guidance"}</button>
+          <Button type="submit" disabled={updateSettings.isPending}>{updateSettings.isPending ? "Saving" : "Save scoring guidance"}</Button>
         </div>
       </form>
     </section>

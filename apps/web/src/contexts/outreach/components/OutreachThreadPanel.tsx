@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type JSX } from "react";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { ReviseDraftForm } from "../forms/revise-draft-form.js";
 import { SendLogForm } from "../forms/send-log-form.js";
@@ -140,9 +141,9 @@ function OutreachThreadBody({
           <DraftBody bodyText={approved.bodyText} />
           <div className="outreach-draft-actions">
             <CopyDraftButton draft={approved} />
-            <button
+            <Button
               type="button"
-              className="tab"
+              variant="outline"
               aria-expanded={revisingApproved}
               disabled={revisionToggleDisabled("approved")}
               onClick={() => {
@@ -150,8 +151,8 @@ function OutreachThreadBody({
                 setRevisionTarget((value) => (value === "approved" ? null : "approved"));
               }}
             >
-              {revisingApproved ? "cancel revision" : "revise approved message"}
-            </button>
+              {revisingApproved ? "Cancel revision" : "Revise approved message"}
+            </Button>
           </div>
           {revisingApproved ? (
             <ReviseDraftForm
@@ -179,14 +180,14 @@ function OutreachThreadBody({
         <OutreachSendLogList thread={thread} />
         {approved ? (
           <div className="outreach-send-log-actions">
-            <button
+            <Button
               type="button"
-              className="tab"
+              variant="outline"
               aria-expanded={loggingSend}
               onClick={() => setLoggingSend((value) => !value)}
             >
-              {loggingSend ? "cancel" : "log a send"}
-            </button>
+              {loggingSend ? "Cancel" : "Log a send"}
+            </Button>
             {loggingSend ? (
               <SendLogForm
                 threadId={thread.threadId}
@@ -238,9 +239,9 @@ function OutreachThreadBody({
               onActionSettled={() => settleDecision("reject")}
               {...(jobId ? { jobId } : {})}
             />
-            <button
+            <Button
               type="button"
-              className="tab"
+              variant="outline"
               aria-expanded={revisingCandidate}
               disabled={revisionToggleDisabled("candidate")}
               onClick={() => {
@@ -248,8 +249,8 @@ function OutreachThreadBody({
                 setRevisionTarget((value) => (value === "candidate" ? null : "candidate"));
               }}
             >
-              {revisingCandidate ? "cancel revision" : "revise draft"}
-            </button>
+              {revisingCandidate ? "Cancel revision" : "Revise draft"}
+            </Button>
           </div>
           {revisingCandidate ? (
             <ReviseDraftForm

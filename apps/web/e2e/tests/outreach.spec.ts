@@ -453,16 +453,19 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
     .locator("table.jobs-data-grid-table tbody tr")
     .filter({ hasText: "Director of Platform Engineering" });
   await expect(row).toBeVisible({ timeout: 30_000 });
-  await row
-    .getByRole("button", { name: /^Open job Director of Platform Engineering/ })
-    .click();
+  await row.getByRole("rowheader").click();
 
-  const jobDrawer = page.getByRole("dialog", { name: "Job details" });
+  const jobDrawer = page.getByRole("article", { name: "Job details" });
   await expect(jobDrawer).toBeVisible({ timeout: 10_000 });
 
   const contactsPanel = jobDrawer.locator(".job-contacts-section");
   await expect(contactsPanel.getByText("Casey Recruiter")).toBeVisible();
-  await contactsPanel.getByRole("button", { name: "show provenance" }).click();
+  const caseyContact = contactsPanel
+    .locator(".job-contact-row")
+    .filter({ hasText: "Casey Recruiter" });
+  await caseyContact
+    .getByRole("button", { name: "Show provenance" })
+    .click();
   await expect(contactsPanel.getByText("Imported list").first()).toBeVisible();
   await expect(contactsPanel.getByText("import:outreach-e2e.csv#row-1").first()).toBeVisible();
   await expect(contactsPanel.getByText("Confirmed by you").first()).toBeVisible();
@@ -484,7 +487,7 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
         response.request().method() === "POST",
       { timeout: 30_000 },
     ),
-    researchPanel.getByRole("button", { name: "confirm contact" }).click(),
+    researchPanel.getByRole("button", { name: "Confirm contact" }).click(),
   ]);
   expect(confirmResponse.status()).toBe(200);
   expect(await confirmResponse.json()).toMatchObject({ ok: true });
@@ -497,26 +500,31 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
   await expect(page.getByRole("button", { name: "Open contact Casey Recruiter" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open contact Dana Lee" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Open contact Casey Recruiter" }).click();
-  const contactDialog = page.getByRole("dialog", { name: "Contact details" });
+  await page
+    .locator("tr")
+    .filter({ hasText: "Casey Recruiter" })
+    .getByRole("rowheader")
+    .click();
+  const contactDialog = page.getByRole("article", { name: "Contact details" });
   await expect(contactDialog).toBeVisible({ timeout: 10_000 });
   await expect(contactDialog.getByText("Facts and provenance")).toBeVisible();
   await expect(contactDialog.getByRole("heading", { name: "Approved message" })).toBeVisible();
-  await expect(contactDialog.getByRole("button", { name: "copy approved message" })).toBeVisible();
+  await expect(contactDialog.getByRole("button", { name: "Copy approved message" })).toBeVisible();
   await expect(contactDialog.getByRole("button", { name: /^send$/i })).toHaveCount(0);
 
   await contactDialog.locator("summary", { hasText: "Provenance and gate results" }).click();
   await expect(contactDialog.getByText("Truthfulness gates passed").first()).toBeVisible();
   await expect(contactDialog.getByText("Bound to imported recruiter name.").first()).toBeVisible();
   await expect(contactDialog.getByText("Truthfulness gates blocked this draft").first()).toBeVisible();
-  await expect(contactDialog.getByRole("button", { name: "approve draft" })).toBeDisabled();
+  await expect(contactDialog.getByRole("button", { name: "Approve draft" })).toBeDisabled();
 
-  await contactDialog.getByRole("button", { name: "revise approved message" }).click();
+  await contactDialog.getByRole("button", { name: "Revise approved message" }).click();
   await expect(contactDialog.getByLabel("Edit message")).toBeVisible();
   await expect(contactDialog.getByRole("heading", { name: "Approved message" })).toBeVisible();
 
-  await contactDialog.getByRole("button", { name: "log a send" }).click();
-  await contactDialog.getByLabel("Channel").selectOption("linkedin_message");
+  await contactDialog.getByRole("button", { name: "Log a send" }).click();
+  await contactDialog.getByRole("combobox", { name: "Channel" }).click();
+  await page.getByRole("option", { name: "LinkedIn message" }).click();
   await contactDialog.getByLabel("Date you sent it").fill("2026-07-06");
   const [sendLogResponse] = await Promise.all([
     page.waitForResponse(
@@ -525,7 +533,7 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
         response.request().method() === "POST",
       { timeout: 30_000 },
     ),
-    contactDialog.getByRole("button", { name: "record send" }).click(),
+    contactDialog.getByRole("button", { name: "Record send" }).click(),
   ]);
   expect(sendLogResponse.status()).toBe(200);
   await expect(contactDialog.getByText("linkedin_message")).toBeVisible();
@@ -537,7 +545,7 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
         response.request().method() === "POST",
       { timeout: 30_000 },
     ),
-    contactDialog.getByRole("button", { name: "mark done" }).click(),
+    contactDialog.getByRole("button", { name: "Mark done" }).click(),
   ]);
   expect(completeResponse.status()).toBe(200);
   await expect(contactDialog.getByText("Last follow-up completed. Schedule a new reminder:")).toBeVisible();

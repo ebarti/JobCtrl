@@ -32,7 +32,7 @@ describe("<GenerateInterviewPrepButton>", () => {
       ports: buildTestPorts({ api: { generateInterviewPrep } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "generate interview prep" }));
+    await user.click(screen.getByRole("button", { name: "Generate interview prep" }));
 
     await waitFor(() => expect(generateInterviewPrep).toHaveBeenCalledWith("job-1"));
   });
@@ -46,7 +46,7 @@ describe("<GenerateInterviewPrepButton>", () => {
       ports: buildTestPorts({ api: { generateInterviewPrep } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "regenerate interview prep" }));
+    await user.click(screen.getByRole("button", { name: "Regenerate interview prep" }));
 
     expect(generateInterviewPrep).not.toHaveBeenCalled();
   });

@@ -2,6 +2,7 @@ import { useRef, useState, type CSSProperties, type PointerEvent as ReactPointer
 import { Link } from "@tanstack/react-router";
 
 import { CardHeader } from "../../../shared/ui/card-header.js";
+import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAuditPins.js";
@@ -102,11 +103,13 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
       </section>
       {showPreview ? (
         <>
-          <button
+          <Button
             className="profile-resizer"
             type="button"
             aria-label="Resize profile and resume editor panes"
+            size="icon"
             title="Drag to resize profile and resume editor panes"
+            variant="ghost"
             onPointerDown={startResize}
             onKeyDown={(event) => {
               if (event.key === "ArrowLeft") {
@@ -120,7 +123,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
             }}
           >
             <span aria-hidden="true" />
-          </button>
+          </Button>
           <aside className="preview resume-editor-preview">
             <ResumeStandalonePlateEditor
               className="profile-resume-plate-editor"

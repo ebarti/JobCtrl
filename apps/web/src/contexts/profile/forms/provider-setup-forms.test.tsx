@@ -13,6 +13,30 @@ import {
 } from "./provider-setup-forms.js";
 
 describe("provider setup forms", () => {
+  it("uses shared choice, field, input, and action primitives", () => {
+    renderWithProviders(<GoogleProviderForm configured={false} currentMode="gemini_api_key" />);
+
+    expect(
+      screen.getByText("Choose how Google authenticates").closest("fieldset"),
+    ).toHaveAttribute("data-slot", "field-set");
+    expect(screen.getAllByRole("radio")).not.toHaveLength(0);
+    for (const radio of screen.getAllByRole("radio")) {
+      expect(radio).toHaveAttribute("data-slot", "input");
+    }
+    expect(screen.getByLabelText("Gemini API key (required)")).toHaveAttribute(
+      "data-slot",
+      "input",
+    );
+    expect(screen.getByRole("button", { name: "Show" })).toHaveAttribute(
+      "data-slot",
+      "button",
+    );
+    expect(screen.getByRole("button", { name: "Save Google setup" })).toHaveAttribute(
+      "data-slot",
+      "button",
+    );
+  });
+
   it("selects Vertex AI from its visible card while preserving radio interaction", async () => {
     const user = userEvent.setup();
     const onChangeCapture = vi.fn();

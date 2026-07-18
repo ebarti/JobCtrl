@@ -40,6 +40,7 @@ import { Route as OutreachContactIdRouteImport } from "./routes/outreach.$contac
 import { Route as JobsJobIdRouteImport } from "./routes/jobs.$jobId";
 import { Route as ArtifactsArtifactIdRouteImport } from "./routes/artifacts.$artifactId";
 import { Route as ActivityEventIdRouteImport } from "./routes/activity.$eventId";
+import { Route as ProfileImportIndexRouteImport } from "./routes/profile.import.index";
 import { Route as ProfileImportUploadRouteImport } from "./routes/profile.import.upload";
 import { Route as ProfileImportPreviewRouteImport } from "./routes/profile.import.preview";
 import { Route as ProfileImportConfirmRouteImport } from "./routes/profile.import.confirm";
@@ -200,6 +201,11 @@ const ActivityEventIdRoute = ActivityEventIdRouteImport.update({
   path: "/activity/$eventId",
   getParentRoute: () => rootRouteImport,
 } as any);
+const ProfileImportIndexRoute = ProfileImportIndexRouteImport.update({
+  id: "/",
+  path: "/",
+  getParentRoute: () => ProfileImportRoute,
+} as any);
 const ProfileImportUploadRoute = ProfileImportUploadRouteImport.update({
   id: "/upload",
   path: "/upload",
@@ -256,6 +262,7 @@ export interface FileRoutesByFullPath {
   "/profile/import/confirm": typeof ProfileImportConfirmRoute;
   "/profile/import/preview": typeof ProfileImportPreviewRoute;
   "/profile/import/upload": typeof ProfileImportUploadRoute;
+  "/profile/import/": typeof ProfileImportIndexRoute;
   "/jobs/$jobId/run/$runId": typeof JobsJobIdRunRunIdRoute;
 }
 export interface FileRoutesByTo {
@@ -272,7 +279,6 @@ export interface FileRoutesByTo {
   "/artifacts/$artifactId": typeof ArtifactsArtifactIdRoute;
   "/jobs/$jobId": typeof JobsJobIdRouteWithChildren;
   "/outreach/$contactId": typeof OutreachContactIdRoute;
-  "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
   "/settings/browser": typeof SettingsBrowserRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
@@ -287,6 +293,7 @@ export interface FileRoutesByTo {
   "/profile/import/confirm": typeof ProfileImportConfirmRoute;
   "/profile/import/preview": typeof ProfileImportPreviewRoute;
   "/profile/import/upload": typeof ProfileImportUploadRoute;
+  "/profile/import": typeof ProfileImportIndexRoute;
   "/jobs/$jobId/run/$runId": typeof JobsJobIdRunRunIdRoute;
 }
 export interface FileRoutesById {
@@ -325,6 +332,7 @@ export interface FileRoutesById {
   "/profile/import/confirm": typeof ProfileImportConfirmRoute;
   "/profile/import/preview": typeof ProfileImportPreviewRoute;
   "/profile/import/upload": typeof ProfileImportUploadRoute;
+  "/profile/import/": typeof ProfileImportIndexRoute;
   "/jobs/$jobId/run/$runId": typeof JobsJobIdRunRunIdRoute;
 }
 export interface FileRouteTypes {
@@ -364,6 +372,7 @@ export interface FileRouteTypes {
     | "/profile/import/confirm"
     | "/profile/import/preview"
     | "/profile/import/upload"
+    | "/profile/import/"
     | "/jobs/$jobId/run/$runId";
   fileRoutesByTo: FileRoutesByTo;
   to:
@@ -380,7 +389,6 @@ export interface FileRouteTypes {
     | "/artifacts/$artifactId"
     | "/jobs/$jobId"
     | "/outreach/$contactId"
-    | "/profile/import"
     | "/runs/$runId"
     | "/settings/browser"
     | "/settings/credentials"
@@ -395,6 +403,7 @@ export interface FileRouteTypes {
     | "/profile/import/confirm"
     | "/profile/import/preview"
     | "/profile/import/upload"
+    | "/profile/import"
     | "/jobs/$jobId/run/$runId";
   id:
     | "__root__"
@@ -432,6 +441,7 @@ export interface FileRouteTypes {
     | "/profile/import/confirm"
     | "/profile/import/preview"
     | "/profile/import/upload"
+    | "/profile/import/"
     | "/jobs/$jobId/run/$runId";
   fileRoutesById: FileRoutesById;
 }
@@ -674,6 +684,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof ActivityEventIdRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/profile/import/": {
+      id: "/profile/import/";
+      path: "/";
+      fullPath: "/profile/import/";
+      preLoaderRoute: typeof ProfileImportIndexRouteImport;
+      parentRoute: typeof ProfileImportRoute;
+    };
     "/profile/import/upload": {
       id: "/profile/import/upload";
       path: "/upload";
@@ -761,12 +778,14 @@ interface ProfileImportRouteChildren {
   ProfileImportConfirmRoute: typeof ProfileImportConfirmRoute;
   ProfileImportPreviewRoute: typeof ProfileImportPreviewRoute;
   ProfileImportUploadRoute: typeof ProfileImportUploadRoute;
+  ProfileImportIndexRoute: typeof ProfileImportIndexRoute;
 }
 
 const ProfileImportRouteChildren: ProfileImportRouteChildren = {
   ProfileImportConfirmRoute: ProfileImportConfirmRoute,
   ProfileImportPreviewRoute: ProfileImportPreviewRoute,
   ProfileImportUploadRoute: ProfileImportUploadRoute,
+  ProfileImportIndexRoute: ProfileImportIndexRoute,
 };
 
 const ProfileImportRouteWithChildren = ProfileImportRoute._addFileChildren(

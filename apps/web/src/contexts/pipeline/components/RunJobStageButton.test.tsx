@@ -46,7 +46,11 @@ describe("<RunJobStageButton>", () => {
       { ports: buildTestPorts({ api: { runJobStage } }) },
     );
 
-    await user.click(screen.getByRole("button", { name: "run current stage" }));
+    const button = screen.getByRole("button", { name: "Run current stage" });
+    expect(button).toHaveAttribute("data-slot", "button");
+    expect(button).toHaveAttribute("data-typography", "control");
+
+    await user.click(button);
 
     await waitFor(() =>
       expect(runJobStage).toHaveBeenCalledWith("job-1", {
@@ -75,7 +79,7 @@ describe("<RunJobStageButton>", () => {
       { ports: buildTestPorts({ api: { runJobStage } }) },
     );
 
-    await user.click(screen.getByRole("button", { name: "run current stage" }));
+    await user.click(screen.getByRole("button", { name: "Run current stage" }));
 
     expect(runJobStage).not.toHaveBeenCalled();
   });
@@ -86,7 +90,7 @@ describe("<RunJobStageButton>", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "run current stage" }),
+      screen.getByRole("button", { name: "Run current stage" }),
     ).toBeDisabled();
   });
 });

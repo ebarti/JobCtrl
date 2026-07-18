@@ -506,7 +506,7 @@ The theme toggle (§4.10) flips a `data-theme="dark"` attribute on
 default class strategy. `color-scheme` is set at the root for native
 controls. Density is scoped to the app shell: `.app-shell` owns
 `--jh-row-height`, with compact, regular, and comfy modes computing to
-32px, 40px, and 48px. The body token remains 16px in every density; density
+44px, 52px, and 60px. The body role remains 14px/20px in every density; density
 changes geometry, not typography.
 
 ## 4.9 Cross-Cutting Client State (Zustand vs Context)

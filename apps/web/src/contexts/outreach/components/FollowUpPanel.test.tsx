@@ -23,7 +23,7 @@ describe("<FollowUpPanel>", () => {
       <FollowUpPanel threadId="thread-1" contactId="contact-1" followUp={null} />,
       { ports },
     );
-    fireEvent.click(view.getByRole("button", { name: "schedule follow-up" }));
+    fireEvent.click(view.getByRole("button", { name: "Schedule follow-up" }));
     await waitFor(() =>
       expect(scheduleOutreachFollowUp).toHaveBeenCalledWith("thread-1", {}),
     );
@@ -39,7 +39,7 @@ describe("<FollowUpPanel>", () => {
       { ports },
     );
     fireEvent.change(view.getByLabelText("Remind me on"), { target: { value: "2026-08-01" } });
-    fireEvent.click(view.getByRole("button", { name: "schedule follow-up" }));
+    fireEvent.click(view.getByRole("button", { name: "Schedule follow-up" }));
     await waitFor(() =>
       expect(scheduleOutreachFollowUp).toHaveBeenCalledWith("thread-1", { dueAt: "2026-08-01" }),
     );
@@ -58,9 +58,9 @@ describe("<FollowUpPanel>", () => {
       { ports },
     );
     expect(view.getByText(/application_submitted/)).toBeInTheDocument();
-    fireEvent.click(view.getByRole("button", { name: "mark done" }));
+    fireEvent.click(view.getByRole("button", { name: "Mark done" }));
     await waitFor(() => expect(completeOutreachFollowUp).toHaveBeenCalledWith("thread-1"));
-    fireEvent.click(view.getByRole("button", { name: "dismiss" }));
+    fireEvent.click(view.getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(dismissOutreachFollowUp).toHaveBeenCalledWith("thread-1"));
   });
 
@@ -73,6 +73,6 @@ describe("<FollowUpPanel>", () => {
       />,
     );
     expect(view.getByText(/Last follow-up completed/i)).toBeInTheDocument();
-    expect(view.getByRole("button", { name: "schedule follow-up" })).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "Schedule follow-up" })).toBeInTheDocument();
   });
 });

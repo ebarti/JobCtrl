@@ -34,6 +34,7 @@ describe("<GenerateMaterialsButton>", () => {
     const button = container.querySelector("button");
     expect(button).not.toBeDisabled();
     expect(button?.getAttribute("data-job-id")).toBe("job-42");
+    expect(button).toHaveAttribute("data-slot", "button");
   });
 
   it("dispatches per-job material generation after confirmation", async () => {
@@ -45,7 +46,7 @@ describe("<GenerateMaterialsButton>", () => {
       ports: buildTestPorts({ api: { generateMaterials } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "generate materials" }));
+    await user.click(screen.getByRole("button", { name: "Generate materials" }));
 
     await waitFor(() =>
       expect(generateMaterials).toHaveBeenCalledWith("job-1", {
@@ -65,14 +66,14 @@ describe("<GenerateMaterialsButton>", () => {
       ports: buildTestPorts({ api: { generateMaterials } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "generate materials" }));
+    await user.click(screen.getByRole("button", { name: "Generate materials" }));
 
     expect(generateMaterials).not.toHaveBeenCalled();
   });
 
   it("respects the disabled prop", () => {
     renderWithProviders(<GenerateMaterialsButton jobId="job-1" disabled />);
-    expect(screen.getByRole("button", { name: "generate materials" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Generate materials" })).toBeDisabled();
   });
 
   it("blocks unavailable demo generation before confirmation or dispatch", async () => {
@@ -88,7 +89,7 @@ describe("<GenerateMaterialsButton>", () => {
 
     renderWithProviders(<GenerateMaterialsButton jobId="job-1" />, { ports });
 
-    const button = screen.getByRole("button", { name: "generate materials" });
+    const button = screen.getByRole("button", { name: "Generate materials" });
     expect(button).toBeDisabled();
     expect(button).toHaveAccessibleDescription(
       /Material generation is available in the local app.*bundled materials remain available/i,

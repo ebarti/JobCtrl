@@ -27,7 +27,13 @@ describe("<CancelWorkflowRunButton>", () => {
       { ports: buildTestPorts({ api: { cancelWorkflowRun } }) },
     );
 
-    await user.click(screen.getByRole("button", { name: "Stop workflow run workflow-run-1" }));
+    const button = screen.getByRole("button", {
+      name: "Stop workflow run workflow-run-1",
+    });
+    expect(button).toHaveAttribute("data-slot", "button");
+    expect(button).toHaveAttribute("data-typography", "control");
+
+    await user.click(button);
 
     await waitFor(() => expect(cancelWorkflowRun).toHaveBeenCalledWith("workflow-run-1"));
     expect(parentClick).not.toHaveBeenCalled();

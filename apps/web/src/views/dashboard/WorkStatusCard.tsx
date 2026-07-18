@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "../../shared/ui/card.js";
+import { Button } from "../../shared/ui/button.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
 import { Separator } from "../../shared/ui/separator.js";
@@ -29,10 +30,10 @@ export function WorkStatusCard({ summary }: { summary: DashboardSummary }) {
     <Card className="card work-status-card">
       <CardHeader className="card-hd">
         <CardTitle>
-          <h2>Work status</h2>
+          <h2 data-typography="component-title">Work status</h2>
         </CardTitle>
         <CardAction>
-          <span className="meta">
+          <span className="meta" data-typography="metadata">
             {work.active} active · {work.stuck} stuck
           </span>
         </CardAction>
@@ -44,9 +45,13 @@ export function WorkStatusCard({ summary }: { summary: DashboardSummary }) {
           aria-label="Work status summary"
         >
           <dl className="work-status-metric">
-            <dt>Active work</dt>
-            <dd className="work-status-metric-value">{work.active}</dd>
-            <dd className="work-status-metric-description">queued or moving</dd>
+            <dt data-typography="label">Active work</dt>
+            <dd className="work-status-metric-value" data-typography="metric">
+              {work.active}
+            </dd>
+            <dd className="work-status-metric-description" data-typography="body">
+              queued or moving
+            </dd>
           </dl>
           <Separator
             orientation="vertical"
@@ -56,9 +61,11 @@ export function WorkStatusCard({ summary }: { summary: DashboardSummary }) {
             className="work-status-metric"
             data-attention={work.stuck ? "true" : "false"}
           >
-            <dt>Stuck work</dt>
-            <dd className="work-status-metric-value">{work.stuck}</dd>
-            <dd className="work-status-metric-description">
+            <dt data-typography="label">Stuck work</dt>
+            <dd className="work-status-metric-value" data-typography="metric">
+              {work.stuck}
+            </dd>
+            <dd className="work-status-metric-description" data-typography="body">
               {work.stuck
                 ? `worker unavailable · stale over ${formatThreshold(work.stuckAfterSeconds)}`
                 : `no stuck work over ${formatThreshold(work.stuckAfterSeconds)}`}
@@ -69,9 +76,10 @@ export function WorkStatusCard({ summary }: { summary: DashboardSummary }) {
         <div className="rows">
           {work.stuckItems.length ? (
             work.stuckItems.map((item) => (
-              <button
+              <Button
                 key={`${item.jobKey}:${item.stage}`}
                 type="button"
+                variant="ghost"
                 className="mini-row clickable-row"
                 onClick={() =>
                   void navigate({
@@ -85,8 +93,8 @@ export function WorkStatusCard({ summary }: { summary: DashboardSummary }) {
                   stuck
                 </StatusBadge>
                 <span className="title-stack">
-                  <b>{item.title}</b>
-                  <span>
+                  <b data-typography="strong-body">{item.title}</b>
+                  <span data-typography="metadata">
                     {item.company} · {item.stage}
                   </span>
                 </span>
@@ -94,7 +102,7 @@ export function WorkStatusCard({ summary }: { summary: DashboardSummary }) {
                   value={item.updatedAt}
                   fallback="timestamp missing"
                 />
-              </button>
+              </Button>
             ))
           ) : (
             <Empty title="No stuck work." />

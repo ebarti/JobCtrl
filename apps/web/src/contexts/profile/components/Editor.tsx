@@ -1,3 +1,9 @@
+import { useId } from "react";
+
+import { Button } from "../../../shared/ui/button.js";
+import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Textarea } from "../../../shared/ui/textarea.js";
+
 export interface EditorProps {
   dirty: boolean;
   label: string;
@@ -17,38 +23,41 @@ export function Editor({
   onDiscard,
   onSave,
 }: EditorProps) {
+  const editorId = useId();
+
   return (
-    <label className={`editor ${dirty ? "dirty" : ""}`}>
-      <span>
-        {label}
+    <Field className={`editor ${dirty ? "dirty" : ""}`}>
+      <div>
+        <FieldLabel htmlFor={editorId}>{label}</FieldLabel>
         {dirty ? (
           <span className="field-actions-inline">
-            <button
-              className="tab on"
+            <Button
               type="button"
               disabled={saving}
+              size="sm"
               onClick={(event) => {
                 event.preventDefault();
                 onSave();
               }}
             >
-              {saving ? "saving" : "save"}
-            </button>
-            <button
-              className="tab"
+              {saving ? "Saving" : "Save"}
+            </Button>
+            <Button
               type="button"
               disabled={saving}
+              size="sm"
+              variant="outline"
               onClick={(event) => {
                 event.preventDefault();
                 onDiscard();
               }}
             >
-              discard
-            </button>
+              Discard
+            </Button>
           </span>
         ) : null}
-      </span>
-      <textarea value={value} onChange={(event) => onChange(event.target.value)} />
-    </label>
+      </div>
+      <Textarea id={editorId} value={value} onChange={(event) => onChange(event.target.value)} />
+    </Field>
   );
 }

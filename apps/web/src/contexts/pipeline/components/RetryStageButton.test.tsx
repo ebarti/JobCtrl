@@ -5,8 +5,10 @@ import { renderWithProviders } from "../../../test/render.js";
 import { RetryStageButton } from "./RetryStageButton.js";
 
 describe("<RetryStageButton>", () => {
-  it("renders the retry label", () => {
+  it("renders its shared control primitive", () => {
     renderWithProviders(<RetryStageButton jobId="job-1" stage="tailor" />);
-    expect(screen.getByRole("button", { name: "retry" })).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Retry" });
+    expect(button).toHaveAttribute("data-slot", "button");
+    expect(button).toHaveAttribute("data-typography", "control");
   });
 });

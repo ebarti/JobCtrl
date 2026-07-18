@@ -65,18 +65,32 @@ export function DisclosureSection({
       render={<section />}
     >
       <div className="configuration-section__header">
-        <CollapsibleTrigger className="configuration-section__trigger">
+        <CollapsibleTrigger
+          className="configuration-section__trigger"
+          data-typography="control"
+        >
           <span className="configuration-section__title-group">
             <span
               aria-level={headingLevel}
               className="configuration-section__title"
+              data-typography="component-title"
               role="heading"
             >
               {title}
             </span>
-            <span className="configuration-section__description">{description}</span>
+            <span
+              className="configuration-section__description"
+              data-typography="body"
+            >
+              {description}
+            </span>
             {!expanded && collapsedSummary ? (
-              <span className="configuration-section__summary">{collapsedSummary}</span>
+              <span
+                className="configuration-section__summary"
+                data-typography="metadata"
+              >
+                {collapsedSummary}
+              </span>
             ) : null}
           </span>
           <IconChevronDown

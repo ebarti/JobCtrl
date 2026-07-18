@@ -11,6 +11,7 @@ describe("<Button>", () => {
     const button = screen.getByRole("button", { name: "Save changes" });
     expect(button).toBeInstanceOf(HTMLButtonElement);
     expect(button).toHaveAttribute("type", "button");
+    expect(button).toHaveAttribute("data-typography", "control");
     expect(button).toHaveClass("text-sm");
 
     fireEvent.click(button);
@@ -23,6 +24,48 @@ describe("<Button>", () => {
     expect(screen.getByRole("button", { name: "Compact action" })).toHaveClass(
       "h-8",
       "text-sm",
+    );
+  });
+
+  it("normalizes direct SVG icons without shrinking the icon-button hit area", () => {
+    render(
+      <>
+        <Button aria-label="Save filters">
+          <svg aria-hidden="true" data-testid="save-icon" />
+        </Button>
+        <Button aria-label="Open filters" size="icon">
+          <svg aria-hidden="true" data-testid="filter-icon" />
+        </Button>
+      </>,
+    );
+
+    const defaultButton = screen.getByRole("button", { name: "Save filters" });
+    const button = screen.getByRole("button", { name: "Open filters" });
+    expect(defaultButton).toHaveClass(
+      "[&>svg]:size-4",
+      "[&>svg]:shrink-0",
+      "[&>svg]:pointer-events-none",
+    );
+    expect(button).toHaveClass(
+      "size-9",
+      "[&>svg]:size-4",
+      "[&>svg]:shrink-0",
+      "[&>svg]:pointer-events-none",
+    );
+    expect(screen.getByTestId("save-icon")).toBeInTheDocument();
+    expect(screen.getByTestId("filter-icon")).toBeInTheDocument();
+  });
+
+  it("uses the compact icon size only for compact controls", () => {
+    render(
+      <Button size="sm">
+        <svg aria-hidden="true" />
+        Compact action
+      </Button>,
+    );
+
+    expect(screen.getByRole("button", { name: "Compact action" })).toHaveClass(
+      "[&>svg]:size-3.5",
     );
   });
 
@@ -71,13 +114,12 @@ describe("<Button>", () => {
 
     expect(screen.getByRole("button", { name: "Delete" })).toHaveClass(
       "bg-destructive",
+      "text-destructive-foreground",
       "hover:bg-destructive/90",
       "focus-visible:ring-destructive",
     );
-    expect(screen.getByRole("button", { name: "Delete disabled" })).toHaveClass(
-      "disabled:bg-destructive/60",
-      "disabled:text-white",
-      "disabled:opacity-100",
-    );
+    expect(
+      screen.getByRole("button", { name: "Delete disabled" }),
+    ).not.toHaveClass("disabled:bg-destructive/60");
   });
 });

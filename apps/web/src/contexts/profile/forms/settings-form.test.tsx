@@ -40,6 +40,30 @@ describe("<SettingsForm>", () => {
     expect(container.querySelector("textarea")).not.toBeInTheDocument();
   });
 
+  it("uses shared field, input, and action primitives", () => {
+    const { container } = renderWithProviders(
+      <SettingsForm
+        initial={sampleSettingsResponse.settings}
+        effectiveSettings={sampleSettingsResponse.effectiveSettings}
+      />,
+    );
+
+    expect(container.querySelectorAll('[data-slot="field"]')).toHaveLength(3);
+    expect(container.querySelectorAll('input[data-slot="input"]')).toHaveLength(3);
+    expect(screen.getByLabelText("Daily LLM budget (USD)")).toHaveAttribute(
+      "data-slot",
+      "input",
+    );
+    expect(screen.getByRole("button", { name: "Save changes" })).toHaveAttribute(
+      "data-slot",
+      "button",
+    );
+    expect(screen.getByRole("button", { name: "Discard changes" })).toHaveAttribute(
+      "data-slot",
+      "button",
+    );
+  });
+
   it("autosaves execution settings after five seconds", async () => {
     vi.useFakeTimers();
     const updateSettings = vi.fn(async (request): Promise<SettingsResponse> => ({
@@ -149,7 +173,7 @@ describe("<SettingsForm>", () => {
     expect(screen.getByText(/Saved in config.json; requires a worker restart/)).toBeInTheDocument();
     expect(screen.getByText(/Restart pending/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Daily LLM budget (USD)"), { target: { value: "30" } });
-    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
     expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({ workerActivitySlots: 9 }));
@@ -167,7 +191,7 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
     );
 
     expect(screen.getByLabelText("Minimum fit score")).toHaveValue(7);
-    expect(screen.getByLabelText("Auto apply")).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Auto apply" })).not.toBeChecked();
     expect(screen.queryByLabelText("Concurrent applications")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Daily LLM budget (USD)")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Target role")).not.toBeInTheDocument();
@@ -192,8 +216,8 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
     fireEvent.change(screen.getByLabelText("Minimum fit score"), {
       target: { value: "9" },
     });
-    fireEvent.click(screen.getByLabelText("Auto apply"));
-    fireEvent.click(screen.getByRole("button", { name: /^save automation settings$/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Auto apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(updateDiscoverySettings).toHaveBeenCalledTimes(1));
     expect(updateDiscoverySettings).toHaveBeenCalledWith({
@@ -218,12 +242,12 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
   it("describes supervised and autonomous auto-apply combinations", async () => {
     renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleDiscoverySettingsResponse} />);
 
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(screen.getByRole("status", { name: "Automation policy summary" })).toHaveTextContent(
       "Default supervised mode: no standing apply loop runs, and live submit requires Apply Review approval.",
     );
 
-    fireEvent.click(screen.getByLabelText("Auto apply"));
-    expect(screen.getByRole("status")).toHaveTextContent(
+    fireEvent.click(screen.getByRole("checkbox", { name: "Auto apply" }));
+    expect(screen.getByRole("status", { name: "Automation policy summary" })).toHaveTextContent(
       "Auto apply is supervised: the standing loop polls eligible jobs, and live submit waits for Apply Review approval.",
     );
 
@@ -238,7 +262,7 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
   it("undos automation checkbox changes with the keyboard shortcut", async () => {
     renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleDiscoverySettingsResponse} />);
 
-    const autoApply = screen.getByLabelText("Auto apply");
+    const autoApply = screen.getByRole("checkbox", { name: "Auto apply" });
     fireEvent.click(autoApply);
     await waitFor(() => expect(autoApply).toBeChecked());
 

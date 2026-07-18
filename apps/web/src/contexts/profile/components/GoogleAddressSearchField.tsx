@@ -1,6 +1,10 @@
 import { IconSearch } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
+import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
+
 export interface GoogleAddressSelection {
   address: string;
   city: string;
@@ -235,9 +239,9 @@ export function GoogleAddressSearchField({
   const searchButtonLabel = status === "searching" ? "Searching" : "Search";
 
   return (
-    <div className="field google-address-field">
+    <Field className="field google-address-field">
       <div className="google-address-label-row">
-        <label htmlFor={ADDRESS_INPUT_ID}>Address</label>
+        <FieldLabel htmlFor={ADDRESS_INPUT_ID}>Address</FieldLabel>
         <span
           className={`field-hint address-validation-status ${status}`}
           id={ADDRESS_STATUS_ID}
@@ -247,7 +251,7 @@ export function GoogleAddressSearchField({
         </span>
       </div>
       <div className="google-address-control">
-        <input
+        <Input
           autoComplete="street-address"
           aria-controls={predictions.length ? ADDRESS_RESULTS_ID : undefined}
           aria-describedby={ADDRESS_STATUS_ID}
@@ -273,16 +277,18 @@ export function GoogleAddressSearchField({
           }}
         />
         {showSearchButton ? (
-          <button
+          <Button
             aria-label="Search address"
             className="google-address-search-button"
             disabled={!canSearch}
+            size="sm"
             type="button"
+            variant="outline"
             onClick={() => void searchGoogleAddress()}
           >
             <IconSearch size={14} aria-hidden="true" />
             <span>{searchButtonLabel}</span>
-          </button>
+          </Button>
         ) : null}
       </div>
       {predictions.length ? (
@@ -294,20 +300,22 @@ export function GoogleAddressSearchField({
         >
           {predictions.map((prediction) => (
             <li key={prediction.id} role="presentation">
-              <button
+              <Button
                 className="google-address-result"
                 disabled={status === "validating"}
                 role="option"
+                size="sm"
                 type="button"
+                variant="ghost"
                 onClick={() => void validatePrediction(prediction)}
               >
                 {prediction.label}
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
       ) : null}
-    </div>
+    </Field>
   );
 }
 

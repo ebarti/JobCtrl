@@ -59,7 +59,7 @@ describe("<DebugActivityTable>", () => {
 
     expect(screen.getByRole("table")).toHaveClass("filterable-data-grid-table");
     expect(screen.getByText("50 shown / 60 total")).toBeInTheDocument();
-    expect(screen.getByText("page 1 / 2 · 60 rows")).toBeInTheDocument();
+    expect(screen.getByText("Page 1 of 2 · 60 rows")).toBeInTheDocument();
     expect(screen.getAllByRole("row")).toHaveLength(51);
     expect(screen.getByText("Activity event 60")).toBeInTheDocument();
     expect(screen.queryByText("Activity event 01")).not.toBeInTheDocument();

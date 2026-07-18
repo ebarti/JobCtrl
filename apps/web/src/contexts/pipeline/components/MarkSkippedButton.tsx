@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
 import { useMarkSkippedMutation } from "../hooks/useMarkSkippedMutation.js";
 
 export interface MarkSkippedButtonProps {
@@ -10,19 +11,21 @@ export interface MarkSkippedButtonProps {
 
 export function MarkSkippedButton({
   jobId,
-  className = "tab",
-  label = "skip",
+  className,
+  label = "Skip",
 }: MarkSkippedButtonProps): JSX.Element {
   const markSkipped = useMarkSkippedMutation();
   const isPending = markSkipped.isPending;
   return (
-    <button
+    <Button
       type="button"
-      className={className}
+      {...(className ? { className } : {})}
+      variant="ghost"
+      size="sm"
       disabled={isPending}
       onClick={() => markSkipped.mutate({ jobId })}
     >
-      {isPending ? "skipping" : label}
-    </button>
+      {isPending ? "Skipping" : label}
+    </Button>
   );
 }

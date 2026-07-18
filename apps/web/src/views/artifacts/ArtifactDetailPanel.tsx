@@ -318,7 +318,9 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
               </span>
               <div className="artifact-detail-workspace__title">
                 <small>{detail.artifact.company}</small>
-                <h1>{detail.artifact.title || detail.artifact.type}</h1>
+                <h1 data-typography="page-title">
+                  {detail.artifact.title || detail.artifact.type}
+                </h1>
                 <p>
                   {artifactTypeLabel(detail.artifact.type)} · created{" "}
                   {formatDateTime(detail.artifact.createdAt)}
@@ -441,10 +443,10 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                         data-icon="inline-start"
                       />
                       {openArtifact.isPending
-                        ? "opening"
+                        ? "Opening"
                         : isDemo
-                          ? "preview in browser"
-                          : "open"}
+                          ? "Preview in browser"
+                          : "Open"}
                     </Button>
                     <Button
                       size="sm"

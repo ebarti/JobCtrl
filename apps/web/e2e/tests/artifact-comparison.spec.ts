@@ -200,7 +200,7 @@ test("apply review compares accepted artifact with rendered draft artifact", asy
     "Render a saved draft to compare it with the accepted artifact.",
   );
 
-  const renderButton = page.getByRole("button", { name: "render replacement" });
+  const renderButton = page.getByRole("button", { name: "Render replacement" });
   await expect(renderButton).toBeEnabled();
   await renderButton.click();
 

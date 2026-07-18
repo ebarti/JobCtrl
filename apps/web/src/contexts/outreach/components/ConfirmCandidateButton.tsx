@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
 import { useConfirmCandidateMutation } from "../hooks/useConfirmCandidateMutation.js";
 
 export interface ConfirmCandidateButtonProps {
@@ -19,14 +20,13 @@ export function ConfirmCandidateButton({
   const errorMessage = mutation.error instanceof Error ? mutation.error.message : "";
   return (
     <div className="confirm-candidate">
-      <button
+      <Button
         type="button"
-        className="primary"
         disabled={disabled || mutation.isPending}
         onClick={() => mutation.mutate({ candidateId })}
       >
-        {mutation.isPending ? "confirming…" : "confirm contact"}
-      </button>
+        {mutation.isPending ? "Confirming…" : "Confirm contact"}
+      </Button>
       {errorMessage ? (
         <span role="alert" className="banner inline">
           {errorMessage}

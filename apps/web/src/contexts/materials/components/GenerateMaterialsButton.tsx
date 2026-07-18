@@ -6,6 +6,7 @@ import {
   LOCAL_INSTALL_GUIDE_URL,
 } from "../../../shared/lib/apiCapabilityAvailability.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { Button } from "../../../shared/ui/button.js";
 import { useGenerateMaterialsMutation } from "../hooks/useGenerateMaterialsMutation.js";
 
 export interface GenerateMaterialsButtonProps {
@@ -22,7 +23,7 @@ export interface GenerateMaterialsButtonProps {
 export function GenerateMaterialsButton({
   jobId,
   className = "tab",
-  label = "generate materials",
+  label = "Generate materials",
   disabled = false,
 }: GenerateMaterialsButtonProps): JSX.Element {
   const { featureFlags } = usePorts();
@@ -36,7 +37,7 @@ export function GenerateMaterialsButton({
 
   return (
     <>
-      <button
+      <Button
         aria-describedby={
           availability.available ? undefined : unavailableReasonId
         }
@@ -58,8 +59,8 @@ export function GenerateMaterialsButton({
         }}
       >
         <IconSparkles aria-hidden="true" size={14} />
-        <span>{mutation.isPending ? "generating" : label}</span>
-      </button>
+        <span>{mutation.isPending ? "Generating" : label}</span>
+      </Button>
       {!availability.available ? (
         <span className="meta" id={unavailableReasonId}>
           Material generation is available in the local app. Existing bundled

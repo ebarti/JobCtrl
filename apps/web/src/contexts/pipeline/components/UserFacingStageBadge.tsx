@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 
+import { Badge } from "../../../shared/ui/badge.js";
 import type { Stage } from "../../operations/types.js";
-import { stageTone } from "../lib/stage-tone.js";
 
 const PREPARATION_STAGES = new Set<Stage>(["discover", "enrich", "score", "tailor", "cover"]);
 
@@ -17,8 +17,12 @@ export function UserFacingStageBadge({ stage }: UserFacingStageBadgeProps): JSX.
   const visibleStage = userFacingStage(stage);
 
   return (
-    <span aria-label={visibleStage} className={`stage-pill ${stageTone(visibleStage)}`}>
-      {visibleStage}
-    </span>
+    <Badge aria-label={visibleStage} variant="category">
+      {stageLabel(visibleStage)}
+    </Badge>
   );
+}
+
+function stageLabel(stage: "discover" | "apply"): string {
+  return `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;
 }

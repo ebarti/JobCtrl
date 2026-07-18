@@ -6,6 +6,7 @@ import {
   LOCAL_INSTALL_GUIDE_URL,
 } from "../../../shared/lib/apiCapabilityAvailability.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { Button } from "../../../shared/ui/button.js";
 import { useGenerateDraftMutation } from "../hooks/useGenerateDraftMutation.js";
 
 export interface GenerateDraftButtonProps {
@@ -22,7 +23,7 @@ export function GenerateDraftButton({
   contactId,
   jobId,
   kind,
-  label = "generate draft",
+  label = "Generate draft",
 }: GenerateDraftButtonProps): JSX.Element {
   const { featureFlags } = usePorts();
   const availability = getApiCapabilityAvailability(
@@ -46,15 +47,14 @@ export function GenerateDraftButton({
 
   return (
     <div className="generate-draft">
-      <button
+      <Button
         aria-describedby={availability.available ? undefined : unavailableReasonId}
         type="button"
-        className="primary"
         disabled={blocked}
         onClick={onGenerate}
       >
-        {mutation.isPending ? "generating…" : label}
-      </button>
+        {mutation.isPending ? "Generating…" : label}
+      </Button>
       {!availability.available ? (
         <span className="meta" id={unavailableReasonId}>
           Draft generation is available in the local app. This public demo does

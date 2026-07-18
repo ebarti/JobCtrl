@@ -30,6 +30,7 @@ import { Button, buttonVariants } from "../../shared/ui/button.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { RouteWorkspace } from "../../shared/ui/route-workspace.js";
 import { Section } from "../../shared/ui/section.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
 import { JobAuditTriage } from "./JobAuditTriage.js";
 import { JobDescription } from "./JobDescription.js";
 import { JobOverview } from "./JobOverview.js";
@@ -73,10 +74,17 @@ function JobAuditHistorySection({
     <section className="section job-audit-section">
       <details className="job-audit-disclosure">
         <summary>
-          <span className="job-audit-summary-title">Audit history</span>
-          <span className="tag muted">{entries.length} events</span>
+          <span className="job-audit-summary-title" data-typography="control">
+            Technical details
+          </span>
+          <StatusBadge icon={false} tone="muted">
+            {entries.length} audit event{entries.length === 1 ? "" : "s"}
+          </StatusBadge>
         </summary>
-        <JobAuditHistory entries={entries} />
+        <div className="job-audit-history-detail">
+          <h3 data-typography="component-title">Audit history</h3>
+          <JobAuditHistory entries={entries} />
+        </div>
       </details>
     </section>
   );
@@ -97,7 +105,7 @@ function RequirementFitMissingCallout({ jobId }: { readonly jobId: string }) {
         </p>
       </div>
       <RescoreJobButton
-        className="tab on"
+        className={buttonVariants({ size: "sm", variant: "default" })}
         jobId={jobId}
         label="re-score requirement fit"
       />
@@ -164,7 +172,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
               </Button>
               <JobOverview detail={detail} />
               <div className="job-detail-top-actions">
-                <div
+                <nav
                   className="job-detail-handoff-actions"
                   aria-label="Related job workspaces"
                 >
@@ -190,16 +198,19 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   >
                     Evidence map
                   </Link>
-                </div>
-                <JobActions
-                  jobId={detail.job.jobKey}
-                  currentStage={detail.job.currentSubstage}
-                  canRetryStage={canRetryStage(currentSubstage)}
-                  canRunCurrentStage={canRunCurrentStage(currentSubstage)}
-                  canRetailor={detail.artifacts.length > 0}
-                  applyApprovalRequired={applyApprovalRequired}
-                  activeApplyRunId={detail.activeApplyRun?.runId ?? null}
-                />
+                </nav>
+                <section className="job-detail-workflow-actions" aria-label="Job workflow actions">
+                  <JobActions
+                    jobId={detail.job.jobKey}
+                    currentStage={detail.job.currentSubstage}
+                    canRetryStage={canRetryStage(currentSubstage)}
+                    canRunCurrentStage={canRunCurrentStage(currentSubstage)}
+                    canRetailor={detail.artifacts.length > 0}
+                    applyApprovalRequired={applyApprovalRequired}
+                    activeApplyRunId={detail.activeApplyRun?.runId ?? null}
+                    isApplied={detail.job.applyStatus?.toLowerCase() === "applied"}
+                  />
+                </section>
               </div>
             </div>
           }
@@ -218,11 +229,14 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                     <div className="mini-row" key={artifact.artifactId}>
                       <ArtifactStatusBadge status={artifact.status} />
                       <span>{artifact.type}</span>
-                      <code>{artifact.localPath}</code>
                       <OpenArtifactButton
                         artifactId={artifact.artifactId}
                         disabled={artifact.status === "missing"}
                       />
+                      <details className="job-artifact-technical-details">
+                        <summary data-typography="control">Technical details</summary>
+                        <code data-typography="code">{artifact.localPath}</code>
+                      </details>
                     </div>
                   ))
                 ) : (
@@ -256,7 +270,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
             <section className="section job-detail-description">
               <div className="job-detail-section-heading">
                 <h3>Description</h3>
-                <span>Original posting text</span>
+                <span data-typography="label">Original posting text</span>
               </div>
               <JobDescription text={detail.job.descriptionPreview} />
             </section>

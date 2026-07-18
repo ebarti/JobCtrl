@@ -44,7 +44,8 @@ export const CardTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    data-slot="card-title"
+      data-slot="card-title"
+      data-typography="component-title"
     className={cn("font-heading text-base font-medium", className)}
     {...props}
   />
@@ -57,7 +58,8 @@ export const CardDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    data-slot="card-description"
+      data-slot="card-description"
+      data-typography="metadata"
     className={cn("text-sm text-muted-foreground", className)}
     {...props}
   />

@@ -11,6 +11,9 @@ import {
   LOCAL_INSTALL_GUIDE_URL,
 } from "../../../shared/lib/apiCapabilityAvailability.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { Button } from "../../../shared/ui/button.js";
+import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import {
   Select,
   SelectContent,
@@ -58,6 +61,7 @@ export function SendLogForm({
     featureFlags,
     "logOutreachSend",
   );
+  const formId = useId();
   const unavailableReasonId = useId();
   const mutation = useLogSendMutation(threadId, contactId, jobId);
   const mutationError =
@@ -114,8 +118,8 @@ export function SendLogForm({
       </p>
       <form.Field name="channel">
         {(field) => (
-          <label className="field">
-            <span>Channel</span>
+          <Field className="field">
+            <FieldLabel htmlFor={`${formId}-channel`}>Channel</FieldLabel>
             <Select
               disabled={!availability.available}
               items={OUTREACH_SEND_CHANNELS.map((channel) => ({
@@ -130,6 +134,7 @@ export function SendLogForm({
               }}
             >
               <SelectTrigger
+                id={`${formId}-channel`}
                 aria-describedby={availability.available ? undefined : unavailableReasonId}
                 aria-label="Channel"
                 className="w-full"
@@ -148,14 +153,15 @@ export function SendLogForm({
                 </SelectGroup>
               </SelectContent>
             </Select>
-          </label>
+          </Field>
         )}
       </form.Field>
       <form.Field name="sentAt">
         {(field) => (
-          <label className="field">
-            <span>Date you sent it</span>
-            <input
+          <Field className="field">
+            <FieldLabel htmlFor={`${formId}-sent-at`}>Date you sent it</FieldLabel>
+            <Input
+              id={`${formId}-sent-at`}
               aria-describedby={availability.available ? undefined : unavailableReasonId}
               disabled={!availability.available}
               type="date"
@@ -163,7 +169,7 @@ export function SendLogForm({
               onBlur={field.handleBlur}
               onChange={(event) => field.handleChange(event.target.value)}
             />
-          </label>
+          </Field>
         )}
       </form.Field>
       {!availability.available ? (
@@ -191,16 +197,15 @@ export function SendLogForm({
       <form.Subscribe selector={(state) => state.isSubmitting}>
         {(isSubmitting) => (
           <div className="form-actions">
-            <button
+            <Button
               aria-describedby={availability.available ? undefined : unavailableReasonId}
               type="submit"
-              className="tab on"
               disabled={mutation.isPending || isSubmitting || !availability.available}
             >
               {mutation.isPending || isSubmitting
-                ? "recording…"
-                : "record send"}
-            </button>
+                ? "Recording…"
+                : "Record send"}
+            </Button>
           </div>
         )}
       </form.Subscribe>

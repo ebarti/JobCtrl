@@ -1,6 +1,7 @@
 import { IconNotebook } from "@tabler/icons-react";
 import type { JSX } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
 import { useGenerateInterviewPrepMutation } from "../hooks/useGenerateInterviewPrepMutation.js";
 
 export interface GenerateInterviewPrepButtonProps {
@@ -20,10 +21,10 @@ export function GenerateInterviewPrepButton({
 }: GenerateInterviewPrepButtonProps): JSX.Element {
   const mutation = useGenerateInterviewPrepMutation();
   const blocked = disabled || mutation.isPending;
-  const actionLabel = label ?? (hasAcceptedPrep ? "regenerate interview prep" : "generate interview prep");
+  const actionLabel = label ?? (hasAcceptedPrep ? "Regenerate interview prep" : "Generate interview prep");
 
   return (
-    <button
+    <Button
       aria-label={actionLabel}
       className={className}
       disabled={blocked}
@@ -44,7 +45,7 @@ export function GenerateInterviewPrepButton({
       }}
     >
       <IconNotebook aria-hidden="true" size={14} />
-      <span>{mutation.isPending ? "generating" : actionLabel}</span>
-    </button>
+      <span>{mutation.isPending ? "Generating" : actionLabel}</span>
+    </Button>
   );
 }

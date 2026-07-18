@@ -38,11 +38,14 @@ test("Generate materials: button enabled → dispatch queued → ResumeApproved 
   await expect(row).toBeVisible({ timeout: 30_000 });
   // Row activation is the named per-row "Open" button, not a whole-row click:
   // structural rows stay non-interactive for accessibility.
-  await row
-    .getByRole("button", { name: /^Open job Director of Platform Engineering/ })
-    .click();
+  const rowActivation = row.getByRole("button", {
+    name: /^Open job Director of Platform Engineering/,
+  });
+  await rowActivation.focus();
+  await expect(rowActivation).toBeFocused();
+  await rowActivation.press("Enter");
 
-  const drawer = page.getByRole("dialog", { name: "Job details" });
+  const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });
 
   // The button is enabled (no longer the disabled "not yet wired" stub).
@@ -92,6 +95,7 @@ test("Generate materials: button enabled → dispatch queued → ResumeApproved 
   // Expand the audit history disclosure and assert the approval surfaced. The
   // disclosure summary is the stable target (the body may briefly render the
   // empty state before the injected event arrives via SSE).
-  await drawer.locator("summary", { hasText: "Audit history" }).click();
-  await expect(drawer.getByText(/resume approved/i)).toBeVisible({ timeout: 30_000 });
+  const auditDetails = drawer.locator("details.job-audit-disclosure");
+  await auditDetails.locator("summary", { hasText: "Technical details" }).click();
+  await expect(auditDetails.getByText(/resume approved/i)).toBeVisible({ timeout: 30_000 });
 });

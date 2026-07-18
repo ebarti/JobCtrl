@@ -51,7 +51,9 @@ export function WorkflowRunDrawer({ runId }: WorkflowRunDrawerProps) {
               <RunStatusBadge status={run.status} />
               <div className="workflow-run-workspace__title">
                 <small>{run.workflowType || "workflow"}</small>
-                <h1>{run.title || run.workflowType || "Workflow run"}</h1>
+                <h1 data-typography="page-title">
+                  {run.title || run.workflowType || "Workflow run"}
+                </h1>
                 <p>
                   {run.status}
                   {run.dryRun ? " · dry-run" : ""}

@@ -64,7 +64,7 @@ export function OutreachDetailDrawer({
               </span>
               <div className="contact-detail-workspace__title">
                 <small>{contact.employer ?? "No employer"}</small>
-                <h1>{contact.displayName}</h1>
+                <h1 data-typography="page-title">{contact.displayName}</h1>
                 <p>
                   {contact.jobId
                     ? `Linked job ${contact.jobId}`

@@ -75,19 +75,22 @@ export function CompensationSourcePolicyPanel() {
           <table
             className="source-registry-table responsive-record-table"
             aria-label="Compensation source policy"
+            data-typography="body"
           >
-            <caption>{sources.length} configured source policies</caption>
+            <caption data-typography="metadata">
+              {sources.length} configured source policies
+            </caption>
             <thead>
               <tr>
-                <th scope="col">Source</th>
-                <th scope="col">Enablement</th>
-                <th scope="col">Policy</th>
-                <th scope="col">Status</th>
-                <th scope="col">Freshness</th>
-                <th scope="col">Attribution</th>
-                <th scope="col">Coverage</th>
-                <th scope="col">Supported fields</th>
-                <th scope="col">Access notes</th>
+                <th data-typography="table-header" scope="col">Source</th>
+                <th data-typography="table-header" scope="col">Enablement</th>
+                <th data-typography="table-header" scope="col">Policy</th>
+                <th data-typography="table-header" scope="col">Status</th>
+                <th data-typography="table-header" scope="col">Freshness</th>
+                <th data-typography="table-header" scope="col">Attribution</th>
+                <th data-typography="table-header" scope="col">Coverage</th>
+                <th data-typography="table-header" scope="col">Supported fields</th>
+                <th data-typography="table-header" scope="col">Access notes</th>
               </tr>
             </thead>
             <tbody>
@@ -118,36 +121,49 @@ function CompensationSourcePolicyRow({
 }) {
   return (
     <tr>
-      <th data-label="Source" data-row-header="true" scope="row">
+      <th
+        data-label="Source"
+        data-row-header="true"
+        data-typography="strong-body"
+        scope="row"
+      >
         <strong>{source.displayName}</strong>
         <div className="meta">{source.sourceId}</div>
         <div className="source-table-actions">
           {source.sourceUrl ? (
-            <a href={source.sourceUrl} aria-label={`${source.displayName} source`}>
+            <a
+              data-typography="control"
+              href={source.sourceUrl}
+              aria-label={`${source.displayName} source`}
+            >
               source
             </a>
           ) : (
             <span className="meta">local posting</span>
           )}
           {source.termsUrl ? (
-            <a href={source.termsUrl} aria-label={`${source.displayName} terms`}>
+            <a
+              data-typography="control"
+              href={source.termsUrl}
+              aria-label={`${source.displayName} terms`}
+            >
               terms
             </a>
           ) : null}
         </div>
       </th>
-      <td data-label="Enablement">
+      <td data-label="Enablement" data-typography="body">
         <CompensationSourceControls
           busy={busy}
           onUpdate={onUpdate}
           source={source}
         />
       </td>
-      <td data-label="Policy">
+      <td data-label="Policy" data-typography="body">
         <div>{formatLabel(source.sourceType)}</div>
         <span className="tag muted">{formatLabel(source.accessMode)}</span>
       </td>
-      <td data-label="Status">
+      <td data-label="Status" data-typography="body">
         <div className="flex flex-col items-start gap-1">
           <span className={availabilityClass(source.availability)}>
             {formatLabel(source.availability)}
@@ -158,15 +174,21 @@ function CompensationSourcePolicyRow({
           <div className="meta">{source.configured ? "configured" : "not configured"}</div>
         </div>
       </td>
-      <td data-label="Freshness">{source.freshnessPolicy}</td>
-      <td data-label="Attribution">{source.attributionRequirement}</td>
-      <td data-label="Coverage">
+      <td data-label="Freshness" data-typography="body">
+        {source.freshnessPolicy}
+      </td>
+      <td data-label="Attribution" data-typography="body">
+        {source.attributionRequirement}
+      </td>
+      <td data-label="Coverage" data-typography="body">
         <div>{formatLabel(source.coverage.geography)}</div>
         <div className="meta">{source.coverage.regions.join(", ") || "none configured"}</div>
         <div className="meta">{source.coverage.notes}</div>
       </td>
-      <td data-label="Supported fields">{renderSupportedFields(source)}</td>
-      <td data-label="Access notes">
+      <td data-label="Supported fields" data-typography="body">
+        {renderSupportedFields(source)}
+      </td>
+      <td data-label="Access notes" data-typography="body">
         {source.disabledReason ? <div className="banner inline">{source.disabledReason}</div> : null}
         {source.notes.map((note) => (
           <div key={note} className="meta">

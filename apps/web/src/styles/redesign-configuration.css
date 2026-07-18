@@ -104,9 +104,10 @@
 }
 
 .profile-layout > .card > .card-hd h2 {
-  font-size: 17px;
-  font-weight: 670;
-  letter-spacing: -0.03em;
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-component-title-line-height);
 }
 
 .profile-layout .profile-evidence-toolbar {
@@ -117,11 +118,19 @@
 }
 
 .profile-layout .editor-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   margin-bottom: 18px;
   padding: 12px 14px;
   border: 1px solid var(--configuration-rule);
   border-radius: 8px;
   background: var(--configuration-surface);
+}
+
+.profile-layout .editor-bulk-actions > [role="status"] {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .profile-layout .profile-sections {
@@ -151,9 +160,10 @@
   border-bottom: 1px solid var(--configuration-rule);
   background: transparent;
   color: var(--foreground);
-  font-size: 15px;
-  font-weight: 660;
-  letter-spacing: -0.025em;
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-component-title-line-height);
 }
 
 .profile-layout .profile-sections > .form-section:not(:first-child) > h3 {
@@ -257,8 +267,9 @@
   margin: 0;
   align-self: center;
   color: var(--foreground);
-  font-size: var(--jh-font-size-heading-sm);
-  font-weight: 650;
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  line-height: var(--jh-type-component-title-line-height);
 }
 
 .profile-layout .repeat-section > .repeat-controls {
@@ -366,22 +377,24 @@
 
 .configuration-section__title {
   color: var(--foreground);
-  font-size: 15px;
-  font-weight: 660;
-  letter-spacing: -0.025em;
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-component-title-line-height);
 }
 
 .configuration-section__description {
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-body-sm);
-  line-height: 1.45;
+  font-size: var(--jh-type-body-size);
+  font-weight: var(--jh-type-body-weight);
+  line-height: var(--jh-type-body-line-height);
 }
 
 .configuration-section__summary {
   color: var(--foreground);
-  font-size: var(--jh-font-size-body-sm);
-  font-weight: 560;
-  line-height: 1.4;
+  font-size: var(--jh-type-strong-body-size);
+  font-weight: var(--jh-type-strong-body-weight);
+  line-height: var(--jh-type-strong-body-line-height);
 }
 
 .configuration-section__actions {
@@ -515,8 +528,9 @@
 .configuration-section .bullet-standards-group legend {
   margin-bottom: 10px;
   color: var(--foreground);
-  font-size: var(--jh-font-size-heading-sm);
-  font-weight: 650;
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  line-height: var(--jh-type-component-title-line-height);
 }
 
 .configuration-section .bullet-standards-group legend {
@@ -528,8 +542,9 @@
   align-items: center;
   gap: 4px;
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-body-sm);
-  font-weight: 560;
+  font-size: var(--jh-type-control-size);
+  font-weight: var(--jh-type-control-weight);
+  line-height: var(--jh-type-control-line-height);
   text-decoration: none;
 }
 
@@ -592,7 +607,9 @@
 .profile-layout .choice,
 .discovery-workspace .choice {
   color: var(--foreground);
-  font-size: var(--jh-font-size-body);
+  font-size: var(--jh-type-body-size);
+  font-weight: var(--jh-type-body-weight);
+  line-height: var(--jh-type-body-line-height);
 }
 
 .configuration-section .target-choice,
@@ -604,7 +621,7 @@
 .configuration-section .field.check,
 .configuration-section .target-choice.required-choice {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-columns: var(--jh-target-min-size) minmax(0, 1fr);
   align-items: start;
   gap: 8px;
 }
@@ -628,9 +645,9 @@
 
 .configuration-section .locked-choice [data-slot="field-description"] {
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-body-sm);
-  font-weight: 430;
-  line-height: 1.4;
+  font-size: var(--jh-type-body-size);
+  font-weight: var(--jh-type-body-weight);
+  line-height: var(--jh-type-body-line-height);
 }
 
 .configuration-section
@@ -639,9 +656,9 @@
   display: block;
   margin-top: 8px;
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-body-sm);
-  font-weight: 430;
-  line-height: 1.4;
+  font-size: var(--jh-type-body-size);
+  font-weight: var(--jh-type-body-weight);
+  line-height: var(--jh-type-body-line-height);
 }
 
 .profile-layout .target-work-model-options,
@@ -654,8 +671,9 @@
 .profile-layout .month-selector > [data-slot="field-legend"] {
   margin: 0;
   color: var(--foreground);
-  font-size: var(--jh-font-size-heading-sm);
-  font-weight: 600;
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  line-height: var(--jh-type-component-title-line-height);
 }
 
 .profile-layout .month-selector-controls > button:first-of-type {
@@ -680,9 +698,10 @@
   border-bottom: 1px solid var(--configuration-rule);
   background: transparent;
   color: var(--foreground);
-  font-size: 15px;
-  font-weight: 660;
-  letter-spacing: -0.025em;
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-component-title-line-height);
 }
 
 .resume-template-shell {
@@ -715,13 +734,16 @@
 }
 
 .resume-template-controls-title strong {
-  font-size: var(--jh-font-size-heading-sm);
-  font-weight: 650;
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  line-height: var(--jh-type-component-title-line-height);
 }
 
 .resume-template-controls-title span {
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-body-sm);
+  font-size: var(--jh-type-metadata-size);
+  font-weight: var(--jh-type-metadata-weight);
+  line-height: var(--jh-type-metadata-line-height);
 }
 
 .resume-template-controls .field-grid {
@@ -747,7 +769,9 @@
   align-items: center;
   gap: 5px;
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-body-sm);
+  font-size: var(--jh-type-label-size);
+  font-weight: var(--jh-type-label-weight);
+  line-height: var(--jh-type-label-line-height);
 }
 
 .resume-template-default-status svg {
@@ -755,6 +779,7 @@
   height: 14px;
 }
 
+/* visual-color-exception:start resume-editor-chrome */
 .resume-template-plate-editor {
   --background: oklch(0.185 0.012 293);
   --foreground: oklch(0.985 0 0);
@@ -776,6 +801,7 @@
   border: 1px solid var(--configuration-rule);
   border-radius: 7px;
 }
+/* visual-color-exception:end resume-editor-chrome */
 
 .resume-template-plate-editor .resume-plate-workspace-controls {
   border-bottom: 1px solid var(--border);
@@ -819,8 +845,9 @@
   background: transparent;
   color: var(--muted-foreground);
   box-shadow: none;
-  font-size: var(--jh-font-size-body-sm);
-  font-weight: 600;
+  font-size: var(--jh-type-control-size);
+  font-weight: var(--jh-type-control-weight);
+  line-height: var(--jh-type-control-line-height);
 }
 
 .config-layout .settings-tabs .tab:hover {
@@ -926,8 +953,10 @@
 
 .config-layout .credential-row-key {
   overflow-wrap: anywhere;
-  font-family: var(--font-mono);
-  font-size: var(--jh-font-size-code);
+  font-family: var(--jh-font-mono);
+  font-size: var(--jh-type-body-size);
+  font-weight: var(--jh-type-body-weight);
+  line-height: var(--jh-type-body-line-height);
 }
 
 .config-layout .credential-row-actions {
@@ -983,7 +1012,7 @@
 /* Discovery ---------------------------------------------------------------- */
 
 .discovery-workspace {
-  gap: 22px;
+  gap: var(--jh-section-gap);
 }
 
 .discovery-workspace > .card,
@@ -998,20 +1027,26 @@
 
 .discovery-workspace > .card > .card-hd {
   min-height: 0;
-  padding: 17px 20px 13px;
+  padding: var(--jh-panel-padding);
   background: transparent;
 }
 
 .discovery-workspace > .card > .card-hd h2 {
-  font-size: 15px;
-  font-weight: 660;
-  letter-spacing: -0.025em;
+  font: inherit;
 }
 
 .discovery-workspace .config-form,
 .discovery-workspace .target-preferences-grid {
-  gap: 16px 20px;
-  padding: 16px 20px 20px;
+  gap: var(--jh-field-grid-row-gap) var(--jh-field-grid-column-gap);
+  padding: var(--jh-panel-padding);
+}
+
+/* Target-search groups have independent content widths; equal fractional
+ * tracks left an empty visual column whenever a long location or role group
+ * was paired with a compact option set. */
+.discovery-workspace .target-preferences-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  align-items: start;
 }
 
 .discovery-workspace .discovery-runtime-settings .config-form {
@@ -1019,17 +1054,21 @@
 }
 
 .discovery-workspace .discovery-runtime-settings .field-grid {
-  gap: 16px 20px;
-  padding: 16px 20px 20px;
+  gap: var(--jh-field-grid-row-gap) var(--jh-field-grid-column-gap);
+  padding: var(--jh-panel-padding);
 }
 
 .discovery-workspace .editor-bulk-actions,
 .discovery-workspace .form-actions {
-  padding: 12px 20px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jh-internal-gap);
+  padding: 0 var(--jh-panel-padding) var(--jh-panel-padding);
 }
 
 .discovery-workspace .discovery-automation-settings-form {
-  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
   align-items: start;
 }
 
@@ -1041,9 +1080,8 @@
 }
 
 .discovery-workspace .discovery-automation-settings-form > .form-actions {
-  align-self: end;
-  justify-self: start;
-  padding: 0;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
 }
 
 .discovery-workspace .discovery-tabs {
@@ -1061,14 +1099,13 @@
 }
 
 .discovery-workspace .discovery-tab-list [role="tab"] {
-  min-height: 38px;
+  min-height: var(--jh-control-height);
   border: 0;
   border-bottom: 2px solid transparent;
   border-radius: 0;
   background: transparent;
   color: var(--muted-foreground);
-  font-size: var(--jh-font-size-body-sm);
-  font-weight: 600;
+  font: inherit;
 }
 
 .discovery-workspace .discovery-tab-list [role="tab"][data-active] {
@@ -1088,13 +1125,12 @@
 }
 
 .discovery-workspace .discovery-panel-head {
-  min-height: 46px;
-  padding: 10px 0;
+  min-height: var(--jh-row-height);
+  padding-block: var(--jh-internal-gap);
 }
 
 .discovery-workspace .discovery-panel-head h3 {
-  font-size: var(--jh-font-size-heading-sm);
-  letter-spacing: -0.015em;
+  font: inherit;
 }
 
 .discovery-workspace .discovery-source-summary {
@@ -1103,34 +1139,31 @@
   padding: 0;
 }
 
-.discovery-workspace .discovery-source-summary span {
+.discovery-workspace .discovery-source-summary > span {
   display: flex;
   align-items: baseline;
-  gap: 5px;
+  gap: var(--jh-internal-gap);
   border: 0;
   border-left: 1px solid var(--configuration-rule);
   border-radius: 0;
   background: transparent;
-  padding: 11px 12px;
+  padding: var(--jh-internal-gap);
 }
 
-.discovery-workspace .discovery-source-summary span:first-child {
+.discovery-workspace .discovery-source-summary > span:first-child {
   border-left: 0;
 }
 
 .discovery-workspace .discovery-source-summary strong {
-  font-size: 18px;
-  letter-spacing: -0.035em;
+  font: inherit;
 }
 
 .discovery-workspace .source-upsert-form {
-  grid-template-columns:
-    minmax(150px, 0.6fr) minmax(180px, 0.8fr) minmax(132px, 0.45fr)
-    minmax(260px, 1.2fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
   align-items: end;
-  gap: 10px;
+  gap: var(--jh-internal-gap);
   border-color: var(--configuration-rule);
-  padding: 14px 0 0;
+  padding-top: var(--jh-internal-gap);
 }
 
 .discovery-workspace .source-upsert-form .wide,
@@ -1138,10 +1171,14 @@
   grid-column: auto;
 }
 
+.discovery-workspace .source-upsert-form .wide {
+  grid-column: span 2;
+}
+
 .discovery-workspace .discovery-review-row,
 .discovery-workspace .discovery-preview-row {
-  gap: 12px;
-  padding: 12px 0;
+  gap: var(--jh-internal-gap);
+  padding-block: var(--jh-row-padding-block);
 }
 
 .discovery-workspace .discovery-review-row:first-child,
@@ -1149,19 +1186,33 @@
   border-top: 1px solid var(--configuration-rule);
 }
 
-.discovery-workspace .source-politeness-badge,
-.discovery-workspace .source-table-tone {
+.discovery-workspace .source-politeness-badge {
   border-radius: 3px;
+}
+
+.discovery-workspace .source-table-category {
+  color: var(--category-foreground);
+}
+
+.discovery-workspace .source-table-metric.good {
+  color: var(--success-text);
+}
+
+.discovery-workspace .source-table-metric.warn {
+  color: var(--warning-text);
+}
+
+.discovery-workspace .source-table-metric.bad {
+  color: var(--destructive-text);
 }
 
 /* Shared controls on these dense form surfaces. */
 .profile-layout .field,
 .config-layout .field,
 .discovery-workspace .field {
-  gap: 6px;
+  gap: var(--jh-internal-gap);
   color: var(--foreground);
-  font-size: var(--jh-font-size-body-sm);
-  font-weight: 550;
+  font: inherit;
 }
 
 .profile-layout .field > span:first-child,
@@ -1185,7 +1236,7 @@
 .discovery-workspace input:not([type="checkbox"]):not([type="radio"]),
 .discovery-workspace select,
 .discovery-workspace textarea {
-  min-height: 40px;
+  min-height: var(--jh-control-height);
   border-color: var(--input);
   border-radius: 6px;
   background: var(--configuration-surface);
@@ -1217,7 +1268,7 @@
 .config-layout textarea,
 .discovery-workspace textarea {
   min-height: 96px;
-  line-height: 1.5;
+  line-height: var(--jh-type-body-line-height);
 }
 
 .profile-layout input[type="checkbox"],

@@ -8,6 +8,8 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import type { ProfileConfigResponse } from "../../operations/types.js";
+import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
+import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
@@ -103,10 +105,14 @@ export function ProfileForm({
   const [resetToken, setResetToken] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
   const isProfileSection = section === "profile";
-  const saveLabel = section === "target-search" ? "save discovery settings" : "save all";
-  const discardLabel = section === "target-search" ? "discard changes" : "discard all";
+  const saveLabel = "Save changes";
+  const discardLabel = "Discard changes";
   const savedMessage =
-    section === "profile" ? "profile saved" : section === "target-search" ? "discovery settings saved" : "preferences saved";
+    section === "profile"
+      ? "Profile saved"
+      : section === "target-search"
+        ? "Discovery settings saved"
+        : "Preferences saved";
 
   const form = useForm({
     defaultValues: toProfileFormValues(initial),
@@ -129,7 +135,7 @@ export function ProfileForm({
         formApi.reset(toProfileFormValues(profileResponse));
         setStatusMessage(savedMessage);
       } else {
-        setStatusMessage("saved; newer changes pending");
+        setStatusMessage("Saved; newer changes pending");
       }
     },
   });
@@ -157,7 +163,11 @@ export function ProfileForm({
         setStatusMessage("");
       }}
     >
-      {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
+      {statusMessage ? (
+        <div className="status-line" data-typography="metadata" role="status">
+          {statusMessage}
+        </div>
+      ) : null}
       <form.Subscribe
         selector={(state) => ({
           isDirty: state.isDirty,
@@ -180,26 +190,34 @@ export function ProfileForm({
       </form.Subscribe>
       <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting })}>
         {({ isDirty, isSubmitting }) => (
-          <div className="editor-bulk-actions">
+          <div className="editor-bulk-actions" data-state={isDirty ? "dirty" : "saved"}>
             {isProfileSection ? (
-              <Link className="tab on" to="/profile/import/upload">
-                import resume
-              </Link>
+              <Button
+                nativeButton={false}
+                render={<Link to="/profile/import/upload" role="link" />}
+                variant="secondary"
+              >
+                Import resume
+              </Button>
             ) : null}
-            <button
-              className="tab on"
+            <span data-typography="metadata" role="status">
+              {isDirty ? "Unsaved changes" : "No unsaved changes"}
+            </span>
+            <Button
               type="submit"
               disabled={!isDirty || isSubmitting}
+              title={!isDirty ? "No unsaved changes" : undefined}
             >
-              {isSubmitting ? "saving" : saveLabel}
-            </button>
-            <button
-              className="tab"
+              {isSubmitting ? "Saving changes" : saveLabel}
+            </Button>
+            <Button
               type="reset"
+              variant="secondary"
               disabled={!isDirty || isSubmitting}
+              title={!isDirty ? "No unsaved changes" : undefined}
             >
               {discardLabel}
-            </button>
+            </Button>
           </div>
         )}
       </form.Subscribe>
@@ -225,11 +243,17 @@ export function ProfileForm({
             .flat()
             .filter((entry): entry is string => typeof entry === "string")
             .at(0);
-          return message ? <div className="banner inline">{message}</div> : null;
+          return message ? (
+            <Alert className="inline" variant="destructive">
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          ) : null;
         }}
       </form.Subscribe>
       {updateProfile.error ? (
-        <div className="banner inline">{updateProfile.error.message}</div>
+        <Alert className="inline" variant="destructive">
+          <AlertDescription>{updateProfile.error.message}</AlertDescription>
+        </Alert>
       ) : null}
       {!form.state.values.profileText && !form.state.values.styleText ? (
         <Empty title="Loading profile." />

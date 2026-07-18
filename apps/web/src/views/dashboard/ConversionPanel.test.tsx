@@ -31,6 +31,14 @@ describe("ConversionPanel", () => {
 
     const stages = [...container.querySelectorAll(".conversion-stage")].map((el) => el.textContent);
     expect(stages).toEqual(["Applied3100%", "Reply267%", "Interview133%", "Offer00%"]);
+    expect(container.querySelector(".conversion-stage-lbl")).toHaveAttribute(
+      "data-typography",
+      "label",
+    );
+    expect(container.querySelector(".conversion-stage-val span")).toHaveAttribute(
+      "data-typography",
+      "metadata",
+    );
   });
 
   it("shows the rejection rate and reports a missing cost per interview honestly", () => {
@@ -51,6 +59,14 @@ describe("ConversionPanel", () => {
 
     const metrics = [...container.querySelectorAll(".conversion-row-metric")].map((el) => el.textContent);
     expect(metrics).toEqual(["33%interview", "33%interview"]);
+    expect(container.querySelector(".conversion-row-metric b")).toHaveAttribute(
+      "data-typography",
+      "metric",
+    );
+    expect(container.querySelector(".conversion-row-metric span")).toHaveAttribute(
+      "data-typography",
+      "metadata",
+    );
   });
 
   it("formats a populated cost per interview instead of fabricating when it is present", () => {

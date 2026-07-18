@@ -1,3 +1,4 @@
+import { Button } from "../../../shared/ui/button.js";
 import { useDeleteContactMutation } from "../hooks/useDeleteContactMutation.js";
 
 export interface ContactDeleteButtonProps {
@@ -12,7 +13,7 @@ export function ContactDeleteButton({
   contactId,
   displayName,
   onDeleted,
-  label = "delete",
+  label = "Delete",
   className,
 }: ContactDeleteButtonProps) {
   const deleteContact = useDeleteContactMutation();
@@ -29,13 +30,14 @@ export function ContactDeleteButton({
   };
 
   return (
-    <button
+    <Button
       type="button"
-      className={className ?? "tab"}
+      {...(className ? { className } : {})}
+      variant="destructive"
       disabled={deleteContact.isPending}
       onClick={handleDelete}
     >
-      {deleteContact.isPending ? "deleting" : label}
-    </button>
+      {deleteContact.isPending ? "Deleting…" : label}
+    </Button>
   );
 }

@@ -147,11 +147,36 @@ describe("<JobsTable>", () => {
     expect(screen.getByText("Company")).toBeInTheDocument();
     expect(screen.getByText("Sources")).toBeInTheDocument();
     expect(screen.getByText("Acme Corp")).toBeInTheDocument();
-    expect(screen.getByText("posting greenhouse:acme")).toBeInTheDocument();
+    expect(screen.getByText("Posting greenhouse:acme")).toBeInTheDocument();
     expect(
-      screen.getByText("discovered via jobspy:linkedin"),
+      screen.getByText("Discovered via jobspy:linkedin"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Acme Corp.*LinkedIn/)).not.toBeInTheDocument();
+  });
+
+  it("maps Jobs table text to the shared visual roles", () => {
+    renderJobsTable();
+
+    expect(screen.getByText("Title").closest("th")).toHaveAttribute(
+      "data-typography",
+      "table-header",
+    );
+    expect(screen.getByText(sampleJob.title)).toHaveAttribute(
+      "data-typography",
+      "strong-body",
+    );
+    expect(screen.getByText("Acme Corp")).toHaveAttribute(
+      "data-typography",
+      "body",
+    );
+    expect(screen.getByText("Posting greenhouse:acme")).toHaveAttribute(
+      "data-typography",
+      "body",
+    );
+    expect(screen.getByText("Discovered via jobspy:linkedin")).toHaveAttribute(
+      "data-typography",
+      "metadata",
+    );
   });
 
   it("does not label a broad discovery board as the posting owner", () => {
@@ -165,9 +190,9 @@ describe("<JobsTable>", () => {
       },
     ]);
 
-    expect(screen.queryByText("posting LinkedIn")).not.toBeInTheDocument();
+    expect(screen.queryByText("Posting LinkedIn")).not.toBeInTheDocument();
     expect(
-      screen.getByText("discovered via jobspy:linkedin"),
+      screen.getByText("Discovered via jobspy:linkedin"),
     ).toBeInTheDocument();
   });
 
@@ -214,6 +239,11 @@ describe("<JobsTable>", () => {
 
     await user.click(hitboxForTitle(sampleJob.title));
 
+    expect(screen.getByRole("checkbox", { name: `Select ${sampleJob.title}` })).toHaveAttribute(
+      "data-slot",
+      "checkbox",
+    );
+
     expect(rowForTitle(sampleJob.title)).toHaveAttribute(
       "aria-selected",
       "true",
@@ -222,6 +252,27 @@ describe("<JobsTable>", () => {
       "aria-selected",
       "false",
     );
+    expect(openCalls).toEqual([]);
+  });
+
+  it("keeps shared row selection keyboard-operable", async () => {
+    const user = userEvent.setup();
+    const openCalls: string[] = [];
+
+    render(
+      <StatefulJobsTable
+        jobs={[sampleJob, sampleSecondaryJob]}
+        onOpenJob={(jobKey) => openCalls.push(jobKey)}
+      />,
+    );
+
+    const selection = screen.getByRole("checkbox", {
+      name: `Select ${sampleJob.title}`,
+    });
+    selection.focus();
+    await user.keyboard(" ");
+
+    expect(rowForTitle(sampleJob.title)).toHaveAttribute("aria-selected", "true");
     expect(openCalls).toEqual([]);
   });
 

@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
 import { useRejectDraftMutation } from "../hooks/useRejectDraftMutation.js";
 
 export interface RejectDraftButtonProps {
@@ -39,14 +40,14 @@ export function RejectDraftButton({
 
   return (
     <div className="reject-draft">
-      <button
+      <Button
         type="button"
-        className="tab"
+        variant="outline"
         disabled={disabled || mutation.isPending}
         onClick={onReject}
       >
-        {mutation.isPending ? "rejecting…" : "reject draft"}
-      </button>
+        {mutation.isPending ? "Rejecting…" : "Reject draft"}
+      </Button>
       {errorMessage ? (
         <span role="alert" className="banner inline">
           {errorMessage}

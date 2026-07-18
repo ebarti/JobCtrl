@@ -18,10 +18,17 @@ describe("<ScoreCorrectionControl>", () => {
       { ports: buildTestPorts({ api: { correctScore } }) },
     );
 
-    await user.clear(screen.getByLabelText("Correct score"));
-    await user.type(screen.getByLabelText("Correct score"), "6");
-    await user.type(screen.getByLabelText("Reason"), "Manual review found a mismatch.");
-    await user.click(screen.getByRole("button", { name: "Save score correction" }));
+    const scoreInput = screen.getByLabelText("Correct score");
+    const reasonInput = screen.getByLabelText("Reason");
+    const submit = screen.getByRole("button", { name: "Save score correction" });
+    expect(scoreInput).toHaveAttribute("data-slot", "input");
+    expect(reasonInput).toHaveAttribute("data-slot", "input");
+    expect(submit).toHaveAttribute("data-slot", "button");
+
+    await user.clear(scoreInput);
+    await user.type(scoreInput, "6");
+    await user.type(reasonInput, "Manual review found a mismatch.");
+    await user.click(submit);
 
     await waitFor(() =>
       expect(correctScore).toHaveBeenCalledWith("job-1", {

@@ -6,7 +6,7 @@ interface LegalNoticeProps {
 
 export function LegalNotice({ className }: LegalNoticeProps) {
   return (
-    <footer className={className}>
+    <footer className={className} data-typography="metadata">
       <span>Copyright © 2026 Eloi Barti</span>
       <span>
         <a href={`${REPOSITORY_URL}/blob/main/LICENSE`} target="_blank" rel="noreferrer">

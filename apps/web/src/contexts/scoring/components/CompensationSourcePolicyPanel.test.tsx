@@ -138,6 +138,10 @@ describe("<CompensationSourcePolicyPanel>", () => {
     });
 
     await screen.findByRole("table", { name: "Compensation source policy" });
+    expect(screen.getByText("4 configured source policies")).toHaveAttribute(
+      "data-typography",
+      "metadata",
+    );
     expect(screen.queryByText("editable source policy")).not.toBeInTheDocument();
   });
 
@@ -163,6 +167,10 @@ describe("<CompensationSourcePolicyPanel>", () => {
 
     expect(screen.getByRole("heading", { name: "Compensation sources" })).toBeInTheDocument();
     const table = await screen.findByRole("table", { name: "Compensation source policy" });
+    expect(table).toHaveAttribute("data-typography", "body");
+    for (const header of within(table).getAllByRole("columnheader")) {
+      expect(header).toHaveAttribute("data-typography", "table-header");
+    }
     expect(table).toHaveTextContent("Manual reported compensation import");
     expect(table).toHaveTextContent("reported compensation");
     expect(table).toHaveTextContent("available");

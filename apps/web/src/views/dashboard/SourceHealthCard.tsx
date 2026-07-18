@@ -49,8 +49,8 @@ export function SourceHealthCard({ summary }: SourceHealthCardProps) {
                 {source.recommendedState}
               </StatusBadge>
               <span className="title-stack">
-                <b>{source.sourceId}</b>
-                <span>
+                <b data-typography="strong-body">{source.sourceId}</b>
+                <span data-typography="metadata">
                   active {pct(source.activeVerificationRate)} · detail{" "}
                   {pct(source.fullDescriptionSuccessRate)} · apply{" "}
                   {pct(source.applyUrlSuccessRate)} · duplicate {pct(source.duplicateRate)}

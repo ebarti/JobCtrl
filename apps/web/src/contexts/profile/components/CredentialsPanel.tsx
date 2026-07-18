@@ -17,6 +17,7 @@ import {
   AlertTitle,
 } from "../../../shared/ui/alert.js";
 import { Badge } from "../../../shared/ui/badge.js";
+import { Button } from "../../../shared/ui/button.js";
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import {
   ClaudeProviderForm,
@@ -406,19 +407,19 @@ function CodexProviderSetup({
           <p>
             A legacy <code>OPENAI_API_KEY</code> exists in JobCtrl Keychain. The Codex runtime does not use it directly; complete Codex enrollment first, then remove this unused copy.
           </p>
-          <button
-            className="tab"
+          <Button
             disabled={removeLegacyKey.isPending}
+            size="sm"
             type="button"
+            variant="outline"
             onClick={() => void removeLegacy()}
           >
             {removeLegacyKey.isPending ? "Removing…" : "Remove legacy key"}
-          </button>
+          </Button>
         </div>
       ) : null}
       <div className="provider-form-footer">
-        <button
-          className="tab on"
+        <Button
           disabled={verify.isPending}
           type="button"
           onClick={() => verify.mutate()}
@@ -428,7 +429,7 @@ function CodexProviderSetup({
             : isolatedAuthDetected
               ? "Verify isolated login"
               : "Reuse existing login or verify"}
-        </button>
+        </Button>
         <div
           aria-live="polite"
           className={verification?.ok === false || verify.error ? "provider-form-message warning" : "provider-form-message"}

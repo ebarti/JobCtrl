@@ -44,7 +44,7 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
     expect(await screen.findByLabelText("Parallel source families")).not.toHaveAttribute("readonly");
     await user.clear(screen.getByLabelText("Results per board"));
     await user.type(screen.getByLabelText("Results per board"), "25");
-    await user.click(screen.getByRole("button", { name: "save runtime settings" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(updateDiscoverySettings).toHaveBeenCalledTimes(1));
     expect(updateDiscoverySettings).toHaveBeenCalledWith(
@@ -56,9 +56,45 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
     const user = userEvent.setup();
     renderWithProviders(<DiscoveryRuntimeSettingsPanel />);
 
-    await user.click(await screen.findByLabelText("Enable scheduled discovery"));
-    await user.click(screen.getByRole("button", { name: "save runtime settings" }));
+    await user.click(
+      await screen.findByRole("checkbox", {
+        name: "Enable scheduled discovery",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Restart pending");
+    expect(await screen.findByText(/Restart pending/)).toHaveAttribute(
+      "role",
+      "status",
+    );
+  });
+
+  it("uses shared controls and keeps save and discard states explicit", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<DiscoveryRuntimeSettingsPanel />);
+
+    const resultsPerBoard = await screen.findByLabelText("Results per board");
+    const save = screen.getByRole("button", { name: "Save changes" });
+    const discard = screen.getByRole("button", { name: "Discard changes" });
+
+    expect(resultsPerBoard).toHaveAttribute("data-slot", "input");
+    expect(screen.getByRole("checkbox", { name: "Indeed" })).toHaveAttribute(
+      "data-slot",
+      "checkbox",
+    );
+    expect(save).toBeDisabled();
+    expect(discard).toBeDisabled();
+    expect(screen.getByText("No unsaved changes")).toBeInTheDocument();
+
+    await user.clear(resultsPerBoard);
+    await user.type(resultsPerBoard, "25");
+
+    expect(save).toBeEnabled();
+    expect(discard).toBeEnabled();
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+
+    await user.click(discard);
+    expect(resultsPerBoard).toHaveValue(50);
+    expect(save).toBeDisabled();
   });
 });

@@ -115,6 +115,7 @@ export const CommandInput = forwardRef<
       <CommandPrimitive.Input
         ref={ref}
         data-slot="command-input"
+        data-typography="control"
         className={cn(
           "flex h-10 w-full bg-transparent py-2 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
           className,
@@ -171,6 +172,7 @@ export const CommandEmpty = forwardRef<
   <CommandPrimitive.Empty
     ref={ref}
     data-slot="command-empty"
+    data-typography="body"
     className={cn("py-8 text-center text-sm text-muted-foreground", className)}
     {...props}
   />
@@ -185,7 +187,7 @@ export const CommandGroup = forwardRef<
     ref={ref}
     data-slot="command-group"
     className={cn(
-      "overflow-hidden p-1.5 text-popover-foreground [&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[13px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.08em] [&_[cmdk-group-heading]]:text-muted-foreground",
+      "overflow-hidden p-1.5 text-popover-foreground [&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-muted-foreground",
       className,
     )}
     {...props}
@@ -213,6 +215,7 @@ export const CommandItem = forwardRef<
   <CommandPrimitive.Item
     ref={ref}
     data-slot="command-item"
+    data-typography="control"
     className={cn(
       "relative flex min-h-8 cursor-default select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-sm outline-none aria-selected:bg-muted aria-selected:text-foreground data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 [&_svg]:shrink-0",
       className,
@@ -229,10 +232,8 @@ export function CommandShortcut({
   return (
     <span
       data-slot="command-shortcut"
-      className={cn(
-        "ml-auto text-[13px] tracking-wider text-muted-foreground",
-        className,
-      )}
+      data-typography="metadata"
+      className={cn("ml-auto text-muted-foreground", className)}
       {...props}
     />
   );

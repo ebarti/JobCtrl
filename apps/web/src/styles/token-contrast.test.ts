@@ -11,6 +11,15 @@ const semanticTextCss = [
   "redesign-apply-review.css",
   "redesign-data.css",
   "redesign-job-detail.css",
+  "visual-roles.css",
+]
+  .map((file) => readFileSync(resolve(styleDir, file), "utf8"))
+  .join("\n");
+const semanticRouteCss = [
+  "redesign-apply-review.css",
+  "redesign-data.css",
+  "redesign-job-detail.css",
+  "visual-roles.css",
 ]
   .map((file) => readFileSync(resolve(styleDir, file), "utf8"))
   .join("\n");
@@ -199,15 +208,27 @@ describe("JobCtrl violet interaction contrast", () => {
 });
 
 describe("semantic text token WCAG AA contrast", () => {
-  const textTokens = ["warning-text", "status-info-text"] as const;
+  const textTokens = [
+    "success-text",
+    "warning-text",
+    "destructive-text",
+    "status-info-text",
+  ] as const;
   const surfaceTokens = ["background", "card", "muted"] as const;
-  const mutedSurfaceTokens = ["warning-muted", "status-info-muted"] as const;
+  const mutedSurfaceTokens = [
+    "success-muted",
+    "warning-muted",
+    "destructive-muted",
+    "status-info-muted",
+  ] as const;
 
   it("reserves raw semantic colors for fills, borders, and graphics rather than text", () => {
-    expect(semanticTextCss).not.toMatch(
-      /(?:^|\n)\s*color:\s*var\(--(?:warning|status-info)\);/m,
+    expect(semanticRouteCss).not.toMatch(
+      /(?:^|\n)\s*color:\s*var\(--(?:success|warning|destructive|status-info)\)(?:\s*!important)?\s*;/m,
     );
+    expect(semanticTextCss).toContain("color: var(--success-text)");
     expect(semanticTextCss).toContain("color: var(--warning-text)");
+    expect(semanticTextCss).toContain("color: var(--destructive-text)");
     expect(semanticTextCss).toContain("color: var(--status-info-text)");
   });
 
@@ -236,5 +257,22 @@ describe("semantic text token WCAG AA contrast", () => {
         });
       }
     }
+  }
+});
+
+describe("semantic action token WCAG AA contrast", () => {
+  for (const [theme, block] of [
+    ["light", lightBlock],
+    ["dark", darkBlock],
+  ] as const) {
+    it(`keeps destructive action text readable in the ${theme} theme`, () => {
+      const ratio = contrastRatio(
+        readToken(block, "destructive-foreground"),
+        readToken(block, "destructive"),
+      );
+      expect(ratio, `${theme} destructive action text was ${ratio.toFixed(3)}:1`).toBeGreaterThanOrEqual(
+        AA_NORMAL,
+      );
+    });
   }
 });

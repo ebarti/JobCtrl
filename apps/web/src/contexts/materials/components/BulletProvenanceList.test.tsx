@@ -30,7 +30,10 @@ describe("<BulletProvenanceList>", () => {
     expect(screen.getByText("Per-bullet provenance (2)")).toBeInTheDocument();
     expect(screen.getByText("Rephrased")).toBeInTheDocument();
     expect(screen.getByText("Rephrase Allowed")).toBeInTheDocument();
-    expect(screen.getByText("Evidence ev-platform")).toBeInTheDocument();
+    expect(screen.getByText("Evidence ev-platform")).toHaveAttribute(
+      "data-typography",
+      "body",
+    );
     expect(
       screen.getByText(
         "Lead platform reliability programs across multiple teams",

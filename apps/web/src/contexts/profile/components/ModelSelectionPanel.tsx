@@ -8,7 +8,13 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { Button } from "../../../shared/ui/button.js";
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
+import {
+  Field,
+  FieldDescription,
+  FieldLabel,
+} from "../../../shared/ui/field.js";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
 import { useProviderModelsQuery } from "../hooks/useProviderModelsQuery.js";
 import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
@@ -86,9 +92,14 @@ export function ModelSelectionPanel() {
       {catalogQuery.error ? (
         <div className="banner inline model-catalog-error" role="alert">
           <span>Available models could not be loaded. Provider credentials were not changed.</span>
-          <button className="tab" type="button" onClick={() => void catalogQuery.refetch()}>
-            retry catalog
-          </button>
+          <Button
+            onClick={() => void catalogQuery.refetch()}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Retry catalog
+          </Button>
         </div>
       ) : null}
 
@@ -226,13 +237,13 @@ function ProviderModelCard({
         <div className="provider-model-empty">
           <p>Finish and verify this provider before selecting a model.</p>
           <Link className="tab" to="/settings/credentials">
-            configure {providerCopy.title}
+            Configure {providerCopy.title}
           </Link>
         </div>
       ) : (
         <div className="provider-model-form">
-          <label className="field" htmlFor={`preferred-model-${provider}`}>
-            <span>Preferred model</span>
+          <Field className="field">
+            <FieldLabel htmlFor={`preferred-model-${provider}`}>Preferred model</FieldLabel>
             <Select
               name={`preferred-model-${provider}`}
               items={modelItems}
@@ -248,32 +259,33 @@ function ProviderModelCard({
               <SelectTrigger id={`preferred-model-${provider}`} aria-label="Preferred model" aria-describedby={modelHintId} className="w-full"><SelectValue /></SelectTrigger>
               <SelectContent><SelectGroup>{modelItems.map((item) => <SelectItem key={item.value} value={item.value} disabled={savedModelUnavailable && item.value === savedModel}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
             </Select>
-            <small className="field-hint" id={modelHintId}>
+            <FieldDescription className="field-hint" id={modelHintId}>
               {savedModel
                 ? `Saved: ${savedModel}`
                 : "No saved preference; the provider chooses its default."}
-            </small>
-          </label>
-          <button
-            className="tab on"
+            </FieldDescription>
+          </Field>
+          <Button
             type="button"
             disabled={!canSave}
             onClick={() => void savePreference()}
           >
-            {updateSettings.isPending ? "saving" : "save model"}
-          </button>
+            {updateSettings.isPending ? "Saving" : "Save model"}
+          </Button>
         </div>
       )}
 
       {savedModel && !isDemo ? (
-        <button
-          className="tab provider-model-clear"
+        <Button
+          className="provider-model-clear"
           type="button"
           disabled={!settingsReady || updateSettings.isPending}
           onClick={() => void clearPreference()}
+          size="sm"
+          variant="outline"
         >
-          clear saved model
-        </button>
+          Clear saved model
+        </Button>
       ) : null}
 
       {statusMessage ? (

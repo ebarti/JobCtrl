@@ -5,8 +5,8 @@ import { renderWithProviders } from "../../../test/render.js";
 import { MarkAppliedButton } from "./MarkAppliedButton.js";
 
 describe("<MarkAppliedButton>", () => {
-  it("renders the configured label", () => {
+  it("uses an explicit state-transition label", () => {
     renderWithProviders(<MarkAppliedButton jobId="job-1" />);
-    expect(screen.getByRole("button", { name: "applied" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark as applied" })).toBeInTheDocument();
   });
 });

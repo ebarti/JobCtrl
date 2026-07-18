@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 const ROW_CHECKBOX_SELECTOR =
-  "input[type='checkbox'][aria-label^='Select ']:not([aria-label='Select all rows on this page'])";
+  "[role='checkbox'][aria-label^='Select ']:not([aria-label='Select all rows on this page'])";
 
 test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to Deleted tab → restore", async ({
   page,
@@ -26,7 +26,7 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
 
   const rowsToSelect = Math.min(3, rowCount);
   for (let i = 0; i < rowsToSelect; i += 1) {
-    await rowCheckboxes.nth(i).check();
+    await rowCheckboxes.nth(i).click();
   }
   await expect(
     page.getByText(new RegExp(`${rowsToSelect} selected`)),
@@ -56,7 +56,7 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
     .toBeGreaterThanOrEqual(rowsToSelect);
 
   for (let i = 0; i < rowsToSelect; i += 1) {
-    await deletedRowCheckboxes.nth(i).check();
+    await deletedRowCheckboxes.nth(i).click();
   }
   await page.getByRole("button", { name: /restore selected/i }).click();
   await expect(
@@ -64,4 +64,67 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
   ).toBeDisabled({
     timeout: 15_000,
   });
+});
+
+test("Job operations menu hides a selected job and exposes it in the Hidden queue", async ({
+  page,
+}) => {
+  page.on("dialog", (dialog) => void dialog.accept());
+
+  await page.goto("/jobs");
+  const activeTab = page.getByRole("tab", { name: "Active" });
+  await expect(activeTab).toHaveAttribute("aria-selected", "true", {
+    timeout: 30_000,
+  });
+
+  const selectedCheckbox = page.locator(ROW_CHECKBOX_SELECTOR).first();
+  await expect(selectedCheckbox).toBeVisible({ timeout: 30_000 });
+  const selectedRowLabel = await selectedCheckbox.getAttribute("aria-label");
+  if (!selectedRowLabel) {
+    throw new Error("The selected job row must expose a checkbox label.");
+  }
+  await selectedCheckbox.click();
+  await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
+
+  const operationsTrigger = page.getByRole("button", {
+    name: "Job operations",
+  });
+  await operationsTrigger.click();
+  await expect(operationsTrigger).toHaveAttribute("aria-expanded", "true");
+
+  const operationsMenu = page.getByRole("menu", { name: "Job operations" });
+  await expect(operationsMenu).toBeVisible();
+  const hideSelected = operationsMenu.getByRole("menuitem", {
+    name: "Hide selected",
+  });
+  await expect(hideSelected).toBeEnabled();
+  await hideSelected.click();
+
+  await expect(
+    page.getByRole("checkbox", { name: selectedRowLabel }),
+  ).toHaveCount(0, { timeout: 15_000 });
+
+  const hiddenTab = page.getByRole("tab", { name: "Hidden" });
+  await hiddenTab.click();
+  await expect(hiddenTab).toHaveAttribute("aria-selected", "true");
+  await expect(page).toHaveURL(/deleted=hidden/);
+
+  const hiddenCheckbox = page.getByRole("checkbox", {
+    name: selectedRowLabel,
+  });
+  await expect(hiddenCheckbox).toBeVisible({ timeout: 15_000 });
+
+  // Restore the shared E2E fixture so subsequent specs still start from the
+  // seeded active queue.
+  await hiddenCheckbox.click();
+  const unhideSelected = page.getByRole("button", {
+    name: "Unhide selected",
+  });
+  await unhideSelected.click();
+  await expect(unhideSelected).toBeDisabled({ timeout: 15_000 });
+  await activeTab.click();
+  await expect(activeTab).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("checkbox", { name: selectedRowLabel }),
+  ).toBeVisible({ timeout: 15_000 });
 });

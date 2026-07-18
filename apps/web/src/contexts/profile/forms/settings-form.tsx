@@ -9,6 +9,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { JobCtrlSettings } from "../../operations/types.js";
 import { useUpdateSettingsMutation } from "../hooks/useUpdateSettingsMutation.js";
 import { AutosaveUndoController } from "../../../shared/ui/autosave-undo-controller.js";
+import { Button } from "../../../shared/ui/button.js";
+import { Field, FieldDescription, FieldLabel } from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 
 interface SettingsInitialProps {
   initial: JobCtrlSettings;
@@ -125,9 +128,9 @@ export function SettingsForm({
       </form.Subscribe>
       <form.Field name="dailyBudgetUsd">
         {(field) => (
-          <div className="field">
-            <label htmlFor="settings-daily-budget-usd">Daily LLM budget (USD)</label>
-            <input
+          <Field className="field">
+            <FieldLabel htmlFor="settings-daily-budget-usd">Daily LLM budget (USD)</FieldLabel>
+            <Input
               id="settings-daily-budget-usd"
               name="dailyBudgetUsd"
               type="number"
@@ -138,17 +141,17 @@ export function SettingsForm({
               onBlur={field.handleBlur}
               onChange={(event) => field.handleChange(Number(event.target.value))}
             />
-            <small id="settings-daily-budget-usd-help">
+            <FieldDescription id="settings-daily-budget-usd-help">
               Use 0 for unlimited. {settingContext(effectiveSettings.dailyBudgetUsd)}
-            </small>
-          </div>
+            </FieldDescription>
+          </Field>
         )}
       </form.Field>
       <form.Field name="applyConcurrency">
         {(field) => (
-          <div className="field">
-            <label htmlFor="settings-apply-concurrency">Concurrent applications</label>
-            <input
+          <Field className="field">
+            <FieldLabel htmlFor="settings-apply-concurrency">Concurrent applications</FieldLabel>
+            <Input
               id="settings-apply-concurrency"
               name="applyConcurrency"
               type="number"
@@ -160,10 +163,10 @@ export function SettingsForm({
               onBlur={field.handleBlur}
               onChange={(event) => field.handleChange(Number(event.target.value))}
             />
-            <small id="settings-apply-concurrency-help">
+            <FieldDescription id="settings-apply-concurrency-help">
               {settingContext(effectiveSettings.applyConcurrency)}
-            </small>
-          </div>
+            </FieldDescription>
+          </Field>
         )}
       </form.Field>
       {effectiveSettings.workerActivitySlots.editable ? (
@@ -196,20 +199,19 @@ export function SettingsForm({
       >
         {({ canSubmit, isSubmitting, isDirty }) => (
           <div className="form-actions">
-            <button
-              className="tab on"
+            <Button
               type="submit"
               disabled={!canSubmit || !isDirty || isSubmitting}
             >
-              {isSubmitting ? "saving" : "save"}
-            </button>
-            <button
-              className="tab"
+              {isSubmitting ? "Saving changes" : "Save changes"}
+            </Button>
+            <Button
+              variant="outline"
               type="reset"
               disabled={!isDirty || isSubmitting}
             >
-              reset
-            </button>
+              Discard changes
+            </Button>
           </div>
         )}
       </form.Subscribe>
@@ -234,9 +236,9 @@ function WorkerActivitySlotsField({
 }) {
   const pendingRestart = activeValue !== null && activeValue !== value;
   return (
-    <div className="field">
-      <label htmlFor="settings-worker-activity-slots">Worker activity slots</label>
-      <input
+    <Field className="field">
+      <FieldLabel htmlFor="settings-worker-activity-slots">Worker activity slots</FieldLabel>
+      <Input
         id="settings-worker-activity-slots"
         name={metadata.editable ? "workerActivitySlots" : undefined}
         type="number"
@@ -250,14 +252,20 @@ function WorkerActivitySlotsField({
         onBlur={onBlur}
         onChange={onChange ? (event) => onChange(Number(event.target.value)) : undefined}
       />
-      <small id="settings-worker-activity-slots-help">{settingContext(metadata)}</small>
-      <div id="settings-worker-activity-slots-state" className="status-line">
+      <FieldDescription id="settings-worker-activity-slots-help">
+        {settingContext(metadata)}
+      </FieldDescription>
+      <div
+        id="settings-worker-activity-slots-state"
+        className="status-line"
+        data-typography="metadata"
+      >
         Desired: {value}. Active: {activeValue ?? "not reported"}.{" "}
         {pendingRestart
           ? "Restart pending: restart the worker to activate the desired slots."
           : friendlyWorkerState(workerStatus, activeValue)}
       </div>
-    </div>
+    </Field>
   );
 }
 

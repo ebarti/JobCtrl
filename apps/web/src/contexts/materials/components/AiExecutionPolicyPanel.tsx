@@ -3,7 +3,18 @@ import { useForm } from "@tanstack/react-form";
 import { useEffect, useMemo, useState } from "react";
 
 import { CardHeader } from "../../../shared/ui/card-header.js";
+import { Button } from "../../../shared/ui/button.js";
+import { Checkbox } from "../../../shared/ui/checkbox.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
 import {
   useProviderModelCatalogQuery,
@@ -70,12 +81,12 @@ export function AiExecutionPolicyPanel() {
       <CardHeader title="AI execution policy" />
       <form className="config-form" onSubmit={(event) => { event.preventDefault(); void form.handleSubmit(); }}>
         {status ? <div className="status-line" role="status">{status}</div> : null}
-        <form.Field name="analysisLegs">{(field) => <fieldset className="field wide checkbox-group-field" aria-describedby="analysis-legs-help"><legend>Employer analysis perspectives</legend><div className="checkbox-options">{LEG_OPTIONS.map((option) => <label className="choice target-choice" key={option.value}><input name="analysisLegs" type="checkbox" disabled={!effective.analysisLegs.editable} checked={field.state.value.includes(option.value)} onChange={(event) => { const next = event.target.checked ? [...field.state.value, option.value] : field.state.value.filter((leg) => leg !== option.value); if (next.length) field.handleChange(next); }} /><span>{option.label}</span></label>)}</div><small id="analysis-legs-help">{context(effective.analysisLegs.source, "next analysis")}</small></fieldset>}</form.Field>
+        <form.Field name="analysisLegs">{(field) => <FieldSet className="field wide checkbox-group-field" aria-describedby="analysis-legs-help"><FieldLegend>Employer analysis perspectives</FieldLegend><FieldGroup className="checkbox-options">{LEG_OPTIONS.map((option) => { const id = `analysis-leg-${option.value}`; return <Field className="choice target-choice" key={option.value} orientation="horizontal"><Checkbox id={id} name="analysisLegs" disabled={!effective.analysisLegs.editable} checked={field.state.value.includes(option.value)} onCheckedChange={(checked) => { const next = checked ? [...field.state.value, option.value] : field.state.value.filter((leg) => leg !== option.value); if (next.length) field.handleChange(next); }} /><FieldLabel htmlFor={id}>{option.label}</FieldLabel></Field>; })}</FieldGroup><FieldDescription id="analysis-legs-help">{context(effective.analysisLegs.source, "next analysis")}</FieldDescription></FieldSet>}</form.Field>
         <form.Field name="generatorPrimary">{(field) => <ModelSelectControl name="generatorPrimary" label="Primary tailoring generator" models={models} value={field.state.value} readOnly={!effective.tailoringGeneratorModels.editable} help={context(effective.tailoringGeneratorModels.source, "next tailoring workflow")} onChange={field.handleChange} />}</form.Field>
         <form.Field name="generatorFallback">{(field) => <ModelSelectControl name="generatorFallback" label="Fallback tailoring generator" models={models} value={field.state.value} readOnly={!effective.tailoringGeneratorModels.editable} help="Optional second choice; used after the primary." onChange={field.handleChange} />}</form.Field>
         <form.Field name="tailoringJudgeModel">{(field) => <ModelSelectControl name="tailoringJudgeModel" label="Tailoring judge" models={models} value={field.state.value} readOnly={!effective.tailoringJudgeModel.editable} help={context(effective.tailoringJudgeModel.source, "next tailoring workflow")} onChange={field.handleChange} />}</form.Field>
-        <form.Field name="tailoringJudgeMinScore">{(field) => <div className="field"><label htmlFor="tailoring-judge-score">Minimum judge score</label><input id="tailoring-judge-score" name="tailoringJudgeMinScore" type="number" min={0} max={1} step={0.01} readOnly={!effective.tailoringJudgeMinScore.editable} aria-describedby="tailoring-judge-score-help" value={field.state.value} onChange={(event) => field.handleChange(Number(event.target.value))} /><small id="tailoring-judge-score-help">{context(effective.tailoringJudgeMinScore.source, "next tailoring workflow")}</small></div>}</form.Field>
-        <button className="tab on" type="submit" disabled={updateSettings.isPending || (!effective.analysisLegs.editable && !effective.tailoringGeneratorModels.editable && !effective.tailoringJudgeModel.editable && !effective.tailoringJudgeMinScore.editable)}>{updateSettings.isPending ? "saving" : "save AI policy"}</button>
+        <form.Field name="tailoringJudgeMinScore">{(field) => <Field className="field"><FieldLabel htmlFor="tailoring-judge-score">Minimum judge score</FieldLabel><Input id="tailoring-judge-score" name="tailoringJudgeMinScore" type="number" min={0} max={1} step={0.01} readOnly={!effective.tailoringJudgeMinScore.editable} aria-describedby="tailoring-judge-score-help" value={field.state.value} onChange={(event) => field.handleChange(Number(event.target.value))} /><FieldDescription id="tailoring-judge-score-help">{context(effective.tailoringJudgeMinScore.source, "next tailoring workflow")}</FieldDescription></Field>}</form.Field>
+        <Button className="tab on" type="submit" disabled={updateSettings.isPending || (!effective.analysisLegs.editable && !effective.tailoringGeneratorModels.editable && !effective.tailoringJudgeModel.editable && !effective.tailoringJudgeMinScore.editable)}>{updateSettings.isPending ? "Saving" : "Save AI policy"}</Button>
       </form>
     </section>
   );
@@ -86,7 +97,7 @@ function ModelSelectControl({ name, label, models, value, readOnly, help, onChan
   const helpId = `ai-policy-${name}-help`;
   const defaultValue = `__${name}-default__`;
   const items = [{ value: defaultValue, label: "Provider/default policy" }, ...options];
-  return <div className="field"><label htmlFor={`ai-policy-${name}`}>{label}</label><Select name={name} disabled={readOnly} items={items} value={value || defaultValue} onValueChange={(nextValue) => { if (nextValue !== null) onChange(nextValue === defaultValue ? "" : nextValue); }}><SelectTrigger id={`ai-policy-${name}`} aria-label={label} aria-describedby={helpId} className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{items.map((model) => <SelectItem key={model.value} value={model.value}>{model.label}</SelectItem>)}</SelectGroup></SelectContent></Select><small id={helpId}>{help}</small></div>;
+  return <Field className="field"><FieldLabel htmlFor={`ai-policy-${name}`}>{label}</FieldLabel><Select name={name} disabled={readOnly} items={items} value={value || defaultValue} onValueChange={(nextValue) => { if (nextValue !== null) onChange(nextValue === defaultValue ? "" : nextValue); }}><SelectTrigger id={`ai-policy-${name}`} aria-label={label} aria-describedby={helpId} className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{items.map((model) => <SelectItem key={model.value} value={model.value}>{model.label}</SelectItem>)}</SelectGroup></SelectContent></Select><FieldDescription id={helpId}>{help}</FieldDescription></Field>;
 }
 
 function context(source: "persisted" | "default", activation: string): string {

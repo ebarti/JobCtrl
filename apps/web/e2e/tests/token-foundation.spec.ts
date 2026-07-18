@@ -42,7 +42,15 @@ async function expectColorScheme(page: Page, expected: "light" | "dark"): Promis
 
 async function expectDensity(page: Page, density: "compact" | "regular" | "comfy", height: string) {
   const densityGroup = page.getByRole("group", { name: "Row density" });
-  const densityButton = densityGroup.getByRole("button", { name: density, exact: true });
+  const densityLabel = {
+    compact: "Compact",
+    regular: "Regular",
+    comfy: "Comfortable",
+  }[density];
+  const densityButton = densityGroup.getByRole("button", {
+    name: densityLabel,
+    exact: true,
+  });
   await densityButton.click();
   const shell = page.locator(".app-shell");
 
@@ -340,9 +348,9 @@ test("token foundation computes light/dark app-shell tokens and density values",
     darkTokens["--background"],
   );
 
-  await expectDensity(page, "compact", "32px");
-  await expectDensity(page, "regular", "40px");
-  await expectDensity(page, "comfy", "48px");
+  await expectDensity(page, "compact", "44px");
+  await expectDensity(page, "regular", "52px");
+  await expectDensity(page, "comfy", "60px");
   await page.mouse.move(0, 0);
   await page.waitForTimeout(200);
 

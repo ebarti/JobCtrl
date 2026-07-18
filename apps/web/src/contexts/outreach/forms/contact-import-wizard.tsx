@@ -1,8 +1,12 @@
 import { ContactImportRequestSchema, type ContactImportRequest } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
+import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import { Field, FieldLabel } from "../../../shared/ui/field.js";
+import { Input } from "../../../shared/ui/input.js";
+import { Textarea } from "../../../shared/ui/textarea.js";
 import { useImportContactsMutation } from "../hooks/useImportContactsMutation.js";
 import { useOutreachImportStore } from "../stores/outreach-import-store.js";
 
@@ -18,6 +22,7 @@ function estimateContactRows(csvText: string): number {
 }
 
 export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
+  const formId = useId();
   const filename = useOutreachImportStore((state) => state.filename);
   const csvText = useOutreachImportStore((state) => state.csvText);
   const setUpload = useOutreachImportStore((state) => state.setUpload);
@@ -72,27 +77,29 @@ export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
         >
           <form.Field name="filename">
             {(field) => (
-              <label className="field">
-                <span>List name</span>
-                <input
+              <Field className="field">
+                <FieldLabel htmlFor={`${formId}-filename`}>List name</FieldLabel>
+                <Input
+                  id={`${formId}-filename`}
                   value={field.state.value}
                   onBlur={field.handleBlur}
                   onChange={(event) => field.handleChange(event.target.value)}
                 />
-              </label>
+              </Field>
             )}
           </form.Field>
           <form.Field name="csvText">
             {(field) => (
-              <label className="field">
-                <span>CSV rows</span>
-                <textarea
+              <Field className="field">
+                <FieldLabel htmlFor={`${formId}-csv-text`}>CSV rows</FieldLabel>
+                <Textarea
+                  id={`${formId}-csv-text`}
                   rows={8}
                   value={field.state.value}
                   onBlur={field.handleBlur}
                   onChange={(event) => field.handleChange(event.target.value)}
                 />
-              </label>
+              </Field>
             )}
           </form.Field>
           <form.Subscribe selector={(state) => state.errors}>
@@ -105,9 +112,7 @@ export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
             }}
           </form.Subscribe>
           <div className="form-actions">
-            <button type="submit" className="tab on">
-              next
-            </button>
+            <Button type="submit">Next</Button>
           </div>
         </form>
       ) : null}
@@ -124,17 +129,16 @@ export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
             <Empty title="No CSV provided. Go back to step 1." />
           )}
           <div className="form-actions">
-            <button type="button" className="tab" onClick={() => setStep("upload")}>
-              back
-            </button>
-            <button
+            <Button type="button" variant="outline" onClick={() => setStep("upload")}>
+              Back
+            </Button>
+            <Button
               type="button"
-              className="tab on"
               disabled={!csvText}
               onClick={() => setStep("confirm")}
             >
-              next
-            </button>
+              Next
+            </Button>
           </div>
         </div>
       ) : null}
@@ -147,17 +151,16 @@ export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
             provenance.
           </p>
           <div className="form-actions">
-            <button type="button" className="tab" onClick={() => setStep("preview")}>
-              back
-            </button>
-            <button
+            <Button type="button" variant="outline" onClick={() => setStep("preview")}>
+              Back
+            </Button>
+            <Button
               type="button"
-              className="tab on"
               disabled={importContacts.isPending || !csvText}
               onClick={() => void confirmImport()}
             >
-              {importContacts.isPending ? "importing" : "confirm import"}
-            </button>
+              {importContacts.isPending ? "Importing…" : "Confirm import"}
+            </Button>
           </div>
         </div>
       ) : null}

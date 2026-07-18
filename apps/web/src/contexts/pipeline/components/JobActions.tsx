@@ -13,6 +13,7 @@ import { MarkSkippedButton } from "./MarkSkippedButton.js";
 import { RetryStageButton } from "./RetryStageButton.js";
 import { RunJobStageButton } from "./RunJobStageButton.js";
 import { buttonVariants } from "../../../shared/ui/button.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 
 export interface JobActionsProps {
   jobId: string;
@@ -22,6 +23,7 @@ export interface JobActionsProps {
   canRetailor?: boolean;
   applyApprovalRequired?: boolean;
   activeApplyRunId?: string | null;
+  isApplied?: boolean;
 }
 
 export function JobActions({
@@ -32,6 +34,7 @@ export function JobActions({
   canRetailor = false,
   applyApprovalRequired = true,
   activeApplyRunId = null,
+  isApplied = false,
 }: JobActionsProps): JSX.Element {
   return (
     <div className="action-panel" role="toolbar" aria-label="Job actions">
@@ -52,25 +55,30 @@ export function JobActions({
           className={buttonVariants({ size: "sm", variant: "outline" })}
           disabled={!canRunCurrentStage}
           jobId={jobId}
+          label="Run current stage"
           stage={currentStage}
         />
         <CancelStageButton
           className={buttonVariants({ size: "sm", variant: "warning" })}
           jobId={jobId}
+          label="Stop current stage"
           stage={currentStage}
         />
         <RescoreJobButton
           className={buttonVariants({ size: "sm", variant: "outline" })}
           jobId={jobId}
+          label="Rescore current policy"
         />
         <GenerateMaterialsButton
           className={buttonVariants({ size: "sm", variant: "outline" })}
           jobId={jobId}
+          label="Generate materials"
         />
         {canRetailor ? (
           <RetailorJobButton
             className={buttonVariants({ size: "sm", variant: "secondary" })}
             jobId={jobId}
+            label="Re-tailor current policy"
           />
         ) : null}
       </div>
@@ -92,15 +100,23 @@ export function JobActions({
         <CancelApplyButton
           className={buttonVariants({ size: "sm", variant: "warning" })}
           jobId={jobId}
+          label="Stop application run"
           {...(activeApplyRunId ? { runId: activeApplyRunId } : {})}
         />
-        <MarkAppliedButton
-          className={buttonVariants({ size: "sm", variant: "success" })}
-          jobId={jobId}
-        />
+        {isApplied ? (
+          <StatusBadge aria-label="Application status: Applied" tone="ok">
+            Applied
+          </StatusBadge>
+        ) : (
+          <MarkAppliedButton
+            className={buttonVariants({ size: "sm", variant: "success" })}
+            jobId={jobId}
+          />
+        )}
         <MarkSkippedButton
           className={buttonVariants({ size: "sm", variant: "ghost" })}
           jobId={jobId}
+          label="Skip"
         />
       </div>
     </div>
