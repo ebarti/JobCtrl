@@ -226,6 +226,20 @@ describe("<ProfileForm>", () => {
     expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
   });
 
+  it("does not add a legacy form-section shell when the Discovery heading is hidden", () => {
+    const { container } = renderWithProviders(
+      <ProfileForm
+        initial={sampleProfileResponse}
+        section="target-search"
+        showSectionHeading={false}
+      />,
+    );
+
+    const targetGrid = container.querySelector(".target-preferences-grid");
+    expect(targetGrid?.parentElement).toHaveClass("target-search-grid-shell");
+    expect(targetGrid?.parentElement).not.toHaveClass("form-section");
+  });
+
   it("saves target tracks and seniority floors as canonical values", async () => {
     const user = userEvent.setup();
     const updateProfile = vi.fn(async (request) => ({

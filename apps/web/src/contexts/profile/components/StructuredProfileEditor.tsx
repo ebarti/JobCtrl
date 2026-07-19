@@ -1290,7 +1290,11 @@ export function StructuredProfileEditor({
   );
 
   const targetSearchSection = () => (
-    <section className="form-section">
+    <section
+      className={
+        showSectionHeading ? "form-section" : "target-search-grid-shell"
+      }
+    >
       {showSectionHeading ? <h3>Target search</h3> : null}
       <FieldGroup className="target-preferences-grid">
         <TargetPreferenceCard id="target-tracks-card-title" title="Target tracks">

@@ -1484,6 +1484,15 @@ test("Discovery settings pack related controls and reflow with available width",
 
   const desktopTarget = await targetGrid.evaluate((element) => {
     const grid = element.getBoundingClientRect();
+    const gridShell = element.parentElement;
+    const disclosure = element.closest<HTMLElement>(
+      ".target-search-settings",
+    );
+    if (!gridShell || !disclosure) {
+      throw new Error("Target search hierarchy did not render");
+    }
+    const gridShellStyle = getComputedStyle(gridShell);
+    const disclosureStyle = getComputedStyle(disclosure);
     const children = Array.from(element.children).map((child) => {
       const bounds = child.getBoundingClientRect();
       return {
@@ -1493,7 +1502,9 @@ test("Discovery settings pack related controls and reflow with available width",
     });
     return {
       children,
+      disclosureBorderWidth: disclosureStyle.borderTopWidth,
       gridHeight: Math.round(grid.height),
+      gridShellBorderWidth: gridShellStyle.borderTopWidth,
       maxChildHeight: Math.max(...children.map(({ height }) => height)),
     };
   });
@@ -1519,6 +1530,8 @@ test("Discovery settings pack related controls and reflow with available width",
   expect(desktopTarget.gridHeight).toBeLessThanOrEqual(
     desktopTarget.maxChildHeight + 42,
   );
+  expect(desktopTarget.disclosureBorderWidth).toBe("1px");
+  expect(desktopTarget.gridShellBorderWidth).toBe("0px");
   expect(new Set(desktopBoards.map(({ top }) => top)).size).toBe(1);
   expect(new Set(targetTitleStyles).size).toBe(1);
   expect(Math.max(...desktopBoards.map(({ width }) => width))).toBeLessThanOrEqual(160);
