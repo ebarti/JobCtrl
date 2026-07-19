@@ -7,7 +7,7 @@ import {
   type EffectiveSetting,
 } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { Empty } from "../../../shared/ui/empty.js";
@@ -17,7 +17,6 @@ import { Checkbox } from "../../../shared/ui/checkbox.js";
 import {
   Field,
   FieldContent,
-  FieldDescription,
   FieldGroup,
   FieldLabel,
   FieldLegend,
@@ -26,6 +25,10 @@ import {
 import { Input } from "../../../shared/ui/input.js";
 import { useDiscoverySettingsQuery } from "../../operations/hooks/useDiscoverySettingsQuery.js";
 import { useUpdateDiscoverySettingsMutation } from "../hooks/useUpdateDiscoverySettingsMutation.js";
+import {
+  DiscoverySettingHelp,
+  type DiscoverySettingHelpContent,
+} from "./DiscoverySettingHelp.js";
 
 const BOARD_OPTIONS: Array<{ value: DiscoverySettings["boards"][number]; label: string }> = [
   { value: "indeed", label: "Indeed" },
@@ -43,6 +46,71 @@ const ROLE_FILTER_MODES: Array<{
   { value: "deterministic", label: "Deterministic", description: "Use only local title rules." },
   { value: "llm", label: "LLM", description: "Require model-backed title matching." },
 ];
+
+const DISCOVERY_GUIDE_URL = "https://jobctrl.dev/user/discovery";
+
+const RUNTIME_SETTING_HELP = {
+  boards: {
+    title: "Job boards",
+    description:
+      "Select which broad-board providers run for each generated target query. The next Discover run snapshots this selection.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-job-boards`,
+  },
+  resultsPerSite: {
+    title: "Results per board",
+    description:
+      "Set the maximum results requested from each selected board for a search unit. The next Discover run snapshots the new limit.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-results-per-board`,
+  },
+  hoursOld: {
+    title: "Posting lookback hours",
+    description:
+      "Limit broad-board discovery to postings no older than this many hours when the provider supports age filtering. The next Discover run uses the new window.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-posting-lookback-hours`,
+  },
+  roleFilterMode: {
+    title: "Role title filtering",
+    description:
+      "Choose how returned titles are checked against target search. Auto uses a ready model when available, Deterministic uses local rules, and LLM requires model-backed matching. The next source family uses the choice.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-role-title-filtering`,
+  },
+  roleFilterModel: {
+    title: "Role filter model",
+    description:
+      "Optionally pin the model used for model-backed title matching. Leave this blank to use configured provider routing. The next source family uses changes.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-role-filter-model`,
+  },
+  maxParallelFamilies: {
+    title: "Parallel source families",
+    description:
+      "Limit how many source families may crawl concurrently in a Discover run. JobCtrl caps the value at four and at available worker activity slots. The next run snapshots it.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-parallel-source-families`,
+  },
+  crawlUserAgentProduct: {
+    title: "Crawler product name",
+    description:
+      "Set the product token in JobCtrl's honest outbound user-agent identity. The next source family uses the updated identity.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-crawler-product-name`,
+  },
+  crawlUserAgentContact: {
+    title: "Crawler contact",
+    description:
+      "Optionally add a contact URL or address to the outbound user-agent identity. The next source family uses the updated identity.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-crawler-contact`,
+  },
+  schedulingEnabled: {
+    title: "Enable scheduled discovery",
+    description:
+      "Control whether worker startup reconciles a recurring Temporal Discover schedule. Restart the worker after changing this setting.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-enable-scheduled-discovery`,
+  },
+  scheduleCron: {
+    title: "Schedule cron",
+    description:
+      "Define the local recurring schedule with a five-field cron expression. It is used only when scheduled discovery is enabled, and changes require a worker restart.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-schedule-cron`,
+  },
+} satisfies Record<string, DiscoverySettingHelpContent>;
 
 function toFormValues(response: DiscoverySettingsResponse): DiscoverySettingsUpdateRequest {
   const { settings, effectiveSettings } = response;
@@ -148,8 +216,12 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
           {(field) => {
             const selected = new Set(field.state.value ?? []);
             return (
-              <FieldSet className="field wide checkbox-group-field">
-                <FieldLegend>Job boards</FieldLegend>
+              <FieldSet aria-label="Job boards" className="field wide checkbox-group-field">
+                <FieldLegend>
+                  <DiscoverySettingLegend help={RUNTIME_SETTING_HELP.boards}>
+                    Job boards
+                  </DiscoverySettingLegend>
+                </FieldLegend>
                 <FieldGroup className="checkbox-options discovery-board-options">
                   {BOARD_OPTIONS.map((option) => (
                     <Field
@@ -174,31 +246,30 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
                     </Field>
                   ))}
                 </FieldGroup>
-                <FieldDescription>{settingContext(effective.boards)}</FieldDescription>
               </FieldSet>
             );
           }}
         </form.Field>
         <form.Field name="resultsPerSite">
-          {(field) => <NumberControl id="discovery-results" name="resultsPerSite" label="Results per board" min={1} max={1000} value={field.state.value ?? 50} metadata={effective.resultsPerSite} onChange={field.handleChange} />}
+          {(field) => <NumberControl help={RUNTIME_SETTING_HELP.resultsPerSite} id="discovery-results" name="resultsPerSite" label="Results per board" min={1} max={1000} value={field.state.value ?? 50} metadata={effective.resultsPerSite} onChange={field.handleChange} />}
         </form.Field>
         <form.Field name="hoursOld">
-          {(field) => <NumberControl id="discovery-lookback" name="hoursOld" label="Posting lookback hours" min={1} max={8760} value={field.state.value ?? 72} metadata={effective.hoursOld} onChange={field.handleChange} />}
+          {(field) => <NumberControl help={RUNTIME_SETTING_HELP.hoursOld} id="discovery-lookback" name="hoursOld" label="Posting lookback hours" min={1} max={8760} value={field.state.value ?? 72} metadata={effective.hoursOld} onChange={field.handleChange} />}
         </form.Field>
         <form.Field name="roleFilterMode">
-          {(field) => <RoleFilterModeControl value={field.state.value ?? initial.settings.roleFilterMode} metadata={effective.roleFilterMode} onChange={field.handleChange} />}
+          {(field) => <RoleFilterModeControl help={RUNTIME_SETTING_HELP.roleFilterMode} value={field.state.value ?? initial.settings.roleFilterMode} metadata={effective.roleFilterMode} onChange={field.handleChange} />}
         </form.Field>
         <form.Field name="roleFilterModel">
-          {(field) => <TextControl id="discovery-role-model" name="roleFilterModel" label="Role filter model" value={String(field.state.value ?? "")} metadata={effective.roleFilterModel} optional onChange={(value) => field.handleChange(value || null)} />}
+          {(field) => <TextControl help={RUNTIME_SETTING_HELP.roleFilterModel} id="discovery-role-model" name="roleFilterModel" label="Role filter model" value={String(field.state.value ?? "")} metadata={effective.roleFilterModel} optional onChange={(value) => field.handleChange(value || null)} />}
         </form.Field>
         <form.Field name="maxParallelFamilies">
-          {(field) => <NumberControl id="discovery-max-parallel" name="maxParallelFamilies" label="Parallel source families" min={1} max={4} value={field.state.value ?? initial.settings.maxParallelFamilies} metadata={effective.maxParallelFamilies} onChange={field.handleChange} />}
+          {(field) => <NumberControl help={RUNTIME_SETTING_HELP.maxParallelFamilies} id="discovery-max-parallel" name="maxParallelFamilies" label="Parallel source families" min={1} max={4} value={field.state.value ?? initial.settings.maxParallelFamilies} metadata={effective.maxParallelFamilies} onChange={field.handleChange} />}
         </form.Field>
         <form.Field name="crawlUserAgentProduct">
-          {(field) => <TextControl id="discovery-ua-product" name="crawlUserAgentProduct" label="Crawler product name" value={String(field.state.value ?? initial.settings.crawlUserAgentProduct)} metadata={effective.crawlUserAgentProduct} onChange={field.handleChange} />}
+          {(field) => <TextControl help={RUNTIME_SETTING_HELP.crawlUserAgentProduct} id="discovery-ua-product" name="crawlUserAgentProduct" label="Crawler product name" value={String(field.state.value ?? initial.settings.crawlUserAgentProduct)} metadata={effective.crawlUserAgentProduct} onChange={field.handleChange} />}
         </form.Field>
         <form.Field name="crawlUserAgentContact">
-          {(field) => <TextControl id="discovery-ua-contact" name="crawlUserAgentContact" label="Crawler contact" value={String(field.state.value ?? "")} metadata={effective.crawlUserAgentContact} optional onChange={field.handleChange} />}
+          {(field) => <TextControl help={RUNTIME_SETTING_HELP.crawlUserAgentContact} id="discovery-ua-contact" name="crawlUserAgentContact" label="Crawler contact" value={String(field.state.value ?? "")} metadata={effective.crawlUserAgentContact} optional onChange={field.handleChange} />}
         </form.Field>
         <form.Field name="schedulingEnabled">
           {(field) => (
@@ -209,12 +280,12 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
                 onCheckedChange={(checked) => field.handleChange(checked)}
               />
               <FieldContent>
-                <FieldLabel htmlFor="discovery-scheduling-enabled">
+                <DiscoverySettingLabel
+                  help={RUNTIME_SETTING_HELP.schedulingEnabled}
+                  htmlFor="discovery-scheduling-enabled"
+                >
                   Enable scheduled discovery
-                </FieldLabel>
-                <FieldDescription>
-                  {settingContext(effective.schedulingEnabled)}
-                </FieldDescription>
+                </DiscoverySettingLabel>
               </FieldContent>
             </Field>
           )}
@@ -222,7 +293,12 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
         <form.Field name="scheduleCron">
           {(field) => (
             <Field className="field">
-              <FieldLabel htmlFor="discovery-schedule-cron">Schedule cron</FieldLabel>
+              <DiscoverySettingLabel
+                help={RUNTIME_SETTING_HELP.scheduleCron}
+                htmlFor="discovery-schedule-cron"
+              >
+                Schedule cron
+              </DiscoverySettingLabel>
               <Input
                 id="discovery-schedule-cron"
                 name="scheduleCron"
@@ -230,34 +306,26 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
                 value={field.state.value ?? "0 7 * * *"}
                 onChange={(event) => field.handleChange(event.target.value)}
               />
-              <FieldDescription>{settingContext(effective.scheduleCron)}</FieldDescription>
             </Field>
           )}
         </form.Field>
       </div>
       <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting })}>
-        {({ isDirty, isSubmitting }) => (
-          <div className="editor-bulk-actions" data-state={isDirty ? "dirty" : "saved"}>
-            <span data-typography="metadata" role="status">
-              {isDirty ? "Unsaved changes" : "No unsaved changes"}
-            </span>
-            <Button
-              type="submit"
-              disabled={!isDirty || isSubmitting}
-              title={!isDirty ? "No unsaved changes" : undefined}
-            >
-              {isSubmitting ? "Saving changes" : "Save changes"}
-            </Button>
-            <Button
-              type="reset"
-              variant="secondary"
-              disabled={!isDirty || isSubmitting}
-              title={!isDirty ? "No unsaved changes" : undefined}
-            >
-              Discard changes
-            </Button>
-          </div>
-        )}
+        {({ isDirty, isSubmitting }) =>
+          isDirty || isSubmitting ? (
+            <div className="editor-bulk-actions" data-state="dirty">
+              <span data-typography="metadata" role="status">
+                {isSubmitting ? "Saving changes" : "Unsaved changes"}
+              </span>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Saving changes" : "Save changes"}
+              </Button>
+              <Button type="reset" variant="secondary" disabled={isSubmitting}>
+                Discard changes
+              </Button>
+            </div>
+          ) : null
+        }
       </form.Subscribe>
       <form.Subscribe selector={(state) => state.errors}>
         {(errors) => {
@@ -278,7 +346,47 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
   );
 }
 
-function NumberControl({ name, id, label, min, max, metadata, value, onChange }: {
+function DiscoverySettingLabel({
+  children,
+  help,
+  htmlFor,
+  optional = false,
+}: {
+  children: ReactNode;
+  help: DiscoverySettingHelpContent;
+  htmlFor: string;
+  optional?: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      <FieldLabel htmlFor={htmlFor}>{children}</FieldLabel>
+      {optional ? (
+        <span className="text-muted-foreground" data-typography="metadata">
+          Optional
+        </span>
+      ) : null}
+      <DiscoverySettingHelp {...help} />
+    </div>
+  );
+}
+
+function DiscoverySettingLegend({
+  children,
+  help,
+}: {
+  children: ReactNode;
+  help: DiscoverySettingHelpContent;
+}) {
+  return (
+    <span className="flex items-center gap-1.5">
+      {children}
+      <DiscoverySettingHelp {...help} />
+    </span>
+  );
+}
+
+function NumberControl({ help, name, id, label, min, max, metadata, value, onChange }: {
+  help: DiscoverySettingHelpContent;
   name: "resultsPerSite" | "hoursOld" | "maxParallelFamilies";
   id: string;
   label: string;
@@ -289,18 +397,18 @@ function NumberControl({ name, id, label, min, max, metadata, value, onChange }:
   onChange: (value: number) => void;
 }) {
   if (!metadata.editable) {
-    return <ReadOnlyField id={id} label={label} value={metadata.value} metadata={metadata} />;
+    return <ReadOnlyField help={help} id={id} label={label} value={metadata.value} />;
   }
   return (
     <Field className="field">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <DiscoverySettingLabel help={help} htmlFor={id}>{label}</DiscoverySettingLabel>
       <Input id={id} name={name} type="number" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />
-      <FieldDescription>{settingContext(metadata)}</FieldDescription>
     </Field>
   );
 }
 
-function TextControl({ id, name, label, value, metadata, onChange, optional = false }: {
+function TextControl({ help, id, name, label, value, metadata, onChange, optional = false }: {
+  help: DiscoverySettingHelpContent;
   id: string;
   name: "roleFilterModel" | "crawlUserAgentProduct" | "crawlUserAgentContact";
   label: string;
@@ -310,25 +418,27 @@ function TextControl({ id, name, label, value, metadata, onChange, optional = fa
   optional?: boolean;
 }) {
   if (!metadata.editable) {
-    return <ReadOnlyField id={id} label={label} value={metadata.value ?? ""} metadata={metadata} />;
+    return <ReadOnlyField help={help} id={id} label={label} value={metadata.value ?? ""} />;
   }
   return (
     <Field className="field">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <DiscoverySettingLabel help={help} htmlFor={id} optional={optional}>{label}</DiscoverySettingLabel>
       <Input id={id} name={name} type="text" value={value} onChange={(event) => onChange(event.target.value)} />
-      <FieldDescription>{optional ? "Optional. " : ""}{settingContext(metadata)}</FieldDescription>
     </Field>
   );
 }
 
-function RoleFilterModeControl({ value, metadata, onChange }: {
+function RoleFilterModeControl({ help, value, metadata, onChange }: {
+  help: DiscoverySettingHelpContent;
   value: DiscoverySettings["roleFilterMode"];
   metadata: EffectiveSetting<DiscoverySettings["roleFilterMode"]>;
   onChange: (value: DiscoverySettings["roleFilterMode"]) => void;
 }) {
   return (
-    <FieldSet className="field wide checkbox-group-field">
-      <FieldLegend>Role title filtering</FieldLegend>
+    <FieldSet aria-label="Role title filtering" className="field wide checkbox-group-field">
+      <FieldLegend>
+        <DiscoverySettingLegend help={help}>Role title filtering</DiscoverySettingLegend>
+      </FieldLegend>
       <FieldGroup className="checkbox-options">
         {ROLE_FILTER_MODES.map((option) => (
           <Field className="choice target-choice" key={option.value} orientation="horizontal">
@@ -347,23 +457,15 @@ function RoleFilterModeControl({ value, metadata, onChange }: {
           </Field>
         ))}
       </FieldGroup>
-      <FieldDescription>{settingContext(metadata)}</FieldDescription>
     </FieldSet>
   );
 }
 
-function ReadOnlyField({ id, label, value, metadata }: { id: string; label: string; value: string | number; metadata: EffectiveSetting<unknown> }) {
+function ReadOnlyField({ help, id, label, value }: { help: DiscoverySettingHelpContent; id: string; label: string; value: string | number }) {
   return (
     <Field className="field">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <DiscoverySettingLabel help={help} htmlFor={id}>{label}</DiscoverySettingLabel>
       <Input id={id} type="text" readOnly aria-readonly="true" value={value} />
-      <FieldDescription>{settingContext(metadata)}</FieldDescription>
     </Field>
   );
-}
-
-function settingContext(metadata: EffectiveSetting<unknown>): string {
-  const source = metadata.source === "persisted" ? "Saved in SQLite" : "Using the default";
-  const activation = metadata.activation === "restart" ? "requires a worker restart" : metadata.activation === "next_run" ? "applies to the next discovery run" : metadata.activation === "next_source_family" ? "applies to the next source family" : metadata.activation === "next_poll" ? "applies on the next worker poll" : "applies immediately";
-  return `${source}; ${activation}.`;
 }

@@ -79,8 +79,7 @@ html:has(.demo-guide-launcher) {
 .side-rail {
   width: 100%;
   gap: 0;
-  padding: var(--jh-panel-padding) var(--jh-internal-gap)
-    var(--jh-internal-gap);
+  padding: var(--jh-panel-padding) var(--jh-internal-gap) var(--jh-internal-gap);
   background: var(--sidebar);
   border-right: 0;
   backdrop-filter: none;
@@ -265,6 +264,12 @@ html:has(.demo-guide-launcher) {
     color 120ms ease;
 }
 
+.topbar__search-trigger,
+.topbar__preferences,
+.topbar__search-close {
+  display: none;
+}
+
 .topbar__search:focus-within {
   border-bottom-color: var(--primary);
   color: var(--primary);
@@ -434,35 +439,65 @@ html:has(.demo-guide-launcher) {
 
 @media (max-width: 820px) {
   .topbar {
-    gap: var(--jh-internal-gap);
-    min-height: calc(var(--jh-control-height) + var(--jh-internal-gap) + 4px);
-    padding: var(--jh-internal-gap) var(--jh-panel-padding);
+    min-height: calc(var(--jh-control-height) + 12px);
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 12px;
   }
 
-  .topbar .topbar__hamburger {
+  .topbar .topbar__hamburger,
+  .topbar__search-trigger,
+  .topbar__preferences {
+    display: inline-flex;
     min-height: var(--jh-control-height);
-    padding: 4px;
-    border-radius: 5px;
+    flex: 0 0 var(--jh-control-height);
+    padding: 0;
+    border-radius: 6px;
   }
 
   .topbar__search {
-    flex-basis: 220px;
-    order: 1;
+    display: none;
+    order: 10;
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: none;
   }
 
-  .topbar__density {
-    order: 2;
+  .topbar__search[data-state="open"] {
+    display: flex;
   }
 
+  .topbar__search-close {
+    display: flex;
+    padding-right: 0;
+  }
+
+  .topbar__search-close [data-slot="button"] {
+    min-width: var(--jh-control-height);
+    min-height: var(--jh-control-height);
+    padding: 0;
+  }
+
+  .topbar__density,
   .topbar__theme-toggle {
-    order: 3;
+    display: none;
   }
 
   .connection-pill-group {
-    order: 4;
+    min-width: 0;
+    margin-left: auto;
+  }
+
+  .connection-spend {
+    display: none;
+  }
+
+  .topbar__preferences-menu {
+    width: min(260px, calc(100vw - 24px));
   }
 
   .connection-pill-group:has(.connection-banner) {
+    order: 11;
     min-width: 0;
     flex: 1 1 100%;
   }
@@ -499,16 +534,6 @@ html:has(.demo-guide-launcher) {
     left: 8px;
     width: auto;
     max-height: calc(100dvh - 16px - env(safe-area-inset-bottom));
-  }
-
-  .topbar__search {
-    order: 5;
-    flex-basis: 100%;
-    max-width: none;
-  }
-
-  .connection-spend {
-    display: none;
   }
 }
 

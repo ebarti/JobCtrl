@@ -2,6 +2,7 @@ import type { JSX } from "react";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { useDueFollowUpsQuery } from "../hooks/useDueFollowUpsQuery.js";
 
 // Context-owned surface listing the outreach follow-ups that are due. These are
@@ -29,7 +30,9 @@ export function DueFollowUpsPanel(): JSX.Element {
           <ul className="outreach-due-follow-ups-list">
             {followUps.map((item) => (
               <li key={item.threadId} className="outreach-due-follow-up-item">
-                <span className="tag">{item.isDue ? "due" : "scheduled"}</span>
+                <StatusBadge tone={item.isDue ? "warn" : "info"}>
+                  {item.isDue ? "Due" : "Scheduled"}
+                </StatusBadge>
                 <span>due {formatDateTime(item.dueAt)}</span>
                 {item.basis ? <span className="muted">{item.basis}</span> : null}
                 <span className="mono">{item.jobId ?? item.contactId}</span>

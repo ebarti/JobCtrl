@@ -18,6 +18,18 @@ import {
 import { CredentialsPanel } from "./CredentialsPanel.js";
 
 describe("<CredentialsPanel>", () => {
+  it("gives every provider an explicit configuration action", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    const heading = await screen.findByRole("heading", { name: "Claude" });
+    const card = heading.closest("article");
+    expect(card).not.toBeNull();
+    const configure = within(card as HTMLElement).getByRole("button", { name: "Configure Claude" });
+    expect(configure).toHaveAttribute("aria-expanded", "false");
+    await user.click(configure);
+    expect(within(card as HTMLElement).getByRole("button", { name: "Close Claude" })).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("renders three guided provider cards and no raw Codex secret field", async () => {
     renderPanel();
 

@@ -61,7 +61,8 @@ describe("<SettingsPanel>", () => {
 
     renderWithProviders(<ExtensionPairingPanel />, { ports });
 
-    expect(await screen.findByText("Browser extension pairing")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: /^Browser extension\b/i }));
+    expect(await screen.findByText("Pairing token")).toBeInTheDocument();
     expect(screen.getByText("capture, autofill read")).toHaveAttribute(
       "data-typography",
       "body",
@@ -104,6 +105,7 @@ describe("<SettingsPanel>", () => {
 
     renderWithProviders(<ExtensionPairingPanel />, { ports });
 
+    await user.click(await screen.findByRole("button", { name: /^Browser extension\b/i }));
     await user.click(
       await screen.findByRole("button", { name: "Rotate token" }),
     );

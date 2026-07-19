@@ -34,22 +34,36 @@ describe("<ProfileForm>", () => {
     expect(screen.queryByRole("button", { name: "preferences" })).not.toBeInTheDocument();
   });
 
-  it("uses a stable shared save and discard bar with explicit unchanged state", async () => {
+  it("keeps save and discard actions quiet until the form is dirty", async () => {
+    const user = userEvent.setup();
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} />, {
       withRouter: true,
     });
 
-    const save = await screen.findByRole("button", { name: "Save changes" });
-    const discard = screen.getByRole("button", { name: "Discard changes" });
-
-    expect(screen.getByRole("link", { name: "Import resume" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "Import resume" })).toHaveAttribute(
       "data-slot",
       "button",
     );
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard changes" })).not.toBeInTheDocument();
+    expect(screen.queryByText("No unsaved changes")).not.toBeInTheDocument();
+
+    const fullName = screen.getByLabelText("Full name");
+    const initialFullName = (fullName as HTMLInputElement).value;
+    await user.clear(fullName);
+    await user.type(fullName, "Updated Candidate");
+
+    const save = screen.getByRole("button", { name: "Save changes" });
+    const discard = screen.getByRole("button", { name: "Discard changes" });
     expect(save).toHaveAttribute("data-slot", "button");
-    expect(save).toBeDisabled();
-    expect(discard).toBeDisabled();
-    expect(screen.getByText("No unsaved changes")).toBeInTheDocument();
+    expect(save).toBeEnabled();
+    expect(discard).toBeEnabled();
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+
+    await user.click(discard);
+
+    expect(fullName).toHaveValue(initialFullName);
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
   });
 
   it("keeps the address field editable when Google Maps is not configured", async () => {
@@ -160,6 +174,21 @@ describe("<ProfileForm>", () => {
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />);
 
     expect(screen.getByRole("heading", { name: "Target search" })).toBeInTheDocument();
+    for (const cardTitle of [
+      "Target tracks",
+      "Seniority floors",
+      "Role areas",
+      "Locations and work models",
+    ]) {
+      const card = screen.getByRole("region", { name: cardTitle });
+      expect(card).toHaveAttribute("data-slot", "card");
+      expect(
+        within(card).getByText(cardTitle, { selector: '[data-slot="card-title"]' }),
+      ).toHaveAttribute(
+        "data-typography",
+        "component-title",
+      );
+    }
     expect(screen.getByRole("group", { name: "Target tracks" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Individual Contributor" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Management" })).toBeInTheDocument();
@@ -190,12 +219,25 @@ describe("<ProfileForm>", () => {
     expect(screen.getByLabelText("Specializations 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Target roles 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Target location 1")).toBeInTheDocument();
-    expect(screen.getByText("Locations and work models")).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Target work model 1" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Remote" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Hybrid" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Application configuration" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
+  });
+
+  it("does not add a legacy form-section shell when the Discovery heading is hidden", () => {
+    const { container } = renderWithProviders(
+      <ProfileForm
+        initial={sampleProfileResponse}
+        section="target-search"
+        showSectionHeading={false}
+      />,
+    );
+
+    const targetGrid = container.querySelector(".target-preferences-grid");
+    expect(targetGrid?.parentElement).toHaveClass("target-search-grid-shell");
+    expect(targetGrid?.parentElement).not.toHaveClass("form-section");
   });
 
   it("saves target tracks and seniority floors as canonical values", async () => {

@@ -38,20 +38,23 @@ describe("<AnalyticsView>", () => {
     const { router, Wrapper } = buildRouter(harness, "/analytics?dimension=fit_band");
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
-    await waitFor(() => expect(screen.getByText("11 applied")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("11 applied applications in outcome history")).toBeInTheDocument(),
+    );
 
     expect(screen.getByRole("heading", { name: "Outcome analytics" })).toBeInTheDocument();
     expect(screen.getByText(/Recorded outcomes from canonical rows only/i)).toBeInTheDocument();
     expect(screen.getByText(/not causal claims/i)).toBeInTheDocument();
-    expect(screen.getByText(/Analytics never enter scoring, ranking, or apply eligibility/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Analytics never enter scoring, ranking, or apply eligibility/i),
+    ).toBeInTheDocument();
     expect(screen.getByText("4d")).toBeInTheDocument();
     expect(screen.getByText("60%")).toBeInTheDocument();
+    expect(screen.getByText("Median response time")).toBeInTheDocument();
+    expect(screen.getByText("Suggestion acceptance")).toBeInTheDocument();
     expect(screen.getByText("excellent")).toBeInTheDocument();
     expect(
-      screen
-        .getByText("excellent")
-        .closest("tr")
-        ?.querySelector('[data-slot="status-badge"]'),
+      screen.getByText("excellent").closest("tr")?.querySelector('[data-slot="status-badge"]'),
     ).toHaveAttribute("data-status-tone", "muted");
     expect(screen.getByText("stretch")).toBeInTheDocument();
     expect(screen.getAllByText(/too few to rate/i).length).toBeGreaterThan(0);
@@ -62,9 +65,13 @@ describe("<AnalyticsView>", () => {
     const { router, Wrapper } = buildRouter(harness);
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
-    await waitFor(() => expect(screen.getByText("11 applied")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("11 applied applications in outcome history")).toBeInTheDocument(),
+    );
 
-    const appliedLabel = screen.getAllByText("Applied").find((element) => element.tagName === "DT");
+    const appliedLabel = screen
+      .getAllByText("Applied applications")
+      .find((element) => element.tagName === "DT");
     expect(appliedLabel).toBeDefined();
     const summary = appliedLabel!.closest("dl.analytics-summary-strip");
     expect(summary).not.toBeNull();
@@ -72,10 +79,7 @@ describe("<AnalyticsView>", () => {
       expect(metric.querySelector("dt")).toHaveAttribute("data-typography", "label");
       expect(metric.querySelector("dd")).toHaveAttribute("data-typography", "metric");
     }
-    expect(screen.getByText("Breakdown")).toHaveAttribute(
-      "data-typography",
-      "label",
-    );
+    expect(screen.getByText("Breakdown")).toHaveAttribute("data-typography", "label");
     expect(document.querySelector(".analytics-controls-copy > strong")).toHaveAttribute(
       "data-typography",
       "component-title",
@@ -88,13 +92,19 @@ describe("<AnalyticsView>", () => {
     const { router, Wrapper } = buildRouter(harness);
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
-    await waitFor(() => expect(screen.getByText("11 applied")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("11 applied applications in outcome history")).toBeInTheDocument(),
+    );
     await user.click(screen.getByRole("button", { name: "Break down outcomes by apply mode" }));
 
-    expect(router.state.location.search).toMatchObject({ dimension: "apply_mode" });
+    expect(router.state.location.search).toMatchObject({
+      dimension: "apply_mode",
+    });
     expect(screen.getByText("automated live")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Break down outcomes by template" }));
-    expect(router.state.location.search).toMatchObject({ dimension: "template" });
+    expect(router.state.location.search).toMatchObject({
+      dimension: "template",
+    });
     expect(screen.getByText("Modern compact")).toBeInTheDocument();
   });
 
@@ -137,18 +147,25 @@ describe("<AnalyticsView>", () => {
     const { router, Wrapper } = buildRouter(harness, "/analytics?dimension=source");
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
-    await waitFor(() =>
-      expect(screen.getByText("No source outcome rows yet.")).toBeInTheDocument(),
+    await waitFor(() => expect(screen.getByText("No source outcome rows yet")).toBeInTheDocument());
+    expect(screen.getByText("No outcome history yet")).toBeInTheDocument();
+    expect(screen.getByText("No replies")).toBeInTheDocument();
+    expect(screen.getByText("No decisions")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Review applied jobs/i })).toHaveAttribute(
+      "href",
+      expect.stringContaining("applyStatus=applied"),
     );
     expect(screen.queryByText("100%")).not.toBeInTheDocument();
   });
 
   it("marks analytics load failures with a semantic alert icon", async () => {
     server.use(
-      http.get("*/v1/analytics/outcomes", () =>
-        new HttpResponse(JSON.stringify({ ok: false, error: "analytics unavailable" }), {
-          status: 503,
-        }),
+      http.get(
+        "*/v1/analytics/outcomes",
+        () =>
+          new HttpResponse(JSON.stringify({ ok: false, error: "analytics unavailable" }), {
+            status: 503,
+          }),
       ),
     );
     const harness = buildProviderHarness();
@@ -165,7 +182,9 @@ describe("<AnalyticsView>", () => {
     const { router, Wrapper } = buildRouter(harness);
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
-    await waitFor(() => expect(screen.getByText("11 applied")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("11 applied applications in outcome history")).toBeInTheDocument(),
+    );
 
     const headingsCaptionsAndLabels = [
       ...screen.getAllByRole("heading").map((element) => element.textContent ?? ""),

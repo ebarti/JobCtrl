@@ -58,6 +58,7 @@ import { Button } from "../../../shared/ui/button.js";
 import { Input } from "../../../shared/ui/input.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../../shared/ui/PdfPreviewViewer.js";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
 import { useArtifactDetailQuery } from "../../operations/hooks/useArtifactDetailQuery.js";
 import { formatToken, scorePercent } from "../lib/audit-format.js";
@@ -244,7 +245,7 @@ const RESUME_EDITOR_FONT_FAMILY_STYLES: Record<ResumeEditorFontFamily, string | 
   inter: '"Inter", "Aptos", "Arial", sans-serif',
   mono: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
   resume: null,
-  sans: '"Aptos", "Inter", "Arial", sans-serif',
+  sans: '"Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   serif: '"Charter", "Georgia", serif',
   source_sans: '"Source Sans 3", "Source Sans Pro", "Aptos", "Arial", sans-serif',
   source_serif: '"Source Serif 4", "Source Serif Pro", "Georgia", serif',
@@ -3549,7 +3550,7 @@ function SelectedPinInspector({
           <span className="eyebrow">{formatToken(pin.section)}</span>
           <h4>{pin.title}</h4>
         </div>
-        <span className={`tag ${tone}`}>{pinStatus(pin, risk)}</span>
+        <StatusBadge tone={tone}>{pinStatus(pin, risk)}</StatusBadge>
       </header>
       <LineJustification pin={pin} />
       <details className="resume-pin-source-check">

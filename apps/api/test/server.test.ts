@@ -24,6 +24,7 @@ import {
 } from "../src/credentials.js";
 import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 import { PROFILE_PREVIEW_SCRIPT, defaultActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
+import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 
 let tempDir = "";
@@ -5333,6 +5334,123 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("filters workflow runs by exact type and canonical started interval before pagination", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      const insert = db.prepare(
+        "INSERT INTO workflow_run_projections (workflow_id, workflow_type, status, started_at, temporal_run_id) VALUES (?, ?, ?, ?, ?)",
+      );
+      insert.run(
+        "run-discover-early",
+        "DiscoverWorkflow",
+        "succeeded",
+        "2026-04-29T10:00:00+00:00",
+        "temporal-discover-early",
+      );
+      insert.run(
+        "run-discover-boundary",
+        "DiscoverWorkflow",
+        "succeeded",
+        "2026-04-29T10:15:00+00:00",
+        "temporal-discover-boundary",
+      );
+      insert.run(
+        "run-discover-late",
+        "DiscoverWorkflow",
+        "succeeded",
+        "2026-04-29T10:20:00+00:00",
+        "temporal-discover-late",
+      );
+      insert.run(
+        "run-discover-no-start",
+        "DiscoverWorkflow",
+        "succeeded",
+        null,
+        "temporal-discover-no-start",
+      );
+      insert.run(
+        "run-legacy-workflow",
+        "",
+        "succeeded",
+        "2026-04-29T10:17:00+00:00",
+        "temporal-legacy-workflow",
+      );
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const byType = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?workflowType=DiscoverWorkflow&sort=started_at&dir=asc&pageSize=100",
+      });
+      expect(byType.statusCode, byType.body).toBe(200);
+      expect(byType.json().items.map((run: { workflowId: string }) => run.workflowId)).toEqual(
+        expect.arrayContaining([
+          "run-discover-early",
+          "run-discover-boundary",
+          "run-discover-late",
+          "run-discover-no-start",
+        ]),
+      );
+      expect(byType.json().items.map((run: { workflowId: string }) => run.workflowId)).not.toContain(
+        "run-legacy-workflow",
+      );
+      expect(byType.json().filter).toMatchObject({
+        status: "all",
+        workflowType: "DiscoverWorkflow",
+        startedSince: null,
+        startedBefore: null,
+      });
+
+      const lowerOnly = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?workflowType=DiscoverWorkflow&startedSince=2026-04-29T10:15:00.000Z&sort=started_at&dir=asc",
+      });
+      expect(lowerOnly.statusCode, lowerOnly.body).toBe(200);
+      expect(lowerOnly.json().items.map((run: { workflowId: string }) => run.workflowId)).toEqual([
+        "run-discover-boundary",
+        "run-discover-late",
+      ]);
+
+      const upperOnly = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?workflowType=DiscoverWorkflow&startedBefore=2026-04-29T10:15:00.000Z&sort=started_at&dir=asc",
+      });
+      expect(upperOnly.statusCode, upperOnly.body).toBe(200);
+      expect(upperOnly.json().items.map((run: { workflowId: string }) => run.workflowId)).toEqual([
+        "run-discover-early",
+      ]);
+
+      const boundedPage = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?workflowType=DiscoverWorkflow&startedSince=2026-04-29T10:00:00.000Z&startedBefore=2026-04-29T10:30:00.000Z&sort=started_at&dir=asc&page=2&pageSize=1",
+      });
+      expect(boundedPage.statusCode, boundedPage.body).toBe(200);
+      expect(boundedPage.json().items.map((run: { workflowId: string }) => run.workflowId)).toEqual([
+        "run-discover-boundary",
+      ]);
+      expect(boundedPage.json().pagination).toEqual({
+        page: 2,
+        pageSize: 1,
+        total: 3,
+        pages: 3,
+      });
+
+      const unfiltered = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?sort=started_at&dir=asc&pageSize=100",
+      });
+      expect(unfiltered.statusCode, unfiltered.body).toBe(200);
+      expect(unfiltered.json().items.map((run: { workflowId: string }) => run.workflowId)).toEqual(
+        expect.arrayContaining(["run-legacy-workflow", "run-discover-no-start"]),
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
   it("renders non-apply workflow runs with their workflow type and detail", async () => {
     // Temporal loop closure (P0): a pipeline orchestrator run has no apply
     // job context — the unified list surfaces its workflow type, and the
@@ -5406,7 +5524,7 @@ describe("local TypeScript API", () => {
         status: "terminated",
         errorCode: "reconciled_not_found",
         errorMessage: RECONCILED_MESSAGE,
-        startedAt: DISCOVER_NEW_START,
+        startedAt: DISCOVER_OLD_START,
         finishedAt: DISCOVER_TERMINATE_AT,
         temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
         eventsJson: JSON.stringify([
@@ -5436,6 +5554,16 @@ describe("local TypeScript API", () => {
         status: "failed",
         startedAt: DISCOVER_NEW_START,
         finishedAt: DISCOVER_FAILED_AT,
+      });
+
+      const filtered = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?workflowType=DiscoverWorkflow&startedSince=2026-07-04T12:13:38.000Z&startedBefore=2026-07-04T12:13:39.000Z",
+      });
+      expect(filtered.statusCode, filtered.body).toBe(200);
+      expect(filtered.json()).toMatchObject({
+        pagination: { total: 1 },
+        items: [{ workflowId: "discover-local", startedAt: DISCOVER_NEW_START }],
       });
 
       const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });
@@ -5960,6 +6088,7 @@ describe("local TypeScript API", () => {
     expect(response.statusCode, response.body).toBe(200);
     expect(response.headers["content-type"]).toContain("text/html");
     expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers["content-security-policy"]).toContain("font-src data:");
     expect(response.headers["content-security-policy"]).toContain("default-src 'none'");
     expect(response.body).toContain("Jordan Candidate");
     expect(response.body).toContain('data-resume-layout-target="personal:full_name"');
@@ -8395,6 +8524,8 @@ describe("local TypeScript API", () => {
     expect(PROFILE_PREVIEW_SCRIPT).toContain("from jobctrl.infrastructure.materials.html_resume_pdf import HtmlResumePdfAdapter");
     expect(PROFILE_PREVIEW_SCRIPT).not.toContain("jobctrl.infrastructure.materials.latex_pdf");
     expect(PROFILE_PREVIEW_SCRIPT).toContain("HtmlResumePdfAdapter().render_resume_to_pdf(");
+    expect(PROFILE_PREVIEW_SCRIPT).toContain("resume_theme = json.loads(sys.argv[3])");
+    expect(PROFILE_PREVIEW_SCRIPT).toContain("resume_theme=resume_theme");
   });
 
   it("serves a rendered profile PDF preview", async () => {
@@ -8421,6 +8552,7 @@ describe("local TypeScript API", () => {
     expect(renderer).toHaveBeenCalledWith(
       {
         profile: expect.objectContaining({ personal: expect.objectContaining({ full_name: "Jordan Candidate" }) }),
+        resumeTheme: BUILT_IN_RESUME_TEMPLATE_THEME,
         templateText: INERT_RESUME_TEMPLATE,
       },
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
@@ -8450,12 +8582,56 @@ describe("local TypeScript API", () => {
     expect(response.statusCode, response.body).toBe(200);
     expect(response.headers["content-type"]).toContain("text/html");
     expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers["content-security-policy"]).toContain("font-src data:");
     expect(response.body).toContain("mock profile resume");
     expect(renderer).toHaveBeenCalledWith(
       {
         profile: expect.objectContaining({ personal: expect.objectContaining({ full_name: "Jordan Candidate" }) }),
+        resumeTheme: BUILT_IN_RESUME_TEMPLATE_THEME,
         templateText: INERT_RESUME_TEMPLATE,
       },
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    await app.close();
+  });
+
+  it("applies the effective template layout order to profile previews", async () => {
+    const renderer = vi.fn(async () => ({
+      pdfBytes: Buffer.from("%PDF-1.7\nmock preview"),
+      htmlText: '<main class="resume-page">mock profile resume</main>',
+    }));
+    const app = buildApp({ ...options, profilePreviewRenderer: renderer });
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/resume-templates",
+      payload: {
+        displayName: "Ordered profile template",
+        theme: BUILT_IN_RESUME_TEMPLATE_THEME,
+        layout: { sectionOrder: ["skills", "summary", "experience"] },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const template = created.json().template;
+    const selected = await app.inject({
+      method: "PATCH",
+      url: "/v1/resume-templates/default",
+      payload: {
+        templateId: template.templateId,
+        versionId: template.activeVersion.versionId,
+      },
+    });
+    expect(selected.statusCode, selected.body).toBe(200);
+
+    const response = await app.inject({ method: "GET", url: "/v1/profile/preview.html" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(renderer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resumeTheme: expect.objectContaining({
+          sectionOrder: ["skills", "summary", "experience"],
+        }),
+      }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 

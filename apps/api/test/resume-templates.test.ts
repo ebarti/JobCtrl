@@ -84,6 +84,45 @@ describe("resume template service", () => {
     expect(assignment.templateState?.state).toBe("template_stale");
   });
 
+  it("returns the exact pinned default version when a newer version exists", () => {
+    const first = createResumeTemplateVersion(db, {
+      displayName: "Pinned template",
+      theme: {
+        ...BUILT_IN_RESUME_TEMPLATE_THEME,
+        accentColor: "#123456",
+        fontFamily: "georgia",
+      },
+      layout: {},
+    }).template;
+    const second = createResumeTemplateVersion(db, {
+      templateId: first.templateId,
+      displayName: "Pinned template",
+      theme: {
+        ...BUILT_IN_RESUME_TEMPLATE_THEME,
+        accentColor: "#654321",
+        fontFamily: "sans",
+      },
+      layout: {},
+    }).template;
+
+    setDefaultResumeTemplate(db, {
+      templateId: first.templateId,
+      versionId: first.activeVersion.versionId,
+    });
+
+    const listed = listResumeTemplates(db);
+    expect(listed.templates.find((template) => template.templateId === first.templateId)?.activeVersion.versionId).toBe(
+      second.activeVersion.versionId,
+    );
+    expect(listed.effectiveDefaultVersion).toMatchObject({
+      versionId: first.activeVersion.versionId,
+      theme: {
+        accentColor: "#123456",
+        fontFamily: "georgia",
+      },
+    });
+  });
+
   it("rejects template payloads that contain profile or job facts", () => {
     expect(() =>
       createResumeTemplateVersion(db, {

@@ -895,7 +895,6 @@ export class DemoLocalCommandExecutor {
         const templates = draft.state.readModel.materials.resumeTemplates.templates;
         const existingIndex = templates.findIndex((template) => template.templateId === templateId);
         const previous = existingIndex >= 0 ? templates[existingIndex]! : templates[0]!;
-        const previousVersionId = previous.activeVersion.versionId;
         const base = structuredClone(previous);
         const versionId = this.createId("template-version");
         Object.assign(base, {
@@ -921,14 +920,6 @@ export class DemoLocalCommandExecutor {
           templates.push(base);
         }
         mutableMap(draft.state.readModel.materials.templateDetails)[templateId] = { ok: true, template: base };
-        if (
-          draft.state.readModel.materials.resumeTemplates.defaultTemplate?.templateId === templateId &&
-          draft.state.readModel.materials.resumeTemplates.defaultTemplate.templateVersionId === previousVersionId
-        ) {
-          const metadata = templateMetadata(base, "profile_default");
-          draft.state.readModel.materials.resumeTemplates.defaultTemplate = metadata;
-          refreshDefaultTemplateConsumers(draft, metadata);
-        }
         context.appendDomainEvent(atTime(createResumeTemplateVersionSaved(LOCAL_TENANT, {
           templateId,
           templateVersionId: base.activeVersion.versionId,
@@ -948,6 +939,7 @@ export class DemoLocalCommandExecutor {
         }
         const metadata = templateMetadata(template, "profile_default");
         draft.state.readModel.materials.resumeTemplates.defaultTemplate = metadata;
+        draft.state.readModel.materials.resumeTemplates.effectiveDefaultVersion = template.activeVersion;
         refreshDefaultTemplateConsumers(draft, metadata);
         context.appendDomainEvent(atTime(createResumeTemplateDefaultChanged(LOCAL_TENANT, {
           templateId: metadata.templateId,

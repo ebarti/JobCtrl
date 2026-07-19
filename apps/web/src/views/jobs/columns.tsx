@@ -19,7 +19,7 @@ import { Checkbox } from "../../shared/ui/checkbox.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
 import { TitleStack } from "../../shared/ui/title-stack.js";
 
-interface JobColumnsOptions {
+export interface JobColumnsOptions {
   rowSelection: RowSelectionState;
   onRowSelectionChange: (next: RowSelectionState) => void;
   selectionAnchorJobKey: string | null;
@@ -281,10 +281,7 @@ export function SalaryAmountCell({
       aria-label={`${bound === "min" ? "Minimum" : "Maximum"} normalized salary ${formatEurPerYearLabel(amount)}`}
       title={`${bound === "min" ? "Minimum" : "Maximum"} normalized salary ${formatEurPerYearLabel(amount)}`}
     >
-      <span
-        className="job-compensation-primary"
-        data-typography="strong-body"
-      >
+      <span className="job-compensation-primary" data-typography="strong-body">
         {formatEurAmount(amount)}
       </span>
     </span>
@@ -330,10 +327,7 @@ export function MarketCompensationCell({
         .filter(Boolean)
         .join(", ")}
     >
-      <span
-        className="job-compensation-primary"
-        data-typography="strong-body"
-      >
+      <span className="job-compensation-primary" data-typography="strong-body">
         {primary}
       </span>
       {interval ? (
@@ -404,7 +398,10 @@ export function CompensationWarningsCell({
     );
   }
   return (
-    <span className="job-compensation-warning-count warn" data-typography="status">
+    <span
+      className="job-compensation-warning-count warn"
+      data-typography="status"
+    >
       {pluralize(warningCount, "warning")}
     </span>
   );
@@ -501,12 +498,14 @@ function selectHeader(
 }
 
 interface RowSelectionControlProps {
+  accessibleLabel?: string;
   context: DataGridCellContext<JobSummary>;
   options: JobColumnsOptions;
   row: JobSummary;
 }
 
 function RowSelectionControl({
+  accessibleLabel,
   context,
   options,
   row,
@@ -527,7 +526,7 @@ function RowSelectionControl({
       }}
     >
       <Checkbox
-        aria-label={`Select ${row.title}`}
+        aria-label={accessibleLabel ?? `Select ${row.title}`}
         checked={checked}
         onPointerDown={(event) => {
           shiftKeyRef.current = event.shiftKey;
@@ -544,6 +543,56 @@ function RowSelectionControl({
         onClick={(event: MouseEvent) => event.stopPropagation()}
       />
     </span>
+  );
+}
+
+export function JobMobileRow({
+  context,
+  options,
+  row,
+}: {
+  readonly context: DataGridCellContext<JobSummary>;
+  readonly options: JobColumnsOptions;
+  readonly row: JobSummary;
+}) {
+  const applyStatus =
+    row.applyStatus && isApplyRunStatus(row.applyStatus)
+      ? row.applyStatus
+      : null;
+
+  return (
+    <div className="job-mobile-row">
+      <RowSelectionControl
+        accessibleLabel={`Select job ${row.title}`}
+        context={context}
+        options={options}
+        row={row}
+      />
+      <div className="job-mobile-row__content">
+        <div className="job-mobile-row__identity">
+          <span className="job-mobile-row__title" data-typography="strong-body">
+            {row.title}
+          </span>
+          <span className="job-mobile-row__score" data-typography="strong-body">
+            <span className="sr-only">Fit score </span>
+            <ScoreBadge score={row.fitScore} />
+          </span>
+        </div>
+        <span className="job-mobile-row__company" data-typography="body">
+          {row.company || "Unknown company"}
+        </span>
+        <div className="job-mobile-row__status" aria-label="Job status">
+          <UserFacingStageBadge stage={row.currentStage} />
+          <StageBadge state={row.currentState} />
+          {applyStatus ? <ApplyRunBadge result={applyStatus} /> : null}
+          {row.scoreStaleness.isStale ? (
+            <span data-typography="label">
+              <ScoreStalenessBadge staleness={row.scoreStaleness} />
+            </span>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 

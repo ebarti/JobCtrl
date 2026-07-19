@@ -175,12 +175,12 @@ describe("<StructuredProfileEditor>", () => {
 
     await user.click(checkbox);
     expect(checkbox).toHaveAttribute("aria-checked", "true");
-    expect(checkbox).toHaveAccessibleDescription("Yes");
+    expect(checkbox).toHaveAccessibleDescription("Selected: Yes");
     expect(storedValueAt(latestProfile, "work_authorization.legally_authorized_to_work")).toBe("Yes");
 
     await user.click(checkbox);
     expect(checkbox).toHaveAttribute("aria-checked", "false");
-    expect(checkbox).toHaveAccessibleDescription("No");
+    expect(checkbox).toHaveAccessibleDescription("Selected: No");
     expect(storedValueAt(latestProfile, "work_authorization.legally_authorized_to_work")).toBe("No");
   });
 
@@ -399,6 +399,18 @@ describe("<StructuredProfileEditor>", () => {
     expect(styleGrid).not.toBeNull();
     expect(applicationGrid).not.toBe(styleGrid);
     expect(document.querySelector(".profile-sections .field-grid")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Work authorization and account" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Availability" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Compensation" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Salary expectation")).toHaveAccessibleDescription(
+      "Annual gross amount in the selected currency.",
+    );
+    expect(screen.getByLabelText("Salary currency")).toHaveAccessibleDescription(
+      "Three-letter currency code, such as EUR or USD.",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Application configuration" }).closest("section"),
+    ).toHaveAttribute("id", "preferences-application");
   });
 
   it("keeps the tailoring field contract grouped behind semantic keyboard tabs", async () => {

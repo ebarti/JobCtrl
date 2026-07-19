@@ -46,7 +46,9 @@ export function ImportPreviewForm() {
     validators: {
       onSubmit: ({ value }) => {
         const result = PreviewValidator.safeParse(value);
-        return result.success ? undefined : (result.error.issues[0]?.message ?? "Invalid options");
+        return result.success
+          ? undefined
+          : (result.error.issues[0]?.message ?? "Invalid options");
       },
     },
     listeners: {
@@ -66,11 +68,8 @@ export function ImportPreviewForm() {
       <div className="wizard-step resume-import-step resume-import-empty-step">
         <Empty title="Pick a PDF on the previous step before continuing." />
         <div className="form-actions resume-import-actions">
-          <Link
-            className={buttonVariants({ variant: "outline" })}
-            to="/profile/import/upload"
-          >
-            Back to upload
+          <Link className={buttonVariants()} to="/profile/import/upload">
+            Return to upload
           </Link>
         </div>
       </div>
@@ -90,9 +89,12 @@ export function ImportPreviewForm() {
         <span className="resume-import-step__eyebrow" data-typography="label">
           Preview options
         </span>
-        <h2 data-typography="section-title">Review the PDF and choose the import scope</h2>
+        <h2 data-typography="section-title">
+          Review the PDF and choose the import scope
+        </h2>
         <p data-typography="body">
-          The original document stays visible while you decide which sections to bring across.
+          The original document stays visible while you decide which sections to
+          bring across.
         </p>
       </header>
 
@@ -107,7 +109,8 @@ export function ImportPreviewForm() {
       <FieldSet className="resume-import-option-set">
         <FieldLegend>What should be imported?</FieldLegend>
         <FieldDescription>
-          Select at least one section. You can edit the resulting profile after import.
+          Select at least one section. You can edit the resulting profile after
+          import.
         </FieldDescription>
         <FieldGroup className="import-options resume-import-options">
           <form.Field name="importProfile">
@@ -120,7 +123,9 @@ export function ImportPreviewForm() {
                   onCheckedChange={(checked) => field.handleChange(checked)}
                 />
                 <FieldContent>
-                  <FieldLabel htmlFor="resume-import-profile-data">Profile data</FieldLabel>
+                  <FieldLabel htmlFor="resume-import-profile-data">
+                    Profile data
+                  </FieldLabel>
                   <FieldDescription>
                     Canonical profile fields parsed from the source resume.
                   </FieldDescription>
@@ -138,7 +143,9 @@ export function ImportPreviewForm() {
                   onCheckedChange={(checked) => field.handleChange(checked)}
                 />
                 <FieldContent>
-                  <FieldLabel htmlFor="resume-import-style-data">Style data</FieldLabel>
+                  <FieldLabel htmlFor="resume-import-style-data">
+                    Style data
+                  </FieldLabel>
                   <FieldDescription>
                     Resume rendering style parsed from the source document.
                   </FieldDescription>
@@ -153,7 +160,10 @@ export function ImportPreviewForm() {
         {(errors) => {
           const message = errors
             .flat()
-            .find((entry): entry is string => typeof entry === "string" && entry.length > 0);
+            .find(
+              (entry): entry is string =>
+                typeof entry === "string" && entry.length > 0,
+            );
           return message ? (
             <Alert className="resume-import-alert" variant="destructive">
               <AlertDescription>{message}</AlertDescription>
@@ -162,10 +172,16 @@ export function ImportPreviewForm() {
         }}
       </form.Subscribe>
 
-      <section className="resume-import-document-preview" aria-labelledby="resume-import-preview-title">
+      <section
+        className="resume-import-document-preview"
+        aria-labelledby="resume-import-preview-title"
+      >
         <header>
           <div>
-            <h3 id="resume-import-preview-title" data-typography="component-title">
+            <h3
+              id="resume-import-preview-title"
+              data-typography="component-title"
+            >
               Original PDF
             </h3>
             <p data-typography="body">Inspect every page before continuing.</p>
@@ -186,22 +202,22 @@ export function ImportPreviewForm() {
       </section>
 
       <form.Subscribe
-        selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}
+        selector={(state) => ({
+          canSubmit: state.canSubmit,
+          isSubmitting: state.isSubmitting,
+        })}
       >
         {({ canSubmit, isSubmitting }) => (
           <div className="form-actions resume-import-actions">
+            <Button type="submit" disabled={!canSubmit || isSubmitting}>
+              Continue to confirmation
+            </Button>
             <Link
               className={buttonVariants({ variant: "outline" })}
               to="/profile/import/upload"
             >
               Back
             </Link>
-            <Button
-              type="submit"
-              disabled={!canSubmit || isSubmitting}
-            >
-              Continue to confirmation
-            </Button>
           </div>
         )}
       </form.Subscribe>

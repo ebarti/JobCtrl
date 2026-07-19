@@ -40,6 +40,10 @@ describe("<ActivityDetailDrawer>", () => {
     ]) {
       expect(within(inspector).getByText(fact)).toBeInTheDocument();
     }
+    expect(within(inspector).getByText("info")).toHaveAttribute(
+      "data-status-tone",
+      "info",
+    );
 
     const payload = screen.getByRole("region", {
       name: "Projected event payload",

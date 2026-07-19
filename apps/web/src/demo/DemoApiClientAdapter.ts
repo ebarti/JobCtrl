@@ -339,9 +339,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
   ): Promise<ApiClientResponse<"workflowRuns">> {
     const normalized = WorkflowRunsListQuerySchema.parse(query);
     const source = await this.read((model) => model.runs.list.items);
-    const items = source.filter(
-      (run) => normalized.status === "all" || run.status === normalized.status,
-    );
+    const items = source.filter((run) => filterWorkflowRun(run, normalized));
     items.sort((left, right) =>
       compareWorkflowRuns(left, right, normalized.sort, normalized.dir),
     );
@@ -353,6 +351,9 @@ export class DemoApiClientAdapter implements ApiClientPort {
       normalized.dir,
       {
         status: normalized.status,
+        workflowType: normalized.workflowType ?? null,
+        startedSince: normalized.startedSince ?? null,
+        startedBefore: normalized.startedBefore ?? null,
       },
     );
   }
@@ -1051,6 +1052,40 @@ function timestampAtOrAfter(
     Number.isFinite(sinceTime) &&
     valueTime >= sinceTime
   );
+}
+
+function timestampBefore(
+  value: string | null | undefined,
+  before: string,
+): boolean {
+  if (!value) return false;
+  const valueTime = Date.parse(value);
+  const beforeTime = Date.parse(before);
+  return (
+    Number.isFinite(valueTime) &&
+    Number.isFinite(beforeTime) &&
+    valueTime < beforeTime
+  );
+}
+
+function filterWorkflowRun(
+  run: WorkflowRunSummary,
+  query: ReturnType<typeof WorkflowRunsListQuerySchema.parse>,
+): boolean {
+  if (query.status !== "all" && run.status !== query.status) return false;
+  if (query.workflowType && run.workflowType !== query.workflowType)
+    return false;
+  if (
+    query.startedSince &&
+    !timestampAtOrAfter(run.startedAt, query.startedSince)
+  )
+    return false;
+  if (
+    query.startedBefore &&
+    !timestampBefore(run.startedAt, query.startedBefore)
+  )
+    return false;
+  return true;
 }
 
 function compareJobs(

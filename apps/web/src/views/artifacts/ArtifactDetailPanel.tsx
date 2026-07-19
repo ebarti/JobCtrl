@@ -31,14 +31,11 @@ import type {
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
-import { Badge } from "../../shared/ui/badge.js";
 import { Button } from "../../shared/ui/button.js";
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "../../shared/ui/card.js";
@@ -50,7 +47,6 @@ import {
 import { Empty } from "../../shared/ui/empty.js";
 import { PdfPreviewViewer } from "../../shared/ui/PdfPreviewViewer.js";
 import { RouteWorkspace } from "../../shared/ui/route-workspace.js";
-import { Separator } from "../../shared/ui/separator.js";
 import {
   Select,
   SelectContent,
@@ -127,6 +123,19 @@ function artifactTypeLabel(type: string): string {
         : part.charAt(0).toUpperCase() + part.slice(1),
     )
     .join(" ");
+}
+
+function tailoringRationaleSummary(
+  explanation: NonNullable<TailoringExplanationSectionProps["explanation"]>,
+): string {
+  const { counts, coverageRecorded } = explanation.keywords;
+  const keywordSummary = counts.planned
+    ? coverageRecorded
+      ? `${counts.covered} of ${counts.planned} target keywords demonstrated`
+      : `${counts.planned} target keywords recorded`
+    : "Generation decisions recorded";
+  const provenanceCount = explanation.bulletProvenance.length;
+  return `${keywordSummary} · ${provenanceCount} provenance ${provenanceCount === 1 ? "record" : "records"}`;
 }
 
 function evidenceReferenceExcerpt(entry: EvidenceMapEntry): string | null {
@@ -270,6 +279,7 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
     [comparisonCandidates],
   );
   const [comparisonArtifactId, setComparisonArtifactId] = useState<string>("");
+  const [rationaleOpen, setRationaleOpen] = useState(false);
   const openArtifact = useOpenArtifactMutation();
   const errorMessage =
     queryError instanceof Error
@@ -326,6 +336,49 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                   {formatDateTime(detail.artifact.createdAt)}
                 </p>
               </div>
+              <div
+                aria-label="Artifact actions"
+                className="artifact-detail-workspace__actions"
+              >
+                <Button
+                  size="sm"
+                  type="button"
+                  disabled={
+                    openArtifact.isPending ||
+                    detail.artifact.status === "missing"
+                  }
+                  onClick={() =>
+                    openArtifact.mutate({
+                      artifactId: detail.artifact.artifactId,
+                    })
+                  }
+                >
+                  <IconFileTypePdf
+                    aria-hidden="true"
+                    data-icon="inline-start"
+                  />
+                  {openArtifact.isPending
+                    ? "Opening"
+                    : isDemo
+                      ? "Preview in browser"
+                      : "Open"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  type="button"
+                  disabled={!detail.artifact.jobKey}
+                  onClick={() =>
+                    void navigate({
+                      to: "/jobs/$jobId",
+                      params: { jobId: detail.artifact.jobKey },
+                    })
+                  }
+                >
+                  Open related job
+                  <IconExternalLink aria-hidden="true" data-icon="inline-end" />
+                </Button>
+              </div>
             </div>
           }
         >
@@ -334,7 +387,7 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
               <div className="artifact-detail-sidebar">
                 <h2 className="sr-only">Artifact audit</h2>
                 <Card className="artifact-summary-card" size="sm">
-                  <CardHeader className="border-b">
+                  <CardHeader className="artifact-summary-card__header">
                     <CardTitle>
                       <h3 className="artifact-card-heading">
                         Artifact summary
@@ -343,11 +396,6 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                     <CardDescription>
                       {artifactStatusDescription(detail.artifact.status)}
                     </CardDescription>
-                    <CardAction>
-                      <Badge variant="outline">
-                        {artifactTypeLabel(detail.artifact.type)}
-                      </Badge>
-                    </CardAction>
                   </CardHeader>
                   <CardContent className="artifact-summary-card__content">
                     {isSuppressed(detail.artifact.status) ? (
@@ -360,15 +408,10 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                         </AlertDescription>
                       </Alert>
                     ) : null}
-                    <dl className="artifact-summary-facts">
-                      <div>
-                        <dt>Status</dt>
-                        <dd>
-                          <ArtifactStatusBadge
-                            status={detail.artifact.status}
-                          />
-                        </dd>
-                      </div>
+                    <dl
+                      aria-label="Artifact metadata"
+                      className="artifact-summary-facts"
+                    >
                       <div>
                         <dt>Created</dt>
                         <dd>{formatDateTime(detail.artifact.createdAt)}</dd>
@@ -377,8 +420,19 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                         <dt>File size</dt>
                         <dd>{detail.artifact.size}</dd>
                       </div>
+                      {detail.artifact.resumeTemplate?.effective
+                        .templateName ? (
+                        <div>
+                          <dt>Template</dt>
+                          <dd>
+                            {
+                              detail.artifact.resumeTemplate.effective
+                                .templateName
+                            }
+                          </dd>
+                        </div>
+                      ) : null}
                     </dl>
-                    <Separator />
                     <Collapsible className="artifact-technical-details">
                       <CollapsibleTrigger
                         render={
@@ -424,68 +478,62 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                       </CollapsibleContent>
                     </Collapsible>
                   </CardContent>
-                  <CardFooter className="artifact-summary-actions border-t">
-                    <Button
-                      size="sm"
-                      type="button"
-                      disabled={
-                        openArtifact.isPending ||
-                        detail.artifact.status === "missing"
-                      }
-                      onClick={() =>
-                        openArtifact.mutate({
-                          artifactId: detail.artifact.artifactId,
-                        })
-                      }
-                    >
-                      <IconFileTypePdf
-                        aria-hidden="true"
-                        data-icon="inline-start"
-                      />
-                      {openArtifact.isPending
-                        ? "Opening"
-                        : isDemo
-                          ? "Preview in browser"
-                          : "Open"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      type="button"
-                      disabled={!detail.artifact.jobKey}
-                      onClick={() =>
-                        void navigate({
-                          to: "/jobs/$jobId",
-                          params: { jobId: detail.artifact.jobKey },
-                        })
-                      }
-                    >
-                      open related job
-                      <IconExternalLink
-                        aria-hidden="true"
-                        data-icon="inline-end"
-                      />
-                    </Button>
-                  </CardFooter>
                 </Card>
-                {detail.artifact.jobKey &&
-                detail.tailoringExplanation?.bulletProvenance.some(
-                  (entry) => entry.requirementIds.length > 0,
-                ) ? (
-                  <ArtifactTailoringExplanation
-                    explanation={detail.tailoringExplanation}
-                    jobKey={detail.artifact.jobKey}
-                    renderEvidenceReference={renderEvidenceReference}
-                    resolveEvidenceReference={resolveEvidenceReference}
-                  />
-                ) : (
-                  <TailoringExplanationSection
-                    className="tailoring-explanation-section artifact-tailoring-card"
-                    explanation={detail.tailoringExplanation}
-                    renderEvidenceReference={renderEvidenceReference}
-                    resolveEvidenceReference={resolveEvidenceReference}
-                  />
-                )}
+                {detail.tailoringExplanation ? (
+                  <Collapsible
+                    className="artifact-rationale-disclosure"
+                    open={rationaleOpen}
+                    onOpenChange={setRationaleOpen}
+                    render={<section />}
+                  >
+                    <div className="artifact-rationale-disclosure__header">
+                      <div className="artifact-rationale-disclosure__title">
+                        <h3>Tailoring rationale</h3>
+                        <p>
+                          {tailoringRationaleSummary(
+                            detail.tailoringExplanation,
+                          )}
+                        </p>
+                      </div>
+                      <CollapsibleTrigger
+                        render={
+                          <Button
+                            className="artifact-rationale-disclosure__trigger"
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          />
+                        }
+                      >
+                        {rationaleOpen ? "Hide rationale" : "Review rationale"}
+                        <IconChevronDown
+                          aria-hidden="true"
+                          data-icon="inline-end"
+                        />
+                      </CollapsibleTrigger>
+                    </div>
+                    <CollapsibleContent className="artifact-rationale-disclosure__content">
+                      {detail.artifact.jobKey &&
+                      detail.tailoringExplanation.bulletProvenance.some(
+                        (entry) => entry.requirementIds.length > 0,
+                      ) ? (
+                        <ArtifactTailoringExplanation
+                          explanation={detail.tailoringExplanation}
+                          jobKey={detail.artifact.jobKey}
+                          renderEvidenceReference={renderEvidenceReference}
+                          resolveEvidenceReference={resolveEvidenceReference}
+                        />
+                      ) : (
+                        <TailoringExplanationSection
+                          className="tailoring-explanation-section artifact-tailoring-card"
+                          explanation={detail.tailoringExplanation}
+                          renderEvidenceReference={renderEvidenceReference}
+                          resolveEvidenceReference={resolveEvidenceReference}
+                        />
+                      )}
+                    </CollapsibleContent>
+                  </Collapsible>
+                ) : null}
                 <Card className="artifact-comparison-card" size="sm">
                   <CardHeader className="border-b">
                     <CardTitle>
@@ -562,7 +610,7 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                     )}
                     loadingMessage="The artifact PDF is loading into the in-app preview."
                     loadingTitle="Rendering artifact PDF."
-                    openLabel="open PDF"
+                    openLabel="Open PDF"
                     pageAltPrefix={
                       detail.artifact.title || detail.artifact.type
                     }

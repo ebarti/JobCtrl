@@ -44,6 +44,9 @@ describe("Checkbox", () => {
 
     expect(checkbox).toHaveAttribute("data-checked");
     expect(checkbox).toHaveAttribute("aria-checked", "true");
+    expect(
+      checkbox.querySelector('[data-slot="checkbox-indicator"]'),
+    ).toHaveClass("text-primary-foreground");
     expect(checkbox.querySelector("svg")).toHaveClass("size-3");
     expect(onCheckedChange).toHaveBeenCalledWith(true, expect.anything());
   });

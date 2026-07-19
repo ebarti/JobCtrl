@@ -78,11 +78,7 @@ export interface DimensionBreakdownPanelProps {
   readonly loading: boolean;
 }
 
-export function DimensionBreakdownPanel({
-  analytics,
-  dimension,
-  loading,
-}: DimensionBreakdownPanelProps) {
+export function DimensionBreakdownPanel({ analytics, dimension, loading }: DimensionBreakdownPanelProps) {
   const rows = analytics ? outcomeRows(analytics, dimension) : [];
   return rows.length || loading ? (
     <div className="analytics-breakdown-region">
@@ -94,7 +90,14 @@ export function DimensionBreakdownPanel({
     </div>
   ) : (
     <div className="analytics-breakdown-empty">
-      <Empty title={`No ${DIMENSION_LABELS[dimension].toLowerCase()} outcome rows yet.`} />
+      <Empty
+        title={`No ${DIMENSION_LABELS[dimension].toLowerCase()} outcome rows yet`}
+        description={
+          analytics && analytics.totals.applied > 0
+            ? "Choose another breakdown to inspect the outcomes already recorded."
+            : "Record an outcome on an applied job to populate this breakdown."
+        }
+      />
     </div>
   );
 }

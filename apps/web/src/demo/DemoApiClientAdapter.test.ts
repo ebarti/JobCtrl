@@ -678,6 +678,31 @@ describe("DemoApiClientAdapter", () => {
       pages: 3,
     });
 
+    const filteredRuns = await adapter.workflowRuns({
+      workflowType: "JobPipelineWorkflow",
+      startedSince: "2026-07-11T08:00:00.000Z",
+      startedBefore: "2026-07-11T08:30:00.000Z",
+      sort: "started_at",
+      dir: "asc",
+      page: 2,
+      pageSize: 1,
+    });
+    expect(filteredRuns.items.map((run) => run.runId)).toEqual([
+      "run-failed-quality-gate",
+    ]);
+    expect(filteredRuns.pagination).toEqual({
+      page: 2,
+      pageSize: 1,
+      total: 3,
+      pages: 3,
+    });
+    expect(filteredRuns.filter).toEqual({
+      status: "all",
+      workflowType: "JobPipelineWorkflow",
+      startedSince: "2026-07-11T08:00:00.000Z",
+      startedBefore: "2026-07-11T08:30:00.000Z",
+    });
+
     await expect(
       adapter.listContacts({
         jobId: "job-northwind-platform",

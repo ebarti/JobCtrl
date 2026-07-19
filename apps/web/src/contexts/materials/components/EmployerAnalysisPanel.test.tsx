@@ -442,7 +442,10 @@ describe("<EmployerAnalysisPanel>", () => {
 
     expect(screen.getByText("platform reliability")).toBeInTheDocument();
     expect(screen.getByText("Kubernetes")).toBeInTheDocument();
-    expect(screen.getByText("orphan")).toBeInTheDocument();
+    expect(screen.getByText("Orphan")).toHaveAttribute(
+      "data-status-tone",
+      "warn",
+    );
     expect(
       screen.getByText("Named technology with no dedicated requirement."),
     ).toBeInTheDocument();
@@ -477,7 +480,10 @@ describe("<EmployerAnalysisPanel>", () => {
     const user = userEvent.setup();
     render(<EmployerAnalysisPanel analysis={degradedEmployerAnalysis} />);
 
-    expect(screen.getByText("degraded (1/2)")).toBeInTheDocument();
+    expect(screen.getByText("Degraded (1/2)")).toHaveAttribute(
+      "data-status-tone",
+      "warn",
+    );
     const flaggedRequirement = screen.getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });

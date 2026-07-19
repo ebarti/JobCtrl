@@ -232,28 +232,21 @@ export function DiscoveryAutomationSettingsForm({
           isDirty: state.isDirty,
         })}
       >
-        {({ canSubmit, isSubmitting, isDirty }) => (
-          <div className="form-actions" data-state={isDirty ? "dirty" : "saved"}>
-            <span data-typography="metadata" role="status">
-              {isDirty ? "Unsaved changes" : "No unsaved changes"}
-            </span>
-            <Button
-              type="submit"
-              disabled={!canSubmit || !isDirty || isSubmitting}
-              title={!isDirty ? "No unsaved changes" : undefined}
-            >
-              {isSubmitting ? "Saving changes" : "Save changes"}
-            </Button>
-            <Button
-              type="reset"
-              variant="secondary"
-              disabled={!isDirty || isSubmitting}
-              title={!isDirty ? "No unsaved changes" : undefined}
-            >
-              Discard changes
-            </Button>
-          </div>
-        )}
+        {({ canSubmit, isSubmitting, isDirty }) =>
+          isDirty || isSubmitting ? (
+            <div className="form-actions" data-state="dirty">
+              <span data-typography="metadata" role="status">
+                {isSubmitting ? "Saving changes" : "Unsaved changes"}
+              </span>
+              <Button type="submit" disabled={!canSubmit || isSubmitting}>
+                {isSubmitting ? "Saving changes" : "Save changes"}
+              </Button>
+              <Button type="reset" variant="secondary" disabled={isSubmitting}>
+                Discard changes
+              </Button>
+            </div>
+          ) : null
+        }
       </form.Subscribe>
       {updateSettings.error ? (
         <Alert className="inline" variant="destructive">

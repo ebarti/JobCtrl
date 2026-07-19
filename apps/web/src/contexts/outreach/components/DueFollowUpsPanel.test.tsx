@@ -16,7 +16,7 @@ describe("<DueFollowUpsPanel>", () => {
       view.getByText(/Reminders surfaced for you to act on/i).parentElement,
     ).toHaveClass("outreach-due-follow-ups-content");
     expect(view.getByText("application_submitted")).toBeInTheDocument();
-    expect(view.getByText("due")).toBeInTheDocument();
+    expect(view.getByText("Due")).toHaveAttribute("data-status-tone", "warn");
   });
 
   it("shows an empty message when nothing is due", async () => {

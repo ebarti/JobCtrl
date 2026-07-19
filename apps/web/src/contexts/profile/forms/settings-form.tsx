@@ -71,12 +71,16 @@ export function SettingsForm({
     onSubmit: async ({ value, formApi }) => {
       setStatusMessage("");
       const submittedValues = serializeSettingsValues(value);
-      const response = await updateSettings.mutateAsync(value);
-      if (serializeSettingsValues(formApi.state.values) === submittedValues) {
-        formApi.reset(toFormValues(response.settings));
-        setStatusMessage("settings saved");
-      } else {
-        setStatusMessage("saved; newer changes pending");
+      try {
+        const response = await updateSettings.mutateAsync(value);
+        if (serializeSettingsValues(formApi.state.values) === submittedValues) {
+          formApi.reset(toFormValues(response.settings));
+          setStatusMessage("Settings saved.");
+        } else {
+          setStatusMessage("Saved; newer changes pending.");
+        }
+      } catch {
+        setStatusMessage("Could not save settings. Review the fields and try again.");
       }
     },
   });
@@ -105,7 +109,7 @@ export function SettingsForm({
         setStatusMessage("");
       }}
     >
-      {statusMessage ? <div className="status-line" role="status">{statusMessage}</div> : null}
+      {statusMessage ? <div className="status-line" role={updateSettings.isError ? "alert" : "status"}>{statusMessage}</div> : null}
       <form.Subscribe
         selector={(state) => ({
           isDirty: state.isDirty,
@@ -198,7 +202,7 @@ export function SettingsForm({
         })}
       >
         {({ canSubmit, isSubmitting, isDirty }) => (
-          <div className="form-actions">
+          <div className="form-actions settings-save-actions" data-save-state={isSubmitting ? "saving" : isDirty ? "dirty" : "saved"}>
             <Button
               type="submit"
               disabled={!canSubmit || !isDirty || isSubmitting}

@@ -44,11 +44,14 @@ describe("<ModelSelectionPanel>", () => {
 
     expect(await screen.findByRole("heading", { name: "Model selection" })).toBeInTheDocument();
     expect(screen.getAllByRole("article")).toHaveLength(3);
+    await screen.findByText("Configuration required");
+    expect(screen.getByRole("heading", { name: "Google" }).closest("article")).toHaveAttribute("data-model-state", "unconfigured");
     const claude = await providerCard("Claude");
     const codex = await providerCard("Codex");
     const google = await providerCard("Google");
-    expect(claude.getByText(/live availability/i)).toBeInTheDocument();
-    expect(codex.getByText(/live availability/i)).toBeInTheDocument();
+    expect(claude.getByText(/live provider availability/i)).toBeInTheDocument();
+    expect(codex.getByText(/live provider availability/i)).toBeInTheDocument();
+    expect(claude.getByText("Ready to select")).toHaveAttribute("data-slot", "status-badge");
     expect(google.getByRole("link", { name: "Configure Google" })).toHaveAttribute(
       "href",
       "/settings/credentials",

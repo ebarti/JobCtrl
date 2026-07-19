@@ -877,11 +877,14 @@ describe("<JobsView> bulk delete integration", () => {
 
     expect(await screen.findByText("Pending Tailor")).toBeInTheDocument();
 
-    const rowCheckboxes = screen.getAllByRole("checkbox").filter(
-      (checkbox) =>
-        checkbox.getAttribute("aria-label")?.startsWith("Select ") &&
-        checkbox.getAttribute("aria-label") !== "Select all rows on this page",
-    );
+    const rowCheckboxes = screen
+      .getAllByRole("checkbox")
+      .filter(
+        (checkbox) =>
+          checkbox.getAttribute("aria-label")?.startsWith("Select ") &&
+          checkbox.getAttribute("aria-label") !==
+            "Select all rows on this page",
+      );
     await user.click(rowCheckboxes[0]!);
     await waitFor(() =>
       expect(screen.getByText("1 selected")).toBeInTheDocument(),
@@ -1041,9 +1044,10 @@ describe("<JobsView> bulk delete integration", () => {
     firstMoreActions.focus();
     await user.keyboard("{Enter}");
     await user.click(
-      within(
-        screen.getByRole("menu", { name: "More actions" }),
-      ).getByRole("menuitem", { name: "Select all matching" }),
+      within(screen.getByRole("menu", { name: "More actions" })).getByRole(
+        "menuitem",
+        { name: "Select all matching" },
+      ),
     );
     await waitFor(() =>
       expect(screen.getByText("1 selected")).toBeInTheDocument(),
@@ -1079,19 +1083,23 @@ describe("<JobsView> bulk delete integration", () => {
     secondMoreActions.focus();
     await user.keyboard("{Enter}");
     await user.click(
-      within(
-        screen.getByRole("menu", { name: "More actions" }),
-      ).getByRole("menuitem", { name: "Select all matching" }),
+      within(screen.getByRole("menu", { name: "More actions" })).getByRole(
+        "menuitem",
+        { name: "Select all matching" },
+      ),
     );
     await waitFor(() =>
       expect(screen.getByText(/2 selected/i)).toBeInTheDocument(),
     );
 
-    const rowCheckboxes = screen.getAllByRole("checkbox").filter(
-      (checkbox) =>
-        checkbox.getAttribute("aria-label")?.startsWith("Select ") &&
-        checkbox.getAttribute("aria-label") !== "Select all rows on this page",
-    );
+    const rowCheckboxes = screen
+      .getAllByRole("checkbox")
+      .filter(
+        (checkbox) =>
+          checkbox.getAttribute("aria-label")?.startsWith("Select ") &&
+          checkbox.getAttribute("aria-label") !==
+            "Select all rows on this page",
+      );
 
     expect(
       screen.getByRole("checkbox", { name: /select all rows on this page/i }),
@@ -1155,12 +1163,18 @@ describe("<JobsView> bulk delete integration", () => {
     filteredMoreActions.focus();
     await user.keyboard("{Enter}");
     expect(
-      within(
-        screen.getByRole("menu", { name: "More actions" }),
-      ).getByRole("menuitem", { name: "Select all matching" }),
+      within(screen.getByRole("menu", { name: "More actions" })).getByRole(
+        "menuitem",
+        { name: "Select all matching" },
+      ),
     ).toHaveAttribute("aria-disabled", "true");
 
-    await user.click(screen.getByRole("button", { name: /select page/i }));
+    await user.click(
+      within(screen.getByRole("menu", { name: "More actions" })).getByRole(
+        "menuitem",
+        { name: /select page/i },
+      ),
+    );
     await waitFor(() =>
       expect(screen.getByText(/1 selected/i)).toBeInTheDocument(),
     );

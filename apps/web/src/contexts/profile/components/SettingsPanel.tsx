@@ -1,5 +1,10 @@
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "../../../shared/ui/alert.js";
 import { useHealthQuery } from "../../operations/hooks/useHealthQuery.js";
 import { SettingsForm } from "../forms/settings-form.js";
 import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
@@ -17,12 +22,18 @@ export function SettingsPanel() {
       description="Daily spend, application concurrency, and worker capacity"
       title="Cost and capacity"
     >
-      {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
+      {errorMessage ? (
+        <Alert variant="destructive">
+          <AlertTitle>Cost and capacity settings are unavailable</AlertTitle>
+          <AlertDescription>{errorMessage}</AlertDescription>
+        </Alert>
+      ) : null}
       {settings ? (
         <SettingsForm
           initial={settings}
           effectiveSettings={settingsQuery.data!.effectiveSettings}
-          {...(healthQuery.data?.worker.heartbeat?.maxConcurrentActivities !== undefined
+          {...(healthQuery.data?.worker.heartbeat?.maxConcurrentActivities !==
+          undefined
             ? {
                 activeWorkerActivitySlots:
                   healthQuery.data.worker.heartbeat.maxConcurrentActivities,
@@ -33,7 +44,7 @@ export function SettingsPanel() {
             : {})}
         />
       ) : (
-        <Empty title="Loading config." />
+        <Empty title="Loading cost and capacity settings" />
       )}
     </DisclosureSection>
   );

@@ -31,10 +31,7 @@ describe("ConversionPanel", () => {
 
     const stages = [...container.querySelectorAll(".conversion-stage")].map((el) => el.textContent);
     expect(stages).toEqual(["Applied3100%", "Reply267%", "Interview133%", "Offer00%"]);
-    expect(container.querySelector(".conversion-stage-lbl")).toHaveAttribute(
-      "data-typography",
-      "label",
-    );
+    expect(container.querySelector(".conversion-stage-lbl")).toHaveAttribute("data-typography", "label");
     expect(container.querySelector(".conversion-stage-val span")).toHaveAttribute(
       "data-typography",
       "metadata",
@@ -59,10 +56,7 @@ describe("ConversionPanel", () => {
 
     const metrics = [...container.querySelectorAll(".conversion-row-metric")].map((el) => el.textContent);
     expect(metrics).toEqual(["33%interview", "33%interview"]);
-    expect(container.querySelector(".conversion-row-metric b")).toHaveAttribute(
-      "data-typography",
-      "metric",
-    );
+    expect(container.querySelector(".conversion-row-metric b")).toHaveAttribute("data-typography", "metric");
     expect(container.querySelector(".conversion-row-metric span")).toHaveAttribute(
       "data-typography",
       "metadata",
@@ -74,15 +68,16 @@ describe("ConversionPanel", () => {
       ...sampleDashboardSummary,
       conversion: {
         ...sampleDashboardSummary.conversion,
-        totals: { ...sampleDashboardSummary.conversion.totals, costPerInterview: 42 },
+        totals: {
+          ...sampleDashboardSummary.conversion.totals,
+          costPerInterview: 42,
+        },
       },
     };
 
     const { container } = render(<ConversionPanel summary={summary} />);
 
-    expect(container.querySelector(".conversion-note")?.textContent).toContain(
-      "Cost / interview: 42",
-    );
+    expect(container.querySelector(".conversion-note")?.textContent).toContain("Cost / interview: 42");
     expect(container.querySelector(".conversion-note")?.textContent).not.toContain("not available");
   });
 
@@ -118,14 +113,20 @@ describe("ConversionPanel", () => {
   });
 
   it("shows an empty state when there are no applications yet", () => {
-    const summary: DashboardSummary = { ...sampleDashboardSummary, conversion: emptyConversion };
+    const summary: DashboardSummary = {
+      ...sampleDashboardSummary,
+      conversion: emptyConversion,
+    };
 
     render(<ConversionPanel summary={summary} />);
 
-    expect(screen.getByText("no outcomes yet")).toBeInTheDocument();
-    expect(
-      screen.getByText("No applications yet. Conversion appears once you apply and record outcomes."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Awaiting outcomes")).toBeInTheDocument();
+    expect(screen.getByText("No application outcomes yet")).toBeInTheDocument();
+    expect(screen.getByText(/Conversion rates appear after you apply/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Review applied jobs" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("applyStatus=applied"),
+    );
     expect(screen.queryByRole("heading", { name: "By source" })).not.toBeInTheDocument();
   });
 });

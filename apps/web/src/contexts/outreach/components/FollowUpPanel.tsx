@@ -5,6 +5,7 @@ import { formatDateTime } from "../../../shared/lib/formatters.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Field, FieldLabel } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { useCompleteFollowUpMutation } from "../hooks/useCompleteFollowUpMutation.js";
 import { useDismissFollowUpMutation } from "../hooks/useDismissFollowUpMutation.js";
 import { useScheduleFollowUpMutation } from "../hooks/useScheduleFollowUpMutation.js";
@@ -49,7 +50,8 @@ export function FollowUpPanel({
       {isScheduled && followUp ? (
         <div className="outreach-follow-up-scheduled">
           <p>
-            <span className="tag">scheduled</span> due {formatDateTime(followUp.dueAt)}
+            <StatusBadge tone="info">Scheduled</StatusBadge> due{" "}
+            {formatDateTime(followUp.dueAt)}
             {followUp.basis ? <span className="muted"> · {followUp.basis}</span> : null}
           </p>
           <div className="form-actions">

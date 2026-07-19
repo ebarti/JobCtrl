@@ -1,8 +1,10 @@
 import type { DashboardSummary } from "../../contexts/operations/types.js";
+import { Button } from "../../shared/ui/button.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { SegmentBar } from "../../shared/ui/segment-bar.js";
 import type { SegmentBarTone } from "../../shared/ui/status-tokens.js";
+import { kpiHrefFor } from "./KpiGrid.js";
 
 type ConversionFunnel = DashboardSummary["conversion"]["totals"];
 
@@ -99,10 +101,7 @@ export function ConversionPanel({ summary }: ConversionPanelProps) {
   const hasOutcomes = totals.applied > 0;
   return (
     <section className="card">
-      <CardHeader
-        title="Conversion"
-        meta={hasOutcomes ? `${totals.applied} applied` : "no outcomes yet"}
-      />
+      <CardHeader title="Conversion" meta={hasOutcomes ? `${totals.applied} applied` : "Awaiting outcomes"} />
       {hasOutcomes ? (
         <div className="conversion-body">
           <ConversionFunnelView funnel={totals} />
@@ -120,7 +119,17 @@ export function ConversionPanel({ summary }: ConversionPanelProps) {
           </div>
         </div>
       ) : (
-        <Empty title="No applications yet. Conversion appears once you apply and record outcomes." />
+        <div className="conversion-empty">
+          <Empty
+            title="No application outcomes yet"
+            description="Conversion rates appear after you apply and record an outcome on a job."
+            action={
+              <Button nativeButton={false} render={<a href={kpiHrefFor("applied")} role="link" />} size="sm">
+                Review applied jobs
+              </Button>
+            }
+          />
+        </div>
       )}
     </section>
   );

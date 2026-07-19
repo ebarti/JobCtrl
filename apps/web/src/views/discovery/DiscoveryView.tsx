@@ -9,10 +9,32 @@ export function DiscoveryView() {
     <>
       <PageHead eyebrow="Pipeline" title="Discovery" />
       <div className="discovery-view-stack discovery-workspace">
-        <TargetSearchSettingsPanel />
-        <DiscoveryAutomationSettingsPanel />
-        <DiscoveryRuntimeSettingsPanel />
-        <DiscoveryProductControls layout="tabs" />
+        <nav className="discovery-section-nav" aria-label="Discovery sections">
+          <a data-typography="control" href="#discovery-target-search">
+            Target search
+          </a>
+          <a data-typography="control" href="#discovery-automation">
+            Automation
+          </a>
+          <a data-typography="control" href="#discovery-runtime">
+            Runtime
+          </a>
+          <a data-typography="control" href="#discovery-source-controls">
+            Source controls
+          </a>
+        </nav>
+        <div className="discovery-task-section" id="discovery-target-search">
+          <TargetSearchSettingsPanel />
+        </div>
+        <div className="discovery-task-section" id="discovery-automation">
+          <DiscoveryAutomationSettingsPanel />
+        </div>
+        <div className="discovery-task-section" id="discovery-runtime">
+          <DiscoveryRuntimeSettingsPanel />
+        </div>
+        <div className="discovery-task-section" id="discovery-source-controls">
+          <DiscoveryProductControls layout="tabs" />
+        </div>
       </div>
     </>
   );

@@ -198,11 +198,14 @@ export function listResumeTemplates(db: SqliteDatabase): ResumeTemplateListRespo
     [DEFAULT_TENANT],
   );
   const templates = rows.map((row) => templateSummaryFromRow(db, row)).filter(isPresent);
+  const defaultTemplate = readDefaultTemplate(db);
+  const builtInDefault = resolveBuiltInTemplate(db);
   return {
     ok: true,
     templates,
-    defaultTemplate: readDefaultTemplate(db)?.metadata ?? null,
-    builtInDefault: resolveBuiltInTemplate(db).metadata,
+    defaultTemplate: defaultTemplate?.metadata ?? null,
+    builtInDefault: builtInDefault.metadata,
+    effectiveDefaultVersion: (defaultTemplate ?? builtInDefault).version,
   };
 }
 

@@ -112,11 +112,11 @@ describe("<JobBulkActions>", () => {
     ).toHaveTextContent(/^Restore selected$/);
   });
 
-  it("keeps the visible primary lifecycle action destructive", () => {
+  it("keeps the contextual primary lifecycle action destructive", () => {
     renderWithProviders(
       <JobBulkActions
         search={baseSearch}
-        selectedCount={0}
+        selectedCount={1}
         hasItems
         hasAnyMatching
         loading={false}
@@ -133,7 +133,7 @@ describe("<JobBulkActions>", () => {
     const deleteSelected = screen.getByRole("button", {
       name: "Delete selected",
     });
-    expect(deleteSelected).toBeDisabled();
+    expect(deleteSelected).toBeEnabled();
     expect(deleteSelected).toHaveClass(
       "bg-destructive",
       "hover:bg-destructive/90",
@@ -178,7 +178,9 @@ describe("<JobBulkActions>", () => {
       "Viewing posting availability exceptions from a legacy link.",
     );
     expect(legacyContext).toHaveAttribute("role", "status");
-    expect(screen.getByRole("button", { name: "Job operations" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Job operations" }),
+    ).toBeInTheDocument();
   });
 
   it("omits the redundant selection instruction when nothing is selected", () => {
@@ -202,7 +204,7 @@ describe("<JobBulkActions>", () => {
     expect(screen.queryByText("select jobs to manage")).not.toBeInTheDocument();
   });
 
-  it("keeps selection, workflow recovery, and the primary decision visible while grouping maintenance in a labelled menu", async () => {
+  it("keeps selection and the primary decision visible while grouping recovery and maintenance in a labelled menu", async () => {
     const user = userEvent.setup();
     const onSelectAllMatching = vi.fn();
     const onClearSelection = vi.fn();
@@ -223,11 +225,15 @@ describe("<JobBulkActions>", () => {
       />,
     );
 
-    expect(screen.getByRole("group", { name: "Selection actions" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Job operations" })).toBeInTheDocument();
     expect(
-      screen.getByRole("group", { name: "Workflow recovery actions" }),
+      screen.getByRole("group", { name: "Selection actions" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: "Job operations" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "Workflow recovery actions" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("group", { name: "Selected job lifecycle actions" }),
     ).toBeInTheDocument();
@@ -236,11 +242,8 @@ describe("<JobBulkActions>", () => {
       screen.queryByRole("menuitem", { name: "Refresh compensation" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Continue pending preparation" }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Retry all failed" }),
-    ).toBeVisible();
+      screen.queryByRole("button", { name: "Continue pending preparation" }),
+    ).not.toBeInTheDocument();
 
     const jobOperations = screen.getByRole("button", {
       name: "Job operations",
@@ -251,11 +254,20 @@ describe("<JobBulkActions>", () => {
       name: "Job operations",
     });
     expect(
-      within(operationsMenu).getByText("Maintenance"),
+      within(operationsMenu).getByText("Workflow recovery"),
     ).toBeInTheDocument();
     expect(
-      within(operationsMenu).getByText("Preparation"),
+      within(operationsMenu).getByRole("menuitem", {
+        name: "Continue pending preparation",
+      }),
     ).toBeInTheDocument();
+    expect(
+      within(operationsMenu).getByRole("menuitem", {
+        name: "Retry all failed",
+      }),
+    ).toBeInTheDocument();
+    expect(within(operationsMenu).getByText("Maintenance")).toBeInTheDocument();
+    expect(within(operationsMenu).getByText("Preparation")).toBeInTheDocument();
     expect(
       within(operationsMenu).getByRole("menuitem", {
         name: "Refresh compensation",
@@ -274,9 +286,10 @@ describe("<JobBulkActions>", () => {
     moreActions.focus();
     await user.keyboard("{Enter}");
     await user.click(
-      within(
-        screen.getByRole("menu", { name: "More actions" }),
-      ).getByRole("menuitem", { name: "Clear selection" }),
+      within(screen.getByRole("menu", { name: "More actions" })).getByRole(
+        "menuitem",
+        { name: "Clear selection" },
+      ),
     );
     expect(onClearSelection).toHaveBeenCalledTimes(1);
   });
@@ -304,7 +317,7 @@ describe("<JobBulkActions>", () => {
     expect(onMutate).toHaveBeenCalledTimes(1);
   });
 
-  it("disables the danger button when nothing is selected", () => {
+  it("hides the danger button when nothing is selected", () => {
     renderWithProviders(
       <JobBulkActions
         search={baseSearch}
@@ -322,8 +335,8 @@ describe("<JobBulkActions>", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: /delete selected/i }),
-    ).toBeDisabled();
+      screen.queryByRole("button", { name: /delete selected/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("flips to a restore label when the deleted tab is active", () => {
@@ -394,10 +407,7 @@ describe("<JobBulkActions>", () => {
     );
     const operationsMenu = await openJobOperations(user);
     await user.click(
-      within(operationsMenu).getByRole(
-        "menuitem",
-        { name: /hide selected/i },
-      ),
+      within(operationsMenu).getByRole("menuitem", { name: /hide selected/i }),
     );
     expect(onHide).toHaveBeenCalledTimes(1);
   });
@@ -425,8 +435,18 @@ describe("<JobBulkActions>", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /retry selected/i }));
-    await user.click(screen.getByRole("button", { name: /retry all failed/i }));
+    let operationsMenu = await openJobOperations(user);
+    await user.click(
+      within(operationsMenu).getByRole("menuitem", {
+        name: /retry selected/i,
+      }),
+    );
+    operationsMenu = await openJobOperations(user);
+    await user.click(
+      within(operationsMenu).getByRole("menuitem", {
+        name: /retry all failed/i,
+      }),
+    );
 
     expect(onRetrySelected).toHaveBeenCalledTimes(1);
     expect(onRetryAll).toHaveBeenCalledTimes(1);
@@ -474,9 +494,9 @@ describe("<JobBulkActions>", () => {
       "Continue pending preparation",
       "Retry all failed",
     ]) {
-      const button = screen.getByRole("button", { name });
-      expect(button).toBeDisabled();
-      expect(button).toHaveAccessibleDescription(
+      const menuItem = within(operationsMenu).getByRole("menuitem", { name });
+      expect(menuItem).toHaveAttribute("data-disabled");
+      expect(menuItem).toHaveAccessibleDescription(
         /Disabled automation actions require the local app.*job organization remains available/i,
       );
     }
@@ -490,11 +510,12 @@ describe("<JobBulkActions>", () => {
         name: "Hide selected",
       }),
     ).not.toHaveAttribute("data-disabled");
-    expect(screen.getByRole("button", { name: "Delete selected" })).toBeEnabled();
-    expect(screen.getByRole("link", { name: "Install JobCtrl" })).toHaveAttribute(
-      "href",
-      "https://jobctrl.dev/user/getting-started",
-    );
+    expect(
+      screen.getByRole("button", { name: "Delete selected" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("link", { name: "Install JobCtrl" }),
+    ).toHaveAttribute("href", "https://jobctrl.dev/user/getting-started");
   });
 
   it("shows retry all failed for active jobs outside the failed filter", async () => {
@@ -521,7 +542,11 @@ describe("<JobBulkActions>", () => {
     expect(
       screen.queryByRole("button", { name: /retry selected/i }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /retry all failed/i }));
+    await user.click(
+      within(await openJobOperations(user)).getByRole("menuitem", {
+        name: /retry all failed/i,
+      }),
+    );
 
     expect(onRetryAll).toHaveBeenCalledTimes(1);
   });
@@ -548,7 +573,9 @@ describe("<JobBulkActions>", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: /continue pending prep/i }),
+      within(await openJobOperations(user)).getByRole("menuitem", {
+        name: /continue pending prep/i,
+      }),
     );
 
     expect(onRunPendingPreparation).toHaveBeenCalledTimes(1);
@@ -576,13 +603,16 @@ describe("<JobBulkActions>", () => {
       />,
     );
 
+    const operationsMenu = await openJobOperations(user);
     expect(
-      screen.getByRole("button", { name: /continue pending prep/i }),
-    ).toBeDisabled();
-    const retryAllFailed = screen.getByRole("button", {
+      within(operationsMenu).getByRole("menuitem", {
+        name: /continue pending prep/i,
+      }),
+    ).toHaveAttribute("data-disabled");
+    const retryAllFailed = within(operationsMenu).getByRole("menuitem", {
       name: /retry all failed/i,
     });
-    expect(retryAllFailed).toBeEnabled();
+    expect(retryAllFailed).not.toHaveAttribute("data-disabled");
 
     await user.click(retryAllFailed);
 
@@ -633,10 +663,9 @@ describe("<JobBulkActions>", () => {
     );
     const operationsMenu = await openJobOperations(user);
     await user.click(
-      within(operationsMenu).getByRole(
-        "menuitem",
-        { name: /permanently delete selected/i },
-      ),
+      within(operationsMenu).getByRole("menuitem", {
+        name: /permanently delete selected/i,
+      }),
     );
     expect(onPermanentDelete).toHaveBeenCalledTimes(1);
   });
@@ -715,10 +744,9 @@ describe("<JobBulkActions>", () => {
 
     const operationsMenu = await openJobOperations(user);
     await user.click(
-      within(operationsMenu).getByRole(
-        "menuitem",
-        { name: "Rescore selected" },
-      ),
+      within(operationsMenu).getByRole("menuitem", {
+        name: "Rescore selected",
+      }),
     );
 
     await waitFor(() =>
@@ -768,10 +796,9 @@ describe("<JobBulkActions>", () => {
 
     const operationsMenu = await openJobOperations(user);
     await user.click(
-      within(operationsMenu).getByRole(
-        "menuitem",
-        { name: "Re-tailor selected" },
-      ),
+      within(operationsMenu).getByRole("menuitem", {
+        name: "Re-tailor selected",
+      }),
     );
 
     await waitFor(() =>
@@ -818,10 +845,9 @@ describe("<JobBulkActions>", () => {
 
     const operationsMenu = await openJobOperations(user);
     await user.click(
-      within(operationsMenu).getByRole(
-        "menuitem",
-        { name: "Refresh compensation" },
-      ),
+      within(operationsMenu).getByRole("menuitem", {
+        name: "Refresh compensation",
+      }),
     );
 
     await waitFor(() =>

@@ -19,6 +19,7 @@ import {
 import { Badge } from "../../../shared/ui/badge.js";
 import { Button } from "../../../shared/ui/button.js";
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import {
   ClaudeProviderForm,
   GoogleProviderForm,
@@ -99,7 +100,7 @@ export function CredentialsPanel() {
         ) : (
           <div className="provider-card-list">
             <ProviderCard
-              description="Reuses an already authenticated normal Codex CLI first, then verifies it in JobCtrl's isolated Codex home. JobCtrl does not accept a raw OpenAI key."
+              description="Reuse and verify an authenticated Codex CLI in JobCtrl's isolated home."
               provider="codex"
               status={codexStatus}
               title="Codex"
@@ -319,6 +320,7 @@ function ProviderCard({
         ? "Configured · restart or verify"
         : "Not configured";
   const statusMessage = visibleProviderStatusMessage(provider, status);
+  const [open, setOpen] = useState(false);
   const visibleOwnership = ownership === "not configured" ? undefined : ownership;
   const detectedMode =
     provider === "claude" || provider === "google"
@@ -335,12 +337,13 @@ function ProviderCard({
       onChangeCapture={onConfigurationChange}
     >
       <DisclosureSection
-        actions={<span className={`tag ${status?.ready ? "ok" : "muted"}`}>{statusLabel}</span>}
+        actions={<div className="provider-card-actions"><StatusBadge icon={false} tone={status?.ready ? "ok" : status?.configured ? "warn" : "muted"}>{statusLabel}</StatusBadge><Button aria-expanded={open} aria-label={`${open ? "Close" : "Configure"} ${title}`} size="sm" type="button" variant="outline" onClick={() => setOpen((current) => !current)}>{open ? "Close" : "Configure"}</Button></div>}
         className="provider-disclosure"
         collapsedSummary={summary || "Provider configuration"}
-        defaultOpen={false}
         description={description}
         headingLevel={3}
+        open={open}
+        onOpenChange={setOpen}
         title={title}
       >
       {detectedMode ? (
@@ -460,7 +463,7 @@ function ReadOnlyProviderGuidance({
       {providers.map(([title, copy]) => (
         <article className="provider-card provider-card--readonly" key={title}>
           <DisclosureSection
-            actions={<span className="tag muted">Read only</span>}
+            actions={<StatusBadge tone="muted">Read only</StatusBadge>}
             className="provider-disclosure provider-disclosure--readonly"
             collapsedSummary="Ownership: external provider environment"
             defaultOpen={false}

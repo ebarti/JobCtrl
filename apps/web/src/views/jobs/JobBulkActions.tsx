@@ -144,7 +144,12 @@ export function JobBulkActions({
           </TabsList>
         </Tabs>
       </div>
-      <div className="bulk-bar jobs-bulk-actions" aria-label="Job actions" role="group">
+      <div
+        className="bulk-bar jobs-bulk-actions"
+        data-selection-active={selectedCount ? "true" : "false"}
+        aria-label="Job actions"
+        role="group"
+      >
         <div
           aria-label="Selection actions"
           className="jobs-action-group jobs-selection-actions"
@@ -153,15 +158,6 @@ export function JobBulkActions({
           {selectedCount ? (
             <span data-typography="metadata">{selectedCount} selected</span>
           ) : null}
-          <Button
-            size="sm"
-            type="button"
-            variant="outline"
-            disabled={!hasItems}
-            onClick={onSelectPage}
-          >
-            Select page
-          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={<Button size="sm" type="button" variant="outline" />}
@@ -171,18 +167,20 @@ export function JobBulkActions({
             <DropdownMenuContent align="start" aria-label="More actions">
               <DropdownMenuGroup>
                 <DropdownMenuLabel>Selection</DropdownMenuLabel>
+                <DropdownMenuItem disabled={!hasItems} onClick={onSelectPage}>
+                  Select page
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!hasAnyMatching || hasLocalFilters}
                   onClick={onSelectAllMatching}
                 >
                   Select all matching
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!selectedCount}
-                  onClick={onClearSelection}
-                >
-                  Clear selection
-                </DropdownMenuItem>
+                {selectedCount ? (
+                  <DropdownMenuItem onClick={onClearSelection}>
+                    Clear selection
+                  </DropdownMenuItem>
+                ) : null}
               </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -193,66 +191,6 @@ export function JobBulkActions({
             organization remains available.{" "}
             <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
           </span>
-        ) : null}
-        {retrySelectedFailures || retryAllFailures ? (
-          <div
-            aria-label="Workflow recovery actions"
-            className="jobs-action-group jobs-recovery-actions"
-            role="group"
-          >
-            {retryAllFailures ? (
-              <Button
-                aria-describedby={
-                  pendingPreparationAvailability.available
-                    ? undefined
-                    : unavailableReasonId
-                }
-                size="sm"
-                type="button"
-                variant="default"
-                disabled={
-                  hasLocalFilters ||
-                  pendingPreparationLoading ||
-                  !pendingPreparationAvailability.available
-                }
-                onClick={onRunPendingPreparation}
-              >
-                Continue pending preparation
-              </Button>
-            ) : null}
-            {retrySelectedFailures ? (
-              <Button
-                aria-describedby={
-                  retryAvailability.available ? undefined : unavailableReasonId
-                }
-                size="sm"
-                type="button"
-                variant="outline"
-                disabled={
-                  !selectedCount || retryLoading || !retryAvailability.available
-                }
-                onClick={onRetryFailedSelected}
-              >
-                Retry selected
-              </Button>
-            ) : null}
-            {retryAllFailures ? (
-              <Button
-                aria-describedby={
-                  retryAvailability.available ? undefined : unavailableReasonId
-                }
-                size="sm"
-                type="button"
-                variant="outline"
-                disabled={
-                  hasLocalFilters || retryLoading || !retryAvailability.available
-                }
-                onClick={onRetryAllFailed}
-              >
-                Retry all failed
-              </Button>
-            ) : null}
-          </div>
         ) : null}
         <div
           aria-label="Job operations"
@@ -266,6 +204,62 @@ export function JobBulkActions({
               Job operations
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" aria-label="Job operations">
+              {retrySelectedFailures || retryAllFailures ? (
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Workflow recovery</DropdownMenuLabel>
+                  {retryAllFailures ? (
+                    <DropdownMenuItem
+                      aria-describedby={
+                        pendingPreparationAvailability.available
+                          ? undefined
+                          : unavailableReasonId
+                      }
+                      disabled={
+                        hasLocalFilters ||
+                        pendingPreparationLoading ||
+                        !pendingPreparationAvailability.available
+                      }
+                      onClick={onRunPendingPreparation}
+                    >
+                      Continue pending preparation
+                    </DropdownMenuItem>
+                  ) : null}
+                  {retrySelectedFailures ? (
+                    <DropdownMenuItem
+                      aria-describedby={
+                        retryAvailability.available
+                          ? undefined
+                          : unavailableReasonId
+                      }
+                      disabled={
+                        !selectedCount ||
+                        retryLoading ||
+                        !retryAvailability.available
+                      }
+                      onClick={onRetryFailedSelected}
+                    >
+                      Retry selected
+                    </DropdownMenuItem>
+                  ) : null}
+                  {retryAllFailures ? (
+                    <DropdownMenuItem
+                      aria-describedby={
+                        retryAvailability.available
+                          ? undefined
+                          : unavailableReasonId
+                      }
+                      disabled={
+                        hasLocalFilters ||
+                        retryLoading ||
+                        !retryAvailability.available
+                      }
+                      onClick={onRetryAllFailed}
+                    >
+                      Retry all failed
+                    </DropdownMenuItem>
+                  ) : null}
+                </DropdownMenuGroup>
+              ) : null}
               <DropdownMenuGroup>
                 <DropdownMenuLabel>Maintenance</DropdownMenuLabel>
                 <RefreshAllCompensationButton
@@ -367,22 +361,24 @@ export function JobBulkActions({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        <div
-          aria-label="Selected job lifecycle actions"
-          className="jobs-action-group jobs-lifecycle-actions"
-          role="group"
-        >
-          <Button
-            aria-label={restoring ? "Restore selected" : undefined}
-            size="sm"
-            type="button"
-            variant={restoring || hidden ? "default" : "destructive"}
-            disabled={!selectedCount || loading}
-            onClick={onPrimaryAction}
+        {selectedCount ? (
+          <div
+            aria-label="Selected job lifecycle actions"
+            className="jobs-action-group jobs-lifecycle-actions"
+            role="group"
           >
-            {primaryLabel}
-          </Button>
-        </div>
+            <Button
+              aria-label={restoring ? "Restore selected" : undefined}
+              size="sm"
+              type="button"
+              variant={restoring || hidden ? "default" : "destructive"}
+              disabled={loading}
+              onClick={onPrimaryAction}
+            >
+              {primaryLabel}
+            </Button>
+          </div>
+        ) : null}
       </div>
     </>
   );

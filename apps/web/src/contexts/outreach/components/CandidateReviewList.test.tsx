@@ -18,6 +18,10 @@ describe("<CandidateReviewList>", () => {
     // Source-attempt outcomes (the search audit) are shown, including the
     // manual-capture fallback recorded as a first-class outcome.
     expect(view.getByText("Manual capture required")).toBeInTheDocument();
+    expect(view.getByText("Needs review")).toHaveAttribute(
+      "data-status-tone",
+      "warn",
+    );
   });
 
   it("offers an explicit Confirm action for a needs_review candidate (INV-4)", () => {
@@ -40,6 +44,10 @@ describe("<CandidateReviewList>", () => {
       ],
     });
     const view = renderWithProviders(<CandidateReviewList task={confirmed} />);
+    expect(view.getByText("Completed")).toHaveAttribute(
+      "data-status-tone",
+      "ok",
+    );
     expect(view.getByText(/confirmed into your contacts/i)).toBeInTheDocument();
     expect(view.queryByRole("button", { name: /confirm contact/i })).toBeNull();
   });

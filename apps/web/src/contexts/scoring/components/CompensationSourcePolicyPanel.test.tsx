@@ -156,6 +156,11 @@ describe("<CompensationSourcePolicyPanel>", () => {
     const statusStack = permitted.closest("td")?.firstElementChild;
     expect(statusStack).toContainElement(permitted);
     expect(statusStack).toHaveClass("flex", "flex-col", "items-start", "gap-1");
+    expect(permitted).toHaveAttribute("data-status-tone", "ok");
+    expect(screen.getAllByText("Configured")[0]).toHaveAttribute(
+      "data-status-tone",
+      "ok",
+    );
   });
 
   it("renders reported compensation sources with required policy fields", async () => {

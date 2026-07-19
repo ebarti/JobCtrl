@@ -8,7 +8,10 @@ import { fileToBase64 } from "../../../shared/lib/file.js";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../../shared/ui/button.js";
 import { Input } from "../../../shared/ui/input.js";
-import { useProfileImportStore } from "../stores/profile-import-store.js";
+import {
+  hasProfileImportUpload,
+  useProfileImportStore,
+} from "../stores/profile-import-store.js";
 
 interface UploadFormValues {
   filename: string;
@@ -16,7 +19,11 @@ interface UploadFormValues {
 }
 
 const UploadValidator = z.object({
-  filename: z.string().trim().min(1, "Choose a PDF before continuing.").max(260),
+  filename: z
+    .string()
+    .trim()
+    .min(1, "Choose a PDF before continuing.")
+    .max(260),
   pdfBase64: z.string().min(1, "Choose a PDF before continuing."),
 });
 
@@ -31,11 +38,16 @@ export function ImportUploadForm() {
   const [reading, setReading] = useState(false);
 
   const form = useForm({
-    defaultValues: { filename: initialFilename, pdfBase64: initialPdf } satisfies UploadFormValues,
+    defaultValues: {
+      filename: initialFilename,
+      pdfBase64: initialPdf,
+    } satisfies UploadFormValues,
     validators: {
       onSubmit: ({ value }) => {
         const result = UploadValidator.safeParse(value);
-        return result.success ? undefined : (result.error.issues[0]?.message ?? "Invalid upload");
+        return result.success
+          ? undefined
+          : (result.error.issues[0]?.message ?? "Invalid upload");
       },
     },
     onSubmit: async ({ value }) => {
@@ -52,6 +64,16 @@ export function ImportUploadForm() {
       form.setFieldValue("pdfBase64", "");
       return;
     }
+    if (
+      file.type !== "application/pdf" &&
+      !file.name.toLowerCase().endsWith(".pdf")
+    ) {
+      reset();
+      form.setFieldValue("filename", "");
+      form.setFieldValue("pdfBase64", "");
+      setReadError("Choose a PDF file.");
+      return;
+    }
     setReading(true);
     try {
       const pdfBase64 = await fileToBase64(file);
@@ -59,7 +81,11 @@ export function ImportUploadForm() {
       form.setFieldValue("pdfBase64", pdfBase64);
       setUpload(file.name, pdfBase64);
     } catch (requestError) {
-      setReadError(requestError instanceof Error ? requestError.message : "Unable to read PDF.");
+      setReadError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to read PDF.",
+      );
     } finally {
       setReading(false);
     }
@@ -80,7 +106,8 @@ export function ImportUploadForm() {
         </span>
         <h2 data-typography="section-title">Choose your source resume</h2>
         <p data-typography="body">
-          Select the PDF you want to inspect before deciding which information to import.
+          Select the PDF you want to inspect before deciding which information
+          to import.
         </p>
       </header>
 
@@ -94,7 +121,10 @@ export function ImportUploadForm() {
         {(errors) => {
           const message = errors
             .flat()
-            .find((entry): entry is string => typeof entry === "string" && entry.length > 0);
+            .find(
+              (entry): entry is string =>
+                typeof entry === "string" && entry.length > 0,
+            );
           return message ? (
             <Alert className="resume-import-alert" variant="destructive">
               <AlertDescription>{message}</AlertDescription>
@@ -127,43 +157,50 @@ export function ImportUploadForm() {
               aria-label="Resume PDF"
               type="file"
               accept="application/pdf"
-              onChange={(event) => void handleFile(event.target.files?.[0] ?? null)}
+              onChange={(event) =>
+                void handleFile(event.target.files?.[0] ?? null)
+              }
             />
             <span
               className="resume-import-target__action"
               data-typography="control"
               aria-hidden="true"
             >
-              {reading ? "Reading…" : field.state.value ? "Choose another" : "Choose PDF"}
+              {reading
+                ? "Reading…"
+                : field.state.value
+                  ? "Choose another"
+                  : "Choose PDF"}
             </span>
           </label>
         )}
       </form.Field>
 
       <p className="resume-import-step__hint" data-typography="body">
-        The selected file is not imported until you review the options and confirm the final step.
+        The selected file is not imported until you review the options and
+        confirm the final step.
       </p>
 
       <form.Subscribe
         selector={(state) => ({
-          canSubmit: state.canSubmit,
+          hasUpload: hasProfileImportUpload(state.values),
           isSubmitting: state.isSubmitting,
         })}
       >
-        {({ canSubmit, isSubmitting }) => (
+        {({ hasUpload, isSubmitting }) => (
           <div className="form-actions resume-import-actions">
+            <Button
+              type="submit"
+              disabled={!hasUpload || isSubmitting || reading}
+            >
+              Continue to options
+            </Button>
             <Link
               className={buttonVariants({ variant: "outline" })}
               to="/profile"
             >
               Cancel
             </Link>
-            <Button
-              type="submit"
-              disabled={!canSubmit || isSubmitting || reading}
-            >
-              Continue to options
-            </Button>
           </div>
         )}
       </form.Subscribe>

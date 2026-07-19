@@ -14,6 +14,12 @@ import {
   AdaptiveFieldSpan,
 } from "../../../shared/ui/adaptive-field-grid.js";
 import { Button } from "../../../shared/ui/button.js";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../../../shared/ui/card.js";
 import { Checkbox } from "../../../shared/ui/checkbox.js";
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import {
@@ -205,6 +211,32 @@ export interface StructuredProfileEditorProps {
   styleText: string;
   onProfileTextChange: (value: string) => void;
   onStyleTextChange: (value: string) => void;
+}
+
+function TargetPreferenceCard({
+  children,
+  id,
+  title,
+}: {
+  children: ReactNode;
+  id: string;
+  title: string;
+}) {
+  return (
+    <Card
+      aria-labelledby={id}
+      className="target-preference-cluster"
+      role="region"
+      size="sm"
+    >
+      <CardHeader>
+        <CardTitle id={id}>{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="target-preference-cluster__content">
+        {children}
+      </CardContent>
+    </Card>
+  );
 }
 
 export function StructuredProfileEditor({
@@ -710,7 +742,7 @@ export function StructuredProfileEditor({
       <FieldContent>
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
         <FieldDescription id={descriptionId} aria-live="polite">
-          {isUnanswered ? "Not answered" : answer}
+          {isUnanswered ? "Not answered" : `Selected: ${answer}`}
         </FieldDescription>
       </FieldContent>
     </Field>
@@ -829,7 +861,7 @@ export function StructuredProfileEditor({
     path: string,
     label: string,
     addLabel: string,
-    options: { compact?: boolean; placeholder?: string } = {},
+    options: { compact?: boolean; hideTitle?: boolean; placeholder?: string } = {},
   ) => {
     const values = delimitedListAt(textAt(profile, path));
     const focusKey = (index: number) => `${path}:${index}`;
@@ -850,7 +882,7 @@ export function StructuredProfileEditor({
     };
     return (
       <Field className="field wide inline-list-field">
-        <FieldTitle>{label}</FieldTitle>
+        <FieldTitle className={options.hideTitle ? "sr-only" : undefined}>{label}</FieldTitle>
         <div className={`inline-list${options.compact ? " compact" : ""}`}>
           {values.map((value, index) => (
             <div className="inline-list-row" key={`${path}-${index}`}>
@@ -898,6 +930,7 @@ export function StructuredProfileEditor({
     path: string,
     label: string,
     groups: readonly TargetSearchOptionGroup[],
+    presentation: { hideLegend?: boolean } = {},
   ) => {
     const options = groups.flatMap((group) => group.options);
     const values = delimitedListAt(textAt(profile, path)).map((value) => value.trim()).filter(Boolean);
@@ -925,7 +958,7 @@ export function StructuredProfileEditor({
 
     return (
       <FieldSet className="field wide checkbox-group-field">
-        <FieldLegend>{label}</FieldLegend>
+        <FieldLegend className={presentation.hideLegend ? "sr-only" : undefined}>{label}</FieldLegend>
         <FieldGroup className="checkbox-group-list">
           {groups.map((group) => {
             const optionFields = (
@@ -991,7 +1024,7 @@ export function StructuredProfileEditor({
     );
   };
 
-  const targetLocationWorkModelField = () => {
+  const targetLocationWorkModelField = (options: { hideTitle?: boolean } = {}) => {
     const locationPath = "experience.target_locations";
     const workModelPath = "experience.target_work_models";
     const locations = delimitedListAt(textAt(profile, locationPath));
@@ -1037,7 +1070,7 @@ export function StructuredProfileEditor({
 
     return (
       <Field className="field wide target-location-model-field">
-        <FieldTitle>{TARGET_LOCATION_LABEL}</FieldTitle>
+        <FieldTitle className={options.hideTitle ? "sr-only" : undefined}>{TARGET_LOCATION_LABEL}</FieldTitle>
         <div className="target-location-model-list">
           {rows.map((row, index) => (
             <div className="target-location-model-row" key={`${locationPath}-${index}`}>
@@ -1257,32 +1290,40 @@ export function StructuredProfileEditor({
   );
 
   const targetSearchSection = () => (
-    <section className="form-section">
+    <section
+      className={
+        showSectionHeading ? "form-section" : "target-search-grid-shell"
+      }
+    >
       {showSectionHeading ? <h3>Target search</h3> : null}
       <FieldGroup className="target-preferences-grid">
-        <FieldGroup className="target-preference-cluster">
-          {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS)}
+        <TargetPreferenceCard id="target-tracks-card-title" title="Target tracks">
+          {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS, {
+            hideLegend: true,
+          })}
           {delimitedListField("experience.target_role", "Target roles", "Add role", { compact: true })}
-        </FieldGroup>
-        <FieldGroup className="target-preference-cluster">
+        </TargetPreferenceCard>
+        <TargetPreferenceCard id="seniority-floors-card-title" title="Seniority floors">
           {targetSearchCheckboxGroup(
             "experience.target_seniority_floor",
             "Seniority floors",
             TARGET_SENIORITY_GROUPS,
+            { hideLegend: true },
           )}
-        </FieldGroup>
-        <FieldGroup className="target-preference-cluster">
+        </TargetPreferenceCard>
+        <TargetPreferenceCard id="role-areas-card-title" title={ROLE_AREA_LABEL}>
           {delimitedListField("experience.target_functions", ROLE_AREA_LABEL, "Add role area", {
             compact: true,
+            hideTitle: true,
             placeholder: ROLE_AREA_PLACEHOLDER,
           })}
           {delimitedListField("experience.target_specializations", "Specializations", "Add specialization", {
             compact: true,
           })}
-        </FieldGroup>
-        <FieldGroup className="target-preference-cluster">
-          {targetLocationWorkModelField()}
-        </FieldGroup>
+        </TargetPreferenceCard>
+        <TargetPreferenceCard id="locations-work-models-card-title" title={TARGET_LOCATION_LABEL}>
+          {targetLocationWorkModelField({ hideTitle: true })}
+        </TargetPreferenceCard>
       </FieldGroup>
     </section>
   );
@@ -1365,6 +1406,7 @@ export function StructuredProfileEditor({
             defaultOpen
             description="Contact, address, and professional links"
             headingLevel={3}
+            id="profile-personal"
             title="Personal information"
           >
             <AdaptiveFieldGrid>
@@ -1394,6 +1436,7 @@ export function StructuredProfileEditor({
             defaultOpen
             description="Default experience summary and verified evidence"
             headingLevel={3}
+            id="profile-baseline"
             title="Resume baseline"
           >
             <AdaptiveFieldGrid>
@@ -1430,6 +1473,7 @@ export function StructuredProfileEditor({
             defaultOpen={false}
             description="Roles, dates, bullets, and required content"
             headingLevel={3}
+            id="profile-experience"
             title="Experience entries"
           >
             <FieldGroup className="repeat-list">
@@ -1564,6 +1608,7 @@ export function StructuredProfileEditor({
             defaultOpen={false}
             description="Degrees, institutions, completion dates, and required content"
             headingLevel={3}
+            id="profile-education"
             title="Education"
           >
             <FieldGroup className="repeat-list">
@@ -1635,6 +1680,7 @@ export function StructuredProfileEditor({
             defaultOpen={false}
             description="Skill groups, individual skills, and required content"
             headingLevel={3}
+            id="profile-skills"
             title="Skill categories"
           >
             <FieldGroup className="repeat-list">
@@ -1766,6 +1812,7 @@ export function StructuredProfileEditor({
             defaultOpen={false}
             description="Optional demographic information"
             headingLevel={3}
+            id="profile-eeo"
             title="Voluntary EEO"
           >
             <AdaptiveFieldGrid>
@@ -1785,48 +1832,87 @@ export function StructuredProfileEditor({
             defaultOpen
             description="Availability, work authorization, and compensation defaults"
             headingLevel={3}
+            id="preferences-application"
             title="Application configuration"
           >
-            <AdaptiveFieldGrid>
-              {applicationConfigurationFields}
-              {yesNoCheckboxField(
-                "work_authorization.legally_authorized_to_work",
-                "Legally authorized to work",
-              )}
-              {yesNoCheckboxField("work_authorization.require_sponsorship", "Requires sponsorship")}
-              {textField("work_authorization.work_permit_type", "Work permit type")}
-              {textField("personal.password", "Job-site login password", "password", {
-                autoComplete: "new-password",
-              })}
-              {textField("availability.earliest_start_date", "Earliest start date", "date")}
-              {yesNoCheckboxField("availability.available_for_full_time", "Available full-time")}
-              {yesNoCheckboxField("availability.available_for_contract", "Available for contract")}
-              {textField("compensation.salary_expectation", "Salary expectation", "number", {
-                min: 0,
-                step: 1,
-                valueKind: "text",
-              })}
-              {textField("compensation.salary_currency", "Salary currency")}
-              {textField("compensation.salary_range_min", "Salary range min", "number", {
-                min: 0,
-                step: 1,
-                valueKind: "text",
-              })}
-              {textField("compensation.salary_range_max", "Salary range max", "number", {
-                min: 0,
-                step: 1,
-                valueKind: "text",
-              })}
-              {textField(
-                "compensation.currency_conversion_note",
-                "Currency conversion guidance",
-                "text",
-                {
-                  helperText:
-                    "Used for salary questions when a job posting lists compensation in a different currency.",
-                },
-              )}
-            </AdaptiveFieldGrid>
+            <FieldGroup className="preferences-field-groups">
+              {applicationConfigurationFields ? (
+                <AdaptiveFieldGrid className="preferences-two-column-grid">
+                  {applicationConfigurationFields}
+                </AdaptiveFieldGrid>
+              ) : null}
+              <FieldSet className="preferences-field-group preferences-field-group--authorization">
+                <FieldLegend>Work authorization and account</FieldLegend>
+                <AdaptiveFieldGrid className="preferences-two-column-grid">
+                  {yesNoCheckboxField(
+                    "work_authorization.legally_authorized_to_work",
+                    "Legally authorized to work",
+                  )}
+                  {yesNoCheckboxField(
+                    "work_authorization.require_sponsorship",
+                    "Requires sponsorship",
+                  )}
+                  {textField("work_authorization.work_permit_type", "Work permit type", "text", {
+                    helperText: "For example, EU citizen, permanent resident, or permit name.",
+                  })}
+                  {textField("personal.password", "Job-site login password", "password", {
+                    autoComplete: "new-password",
+                    helperText: "Used only for local application workflows that require a saved login.",
+                  })}
+                </AdaptiveFieldGrid>
+              </FieldSet>
+              <FieldSet className="preferences-field-group preferences-field-group--availability">
+                <FieldLegend>Availability</FieldLegend>
+                <AdaptiveFieldGrid className="preferences-two-column-grid">
+                  {textField("availability.earliest_start_date", "Earliest start date", "date", {
+                    helperText: "Leave blank when your start date is flexible.",
+                  })}
+                  {yesNoCheckboxField("availability.available_for_full_time", "Available full-time")}
+                  {yesNoCheckboxField("availability.available_for_contract", "Available for contract")}
+                </AdaptiveFieldGrid>
+              </FieldSet>
+              <FieldSet className="preferences-field-group preferences-field-group--compensation">
+                <FieldLegend>Compensation</FieldLegend>
+                <AdaptiveFieldGrid className="preferences-two-column-grid">
+                  {textField("compensation.salary_expectation", "Salary expectation", "number", {
+                    helperText: "Annual gross amount in the selected currency.",
+                    inputMode: "numeric",
+                    min: 0,
+                    step: 1,
+                    valueKind: "text",
+                  })}
+                  {textField("compensation.salary_currency", "Salary currency", "text", {
+                    autoCapitalize: "characters",
+                    helperText: "Three-letter currency code, such as EUR or USD.",
+                  })}
+                  {textField("compensation.salary_range_min", "Salary range min", "number", {
+                    helperText: "Annual gross minimum in the selected currency.",
+                    inputMode: "numeric",
+                    min: 0,
+                    step: 1,
+                    valueKind: "text",
+                  })}
+                  {textField("compensation.salary_range_max", "Salary range max", "number", {
+                    helperText: "Annual gross maximum in the selected currency.",
+                    inputMode: "numeric",
+                    min: 0,
+                    step: 1,
+                    valueKind: "text",
+                  })}
+                  <AdaptiveFieldSpan span="full">
+                    {textField(
+                      "compensation.currency_conversion_note",
+                      "Currency conversion guidance",
+                      "text",
+                      {
+                        helperText:
+                          "Used for salary questions when a job posting lists compensation in a different currency.",
+                      },
+                    )}
+                  </AdaptiveFieldSpan>
+                </AdaptiveFieldGrid>
+              </FieldSet>
+            </FieldGroup>
           </DisclosureSection>
 
           <DisclosureSection
@@ -1835,6 +1921,7 @@ export function StructuredProfileEditor({
             defaultOpen
             description="Control what JobCtrl may change and how generated resumes are evaluated"
             headingLevel={3}
+            id="preferences-tailoring"
             title="Tailoring controls"
           >
             <Tabs className="tailoring-control-tabs" defaultValue="content-rules">
@@ -1884,6 +1971,7 @@ export function StructuredProfileEditor({
             defaultOpen={false}
             description="Defaults for generated resumes outside the template workspace"
             headingLevel={3}
+            id="preferences-style"
             title="Resume style"
           >
             <AdaptiveFieldGrid>

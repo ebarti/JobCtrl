@@ -1,8 +1,8 @@
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { JobSummary } from "../../contexts/operations/types.js";
 import {
@@ -11,6 +11,13 @@ import {
   sampleSecondaryJob,
 } from "../../test/fixtures/projections.js";
 import { JobsTable } from "./JobsTable.js";
+
+function setViewportWidth(width: number) {
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: width,
+  });
+}
 
 function renderJobsTable(
   jobs: readonly JobSummary[] = [
@@ -96,6 +103,8 @@ function hitboxForTitle(title: string): HTMLElement {
 }
 
 describe("<JobsTable>", () => {
+  afterEach(() => setViewportWidth(1024));
+
   it("omits ordinary active lifecycle copy and labels real posting exceptions", () => {
     const unknownJob: JobSummary = {
       ...sampleSecondaryJob,
@@ -196,6 +205,25 @@ describe("<JobsTable>", () => {
     ).toBeInTheDocument();
   });
 
+  it("uses a concise identity, score, and status record on mobile", async () => {
+    setViewportWidth(390);
+    renderJobsTable();
+
+    const list = await screen.findByRole("list", { name: "Jobs" });
+    expect(within(list).getByText(sampleJob.title)).toBeInTheDocument();
+    expect(within(list).getByText("Acme Corp")).toBeInTheDocument();
+    expect(
+      within(list).getByRole("checkbox", {
+        name: `Select job ${sampleJob.title}`,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(list).getByRole("button", {
+        name: `Open job ${sampleJob.title} at Acme Corp`,
+      }),
+    ).not.toHaveClass("row-activation-focus-only");
+  });
+
   it("renders state with internal stage context", () => {
     renderJobsTable([
       {
@@ -239,10 +267,9 @@ describe("<JobsTable>", () => {
 
     await user.click(hitboxForTitle(sampleJob.title));
 
-    expect(screen.getByRole("checkbox", { name: `Select ${sampleJob.title}` })).toHaveAttribute(
-      "data-slot",
-      "checkbox",
-    );
+    expect(
+      screen.getByRole("checkbox", { name: `Select ${sampleJob.title}` }),
+    ).toHaveAttribute("data-slot", "checkbox");
 
     expect(rowForTitle(sampleJob.title)).toHaveAttribute(
       "aria-selected",
@@ -272,7 +299,10 @@ describe("<JobsTable>", () => {
     selection.focus();
     await user.keyboard(" ");
 
-    expect(rowForTitle(sampleJob.title)).toHaveAttribute("aria-selected", "true");
+    expect(rowForTitle(sampleJob.title)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     expect(openCalls).toEqual([]);
   });
 

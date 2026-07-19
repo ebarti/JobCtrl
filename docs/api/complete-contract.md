@@ -714,6 +714,10 @@ job context (title/company/dry-run/model) via a LEFT JOIN to
 job title. The `runId` equals the Temporal workflow id, so the web Workflow Runs
 view at `/runs` deep-links each row to the local Temporal Web UI
 (`http://127.0.0.1:8233`).
+The list query supports exact `workflowType`, inclusive UTC `startedSince`, and
+exclusive UTC `startedBefore` filters. The read model applies them to the
+folded lifecycle summary before sorting and pagination, and echoes the
+effective filters in the response.
 `GET /v1/workflow-runs/:runId` returns a `WorkflowRunDetail` for one run — its
 status, input summary, failure cause (`errorCode` / `errorMessage` /
 `retryable`), Temporal run id, and the folded lifecycle timeline — or `404`

@@ -26,12 +26,19 @@ describe("<DebugFilterBar>", () => {
     );
 
     expect(container.querySelectorAll('[data-slot="input"]')).toHaveLength(3);
+    expect(screen.getByLabelText("Search activity")).toBeInTheDocument();
+    expect(screen.getByLabelText("Level")).toBeInTheDocument();
+    expect(screen.getByLabelText("Stage")).toBeInTheDocument();
+    expect(screen.getByLabelText("Event type")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Search" })).toHaveAttribute(
       "data-slot",
       "button",
     );
 
-    await user.type(screen.getByRole("textbox", { name: "Activity search" }), "  event  ");
+    await user.type(
+      screen.getByRole("textbox", { name: "Activity search" }),
+      "  event  ",
+    );
     await user.click(screen.getByRole("button", { name: "Search" }));
 
     expect(onChange).toHaveBeenLastCalledWith({ q: "event", page: 1 });
@@ -59,7 +66,10 @@ describe("<DebugFilterBar>", () => {
     }
     render(<ControlledFilterBar />);
 
-    await user.type(screen.getByRole("textbox", { name: "Activity stage" }), "ing");
+    await user.type(
+      screen.getByRole("textbox", { name: "Activity stage" }),
+      "ing",
+    );
     expect(onChange).toHaveBeenLastCalledWith({ stage: "scoreing", page: 1 });
 
     await user.click(screen.getByRole("button", { name: "Clear" }));

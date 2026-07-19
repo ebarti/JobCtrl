@@ -5,11 +5,12 @@ import type {
   PaginatedResponse,
   WorkflowRunSummary,
 } from "../../contexts/operations/types.js";
+import { useIsMobile } from "../../shared/hooks/use-mobile.js";
 import {
   FilterableDataGrid,
   type DataGridSortState,
 } from "../../shared/ui/filterable-data-grid.js";
-import { workflowRunColumns } from "./columns.js";
+import { WorkflowRunMobileRow, workflowRunColumns } from "./columns.js";
 
 export interface RunsTableProps {
   data: PaginatedResponse<WorkflowRunSummary> | null;
@@ -34,6 +35,7 @@ export function RunsTable({
   onPageSizeChange,
   onOpenRun,
 }: RunsTableProps) {
+  const isMobile = useIsMobile();
   const gridSort = useMemo<DataGridSortState>(() => {
     const head = sorting[0];
     return {
@@ -55,11 +57,18 @@ export function RunsTable({
       loadingMessage="Loading workflow runs."
       emptyMessage="No workflow runs."
       initialSort={{ columnId: "started_at", direction: "desc" }}
+      {...(isMobile
+        ? {
+            mobileListLabel: "Workflow runs",
+            renderMobileRow: (row) => <WorkflowRunMobileRow row={row} />,
+          }
+        : {})}
       sort={gridSort}
       onSortChange={handleSortChange}
       manualSorting
       tableClassName="runs-data-grid-table"
       onRowActivate={(row) => onOpenRun(row.workflowId)}
+      rowActivationAppearance={isMobile ? "visible" : "focus-only"}
       rowActivationLabel={(row) => `Open run ${row.title} ${row.workflowId}`}
       pagination={{
         page,

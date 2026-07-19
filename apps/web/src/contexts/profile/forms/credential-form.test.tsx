@@ -22,6 +22,7 @@ describe("<CredentialForm>", () => {
     expect(form).not.toBeNull();
     expect(form?.children).toHaveLength(3);
     expect(form?.children[0]).toHaveClass("credential-row-status");
+    expect(form?.children[0]).toHaveAttribute("data-status-tone", "muted");
     expect(form?.children[1]).toHaveClass("credential-row-field-group");
     expect(form?.children[2]).toHaveClass("credential-row-actions");
 

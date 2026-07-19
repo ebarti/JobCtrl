@@ -19,9 +19,7 @@ function sourceHealthTone(state: SourceHealth["recommendedState"]): StatusTagTon
   return "ok";
 }
 
-function sourceHealthIcon(
-  state: SourceHealth["recommendedState"],
-): TablerIcon | undefined {
+function sourceHealthIcon(state: SourceHealth["recommendedState"]): TablerIcon | undefined {
   return state === "disabled" || state === "quarantined" ? IconBan : undefined;
 }
 
@@ -50,15 +48,14 @@ export function SourceHealthCard({ summary }: SourceHealthCardProps) {
               </StatusBadge>
               <span className="title-stack">
                 <b data-typography="strong-body">{source.sourceId}</b>
-                <span data-typography="metadata">
-                  active {pct(source.activeVerificationRate)} · detail{" "}
-                  {pct(source.fullDescriptionSuccessRate)} · apply{" "}
-                  {pct(source.applyUrlSuccessRate)} · duplicate {pct(source.duplicateRate)}
+                <span className="source-health-primary" data-typography="metadata">
+                  {pct(source.activeVerificationRate)} active · {pct(source.applyUrlSuccessRate)} apply
                 </span>
-                <SourcePolitenessBadges
-                  politeness={source.politeness}
-                  sourceLabel={source.sourceId}
-                />
+                <span className="source-health-secondary" data-typography="metadata">
+                  {pct(source.fullDescriptionSuccessRate)} full detail · {pct(source.duplicateRate)}{" "}
+                  duplicates
+                </span>
+                <SourcePolitenessBadges politeness={source.politeness} sourceLabel={source.sourceId} />
               </span>
               {source.consecutiveFailures ? (
                 <StatusBadge tone="danger">{source.consecutiveFailures} fails</StatusBadge>

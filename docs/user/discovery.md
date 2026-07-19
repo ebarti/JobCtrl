@@ -34,14 +34,74 @@ of these fields.
 
 Use **Discovery → Runtime settings** for boards, results per site, posting age,
 schedule, role-filter mode/model, bounded source-family parallelism, and the
-outbound user-agent identity. The form shows `saved` or `default` ownership.
-Every saved value goes to SQLite. Schedule changes need a
-worker restart; boards, limits, and parallelism apply on the next run;
-role-filter and user-agent changes apply to the next source family.
+outbound user-agent identity. Every saved value goes to SQLite. Schedule
+changes need a worker restart; boards, limits, and parallelism apply on the
+next run; role-filter and user-agent changes apply to the next source family.
 
 Parallel families are capped at four and should not exceed the worker's active
 activity slots. See
 [Concurrency & Fan-out](../architecture/pipeline/concurrency.md).
+
+### Runtime setting reference
+
+The help control beside each Runtime setting opens a short explanation and a
+deep link to the matching entry below.
+
+<a id="runtime-setting-job-boards"></a>
+**Job boards.** Choose which broad-board providers run for every generated
+target query. A Discover execution snapshots the selected boards when the run
+starts, so a change affects the next run rather than work already in progress.
+
+<a id="runtime-setting-results-per-board"></a>
+**Results per board.** Set the maximum number of results requested from each
+selected board for one search unit. This is a provider request limit, not a
+promise that every board will return that many accepted jobs; title, location,
+age, and deduplication checks still apply. The next Discover run snapshots the
+new value.
+
+<a id="runtime-setting-posting-lookback-hours"></a>
+**Posting lookback hours.** Limit broad-board discovery to postings no older
+than this many hours when the provider supports age filtering. The next
+Discover run snapshots the window.
+
+<a id="runtime-setting-role-title-filtering"></a>
+**Role title filtering.** Choose how returned titles are checked against the
+target-search plan. **Auto** uses model-backed matching when a configured model
+provider is ready and otherwise uses deterministic local title rules.
+**Deterministic** always uses local rules. **LLM** requires model-backed
+matching. A change applies to the next source family.
+
+<a id="runtime-setting-role-filter-model"></a>
+**Role filter model.** Optionally pin the model used by model-backed role-title
+matching. Leave the value blank to use the configured provider routing. A
+change applies to the next source family.
+
+<a id="runtime-setting-parallel-source-families"></a>
+**Parallel source families.** Limit how many source families may crawl at the
+same time inside a Discover execution. JobCtrl bounds the value to four and to
+the worker's available activity slots. The next run snapshots the limit;
+downstream enrichment remains separately bounded.
+
+<a id="runtime-setting-crawler-product-name"></a>
+**Crawler product name.** Set the product token in JobCtrl's honest outbound
+user-agent identity. It identifies the crawler without impersonating a browser.
+A change applies to the next source family.
+
+<a id="runtime-setting-crawler-contact"></a>
+**Crawler contact.** Optionally add a URL or contact address to the outbound
+user-agent identity so site owners can identify the operator. A change applies
+to the next source family.
+
+<a id="runtime-setting-enable-scheduled-discovery"></a>
+**Enable scheduled discovery.** Control whether worker startup reconciles a
+recurring Temporal Discover schedule. This is off by default. Restart the
+worker after changing the setting so it can create or remove the schedule.
+
+<a id="runtime-setting-schedule-cron"></a>
+**Schedule cron.** Define the recurring local schedule with a five-field cron
+expression. JobCtrl uses it only while scheduled discovery is enabled, with
+`SKIP` overlap behavior so one scheduled execution does not overlap the next.
+Restart the worker after changing the expression.
 
 The Discovery page also hosts the **Automation settings** disclosure. Its minimum-fit,
 auto-apply, and approval controls affect Apply eligibility and submission, so

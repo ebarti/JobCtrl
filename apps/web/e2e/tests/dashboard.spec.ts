@@ -5,7 +5,10 @@ test("Dashboard renders KPIs, click 'Jobs' KPI navigates to /jobs and row count 
 }) => {
   await page.goto("/dashboard");
 
-  const jobsKpi = page.locator(".kpis").getByRole("link", { name: /^Jobs\b/i }).first();
+  const jobsKpi = page
+    .locator(".kpis")
+    .getByRole("link", { name: /^Jobs\b/i })
+    .first();
   await expect(jobsKpi).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("heading", { name: "Daily digest" })).toBeVisible();
   await expect(page.getByRole("link", { name: /New matches/i })).toBeVisible();
@@ -13,7 +16,7 @@ test("Dashboard renders KPIs, click 'Jobs' KPI navigates to /jobs and row count 
   await expect(page.getByRole("heading", { name: "Work status" })).toBeVisible();
   await expect(page.getByText("No stuck work.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Active runs" })).toBeVisible();
-  await expect(page.getByText("No active workflow runs.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /in progress DiscoverWorkflow/i })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recent activity" })).toBeVisible();
   await expect(page.getByText("Apply workflow completed")).toBeVisible();
 
@@ -56,4 +59,31 @@ test("Dashboard renders KPIs, click 'Jobs' KPI navigates to /jobs and row count 
   const rows = page.locator("table.jobs-data-grid-table tbody tr");
   await expect(rows.first()).toBeVisible({ timeout: 30_000 });
   await expect.poll(async () => rows.count(), { timeout: 30_000 }).toBe(totalJobs);
+});
+
+test("@mobile Dashboard keeps the operational overview in the first viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.goto("/dashboard");
+
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await expect(page.locator(".kpis").getByRole("link")).toHaveCount(6);
+  const conversion = page.getByRole("heading", { name: "Conversion" });
+  await expect(conversion).toBeVisible();
+
+  const viewportEvidence = await page.evaluate(() => {
+    const conversionHeading = [...document.querySelectorAll("h2")].find(
+      (heading) => heading.textContent?.trim() === "Conversion",
+    );
+    const kpiTargets = [...document.querySelectorAll<HTMLElement>(".kpis a")];
+    return {
+      conversionTop: conversionHeading?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY,
+      innerHeight: window.innerHeight,
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      minimumKpiTargetHeight: Math.min(...kpiTargets.map((target) => target.getBoundingClientRect().height)),
+    };
+  });
+
+  expect(viewportEvidence.conversionTop).toBeLessThan(viewportEvidence.innerHeight);
+  expect(viewportEvidence.overflow).toBeLessThanOrEqual(1);
+  expect(viewportEvidence.minimumKpiTargetHeight).toBeGreaterThanOrEqual(44);
 });

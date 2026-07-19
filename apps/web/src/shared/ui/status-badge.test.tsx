@@ -17,6 +17,7 @@ describe("<StatusBadge>", () => {
     expect(badge).toHaveAttribute("data-status-tone", tone);
     expect(badge).toHaveAttribute("data-typography", "status");
     expect(badge.querySelector("svg")).toHaveClass(`tabler-icon-${iconName}`);
+    expect(badge.querySelector("svg")).toHaveClass("size-4");
     expect(badge.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     expect(badge.querySelector("svg")).toHaveAttribute("data-icon", "inline-start");
   });
@@ -24,7 +25,9 @@ describe("<StatusBadge>", () => {
   it("keeps muted metadata visually restrained", () => {
     render(<StatusBadge tone="muted">Not recorded</StatusBadge>);
 
-    expect(screen.getByText("Not recorded").querySelector("svg")).toBeNull();
+    const badge = screen.getByText("Not recorded");
+    expect(badge).toHaveClass("before:size-2");
+    expect(badge.querySelector("svg")).toBeNull();
   });
 
   it("accepts a domain-specific icon component", () => {

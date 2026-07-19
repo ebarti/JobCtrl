@@ -145,6 +145,9 @@ describe("shared visual role contract", () => {
     expect(roleCss).toContain("var(--jh-type-body-size)");
     expect(roleCss).toContain("var(--jh-type-label-size)");
     expect(roleCss).toContain("var(--jh-type-metric-size)");
+    expect(roleCss).toContain(
+      '[data-typography="status"] {\n  font-size: var(--jh-type-body-size) !important;\n  font-weight: var(--jh-type-strong-body-weight) !important;\n  line-height: var(--jh-type-body-line-height) !important;\n}',
+    );
   });
 
   it("keeps generated resume artifact typography outside the application role bridge", () => {

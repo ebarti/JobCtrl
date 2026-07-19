@@ -27,6 +27,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../../shared/ui/select.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
+import type { StatusTagTone } from "../../../shared/ui/status-tokens.js";
 import { Switch } from "../../../shared/ui/switch.js";
 
 const NOT_CONFIGURED = "not_configured";
@@ -165,13 +167,15 @@ function CompensationSourcePolicyRow({
       </td>
       <td data-label="Status" data-typography="body">
         <div className="flex flex-col items-start gap-1">
-          <span className={availabilityClass(source.availability)}>
+          <StatusBadge tone={availabilityTone(source.availability)}>
             {formatLabel(source.availability)}
-          </span>
-          <span className={licenseClass(source.licenseStatus)}>
+          </StatusBadge>
+          <StatusBadge tone={licenseTone(source.licenseStatus)}>
             {formatLabel(source.licenseStatus)}
-          </span>
-          <div className="meta">{source.configured ? "configured" : "not configured"}</div>
+          </StatusBadge>
+          <StatusBadge tone={source.configured ? "ok" : "muted"}>
+            {source.configured ? "Configured" : "Not configured"}
+          </StatusBadge>
         </div>
       </td>
       <td data-label="Freshness" data-typography="body">
@@ -210,7 +214,7 @@ function CompensationSourceControls({
   source: CompensationSourcePolicySummary;
 }) {
   if (source.control.kind === "fixed") {
-    return <span className="tag muted">always enabled</span>;
+    return <StatusBadge tone="ok">Always enabled</StatusBadge>;
   }
 
   const control = source.control;
@@ -389,13 +393,17 @@ function formatLabel(value: string): string {
   return value.replaceAll("_", " ");
 }
 
-function availabilityClass(availability: CompensationSourcePolicySummary["availability"]): string {
-  return availability === "available" ? "tag ok" : "tag warn";
+function availabilityTone(
+  availability: CompensationSourcePolicySummary["availability"],
+): StatusTagTone {
+  return availability === "available" ? "ok" : "warn";
 }
 
-function licenseClass(status: CompensationSourcePolicySummary["licenseStatus"]): string {
+function licenseTone(
+  status: CompensationSourcePolicySummary["licenseStatus"],
+): StatusTagTone {
   if (status === "permitted" || status === "not_required") {
-    return "tag ok";
+    return "ok";
   }
-  return "tag warn";
+  return "warn";
 }

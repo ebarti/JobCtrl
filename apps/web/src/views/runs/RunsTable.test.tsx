@@ -1,6 +1,6 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   makeWorkflowRunsPage,
@@ -10,7 +10,16 @@ import {
 import { renderWithProviders } from "../../test/render.js";
 import { RunsTable } from "./RunsTable.js";
 
+function setViewportWidth(width: number) {
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: width,
+  });
+}
+
 describe("<RunsTable>", () => {
+  afterEach(() => setViewportWidth(1024));
+
   function renderTable(
     overrides: Partial<React.ComponentProps<typeof RunsTable>> = {},
   ) {
@@ -78,7 +87,7 @@ describe("<RunsTable>", () => {
     });
 
     expect(screen.getByText("Standing apply loop")).toBeInTheDocument();
-    expect(screen.getByText("Auto apply")).toBeInTheDocument();
+    expect(screen.getByText(/Auto apply/)).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
         name: "Stop workflow run for Standing apply loop",
@@ -104,7 +113,7 @@ describe("<RunsTable>", () => {
     const onSortingChange = vi.fn();
     renderTable({ onSortingChange });
 
-    await user.click(screen.getByRole("button", { name: "Sort by Job" }));
+    await user.click(screen.getByRole("button", { name: "Sort by Workflow" }));
 
     expect(onSortingChange).toHaveBeenCalledWith([
       { id: "title", desc: false },
@@ -127,5 +136,30 @@ describe("<RunsTable>", () => {
       },
     });
     expect(screen.getByText(/No workflow runs/i)).toBeInTheDocument();
+  });
+
+  it("shows workflow, status, start, duration, and actions in the mobile record", async () => {
+    setViewportWidth(390);
+    renderTable();
+
+    const list = await screen.findByRole("list", { name: "Workflow runs" });
+    const record = within(list)
+      .getByText(sampleWorkflowRun.title)
+      .closest("li");
+    expect(record).not.toBeNull();
+    const run = within(record as HTMLElement);
+    expect(run.getByText("in progress")).toBeInTheDocument();
+    expect(run.getByText(/Started/)).toBeInTheDocument();
+    expect(run.getByText(/Duration/)).toBeInTheDocument();
+    expect(
+      run.getByRole("button", {
+        name: `Stop workflow run for ${sampleWorkflowRun.title}`,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      run.getByRole("button", {
+        name: `Open run ${sampleWorkflowRun.title} ${sampleWorkflowRun.workflowId}`,
+      }),
+    ).not.toHaveClass("row-activation-focus-only");
   });
 });

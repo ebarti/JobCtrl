@@ -160,6 +160,19 @@ function renderArtifactRoute(
   return { artifactPreviewPdfUrl, router };
 }
 
+async function openTailoringRationale(
+  user: ReturnType<typeof userEvent.setup>,
+) {
+  const trigger = await screen.findByRole("button", {
+    name: "Review rationale",
+  });
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await user.click(trigger);
+  expect(
+    screen.getByRole("button", { name: "Hide rationale" }),
+  ).toHaveAttribute("aria-expanded", "true");
+}
+
 describe("<ArtifactDetailPanel>", () => {
   it("renders as a route workspace and returns to the artifacts list", async () => {
     const user = userEvent.setup();
@@ -180,6 +193,23 @@ describe("<ArtifactDetailPanel>", () => {
     expect(
       screen.queryByRole("dialog", { name: "Artifact details" }),
     ).not.toBeInTheDocument();
+    const workspaceHeader = screen
+      .getByRole("heading", { level: 1 })
+      .closest<HTMLElement>(".route-workspace__header");
+    if (!workspaceHeader) {
+      throw new Error("Expected artifact actions in the workspace header.");
+    }
+    expect(
+      within(workspaceHeader).getByRole("button", { name: "Open" }),
+    ).toBeInTheDocument();
+    expect(
+      within(workspaceHeader).getByRole("button", {
+        name: "Open related job",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Artifact metadata")).toHaveClass(
+      "artifact-summary-facts",
+    );
 
     await user.click(screen.getByRole("button", { name: "Back to artifacts" }));
 
@@ -246,6 +276,31 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.getByText("job-1")).toBeInTheDocument();
   });
 
+  it("summarizes tailoring evidence before progressively disclosing the complete audit", async () => {
+    const user = userEvent.setup();
+    renderArtifactRoute(
+      <ArtifactDetailPanel artifactId="artifact-preview" />,
+      "approved",
+      makeArtifactTailoringExplanation(),
+    );
+
+    expect(
+      await screen.findByText(/target keywords (demonstrated|recorded)/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Why these changes" }),
+    ).not.toBeInTheDocument();
+
+    await openTailoringRationale(user);
+
+    expect(
+      screen.getByRole("heading", { name: "Why these changes" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: /Per-bullet provenance/i }),
+    ).toBeInTheDocument();
+  });
+
   it("renders canonical requirement text while keeping provenance IDs in Technical details", async () => {
     const user = userEvent.setup();
     renderArtifactRoute(
@@ -261,6 +316,8 @@ describe("<ArtifactDetailPanel>", () => {
         }),
       },
     );
+
+    await openTailoringRationale(user);
 
     const requirementText = await screen.findByText(
       "Lead platform reliability programs across multiple teams",
@@ -323,6 +380,7 @@ describe("<ArtifactDetailPanel>", () => {
   });
 
   it("renders tailoring rationale from artifact detail evidence", async () => {
+    const user = userEvent.setup();
     renderArtifactRoute(
       <ArtifactDetailPanel artifactId="artifact-preview" />,
       "approved",
@@ -495,7 +553,11 @@ describe("<ArtifactDetailPanel>", () => {
       },
     );
 
-    expect(await screen.findByText("Tailoring rationale")).toBeInTheDocument();
+    await openTailoringRationale(user);
+
+    expect(
+      (await screen.findAllByText("Tailoring rationale")).length,
+    ).toBeGreaterThan(0);
     expect(screen.getByText("Senior")).toBeInTheDocument();
     expect(screen.getByText("Evidence Reframing")).toBeInTheDocument();
     expect(screen.getByText("1/2 demonstrated in resume")).toBeInTheDocument();
@@ -619,6 +681,7 @@ describe("<ArtifactDetailPanel>", () => {
   });
 
   it("does not show missing resume keyword matches when coverage was not recorded", async () => {
+    const user = userEvent.setup();
     renderArtifactRoute(
       <ArtifactDetailPanel artifactId="artifact-preview" />,
       "approved",
@@ -701,6 +764,8 @@ describe("<ArtifactDetailPanel>", () => {
         },
       },
     );
+
+    await openTailoringRationale(user);
 
     expect(await screen.findByText("Resume match audit")).toBeInTheDocument();
     expect(

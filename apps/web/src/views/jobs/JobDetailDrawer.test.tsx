@@ -9,7 +9,13 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import { http, HttpResponse } from "msw";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -216,20 +222,18 @@ describe("<JobDetailDrawer>", () => {
     }
     expect(within(triage).getByText("Apply concerns")).toBeInTheDocument();
     expect(
-      within(triage).getByText(
-        "Missing apply link: No application URL is recorded.",
-      ),
-    ).toBeInTheDocument();
+      within(triage).getByText("Missing apply link").closest("li"),
+    ).toHaveTextContent("Missing apply link: No application URL is recorded.");
     expect(
-      within(triage).getByText(
-        "Submit-ready PDF missing: A submit-ready PDF is still missing.",
-      ),
-    ).toBeInTheDocument();
+      within(triage).getByText("Submit-ready PDF missing").closest("li"),
+    ).toHaveTextContent(
+      "Submit-ready PDF missing: A submit-ready PDF is still missing.",
+    );
     expect(
-      within(triage).getByText(
-        "Eligibility warning: Sponsorship requirements need review.",
-      ),
-    ).toBeInTheDocument();
+      within(triage).getByText("Eligibility warning").closest("li"),
+    ).toHaveTextContent(
+      "Eligibility warning: Sponsorship requirements need review.",
+    );
     expect(
       within(workspace).getByLabelText("Apply readiness"),
     ).toHaveTextContent("missing apply link");
@@ -405,6 +409,34 @@ describe("<JobDetailDrawer>", () => {
     expect(
       workspace.querySelector(".job-detail-workspace__inspector"),
     ).not.toBeNull();
+    const mobileSections = within(workspace).getByRole("group", {
+      name: "Job detail section",
+      hidden: true,
+    });
+    const summarySection = within(mobileSections).getByRole("button", {
+      name: "Summary and evidence",
+      hidden: true,
+    });
+    const diagnosticSection = within(mobileSections).getByRole("button", {
+      name: "Progress and history",
+      hidden: true,
+    });
+    expect(summarySection).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(diagnosticSection);
+    expect(diagnosticSection).toHaveAttribute("aria-pressed", "true");
+    expect(
+      workspace.querySelector("#job-detail-diagnostics-panel"),
+    ).toHaveAttribute("data-mobile-active", "true");
+    const commandTrigger = within(workspace).getByRole("button", {
+      name: "More job actions",
+      hidden: true,
+    });
+    expect(commandTrigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(commandTrigger);
+    expect(commandTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(
+      workspace.querySelector("#job-detail-workflow-commands"),
+    ).toHaveAttribute("data-mobile-open", "true");
     expect(
       within(workspace).queryByText("Audit triage"),
     ).not.toBeInTheDocument();
@@ -450,15 +482,15 @@ describe("<JobDetailDrawer>", () => {
     ).toBeInTheDocument();
     expect(within(triage).getByText("Apply concerns")).toBeInTheDocument();
     expect(
-      within(triage).getByText(
-        "Missing apply link: No application or posting URL is recorded, so apply review cannot proceed.",
-      ),
-    ).toBeInTheDocument();
+      within(triage).getByText("Missing apply link").closest("li"),
+    ).toHaveTextContent(
+      "Missing apply link: No application or posting URL is recorded, so apply review cannot proceed.",
+    );
     expect(
-      within(triage).getByText(
-        "Eligibility warning: Sponsorship requirements need review.",
-      ),
-    ).toBeInTheDocument();
+      within(triage).getByText("Eligibility warning").closest("li"),
+    ).toHaveTextContent(
+      "Eligibility warning: Sponsorship requirements need review.",
+    );
     const handoff = within(workspace).getByRole("link", {
       name: "Open Apply Review for Staff Software Engineer",
     });

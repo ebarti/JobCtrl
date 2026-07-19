@@ -37,9 +37,9 @@ function ensureColumn(
   definition: string,
 ): void {
   const columns = new Set(
-    (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(
-      (row) => row.name,
-    ),
+    (
+      db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+    ).map((row) => row.name),
   );
   if (!columns.has(column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -161,8 +161,18 @@ function ensureOutreachSeedTables(db: Database.Database): void {
   ensureColumn(db, "application_outcomes", "note", "TEXT");
   ensureColumn(db, "application_outcomes", "suggestion_id", "TEXT");
   ensureColumn(db, "application_outcomes", "evidence_id", "TEXT");
-  ensureColumn(db, "application_outcomes", "interview_prep_generation", "INTEGER");
-  ensureColumn(db, "application_outcomes", "created_by", "TEXT NOT NULL DEFAULT 'user'");
+  ensureColumn(
+    db,
+    "application_outcomes",
+    "interview_prep_generation",
+    "INTEGER",
+  );
+  ensureColumn(
+    db,
+    "application_outcomes",
+    "created_by",
+    "TEXT NOT NULL DEFAULT 'user'",
+  );
   if (tableExists(db, "job_events")) {
     ensureColumn(db, "job_events", "entity_kind", "TEXT");
     ensureColumn(db, "job_events", "entity_ref", "TEXT");
@@ -171,41 +181,43 @@ function ensureOutreachSeedTables(db: Database.Database): void {
 
 function resetOutreachSeed(db: Database.Database): void {
   const priorConfirmed = tableExists(db, "contact_candidates")
-    ? (db
-        .prepare(
-          "SELECT confirmed_contact_id FROM contact_candidates WHERE tenant_id = 'local' AND task_id = ?",
-        )
-        .all(TASK_ID) as Array<{ confirmed_contact_id: string | null }>)
+    ? (
+        db
+          .prepare(
+            "SELECT confirmed_contact_id FROM contact_candidates WHERE tenant_id = 'local' AND task_id = ?",
+          )
+          .all(TASK_ID) as Array<{ confirmed_contact_id: string | null }>
+      )
         .map((row) => row.confirmed_contact_id)
         .filter((id): id is string => Boolean(id))
     : [];
   const contactIds = [CONTACT_ID, ...priorConfirmed];
   for (const contactId of contactIds) {
-    db.prepare("DELETE FROM contact_attributes WHERE tenant_id = 'local' AND contact_id = ?").run(
-      contactId,
-    );
-    db.prepare("DELETE FROM contacts WHERE tenant_id = 'local' AND contact_id = ?").run(contactId);
+    db.prepare(
+      "DELETE FROM contact_attributes WHERE tenant_id = 'local' AND contact_id = ?",
+    ).run(contactId);
+    db.prepare(
+      "DELETE FROM contacts WHERE tenant_id = 'local' AND contact_id = ?",
+    ).run(contactId);
   }
-  db.prepare("DELETE FROM contact_candidates WHERE tenant_id = 'local' AND task_id = ?").run(TASK_ID);
-  db.prepare("DELETE FROM contact_research_tasks WHERE tenant_id = 'local' AND task_id = ?").run(TASK_ID);
-  db.prepare("DELETE FROM outreach_send_logs WHERE tenant_id = 'local' AND thread_id IN (?, ?, ?)").run(
-    CONTACT_THREAD_ID,
-    DUE_THREAD_ID,
-    FUTURE_THREAD_ID,
-  );
-  db.prepare("DELETE FROM outreach_drafts WHERE tenant_id = 'local' AND thread_id IN (?, ?, ?)").run(
-    CONTACT_THREAD_ID,
-    DUE_THREAD_ID,
-    FUTURE_THREAD_ID,
-  );
-  db.prepare("DELETE FROM outreach_threads WHERE tenant_id = 'local' AND thread_id IN (?, ?, ?)").run(
-    CONTACT_THREAD_ID,
-    DUE_THREAD_ID,
-    FUTURE_THREAD_ID,
-  );
-  db.prepare("DELETE FROM application_outcomes WHERE tenant_id = 'local' AND outcome_id = ?").run(
-    "outcome-e2e-outreach",
-  );
+  db.prepare(
+    "DELETE FROM contact_candidates WHERE tenant_id = 'local' AND task_id = ?",
+  ).run(TASK_ID);
+  db.prepare(
+    "DELETE FROM contact_research_tasks WHERE tenant_id = 'local' AND task_id = ?",
+  ).run(TASK_ID);
+  db.prepare(
+    "DELETE FROM outreach_send_logs WHERE tenant_id = 'local' AND thread_id IN (?, ?, ?)",
+  ).run(CONTACT_THREAD_ID, DUE_THREAD_ID, FUTURE_THREAD_ID);
+  db.prepare(
+    "DELETE FROM outreach_drafts WHERE tenant_id = 'local' AND thread_id IN (?, ?, ?)",
+  ).run(CONTACT_THREAD_ID, DUE_THREAD_ID, FUTURE_THREAD_ID);
+  db.prepare(
+    "DELETE FROM outreach_threads WHERE tenant_id = 'local' AND thread_id IN (?, ?, ?)",
+  ).run(CONTACT_THREAD_ID, DUE_THREAD_ID, FUTURE_THREAD_ID);
+  db.prepare(
+    "DELETE FROM application_outcomes WHERE tenant_id = 'local' AND outcome_id = ?",
+  ).run("outcome-e2e-outreach");
 }
 
 function seedOutreachPlanner(dbPath: string): void {
@@ -225,8 +237,20 @@ function seedOutreachPlanner(dbPath: string): void {
          source_kind, source_ref, capture_method, confidence, user_confirmed, recorded_at
        ) VALUES ('local', ?, ?, ?, ?, 'user_imported_list', 'import:outreach-e2e.csv#row-1', 'csv_import', 0.95, 1, ?)`,
     );
-    insertAttribute.run("attr-e2e-name", CONTACT_ID, "name", JSON.stringify("Casey Recruiter"), NOW);
-    insertAttribute.run("attr-e2e-title", CONTACT_ID, "title", JSON.stringify("Platform recruiter"), NOW);
+    insertAttribute.run(
+      "attr-e2e-name",
+      CONTACT_ID,
+      "name",
+      JSON.stringify("Casey Recruiter"),
+      NOW,
+    );
+    insertAttribute.run(
+      "attr-e2e-title",
+      CONTACT_ID,
+      "title",
+      JSON.stringify("Platform recruiter"),
+      NOW,
+    );
     insertAttribute.run(
       "attr-e2e-email",
       CONTACT_ID,
@@ -309,9 +333,36 @@ function seedOutreachPlanner(dbPath: string): void {
          follow_up_due_at, follow_up_basis, follow_up_state
        ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-    insertThread.run(CONTACT_THREAD_ID, CONTACT_ID, null, NOW, NOW, FUTURE_DUE_AT, "manual", "scheduled");
-    insertThread.run(DUE_THREAD_ID, CONTACT_ID, JOB_URL, NOW, NOW, PAST_DUE_AT, "application_submitted", "scheduled");
-    insertThread.run(FUTURE_THREAD_ID, CONTACT_ID, JOB_URL, NOW, NOW, FUTURE_DUE_AT, "no_reply_nudge", "scheduled");
+    insertThread.run(
+      CONTACT_THREAD_ID,
+      CONTACT_ID,
+      null,
+      NOW,
+      NOW,
+      FUTURE_DUE_AT,
+      "manual",
+      "scheduled",
+    );
+    insertThread.run(
+      DUE_THREAD_ID,
+      CONTACT_ID,
+      JOB_URL,
+      NOW,
+      NOW,
+      PAST_DUE_AT,
+      "application_submitted",
+      "scheduled",
+    );
+    insertThread.run(
+      FUTURE_THREAD_ID,
+      CONTACT_ID,
+      JOB_URL,
+      NOW,
+      NOW,
+      FUTURE_DUE_AT,
+      "no_reply_nudge",
+      "scheduled",
+    );
 
     const passedGate = {
       passed: true,
@@ -338,7 +389,11 @@ function seedOutreachPlanner(dbPath: string): void {
           generatedText: "I improved onboarding speed by 40%.",
         },
       ],
-      validation: { passed: false, errors: ["Unsupported metric 40%."], warnings: [] },
+      validation: {
+        passed: false,
+        errors: ["Unsupported metric 40%."],
+        warnings: [],
+      },
       judge: {
         approved: false,
         score: 0.32,
@@ -405,12 +460,28 @@ function seedOutreachPlanner(dbPath: string): void {
        ) VALUES ('local', 'outcome-e2e-outreach', ?, 'applied_confirmation', 'e2e_seed',
          NULL, '2026-07-01T12:00:00.000Z', ?, NULL, NULL, NULL, 'e2e')`,
     ).run(JOB_URL, NOW);
+
+    // This fixture writes canonical rows directly. Clear the derived read
+    // models so the next public API read rematerializes every outreach surface
+    // from those canonical rows instead of serving the earlier QA seed.
+    for (const table of [
+      "contact_projections",
+      "contact_research_task_projections",
+      "outreach_thread_projections",
+      "due_follow_up_projections",
+    ]) {
+      if (tableExists(db, table)) {
+        db.prepare(`DELETE FROM ${table} WHERE tenant_id = 'local'`).run();
+      }
+    }
   } finally {
     db.close();
   }
 }
 
-function assertSensitiveValuesStayOutOfEventsAndProjections(dbPath: string): void {
+function assertSensitiveValuesStayOutOfEventsAndProjections(
+  dbPath: string,
+): void {
   const db = new Database(dbPath);
   try {
     const eventRows = db
@@ -430,10 +501,17 @@ function assertSensitiveValuesStayOutOfEventsAndProjections(dbPath: string): voi
       "due_follow_up_projections",
     ]) {
       if (tableExists(db, table)) {
-        projectionRows.push(...(db.prepare(`SELECT * FROM ${table}`).all() as Array<Record<string, unknown>>));
+        projectionRows.push(
+          ...(db.prepare(`SELECT * FROM ${table}`).all() as Array<
+            Record<string, unknown>
+          >),
+        );
       }
     }
-    const storedOutsideCanonicalRows = JSON.stringify({ eventRows, projectionRows });
+    const storedOutsideCanonicalRows = JSON.stringify({
+      eventRows,
+      projectionRows,
+    });
     for (const value of SENSITIVE_VALUES) {
       expect(storedOutsideCanonicalRows).not.toContain(value);
     }
@@ -463,42 +541,67 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
   const caseyContact = contactsPanel
     .locator(".job-contact-row")
     .filter({ hasText: "Casey Recruiter" });
-  await caseyContact
-    .getByRole("button", { name: "Show provenance" })
-    .click();
+  await caseyContact.getByRole("button", { name: "Show provenance" }).click();
   await expect(contactsPanel.getByText("Imported list").first()).toBeVisible();
-  await expect(contactsPanel.getByText("import:outreach-e2e.csv#row-1").first()).toBeVisible();
-  await expect(contactsPanel.getByText("Confirmed by you").first()).toBeVisible();
+  await expect(
+    contactsPanel.getByText("import:outreach-e2e.csv#row-1").first(),
+  ).toBeVisible();
+  await expect(
+    contactsPanel.getByText("Confirmed by you").first(),
+  ).toBeVisible();
 
   const researchPanel = jobDrawer.locator(".job-research-section");
   await expect(researchPanel.getByLabel("Research candidates")).toBeVisible();
   await expect(researchPanel.getByText("Dana Lee").first()).toBeVisible();
-  await expect(researchPanel.getByText("dana.lee@example.test").first()).toBeVisible();
-  await expect(researchPanel.getByText("Public web page").first()).toBeVisible();
-  await expect(researchPanel.getByText("https://example.test/team").first()).toBeVisible();
-  await researchPanel.locator("summary", { hasText: "Sources attempted" }).click();
-  await expect(researchPanel.getByText("source fetched under e2e policy")).toBeVisible();
-  await expect(researchPanel.getByText("login-walled page routed to manual capture")).toBeVisible();
+  await expect(
+    researchPanel.getByText("dana.lee@example.test").first(),
+  ).toBeVisible();
+  await expect(
+    researchPanel.getByText("Public web page").first(),
+  ).toBeVisible();
+  await expect(
+    researchPanel.getByText("https://example.test/team").first(),
+  ).toBeVisible();
+  await researchPanel
+    .locator("summary", { hasText: "Sources attempted" })
+    .click();
+  await expect(
+    researchPanel.getByText("source fetched under e2e policy"),
+  ).toBeVisible();
+  await expect(
+    researchPanel.getByText("login-walled page routed to manual capture"),
+  ).toBeVisible();
 
   const [confirmResponse] = await Promise.all([
     page.waitForResponse(
       (response) =>
-        response.url().includes(`/v1/contacts/research/${TASK_ID}/candidates/${CANDIDATE_ID}/confirm`) &&
-        response.request().method() === "POST",
+        response
+          .url()
+          .includes(
+            `/v1/contacts/research/${TASK_ID}/candidates/${CANDIDATE_ID}/confirm`,
+          ) && response.request().method() === "POST",
       { timeout: 30_000 },
     ),
     researchPanel.getByRole("button", { name: "Confirm contact" }).click(),
   ]);
   expect(confirmResponse.status()).toBe(200);
   expect(await confirmResponse.json()).toMatchObject({ ok: true });
-  await expect(researchPanel.getByText("Confirmed into your contacts.")).toBeVisible();
+  await expect(
+    researchPanel.getByText("Confirmed into your contacts."),
+  ).toBeVisible();
 
   await page.goto("/outreach");
-  await expect(page.getByRole("heading", { name: "Follow-ups due" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Follow-ups due" }),
+  ).toBeVisible();
   await expect(page.getByText("application_submitted")).toBeVisible();
   await expect(page.getByText("no_reply_nudge")).not.toBeVisible();
-  await expect(page.getByRole("button", { name: "Open contact Casey Recruiter" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open contact Dana Lee" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Open contact Casey Recruiter" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Open contact Dana Lee" }),
+  ).toBeVisible();
 
   await page
     .locator("tr")
@@ -508,19 +611,39 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
   const contactDialog = page.getByRole("article", { name: "Contact details" });
   await expect(contactDialog).toBeVisible({ timeout: 10_000 });
   await expect(contactDialog.getByText("Facts and provenance")).toBeVisible();
-  await expect(contactDialog.getByRole("heading", { name: "Approved message" })).toBeVisible();
-  await expect(contactDialog.getByRole("button", { name: "Copy approved message" })).toBeVisible();
-  await expect(contactDialog.getByRole("button", { name: /^send$/i })).toHaveCount(0);
+  await expect(
+    contactDialog.getByRole("heading", { name: "Approved message" }),
+  ).toBeVisible();
+  await expect(
+    contactDialog.getByRole("button", { name: "Copy approved message" }),
+  ).toBeVisible();
+  await expect(
+    contactDialog.getByRole("button", { name: /^send$/i }),
+  ).toHaveCount(0);
 
-  await contactDialog.locator("summary", { hasText: "Provenance and gate results" }).click();
-  await expect(contactDialog.getByText("Truthfulness gates passed").first()).toBeVisible();
-  await expect(contactDialog.getByText("Bound to imported recruiter name.").first()).toBeVisible();
-  await expect(contactDialog.getByText("Truthfulness gates blocked this draft").first()).toBeVisible();
-  await expect(contactDialog.getByRole("button", { name: "Approve draft" })).toBeDisabled();
+  await contactDialog
+    .locator("summary", { hasText: "Provenance and gate results" })
+    .click();
+  await expect(
+    contactDialog.getByText("Truthfulness gates passed").first(),
+  ).toBeVisible();
+  await expect(
+    contactDialog.getByText("Bound to imported recruiter name.").first(),
+  ).toBeVisible();
+  await expect(
+    contactDialog.getByText("Truthfulness gates blocked this draft").first(),
+  ).toBeVisible();
+  await expect(
+    contactDialog.getByRole("button", { name: "Approve draft" }),
+  ).toBeDisabled();
 
-  await contactDialog.getByRole("button", { name: "Revise approved message" }).click();
+  await contactDialog
+    .getByRole("button", { name: "Revise approved message" })
+    .click();
   await expect(contactDialog.getByLabel("Edit message")).toBeVisible();
-  await expect(contactDialog.getByRole("heading", { name: "Approved message" })).toBeVisible();
+  await expect(
+    contactDialog.getByRole("heading", { name: "Approved message" }),
+  ).toBeVisible();
 
   await contactDialog.getByRole("button", { name: "Log a send" }).click();
   await contactDialog.getByRole("combobox", { name: "Channel" }).click();
@@ -529,7 +652,9 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
   const [sendLogResponse] = await Promise.all([
     page.waitForResponse(
       (response) =>
-        response.url().includes(`/v1/outreach/threads/${CONTACT_THREAD_ID}/send-logs`) &&
+        response
+          .url()
+          .includes(`/v1/outreach/threads/${CONTACT_THREAD_ID}/send-logs`) &&
         response.request().method() === "POST",
       { timeout: 30_000 },
     ),
@@ -541,14 +666,21 @@ test("Outreach planner: seeded contacts, supervised research, draft review, send
   const [completeResponse] = await Promise.all([
     page.waitForResponse(
       (response) =>
-        response.url().includes(`/v1/outreach/threads/${CONTACT_THREAD_ID}/follow-up/complete`) &&
-        response.request().method() === "POST",
+        response
+          .url()
+          .includes(
+            `/v1/outreach/threads/${CONTACT_THREAD_ID}/follow-up/complete`,
+          ) && response.request().method() === "POST",
       { timeout: 30_000 },
     ),
     contactDialog.getByRole("button", { name: "Mark done" }).click(),
   ]);
   expect(completeResponse.status()).toBe(200);
-  await expect(contactDialog.getByText("Last follow-up completed. Schedule a new reminder:")).toBeVisible();
+  await expect(
+    contactDialog.getByText(
+      "Last follow-up completed. Schedule a new reminder:",
+    ),
+  ).toBeVisible();
 
   assertSensitiveValuesStayOutOfEventsAndProjections(dbPath);
 });

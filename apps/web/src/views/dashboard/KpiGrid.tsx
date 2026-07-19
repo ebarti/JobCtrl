@@ -6,6 +6,7 @@ import { StatCard, type StatTone } from "../../shared/ui/stat-card.js";
 
 export type KpiTarget = "all" | "failed" | "blocked" | "ready" | "applied";
 type KpiTone = "alert" | "warn" | "ok";
+type KpiPriority = "overview" | "attention" | "context";
 
 const VALUE_TONE: Record<KpiTone, StatTone> = {
   alert: "down",
@@ -65,6 +66,7 @@ const ITEMS: ReadonlyArray<{
   readonly caption: (summary: DashboardSummary) => string;
   readonly target: KpiTarget;
   readonly tone: KpiTone | null;
+  readonly priority: KpiPriority;
 }> = [
   {
     label: "Jobs",
@@ -72,6 +74,7 @@ const ITEMS: ReadonlyArray<{
     caption: (summary) => `+${summary.totals.jobsToday} today`,
     target: "all",
     tone: null,
+    priority: "overview",
   },
   {
     label: "Failures",
@@ -79,6 +82,7 @@ const ITEMS: ReadonlyArray<{
     caption: () => "needs retry",
     target: "failed",
     tone: "alert",
+    priority: "attention",
   },
   {
     label: "Blocked",
@@ -86,6 +90,7 @@ const ITEMS: ReadonlyArray<{
     caption: () => "needs review",
     target: "blocked",
     tone: "warn",
+    priority: "attention",
   },
   {
     label: "Ready",
@@ -93,6 +98,7 @@ const ITEMS: ReadonlyArray<{
     caption: () => "ready queue",
     target: "ready",
     tone: "ok",
+    priority: "attention",
   },
   {
     label: "Applied",
@@ -100,6 +106,7 @@ const ITEMS: ReadonlyArray<{
     caption: (summary) => `+${summary.totals.appliedToday} today`,
     target: "applied",
     tone: null,
+    priority: "context",
   },
   {
     label: "Dry runs",
@@ -107,6 +114,7 @@ const ITEMS: ReadonlyArray<{
     caption: () => "today excluded",
     target: "all",
     tone: null,
+    priority: "context",
   },
 ];
 
@@ -118,12 +126,12 @@ export function KpiGrid({ summary }: KpiGridProps) {
   const navigate = useNavigate();
   return (
     <section className="kpis">
-      {ITEMS.map(({ label, key, caption, target, tone }) => {
+      {ITEMS.map(({ label, key, caption, target, tone, priority }) => {
         const search = kpiSearchFor(target);
         return (
           <StatCard
             key={label}
-            className={KPI_HOVER}
+            className={`${KPI_HOVER} dashboard-kpi dashboard-kpi-${priority}`}
             label={label}
             value={summary.totals[key]}
             valueTone={tone ? VALUE_TONE[tone] : undefined}

@@ -3,7 +3,9 @@ import type { ApplyReviewQueueResponse } from "@jobctrl/contracts";
 
 import {
   makeApplyAudit,
+  makeJobsPage,
   sampleApplyReviewQueue,
+  sampleJob,
   sampleResumeTemplateListResponse,
 } from "../../src/test/fixtures/projections.js";
 
@@ -62,7 +64,8 @@ const ROUTE_SURFACES: readonly RouteSurface[] = [
     path: "/discovery",
     activeLink: "Discovery",
     proof: (page) => page.getByRole("heading", { name: "Source registry" }),
-    surface: (page) => page.locator(".discovery-control-panel .filterable-data-grid").first(),
+    surface: (page) =>
+      page.locator(".discovery-control-panel .filterable-data-grid").first(),
   },
   {
     path: "/profile",
@@ -107,15 +110,17 @@ const MOBILE_ROUTE_SURFACES: readonly MobileRouteSurface[] = [
   },
   {
     ...ROUTE_SURFACES[1]!,
+    proof: (page) => page.getByRole("list", { name: "Jobs" }),
+    surface: (page) => page.getByRole("list", { name: "Jobs" }),
     primaryControl: (page) =>
-      page
-        .locator("table.jobs-data-grid-table tbody tr")
-        .filter({ hasText: "Director of Platform Engineering" })
-        .locator('[data-slot="title-stack-primary"]')
-        .filter({ hasText: /^Director of Platform Engineering$/ }),
+      page.getByRole("button", {
+        name: /^Open job Director of Platform Engineering/,
+      }),
   },
   {
     ...ROUTE_SURFACES[2]!,
+    proof: (page) => page.getByRole("list", { name: "Artifacts" }),
+    surface: (page) => page.getByRole("list", { name: "Artifacts" }),
     primaryControl: (page) =>
       page.getByRole("button", { name: /Open artifact/i }).first(),
   },
@@ -138,16 +143,20 @@ const MOBILE_ROUTE_SURFACES: readonly MobileRouteSurface[] = [
   },
   {
     ...ROUTE_SURFACES[7]!,
+    proof: (page) => page.getByRole("list", { name: "Workflow runs" }),
+    surface: (page) => page.getByRole("list", { name: "Workflow runs" }),
     primaryControl: (page) =>
       page.getByRole("button", { name: /Open run/i }).first(),
   },
   {
     ...ROUTE_SURFACES[8]!,
     primaryControl: (page) =>
-      page.getByRole("button", { name: /Freshness and capacity/i }),
+      page.getByRole("button", { name: "Inspector", exact: true }),
   },
   {
     ...ROUTE_SURFACES[9]!,
+    proof: (page) => page.getByRole("list", { name: "Recent activity" }),
+    surface: (page) => page.getByRole("list", { name: "Recent activity" }),
     primaryControl: (page) =>
       page.getByRole("button", { name: /Open activity/i }).first(),
   },
@@ -214,7 +223,7 @@ const APPROVED_ROLE_METRICS = {
   "strong-body": "14px/20px/600",
   control: "14px/20px/600",
   label: "12px/16px/600",
-  status: "12px/16px/600",
+  status: "14px/20px/600",
   "table-header": "12px/16px/600",
   metadata: "12px/16px/400",
   metric: "20px/24px/700",
@@ -236,7 +245,9 @@ interface TypographyAuditResult {
   }>;
 }
 
-async function collectTypographyAudit(page: Page): Promise<TypographyAuditResult> {
+async function collectTypographyAudit(
+  page: Page,
+): Promise<TypographyAuditResult> {
   return page.locator(".app-shell").evaluate((shell, approvedRoleMetrics) => {
     const approved = approvedRoleMetrics as Record<string, string>;
     const metricFallback: Record<string, string> = {
@@ -318,11 +329,16 @@ async function collectTypographyAudit(page: Page): Promise<TypographyAuditResult
         role = "metadata";
       } else if (
         !role &&
-        element.matches(".eyebrow, .job-audit-triage-kicker, .text-xs.font-medium")
+        element.matches(
+          ".eyebrow, .job-audit-triage-kicker, .text-xs.font-medium",
+        )
       ) {
         role = "label";
       } else if (!role && element.matches(".tag, .stage-pill")) {
-        role = "status";
+        // Legacy tags are reserved for categories, artifact types, and stage
+        // names. Domain state belongs in StatusBadge, whose explicit
+        // data-typography contract is independent from ARIA live-region roles.
+        role = "label";
       } else if (!role && element.matches("code, pre, .mono")) {
         role = "code";
       } else if (!role && (tag === "strong" || tag === "b")) {
@@ -335,10 +351,7 @@ async function collectTypographyAudit(page: Page): Promise<TypographyAuditResult
         role = "section-title";
       } else if (!role && /^h[3-6]$/.test(tag)) {
         role = "component-title";
-      } else if (
-        !role &&
-        ["p", "li", "td", "dd", "blockquote"].includes(tag)
-      ) {
+      } else if (!role && ["p", "li", "td", "dd", "blockquote"].includes(tag)) {
         role = "body";
       } else if (!role) {
         role = metricFallback[metric] ?? null;
@@ -351,8 +364,11 @@ async function collectTypographyAudit(page: Page): Promise<TypographyAuditResult
         element instanceof HTMLInputElement ||
         element instanceof HTMLTextAreaElement ||
         element instanceof HTMLSelectElement
-          ? element.value || element.getAttribute("placeholder") || element.getAttribute("aria-label") || ""
-          : element.textContent?.trim() ?? "";
+          ? element.value ||
+            element.getAttribute("placeholder") ||
+            element.getAttribute("aria-label") ||
+            ""
+          : (element.textContent?.trim() ?? "");
       const selector = `${tag}${element.id ? `#${element.id}` : ""}${
         element.classList.length
           ? `.${[...element.classList].slice(0, 3).join(".")}`
@@ -1007,7 +1023,10 @@ test("target screens use only approved typography roles and identical role metri
     ).toBeVisible({ timeout: 30_000 });
     const audit = await collectTypographyAudit(page);
 
-    expect(audit.checked, `${route.name} should expose rendered text`).toBeGreaterThan(0);
+    expect(
+      audit.checked,
+      `${route.name} should expose rendered text`,
+    ).toBeGreaterThan(0);
     expect(audit.unknown, `${route.name} unknown typography roles`).toEqual([]);
     expect(audit.violations, `${route.name} unapproved typography`).toEqual([]);
     for (const [role, styles] of Object.entries(audit.roleStyles)) {
@@ -1045,6 +1064,55 @@ test("compact, regular, and comfortable modes preserve typography metrics", asyn
   expect(new Set(metrics.values()).size).toBe(1);
 });
 
+test("stale score status keeps the shared transparent status treatment", async ({
+  page,
+}) => {
+  await page.route(/\/v1\/jobs(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        makeJobsPage([
+          {
+            ...sampleJob,
+            scoreStaleness: {
+              isStale: true,
+              staleReason: "scoring_policy_changed",
+              currentPolicyVersion: 1,
+              targetPolicyVersion: 2,
+              markedAt: "2026-04-29T10:07:00+00:00",
+              pendingExplicitRescore: true,
+            },
+          },
+        ]),
+      ),
+    });
+  });
+
+  await page.goto("/jobs");
+  const status = page.locator('[data-slot="status-badge"].score-stale-tag');
+  await expect(status).toBeVisible({ timeout: 30_000 });
+  await expect(status).toHaveAttribute("data-status-tone", "warn");
+  await expect(status).toHaveAttribute("data-typography", "status");
+
+  const styles = await status.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderTopWidth: style.borderTopWidth,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+      lineHeight: style.lineHeight,
+    };
+  });
+  expect(styles).toEqual({
+    backgroundColor: "rgba(0, 0, 0, 0)",
+    borderTopWidth: "0px",
+    fontSize: "14px",
+    fontWeight: "600",
+    lineHeight: "20px",
+  });
+});
+
 test("representative routes stay legible in light and dark themes", async ({
   page,
 }) => {
@@ -1080,10 +1148,14 @@ test("every target screen preserves semantic foreground and surface colors in da
   for (const route of VISUAL_SYSTEM_AUDIT_ROUTES) {
     await page.goto(route.path);
     const title = page.locator('[data-typography="page-title"]').first();
-    await expect(title, `${route.name} page title`).toBeVisible({ timeout: 30_000 });
+    await expect(title, `${route.name} page title`).toBeVisible({
+      timeout: 30_000,
+    });
     const colors = await page.locator(".app-shell").evaluate((shell) => {
       const shellStyle = getComputedStyle(shell);
-      const titleElement = shell.querySelector<HTMLElement>('[data-typography="page-title"]');
+      const titleElement = shell.querySelector<HTMLElement>(
+        '[data-typography="page-title"]',
+      );
       return {
         background: shellStyle.backgroundColor,
         foreground: titleElement ? getComputedStyle(titleElement).color : "",
@@ -1160,25 +1232,10 @@ test("@mobile every target screen reflows without document overflow at 320 CSS p
     await expectNoDocumentInlineOverflow(page);
     if (route.path === "/profile") {
       const actionBar = page.locator(".editor-bulk-actions").first();
-      await expect(actionBar).toBeVisible();
-      const containment = await actionBar.evaluate((element) => {
-        const parent = element.getBoundingClientRect();
-        return [...element.children].map((child) => {
-          const rect = child.getBoundingClientRect();
-          return {
-            bottom: rect.bottom <= parent.bottom + 1,
-            left: rect.left >= parent.left - 1,
-            right: rect.right <= parent.right + 1,
-            top: rect.top >= parent.top - 1,
-          };
-        });
-      });
-      expect(
-        containment.every(
-          ({ bottom, left, right, top }) => bottom && left && right && top,
-        ),
-        "Profile save and discard actions should stay inside their mobile decision bar",
-      ).toBe(true);
+      await expect(
+        actionBar,
+        "Profile should not show a permanent inactive save bar before edits",
+      ).toHaveCount(0);
     }
   }
 });
@@ -1228,7 +1285,10 @@ test("Apply Review queue items contain their content at every density", async ({
 
   const queueItems = page.locator(".apply-review-queue-item");
   await expect(queueItems.first()).toBeVisible({ timeout: 30_000 });
-  expect(await queueItems.count(), "queue fixture should contain multiple rows").toBeGreaterThan(1);
+  expect(
+    await queueItems.count(),
+    "queue fixture should contain multiple rows",
+  ).toBeGreaterThan(1);
 
   for (const density of Object.keys(DENSITY_TOKENS) as Density[]) {
     await setDensity(page, density);
@@ -1253,7 +1313,10 @@ test("Apply Review queue items contain their content at every density", async ({
 
     expect(rows.length, `${density} queue measurements`).toBeGreaterThan(1);
     for (const [index, row] of rows.entries()) {
-      expect(row.height, `${density} row ${index} height`).toBeGreaterThanOrEqual(88);
+      expect(
+        row.height,
+        `${density} row ${index} height`,
+      ).toBeGreaterThanOrEqual(88);
       expect(
         row.scrollHeight,
         `${density} row ${index} content must fit its box`,
@@ -1282,18 +1345,26 @@ test("Configuration checkboxes share one target, visual, and label alignment", a
     name: "Individual Contributor",
   });
   await expect(discoveryCheckbox).toBeVisible({ timeout: 30_000 });
+  await discoveryCheckbox.click();
+  await expect(discoveryCheckbox).toHaveAttribute("data-checked");
 
   const readGeometry = async (checkbox: Locator) =>
     checkbox.evaluate((element) => {
       const target = element.getBoundingClientRect();
       const visual = getComputedStyle(element, "::before");
+      const indicator = element.querySelector(
+        '[data-slot="checkbox-indicator"]',
+      );
       const labelledBy = element.getAttribute("aria-labelledby");
       const label = labelledBy
         ? document.getElementById(labelledBy)
-        : element.parentElement?.querySelector("label") ?? null;
+        : (element.parentElement?.querySelector("label") ?? null);
       const labelRect = label?.getBoundingClientRect() ?? null;
       const visualHeight = Number.parseFloat(visual.height);
       return {
+        indicatorColor: indicator
+          ? getComputedStyle(indicator).color
+          : "missing",
         labelLineHeight: label
           ? Number.parseFloat(getComputedStyle(label).lineHeight)
           : 0,
@@ -1304,6 +1375,8 @@ test("Configuration checkboxes share one target, visual, and label alignment", a
           labelRect === null
             ? Number.NaN
             : target.top + (target.height - visualHeight) / 2 - labelRect.top,
+        visualBackgroundColor: visual.backgroundColor,
+        visualBorderColor: visual.borderColor,
         visualWidth: Number.parseFloat(visual.width),
       };
     });
@@ -1318,9 +1391,15 @@ test("Configuration checkboxes share one target, visual, and label alignment", a
     const geometry = await readGeometry(discoveryCheckbox);
     discoveryGeometry.set(density, geometry);
 
-    expect(geometry.targetHeight, `${density} target height`).toBeCloseTo(24, 1);
+    expect(geometry.targetHeight, `${density} target height`).toBeCloseTo(
+      24,
+      1,
+    );
     expect(geometry.targetWidth, `${density} target width`).toBeCloseTo(24, 1);
-    expect(geometry.visualHeight, `${density} visual height`).toBeCloseTo(16, 1);
+    expect(geometry.visualHeight, `${density} visual height`).toBeCloseTo(
+      16,
+      1,
+    );
     expect(geometry.visualWidth, `${density} visual width`).toBeCloseTo(16, 1);
     expect(
       geometry.visualHeight,
@@ -1338,6 +1417,8 @@ test("Configuration checkboxes share one target, visual, and label alignment", a
       name: "Set Available full-time to not answered",
     }),
   ).toHaveCount(0);
+  await preferencesCheckbox.click();
+  await expect(preferencesCheckbox).toHaveAttribute("data-checked");
 
   for (const density of Object.keys(DENSITY_TOKENS) as Density[]) {
     await setDensity(page, density);
@@ -1368,6 +1449,18 @@ test("Configuration checkboxes share one target, visual, and label alignment", a
       ),
       `${density} checkbox visuals should align with the same label line`,
     ).toBeLessThanOrEqual(1);
+    expect(
+      preferencesGeometry.indicatorColor,
+      `${density} Preferences checkmark color`,
+    ).toBe(expectedGeometry!.indicatorColor);
+    expect(
+      preferencesGeometry.visualBackgroundColor,
+      `${density} Preferences checked surface`,
+    ).toBe(expectedGeometry!.visualBackgroundColor);
+    expect(
+      preferencesGeometry.visualBorderColor,
+      `${density} Preferences checked border`,
+    ).toBe(expectedGeometry!.visualBorderColor);
   }
 });
 
@@ -1377,33 +1470,53 @@ test("Discovery settings pack related controls and reflow with available width",
   await page.setViewportSize({ width: 1666, height: 900 });
   await page.goto("/discovery");
 
-  await expect(
-    page.getByRole("group", { name: "Target tracks" }),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("group", { name: "Target tracks" })).toBeVisible({
+    timeout: 30_000,
+  });
 
   const targetGrid = page.locator(".target-preferences-grid");
-  const targetClusters = targetGrid.locator(":scope > .target-preference-cluster");
+  const targetClusters = targetGrid.locator(
+    ":scope > .target-preference-cluster",
+  );
   const boardGrid = page.locator(".discovery-board-options");
   const boardOptions = boardGrid.locator(":scope > .target-choice");
+  const targetCardTitles = targetGrid.locator(
+    ':scope > .target-preference-cluster [data-slot="card-title"]',
+  );
   const assertUsableTargetInputs = async (viewport: string) => {
     for (const inputKind of ["Target roles", "Target location"] as const) {
       const inputs = page.locator(`input[aria-label^="${inputKind} "]`);
       const count = await inputs.count();
       expect(count, `${viewport} ${inputKind} inputs`).toBeGreaterThan(0);
       const widths = await inputs.evaluateAll((elements) =>
-        elements.map((element) => Math.round(element.getBoundingClientRect().width)),
+        elements.map((element) =>
+          Math.round(element.getBoundingClientRect().width),
+        ),
       );
       for (const [index, width] of widths.entries()) {
-        expect(width, `${viewport} ${inputKind} input ${index + 1}`).toBeGreaterThanOrEqual(180);
+        expect(
+          width,
+          `${viewport} ${inputKind} input ${index + 1}`,
+        ).toBeGreaterThanOrEqual(180);
       }
     }
   };
 
   await expect(targetClusters).toHaveCount(4);
+  await expect(targetCardTitles).toHaveCount(4);
   await expect(boardOptions).toHaveCount(4);
 
   const desktopTarget = await targetGrid.evaluate((element) => {
     const grid = element.getBoundingClientRect();
+    const gridShell = element.parentElement;
+    const disclosure = element.closest<HTMLElement>(
+      ".target-search-settings",
+    );
+    if (!gridShell || !disclosure) {
+      throw new Error("Target search hierarchy did not render");
+    }
+    const gridShellStyle = getComputedStyle(gridShell);
+    const disclosureStyle = getComputedStyle(disclosure);
     const children = Array.from(element.children).map((child) => {
       const bounds = child.getBoundingClientRect();
       return {
@@ -1413,14 +1526,27 @@ test("Discovery settings pack related controls and reflow with available width",
     });
     return {
       children,
+      disclosureBorderWidth: disclosureStyle.borderTopWidth,
       gridHeight: Math.round(grid.height),
+      gridShellBorderWidth: gridShellStyle.borderTopWidth,
       maxChildHeight: Math.max(...children.map(({ height }) => height)),
     };
   });
   const desktopBoards = await boardGrid.evaluate((element) =>
     Array.from(element.children).map((child) => {
       const bounds = child.getBoundingClientRect();
-      return { top: Math.round(bounds.top) };
+      return {
+        left: Math.round(bounds.left),
+        right: Math.round(bounds.right),
+        top: Math.round(bounds.top),
+        width: Math.round(bounds.width),
+      };
+    }),
+  );
+  const targetTitleStyles = await targetCardTitles.evaluateAll((elements) =>
+    elements.map((element) => {
+      const style = getComputedStyle(element);
+      return `${style.fontFamily}|${style.fontSize}|${style.fontWeight}|${style.lineHeight}`;
     }),
   );
 
@@ -1428,7 +1554,26 @@ test("Discovery settings pack related controls and reflow with available width",
   expect(desktopTarget.gridHeight).toBeLessThanOrEqual(
     desktopTarget.maxChildHeight + 42,
   );
+  expect(desktopTarget.disclosureBorderWidth).toBe("1px");
+  expect(desktopTarget.gridShellBorderWidth).toBe("0px");
   expect(new Set(desktopBoards.map(({ top }) => top)).size).toBe(1);
+  expect(new Set(targetTitleStyles).size).toBe(1);
+  expect(Math.max(...desktopBoards.map(({ width }) => width))).toBeLessThanOrEqual(160);
+  expect(
+    Math.max(...desktopBoards.map(({ right }) => right)) -
+      Math.min(...desktopBoards.map(({ left }) => left)),
+  ).toBeLessThanOrEqual(700);
+  await expect(page.getByText(/Saved in SQLite/i)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Help for / })).toHaveCount(10);
+  await page.getByRole("button", { name: "Help for Results per board" }).click();
+  const settingHelp = page.getByRole("dialog", { name: "Results per board help" });
+  await expect(settingHelp).toBeVisible();
+  await expect(settingHelp.getByRole("link", { name: "Open documentation" })).toHaveAttribute(
+    "href",
+    "https://jobctrl.dev/user/discovery#runtime-setting-results-per-board",
+  );
+  await page.keyboard.press("Escape");
+  await expect(settingHelp).toBeHidden();
   await assertUsableTargetInputs("desktop");
 
   await page.setViewportSize({ width: 900, height: 900 });
@@ -1463,9 +1608,7 @@ test("Discovery settings pack related controls and reflow with available width",
       };
     });
     const boards = Array.from(
-      document.querySelectorAll(
-        ".discovery-board-options > .target-choice",
-      ),
+      document.querySelectorAll(".discovery-board-options > .target-choice"),
     ).map((element) => {
       const bounds = element.getBoundingClientRect();
       return {
@@ -1604,12 +1747,83 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
   await expect(
     page.getByRole("heading", { name: "Live pipeline" }),
   ).toBeVisible({ timeout: 30_000 });
+  const pipelineStageStatus = page
+    .locator(
+      ".pipeline-stage-row .configuration-section__actions [data-slot='status-badge']",
+    )
+    .first();
+  await expect(pipelineStageStatus).toBeVisible();
+  const pipelineStageStatusMetrics = await pipelineStageStatus.evaluate(
+    (element) => {
+      const style = getComputedStyle(element);
+      const icon = element.querySelector<SVGElement>(
+        "[data-status-icon='true']",
+      );
+      return {
+        background: style.backgroundColor,
+        borderWidth: style.borderWidth,
+        fontSize: style.fontSize,
+        height: Math.round(element.getBoundingClientRect().height),
+        iconSize: icon ? Math.round(icon.getBoundingClientRect().width) : 0,
+        lineHeight: style.lineHeight,
+      };
+    },
+  );
+  expect(pipelineStageStatusMetrics).toEqual({
+    background: "rgba(0, 0, 0, 0)",
+    borderWidth: "0px",
+    fontSize: "14px",
+    height: 20,
+    iconSize: 16,
+    lineHeight: "20px",
+  });
   await expectKeyboardFocusIndicator(
     page,
     page.getByRole("button", { name: /Freshness and capacity/i }),
     "pipeline freshness and capacity disclosure",
     100,
   );
+
+  await page.goto("/settings/credentials");
+  await expect(
+    page.getByRole("heading", { name: "Settings", level: 1 }),
+  ).toBeVisible({ timeout: 30_000 });
+  const quietStatus = page
+    .locator("[data-slot='status-badge']:not(:has([data-status-icon='true']))")
+    .first();
+  await expect(quietStatus).toBeVisible();
+  await expect(quietStatus.locator("[data-status-icon='true']")).toHaveCount(0);
+  const quietStatusDotMetrics = await quietStatus.evaluate((element) => {
+    const marker = getComputedStyle(element, "::before");
+    return {
+      background: marker.backgroundColor,
+      height: marker.height,
+      width: marker.width,
+    };
+  });
+  expect(quietStatusDotMetrics.height).toBe("8px");
+  expect(quietStatusDotMetrics.width).toBe("8px");
+  expectPainted(quietStatusDotMetrics.background, "quiet status marker");
+
+  await page.goto("/artifacts");
+  await expect(
+    page.getByRole("heading", { name: "Artifacts", level: 1 }),
+  ).toBeVisible({ timeout: 30_000 });
+  const artifactCategory = page.locator(".tag.muted").first();
+  await expect(artifactCategory).toBeVisible();
+  const artifactCategoryMetrics = await artifactCategory.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      fontSize: style.fontSize,
+      lineHeight: style.lineHeight,
+      role: element.getAttribute("data-typography"),
+    };
+  });
+  expect(artifactCategoryMetrics).toEqual({
+    fontSize: "12px",
+    lineHeight: "16px",
+    role: null,
+  });
 });
 test("Profile and Preferences subjects share one expandable-card hierarchy", async ({
   page,
@@ -1682,6 +1896,29 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
     '[data-slot="collapsible-content"]',
   );
   await expect(baselineContent).toBeVisible();
+  const baselineInset = await baselineSection.evaluate((section) => {
+    const card = section.getBoundingClientRect();
+    const leftInput = section.querySelector(
+      "#structured-profile-experience-years-of-experience-total",
+    );
+    const rightInput = section.querySelector(
+      "#structured-profile-experience-current-company",
+    );
+    if (
+      !(leftInput instanceof HTMLElement) ||
+      !(rightInput instanceof HTMLElement)
+    ) {
+      throw new Error("Resume baseline edge inputs are missing");
+    }
+    const left = leftInput.getBoundingClientRect();
+    const right = rightInput.getBoundingClientRect();
+    return {
+      left: left.left - card.left,
+      right: card.right - right.right,
+    };
+  });
+  expect(baselineInset.left).toBeGreaterThanOrEqual(20);
+  expect(baselineInset.right).toBeGreaterThanOrEqual(20);
   await baselineTrigger.click();
   await expect(baselineContent).toBeHidden();
   await baselineTrigger.click();
@@ -1781,6 +2018,66 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
   await expect(resumeStyleContent).toBeHidden();
   await resumeStyleTrigger.click();
   await expect(resumeStyleContent).toBeVisible();
+});
+
+test("Profile experience date ranges stay compact and reflow on mobile", async ({
+  page,
+}) => {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+    { width: 320, height: 568 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/profile");
+    await expect(
+      page.getByRole("heading", { name: "Profile", level: 1 }),
+    ).toBeVisible({ timeout: 30_000 });
+
+    const experienceSection = page
+      .locator(".profile-sections > .profile-disclosure")
+      .filter({
+        has: page.getByRole("heading", { name: "Experience entries" }),
+      });
+    await experienceSection
+      .getByRole("button", { name: /Experience entries/i })
+      .click();
+
+    const dateRange = experienceSection.locator(".date-range-body").first();
+    await expect(dateRange).toBeVisible();
+    const metrics = await dateRange.evaluate((element) => {
+      const body = element.getBoundingClientRect();
+      const section = element
+        .closest(".profile-disclosure")
+        ?.getBoundingClientRect();
+      const start = element
+        .querySelector(".month-selector")
+        ?.getBoundingClientRect();
+      const present = element
+        .querySelector(".date-range-present")
+        ?.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        bodyWidth: body.width,
+        borderWidth: style.borderWidth,
+        documentOverflow:
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
+        presentWidth: present?.width ?? Number.POSITIVE_INFINITY,
+        sectionWidth: section?.width ?? 0,
+        startWidth: start?.width ?? Number.POSITIVE_INFINITY,
+      };
+    });
+
+    expect(metrics.borderWidth).toBe("0px");
+    expect(metrics.documentOverflow).toBeLessThanOrEqual(1);
+    expect(metrics.bodyWidth).toBeLessThanOrEqual(metrics.sectionWidth - 40);
+    expect(metrics.startWidth).toBeLessThanOrEqual(281);
+    expect(metrics.presentWidth).toBeLessThanOrEqual(140);
+    if (viewport.width >= 1000) {
+      expect(metrics.bodyWidth).toBeLessThanOrEqual(480);
+    }
+  }
 });
 
 test("detail workspaces open with seeded data and preserve route navigation", async ({
@@ -1901,7 +2198,9 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
         ".apply-review-resume-review",
       );
       if (!(audit instanceof HTMLElement)) return false;
-      return element.getBoundingClientRect().top <= audit.getBoundingClientRect().top;
+      return (
+        element.getBoundingClientRect().top <= audit.getBoundingClientRect().top
+      );
     }),
     "resume template control should lead directly into the resume review surface",
   ).toBe(true);
@@ -1963,9 +2262,7 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
   expect(
     layout.maxSummaryItemHeight,
     "audit summary items should remain readable",
-  ).toBeLessThan(
-    140,
-  );
+  ).toBeLessThan(140);
   expect(
     layout.cardHeight,
     "decision card should remain a compact summary",

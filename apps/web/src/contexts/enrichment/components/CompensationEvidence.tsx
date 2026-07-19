@@ -19,6 +19,7 @@ import { Empty } from "../../../shared/ui/empty.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Field, FieldLabel } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { useRefreshCompensationMutation } from "../hooks/useRefreshCompensationMutation.js";
 
 type TagTone = "ok" | "info" | "warn" | "muted";
@@ -250,7 +251,11 @@ export function CompensationSummaryCell({
       <b>{primary.range}</b>
       <span>{primary.source}</span>
       <span className={`tag ${primary.tone}`}>{primary.confidence}</span>
-      {primary.warningCount ? <span className="tag warn">{plural(primary.warningCount, "warning")}</span> : null}
+      {primary.warningCount ? (
+        <StatusBadge tone="warn">
+          {plural(primary.warningCount, "warning")}
+        </StatusBadge>
+      ) : null}
     </div>
   );
 }
@@ -267,7 +272,11 @@ export function CompensationSummaryStrip({
       <b>{primary.range}</b>
       <span>{primary.source}</span>
       <span className={`tag ${primary.tone}`}>{primary.confidence}</span>
-      {primary.warningCount ? <span className="tag warn">{plural(primary.warningCount, "warning")}</span> : null}
+      {primary.warningCount ? (
+        <StatusBadge tone="warn">
+          {plural(primary.warningCount, "warning")}
+        </StatusBadge>
+      ) : null}
     </section>
   );
 }

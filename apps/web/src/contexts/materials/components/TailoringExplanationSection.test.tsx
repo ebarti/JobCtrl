@@ -321,7 +321,10 @@ describe("<TailoringExplanationSection>", () => {
     };
     render(<TailoringExplanationSection explanation={explanation} />);
 
-    expect(screen.getByText("not accepted")).toBeInTheDocument();
+    expect(screen.getByText("Not accepted")).toHaveAttribute(
+      "data-status-tone",
+      "warn",
+    );
     expect(
       screen.getByText(
         "Voice edit introduced an unsourced metric and was rejected.",

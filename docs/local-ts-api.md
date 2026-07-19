@@ -91,6 +91,12 @@ job evidence. Start with [Jobs & Materials](api/jobs-and-materials.md#compensati
 List, detail, cancel, and workflow-start semantics are in
 [Operations & Events](api/operations-and-events.md#workflow-runs).
 
+`GET /v1/workflow-runs` accepts the normal pagination and sort parameters plus
+an exact `workflowType` match, inclusive `startedSince`, and exclusive
+`startedBefore`. Timestamp bounds must be UTC ISO-8601 timestamps; malformed
+optional filter values are ignored. The list response echoes the effective
+filters in its `filter` object (`null` when an optional filter is inactive).
+
 ## Profile Resume Preview
 
 `GET /v1/profile/preview.html` and `GET /v1/profile/preview.pdf` render the

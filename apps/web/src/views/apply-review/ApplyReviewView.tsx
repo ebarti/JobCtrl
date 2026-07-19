@@ -53,9 +53,18 @@ import {
   CollapsibleTrigger,
 } from "../../shared/ui/collapsible.js";
 import { Empty } from "../../shared/ui/empty.js";
+import { Input } from "../../shared/ui/input.js";
 import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../shared/ui/PdfPreviewViewer.js";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../shared/ui/select.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
 import "../../styles/redesign-apply-review.css";
 
@@ -451,6 +460,9 @@ function ApplyAuditFacts({ item }: { readonly item: ApplyReviewQueueItem }) {
   const facts = reviewAuditFacts(item);
   const summaryFacts = facts.filter((entry) => !isTechnicalAuditMessage(entry.message));
   const technicalFacts = facts.filter((entry) => isTechnicalAuditMessage(entry.message));
+  const blockingCount = summaryFacts.filter((entry) => entry.fact.severity === "blocking").length;
+  const warningCount = summaryFacts.filter((entry) => entry.fact.severity === "warning").length;
+  const noticeCount = summaryFacts.length - blockingCount - warningCount;
 
   if (!facts.length) {
     return null;
@@ -466,13 +478,29 @@ function ApplyAuditFacts({ item }: { readonly item: ApplyReviewQueueItem }) {
             {summaryFacts.length === 1 ? "requires" : "require"} attention
           </AlertTitle>
           <AlertDescription>
-            <ul className="apply-review-audit-summary-list">
-              {summaryFacts.map(({ category, fact, message }) => (
-                <li key={`${category}:${fact.code}:${fact.detail ?? ""}`}>
-                  <strong data-typography="strong-body">{category}:</strong> {message}
-                </li>
-              ))}
-            </ul>
+            <div className="apply-review-audit-counts" aria-label="Issue severity summary">
+              {blockingCount ? <StatusBadge tone="warn">{blockingCount} blocking</StatusBadge> : null}
+              {warningCount ? (
+                <StatusBadge tone="warn">
+                  {warningCount} warning{warningCount === 1 ? "" : "s"}
+                </StatusBadge>
+              ) : null}
+              {noticeCount ? (
+                <StatusBadge tone="muted">
+                  {noticeCount} notice{noticeCount === 1 ? "" : "s"}
+                </StatusBadge>
+              ) : null}
+            </div>
+            <details className="apply-review-issue-details">
+              <summary data-typography="control">Review issue details ({summaryFacts.length})</summary>
+              <ul className="apply-review-audit-summary-list">
+                {summaryFacts.map(({ category, fact, message }) => (
+                  <li key={`${category}:${fact.code}:${fact.detail ?? ""}`}>
+                    <strong data-typography="strong-body">{category}:</strong> {message}
+                  </li>
+                ))}
+              </ul>
+            </details>
           </AlertDescription>
         </Alert>
       ) : null}
@@ -502,6 +530,16 @@ function ApplyReviewQueue({
   readonly selected: ApplyReviewQueueItem;
   readonly onSelect: (jobKey: string) => void;
 }) {
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const filteredItems = normalizedQuery
+    ? items.filter((item) =>
+        [item.title, item.company, item.source].some((value) =>
+          value.toLocaleLowerCase().includes(normalizedQuery),
+        ),
+      )
+    : items;
+
   return (
     <aside className="apply-review-queue" aria-label="Application review queue">
       <Card className="apply-review-queue-card" size="sm">
@@ -511,11 +549,56 @@ function ApplyReviewQueue({
           </CardTitle>
           <CardDescription>Select the next application decision.</CardDescription>
           <CardAction className="apply-review-queue-count">
-            {items.length} human decision{items.length === 1 ? "" : "s"}
+            {filteredItems.length} of {items.length}
           </CardAction>
         </CardHeader>
+        <div className="apply-review-queue-filter">
+          <label htmlFor="apply-review-queue-filter" data-typography="label">
+            Filter review queue
+          </label>
+          <Input
+            id="apply-review-queue-filter"
+            placeholder="Title, company, or source"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+        <div className="apply-review-queue-mobile">
+          <label id="apply-review-mobile-selector-label" data-typography="label">
+            Review item
+          </label>
+          <Select
+            items={items.map((item) => ({
+              label: `${item.title} · ${item.company}`,
+              value: item.jobKey,
+            }))}
+            value={selected.jobKey}
+            onValueChange={(value) => {
+              if (value) onSelect(value);
+            }}
+          >
+            <SelectTrigger
+              aria-labelledby="apply-review-mobile-selector-label"
+              className="apply-review-queue-mobile-trigger"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent alignItemWithTrigger={false}>
+              <SelectGroup>
+                {items.map((item) => (
+                  <SelectItem key={item.jobKey} value={item.jobKey}>
+                    {item.title} · {item.company}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <span data-typography="metadata">
+            {items.findIndex((item) => item.jobKey === selected.jobKey) + 1} of {items.length}
+          </span>
+        </div>
         <CardContent className="apply-review-queue-list">
-          {items.map((item) => {
+          {filteredItems.map((item) => {
             const status = materialStatus(item);
             return (
               <Button
@@ -549,6 +632,7 @@ function ApplyReviewQueue({
               </Button>
             );
           })}
+          {!filteredItems.length ? <Empty title="No review items match this filter." /> : null}
         </CardContent>
       </Card>
     </aside>
@@ -1346,14 +1430,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             </div>
           </CardAction>
         </CardHeader>
-        <CardContent className="apply-review-selected-facts">
-          <CompensationSummaryStrip
-            summary={item.compensationSummary}
-            label="Compensation"
-          />
-          <ApplyAuditFacts item={item} />
-        </CardContent>
-        <CardFooter className="apply-review-selected-actions border-t">
+        <CardFooter className="apply-review-selected-actions border-b">
           <ApplyReviewDecisionControls
             item={item}
             approvalDisabledReason={draftGate.reason}
@@ -1362,6 +1439,13 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             onPrepareApproval={draftGate.notice ? handlePrepareApproval : null}
           />
         </CardFooter>
+        <CardContent className="apply-review-selected-facts">
+          <CompensationSummaryStrip
+            summary={item.compensationSummary}
+            label="Compensation"
+          />
+          <ApplyAuditFacts item={item} />
+        </CardContent>
       </Card>
 
       <section className="apply-review-workspace" aria-label={`Review evidence for ${item.title}`}>

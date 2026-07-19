@@ -50,11 +50,16 @@
 }
 
 [data-typography="label"],
-[data-typography="status"],
 [data-typography="table-header"] {
   font-size: var(--jh-type-label-size) !important;
   font-weight: var(--jh-type-label-weight) !important;
   line-height: var(--jh-type-label-line-height) !important;
+}
+
+[data-typography="status"] {
+  font-size: var(--jh-type-body-size) !important;
+  font-weight: var(--jh-type-strong-body-weight) !important;
+  line-height: var(--jh-type-body-line-height) !important;
 }
 
 [data-typography="metadata"] {

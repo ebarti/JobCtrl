@@ -662,6 +662,7 @@ export interface ResumeTemplateListResponse {
   templates: ResumeTemplateSummary[];
   defaultTemplate: ResumeTemplateMetadata | null;
   builtInDefault: ResumeTemplateMetadata;
+  effectiveDefaultVersion: ResumeTemplateVersionSummary;
 }
 
 export interface ResumeTemplateDetailResponse {
@@ -2092,6 +2093,9 @@ export const WorkflowRunsListQuerySchema = z
     pageSize: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
     page_size: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
     status: z.enum(WORKFLOW_RUN_STATUS_FILTERS).default("all").catch("all"),
+    workflowType: z.string().trim().min(1).optional().catch(undefined),
+    startedSince: IsoTimestampSchema.optional().catch(undefined),
+    startedBefore: IsoTimestampSchema.optional().catch(undefined),
     sort: z.enum(WORKFLOW_RUN_SORT_FIELDS).default("started_at").catch("started_at"),
     dir: SortDirectionSchema,
   })
@@ -2099,6 +2103,9 @@ export const WorkflowRunsListQuerySchema = z
     page: value.page,
     pageSize: value.pageSize ?? value.page_size ?? 50,
     status: value.status,
+    workflowType: value.workflowType,
+    startedSince: value.startedSince,
+    startedBefore: value.startedBefore,
     sort: value.sort,
     dir: value.dir,
   }));

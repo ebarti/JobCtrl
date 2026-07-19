@@ -420,9 +420,13 @@ test("shell chrome collapses navigation into a sheet on the mobile viewport", as
 
   await expect(page.locator(".topbar")).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".side-rail")).toBeHidden();
-  await expect(page.getByRole("textbox", { name: "Global search" })).toBeVisible();
-  await expect(page.getByRole("group", { name: "Row density" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Switch to dark theme/i })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Global search" })).toBeHidden();
+  await expect(page.getByRole("group", { name: "Row density" })).toBeHidden();
+  await expect(page.getByRole("button", { name: /Switch to dark theme/i })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Open global search" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Open display preferences" }),
+  ).toBeVisible();
   await expectNoDocumentInlineOverflow(page);
 
   await page.getByRole("button", { name: "Open navigation" }).click();

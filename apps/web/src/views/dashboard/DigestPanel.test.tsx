@@ -13,27 +13,32 @@ describe("DigestPanel", () => {
     renderWithProviders(<DigestPanel />);
 
     expect(await screen.findByRole("heading", { name: "Daily digest" })).toBeInTheDocument();
-    const newMatches = await screen.findByRole("link", { name: /new matches/i });
+    const newMatches = await screen.findByRole("link", {
+      name: /new matches/i,
+    });
 
     expect(within(newMatches).getByText("3")).toBeInTheDocument();
     expect(newMatches.getAttribute("href")).toContain("discoveredSince=");
     expect(newMatches.getAttribute("href")).toContain("scoredSince=");
-    expect(within(newMatches).getByText("3").querySelector("svg")).toHaveClass(
-      "tabler-icon-circle-check",
-    );
-    const blockedSources = screen.getByRole("link", { name: /blocked sources/i });
-    expect(within(blockedSources).getByText("1").querySelector("svg")).toHaveClass(
-      "tabler-icon-ban",
-    );
+    expect(within(newMatches).getByText("3").querySelector("svg")).not.toBeInTheDocument();
+    expect(within(newMatches).getByText("Review")).toBeInTheDocument();
+    expect(newMatches.querySelector("svg.tabler-icon-chevron-right")).toBeInTheDocument();
+    const blockedSources = screen.getByRole("link", {
+      name: /blocked sources/i,
+    });
+    expect(within(blockedSources).getByText("1").querySelector("svg")).toHaveClass("tabler-icon-ban");
     expect(screen.getByText("7d, UTC")).toBeInTheDocument();
+    expect(within(blockedSources).getByText("Inspect")).toBeInTheDocument();
   });
 
   it("marks digest load failures with a semantic alert icon", async () => {
     server.use(
-      http.get("*/v1/digest", () =>
-        new HttpResponse(JSON.stringify({ ok: false, error: "digest unavailable" }), {
-          status: 503,
-        }),
+      http.get(
+        "*/v1/digest",
+        () =>
+          new HttpResponse(JSON.stringify({ ok: false, error: "digest unavailable" }), {
+            status: 503,
+          }),
       ),
     );
 
@@ -68,7 +73,9 @@ describe("DigestPanel", () => {
     await user.click(await screen.findByRole("button", { name: /mark reviewed/i }));
 
     await waitFor(() =>
-      expect(postedBody).toEqual({ acknowledgedAt: sampleDailyDigest.generatedAt }),
+      expect(postedBody).toEqual({
+        acknowledgedAt: sampleDailyDigest.generatedAt,
+      }),
     );
   });
 });

@@ -7,11 +7,14 @@ records DOM-derived layout boxes for Apply Review line highlighting.
 
 from __future__ import annotations
 
+import base64
 import html
 import logging
 import os
 import re
 import uuid
+from functools import lru_cache
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +48,48 @@ ContactItem = dict[str, str]
 RESUME_PAGE_VIEWPORT = {"width": 794, "height": 1123}
 CONTACT_KIND_ORDER = {"phone": 0, "email": 1, "website": 2, "linkedin": 3, "github": 4}
 DATE_RANGE_SEPARATOR_RE = re.compile(r"\s*(?:--|–|—)\s*")
+RESUME_SECTIONS = ("summary", "experience", "education", "skills")
+GEIST_FONT_RESOURCES = (
+    (
+        "geist-latin-ext-wght-normal.woff2",
+        "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,"
+        "U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF",
+    ),
+    (
+        "geist-latin-wght-normal.woff2",
+        "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,"
+        "U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD",
+    ),
+)
+
+
+@lru_cache(maxsize=1)
+def geist_font_face_css() -> str:
+    """Return self-contained Geist faces for offline HTML and PDF rendering."""
+
+    font_root = files("jobctrl").joinpath("assets", "fonts")
+    faces: list[str] = []
+    for filename, unicode_range in GEIST_FONT_RESOURCES:
+        encoded = base64.b64encode(font_root.joinpath(filename).read_bytes()).decode("ascii")
+        faces.append(
+            "@font-face {\n"
+            '  font-family: "Geist Variable";\n'
+            "  font-style: normal;\n"
+            "  font-display: block;\n"
+            "  font-weight: 100 900;\n"
+            f"  src: url(data:font/woff2;base64,{encoded}) format('woff2-variations');\n"
+            f"  unicode-range: {unicode_range};\n"
+            "}\n"
+        )
+    return "".join(faces)
+
+
+def resume_font_assets_css(theme: dict[str, Any] | None) -> str:
+    """Embed the bundled default font only when the selected theme uses it."""
+
+    font_family = str(theme.get("fontFamily", "sans")) if isinstance(theme, dict) else "sans"
+    return geist_font_face_css() if font_family == "sans" else ""
+
 
 RESUME_HTML_STYLE = """
 @page {
@@ -62,7 +107,7 @@ body {
 body {
   background: #ffffff;
   color: #111111;
-  font-family: "Avenir Next", "Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-family: "Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 10.35pt;
   line-height: 1.32;
   -webkit-print-color-adjust: exact;
@@ -270,7 +315,7 @@ FONT_STACKS = {
     "georgia": 'Georgia, "Times New Roman", Times, serif',
     "helvetica": '"Helvetica Neue", Helvetica, Arial, sans-serif',
     "inter": '"Inter", "Aptos", Arial, sans-serif',
-    "sans": '"Avenir Next", "Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif',
+    "sans": '"Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     "serif": 'Georgia, "Times New Roman", Times, serif',
     "source_sans": '"Source Sans 3", "Source Sans Pro", "Aptos", Arial, sans-serif',
     "source_serif": '"Source Serif 4", "Source Serif Pro", Georgia, serif',
@@ -311,6 +356,10 @@ def resume_theme_css(theme: dict[str, Any] | None) -> str:
         "split": "left",
         "centered": "center",
     }.get(str(theme.get("headerLayout", "centered")), "center")
+    header_justify = "center" if header_align == "center" else "flex-start"
+    page_size = "Letter" if theme.get("pageSize") == "letter" else "A4"
+    page_width = "8.5in" if page_size == "Letter" else "210mm"
+    page_height = "11in" if page_size == "Letter" else "297mm"
     accent = str(theme.get("accentColor", "#111111"))
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
         accent = "#111111"
@@ -319,6 +368,9 @@ def resume_theme_css(theme: dict[str, Any] | None) -> str:
     heading_border = f"0.45pt solid {accent}" if heading_style == "boxed" else "0"
 
     return f"""
+@page {{
+  size: {page_size};
+}}
 body {{
   color: {accent};
   font-family: {font_family};
@@ -326,10 +378,31 @@ body {{
   line-height: {density["line"]:.3f};
 }}
 .resume-page {{
+  width: {page_width};
+  min-height: {page_height};
   padding: {margin_top:.2f}mm {margin_right:.2f}mm {margin_bottom:.2f}mm {margin_left:.2f}mm;
 }}
 .resume-header {{
   text-align: {header_align};
+}}
+.resume-contact,
+.resume-contact-items {{
+  justify-content: {header_justify};
+}}
+.resume-name,
+.resume-contact,
+.resume-address,
+.resume-contact-item::before,
+.resume-contact-separator,
+.resume-contact a,
+.resume-section-title,
+.resume-entry-company,
+.resume-entry-title,
+.resume-entry-date,
+.resume-entry-location,
+.resume-entry-subtitle,
+.resume-meta {{
+  color: {accent};
 }}
 .resume-summary,
 .resume-bullets li,
@@ -532,7 +605,7 @@ def build_resume_html_document(body: str, resume_theme: dict[str, Any] | None = 
 <html>
 <head>
 <meta charset="utf-8">
-<style>{RESUME_HTML_STYLE}{resume_theme_css(resume_theme)}</style>
+<style>{resume_font_assets_css(resume_theme)}{RESUME_HTML_STYLE}{resume_theme_css(resume_theme)}</style>
 </head>
 <body>
 {body}
@@ -685,6 +758,19 @@ def build_resume_html(
     def section_title(section_id: str, label: str) -> str:
         return target(f"section:{section_id}", label, tag="h2", class_name="resume-section-title")
 
+    def resolved_section_order() -> list[str]:
+        if not isinstance(resume_theme, dict):
+            return list(RESUME_SECTIONS)
+        raw_order = resume_theme.get("sectionOrder")
+        requested = raw_order if isinstance(raw_order, list) else list(RESUME_SECTIONS)
+        hidden_raw = resume_theme.get("hiddenSections")
+        hidden = set(hidden_raw) if isinstance(hidden_raw, list) else set()
+        order: list[str] = []
+        for section in requested:
+            if section in RESUME_SECTIONS and section not in hidden and section not in order:
+                order.append(section)
+        return order or [section for section in RESUME_SECTIONS if section not in hidden]
+
     personal = document.get("personal", {})
     body: list[str] = [
         '<main class="resume-page" data-resume-page="1">',
@@ -707,80 +793,119 @@ def build_resume_html(
         ]
     contact = contact_items_text(contact_items)
     if contact:
-        body.append(target("personal:contact", contact, tag="p", class_name="resume-contact", inner_html=contact_items_html(contact_items)))
-    body.extend(["</header>", '<section class="resume-section">', section_title("executive_profile", "Executive Profile")])
-    body.append(target("summary", str(document.get("summary", "")), tag="p", class_name="resume-summary"))
-    body.append("</section>")
-
-    body.extend(['<section class="resume-section">', section_title("experience", "Experience")])
-    for entry in document.get("experience", []):
-        entry_id = str(entry.get("id", "experience"))
-        title = html.escape(str(entry.get("title", "")))
-        company = html.escape(str(entry.get("company", "")))
-        date_range = normalize_resume_date_range(str(entry.get("date_range", "")))
-        date_range_html = html.escape(date_range)
-        location = str(entry.get("location", "")).strip()
-        location_html = html.escape(location)
-        heading_html = (
-            '<span class="resume-entry-row resume-entry-company-row">'
-            f'<span class="resume-entry-company">{company}</span>'
-            + (f'<span class="resume-entry-location">{location_html}</span>' if location_html else "")
-            + "</span>"
-            + '<span class="resume-entry-row resume-entry-role-row">'
-            f'<span class="resume-entry-title">{title}</span>'
-            + (f'<span class="resume-entry-date">{date_range_html}</span>' if date_range else "")
-            + "</span>"
-        )
-        body.append('<article class="resume-entry">')
         body.append(
             target(
-                f"experience:{entry_id}:heading",
-                " | ".join(part for part in [entry.get("company", ""), location, entry.get("title", ""), date_range] if part),
-                class_name="resume-entry-heading",
-                inner_html=heading_html,
+                "personal:contact",
+                contact,
+                tag="p",
+                class_name="resume-contact",
+                inner_html=contact_items_html(contact_items),
             )
         )
-        body.append('<ul class="resume-bullets">')
-        for bullet in entry.get("bullets", []):
-            body.append(target(str(bullet.get("id", "")), str(bullet.get("text", "")), tag="li"))
-        body.append("</ul>")
-        body.append("</article>")
-    body.append("</section>")
+    body.append("</header>")
 
-    body.extend(['<section class="resume-section">', section_title("education", "Education")])
-    for entry in document.get("education", []):
-        entry_id = str(entry.get("id", "education"))
-        degree = html.escape(str(entry.get("degree", "")))
-        date = html.escape(str(entry.get("date", "")))
-        institution = str(entry.get("institution", "")).strip()
-        location = str(entry.get("location", "")).strip()
-        subtitle = " | ".join(part for part in [institution, location] if part)
-        heading_html = (
-            f'<span class="resume-entry-main"><span class="resume-entry-title">{degree}</span></span>'
-            + (f'<span class="resume-entry-date">{date}</span>' if date else "")
-        )
-        body.append('<article class="resume-entry compact">')
-        body.append(
-            target(
-                f"education:{entry_id}:degree",
-                " | ".join(part for part in [entry.get("degree", ""), entry.get("date", "")] if part),
-                class_name="resume-entry-heading",
-                inner_html=heading_html,
+    def render_summary() -> list[str]:
+        return [
+            '<section class="resume-section">',
+            section_title("executive_profile", "Executive Profile"),
+            target("summary", str(document.get("summary", "")), tag="p", class_name="resume-summary"),
+            "</section>",
+        ]
+
+    def render_experience() -> list[str]:
+        section = ['<section class="resume-section">', section_title("experience", "Experience")]
+        for entry in document.get("experience", []):
+            entry_id = str(entry.get("id", "experience"))
+            title = html.escape(str(entry.get("title", "")))
+            company = html.escape(str(entry.get("company", "")))
+            date_range = normalize_resume_date_range(str(entry.get("date_range", "")))
+            date_range_html = html.escape(date_range)
+            location = str(entry.get("location", "")).strip()
+            location_html = html.escape(location)
+            heading_html = (
+                '<span class="resume-entry-row resume-entry-company-row">'
+                f'<span class="resume-entry-company">{company}</span>'
+                + (f'<span class="resume-entry-location">{location_html}</span>' if location_html else "")
+                + "</span>"
+                + '<span class="resume-entry-row resume-entry-role-row">'
+                f'<span class="resume-entry-title">{title}</span>'
+                + (f'<span class="resume-entry-date">{date_range_html}</span>' if date_range else "")
+                + "</span>"
             )
-        )
-        body.append(target(f"education:{entry_id}:subtitle", subtitle, class_name="resume-meta"))
-        body.append(target(f"education:{entry_id}:details", str(entry.get("details", "")), class_name="resume-meta"))
-        body.append("</article>")
-    body.append("</section>")
+            section.append('<article class="resume-entry">')
+            section.append(
+                target(
+                    f"experience:{entry_id}:heading",
+                    " | ".join(
+                        part
+                        for part in [entry.get("company", ""), location, entry.get("title", ""), date_range]
+                        if part
+                    ),
+                    class_name="resume-entry-heading",
+                    inner_html=heading_html,
+                )
+            )
+            section.append('<ul class="resume-bullets">')
+            for bullet in entry.get("bullets", []):
+                section.append(target(str(bullet.get("id", "")), str(bullet.get("text", "")), tag="li"))
+            section.extend(["</ul>", "</article>"])
+        section.append("</section>")
+        return section
 
-    body.extend(['<section class="resume-section">', section_title("skills", "Skills"), '<ul class="resume-skills-list">'])
-    for category in document.get("skills", []):
-        category_id = str(category.get("id", "skills"))
-        items = ", ".join(str(item) for item in category.get("items", []) if str(item).strip())
-        label = str(category.get("label", "Skills")).strip() or "Skills"
-        skill_html = f"<b>{html.escape(label)}:</b> {html.escape(items)}"
-        body.append(target(f"skills:{category_id}", f"{label}: {items}", tag="li", inner_html=skill_html))
-    body.extend(["</ul>", "</section>", "</main>"])
+    def render_education() -> list[str]:
+        section = ['<section class="resume-section">', section_title("education", "Education")]
+        for entry in document.get("education", []):
+            entry_id = str(entry.get("id", "education"))
+            degree = html.escape(str(entry.get("degree", "")))
+            date = html.escape(str(entry.get("date", "")))
+            institution = str(entry.get("institution", "")).strip()
+            location = str(entry.get("location", "")).strip()
+            subtitle = " | ".join(part for part in [institution, location] if part)
+            heading_html = (
+                f'<span class="resume-entry-main"><span class="resume-entry-title">{degree}</span></span>'
+                + (f'<span class="resume-entry-date">{date}</span>' if date else "")
+            )
+            section.append('<article class="resume-entry compact">')
+            section.append(
+                target(
+                    f"education:{entry_id}:degree",
+                    " | ".join(part for part in [entry.get("degree", ""), entry.get("date", "")] if part),
+                    class_name="resume-entry-heading",
+                    inner_html=heading_html,
+                )
+            )
+            section.append(target(f"education:{entry_id}:subtitle", subtitle, class_name="resume-meta"))
+            section.append(
+                target(f"education:{entry_id}:details", str(entry.get("details", "")), class_name="resume-meta")
+            )
+            section.append("</article>")
+        section.append("</section>")
+        return section
+
+    def render_skills() -> list[str]:
+        section = [
+            '<section class="resume-section">',
+            section_title("skills", "Skills"),
+            '<ul class="resume-skills-list">',
+        ]
+        for category in document.get("skills", []):
+            category_id = str(category.get("id", "skills"))
+            items = ", ".join(str(item) for item in category.get("items", []) if str(item).strip())
+            label = str(category.get("label", "Skills")).strip() or "Skills"
+            skill_html = f"<b>{html.escape(label)}:</b> {html.escape(items)}"
+            section.append(target(f"skills:{category_id}", f"{label}: {items}", tag="li", inner_html=skill_html))
+        section.extend(["</ul>", "</section>"])
+        return section
+
+    section_renderers = {
+        "summary": render_summary,
+        "experience": render_experience,
+        "education": render_education,
+        "skills": render_skills,
+    }
+    for section_name in resolved_section_order():
+        body.extend(section_renderers[section_name]())
+    body.append("</main>")
 
     return build_resume_html_document("".join(body), resume_theme=resume_theme)
 
@@ -795,6 +920,7 @@ def _render_resume_pdf_playwright(html_content: str, output_path: str) -> list[L
         page = browser.new_page(viewport=RESUME_PAGE_VIEWPORT)
         try:
             page.set_content(html_content, wait_until="load")
+            page.evaluate("() => document.fonts.ready")
             page.emulate_media(media="print")
             layout_boxes = page.evaluate(
                 """() => Array.from(document.querySelectorAll('[data-resume-layout-target]')).map((node) => {
@@ -894,15 +1020,15 @@ class HtmlResumePdfAdapter:
         output_path: str,
         created_at: str,
     ) -> Artifact:
-        raise NotImplementedError(
-            "HtmlResumePdfAdapter does not render cover letters; use PlaywrightHtmlPdfAdapter."
-        )
+        raise NotImplementedError("HtmlResumePdfAdapter does not render cover letters; use PlaywrightHtmlPdfAdapter.")
 
 
 __all__ = [
     "RESUME_HTML_STYLE",
     "RESUME_PAGE_VIEWPORT",
     "HtmlResumePdfAdapter",
+    "geist_font_face_css",
+    "resume_font_assets_css",
     "resume_theme_css",
     "build_resume_html_document",
     "build_resume_document",

@@ -1,0 +1,293 @@
+/* Route-level operational view overrides. Shared primitives stay in their owning stylesheets. */
+
+/* Run detail ------------------------------------------------------------- */
+
+.route-page--workflow-run-detail
+  .workflow-run-workspace
+  > .route-workspace__grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.route-page--workflow-run-detail .route-workspace__content {
+  padding: 0;
+}
+
+.route-page--workflow-run-detail .workflow-run-workspace__header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--jh-surface-gap) var(--jh-section-gap);
+}
+
+.route-page--workflow-run-detail
+  .workflow-run-workspace__header
+  > .workspace-back {
+  grid-column: 1 / -1;
+}
+
+.workflow-run-workspace__summary {
+  display: flex;
+  min-width: 0;
+  gap: var(--jh-surface-gap);
+  align-items: flex-start;
+}
+
+.workflow-run-workspace__summary .workflow-run-workspace__title {
+  flex: 1 1 auto;
+}
+
+.workflow-run-workspace__title h1 {
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.workflow-run-workspace__title small {
+  color: var(--muted-foreground);
+}
+
+.workflow-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--jh-surface-gap);
+}
+
+.workflow-run-actions > * {
+  min-width: max-content;
+}
+
+.workflow-run-workspace__content {
+  display: grid;
+  min-width: 0;
+}
+
+.workflow-run-workspace__content > .section {
+  min-width: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
+}
+
+.workflow-run-workspace__content > .section:last-child {
+  border-bottom: 0;
+}
+
+.workflow-run-workspace__content > .section > h2 {
+  margin: 0 0 var(--jh-surface-gap);
+}
+
+.workflow-run-timeline {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-run-timeline__event {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: var(--jh-surface-gap);
+  padding-block: 0 var(--jh-section-gap);
+}
+
+.workflow-run-timeline__event:last-child {
+  padding-bottom: 0;
+}
+
+.workflow-run-timeline__event:not(:last-child)::before {
+  position: absolute;
+  top: 14px;
+  bottom: 0;
+  left: 6px;
+  width: 2px;
+  background: var(--border);
+  content: "";
+}
+
+.workflow-run-timeline__marker {
+  position: relative;
+  z-index: 1;
+  width: 14px;
+  height: 14px;
+  margin-top: 4px;
+  border: 3px solid var(--muted-foreground);
+  border-radius: 999px;
+  background: var(--card);
+}
+
+.workflow-run-timeline__event[data-event-status="succeeded"]
+  .workflow-run-timeline__marker {
+  border-color: var(--success);
+}
+
+.workflow-run-timeline__event[data-event-status="failed"]
+  .workflow-run-timeline__marker {
+  border-color: var(--destructive);
+}
+
+.workflow-run-timeline__event:is(
+    [data-event-status="in_progress"],
+    [data-event-status="starting"],
+    [data-event-status="running"]
+  )
+  .workflow-run-timeline__marker {
+  border-color: var(--status-info);
+}
+
+.workflow-run-timeline__body {
+  display: grid;
+  min-width: 0;
+  gap: var(--jh-surface-gap);
+  padding-bottom: var(--jh-surface-gap);
+  border-bottom: 1px solid var(--border);
+}
+
+.workflow-run-timeline__event:last-child .workflow-run-timeline__body {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.workflow-run-timeline__heading {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: calc(var(--jh-surface-gap) / 2) var(--jh-surface-gap);
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.workflow-run-timeline__heading strong {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.workflow-run-timeline__heading time,
+.workflow-run-timeline__source {
+  color: var(--muted-foreground);
+}
+
+.workflow-run-timeline__body > p,
+.workflow-run-failure h3 {
+  margin: 0;
+}
+
+.workflow-run-failure {
+  display: grid;
+  min-width: 0;
+  gap: var(--jh-surface-gap);
+  border-left: 3px solid var(--destructive);
+  border-radius: var(--radius);
+  background: var(--destructive-muted);
+  padding: var(--jh-internal-gap);
+}
+
+.workflow-run-failure dl {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: var(--jh-surface-gap) var(--jh-section-gap);
+  margin: 0;
+}
+
+.workflow-run-failure dl > div {
+  display: grid;
+  min-width: 0;
+  gap: calc(var(--jh-surface-gap) / 2);
+}
+
+.workflow-run-failure dt {
+  color: var(--muted-foreground);
+}
+
+.workflow-run-failure dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.workflow-run-metadata {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: var(--jh-section-gap);
+  margin: 0;
+}
+
+.workflow-run-metadata > div {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: calc(var(--jh-surface-gap) / 2);
+}
+
+.workflow-run-metadata dt {
+  color: var(--muted-foreground);
+}
+
+.workflow-run-metadata dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.workflow-run-metadata__identity dd {
+  display: flex;
+  gap: var(--jh-surface-gap);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.workflow-run-metadata__identity code {
+  min-width: 0;
+  padding-block: calc(var(--jh-surface-gap) / 2);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.workflow-run-copy {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 760px) {
+  .route-page--workflow-run-detail .workflow-run-workspace__header {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .workflow-run-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 520px) {
+  .workflow-run-workspace__summary {
+    flex-direction: column-reverse;
+  }
+
+  .workflow-run-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workflow-run-actions > * {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .workflow-run-timeline__heading {
+    display: grid;
+    justify-content: stretch;
+  }
+
+  .workflow-run-metadata__identity dd {
+    display: grid;
+  }
+
+  .workflow-run-copy {
+    width: max-content;
+  }
+}

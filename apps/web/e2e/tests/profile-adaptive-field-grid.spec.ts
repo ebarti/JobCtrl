@@ -27,12 +27,22 @@ test("preferences property grids reflow against their container and explain lock
   ).toBeVisible({
     timeout: 30_000,
   });
+  await page.getByRole("button", { name: "Compact", exact: true }).click();
 
   const applicationGrid = page
     .getByLabel("Salary currency")
     .locator('xpath=ancestor::*[@data-slot="adaptive-field-grid"][1]');
   await expect(applicationGrid).toBeVisible();
-  await expect.poll(() => columnCount(applicationGrid)).toBe(4);
+  await expect.poll(() => columnCount(applicationGrid)).toBe(2);
+  await expect(page.getByRole("group", { name: "Work authorization and account" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Availability" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Compensation" })).toBeVisible();
+  await expect(page.getByLabel("Salary expectation")).toHaveAccessibleDescription(
+    "Annual gross amount in the selected currency.",
+  );
+  await expect(page.getByLabel("Salary currency")).toHaveAccessibleDescription(
+    "Three-letter currency code, such as EUR or USD.",
+  );
 
   await page.getByRole("tab", { name: "Writing style" }).click();
   const writingStyleGroup = page.locator(
@@ -159,6 +169,125 @@ test("preferences property grids reflow against their container and explain lock
 
   expect(seriousViolations).toEqual([]);
   expect(consoleErrors).toEqual([]);
+});
+
+test("preferences cards keep controls inset and anchored headings unobscured", async ({
+  page,
+}) => {
+  const viewports = [
+    { width: 1440, height: 1000 },
+    { width: 1280, height: 800 },
+    { width: 430, height: 932 },
+    { width: 390, height: 844 },
+    { width: 320, height: 568 },
+  ] as const;
+
+  await page.setViewportSize(viewports[0]);
+  await page.goto("/preferences");
+  await expect(
+    page.getByRole("heading", { name: "Preferences", level: 1 }),
+  ).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Compact", exact: true }).click();
+  expect(
+    await page.locator("#preferences-application").evaluate((element) => {
+      const nav = document.querySelector<HTMLElement>(".profile-section-nav");
+      const title = element.querySelector<HTMLElement>(
+        ".configuration-section__title",
+      );
+      if (!nav || !title) return false;
+      return (
+        title.getBoundingClientRect().top >= nav.getBoundingClientRect().bottom
+      );
+    }),
+    "initial compact application heading clearance",
+  ).toBe(true);
+
+  for (const viewport of viewports) {
+    await page.setViewportSize(viewport);
+
+    const insets = await page.locator("#preferences-application").evaluate(
+      (element) => {
+        const sectionBox = element.getBoundingClientRect();
+        const controls = Array.from(
+          element.querySelectorAll<HTMLElement>(
+            '[data-slot="input"], [data-slot="select-trigger"], [data-slot="checkbox"]',
+          ),
+        ).filter((control) => control.getClientRects().length > 0);
+        return {
+          left:
+            Math.min(
+              ...controls.map(
+                (control) => control.getBoundingClientRect().left,
+              ),
+            ) - sectionBox.left,
+          right:
+            sectionBox.right -
+            Math.max(
+              ...controls.map(
+                (control) => control.getBoundingClientRect().right,
+              ),
+            ),
+        };
+      },
+    );
+    expect(insets.left, `${viewport.width}px left inset`).toBeGreaterThanOrEqual(
+      16,
+    );
+    expect(
+      insets.right,
+      `${viewport.width}px right inset`,
+    ).toBeGreaterThanOrEqual(16);
+
+    for (const [linkName, sectionId] of [
+      ["Application", "preferences-application"],
+      ["Tailoring", "preferences-tailoring"],
+    ] as const) {
+      await page.getByRole("link", { name: linkName, exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`#${sectionId}$`));
+      await expect
+        .poll(async () =>
+          page.locator(`#${sectionId}`).evaluate((element) => {
+            const nav = document.querySelector<HTMLElement>(
+              ".profile-section-nav",
+            );
+            const title = element.querySelector<HTMLElement>(
+              ".configuration-section__title",
+            );
+            if (!nav || !title) return false;
+            return (
+              title.getBoundingClientRect().top >=
+              nav.getBoundingClientRect().bottom
+            );
+          }),
+        )
+        .toBe(true);
+    }
+
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <=
+          document.documentElement.clientWidth + 1,
+      ),
+      `${viewport.width}px document overflow`,
+    ).toBe(true);
+  }
+});
+
+test("profile cards do not inherit the preferences jump-nav clearance", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/profile");
+  await expect(
+    page.getByRole("heading", { name: "Profile", level: 1 }),
+  ).toBeVisible({ timeout: 30_000 });
+
+  const marginBlockStart = await page
+    .locator(".profile-sections--resume-data")
+    .evaluate((stack) => getComputedStyle(stack).marginBlockStart);
+
+  expect(marginBlockStart).toBe("0px");
 });
 
 test("resume template settings and persistence actions share the Plate editor workspace", async ({

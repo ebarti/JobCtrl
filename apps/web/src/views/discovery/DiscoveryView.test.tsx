@@ -17,7 +17,7 @@ describe("DiscoveryView", () => {
       await screen.findByRole("group", { name: "Target tracks" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Management" })).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Director of Engineering" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Target roles 1")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Automation settings" })).toBeInTheDocument();
     expect(screen.getByLabelText("Minimum fit score")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Auto apply" })).toBeInTheDocument();
@@ -35,6 +35,17 @@ describe("DiscoveryView", () => {
     expect(
       screen.getByRole("tab", { name: "Source locator" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: "Discovery sections" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Target search" })).toHaveAttribute(
+      "href",
+      "#discovery-target-search",
+    );
+    expect(screen.getByRole("link", { name: "Source controls" })).toHaveAttribute(
+      "href",
+      "#discovery-source-controls",
+    );
 
     await screen.findByRole("table");
     const user = userEvent.setup();

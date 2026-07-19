@@ -16,6 +16,7 @@ import {
   FieldLabel,
 } from "../../../shared/ui/field.js";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { useProviderModelsQuery } from "../hooks/useProviderModelsQuery.js";
 import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
 import { useUpdateSettingsMutation } from "../hooks/useUpdateSettingsMutation.js";
@@ -23,15 +24,15 @@ import { useUpdateSettingsMutation } from "../hooks/useUpdateSettingsMutation.js
 const PROVIDER_COPY: Readonly<Record<ProviderId, { title: string; description: string }>> = {
   codex: {
     title: "Codex",
-    description: "Choose from the models exposed by your authenticated Codex App Server.",
+    description: "Models from your authenticated Codex runtime.",
   },
   claude: {
     title: "Claude",
-    description: "Choose from the models exposed by your authenticated Claude Agent SDK runtime.",
+    description: "Models from your authenticated Claude runtime.",
   },
   google: {
     title: "Google",
-    description: "Choose from the models exposed by your authenticated Gemini or Vertex connection.",
+    description: "Models from your authenticated Gemini or Vertex runtime.",
   },
 };
 
@@ -68,12 +69,8 @@ export function ModelSelectionPanel() {
     >
       <div className="model-selection-intro">
         <p>
-          Configure at least one provider before choosing its preferred model. One provider is enough;
-          a second is recommended for resilience, not required.
-        </p>
-        <p>
-          Saved choices in <code>config.json</code> apply to newly started work. An explicit
-          per-workflow model takes precedence when that workflow supports one.
+          Choose preferred models for ready providers. Saved choices apply to newly started
+          work; a workflow-specific choice still takes precedence.
         </p>
       </div>
 
@@ -170,14 +167,14 @@ function ProviderModelCard({
   const statusLabel = isDemo
     ? "Preview only"
     : catalogPending
-      ? "Checking"
+      ? "Loading models"
       : catalog?.ready
         ? models.length > 0
-          ? "Ready"
-          : "Catalog unavailable"
+          ? "Ready to select"
+          : "Models unavailable"
         : catalog?.configured
-          ? "Needs attention"
-          : "Configure first";
+          ? "Provider unavailable"
+          : "Configuration required";
   const savedChoiceLabel = settingsReady
     ? savedModel || "Provider default"
     : "Checking saved choice";
@@ -213,12 +210,12 @@ function ProviderModelCard({
   }
 
   return (
-    <article className="provider-card model-selection-card" data-provider={provider}>
+    <article className="provider-card model-selection-card" data-model-state={isDemo ? "preview" : catalogPending ? "loading" : catalogReady ? "ready" : catalog?.configured ? "unavailable" : "unconfigured"} data-provider={provider}>
       <DisclosureSection
         actions={(
-          <span className={`tag ${catalogReady && !isDemo ? "ok" : "muted"}`}>
+          <StatusBadge icon={false} tone={catalogReady && !isDemo ? "ok" : catalog?.configured && !catalogPending ? "warn" : catalogPending ? "info" : "muted"}>
             {statusLabel}
-          </span>
+          </StatusBadge>
         )}
         className="provider-disclosure provider-preference-disclosure"
         collapsedSummary={`Saved: ${savedChoiceLabel}`}
@@ -228,17 +225,17 @@ function ProviderModelCard({
         title={providerCopy.title}
       >
 
-      <p className="provider-model-source">
-        Live availability from the authenticated provider runtime.
-      </p>
+      <p className="provider-model-source">Live provider availability</p>
       {catalog?.message ? <p className="provider-status-message">{catalog.message}</p> : null}
 
-      {!catalogPending && !catalog?.ready && !isDemo ? (
+      {catalogPending && !isDemo ? (
+        <div className="provider-model-empty" role="status"><p>Loading available models…</p></div>
+      ) : !catalog?.ready && !isDemo ? (
         <div className="provider-model-empty">
           <p>Finish and verify this provider before selecting a model.</p>
-          <Link className="tab" to="/settings/credentials">
+          <Button nativeButton={false} render={<Link to="/settings/credentials" role="link" />} size="sm" variant="outline">
             Configure {providerCopy.title}
-          </Link>
+          </Button>
         </div>
       ) : (
         <div className="provider-model-form">
@@ -289,7 +286,7 @@ function ProviderModelCard({
       ) : null}
 
       {statusMessage ? (
-        <p className="provider-model-save-status" role={updateSettings.isError ? "alert" : "status"}>
+        <p className="provider-model-save-status" data-save-state={updateSettings.isError ? "error" : "saved"} role={updateSettings.isError ? "alert" : "status"}>
           {statusMessage}
         </p>
       ) : null}

@@ -11,7 +11,6 @@ import {
   AlertDescription,
   AlertTitle,
 } from "../../../shared/ui/alert.js";
-import { Badge } from "../../../shared/ui/badge.js";
 import { Button } from "../../../shared/ui/button.js";
 import {
   Card,
@@ -155,7 +154,7 @@ export function BrowserCapabilitiesPanel() {
     if (capability.id === "core-browser") {
       return (
         <p className="text-sm text-muted-foreground">
-          Managed by JobCtrl and read-only.
+          This capability is read-only.
         </p>
       );
     }
@@ -282,7 +281,7 @@ export function BrowserCapabilitiesPanel() {
             <CollapsibleTrigger
               render={<Button variant="ghost" size="sm" type="button" />}
             >
-              Advanced: use a manual executable path
+              Advanced browser path
             </CollapsibleTrigger>
             <CollapsibleContent className="pt-3">
               <div className="flex max-w-3xl flex-col gap-2">
@@ -326,8 +325,8 @@ export function BrowserCapabilitiesPanel() {
                   </Button>
                 </FieldGroup>
                 <FieldDescription>
-                  Only needed when your browser is installed in a non-standard
-                  location.
+                  Use a manual executable path only when your browser is
+                  installed in a non-standard location.
                 </FieldDescription>
               </div>
             </CollapsibleContent>
@@ -404,13 +403,13 @@ export function BrowserCapabilitiesPanel() {
           <h2 id="browser-capabilities-title">Browser capabilities</h2>
         </CardTitle>
         <CardDescription>
-          Installed browsers are detected locally. Nothing is enabled,
-          launched, or adopted until you confirm.
+          Review managed, optional, and consent-required browser access. Nothing
+          is enabled or launched until you confirm.
         </CardDescription>
         <CardAction>
-          <Badge variant="secondary">
-            {demo ? "demo · read only" : "explicit adoption"}
-          </Badge>
+          <StatusBadge icon={false} tone="muted">
+            {demo ? "Preview only" : "Confirmation required"}
+          </StatusBadge>
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
@@ -423,15 +422,27 @@ export function BrowserCapabilitiesPanel() {
           </Alert>
         ) : null}
         <div aria-busy={query.isPending}>
+          {query.isPending ? (
+            <p className="status-line" role="status">
+              Checking browser access…
+            </p>
+          ) : null}
           {capabilities.map((capability, index) => (
             <Fragment key={capability.id}>
               {index > 0 ? <Separator /> : null}
               <article
                 className="flex flex-col gap-4 py-5 first:pt-0 last:pb-0"
+                data-browser-access={browserAccessKind(capability.id)}
                 data-browser-capability={capability.id}
               >
                 <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
+                    <p
+                      className="browser-capability-kind"
+                      data-typography="label"
+                    >
+                      {browserAccessLabel(capability.id)}
+                    </p>
                     <CardTitle>
                       <h3>{LABELS[capability.id]}</h3>
                     </CardTitle>
@@ -441,9 +452,9 @@ export function BrowserCapabilitiesPanel() {
                   </div>
                   <StatusBadge
                     icon={false}
-                    tone={capability.status === "ready" ? "ok" : "muted"}
+                    tone={browserStatusTone(capability.status)}
                   >
-                    {capability.status}
+                    {browserStatusLabel(capability.status)}
                   </StatusBadge>
                 </header>
                 {renderCapabilityControls(capability)}
@@ -461,4 +472,37 @@ export function BrowserCapabilitiesPanel() {
       ) : null}
     </Card>
   );
+}
+
+function browserAccessKind(
+  capabilityId: BrowserCapabilityId,
+): "consent" | "managed" | "optional" {
+  if (capabilityId === "core-browser") return "managed";
+  if (capabilityId === "authenticated-linkedin-browser") return "consent";
+  return "optional";
+}
+
+function browserAccessLabel(capabilityId: BrowserCapabilityId): string {
+  if (capabilityId === "core-browser") return "Managed by JobCtrl";
+  if (capabilityId === "authenticated-linkedin-browser") {
+    return "Optional access · separate consent for profile copy";
+  }
+  return "Optional browser access";
+}
+
+function browserStatusLabel(status: BrowserCapabilityItem["status"]): string {
+  if (status === "ready") return "Ready";
+  if (status === "disabled") return "Off";
+  if (status === "missing") return "Browser missing";
+  if (status === "failed") return "Failed";
+  return "Unavailable";
+}
+
+function browserStatusTone(
+  status: BrowserCapabilityItem["status"],
+): "danger" | "muted" | "ok" | "warn" {
+  if (status === "ready") return "ok";
+  if (status === "failed") return "danger";
+  if (status === "missing" || status === "unavailable") return "warn";
+  return "muted";
 }

@@ -1,4 +1,7 @@
-import { ProfileImportRequestSchema, type ProfileImportRequest } from "@jobctrl/contracts";
+import {
+  ProfileImportRequestSchema,
+  type ProfileImportRequest,
+} from "@jobctrl/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useForm } from "@tanstack/react-form";
 import { IconCheck, IconFileTypePdf, IconMinus } from "@tabler/icons-react";
@@ -31,7 +34,9 @@ export function ImportConfirmForm() {
     validators: {
       onSubmit: ({ value }) => {
         const result = ProfileImportRequestSchema.safeParse(value);
-        return result.success ? undefined : (result.error.issues[0]?.message ?? "Invalid import");
+        return result.success
+          ? undefined
+          : (result.error.issues[0]?.message ?? "Invalid import");
       },
     },
     onSubmit: async ({ value }) => {
@@ -52,11 +57,8 @@ export function ImportConfirmForm() {
       <div className="wizard-step resume-import-step resume-import-empty-step">
         <Empty title="No upload found. Start at step 1." />
         <div className="form-actions resume-import-actions">
-          <Link
-            className={buttonVariants({ variant: "outline" })}
-            to="/profile/import/upload"
-          >
-            Back to upload
+          <Link className={buttonVariants()} to="/profile/import/upload">
+            Return to upload
           </Link>
         </div>
       </div>
@@ -88,7 +90,8 @@ export function ImportConfirmForm() {
         </span>
         <h2 data-typography="section-title">Review the final import</h2>
         <p data-typography="body">
-          Check the source and selected scope once more before applying the import.
+          Check the source and selected scope once more before applying the
+          import.
         </p>
       </header>
 
@@ -107,7 +110,10 @@ export function ImportConfirmForm() {
         {(errors) => {
           const message = errors
             .flat()
-            .find((entry): entry is string => typeof entry === "string" && entry.length > 0);
+            .find(
+              (entry): entry is string =>
+                typeof entry === "string" && entry.length > 0,
+            );
           return message ? (
             <Alert className="resume-import-alert" variant="destructive">
               <AlertDescription>{message}</AlertDescription>
@@ -164,22 +170,22 @@ export function ImportConfirmForm() {
       </div>
 
       <form.Subscribe
-        selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}
+        selector={(state) => ({
+          canSubmit: state.canSubmit,
+          isSubmitting: state.isSubmitting,
+        })}
       >
         {({ canSubmit, isSubmitting }) => (
           <div className="form-actions resume-import-actions">
+            <Button type="submit" disabled={!canSubmit || isSubmitting}>
+              {isSubmitting ? "Importing…" : "Confirm import"}
+            </Button>
             <Link
               className={buttonVariants({ variant: "outline" })}
               to="/profile/import/preview"
             >
               Back
             </Link>
-            <Button
-              type="submit"
-              disabled={!canSubmit || isSubmitting}
-            >
-              {isSubmitting ? "Importing…" : "Confirm import"}
-            </Button>
           </div>
         )}
       </form.Subscribe>

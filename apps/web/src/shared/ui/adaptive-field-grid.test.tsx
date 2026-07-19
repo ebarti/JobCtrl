@@ -59,4 +59,35 @@ describe("<AdaptiveFieldGrid>", () => {
     expect(css).toContain("@container adaptive-field-grid (max-width: 32rem)");
     expect(css).toContain("grid-template-columns: minmax(0, 1fr);");
   });
+
+  it("keeps every expandable Profile card field grid inset from its border", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/styles/redesign-configuration.css"),
+      "utf8",
+    );
+
+    expect(css).toContain(
+      ".profile-sections:not(.profile-sections--card-stack)",
+    );
+    expect(css).toContain(
+      ".profile-sections--card-stack\n  > .form-section\n  > .configuration-section__body\n  > .adaptive-field-grid {\n  padding-inline: 20px;",
+    );
+  });
+
+  it("keeps Profile date ranges compact instead of stretching across a card", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/styles/redesign-configuration.css"),
+      "utf8",
+    );
+
+    expect(css).toContain(
+      ".profile-layout .date-range-body {\n  inline-size: fit-content;\n  max-inline-size: 100%;",
+    );
+    expect(css).toContain(
+      ".profile-layout .date-range-body > .month-selector {\n  inline-size: min(280px, 100%);",
+    );
+    expect(css).toContain(
+      ".profile-layout .date-range-body > .date-range-present,\n.profile-layout .date-range-body > button {\n  inline-size: auto;\n  flex: 0 0 auto;",
+    );
+  });
 });
