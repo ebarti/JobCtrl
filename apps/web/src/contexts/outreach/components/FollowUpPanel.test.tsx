@@ -57,6 +57,10 @@ describe("<FollowUpPanel>", () => {
       />,
       { ports },
     );
+    expect(view.getByText("Scheduled")).toHaveAttribute(
+      "data-status-tone",
+      "info",
+    );
     expect(view.getByText(/application_submitted/)).toBeInTheDocument();
     fireEvent.click(view.getByRole("button", { name: "Mark done" }));
     await waitFor(() => expect(completeOutreachFollowUp).toHaveBeenCalledWith("thread-1"));

@@ -9,7 +9,14 @@ describe("<DraftGateResultsPanel>", () => {
     const view = renderWithProviders(
       <DraftGateResultsPanel gateResults={makeGateResultsPassing()} />,
     );
-    expect(view.getByText("Truthfulness gates passed")).toBeInTheDocument();
+    expect(view.getByText("Truthfulness gates passed")).toHaveAttribute(
+      "data-slot",
+      "status-badge",
+    );
+    expect(view.getByText("Truthfulness gates passed")).toHaveAttribute(
+      "data-status-tone",
+      "ok",
+    );
     expect(
       view.getByText("No fabricated claims detected in the generated text."),
     ).toBeInTheDocument();
@@ -19,7 +26,14 @@ describe("<DraftGateResultsPanel>", () => {
     const view = renderWithProviders(
       <DraftGateResultsPanel gateResults={makeGateResultsBlocked()} />,
     );
-    expect(view.getByText("Truthfulness gates blocked this draft")).toBeInTheDocument();
+    expect(view.getByText("Truthfulness gates blocked this draft")).toHaveAttribute(
+      "data-slot",
+      "status-badge",
+    );
+    expect(view.getByText("Truthfulness gates blocked this draft")).toHaveAttribute(
+      "data-status-tone",
+      "danger",
+    );
     // The deterministic fabrication finding is surfaced with its control, token,
     // and the offending generated text (auditability discipline: never hide it).
     expect(view.getByText("never_fabricate_metrics")).toBeInTheDocument();

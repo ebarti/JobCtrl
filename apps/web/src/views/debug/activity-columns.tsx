@@ -2,6 +2,7 @@ import type { ActivityEventSummary } from "../../contexts/operations/types.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import type { DataGridColumn } from "../../shared/ui/filterable-data-grid.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
 import { ActivityIdentifier } from "./ActivityIdentifier.js";
 import { activityLevelTone } from "./activity-tone.js";
 
@@ -20,9 +21,9 @@ export function ActivityMobileRow({
   return (
     <details className="activity-mobile-row" data-row-activation-ignore>
       <summary>
-        <span className={`tag ${activityLevelTone(activity.level)}`}>
+        <StatusBadge tone={activityLevelTone(activity.level)}>
           {activity.level}
-        </span>
+        </StatusBadge>
         <span className="activity-mobile-row__summary">
           <span data-typography="strong-body">{activity.message}</span>
           <span data-typography="metadata">
@@ -67,9 +68,9 @@ export const activityColumns: Array<DataGridColumn<ActivityEventSummary>> = [
     sortable: true,
     getFilterValue: (activity) => activity.level,
     render: (activity) => (
-      <span className={`tag ${activityLevelTone(activity.level)}`}>
+      <StatusBadge tone={activityLevelTone(activity.level)}>
         {activity.level}
-      </span>
+      </StatusBadge>
     ),
   },
   {

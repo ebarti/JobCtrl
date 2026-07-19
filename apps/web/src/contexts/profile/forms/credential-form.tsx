@@ -17,6 +17,7 @@ import {
   FieldLabel,
 } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { useDeleteCredentialMutation } from "../hooks/useDeleteCredentialMutation.js";
 import { useUpdateCredentialMutation } from "../hooks/useUpdateCredentialMutation.js";
 
@@ -131,9 +132,10 @@ export function CredentialForm({
         void form.handleSubmit();
       }}
     >
-      <span
+      <StatusBadge
         aria-label={`${label} status`}
-        className={`credential-row-status tag ${configured === true ? "ok" : "muted"}`}
+        className="credential-row-status"
+        tone={configured === true ? "ok" : inspectionUnknown ? "warn" : "muted"}
       >
         {environmentManaged
           ? "managed by environment"
@@ -144,7 +146,7 @@ export function CredentialForm({
             : configured === true
               ? "stored in Keychain"
               : "not in Keychain"}
-      </span>
+      </StatusBadge>
       <FieldGroup className="credential-row-field-group">
         <Field
           className="credential-row-field"

@@ -3,7 +3,9 @@ import type { ApplyReviewQueueResponse } from "@jobctrl/contracts";
 
 import {
   makeApplyAudit,
+  makeJobsPage,
   sampleApplyReviewQueue,
+  sampleJob,
   sampleResumeTemplateListResponse,
 } from "../../src/test/fixtures/projections.js";
 
@@ -221,7 +223,7 @@ const APPROVED_ROLE_METRICS = {
   "strong-body": "14px/20px/600",
   control: "14px/20px/600",
   label: "12px/16px/600",
-  status: "12px/16px/600",
+  status: "14px/20px/600",
   "table-header": "12px/16px/600",
   metadata: "12px/16px/400",
   metric: "20px/24px/700",
@@ -333,7 +335,10 @@ async function collectTypographyAudit(
       ) {
         role = "label";
       } else if (!role && element.matches(".tag, .stage-pill")) {
-        role = "status";
+        // Legacy tags are reserved for categories, artifact types, and stage
+        // names. Domain state belongs in StatusBadge, whose explicit
+        // data-typography contract is independent from ARIA live-region roles.
+        role = "label";
       } else if (!role && element.matches("code, pre, .mono")) {
         role = "code";
       } else if (!role && (tag === "strong" || tag === "b")) {
@@ -1059,6 +1064,55 @@ test("compact, regular, and comfortable modes preserve typography metrics", asyn
   expect(new Set(metrics.values()).size).toBe(1);
 });
 
+test("stale score status keeps the shared transparent status treatment", async ({
+  page,
+}) => {
+  await page.route(/\/v1\/jobs(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        makeJobsPage([
+          {
+            ...sampleJob,
+            scoreStaleness: {
+              isStale: true,
+              staleReason: "scoring_policy_changed",
+              currentPolicyVersion: 1,
+              targetPolicyVersion: 2,
+              markedAt: "2026-04-29T10:07:00+00:00",
+              pendingExplicitRescore: true,
+            },
+          },
+        ]),
+      ),
+    });
+  });
+
+  await page.goto("/jobs");
+  const status = page.locator('[data-slot="status-badge"].score-stale-tag');
+  await expect(status).toBeVisible({ timeout: 30_000 });
+  await expect(status).toHaveAttribute("data-status-tone", "warn");
+  await expect(status).toHaveAttribute("data-typography", "status");
+
+  const styles = await status.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderTopWidth: style.borderTopWidth,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+      lineHeight: style.lineHeight,
+    };
+  });
+  expect(styles).toEqual({
+    backgroundColor: "rgba(0, 0, 0, 0)",
+    borderTopWidth: "0px",
+    fontSize: "14px",
+    fontWeight: "600",
+    lineHeight: "20px",
+  });
+});
+
 test("representative routes stay legible in light and dark themes", async ({
   page,
 }) => {
@@ -1656,12 +1710,83 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
   await expect(
     page.getByRole("heading", { name: "Live pipeline" }),
   ).toBeVisible({ timeout: 30_000 });
+  const pipelineStageStatus = page
+    .locator(
+      ".pipeline-stage-row .configuration-section__actions [data-slot='status-badge']",
+    )
+    .first();
+  await expect(pipelineStageStatus).toBeVisible();
+  const pipelineStageStatusMetrics = await pipelineStageStatus.evaluate(
+    (element) => {
+      const style = getComputedStyle(element);
+      const icon = element.querySelector<SVGElement>(
+        "[data-status-icon='true']",
+      );
+      return {
+        background: style.backgroundColor,
+        borderWidth: style.borderWidth,
+        fontSize: style.fontSize,
+        height: Math.round(element.getBoundingClientRect().height),
+        iconSize: icon ? Math.round(icon.getBoundingClientRect().width) : 0,
+        lineHeight: style.lineHeight,
+      };
+    },
+  );
+  expect(pipelineStageStatusMetrics).toEqual({
+    background: "rgba(0, 0, 0, 0)",
+    borderWidth: "0px",
+    fontSize: "14px",
+    height: 20,
+    iconSize: 16,
+    lineHeight: "20px",
+  });
   await expectKeyboardFocusIndicator(
     page,
     page.getByRole("button", { name: /Freshness and capacity/i }),
     "pipeline freshness and capacity disclosure",
     100,
   );
+
+  await page.goto("/settings/credentials");
+  await expect(
+    page.getByRole("heading", { name: "Settings", level: 1 }),
+  ).toBeVisible({ timeout: 30_000 });
+  const quietStatus = page
+    .locator("[data-slot='status-badge']:not(:has([data-status-icon='true']))")
+    .first();
+  await expect(quietStatus).toBeVisible();
+  await expect(quietStatus.locator("[data-status-icon='true']")).toHaveCount(0);
+  const quietStatusDotMetrics = await quietStatus.evaluate((element) => {
+    const marker = getComputedStyle(element, "::before");
+    return {
+      background: marker.backgroundColor,
+      height: marker.height,
+      width: marker.width,
+    };
+  });
+  expect(quietStatusDotMetrics.height).toBe("8px");
+  expect(quietStatusDotMetrics.width).toBe("8px");
+  expectPainted(quietStatusDotMetrics.background, "quiet status marker");
+
+  await page.goto("/artifacts");
+  await expect(
+    page.getByRole("heading", { name: "Artifacts", level: 1 }),
+  ).toBeVisible({ timeout: 30_000 });
+  const artifactCategory = page.locator(".tag.muted").first();
+  await expect(artifactCategory).toBeVisible();
+  const artifactCategoryMetrics = await artifactCategory.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      fontSize: style.fontSize,
+      lineHeight: style.lineHeight,
+      role: element.getAttribute("data-typography"),
+    };
+  });
+  expect(artifactCategoryMetrics).toEqual({
+    fontSize: "12px",
+    lineHeight: "16px",
+    role: null,
+  });
 });
 test("Profile and Preferences subjects share one expandable-card hierarchy", async ({
   page,

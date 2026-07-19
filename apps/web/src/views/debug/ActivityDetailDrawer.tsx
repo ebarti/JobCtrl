@@ -12,6 +12,7 @@ import {
 } from "../../shared/ui/inspector-ledger.js";
 import { RouteWorkspace } from "../../shared/ui/route-workspace.js";
 import { Section } from "../../shared/ui/section.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
 import { activityLevelTone } from "./activity-tone.js";
 
 export interface ActivityDetailDrawerProps {
@@ -57,9 +58,9 @@ export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
                 <IconArrowLeft aria-hidden="true" size={16} stroke={1.9} />
                 Debug
               </Button>
-              <span className={`tag ${activityLevelTone(activity.level)}`}>
+              <StatusBadge tone={activityLevelTone(activity.level)}>
                 {activity.level}
-              </span>
+              </StatusBadge>
               <div className="activity-detail-workspace__title">
                 <small>
                   {activity.stage} · {activity.eventType}
@@ -112,9 +113,9 @@ export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
                 <InspectorLedgerItem
                   label="Level"
                   value={
-                    <span className={`tag ${activityLevelTone(activity.level)}`}>
+                    <StatusBadge tone={activityLevelTone(activity.level)}>
                       {activity.level}
-                    </span>
+                    </StatusBadge>
                   }
                 />
                 <InspectorLedgerItem
@@ -163,11 +164,9 @@ export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
                 <ol className="timeline activity-detail-workspace__timeline">
                   <li className="timeline-row activity-detail-workspace__timeline-entry">
                     <span className="timeline-row-head">
-                      <span
-                        className={`tag ${activityLevelTone(activity.level)}`}
-                      >
+                      <StatusBadge tone={activityLevelTone(activity.level)}>
                         {activity.level}
-                      </span>
+                      </StatusBadge>
                       <span className="stage-pill">{activity.stage}</span>
                     </span>
                     <span className="activity-detail-workspace__timeline-copy">

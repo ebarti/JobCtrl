@@ -26,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../../shared/ui/select.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { StatusDot } from "../../../shared/ui/status-dot.js";
 import type { StatusDotState } from "../../../shared/ui/status-tokens.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
@@ -661,7 +662,7 @@ function OutcomeSuggestionCard({
           </span>
           <span className="meta">{suggestion.jobKey}</span>
         </span>
-        <span className="tag info">pending</span>
+        <StatusBadge tone="info">Pending</StatusBadge>
       </header>
       <p>{suggestion.rationale}</p>
       <div className="row-actions">

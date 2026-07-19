@@ -8,6 +8,7 @@ import { formatDateTime } from "../shared/lib/formatters.js";
 import { buttonVariants } from "../shared/ui/button.js";
 import { RouteWorkspace } from "../shared/ui/route-workspace.js";
 import { Section } from "../shared/ui/section.js";
+import { StatusBadge } from "../shared/ui/status-badge.js";
 
 export const Route = createFileRoute("/jobs/$jobId/run/$runId")({
   component: JobRunTimelineRoute,
@@ -59,9 +60,9 @@ export function JobRunTimelineWorkspace({
             {run ? (
               <RunStatusBadge status={run.status} />
             ) : (
-              <span className="tag muted">
+              <StatusBadge tone="muted">
                 {isLoading ? "loading" : "status unavailable"}
-              </span>
+              </StatusBadge>
             )}
             <div className="job-run-workspace__title">
               <small>{run?.workflowType || "apply workflow"}</small>

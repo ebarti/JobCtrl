@@ -1,6 +1,8 @@
 import type { OutreachDraftGateResults } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
+
 export interface DraftGateResultsPanelProps {
   gateResults: OutreachDraftGateResults;
 }
@@ -17,9 +19,9 @@ export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProp
   const { passed, computedAgainst, fabrications, validation, judge } = gateResults;
   return (
     <div className="draft-gate-results" role="group" aria-label="Truthfulness gate results">
-      <p className={`tag ${passed ? "ok" : "danger"}`} role="status">
+      <StatusBadge role="status" tone={passed ? "ok" : "danger"}>
         {passed ? "Truthfulness gates passed" : "Truthfulness gates blocked this draft"}
-      </p>
+      </StatusBadge>
       <p className="draft-gate-computed-against">
         Computed against <span className="mono">{computedAgainst}</span>
       </p>
@@ -66,9 +68,9 @@ export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProp
       <div className="draft-gate-block">
         <p className="draft-gate-block-title">Validation</p>
         <p>
-          <span className={`tag ${validation.passed ? "ok" : "danger"}`}>
+          <StatusBadge tone={validation.passed ? "ok" : "danger"}>
             {validation.passed ? "Passed" : "Failed"}
-          </span>
+          </StatusBadge>
         </p>
         {validation.errors.length > 0 ? (
           <>
@@ -103,9 +105,9 @@ export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProp
               <div>
                 <dt>Verdict</dt>
                 <dd>
-                  <span className={`tag ${judge.approved ? "ok" : "danger"}`}>
+                  <StatusBadge tone={judge.approved ? "ok" : "danger"}>
                     {judge.approved ? "Approved" : "Blocked"}
-                  </span>
+                  </StatusBadge>
                 </dd>
               </div>
               <div>

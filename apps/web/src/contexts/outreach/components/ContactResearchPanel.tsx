@@ -6,8 +6,8 @@ import { formatDateTime } from "../../../shared/lib/formatters.js";
 import { Button } from "../../../shared/ui/button.js";
 import { useResearchTaskQuery } from "../hooks/useResearchTaskQuery.js";
 import { useResearchTasksListQuery } from "../hooks/useResearchTasksListQuery.js";
-import { researchTaskStatusLabel } from "../lib/research-copy.js";
 import { CandidateReviewList } from "./CandidateReviewList.js";
+import { ResearchTaskStatusBadge } from "./ResearchTaskStatusBadge.js";
 import { RunResearchButton } from "./RunResearchButton.js";
 
 export interface ContactResearchPanelProps {
@@ -31,7 +31,7 @@ function ResearchTaskRow({ task }: { task: ContactResearchTaskSummary }): JSX.El
   return (
     <li className="research-task-row">
       <div className="research-task-head">
-        <span className="tag">{researchTaskStatusLabel(task.status)}</span>
+        <ResearchTaskStatusBadge status={task.status} />
         <span className="research-task-counts">
           {task.candidateCount} proposed · {task.needsReviewCount} awaiting review
         </span>

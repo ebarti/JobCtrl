@@ -58,6 +58,7 @@ import { Button } from "../../../shared/ui/button.js";
 import { Input } from "../../../shared/ui/input.js";
 import type { PdfAuditLineSelection, PdfAuditLineTarget } from "../../../shared/ui/PdfPreviewViewer.js";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
 import { useArtifactDetailQuery } from "../../operations/hooks/useArtifactDetailQuery.js";
 import { formatToken, scorePercent } from "../lib/audit-format.js";
@@ -3549,7 +3550,7 @@ function SelectedPinInspector({
           <span className="eyebrow">{formatToken(pin.section)}</span>
           <h4>{pin.title}</h4>
         </div>
-        <span className={`tag ${tone}`}>{pinStatus(pin, risk)}</span>
+        <StatusBadge tone={tone}>{pinStatus(pin, risk)}</StatusBadge>
       </header>
       <LineJustification pin={pin} />
       <details className="resume-pin-source-check">

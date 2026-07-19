@@ -630,9 +630,12 @@ function KeywordItem({
       <header>
         <b>{keyword.keyword}</b>
         {keyword.is_orphan ? (
-          <span className="tag warn" title="Not tied to a specific requirement">
-            orphan
-          </span>
+          <StatusBadge
+            tone="warn"
+            title="Not tied to a specific requirement"
+          >
+            Orphan
+          </StatusBadge>
         ) : null}
       </header>
       {keyword.evidence_span ? (
@@ -766,16 +769,16 @@ export function EmployerAnalysisPanel({
             <dt>Ensemble</dt>
             <dd>
               {analysis.is_degraded ? (
-                <span
-                  className="tag warn"
+                <StatusBadge
+                  tone="warn"
                   title={`${analysis.legs_succeeded}/${analysis.legs_attempted} models succeeded`}
                 >
-                  degraded ({analysis.legs_succeeded}/{analysis.legs_attempted})
-                </span>
+                  Degraded ({analysis.legs_succeeded}/{analysis.legs_attempted})
+                </StatusBadge>
               ) : (
-                <span className="tag ok">
+                <StatusBadge tone="ok">
                   {formatToken(analysis.ensemble_completeness) || "complete"}
-                </span>
+                </StatusBadge>
               )}
             </dd>
           </div>

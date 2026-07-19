@@ -6,6 +6,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "../../../shared/ui/collapsible.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import {
   BulletProvenanceList,
   type BulletProvenanceListProps,
@@ -447,9 +448,9 @@ function VoicePassBlock({
           <dt>Outcome</dt>
           <dd>
             {voicePass.accepted ? (
-              <span className="tag ok">accepted</span>
+              <StatusBadge tone="ok">Accepted</StatusBadge>
             ) : (
-              <span className="tag warn">not accepted</span>
+              <StatusBadge tone="warn">Not accepted</StatusBadge>
             )}
           </dd>
         </div>

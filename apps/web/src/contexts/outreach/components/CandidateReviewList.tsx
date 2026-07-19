@@ -2,8 +2,8 @@ import type { ContactResearchTaskDetail } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
-import { researchTaskStatusLabel } from "../lib/research-copy.js";
 import { CandidateReviewCard } from "./CandidateReviewCard.js";
+import { ResearchTaskStatusBadge } from "./ResearchTaskStatusBadge.js";
 import { ResearchSourceAttemptList } from "./ResearchSourceAttemptList.js";
 
 export interface CandidateReviewListProps {
@@ -17,7 +17,7 @@ export function CandidateReviewList({ task }: CandidateReviewListProps): JSX.Ele
   return (
     <div className="candidate-review" aria-label="Research candidates">
       <div className="candidate-review-summary">
-        <span className="tag">{researchTaskStatusLabel(task.status)}</span>
+        <ResearchTaskStatusBadge status={task.status} />
         <span>
           {task.candidateCount} proposed · {task.needsReviewCount} awaiting review ·{" "}
           {task.confirmedCount} confirmed

@@ -463,7 +463,7 @@ function ReadOnlyProviderGuidance({
       {providers.map(([title, copy]) => (
         <article className="provider-card provider-card--readonly" key={title}>
           <DisclosureSection
-            actions={<span className="tag muted">Read only</span>}
+            actions={<StatusBadge tone="muted">Read only</StatusBadge>}
             className="provider-disclosure provider-disclosure--readonly"
             collapsedSummary="Ownership: external provider environment"
             defaultOpen={false}

@@ -878,13 +878,6 @@
   color: var(--muted-foreground);
 }
 
-.jobs-data-grid-table .score-stale-tag {
-  color: var(--warning-text);
-  font-size: var(--jh-type-label-size);
-  font-weight: var(--jh-type-label-weight);
-  line-height: var(--jh-type-label-line-height);
-}
-
 .filterable-data-grid-table .stage-pill,
 .filterable-data-grid-table .job-compensation-confidence {
   min-height: 0;

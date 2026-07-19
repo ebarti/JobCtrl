@@ -5361,9 +5361,6 @@ input[type="radio"] {
 }
 
 .score-stale-tag {
-  border-color: color-mix(in oklch, var(--destructive) 40%, var(--border));
-  background: color-mix(in oklch, var(--destructive) 12%, var(--card));
-  color: var(--destructive-text);
   white-space: nowrap;
 }
 

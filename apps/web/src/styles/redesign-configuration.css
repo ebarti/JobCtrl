@@ -373,6 +373,11 @@
   gap: 16px;
 }
 
+.profile-layout
+  .profile-sections--card-stack:not(.profile-sections--resume-data) {
+  margin-block-start: var(--jh-section-gap);
+}
+
 .profile-layout .profile-sections.profile-sections--card-stack > .form-section {
   margin-bottom: 0;
   border: 1px solid var(--configuration-rule);
@@ -386,6 +391,14 @@
   > .configuration-section__body
   > .adaptive-field-grid {
   padding-inline: 20px;
+}
+
+.profile-layout
+  .profile-sections--card-stack
+  > .form-section
+  > .configuration-section__body
+  > :is(.preferences-field-groups, .tailoring-control-tabs) {
+  padding-inline: var(--jh-panel-padding);
 }
 
 .profile-layout

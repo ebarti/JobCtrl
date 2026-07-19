@@ -215,6 +215,15 @@ describe("application outcome components", () => {
       },
     );
 
+    expect(screen.getAllByText("Pending")[0]).toHaveAttribute(
+      "data-slot",
+      "status-badge",
+    );
+    expect(screen.getAllByText("Pending")[0]).toHaveAttribute(
+      "data-status-tone",
+      "info",
+    );
+
     await user.click(screen.getByRole("button", { name: /accept/i }));
     await waitFor(() =>
       expect(decideOutcomeSuggestion).toHaveBeenCalledWith(
