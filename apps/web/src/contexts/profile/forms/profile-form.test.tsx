@@ -174,6 +174,21 @@ describe("<ProfileForm>", () => {
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />);
 
     expect(screen.getByRole("heading", { name: "Target search" })).toBeInTheDocument();
+    for (const cardTitle of [
+      "Target tracks",
+      "Seniority floors",
+      "Role areas",
+      "Locations and work models",
+    ]) {
+      const card = screen.getByRole("region", { name: cardTitle });
+      expect(card).toHaveAttribute("data-slot", "card");
+      expect(
+        within(card).getByText(cardTitle, { selector: '[data-slot="card-title"]' }),
+      ).toHaveAttribute(
+        "data-typography",
+        "component-title",
+      );
+    }
     expect(screen.getByRole("group", { name: "Target tracks" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Individual Contributor" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Management" })).toBeInTheDocument();
@@ -204,7 +219,6 @@ describe("<ProfileForm>", () => {
     expect(screen.getByLabelText("Specializations 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Target roles 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Target location 1")).toBeInTheDocument();
-    expect(screen.getByText("Locations and work models")).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Target work model 1" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Remote" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Hybrid" })).toBeInTheDocument();

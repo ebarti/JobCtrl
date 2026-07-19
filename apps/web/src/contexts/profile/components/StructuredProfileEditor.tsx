@@ -14,6 +14,12 @@ import {
   AdaptiveFieldSpan,
 } from "../../../shared/ui/adaptive-field-grid.js";
 import { Button } from "../../../shared/ui/button.js";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../../../shared/ui/card.js";
 import { Checkbox } from "../../../shared/ui/checkbox.js";
 import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import {
@@ -205,6 +211,32 @@ export interface StructuredProfileEditorProps {
   styleText: string;
   onProfileTextChange: (value: string) => void;
   onStyleTextChange: (value: string) => void;
+}
+
+function TargetPreferenceCard({
+  children,
+  id,
+  title,
+}: {
+  children: ReactNode;
+  id: string;
+  title: string;
+}) {
+  return (
+    <Card
+      aria-labelledby={id}
+      className="target-preference-cluster"
+      role="region"
+      size="sm"
+    >
+      <CardHeader>
+        <CardTitle id={id}>{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="target-preference-cluster__content">
+        {children}
+      </CardContent>
+    </Card>
+  );
 }
 
 export function StructuredProfileEditor({
@@ -829,7 +861,7 @@ export function StructuredProfileEditor({
     path: string,
     label: string,
     addLabel: string,
-    options: { compact?: boolean; placeholder?: string } = {},
+    options: { compact?: boolean; hideTitle?: boolean; placeholder?: string } = {},
   ) => {
     const values = delimitedListAt(textAt(profile, path));
     const focusKey = (index: number) => `${path}:${index}`;
@@ -850,7 +882,7 @@ export function StructuredProfileEditor({
     };
     return (
       <Field className="field wide inline-list-field">
-        <FieldTitle>{label}</FieldTitle>
+        <FieldTitle className={options.hideTitle ? "sr-only" : undefined}>{label}</FieldTitle>
         <div className={`inline-list${options.compact ? " compact" : ""}`}>
           {values.map((value, index) => (
             <div className="inline-list-row" key={`${path}-${index}`}>
@@ -898,6 +930,7 @@ export function StructuredProfileEditor({
     path: string,
     label: string,
     groups: readonly TargetSearchOptionGroup[],
+    presentation: { hideLegend?: boolean } = {},
   ) => {
     const options = groups.flatMap((group) => group.options);
     const values = delimitedListAt(textAt(profile, path)).map((value) => value.trim()).filter(Boolean);
@@ -925,7 +958,7 @@ export function StructuredProfileEditor({
 
     return (
       <FieldSet className="field wide checkbox-group-field">
-        <FieldLegend>{label}</FieldLegend>
+        <FieldLegend className={presentation.hideLegend ? "sr-only" : undefined}>{label}</FieldLegend>
         <FieldGroup className="checkbox-group-list">
           {groups.map((group) => {
             const optionFields = (
@@ -991,7 +1024,7 @@ export function StructuredProfileEditor({
     );
   };
 
-  const targetLocationWorkModelField = () => {
+  const targetLocationWorkModelField = (options: { hideTitle?: boolean } = {}) => {
     const locationPath = "experience.target_locations";
     const workModelPath = "experience.target_work_models";
     const locations = delimitedListAt(textAt(profile, locationPath));
@@ -1037,7 +1070,7 @@ export function StructuredProfileEditor({
 
     return (
       <Field className="field wide target-location-model-field">
-        <FieldTitle>{TARGET_LOCATION_LABEL}</FieldTitle>
+        <FieldTitle className={options.hideTitle ? "sr-only" : undefined}>{TARGET_LOCATION_LABEL}</FieldTitle>
         <div className="target-location-model-list">
           {rows.map((row, index) => (
             <div className="target-location-model-row" key={`${locationPath}-${index}`}>
@@ -1260,29 +1293,33 @@ export function StructuredProfileEditor({
     <section className="form-section">
       {showSectionHeading ? <h3>Target search</h3> : null}
       <FieldGroup className="target-preferences-grid">
-        <FieldGroup className="target-preference-cluster">
-          {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS)}
+        <TargetPreferenceCard id="target-tracks-card-title" title="Target tracks">
+          {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS, {
+            hideLegend: true,
+          })}
           {delimitedListField("experience.target_role", "Target roles", "Add role", { compact: true })}
-        </FieldGroup>
-        <FieldGroup className="target-preference-cluster">
+        </TargetPreferenceCard>
+        <TargetPreferenceCard id="seniority-floors-card-title" title="Seniority floors">
           {targetSearchCheckboxGroup(
             "experience.target_seniority_floor",
             "Seniority floors",
             TARGET_SENIORITY_GROUPS,
+            { hideLegend: true },
           )}
-        </FieldGroup>
-        <FieldGroup className="target-preference-cluster">
+        </TargetPreferenceCard>
+        <TargetPreferenceCard id="role-areas-card-title" title={ROLE_AREA_LABEL}>
           {delimitedListField("experience.target_functions", ROLE_AREA_LABEL, "Add role area", {
             compact: true,
+            hideTitle: true,
             placeholder: ROLE_AREA_PLACEHOLDER,
           })}
           {delimitedListField("experience.target_specializations", "Specializations", "Add specialization", {
             compact: true,
           })}
-        </FieldGroup>
-        <FieldGroup className="target-preference-cluster">
-          {targetLocationWorkModelField()}
-        </FieldGroup>
+        </TargetPreferenceCard>
+        <TargetPreferenceCard id="locations-work-models-card-title" title={TARGET_LOCATION_LABEL}>
+          {targetLocationWorkModelField({ hideTitle: true })}
+        </TargetPreferenceCard>
       </FieldGroup>
     </section>
   );

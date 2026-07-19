@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -8,14 +8,42 @@ import { buildTestPorts } from "../../../test/testPorts.js";
 import { DiscoveryRuntimeSettingsPanel } from "./DiscoveryRuntimeSettingsPanel.js";
 
 describe("<DiscoveryRuntimeSettingsPanel>", () => {
-  it("renders the effective discovery controls with truthful activation", async () => {
+  it("explains every runtime setting without repeating persistence metadata", async () => {
+    const user = userEvent.setup();
     renderWithProviders(<DiscoveryRuntimeSettingsPanel />);
 
     expect(await screen.findByRole("group", { name: "Role title filtering" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Auto/ })).toBeChecked();
     expect(screen.getByLabelText("Parallel source families")).toHaveValue(1);
     expect(screen.getByLabelText("Crawler product name")).toHaveValue("JobCtrl");
-    expect(screen.getAllByText(/requires a worker restart/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Saved in SQLite/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/applies to the next/i)).not.toBeInTheDocument();
+
+    const settingNames = [
+      "Job boards",
+      "Results per board",
+      "Posting lookback hours",
+      "Role title filtering",
+      "Role filter model",
+      "Parallel source families",
+      "Crawler product name",
+      "Crawler contact",
+      "Enable scheduled discovery",
+      "Schedule cron",
+    ];
+    for (const settingName of settingNames) {
+      expect(
+        screen.getByRole("button", { name: `Help for ${settingName}` }),
+      ).toBeInTheDocument();
+    }
+
+    await user.click(screen.getByRole("button", { name: "Help for Schedule cron" }));
+    const help = await screen.findByRole("dialog", { name: "Schedule cron help" });
+    expect(within(help).getByText(/five-field cron expression/i)).toBeInTheDocument();
+    expect(within(help).getByRole("link", { name: /Open documentation/i })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/discovery#runtime-setting-schedule-cron",
+    );
   });
 
   it("keeps SQLite-owned controls editable and includes changed values in writes", async () => {

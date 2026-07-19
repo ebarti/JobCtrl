@@ -149,7 +149,7 @@ const MOBILE_ROUTE_SURFACES: readonly MobileRouteSurface[] = [
   {
     ...ROUTE_SURFACES[8]!,
     primaryControl: (page) =>
-      page.getByRole("button", { name: /Freshness and capacity/i }),
+      page.getByRole("button", { name: "Inspector", exact: true }),
   },
   {
     ...ROUTE_SURFACES[9]!,
@@ -1402,6 +1402,9 @@ test("Discovery settings pack related controls and reflow with available width",
   );
   const boardGrid = page.locator(".discovery-board-options");
   const boardOptions = boardGrid.locator(":scope > .target-choice");
+  const targetCardTitles = targetGrid.locator(
+    ':scope > .target-preference-cluster [data-slot="card-title"]',
+  );
   const assertUsableTargetInputs = async (viewport: string) => {
     for (const inputKind of ["Target roles", "Target location"] as const) {
       const inputs = page.locator(`input[aria-label^="${inputKind} "]`);
@@ -1422,6 +1425,7 @@ test("Discovery settings pack related controls and reflow with available width",
   };
 
   await expect(targetClusters).toHaveCount(4);
+  await expect(targetCardTitles).toHaveCount(4);
   await expect(boardOptions).toHaveCount(4);
 
   const desktopTarget = await targetGrid.evaluate((element) => {
@@ -1442,7 +1446,18 @@ test("Discovery settings pack related controls and reflow with available width",
   const desktopBoards = await boardGrid.evaluate((element) =>
     Array.from(element.children).map((child) => {
       const bounds = child.getBoundingClientRect();
-      return { top: Math.round(bounds.top) };
+      return {
+        left: Math.round(bounds.left),
+        right: Math.round(bounds.right),
+        top: Math.round(bounds.top),
+        width: Math.round(bounds.width),
+      };
+    }),
+  );
+  const targetTitleStyles = await targetCardTitles.evaluateAll((elements) =>
+    elements.map((element) => {
+      const style = getComputedStyle(element);
+      return `${style.fontFamily}|${style.fontSize}|${style.fontWeight}|${style.lineHeight}`;
     }),
   );
 
@@ -1451,6 +1466,23 @@ test("Discovery settings pack related controls and reflow with available width",
     desktopTarget.maxChildHeight + 42,
   );
   expect(new Set(desktopBoards.map(({ top }) => top)).size).toBe(1);
+  expect(new Set(targetTitleStyles).size).toBe(1);
+  expect(Math.max(...desktopBoards.map(({ width }) => width))).toBeLessThanOrEqual(160);
+  expect(
+    Math.max(...desktopBoards.map(({ right }) => right)) -
+      Math.min(...desktopBoards.map(({ left }) => left)),
+  ).toBeLessThanOrEqual(700);
+  await expect(page.getByText(/Saved in SQLite/i)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Help for / })).toHaveCount(10);
+  await page.getByRole("button", { name: "Help for Results per board" }).click();
+  const settingHelp = page.getByRole("dialog", { name: "Results per board help" });
+  await expect(settingHelp).toBeVisible();
+  await expect(settingHelp.getByRole("link", { name: "Open documentation" })).toHaveAttribute(
+    "href",
+    "https://jobctrl.dev/user/discovery#runtime-setting-results-per-board",
+  );
+  await page.keyboard.press("Escape");
+  await expect(settingHelp).toBeHidden();
   await assertUsableTargetInputs("desktop");
 
   await page.setViewportSize({ width: 900, height: 900 });
