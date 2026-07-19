@@ -102,11 +102,12 @@ describe("DashboardView", () => {
 
     renderWithProviders(<DashboardView />);
 
-    expect(
-      await screen.findByText(
-        "No applications yet. Conversion appears once you apply and record outcomes.",
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("No application outcomes yet")).toBeInTheDocument();
+    expect(screen.getByText(/Conversion rates appear after you apply/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Review applied jobs" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("applyStatus=applied"),
+    );
     expect(screen.queryByRole("heading", { name: "By source" })).not.toBeInTheDocument();
   });
 });

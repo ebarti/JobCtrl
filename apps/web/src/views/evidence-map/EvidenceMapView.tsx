@@ -6,7 +6,7 @@ import {
   IconFileText,
   IconLink,
 } from "@tabler/icons-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { EvidenceStatusBadge } from "../../contexts/operations/components/EvidenceStatusBadge.js";
 import {
@@ -31,6 +31,7 @@ import { Input } from "../../shared/ui/input.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 
 const EXCERPT_DISCLOSURE_THRESHOLD = 140;
+type EvidenceMobileView = "evidence" | "details" | "gaps";
 
 function entryKindLabel(entry: EvidenceMapEntry): string {
   return entry.kind === "skill" ? "Skill" : "Achievement";
@@ -295,10 +296,12 @@ function UsageGroup({
 
 function EvidenceEntryButton({
   entry,
+  onOpenDetails,
   search,
   selected,
 }: {
   readonly entry: EvidenceMapEntry;
+  readonly onOpenDetails: () => void;
   readonly search: EvidenceMapSearch;
   readonly selected: boolean;
 }) {
@@ -309,10 +312,12 @@ function EvidenceEntryButton({
   return (
     <li>
       <Link
-        aria-current={selected ? "true" : undefined}
+        aria-current={selected ? "page" : undefined}
         className={`evidence-entry-link ${selected ? "selected" : ""}`}
+        data-selected={selected ? "true" : undefined}
         search={{ ...search, entry: entry.entryId }}
         to="/evidence-map"
+        onClick={onOpenDetails}
       >
         <span>
           <strong
@@ -395,15 +400,30 @@ function EvidenceTechnicalDetails({
 
 function EvidenceDetail({
   entry,
+  mobileActive,
 }: {
   readonly entry: EvidenceMapEntry | null;
+  readonly mobileActive: boolean;
 }) {
   if (!entry) {
-    return <Empty title="Select evidence to inspect usage." />;
+    return (
+      <aside
+        className="evidence-detail"
+        data-mobile-active={mobileActive ? "true" : "false"}
+        id="evidence-map-details-panel"
+      >
+        <Empty title="Select evidence to inspect usage." />
+      </aside>
+    );
   }
   const freshness = entry.freshness;
   return (
-    <aside className="evidence-detail" aria-labelledby="evidence-detail-title">
+    <aside
+      className="evidence-detail"
+      aria-labelledby="evidence-detail-title"
+      data-mobile-active={mobileActive ? "true" : "false"}
+      id="evidence-map-details-panel"
+    >
       <header>
         <p className="meta" data-typography="metadata">
           {entryKindLabel(entry)}
@@ -575,6 +595,7 @@ export function EvidenceMapView() {
   const search = useSearch({ from: "/evidence-map" });
   const navigate = useNavigate({ from: "/evidence-map" });
   const evidenceMap = useEvidenceMapQuery();
+  const [mobileView, setMobileView] = useState<EvidenceMobileView>("evidence");
   const normalizedQuery = search.q.trim().toLowerCase();
   const filteredEntries = useMemo(() => {
     const entries = evidenceMap.data?.entries ?? [];
@@ -642,8 +663,50 @@ export function EvidenceMapView() {
             </Link>
           ) : null}
         </div>
+        <div
+          className="evidence-map-mobile-switcher"
+          aria-label="Evidence map view"
+          role="group"
+        >
+          <Button
+            aria-controls="evidence-map-entry-panel"
+            aria-pressed={mobileView === "evidence"}
+            size="sm"
+            type="button"
+            variant={mobileView === "evidence" ? "default" : "ghost"}
+            onClick={() => setMobileView("evidence")}
+          >
+            Evidence ({filteredEntries.length})
+          </Button>
+          <Button
+            aria-controls="evidence-map-details-panel"
+            aria-pressed={mobileView === "details"}
+            disabled={!selected}
+            size="sm"
+            type="button"
+            variant={mobileView === "details" ? "default" : "ghost"}
+            onClick={() => setMobileView("details")}
+          >
+            Details
+          </Button>
+          <Button
+            aria-controls="evidence-map-gaps-panel"
+            aria-pressed={mobileView === "gaps"}
+            size="sm"
+            type="button"
+            variant={mobileView === "gaps" ? "default" : "ghost"}
+            onClick={() => setMobileView("gaps")}
+          >
+            Gaps ({filteredGaps.length})
+          </Button>
+        </div>
         <div className="evidence-map-shell">
-          <nav className="evidence-entry-list" aria-label="Evidence entries">
+          <nav
+            className="evidence-entry-list"
+            aria-label="Evidence entries"
+            data-mobile-active={mobileView === "evidence" ? "true" : "false"}
+            id="evidence-map-entry-panel"
+          >
             {evidenceMap.isFetching && !evidenceMap.data ? (
               <Empty title="Loading evidence map." />
             ) : filteredEntries.length ? (
@@ -652,6 +715,7 @@ export function EvidenceMapView() {
                   <EvidenceEntryButton
                     entry={entry}
                     key={entry.entryId}
+                    onOpenDetails={() => setMobileView("details")}
                     search={search}
                     selected={entry.entryId === selectedEntryId}
                   />
@@ -661,10 +725,15 @@ export function EvidenceMapView() {
               <Empty title="No evidence entries match." />
             )}
           </nav>
-          <EvidenceDetail entry={selected} />
+          <EvidenceDetail
+            entry={selected}
+            mobileActive={mobileView === "details"}
+          />
           <section
             className="evidence-side-panel"
             aria-labelledby="evidence-gaps-title"
+            data-mobile-active={mobileView === "gaps" ? "true" : "false"}
+            id="evidence-map-gaps-panel"
           >
             <h2 data-typography="component-title" id="evidence-gaps-title">
               Gaps

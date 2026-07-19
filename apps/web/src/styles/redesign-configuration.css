@@ -77,8 +77,34 @@
     minmax(818px, 1fr);
 }
 
+.profile-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: var(--jh-internal-gap);
+}
+
+.profile-workspace-tabs {
+  width: max-content;
+  max-width: 100%;
+  justify-self: start;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.profile-workspace-content,
+.profile-workspace-data {
+  min-width: 0;
+}
+
+.profile-workspace-data[hidden] {
+  display: none;
+}
+
 .profile-layout:not(.profile-layout-single) > .card,
-.profile-layout:not(.profile-layout-single) > .resume-editor-preview {
+.profile-layout:not(.profile-layout-single) > .resume-editor-preview,
+.profile-workspace-data > .card {
   min-width: 0;
 }
 
@@ -89,7 +115,8 @@
 }
 
 .profile-layout > .card,
-.profile-layout-single > .card {
+.profile-layout-single > .card,
+.profile-workspace-data > .card {
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -103,11 +130,114 @@
   background: transparent;
 }
 
+.profile-workspace-data > .card > .card-hd {
+  min-height: 0;
+  padding: 0 0 var(--jh-internal-gap);
+  border: 0;
+  background: transparent;
+}
+
 .profile-layout > .card > .card-hd h2 {
   font-size: var(--jh-type-component-title-size);
   font-weight: var(--jh-type-component-title-weight);
   letter-spacing: normal;
   line-height: var(--jh-type-component-title-line-height);
+}
+
+.profile-workspace-data > .card > .card-hd h2 {
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  letter-spacing: normal;
+  line-height: var(--jh-type-component-title-line-height);
+}
+
+.profile-section-nav {
+  position: sticky;
+  top: calc(var(--topbar-height) + var(--jh-internal-gap));
+  z-index: 3;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--jh-internal-gap);
+  overflow-x: auto;
+  border-bottom: 1px solid var(--configuration-rule);
+  background: var(--background);
+  padding-block: var(--jh-internal-gap);
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.profile-section-nav > span {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+}
+
+.profile-section-nav__links {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--jh-internal-gap);
+}
+
+.profile-section-nav__links a {
+  min-width: max-content;
+  color: var(--muted-foreground);
+  font-size: var(--jh-type-control-size);
+  font-weight: var(--jh-type-control-weight);
+  line-height: var(--jh-type-control-line-height);
+  text-decoration: none;
+}
+
+.profile-section-nav__links a:hover,
+.profile-section-nav__links a:focus-visible {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.profile-editor-state {
+  display: grid;
+  place-items: center;
+  padding: calc(var(--jh-panel-padding) * 2) var(--jh-panel-padding);
+}
+
+.profile-template-section,
+.profile-sections > [id] {
+  scroll-margin-top: calc(
+    var(--topbar-height) + var(--jh-control-height) + var(--jh-section-gap)
+  );
+}
+
+.profile-workspace-content[data-view="resume-editor"] .resume-editor-preview {
+  position: static;
+  top: auto;
+  width: 100%;
+  height: min(76dvh, 64rem);
+  min-height: min(32rem, 76dvh);
+  align-self: stretch;
+}
+
+.profile-workspace .resume-editor-preview {
+  display: flex;
+  flex-direction: column;
+}
+
+.profile-workspace .resume-editor-preview .resume-plate-editor {
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.profile-resume-editor-help {
+  display: grid;
+  gap: var(--jh-internal-gap);
+  border-bottom: 1px solid var(--configuration-rule);
+  padding: var(--jh-panel-padding);
+  background: var(--configuration-surface);
+}
+
+.profile-resume-editor-help > span {
+  color: var(--muted-foreground);
 }
 
 .profile-layout .profile-evidence-toolbar {
@@ -117,7 +247,20 @@
   background: transparent;
 }
 
+.profile-route-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jh-internal-gap);
+  margin-bottom: var(--jh-internal-gap);
+}
+
 .profile-layout .editor-bulk-actions {
+  position: sticky;
+  top: calc(
+    var(--topbar-height) + var(--jh-control-height) + var(--jh-section-gap)
+  );
+  z-index: 4;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -136,6 +279,30 @@
 .profile-layout .profile-sections {
   gap: 0;
   padding: 0;
+}
+
+.preferences-field-groups {
+  display: grid;
+  gap: var(--jh-section-gap);
+}
+
+.preferences-field-group {
+  display: grid;
+  min-width: 0;
+  gap: var(--jh-internal-gap);
+  border-top: 1px solid var(--configuration-rule);
+  padding-top: var(--jh-panel-padding);
+}
+
+.preferences-field-group > [data-slot="field-legend"] {
+  color: var(--foreground);
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  line-height: var(--jh-type-component-title-line-height);
+}
+
+.preferences-two-column-grid .adaptive-field-grid__fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .profile-layout .profile-sections > .form-section {
@@ -356,7 +523,7 @@
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
-  min-height: 70px;
+  min-height: var(--jh-row-height);
   align-items: center;
   justify-content: space-between;
   gap: 18px;
@@ -800,10 +967,18 @@
   --border: oklch(1 0 0 / 14%);
   --input: oklch(1 0 0 / 20%);
   --ring: oklch(0.702 0.183 293.541);
+  --disabled-background: color-mix(
+    in oklch,
+    var(--muted) 82%,
+    var(--card)
+  );
+  --disabled-foreground: var(--muted-foreground);
+  --disabled-border: var(--border);
   height: min(88dvh, 1050px);
   min-height: 760px;
   border: 1px solid var(--configuration-rule);
   border-radius: 7px;
+  color: var(--foreground);
 }
 /* visual-color-exception:end resume-editor-chrome */
 
@@ -826,7 +1001,7 @@
 /* Settings navigation and provider screens -------------------------------- */
 
 .config-layout {
-  gap: 24px;
+  gap: var(--jh-section-gap);
 }
 
 .config-layout .settings-tabs {
@@ -876,8 +1051,17 @@
 }
 
 .config-layout > .card > .card-hd {
-  padding: 17px 20px 13px;
+  padding: var(--jh-panel-padding);
   background: transparent;
+}
+
+.config-layout .settings-save-actions[data-save-state="saved"] {
+  display: none;
+}
+
+.config-layout .settings-save-actions[data-save-state="dirty"],
+.config-layout .settings-save-actions[data-save-state="saving"] {
+  justify-content: flex-end;
 }
 
 .config-layout .provider-card-list {
@@ -908,6 +1092,19 @@
 
 .config-layout .provider-card-header {
   gap: 24px;
+}
+
+.config-layout .provider-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--jh-internal-gap);
+}
+
+.config-layout .browser-capability-kind {
+  margin-bottom: var(--jh-internal-gap);
+  color: var(--muted-foreground);
 }
 
 .config-layout .provider-card .tag,
@@ -1019,8 +1216,49 @@
   gap: var(--jh-section-gap);
 }
 
+.discovery-section-nav {
+  position: sticky;
+  top: calc(var(--topbar-height) + var(--jh-internal-gap));
+  z-index: 3;
+  display: flex;
+  min-width: 0;
+  min-height: var(--jh-control-height);
+  align-items: stretch;
+  gap: var(--jh-internal-gap);
+  overflow-x: auto;
+  border-bottom: 1px solid var(--configuration-rule);
+  background: var(--background);
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.discovery-section-nav a {
+  display: inline-flex;
+  min-width: max-content;
+  align-items: center;
+  border-bottom: 2px solid transparent;
+  color: var(--muted-foreground);
+  padding-inline: var(--jh-internal-gap);
+  text-decoration: none;
+}
+
+.discovery-section-nav a:hover,
+.discovery-section-nav a:focus-visible {
+  border-color: var(--primary);
+  color: var(--foreground);
+}
+
+.discovery-task-section {
+  min-width: 0;
+  scroll-margin-top: calc(
+    var(--topbar-height) + var(--jh-control-height) + var(--jh-section-gap)
+  );
+}
+
 .discovery-workspace > .card,
-.discovery-workspace > .configuration-section {
+.discovery-workspace > .configuration-section,
+.discovery-task-section > .card,
+.discovery-task-section > .configuration-section {
   overflow: hidden;
   margin: 0;
   border-color: var(--configuration-rule);
@@ -1029,13 +1267,15 @@
   box-shadow: none;
 }
 
-.discovery-workspace > .card > .card-hd {
+.discovery-workspace > .card > .card-hd,
+.discovery-task-section > .card > .card-hd {
   min-height: 0;
   padding: var(--jh-panel-padding);
   background: transparent;
 }
 
-.discovery-workspace > .card > .card-hd h2 {
+.discovery-workspace > .card > .card-hd h2,
+.discovery-task-section > .card > .card-hd h2 {
   font: inherit;
 }
 
@@ -1078,9 +1318,7 @@
     grid-area: location;
   }
 
-  .discovery-workspace
-    .target-location-model-row
-    > .target-work-model-group {
+  .discovery-workspace .target-location-model-row > .target-work-model-group {
     grid-area: work-models;
   }
 
@@ -1326,7 +1564,10 @@
   accent-color: var(--primary);
 }
 
-@media (max-width: 1433px) {
+/* Keep the profile task order stable across the supported desktop widths.
+ * The A4 editor only splits beside the form when the viewport can give both
+ * panes their intended working width. */
+@media (max-width: 1540px) {
   .profile-layout:not(.profile-layout-single) {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1386,6 +1627,10 @@
 }
 
 @media (max-width: 760px) {
+  .preferences-two-column-grid .adaptive-field-grid__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .profile-layout .repeat-section {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1456,12 +1701,17 @@
   }
 
   .config-layout .settings-tabs {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+    scroll-snap-type: inline proximity;
   }
 
   .config-layout .settings-tabs .tab {
-    min-width: min(140px, 100%);
-    flex: 1 1 140px;
+    min-width: max-content;
+    flex: 0 0 auto;
+    scroll-snap-align: nearest;
     text-align: center;
   }
 
@@ -1489,7 +1739,27 @@
     flex: 1 1 96px;
   }
 
+  .config-layout
+    .provider-card:has(.provider-card-actions)
+    .configuration-section__header {
+    flex-wrap: wrap;
+  }
+
+  .config-layout
+    .provider-card:has(.provider-card-actions)
+    .configuration-section__actions {
+    width: 100%;
+    justify-content: space-between;
+    padding: 0 var(--jh-panel-padding) var(--jh-internal-gap);
+  }
+
+  .config-layout .provider-card-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .discovery-workspace > .card > .card-hd,
+  .discovery-task-section > .card > .card-hd,
   .discovery-workspace .config-form,
   .discovery-workspace .target-preferences-grid,
   .discovery-workspace .discovery-runtime-settings .field-grid {

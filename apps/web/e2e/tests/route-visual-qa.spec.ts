@@ -62,7 +62,8 @@ const ROUTE_SURFACES: readonly RouteSurface[] = [
     path: "/discovery",
     activeLink: "Discovery",
     proof: (page) => page.getByRole("heading", { name: "Source registry" }),
-    surface: (page) => page.locator(".discovery-control-panel .filterable-data-grid").first(),
+    surface: (page) =>
+      page.locator(".discovery-control-panel .filterable-data-grid").first(),
   },
   {
     path: "/profile",
@@ -107,15 +108,17 @@ const MOBILE_ROUTE_SURFACES: readonly MobileRouteSurface[] = [
   },
   {
     ...ROUTE_SURFACES[1]!,
+    proof: (page) => page.getByRole("list", { name: "Jobs" }),
+    surface: (page) => page.getByRole("list", { name: "Jobs" }),
     primaryControl: (page) =>
-      page
-        .locator("table.jobs-data-grid-table tbody tr")
-        .filter({ hasText: "Director of Platform Engineering" })
-        .locator('[data-slot="title-stack-primary"]')
-        .filter({ hasText: /^Director of Platform Engineering$/ }),
+      page.getByRole("button", {
+        name: /^Open job Director of Platform Engineering/,
+      }),
   },
   {
     ...ROUTE_SURFACES[2]!,
+    proof: (page) => page.getByRole("list", { name: "Artifacts" }),
+    surface: (page) => page.getByRole("list", { name: "Artifacts" }),
     primaryControl: (page) =>
       page.getByRole("button", { name: /Open artifact/i }).first(),
   },
@@ -138,6 +141,8 @@ const MOBILE_ROUTE_SURFACES: readonly MobileRouteSurface[] = [
   },
   {
     ...ROUTE_SURFACES[7]!,
+    proof: (page) => page.getByRole("list", { name: "Workflow runs" }),
+    surface: (page) => page.getByRole("list", { name: "Workflow runs" }),
     primaryControl: (page) =>
       page.getByRole("button", { name: /Open run/i }).first(),
   },
@@ -148,6 +153,8 @@ const MOBILE_ROUTE_SURFACES: readonly MobileRouteSurface[] = [
   },
   {
     ...ROUTE_SURFACES[9]!,
+    proof: (page) => page.getByRole("list", { name: "Recent activity" }),
+    surface: (page) => page.getByRole("list", { name: "Recent activity" }),
     primaryControl: (page) =>
       page.getByRole("button", { name: /Open activity/i }).first(),
   },
@@ -236,7 +243,9 @@ interface TypographyAuditResult {
   }>;
 }
 
-async function collectTypographyAudit(page: Page): Promise<TypographyAuditResult> {
+async function collectTypographyAudit(
+  page: Page,
+): Promise<TypographyAuditResult> {
   return page.locator(".app-shell").evaluate((shell, approvedRoleMetrics) => {
     const approved = approvedRoleMetrics as Record<string, string>;
     const metricFallback: Record<string, string> = {
@@ -318,7 +327,9 @@ async function collectTypographyAudit(page: Page): Promise<TypographyAuditResult
         role = "metadata";
       } else if (
         !role &&
-        element.matches(".eyebrow, .job-audit-triage-kicker, .text-xs.font-medium")
+        element.matches(
+          ".eyebrow, .job-audit-triage-kicker, .text-xs.font-medium",
+        )
       ) {
         role = "label";
       } else if (!role && element.matches(".tag, .stage-pill")) {
@@ -335,10 +346,7 @@ async function collectTypographyAudit(page: Page): Promise<TypographyAuditResult
         role = "section-title";
       } else if (!role && /^h[3-6]$/.test(tag)) {
         role = "component-title";
-      } else if (
-        !role &&
-        ["p", "li", "td", "dd", "blockquote"].includes(tag)
-      ) {
+      } else if (!role && ["p", "li", "td", "dd", "blockquote"].includes(tag)) {
         role = "body";
       } else if (!role) {
         role = metricFallback[metric] ?? null;
@@ -351,8 +359,11 @@ async function collectTypographyAudit(page: Page): Promise<TypographyAuditResult
         element instanceof HTMLInputElement ||
         element instanceof HTMLTextAreaElement ||
         element instanceof HTMLSelectElement
-          ? element.value || element.getAttribute("placeholder") || element.getAttribute("aria-label") || ""
-          : element.textContent?.trim() ?? "";
+          ? element.value ||
+            element.getAttribute("placeholder") ||
+            element.getAttribute("aria-label") ||
+            ""
+          : (element.textContent?.trim() ?? "");
       const selector = `${tag}${element.id ? `#${element.id}` : ""}${
         element.classList.length
           ? `.${[...element.classList].slice(0, 3).join(".")}`
@@ -1007,7 +1018,10 @@ test("target screens use only approved typography roles and identical role metri
     ).toBeVisible({ timeout: 30_000 });
     const audit = await collectTypographyAudit(page);
 
-    expect(audit.checked, `${route.name} should expose rendered text`).toBeGreaterThan(0);
+    expect(
+      audit.checked,
+      `${route.name} should expose rendered text`,
+    ).toBeGreaterThan(0);
     expect(audit.unknown, `${route.name} unknown typography roles`).toEqual([]);
     expect(audit.violations, `${route.name} unapproved typography`).toEqual([]);
     for (const [role, styles] of Object.entries(audit.roleStyles)) {
@@ -1080,10 +1094,14 @@ test("every target screen preserves semantic foreground and surface colors in da
   for (const route of VISUAL_SYSTEM_AUDIT_ROUTES) {
     await page.goto(route.path);
     const title = page.locator('[data-typography="page-title"]').first();
-    await expect(title, `${route.name} page title`).toBeVisible({ timeout: 30_000 });
+    await expect(title, `${route.name} page title`).toBeVisible({
+      timeout: 30_000,
+    });
     const colors = await page.locator(".app-shell").evaluate((shell) => {
       const shellStyle = getComputedStyle(shell);
-      const titleElement = shell.querySelector<HTMLElement>('[data-typography="page-title"]');
+      const titleElement = shell.querySelector<HTMLElement>(
+        '[data-typography="page-title"]',
+      );
       return {
         background: shellStyle.backgroundColor,
         foreground: titleElement ? getComputedStyle(titleElement).color : "",
@@ -1160,25 +1178,10 @@ test("@mobile every target screen reflows without document overflow at 320 CSS p
     await expectNoDocumentInlineOverflow(page);
     if (route.path === "/profile") {
       const actionBar = page.locator(".editor-bulk-actions").first();
-      await expect(actionBar).toBeVisible();
-      const containment = await actionBar.evaluate((element) => {
-        const parent = element.getBoundingClientRect();
-        return [...element.children].map((child) => {
-          const rect = child.getBoundingClientRect();
-          return {
-            bottom: rect.bottom <= parent.bottom + 1,
-            left: rect.left >= parent.left - 1,
-            right: rect.right <= parent.right + 1,
-            top: rect.top >= parent.top - 1,
-          };
-        });
-      });
-      expect(
-        containment.every(
-          ({ bottom, left, right, top }) => bottom && left && right && top,
-        ),
-        "Profile save and discard actions should stay inside their mobile decision bar",
-      ).toBe(true);
+      await expect(
+        actionBar,
+        "Profile should not show a permanent inactive save bar before edits",
+      ).toHaveCount(0);
     }
   }
 });
@@ -1228,7 +1231,10 @@ test("Apply Review queue items contain their content at every density", async ({
 
   const queueItems = page.locator(".apply-review-queue-item");
   await expect(queueItems.first()).toBeVisible({ timeout: 30_000 });
-  expect(await queueItems.count(), "queue fixture should contain multiple rows").toBeGreaterThan(1);
+  expect(
+    await queueItems.count(),
+    "queue fixture should contain multiple rows",
+  ).toBeGreaterThan(1);
 
   for (const density of Object.keys(DENSITY_TOKENS) as Density[]) {
     await setDensity(page, density);
@@ -1253,7 +1259,10 @@ test("Apply Review queue items contain their content at every density", async ({
 
     expect(rows.length, `${density} queue measurements`).toBeGreaterThan(1);
     for (const [index, row] of rows.entries()) {
-      expect(row.height, `${density} row ${index} height`).toBeGreaterThanOrEqual(88);
+      expect(
+        row.height,
+        `${density} row ${index} height`,
+      ).toBeGreaterThanOrEqual(88);
       expect(
         row.scrollHeight,
         `${density} row ${index} content must fit its box`,
@@ -1290,7 +1299,7 @@ test("Configuration checkboxes share one target, visual, and label alignment", a
       const labelledBy = element.getAttribute("aria-labelledby");
       const label = labelledBy
         ? document.getElementById(labelledBy)
-        : element.parentElement?.querySelector("label") ?? null;
+        : (element.parentElement?.querySelector("label") ?? null);
       const labelRect = label?.getBoundingClientRect() ?? null;
       const visualHeight = Number.parseFloat(visual.height);
       return {
@@ -1318,9 +1327,15 @@ test("Configuration checkboxes share one target, visual, and label alignment", a
     const geometry = await readGeometry(discoveryCheckbox);
     discoveryGeometry.set(density, geometry);
 
-    expect(geometry.targetHeight, `${density} target height`).toBeCloseTo(24, 1);
+    expect(geometry.targetHeight, `${density} target height`).toBeCloseTo(
+      24,
+      1,
+    );
     expect(geometry.targetWidth, `${density} target width`).toBeCloseTo(24, 1);
-    expect(geometry.visualHeight, `${density} visual height`).toBeCloseTo(16, 1);
+    expect(geometry.visualHeight, `${density} visual height`).toBeCloseTo(
+      16,
+      1,
+    );
     expect(geometry.visualWidth, `${density} visual width`).toBeCloseTo(16, 1);
     expect(
       geometry.visualHeight,
@@ -1377,12 +1392,14 @@ test("Discovery settings pack related controls and reflow with available width",
   await page.setViewportSize({ width: 1666, height: 900 });
   await page.goto("/discovery");
 
-  await expect(
-    page.getByRole("group", { name: "Target tracks" }),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("group", { name: "Target tracks" })).toBeVisible({
+    timeout: 30_000,
+  });
 
   const targetGrid = page.locator(".target-preferences-grid");
-  const targetClusters = targetGrid.locator(":scope > .target-preference-cluster");
+  const targetClusters = targetGrid.locator(
+    ":scope > .target-preference-cluster",
+  );
   const boardGrid = page.locator(".discovery-board-options");
   const boardOptions = boardGrid.locator(":scope > .target-choice");
   const assertUsableTargetInputs = async (viewport: string) => {
@@ -1391,10 +1408,15 @@ test("Discovery settings pack related controls and reflow with available width",
       const count = await inputs.count();
       expect(count, `${viewport} ${inputKind} inputs`).toBeGreaterThan(0);
       const widths = await inputs.evaluateAll((elements) =>
-        elements.map((element) => Math.round(element.getBoundingClientRect().width)),
+        elements.map((element) =>
+          Math.round(element.getBoundingClientRect().width),
+        ),
       );
       for (const [index, width] of widths.entries()) {
-        expect(width, `${viewport} ${inputKind} input ${index + 1}`).toBeGreaterThanOrEqual(180);
+        expect(
+          width,
+          `${viewport} ${inputKind} input ${index + 1}`,
+        ).toBeGreaterThanOrEqual(180);
       }
     }
   };
@@ -1463,9 +1485,7 @@ test("Discovery settings pack related controls and reflow with available width",
       };
     });
     const boards = Array.from(
-      document.querySelectorAll(
-        ".discovery-board-options > .target-choice",
-      ),
+      document.querySelectorAll(".discovery-board-options > .target-choice"),
     ).map((element) => {
       const bounds = element.getBoundingClientRect();
       return {
@@ -1901,7 +1921,9 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
         ".apply-review-resume-review",
       );
       if (!(audit instanceof HTMLElement)) return false;
-      return element.getBoundingClientRect().top <= audit.getBoundingClientRect().top;
+      return (
+        element.getBoundingClientRect().top <= audit.getBoundingClientRect().top
+      );
     }),
     "resume template control should lead directly into the resume review surface",
   ).toBe(true);
@@ -1963,9 +1985,7 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
   expect(
     layout.maxSummaryItemHeight,
     "audit summary items should remain readable",
-  ).toBeLessThan(
-    140,
-  );
+  ).toBeLessThan(140);
   expect(
     layout.cardHeight,
     "decision card should remain a compact summary",

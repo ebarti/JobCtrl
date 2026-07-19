@@ -5,11 +5,12 @@ import type {
   ArtifactSummary,
   PaginatedResponse,
 } from "../../contexts/operations/types.js";
+import { useIsMobile } from "../../shared/hooks/use-mobile.js";
 import {
   FilterableDataGrid,
   type DataGridSortState,
 } from "../../shared/ui/filterable-data-grid.js";
-import { artifactColumns } from "./columns.js";
+import { ArtifactMobileRow, artifactColumns } from "./columns.js";
 
 export interface ArtifactsTableProps {
   data: PaginatedResponse<ArtifactSummary> | null;
@@ -38,13 +39,14 @@ export function ArtifactsTable({
   onPageSizeChange,
   onOpenArtifact,
 }: ArtifactsTableProps) {
-  const columns = useMemo(
-    () =>
-      artifactColumns({
-        rowSelection,
-        onRowSelectionChange,
-      }),
+  const isMobile = useIsMobile();
+  const columnOptions = useMemo(
+    () => ({ rowSelection, onRowSelectionChange }),
     [onRowSelectionChange, rowSelection],
+  );
+  const columns = useMemo(
+    () => artifactColumns(columnOptions),
+    [columnOptions],
   );
   const gridSort = useMemo<DataGridSortState>(() => {
     const head = sorting[0];
@@ -68,12 +70,21 @@ export function ArtifactsTable({
       emptyMessage="No artifacts match."
       initialSort={{ columnId: "created_at", direction: "desc" }}
       mobileLayout="cards"
+      {...(isMobile
+        ? {
+            mobileListLabel: "Artifacts",
+            renderMobileRow: (row) => (
+              <ArtifactMobileRow options={columnOptions} row={row} />
+            ),
+          }
+        : {})}
       sort={gridSort}
       onSortChange={handleSortChange}
       manualSorting
       tableClassName="artifacts-data-grid-table"
       rowAriaSelected={(row) => Boolean(rowSelection[row.artifactId])}
       onRowActivate={(row) => onOpenArtifact(row.artifactId)}
+      rowActivationAppearance={isMobile ? "visible" : "focus-only"}
       rowActivationLabel={(row) => `Open artifact ${row.title || row.type}`}
       pagination={{
         page,

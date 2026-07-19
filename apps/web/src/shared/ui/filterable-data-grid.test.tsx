@@ -283,6 +283,56 @@ describe("FilterableDataGrid", () => {
     expect(within(table).queryByText("Acme")).not.toBeInTheDocument();
   });
 
+  it("supports task-specific mobile rows without replacing the desktop table fallback", async () => {
+    const onRowActivate = vi.fn();
+    render(
+      <FilterableDataGrid
+        title="Responsive grid"
+        data={rows}
+        columns={columns}
+        getRowId={(row) => row.id}
+        loading={false}
+        loadingMessage="Loading rows."
+        emptyMessage="No rows."
+        initialSort={{ columnId: "company", direction: "asc" }}
+        mobileListLabel="Company results"
+        onRowActivate={onRowActivate}
+        rowActivationLabel={(row) => `Open ${row.company}`}
+        renderMobileRow={(row, context) => (
+          <article data-row-index={context.rowIndex}>
+            <strong>{row.company}</strong>
+            <span>{row.observed} sightings</span>
+          </article>
+        )}
+      />,
+    );
+    const user = userEvent.setup();
+    const grid = document.querySelector(".filterable-data-grid");
+    const table = screen.getByRole("table", { name: "Responsive grid" });
+    const list = screen.getByRole("list", { name: "Company results" });
+    const acmeRecord = within(list)
+      .getAllByRole("listitem")
+      .find((item) => item.dataset["rowId"] === "1");
+
+    expect(grid).toHaveAttribute("data-mobile-rows", "custom");
+    expect(within(table).getByText("Acme")).toBeInTheDocument();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+    expect(acmeRecord).toBeDefined();
+    if (!acmeRecord) throw new Error("Expected the Acme mobile record.");
+    expect(acmeRecord.querySelector("article")).toHaveAttribute(
+      "data-row-index",
+      "0",
+    );
+
+    await user.click(within(acmeRecord).getByText("3 sightings"));
+    expect(onRowActivate).toHaveBeenLastCalledWith(rows[0]);
+
+    await user.click(
+      within(acmeRecord).getByRole("button", { name: "Open Acme" }),
+    );
+    expect(onRowActivate).toHaveBeenCalledTimes(2);
+  });
+
   it("clears the exact active filter chip without removing other filters", async () => {
     renderGrid();
     const user = userEvent.setup();

@@ -10,11 +10,10 @@ describe("SourceHealthCard", () => {
 
     expect(screen.getByText("Source health")).toBeInTheDocument();
     expect(screen.getByText("greenhouse:acme")).toBeInTheDocument();
-    expect(screen.getByText("normal").querySelector("svg")).toHaveClass(
-      "tabler-icon-circle-check",
-    );
-    expect(screen.getByText(/active 90%/i)).toBeInTheDocument();
-    expect(screen.getByText(/apply 80%/i)).toBeInTheDocument();
+    expect(screen.getByText("normal").querySelector("svg")).toHaveClass("tabler-icon-circle-check");
+    expect(screen.getByText(/90% active/i)).toBeInTheDocument();
+    expect(screen.getByText(/80% apply/i)).toBeInTheDocument();
+    expect(screen.getByText(/100% full detail/i)).toBeInTheDocument();
     // The fixture records a robots-disallowed outcome; it surfaces as a badge.
     expect(screen.getByText("robots disallowed")).toBeInTheDocument();
   });
@@ -30,9 +29,7 @@ describe("SourceHealthCard", () => {
       />,
     );
 
-    expect(screen.getByText("quarantined").querySelector("svg")).toHaveClass(
-      "tabler-icon-ban",
-    );
+    expect(screen.getByText("quarantined").querySelector("svg")).toHaveClass("tabler-icon-ban");
   });
 
   it("omits politeness badges when a source has no recorded outcomes", () => {

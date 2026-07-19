@@ -34,22 +34,36 @@ describe("<ProfileForm>", () => {
     expect(screen.queryByRole("button", { name: "preferences" })).not.toBeInTheDocument();
   });
 
-  it("uses a stable shared save and discard bar with explicit unchanged state", async () => {
+  it("keeps save and discard actions quiet until the form is dirty", async () => {
+    const user = userEvent.setup();
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} />, {
       withRouter: true,
     });
 
-    const save = await screen.findByRole("button", { name: "Save changes" });
-    const discard = screen.getByRole("button", { name: "Discard changes" });
-
-    expect(screen.getByRole("link", { name: "Import resume" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "Import resume" })).toHaveAttribute(
       "data-slot",
       "button",
     );
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard changes" })).not.toBeInTheDocument();
+    expect(screen.queryByText("No unsaved changes")).not.toBeInTheDocument();
+
+    const fullName = screen.getByLabelText("Full name");
+    const initialFullName = (fullName as HTMLInputElement).value;
+    await user.clear(fullName);
+    await user.type(fullName, "Updated Candidate");
+
+    const save = screen.getByRole("button", { name: "Save changes" });
+    const discard = screen.getByRole("button", { name: "Discard changes" });
     expect(save).toHaveAttribute("data-slot", "button");
-    expect(save).toBeDisabled();
-    expect(discard).toBeDisabled();
-    expect(screen.getByText("No unsaved changes")).toBeInTheDocument();
+    expect(save).toBeEnabled();
+    expect(discard).toBeEnabled();
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+
+    await user.click(discard);
+
+    expect(fullName).toHaveValue(initialFullName);
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
   });
 
   it("keeps the address field editable when Google Maps is not configured", async () => {

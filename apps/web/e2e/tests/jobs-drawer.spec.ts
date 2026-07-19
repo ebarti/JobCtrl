@@ -325,22 +325,22 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   await page.setViewportSize({ width: 390, height: 860 });
   await page.goto(`/jobs?${FILTER_PARAMS}`);
 
-  const gridScroll = page.locator(".filterable-data-grid-scroll");
-  await expect(gridScroll).toBeVisible({ timeout: 30_000 });
-  const responsiveLayout = await gridScroll.evaluate((element) => ({
+  const jobsList = page.getByRole("list", { name: "Jobs" });
+  await expect(jobsList).toBeVisible({ timeout: 30_000 });
+  const responsiveLayout = await jobsList.evaluate((element) => ({
     documentClientWidth: document.documentElement.clientWidth,
     documentScrollWidth: document.documentElement.scrollWidth,
-    gridClientWidth: element.clientWidth,
-    gridScrollWidth: element.scrollWidth,
+    listClientWidth: element.clientWidth,
+    listScrollWidth: element.scrollWidth,
   }));
   expect(
     responsiveLayout.documentScrollWidth,
     "mobile Jobs should not create document-level horizontal overflow",
   ).toBeLessThanOrEqual(responsiveLayout.documentClientWidth + 1);
   expect(
-    responsiveLayout.gridScrollWidth,
-    "mobile Jobs should reflow rather than require horizontal grid scrolling",
-  ).toBeLessThanOrEqual(responsiveLayout.gridClientWidth + 1);
+    responsiveLayout.listScrollWidth,
+    "mobile Jobs should reflow rather than require horizontal list scrolling",
+  ).toBeLessThanOrEqual(responsiveLayout.listClientWidth + 1);
   await page.getByRole("button", { name: "Configure table columns" }).click();
   const columnDialog = page.getByRole("dialog", { name: "Columns" });
   const warningsColumn = columnDialog.getByRole("checkbox", {
@@ -375,23 +375,17 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
     await page.evaluate(() => document.documentElement.clientWidth + 1),
   );
 
-  const row = page
-    .locator("table.jobs-data-grid-table tbody tr")
+  const row = jobsList
+    .locator(".data-grid-mobile-record")
     .filter({ hasText: PLATFORM_JOB_TITLE });
   await expect(row).toBeVisible();
-  await expect(row.getByText("55,000").first()).toBeVisible();
-  await expect(row.getByText("112,000-142,000").first()).toBeVisible();
-  await expect(row.getByText("CI 112,000-142,000")).toBeVisible();
-  await expect(row.getByText("Medium")).toBeVisible();
-  await expect(row.getByText("82%")).toBeVisible();
-  await expect(row.getByText(/2 sources/i)).toBeVisible();
-  await expect(row.getByText("2 warnings")).toBeVisible();
-
-  const visibleTitle = row
-    .locator('[data-slot="title-stack-primary"]')
-    .filter({ hasText: new RegExp(`^${PLATFORM_JOB_TITLE}$`) });
-  await expect(visibleTitle).toBeVisible();
-  await visibleTitle.click();
+  await expect(row.getByText("GitLab", { exact: true })).toBeVisible();
+  await expect(row.getByLabel("Job status")).toBeVisible();
+  await row
+    .getByRole("button", {
+      name: /^Open job Director of Platform Engineering at GitLab$/,
+    })
+    .click();
 
   const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });

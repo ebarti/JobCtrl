@@ -5,6 +5,7 @@ import type {
   JobSummary,
   PaginatedResponse,
 } from "../../contexts/operations/types.js";
+import { useIsMobile } from "../../shared/hooks/use-mobile.js";
 import {
   FilterableDataGrid,
   type DataGridColorRule,
@@ -15,7 +16,7 @@ import {
   type DataGridGroupingState,
   type DataGridSortState,
 } from "../../shared/ui/filterable-data-grid.js";
-import { jobColumns } from "./columns.js";
+import { JobMobileRow, jobColumns } from "./columns.js";
 
 const EMPTY_FILTERS: DataGridFilterState = {};
 const noopFiltersChange = () => {};
@@ -74,6 +75,7 @@ export function JobsTable({
   colorRules,
   toolbarActions,
 }: JobsTableProps) {
+  const isMobile = useIsMobile();
   const [selectionAnchorJobKey, setSelectionAnchorJobKey] = useState<
     string | null
   >(null);
@@ -92,16 +94,16 @@ export function JobsTable({
       setSelectionAnchorJobKey(null);
     }
   }, [allMatchingSelected, rowSelection]);
-  const columns = useMemo(
-    () =>
-      jobColumns({
-        rowSelection: displayedRowSelection,
-        onRowSelectionChange,
-        selectionAnchorJobKey,
-        onSelectionAnchorChange: setSelectionAnchorJobKey,
-      }),
+  const columnOptions = useMemo(
+    () => ({
+      rowSelection: displayedRowSelection,
+      onRowSelectionChange,
+      selectionAnchorJobKey,
+      onSelectionAnchorChange: setSelectionAnchorJobKey,
+    }),
     [displayedRowSelection, onRowSelectionChange, selectionAnchorJobKey],
   );
+  const columns = useMemo(() => jobColumns(columnOptions), [columnOptions]);
   const gridSort = useMemo<DataGridSortState>(() => {
     const head = sorting[0];
     return {
@@ -133,6 +135,18 @@ export function JobsTable({
       emptyMessage="No jobs match."
       initialSort={{ columnId: "discovered_at", direction: "desc" }}
       mobileLayout="cards"
+      {...(isMobile
+        ? {
+            mobileListLabel: "Jobs",
+            renderMobileRow: (row, context) => (
+              <JobMobileRow
+                context={context}
+                options={columnOptions}
+                row={row}
+              />
+            ),
+          }
+        : {})}
       sort={gridSort}
       onSortChange={handleSortChange}
       manualSorting
@@ -152,10 +166,10 @@ export function JobsTable({
         allMatchingSelected || Boolean(rowSelection[row.jobKey])
       }
       onRowActivate={(row) => onOpenJob(row.jobKey)}
+      rowActivationAppearance={isMobile ? "visible" : "focus-only"}
       rowActivationLabel={(row) =>
         `Open job ${row.title} at ${row.company || "unknown company"}`
       }
-      rowActivationAppearance="focus-only"
       onPageRowsChange={onVisiblePageRowsChange}
       pagination={{
         page,

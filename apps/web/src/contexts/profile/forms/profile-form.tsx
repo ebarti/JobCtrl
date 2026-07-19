@@ -114,6 +114,13 @@ export function ProfileForm({
         ? "Discovery settings saved"
         : "Preferences saved";
 
+  const clearTransientStatus = () => {
+    setStatusMessage("");
+    if (updateProfile.error) {
+      updateProfile.reset();
+    }
+  };
+
   const form = useForm({
     defaultValues: toProfileFormValues(initial),
     validators: {
@@ -160,11 +167,16 @@ export function ProfileForm({
         event.preventDefault();
         form.reset(toProfileFormValues(initial));
         setResetToken((token) => token + 1);
-        setStatusMessage("");
+        clearTransientStatus();
       }}
     >
       {statusMessage ? (
-        <div className="status-line" data-typography="metadata" role="status">
+        <div
+          className="status-line profile-save-status"
+          data-state="saved"
+          data-typography="metadata"
+          role="status"
+        >
           {statusMessage}
         </div>
       ) : null}
@@ -188,38 +200,33 @@ export function ProfileForm({
           />
         )}
       </form.Subscribe>
+      {isProfileSection ? (
+        <div className="profile-route-actions">
+          <Button
+            nativeButton={false}
+            render={<Link to="/profile/import/upload" role="link" />}
+            variant="secondary"
+          >
+            Import resume
+          </Button>
+        </div>
+      ) : null}
       <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting })}>
-        {({ isDirty, isSubmitting }) => (
-          <div className="editor-bulk-actions" data-state={isDirty ? "dirty" : "saved"}>
-            {isProfileSection ? (
-              <Button
-                nativeButton={false}
-                render={<Link to="/profile/import/upload" role="link" />}
-                variant="secondary"
-              >
-                Import resume
+        {({ isDirty, isSubmitting }) =>
+          isDirty || isSubmitting ? (
+            <div className="editor-bulk-actions" data-state={isSubmitting ? "saving" : "dirty"}>
+              <span data-typography="strong-body" role="status">
+                {isSubmitting ? "Saving changes" : "Unsaved changes"}
+              </span>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Saving changes" : saveLabel}
               </Button>
-            ) : null}
-            <span data-typography="metadata" role="status">
-              {isDirty ? "Unsaved changes" : "No unsaved changes"}
-            </span>
-            <Button
-              type="submit"
-              disabled={!isDirty || isSubmitting}
-              title={!isDirty ? "No unsaved changes" : undefined}
-            >
-              {isSubmitting ? "Saving changes" : saveLabel}
-            </Button>
-            <Button
-              type="reset"
-              variant="secondary"
-              disabled={!isDirty || isSubmitting}
-              title={!isDirty ? "No unsaved changes" : undefined}
-            >
-              {discardLabel}
-            </Button>
-          </div>
-        )}
+              <Button type="reset" variant="secondary" disabled={isSubmitting}>
+                {discardLabel}
+              </Button>
+            </div>
+          ) : null
+        }
       </form.Subscribe>
       <form.Field name="profileText">
         {(profileField) => (
@@ -230,8 +237,14 @@ export function ProfileForm({
                 showSectionHeading={showSectionHeading}
                 profileText={profileField.state.value}
                 styleText={styleField.state.value}
-                onProfileTextChange={(value) => profileField.handleChange(value)}
-                onStyleTextChange={(value) => styleField.handleChange(value)}
+                onProfileTextChange={(value) => {
+                  clearTransientStatus();
+                  profileField.handleChange(value);
+                }}
+                onStyleTextChange={(value) => {
+                  clearTransientStatus();
+                  styleField.handleChange(value);
+                }}
               />
             )}
           </form.Field>

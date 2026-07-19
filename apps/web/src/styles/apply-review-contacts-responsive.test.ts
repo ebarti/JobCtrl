@@ -38,10 +38,12 @@ describe("Apply Review and Contacts responsive layout contracts", () => {
   });
 
   it("pads the Contacts follow-up body at desktop and mobile widths", () => {
-    const content = rule(dataCss, ".outreach-due-follow-ups-content");
-
-    expect(content).toContain("display: grid");
-    expect(content).toContain("padding: 16px 20px 20px");
+    expect(dataCss).toMatch(
+      /^\.outreach-due-follow-ups-content\s*\{[\s\S]*?display: grid;[\s\S]*?padding: 16px 20px 20px;/m,
+    );
+    expect(dataCss).toMatch(
+      /\.outreach-due-follow-ups:has\(\[data-slot="empty"\]\)[\s\S]*?\.outreach-due-follow-ups-content\s*\{[\s\S]*?padding: var\(--jh-internal-gap\) var\(--jh-panel-padding\);/,
+    );
     expect(dataCss).toMatch(
       /@media \(max-width: 720px\)[\s\S]*?\.outreach-due-follow-ups-content\s*\{\s*padding: 12px 16px 16px;/,
     );

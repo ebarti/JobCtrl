@@ -5333,6 +5333,123 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("filters workflow runs by exact type and canonical started interval before pagination", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      const insert = db.prepare(
+        "INSERT INTO workflow_run_projections (workflow_id, workflow_type, status, started_at, temporal_run_id) VALUES (?, ?, ?, ?, ?)",
+      );
+      insert.run(
+        "run-discover-early",
+        "DiscoverWorkflow",
+        "succeeded",
+        "2026-04-29T10:00:00+00:00",
+        "temporal-discover-early",
+      );
+      insert.run(
+        "run-discover-boundary",
+        "DiscoverWorkflow",
+        "succeeded",
+        "2026-04-29T10:15:00+00:00",
+        "temporal-discover-boundary",
+      );
+      insert.run(
+        "run-discover-late",
+        "DiscoverWorkflow",
+        "succeeded",
+        "2026-04-29T10:20:00+00:00",
+        "temporal-discover-late",
+      );
+      insert.run(
+        "run-discover-no-start",
+        "DiscoverWorkflow",
+        "succeeded",
+        null,
+        "temporal-discover-no-start",
+      );
+      insert.run(
+        "run-legacy-workflow",
+        "",
+        "succeeded",
+        "2026-04-29T10:17:00+00:00",
+        "temporal-legacy-workflow",
+      );
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    try {
+      const byType = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?workflowType=DiscoverWorkflow&sort=started_at&dir=asc&pageSize=100",
+      });
+      expect(byType.statusCode, byType.body).toBe(200);
+      expect(byType.json().items.map((run: { workflowId: string }) => run.workflowId)).toEqual(
+        expect.arrayContaining([
+          "run-discover-early",
+          "run-discover-boundary",
+          "run-discover-late",
+          "run-discover-no-start",
+        ]),
+      );
+      expect(byType.json().items.map((run: { workflowId: string }) => run.workflowId)).not.toContain(
+        "run-legacy-workflow",
+      );
+      expect(byType.json().filter).toMatchObject({
+        status: "all",
+        workflowType: "DiscoverWorkflow",
+        startedSince: null,
+        startedBefore: null,
+      });
+
+      const lowerOnly = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?workflowType=DiscoverWorkflow&startedSince=2026-04-29T10:15:00.000Z&sort=started_at&dir=asc",
+      });
+      expect(lowerOnly.statusCode, lowerOnly.body).toBe(200);
+      expect(lowerOnly.json().items.map((run: { workflowId: string }) => run.workflowId)).toEqual([
+        "run-discover-boundary",
+        "run-discover-late",
+      ]);
+
+      const upperOnly = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?workflowType=DiscoverWorkflow&startedBefore=2026-04-29T10:15:00.000Z&sort=started_at&dir=asc",
+      });
+      expect(upperOnly.statusCode, upperOnly.body).toBe(200);
+      expect(upperOnly.json().items.map((run: { workflowId: string }) => run.workflowId)).toEqual([
+        "run-discover-early",
+      ]);
+
+      const boundedPage = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?workflowType=DiscoverWorkflow&startedSince=2026-04-29T10:00:00.000Z&startedBefore=2026-04-29T10:30:00.000Z&sort=started_at&dir=asc&page=2&pageSize=1",
+      });
+      expect(boundedPage.statusCode, boundedPage.body).toBe(200);
+      expect(boundedPage.json().items.map((run: { workflowId: string }) => run.workflowId)).toEqual([
+        "run-discover-boundary",
+      ]);
+      expect(boundedPage.json().pagination).toEqual({
+        page: 2,
+        pageSize: 1,
+        total: 3,
+        pages: 3,
+      });
+
+      const unfiltered = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?sort=started_at&dir=asc&pageSize=100",
+      });
+      expect(unfiltered.statusCode, unfiltered.body).toBe(200);
+      expect(unfiltered.json().items.map((run: { workflowId: string }) => run.workflowId)).toEqual(
+        expect.arrayContaining(["run-legacy-workflow", "run-discover-no-start"]),
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
   it("renders non-apply workflow runs with their workflow type and detail", async () => {
     // Temporal loop closure (P0): a pipeline orchestrator run has no apply
     // job context — the unified list surfaces its workflow type, and the
@@ -5406,7 +5523,7 @@ describe("local TypeScript API", () => {
         status: "terminated",
         errorCode: "reconciled_not_found",
         errorMessage: RECONCILED_MESSAGE,
-        startedAt: DISCOVER_NEW_START,
+        startedAt: DISCOVER_OLD_START,
         finishedAt: DISCOVER_TERMINATE_AT,
         temporalRunId: DISCOVER_NEW_TEMPORAL_RUN,
         eventsJson: JSON.stringify([
@@ -5436,6 +5553,16 @@ describe("local TypeScript API", () => {
         status: "failed",
         startedAt: DISCOVER_NEW_START,
         finishedAt: DISCOVER_FAILED_AT,
+      });
+
+      const filtered = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?workflowType=DiscoverWorkflow&startedSince=2026-07-04T12:13:38.000Z&startedBefore=2026-07-04T12:13:39.000Z",
+      });
+      expect(filtered.statusCode, filtered.body).toBe(200);
+      expect(filtered.json()).toMatchObject({
+        pagination: { total: 1 },
+        items: [{ workflowId: "discover-local", startedAt: DISCOVER_NEW_START }],
       });
 
       const detail = await app.inject({ method: "GET", url: "/v1/workflow-runs/discover-local" });

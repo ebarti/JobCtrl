@@ -5,6 +5,7 @@ import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { ToggleGroup, ToggleGroupItem } from "../../../shared/ui/toggle-group.js";
 import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAuditPins.js";
 import { ProfileForm } from "../forms/profile-form.js";
 import { useProfileHtmlPreviewUrl } from "../hooks/useProfileHtmlPreviewUrl.js";
@@ -16,6 +17,8 @@ const DEFAULT_EDITOR_WIDTH = 62;
 const MIN_EDITOR_WIDTH = 38;
 const MAX_EDITOR_WIDTH = 76;
 
+type ProfileWorkspaceView = "profile-data" | "resume-editor" | "split-view";
+
 export interface ProfileEditorProps {
   section?: "profile" | "preferences";
 }
@@ -25,6 +28,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
   const profileQuery = useProfileQuery();
   const { url: profileHtmlPreviewUrl } = useProfileHtmlPreviewUrl();
   const layoutRef = useRef<HTMLDivElement>(null);
+  const [workspaceView, setWorkspaceView] = useState<ProfileWorkspaceView>("profile-data");
   const [editorWidth, setEditorWidth] = useState(() => {
     const saved = storage.get<number>(SPLIT_STORAGE_KEY);
     return clampEditorWidth(typeof saved === "number" ? saved : DEFAULT_EDITOR_WIDTH);
@@ -69,18 +73,39 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
     storage.set(SPLIT_STORAGE_KEY, next);
   };
 
-  return (
-    <div
-      className={`profile-layout ${showPreview ? "" : "profile-layout-single"}`}
-      ref={layoutRef}
-      style={layoutStyle}
-    >
-      <section className="card">
+  const sectionLinks = section === "profile"
+    ? [
+        ["profile-personal", "Personal"],
+        ["profile-baseline", "Resume baseline"],
+        ["profile-experience", "Experience"],
+        ["profile-education", "Education"],
+        ["profile-skills", "Skills"],
+        ["profile-eeo", "Voluntary EEO"],
+      ]
+    : [
+        ["preferences-application", "Application"],
+        ["preferences-tailoring", "Tailoring"],
+        ["preferences-style", "Resume style"],
+        ["preferences-templates", "Templates"],
+      ];
+
+  const profileData = (
+      <section className="card profile-data-workspace">
         <CardHeader
           title={cardTitle}
-          meta={profileQuery.data ? undefined : "loading"}
+          meta={profileQuery.data ? undefined : errorMessage ? "unavailable" : "loading"}
         />
-        {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
+        <nav
+          aria-label={`${section === "profile" ? "Profile" : "Preferences"} sections`}
+          className="profile-section-nav"
+        >
+          <span data-typography="label">Jump to</span>
+          <div className="profile-section-nav__links">
+            {sectionLinks.map(([target, label]) => (
+              <a data-typography="control" href={`#${target}`} key={target}>{label}</a>
+            ))}
+          </div>
+        </nav>
         {section === "profile" ? (
           <div className="toolbar profile-evidence-toolbar">
             <Link className="tab" to="/evidence-map">
@@ -92,17 +117,71 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
           section === "preferences" ? (
             <>
               <ProfileForm initial={profileQuery.data} section={section} />
-              <ResumeTemplatePanel profileHtmlPreviewUrl={profileHtmlPreviewUrl} />
+              <div id="preferences-templates" className="profile-template-section">
+                <ResumeTemplatePanel profileHtmlPreviewUrl={profileHtmlPreviewUrl} />
+              </div>
             </>
           ) : (
             <ProfileForm initial={profileQuery.data} section={section} />
           )
+        ) : errorMessage ? (
+          <div className="profile-editor-state" role="alert">
+            <Empty
+              title={section === "preferences" ? "Preferences unavailable" : "Profile unavailable"}
+              description={errorMessage}
+              action={
+                <Button type="button" variant="outline" onClick={() => void profileQuery.refetch()}>
+                  Retry
+                </Button>
+              }
+            />
+          </div>
         ) : (
-          <Empty title={section === "preferences" ? "Loading preferences." : "Loading profile."} />
+          <div className="profile-editor-state" aria-busy="true">
+            <Empty
+              title={section === "preferences" ? "Loading preferences" : "Loading profile"}
+              description="The editor will appear when the saved configuration is ready."
+            />
+          </div>
         )}
       </section>
-      {showPreview ? (
-        <>
+  );
+
+  if (!showPreview) {
+    return <div className="profile-layout profile-layout-single">{profileData}</div>;
+  }
+
+  return (
+    <div className="profile-workspace">
+      <ToggleGroup
+        aria-label="Profile workspace views"
+        className="profile-workspace-tabs"
+        spacing={0}
+        type="single"
+        value={workspaceView}
+        variant="outline"
+        onValueChange={(value) => {
+          if (value === "profile-data" || value === "resume-editor" || value === "split-view") {
+            setWorkspaceView(value);
+          }
+        }}
+      >
+        <ToggleGroupItem value="profile-data">Profile data</ToggleGroupItem>
+        <ToggleGroupItem value="resume-editor">Resume editor</ToggleGroupItem>
+        <ToggleGroupItem value="split-view">Split view</ToggleGroupItem>
+      </ToggleGroup>
+      <div
+        className={`profile-layout profile-workspace-content ${
+          workspaceView === "split-view" ? "" : "profile-layout-single"
+        }`}
+        data-view={workspaceView}
+        ref={layoutRef}
+        style={layoutStyle}
+      >
+        <div className="profile-workspace-data" hidden={workspaceView === "resume-editor"}>
+          {profileData}
+        </div>
+        {workspaceView === "split-view" ? (
           <Button
             className="profile-resizer"
             type="button"
@@ -124,15 +203,27 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
           >
             <span aria-hidden="true" />
           </Button>
-          <aside className="preview resume-editor-preview">
+        ) : null}
+          <aside
+            aria-label="Baseline resume editor workspace"
+            className="preview resume-editor-preview"
+            hidden={workspaceView === "profile-data"}
+            id="profile-resume-editor"
+          >
+            <div className="profile-resume-editor-help">
+              <strong data-typography="component-title">Edit the baseline resume</strong>
+              <span data-typography="body">
+                Select resume text, then use the labelled bold, italic, underline, link, font,
+                size, and alignment controls.
+              </span>
+            </div>
             <ResumeStandalonePlateEditor
               className="profile-resume-plate-editor"
               htmlUrl={profileHtmlPreviewUrl}
               title="Baseline resume editor"
             />
           </aside>
-        </>
-      ) : null}
+      </div>
     </div>
   );
 }

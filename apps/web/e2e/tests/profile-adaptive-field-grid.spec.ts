@@ -32,7 +32,16 @@ test("preferences property grids reflow against their container and explain lock
     .getByLabel("Salary currency")
     .locator('xpath=ancestor::*[@data-slot="adaptive-field-grid"][1]');
   await expect(applicationGrid).toBeVisible();
-  await expect.poll(() => columnCount(applicationGrid)).toBe(4);
+  await expect.poll(() => columnCount(applicationGrid)).toBe(2);
+  await expect(page.getByRole("group", { name: "Work authorization and account" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Availability" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Compensation" })).toBeVisible();
+  await expect(page.getByLabel("Salary expectation")).toHaveAccessibleDescription(
+    "Annual gross amount in the selected currency.",
+  );
+  await expect(page.getByLabel("Salary currency")).toHaveAccessibleDescription(
+    "Three-letter currency code, such as EUR or USD.",
+  );
 
   await page.getByRole("tab", { name: "Writing style" }).click();
   const writingStyleGroup = page.locator(

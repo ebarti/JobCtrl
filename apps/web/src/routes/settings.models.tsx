@@ -8,5 +8,10 @@ export const Route = createFileRoute("/settings/models")({
 });
 
 function ModelsSettingsRoute() {
-  return <><ModelSelectionPanel /><AiExecutionPolicyPanel /></>;
+  return (
+    <>
+      <AiExecutionPolicyPanel />
+      <ModelSelectionPanel />
+    </>
+  );
 }

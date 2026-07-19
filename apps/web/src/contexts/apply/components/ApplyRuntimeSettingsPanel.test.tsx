@@ -1,4 +1,5 @@
 import { screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { renderWithProviders } from "../../../test/render.js";
@@ -32,6 +33,7 @@ describe("<ApplyRuntimeSettingsPanel>", () => {
   });
 
   it("uses shared field, input, and action primitives", async () => {
+    const user = userEvent.setup();
     const { container } = renderWithProviders(<ApplyRuntimeSettingsPanel />);
 
     await screen.findByLabelText("Maximum AI budget per application (USD)");
@@ -39,8 +41,23 @@ describe("<ApplyRuntimeSettingsPanel>", () => {
     expect(container.querySelectorAll('input[data-slot="input"]')).toHaveLength(
       2,
     );
-    expect(
-      screen.getByRole("button", { name: "Save application runtime" }),
-    ).toHaveAttribute("data-slot", "button");
+    const save = screen.getByRole("button", {
+      name: "Save application runtime",
+    });
+    const discard = screen.getByRole("button", { name: "Discard changes" });
+    expect(save).toHaveAttribute("data-slot", "button");
+    expect(save).toBeDisabled();
+    expect(discard).toBeDisabled();
+    await user.clear(screen.getByLabelText("Apply agent timeout (seconds)"));
+    await user.type(
+      screen.getByLabelText("Apply agent timeout (seconds)"),
+      "1200",
+    );
+    expect(save).toBeEnabled();
+    expect(discard).toBeEnabled();
+    expect(container.querySelector(".settings-save-actions")).toHaveAttribute(
+      "data-save-state",
+      "dirty",
+    );
   });
 });

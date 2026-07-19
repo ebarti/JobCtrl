@@ -4899,6 +4899,13 @@ function timestampAtOrAfter(value: string | null | undefined, since: string): bo
   return Number.isFinite(valueTime) && Number.isFinite(sinceTime) && valueTime >= sinceTime;
 }
 
+function timestampBefore(value: string | null | undefined, before: string): boolean {
+  if (!value) return false;
+  const valueTime = Date.parse(value);
+  const beforeTime = Date.parse(before);
+  return Number.isFinite(valueTime) && Number.isFinite(beforeTime) && valueTime < beforeTime;
+}
+
 function displayPostingSource(
   atsKind: string | null | undefined,
   canonicalUrl: string | null | undefined,
@@ -5904,9 +5911,7 @@ export function listWorkflowRuns(
 ): PaginatedResponse<WorkflowRunSummary> {
   refreshProjections(db, DEFAULT_TENANT);
   if (!tableExists(db, "workflow_run_projections")) {
-    return paginate([], query.page, query.pageSize, query.sort, query.dir, {
-      status: query.status,
-    });
+    return paginate([], query.page, query.pageSize, query.sort, query.dir, workflowRunsFilterPayload(query));
   }
   const hasApply = tableExists(db, "apply_run_projections");
   const applyJoin = hasApply
@@ -5945,11 +5950,26 @@ export function listWorkflowRuns(
   const lifecycleFolds = loadWorkflowRunLifecycleFolds(db);
   const all = rows
     .map((row) => rowToWorkflowRunSummary(applyWorkflowLifecycleFold(row, lifecycleFolds.get(stringField(row.workflow_id)))))
-    .filter((run) => query.status === "all" || run.status === query.status);
+    .filter((run) => filterWorkflowRun(run, query));
   all.sort((left, right) => compareWorkflowRuns(left, right, query.sort, query.dir));
-  return paginate(all, query.page, query.pageSize, query.sort, query.dir, {
+  return paginate(all, query.page, query.pageSize, query.sort, query.dir, workflowRunsFilterPayload(query));
+}
+
+function filterWorkflowRun(run: WorkflowRunSummary, query: WorkflowRunsListQuery): boolean {
+  if (query.status !== "all" && run.status !== query.status) return false;
+  if (query.workflowType && run.workflowType !== query.workflowType) return false;
+  if (query.startedSince && !timestampAtOrAfter(run.startedAt, query.startedSince)) return false;
+  if (query.startedBefore && !timestampBefore(run.startedAt, query.startedBefore)) return false;
+  return true;
+}
+
+function workflowRunsFilterPayload(query: WorkflowRunsListQuery): Record<string, unknown> {
+  return {
     status: query.status,
-  });
+    workflowType: query.workflowType ?? null,
+    startedSince: query.startedSince ?? null,
+    startedBefore: query.startedBefore ?? null,
+  };
 }
 
 /**

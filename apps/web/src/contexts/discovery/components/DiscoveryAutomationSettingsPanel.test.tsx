@@ -7,13 +7,12 @@ import { renderWithProviders } from "../../../test/render.js";
 import { DiscoveryAutomationSettingsForm } from "./DiscoveryAutomationSettingsPanel.js";
 
 describe("<DiscoveryAutomationSettingsForm>", () => {
-  it("uses shared form controls and a stable save and discard decision bar", async () => {
+  it("shows save and discard only while the form has pending changes", async () => {
     const user = userEvent.setup();
     renderWithProviders(
       <DiscoveryAutomationSettingsForm initial={sampleDiscoverySettingsResponse} />,
     );
 
-    const save = screen.getByRole("button", { name: "Save changes" });
     const approval = screen.getByRole("checkbox", {
       name: "Require approval before live submit",
     });
@@ -23,12 +22,13 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
       "input",
     );
     expect(approval).toHaveAttribute("data-slot", "checkbox");
-    expect(save).toBeDisabled();
-    expect(screen.getByText("No unsaved changes")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard changes" })).not.toBeInTheDocument();
+    expect(screen.queryByText("No unsaved changes")).not.toBeInTheDocument();
 
     await user.click(approval);
 
-    expect(save).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
     expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Discard changes" })).toBeEnabled();
   });

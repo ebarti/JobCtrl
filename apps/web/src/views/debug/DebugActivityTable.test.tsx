@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 
-import { render, screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import type { SortingState } from "@tanstack/react-table";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ActivityEventSummary } from "../../contexts/operations/types.js";
 import { makeActivityPage } from "../../test/fixtures/projections.js";
+import { renderWithProviders } from "../../test/render.js";
 import { DebugActivityTable } from "./DebugActivityTable.js";
 
 const baseActivity: ActivityEventSummary = {
@@ -31,8 +32,17 @@ function makeActivity(index: number): ActivityEventSummary {
   };
 }
 
-function renderTable(overrides: Partial<React.ComponentProps<typeof DebugActivityTable>> = {}) {
-  return render(
+function setViewportWidth(width: number) {
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: width,
+  });
+}
+
+function renderTable(
+  overrides: Partial<React.ComponentProps<typeof DebugActivityTable>> = {},
+) {
+  return renderWithProviders(
     <DebugActivityTable
       data={makeActivityPage(
         Array.from({ length: 50 }, (_, index) => makeActivity(index + 11)),
@@ -54,6 +64,8 @@ function renderTable(overrides: Partial<React.ComponentProps<typeof DebugActivit
 }
 
 describe("<DebugActivityTable>", () => {
+  afterEach(() => setViewportWidth(1024));
+
   it("uses server pagination metadata instead of loading every activity event", () => {
     renderTable();
 
@@ -105,15 +117,67 @@ describe("<DebugActivityTable>", () => {
       "activity-message-cell",
     );
 
-    const css = readFileSync("src/styles/globals.css", "utf8");
-    expect(css).toMatch(
+    const baseCss = readFileSync("src/styles/globals.css", "utf8");
+    const routeCss = readFileSync("src/styles/redesign-data.css", "utf8");
+    expect(baseCss).toMatch(
       /\.activity-data-grid-table\s*\{[^}]*table-layout:\s*fixed/s,
     );
-    expect(css).toMatch(
+    expect(baseCss).toMatch(
       /\.activity-data-grid-table \.activity-message-cell\s*\{[^}]*white-space:\s*normal/s,
     );
-    expect(css).toMatch(
-      /\.activity-data-grid-table \.activity-message-cell \.activity-main b\s*\{[^}]*overflow-wrap:\s*anywhere/s,
+    expect(routeCss).toMatch(
+      /\.activity-data-grid-table \.activity-message-cell \.activity-main > span\s*\{[^}]*overflow-wrap:\s*anywhere/s,
     );
+  });
+
+  it("copies the explicit event identifier", async () => {
+    const user = userEvent.setup();
+    const { ports } = renderTable({
+      data: makeActivityPage([makeActivity(1)]),
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "Copy event ID evt-01" }),
+    );
+
+    expect(ports.clipboard.write).toHaveBeenCalledWith("evt-01");
+  });
+
+  it("announces when copying the event identifier fails", async () => {
+    const user = userEvent.setup();
+    const { ports } = renderTable({
+      data: makeActivityPage([makeActivity(1)]),
+    });
+    vi.mocked(ports.clipboard.write).mockRejectedValueOnce(
+      new Error("clipboard permission denied"),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Copy event ID evt-01" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not copy event ID. Try again.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Copy event ID evt-01" }),
+    ).toHaveAttribute("title", "Copy failed. Try again");
+  });
+
+  it("uses expandable event records on mobile", async () => {
+    setViewportWidth(390);
+    renderTable({ data: makeActivityPage([makeActivity(1)]) });
+
+    const list = await screen.findByRole("list", { name: "Recent activity" });
+    const disclosure = within(list)
+      .getByText("Activity event 01")
+      .closest("details");
+    expect(disclosure).not.toBeNull();
+    expect(
+      within(disclosure as HTMLElement).getByText("Event type"),
+    ).toBeInTheDocument();
+    expect(
+      within(disclosure as HTMLElement).getByText("evt-01"),
+    ).toBeInTheDocument();
   });
 });

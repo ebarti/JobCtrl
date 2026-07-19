@@ -9,9 +9,17 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
   page.on("dialog", (dialog) => void dialog.accept());
 
   await page.goto("/jobs");
-  await expect(page.getByRole("button", { name: /select page/i })).toBeVisible({
+  const moreActions = page.getByRole("button", { name: "More actions" });
+  await expect(moreActions).toBeVisible({
     timeout: 30_000,
   });
+  await moreActions.click();
+  await expect(
+    page
+      .getByRole("menu", { name: "More actions" })
+      .getByRole("menuitem", { name: "Select page" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect(page.getByText(/Director of Platform Engineering/i)).toBeVisible(
     {
       timeout: 30_000,
@@ -32,12 +40,16 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
     page.getByText(new RegExp(`${rowsToSelect} selected`)),
   ).toBeVisible();
 
+  const deleteResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/v1/jobs/bulk-delete") &&
+      response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: /delete selected/i }).click();
+  expect((await deleteResponse).ok()).toBe(true);
   await expect(
-    page.getByRole("button", { name: /delete selected/i }),
-  ).toBeDisabled({
-    timeout: 15_000,
-  });
+    page.getByText(new RegExp(`${rowsToSelect} selected`)),
+  ).toHaveCount(0, { timeout: 15_000 });
 
   const queueTabs = page.getByRole("tablist", { name: "Job queues" });
   const deletedTab = queueTabs.getByRole("tab", { name: "Deleted" });
@@ -61,7 +73,7 @@ test("Bulk soft-delete + restore: select 3 → delete → confirm → switch to 
   await page.getByRole("button", { name: /restore selected/i }).click();
   await expect(
     page.getByRole("button", { name: /restore selected/i }),
-  ).toBeDisabled({
+  ).toHaveCount(0, {
     timeout: 15_000,
   });
 });
@@ -121,7 +133,7 @@ test("Job operations menu hides a selected job and exposes it in the Hidden queu
     name: "Unhide selected",
   });
   await unhideSelected.click();
-  await expect(unhideSelected).toBeDisabled({ timeout: 15_000 });
+  await expect(unhideSelected).toHaveCount(0, { timeout: 15_000 });
   await activeTab.click();
   await expect(activeTab).toHaveAttribute("aria-selected", "true");
   await expect(
@@ -129,7 +141,7 @@ test("Job operations menu hides a selected job and exposes it in the Hidden queu
   ).toBeVisible({ timeout: 15_000 });
 });
 
-test("workflow recovery controls stay visible without opening Job operations", async ({
+test("workflow recovery controls stay grouped in Job operations", async ({
   page,
 }) => {
   await page.goto("/jobs");
@@ -137,19 +149,18 @@ test("workflow recovery controls stay visible without opening Job operations", a
     timeout: 30_000,
   });
 
-  const recoveryActions = page.getByRole("group", {
-    name: "Workflow recovery actions",
+  const operationsTrigger = page.getByRole("button", {
+    name: "Job operations",
   });
-  await expect(recoveryActions).toBeVisible();
+  await operationsTrigger.click();
+  const operationsMenu = page.getByRole("menu", { name: "Job operations" });
+  await expect(operationsMenu).toBeVisible();
   await expect(
-    recoveryActions.getByRole("button", {
+    operationsMenu.getByRole("menuitem", {
       name: "Continue pending preparation",
     }),
   ).toBeVisible();
   await expect(
-    recoveryActions.getByRole("button", { name: "Retry all failed" }),
+    operationsMenu.getByRole("menuitem", { name: "Retry all failed" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("menu", { name: "Job operations" }),
-  ).toHaveCount(0);
 });

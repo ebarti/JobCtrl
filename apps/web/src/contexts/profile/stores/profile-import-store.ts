@@ -1,5 +1,9 @@
 import { create } from "zustand";
-import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
+import {
+  createJSONStorage,
+  persist,
+  type StateStorage,
+} from "zustand/middleware";
 
 interface ProfileImportState {
   filename: string;
@@ -9,6 +13,17 @@ interface ProfileImportState {
   setUpload: (filename: string, pdfBase64: string) => void;
   setOptions: (importProfile: boolean, importStyle: boolean) => void;
   reset: () => void;
+}
+
+type ProfileImportUploadState = Pick<
+  ProfileImportState,
+  "filename" | "pdfBase64"
+>;
+
+export function hasProfileImportUpload(
+  state: ProfileImportUploadState,
+): boolean {
+  return state.filename.trim().length > 0 && state.pdfBase64.length > 0;
 }
 
 const initialState = {
@@ -54,7 +69,8 @@ export const useProfileImportStore = create<ProfileImportState>()(
     (set) => ({
       ...initialState,
       setUpload: (filename, pdfBase64) => set({ filename, pdfBase64 }),
-      setOptions: (importProfile, importStyle) => set({ importProfile, importStyle }),
+      setOptions: (importProfile, importStyle) =>
+        set({ importProfile, importStyle }),
       reset: () => set({ ...initialState }),
     }),
     {

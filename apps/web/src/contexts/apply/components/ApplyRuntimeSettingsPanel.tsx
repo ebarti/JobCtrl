@@ -2,8 +2,8 @@ import { SettingsUpdateRequestSchema } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { useEffect, useState } from "react";
 
-import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Button } from "../../../shared/ui/button.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import {
   Field,
@@ -17,7 +17,10 @@ import { useUpdateApplyRuntimeSettingsMutation } from "../hooks/useUpdateApplyRu
 export function ApplyRuntimeSettingsPanel() {
   const settingsQuery = useSettingsPolicyQuery();
   const updateSettings = useUpdateApplyRuntimeSettingsMutation();
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState<{
+    kind: "error" | "success";
+    message: string;
+  } | null>(null);
   const response = settingsQuery.data;
   const form = useForm({
     defaultValues: {
@@ -32,6 +35,7 @@ export function ApplyRuntimeSettingsPanel() {
     },
     onSubmit: async ({ value, formApi }) => {
       if (!response) return;
+      setStatus(null);
       const request = {
         ...(response.effectiveSettings.applyMaxBudgetUsd.editable
           ? { applyMaxBudgetUsd: value.applyMaxBudgetUsd }
@@ -40,14 +44,24 @@ export function ApplyRuntimeSettingsPanel() {
           ? { applyTimeoutSeconds: value.applyTimeoutSeconds }
           : {}),
       };
-      const saved = await updateSettings.mutateAsync(request);
-      formApi.reset({
-        applyMaxBudgetUsd: saved.settings.applyMaxBudgetUsd,
-        applyTimeoutSeconds: saved.settings.applyTimeoutSeconds,
-      });
-      setStatus(
-        "Apply runtime settings saved for newly started application jobs.",
-      );
+      try {
+        const saved = await updateSettings.mutateAsync(request);
+        formApi.reset({
+          applyMaxBudgetUsd: saved.settings.applyMaxBudgetUsd,
+          applyTimeoutSeconds: saved.settings.applyTimeoutSeconds,
+        });
+        setStatus({
+          kind: "success",
+          message:
+            "Application runtime saved for newly started application jobs.",
+        });
+      } catch {
+        setStatus({
+          kind: "error",
+          message:
+            "Application runtime could not be saved. Review the fields and try again.",
+        });
+      }
     },
   });
 
@@ -62,10 +76,14 @@ export function ApplyRuntimeSettingsPanel() {
 
   if (!response) {
     return (
-      <section className="card full">
-        <CardHeader title="Application runtime" />
+      <DisclosureSection
+        className="application-runtime-settings"
+        collapsedSummary="Budget and timeout policy"
+        description="Per-application AI budget and execution timeout"
+        title="Application runtime"
+      >
         <Empty title="Loading Apply runtime settings." />
-      </section>
+      </DisclosureSection>
     );
   }
 
@@ -73,18 +91,33 @@ export function ApplyRuntimeSettingsPanel() {
   const timeout = response.effectiveSettings.applyTimeoutSeconds;
 
   return (
-    <section className="card full">
-      <CardHeader title="Application runtime" />
+    <DisclosureSection
+      className="application-runtime-settings"
+      collapsedSummary="Budget and timeout policy"
+      description="Per-application AI budget and execution timeout"
+      title="Application runtime"
+    >
       <form
         className="config-form"
         onSubmit={(event) => {
           event.preventDefault();
           void form.handleSubmit();
         }}
+        onReset={(event) => {
+          event.preventDefault();
+          form.reset({
+            applyMaxBudgetUsd: response.settings.applyMaxBudgetUsd,
+            applyTimeoutSeconds: response.settings.applyTimeoutSeconds,
+          });
+          setStatus(null);
+        }}
       >
         {status ? (
-          <div className="status-line" role="status">
-            {status}
+          <div
+            className="status-line"
+            role={status.kind === "error" ? "alert" : "status"}
+          >
+            {status.message}
           </div>
         ) : null}
         <form.Field name="applyMaxBudgetUsd">
@@ -102,9 +135,10 @@ export function ApplyRuntimeSettingsPanel() {
                 readOnly={!budget.editable}
                 aria-describedby="apply-max-budget-help"
                 value={field.state.value}
-                onChange={(event) =>
-                  field.handleChange(Number(event.target.value))
-                }
+                onChange={(event) => {
+                  setStatus(null);
+                  field.handleChange(Number(event.target.value));
+                }}
               />
               <FieldDescription id="apply-max-budget-help">
                 0 is a zero-dollar cap, not unlimited.{" "}
@@ -129,9 +163,10 @@ export function ApplyRuntimeSettingsPanel() {
                 readOnly={!timeout.editable}
                 aria-describedby="apply-timeout-help"
                 value={field.state.value}
-                onChange={(event) =>
-                  field.handleChange(Number(event.target.value))
-                }
+                onChange={(event) => {
+                  setStatus(null);
+                  field.handleChange(Number(event.target.value));
+                }}
               />
               <FieldDescription id="apply-timeout-help">
                 Per application agent; separate from Temporal activity timeouts.{" "}
@@ -140,21 +175,45 @@ export function ApplyRuntimeSettingsPanel() {
             </Field>
           )}
         </form.Field>
-        <div className="form-actions">
-          <Button
-            type="submit"
-            disabled={
-              updateSettings.isPending ||
-              (!budget.editable && !timeout.editable)
-            }
-          >
-            {updateSettings.isPending
-              ? "Saving application runtime"
-              : "Save application runtime"}
-          </Button>
-        </div>
+        <form.Subscribe
+          selector={(state) => ({
+            canSubmit: state.canSubmit,
+            isDirty: state.isDirty,
+            isSubmitting: state.isSubmitting,
+          })}
+        >
+          {({ canSubmit, isDirty, isSubmitting }) => (
+            <div
+              className="form-actions settings-save-actions"
+              data-save-state={
+                isSubmitting ? "saving" : isDirty ? "dirty" : "saved"
+              }
+            >
+              <Button
+                type="submit"
+                disabled={
+                  !canSubmit ||
+                  !isDirty ||
+                  isSubmitting ||
+                  (!budget.editable && !timeout.editable)
+                }
+              >
+                {isSubmitting
+                  ? "Saving application runtime"
+                  : "Save application runtime"}
+              </Button>
+              <Button
+                type="reset"
+                variant="outline"
+                disabled={!isDirty || isSubmitting}
+              >
+                Discard changes
+              </Button>
+            </div>
+          )}
+        </form.Subscribe>
       </form>
-    </section>
+    </DisclosureSection>
   );
 }
 

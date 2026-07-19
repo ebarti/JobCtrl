@@ -107,11 +107,20 @@ describe("PipelinesView", () => {
     expect(within(tools).queryByLabelText("Source")).not.toBeInTheDocument();
   });
 
-  it("renders current execution as visual stage cards and keeps secondary ledgers collapsed", async () => {
+  it("renders current execution as status-first stage rows and keeps details collapsed", async () => {
     const user = userEvent.setup();
     await renderPipelineOperations(pipelinesDiscoveringSnapshot);
 
     const crawl = screen.getByRole("region", { name: "Crawl sources stage" });
+    const crawlTrigger = within(crawl).getByRole("button", {
+      name: /Crawl sources/i,
+    });
+    expect(crawlTrigger).toHaveAttribute("aria-expanded", "false");
+    expect(crawlTrigger).toHaveTextContent(
+      "Source family · 2 active · 1 terminal · 0 attention",
+    );
+    await user.click(crawlTrigger);
+    expect(crawlTrigger).toHaveAttribute("aria-expanded", "true");
     expect(
       within(crawl).getByLabelText("Crawl sources stage summary"),
     ).toBeInTheDocument();
@@ -180,6 +189,10 @@ describe("PipelinesView", () => {
   it("makes blocked stages explicit without relying on color alone", async () => {
     await renderPipelineOperations(pipelinesMixedFailureSnapshot);
 
+    const attentionSummary = within(
+      screen.getByLabelText("Pipeline operations summary"),
+    ).getByText("1 stage");
+    expect(attentionSummary).toHaveAttribute("data-status-tone", "warn");
     const crawl = screen.getByRole("region", { name: "Crawl sources stage" });
     expect(crawl).toHaveAttribute("data-stage-status", "blocked");
     expect(within(crawl).getByText("Attention required")).toHaveAttribute(
@@ -202,7 +215,7 @@ describe("PipelinesView", () => {
     expect(crawl).not.toHaveTextContent("Done6");
     expect(crawl).toHaveTextContent("Attention3");
     await user.click(
-      within(crawl).getByRole("button", { name: /All stage outcomes/i }),
+      within(crawl).getByRole("button", { name: /Crawl sources/i }),
     );
     const outcomes = within(crawl).getByLabelText(
       "Crawl sources current-execution outcome counts",
@@ -219,6 +232,55 @@ describe("PipelinesView", () => {
     expect(outcomes).toHaveTextContent("Needs verification1");
     expect(outcomes).toHaveTextContent("Stale0");
     expect(outcomes).toHaveTextContent("Unknown0");
+  });
+
+  it("prioritizes four status facts and moves snapshot provenance to the inspector", async () => {
+    await renderPipelineOperations(pipelinesDiscoveringSnapshot);
+
+    const summary = screen.getByLabelText("Pipeline operations summary");
+    expect(
+      summary.querySelectorAll('[data-summary-priority="primary"]'),
+    ).toHaveLength(4);
+    expect(
+      summary.querySelectorAll('[data-summary-priority="secondary"]'),
+    ).toHaveLength(2);
+    expect(summary).toHaveTextContent("Execution sweep");
+    expect(summary).toHaveTextContent("Source families");
+    expect(summary).toHaveTextContent("Attention");
+    expect(summary).not.toHaveTextContent("Snapshot");
+    expect(document.getElementById("pipeline-inspector-surface")).toHaveTextContent(
+      "Snapshot generated",
+    );
+  });
+
+  it("offers a labelled Pipeline and Inspector mobile surface control", async () => {
+    const user = userEvent.setup();
+    await renderPipelineOperations(pipelinesDiscoveringSnapshot);
+
+    const control = screen.getByRole("group", { name: "Pipeline view" });
+    const pipeline = within(control).getByRole("button", { name: "Pipeline" });
+    const inspector = within(control).getByRole("button", { name: "Inspector" });
+    const workspace = control.closest<HTMLElement>(".pipeline-operations-workspace");
+    if (!workspace) throw new Error("Expected the pipeline workspace.");
+
+    expect(pipeline).toHaveAttribute("aria-pressed", "true");
+    expect(pipeline).toHaveAttribute("aria-controls", "pipeline-primary-surface");
+    expect(inspector).toHaveAttribute("aria-pressed", "false");
+    expect(inspector).toHaveAttribute(
+      "aria-controls",
+      "pipeline-inspector-surface",
+    );
+    expect(workspace).toHaveAttribute("data-mobile-surface", "pipeline");
+    expect(document.getElementById("pipeline-primary-surface")).toBeInTheDocument();
+    expect(document.getElementById("pipeline-inspector-surface")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Freshness and capacity/i }),
+    ).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(inspector);
+    expect(pipeline).toHaveAttribute("aria-pressed", "false");
+    expect(inspector).toHaveAttribute("aria-pressed", "true");
+    expect(workspace).toHaveAttribute("data-mobile-surface", "inspector");
   });
 
   it("makes shared worker capacity and active runtime work immediately legible", async () => {
@@ -349,6 +411,7 @@ describe("PipelinesView", () => {
   });
 
   it("retries history repair automatically without hiding global telemetry or backlog", async () => {
+    const user = userEvent.setup();
     await renderPipelineOperations(pipelinesRetryingProjectionSnapshot);
 
     const coverageAlert = screen.getByRole("alert");
@@ -378,6 +441,9 @@ describe("PipelinesView", () => {
     );
     expect(getLivePipelineMetric("Active work")).toHaveTextContent(
       "Active work4Crawl sources 1 · Tailor 3",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /Freshness and capacity/i }),
     );
     expect(screen.getByRole("region", { name: "Worker capacity facts" })).toHaveTextContent(
       "Configured slots4Active slots4Available slots0",
@@ -527,6 +593,7 @@ describe("PipelinesView", () => {
   });
 
   it("omits meaningless progress for a complete zero-denominator stage", async () => {
+    const user = userEvent.setup();
     await renderPipelineOperations({
       ...pipelinesDiscoveringSnapshot,
       stages: pipelinesDiscoveringSnapshot.stages.map((stage) =>
@@ -554,14 +621,15 @@ describe("PipelinesView", () => {
 
     const planSources = screen.getByRole("region", { name: "Plan sources stage" });
     expect(
-      within(planSources).queryByRole("progressbar", { name: "Stage progress" }),
+      planSources.querySelector('[role="progressbar"]'),
     ).not.toBeInTheDocument();
     expect(within(planSources).queryByText("No work remaining")).not.toBeInTheDocument();
+    const crawlSources = screen.getByRole("region", { name: "Crawl sources stage" });
+    await user.click(
+      within(crawlSources).getByRole("button", { name: /Crawl sources/i }),
+    );
     expect(
-      within(screen.getByRole("region", { name: "Crawl sources stage" })).getByRole(
-        "progressbar",
-        { name: "Stage progress" },
-      ),
+      within(crawlSources).getByRole("progressbar", { name: "Stage progress" }),
     ).toHaveAttribute("aria-valuenow", "33");
   });
 
@@ -769,6 +837,9 @@ describe("PipelinesView", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     await user.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await user.click(
+      screen.getByRole("button", { name: /Freshness and capacity/i }),
+    );
 
     const activityQueue = screen.getByRole("region", {
       name: "Activity task queue",
@@ -801,7 +872,11 @@ describe("PipelinesView", () => {
   });
 
   it("labels unavailable telemetry without inventing a numeric ETA", async () => {
+    const user = userEvent.setup();
     await renderPipelineOperations(pipelinesUnavailableTelemetrySnapshot);
+    await user.click(
+      screen.getByRole("button", { name: /Freshness and capacity/i }),
+    );
 
     const capacity = screen.getByRole("region", {
       name: "Worker capacity facts",
@@ -817,7 +892,11 @@ describe("PipelinesView", () => {
   });
 
   it("reports active inventory truth and multi-worker internal concurrency", async () => {
+    const user = userEvent.setup();
     await renderPipelineOperations(pipelinesMultiWorkerCapacitySnapshot);
+    await user.click(
+      screen.getByRole("button", { name: /Freshness and capacity/i }),
+    );
 
     const activeWorkHeading = screen.getByRole("heading", { name: "Active work" });
     const activeWork = activeWorkHeading.closest<HTMLElement>(".configuration-section");

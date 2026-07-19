@@ -62,6 +62,9 @@ describe("<SettingsForm>", () => {
       "data-slot",
       "button",
     );
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Discard changes" })).toBeDisabled();
+    expect(container.querySelector(".settings-save-actions")).toHaveAttribute("data-save-state", "saved");
   });
 
   it("autosaves execution settings after five seconds", async () => {
@@ -141,7 +144,7 @@ describe("<SettingsForm>", () => {
     });
 
     expect(applyConcurrency).toHaveValue(5);
-    expect(screen.getByText("saved; newer changes pending")).toBeInTheDocument();
+    expect(screen.getByText("Saved; newer changes pending.")).toBeInTheDocument();
   });
 
   it("keeps the saved worker value editable and reports restart state", async () => {

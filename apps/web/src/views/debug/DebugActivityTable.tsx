@@ -5,11 +5,12 @@ import type {
   ActivityEventSummary,
   PaginatedResponse,
 } from "../../contexts/operations/types.js";
+import { useIsMobile } from "../../shared/hooks/use-mobile.js";
 import {
   FilterableDataGrid,
   type DataGridSortState,
 } from "../../shared/ui/filterable-data-grid.js";
-import { activityColumns } from "./activity-columns.js";
+import { ActivityMobileRow, activityColumns } from "./activity-columns.js";
 
 export interface DebugActivityTableProps {
   data: PaginatedResponse<ActivityEventSummary> | null;
@@ -34,6 +35,7 @@ export function DebugActivityTable({
   onPageSizeChange,
   onOpenActivity,
 }: DebugActivityTableProps) {
+  const isMobile = useIsMobile();
   const gridSort = useMemo<DataGridSortState>(() => {
     const head = sorting[0];
     return {
@@ -55,6 +57,14 @@ export function DebugActivityTable({
       loadingMessage="Loading activity."
       emptyMessage="No activity events match."
       initialSort={{ columnId: "occurred_at", direction: "desc" }}
+      {...(isMobile
+        ? {
+            mobileListLabel: "Recent activity",
+            renderMobileRow: (activity) => (
+              <ActivityMobileRow activity={activity} />
+            ),
+          }
+        : {})}
       sort={gridSort}
       onSortChange={handleSortChange}
       manualSorting

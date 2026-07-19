@@ -25,8 +25,13 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
 
   await page.goto("/profile");
 
+  const profileDataView = page.getByRole("button", { name: "Profile data" });
+  const resumeEditorView = page.getByRole("button", { name: "Resume editor" });
+  await expect(profileDataView).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText(/Full name/i).first()).toBeVisible({ timeout: 30_000 });
 
+  await resumeEditorView.click();
+  await expect(resumeEditorView).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("Baseline resume editor", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Plate HTML/CSS editor", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("button", { name: "Bold" })).toBeVisible({ timeout: 30_000 });
@@ -34,6 +39,8 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
     timeout: 30_000,
   }).toBe(true);
 
+  await profileDataView.click();
+  await expect(profileDataView).toHaveAttribute("aria-pressed", "true");
   const fullNameLabel = page.getByText(/Full name/i).first();
   const fullNameInput = fullNameLabel.locator("xpath=following-sibling::input").first();
   await fullNameInput.click();
@@ -43,7 +50,8 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   await expect(saveButton).toBeEnabled({ timeout: 10_000 });
   await saveButton.click();
 
-  await expect(saveButton).toBeDisabled({ timeout: 30_000 });
+  await expect(saveButton).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByRole("status").filter({ hasText: "Profile saved" })).toBeVisible();
 
   await expect.poll(() => previewRequests.some((url) => url.includes("/v1/profile/preview.html?v=1")), {
     timeout: 30_000,

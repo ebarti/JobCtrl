@@ -165,6 +165,12 @@ and task-queue observations are runtime telemetry, not domain events.
 /v1/workflow-runs/:runId` returns the projection-backed detail and timeline.
 `POST /v1/workflow-runs/:runId/actions/cancel` requests Temporal cancellation.
 
+The list accepts an exact `workflowType`, inclusive UTC `startedSince`, and
+exclusive UTC `startedBefore` in addition to status, sorting, and pagination.
+Filtering happens after lifecycle folding and before pagination, so restarted
+executions use their canonical projected start time and returned totals cover
+the complete filtered result rather than only the current page.
+
 Cancellation is cooperative and asynchronous: the accepted request is not the
 same thing as observing the terminal canceled state.
 

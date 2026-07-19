@@ -34,5 +34,9 @@ describe("<AiExecutionPolicyPanel>", () => {
       "data-slot",
       "button",
     );
+    expect(screen.getByRole("button", { name: "Save AI policy" })).toBeDisabled();
+    await userEvent.setup().click(screen.getByRole("checkbox", { name: "Google" }));
+    expect(screen.getByRole("button", { name: "Save AI policy" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Discard changes" })).toBeEnabled();
   });
 });

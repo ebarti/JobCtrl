@@ -10,7 +10,7 @@ test("Dry-run apply: seed JobScored event → activity feed reflects new event",
 
   await page.goto("/debug");
   const livePill = page.locator(".connection-pill");
-  await expect(livePill).toBeVisible({ timeout: 30_000 });
+  await expect(livePill).toContainText("Live", { timeout: 30_000 });
   const activityRows = page.locator("table.activity-data-grid-table tbody tr");
   await expect(activityRows.first()).toBeVisible({ timeout: 30_000 });
 
@@ -42,7 +42,14 @@ test("Dry-run apply: seed JobScored event → activity feed reflects new event",
     db.close();
   }
 
+  // This fixture writes behind the API rather than through a product command.
+  // Reload to exercise the authoritative read path without making this
+  // workflow regression depend on delivery timing already covered by the SSE
+  // integration suite.
+  await page.reload();
   await expect(
-    page.locator("table.activity-data-grid-table tbody tr").filter({ hasText: eventMessage }),
+    page
+      .locator("table.activity-data-grid-table tbody tr")
+      .filter({ hasText: eventMessage }),
   ).toBeVisible({ timeout: 30_000 });
 });

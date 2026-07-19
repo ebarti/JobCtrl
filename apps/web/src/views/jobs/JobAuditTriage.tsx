@@ -4,7 +4,6 @@ import type { JobDetail } from "../../contexts/operations/types.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import { ScoreCorrectionControl } from "../../contexts/scoring/components/ScoreCorrectionControl.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
-import { StatusBadge } from "../../shared/ui/status-badge.js";
 
 export interface JobAuditTriageProps {
   detail: JobDetail;
@@ -28,7 +27,7 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
             <h2>Fit & evidence</h2>
           </header>
           <dl className="job-audit-metrics" aria-label="Ranking summary">
-            <Metric label="Fit score" value={`${job.fitScore ?? "-"}/10`} />
+            <Metric label="Fit score" value={job.fitScore === null ? "Not scored" : `${job.fitScore}/10`} />
             <Metric label="Band" value={score?.fitBand ?? "not recorded"} />
             <Metric label="Confidence" value={score?.confidence ?? "not recorded"} />
             <Metric label="Eligibility" value={score?.eligibility.status ?? "unknown"} />
@@ -44,35 +43,6 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
           ) : (
             <p className="job-audit-rationale muted">No score rationale was stored for this job.</p>
           )}
-          {requirementFitReport ? (
-            <RequirementFitGroups report={requirementFitReport} />
-          ) : (
-            <>
-              <TagGroup label="Matched signals" values={score?.matchedSignals} />
-              <TagGroup label="Missing signals" values={score?.missingSignals} tone="warn" />
-              <TagGroup label="Transferable signals" values={score?.transferableSignals} />
-            </>
-          )}
-          <TagGroup label="Keywords" values={job.scoreKeywords} />
-          <ScoreMetadata detail={detail} />
-          {job.scoreStaleness.isStale ? (
-            <div className="score-policy-row">
-              <ScoreStalenessBadge staleness={job.scoreStaleness} />
-              <span className="muted">scoring policy updated; reset this score before rescoring</span>
-              <ResetStaleScoresButton
-                className="tab on"
-                jobKeys={[job.jobKey]}
-                label="reset for rescore"
-                staleCount={1}
-              />
-            </div>
-          ) : null}
-          <div className="job-audit-score-correction">
-            <span className="job-audit-triage-kicker" data-typography="label">
-              Score correction
-            </span>
-            <ScoreCorrectionControl jobId={job.jobKey} currentScore={job.fitScore} />
-          </div>
           {factGroups.length ? (
             <div className="job-audit-concerns">
               <div className="job-audit-triage-kicker" data-typography="label">
@@ -83,23 +53,58 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
                   <div key={group.label}>
                     <dt>{group.label}</dt>
                     <dd>
-                      {group.facts.map((fact) => (
-                        <StatusBadge
-                          tone={factTone(fact)}
-                          key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}
-                        >
-                          {fact.detail ? `${fact.label}: ${fact.detail}` : fact.label}
-                        </StatusBadge>
-                      ))}
+                      <ul className="job-audit-concern-list">
+                        {group.facts.map((fact) => (
+                          <li data-severity={fact.severity} key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}>
+                            <span className="job-audit-concern-marker" aria-hidden="true" />
+                            <span data-typography="body">
+                              <strong data-typography="strong-body">{fact.label}</strong>
+                              {fact.detail ? `: ${fact.detail}` : ""}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
                     </dd>
                   </div>
                 ))}
               </dl>
             </div>
           ) : null}
-          {applyAudit.state !== "ready" && !factGroups.length ? (
-            <p className="muted">{applyAudit.summary}</p>
-          ) : null}
+          {applyAudit.state !== "ready" && !factGroups.length ? <p className="muted">{applyAudit.summary}</p> : null}
+          <details className="job-audit-diagnostics">
+            <summary data-typography="control">Score evidence and controls</summary>
+            <div className="job-audit-diagnostics__content">
+              {requirementFitReport ? (
+                <RequirementFitGroups report={requirementFitReport} />
+              ) : (
+                <>
+                  <TagGroup label="Matched signals" values={score?.matchedSignals} />
+                  <TagGroup label="Missing signals" values={score?.missingSignals} tone="warn" />
+                  <TagGroup label="Transferable signals" values={score?.transferableSignals} />
+                </>
+              )}
+              <TagGroup label="Keywords" values={job.scoreKeywords} />
+              <ScoreMetadata detail={detail} />
+              {job.scoreStaleness.isStale ? (
+                <div className="score-policy-row">
+                  <ScoreStalenessBadge staleness={job.scoreStaleness} />
+                  <span className="muted">scoring policy updated; reset this score before rescoring</span>
+                  <ResetStaleScoresButton
+                    className="tab on"
+                    jobKeys={[job.jobKey]}
+                    label="reset for rescore"
+                    staleCount={1}
+                  />
+                </div>
+              ) : null}
+              <div className="job-audit-score-correction">
+                <span className="job-audit-triage-kicker" data-typography="label">
+                  Score correction
+                </span>
+                <ScoreCorrectionControl jobId={job.jobKey} currentScore={job.fitScore} />
+              </div>
+            </div>
+          </details>
         </div>
       </div>
     </section>
@@ -115,11 +120,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function RequirementFitGroups({
-  report,
-}: {
-  report: NonNullable<JobDetail["requirementFitReport"]>;
-}) {
+function RequirementFitGroups({ report }: { report: NonNullable<JobDetail["requirementFitReport"]> }) {
   const matched = requirementTexts(report.assessments, ["matched"]);
   const missing = requirementTexts(report.assessments, ["missing", "blocked"]);
   const transferable = requirementTexts(report.assessments, ["transferable"]);
@@ -132,8 +133,8 @@ function RequirementFitGroups({
       <TagGroup label="Unassessed requirements" values={unassessed} tone="warn" />
       {report.summary.blockerCount || report.summary.missingHighWeightCount ? (
         <p className="muted">
-          {report.summary.blockerCount} blocker{report.summary.blockerCount === 1 ? "" : "s"} ·{" "}
-          {report.summary.missingHighWeightCount} high-weight miss
+          {report.summary.blockerCount} blocker
+          {report.summary.blockerCount === 1 ? "" : "s"} · {report.summary.missingHighWeightCount} high-weight miss
           {report.summary.missingHighWeightCount === 1 ? "" : "es"}
         </p>
       ) : null}
@@ -166,13 +167,13 @@ function TagGroup({
   return (
     <div className="job-audit-tag-group">
       <span data-typography="label">{label}</span>
-      <div>
+      <ul data-tone={tone}>
         {values.map((value) => (
-          <StatusBadge icon={false} tone={tone} key={value}>
+          <li data-typography="body" key={value}>
             {value}
-          </StatusBadge>
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }
@@ -192,7 +193,14 @@ function ScoreMetadata({ detail }: { detail: JobDetail }) {
     return null;
   }
 
-  return <p className="muted">{metadata.join(" | ")}</p>;
+  return (
+    <details className="job-score-technical-details">
+      <summary data-typography="control">Scoring technical details</summary>
+      <p className="muted" data-typography="body">
+        {metadata.join(" · ")}
+      </p>
+    </details>
+  );
 }
 
 function percent(value: number): string {
@@ -210,15 +218,13 @@ function auditFactGroups(detail: JobDetail): Array<{ label: string; facts: Apply
 }
 
 function sourceFacts(sources: readonly ApplyAuditSource[]): ApplyAuditFact[] {
-  return sources
-    .filter(isInspectableSource)
-    .map((source) => ({
-      code: `source_${source.kind}`,
-      label: source.label,
-      detail: sourceDetail(source),
-      severity: source.status === "unknown" ? "unknown" : "warning",
-      source: source.kind,
-    }));
+  return sources.filter(isInspectableSource).map((source) => ({
+    code: `source_${source.kind}`,
+    label: source.label,
+    detail: sourceDetail(source),
+    severity: source.status === "unknown" ? "unknown" : "warning",
+    source: source.kind,
+  }));
 }
 
 function isInspectableSource(source: ApplyAuditSource): boolean {
@@ -227,26 +233,11 @@ function isInspectableSource(source: ApplyAuditSource): boolean {
   }
   return (
     source.status === "missing" &&
-    (source.kind === "application_url" ||
-      source.kind === "materials.resume" ||
-      source.kind === "materials.pdf")
+    (source.kind === "application_url" || source.kind === "materials.resume" || source.kind === "materials.pdf")
   );
 }
 
 function sourceDetail(source: ApplyAuditSource): string {
   const status = source.status.replace(/_/g, " ");
   return source.detail ? `${status}: ${source.detail}` : status;
-}
-
-function factTone(fact: ApplyAuditFact): "muted" | "info" | "ok" | "warn" {
-  if (fact.severity === "unknown") {
-    return "muted";
-  }
-  if (fact.severity === "success") {
-    return "ok";
-  }
-  if (fact.severity === "info") {
-    return "info";
-  }
-  return "warn";
 }

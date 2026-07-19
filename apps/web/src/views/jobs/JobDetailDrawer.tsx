@@ -1,8 +1,8 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobctrl/contracts";
-import { IconArrowLeft } from "@tabler/icons-react";
+import { IconArrowLeft, IconChevronDown } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
 import {
@@ -39,6 +39,8 @@ export interface JobDetailDrawerProps {
   jobId: string;
   onClose: () => void;
 }
+
+type JobDetailMobileSection = "overview" | "diagnostics";
 
 function detailErrorTitle(error: unknown): string {
   if (error instanceof JobCtrlApiError && error.status === 404) {
@@ -114,6 +116,9 @@ function RequirementFitMissingCallout({ jobId }: { readonly jobId: string }) {
 }
 
 export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
+  const [mobileSection, setMobileSection] =
+    useState<JobDetailMobileSection>("overview");
+  const [commandsOpen, setCommandsOpen] = useState(false);
   const { data: detail, error: detailError } = useJobDetailQuery(jobId);
   const evidenceMap = useEvidenceMapQuery();
   const evidenceEntriesById = useMemo(() => {
@@ -171,6 +176,38 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 Jobs
               </Button>
               <JobOverview detail={detail} />
+              <div
+                className="job-detail-mobile-sections"
+                aria-label="Job detail section"
+                role="group"
+              >
+                <Button
+                  aria-controls="job-detail-overview-panel"
+                  aria-pressed={mobileSection === "overview"}
+                  data-selected={
+                    mobileSection === "overview" ? "true" : "false"
+                  }
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setMobileSection("overview")}
+                >
+                  Summary and evidence
+                </Button>
+                <Button
+                  aria-controls="job-detail-diagnostics-panel"
+                  aria-pressed={mobileSection === "diagnostics"}
+                  data-selected={
+                    mobileSection === "diagnostics" ? "true" : "false"
+                  }
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setMobileSection("diagnostics")}
+                >
+                  Progress and history
+                </Button>
+              </div>
               <div className="job-detail-top-actions">
                 <nav
                   className="job-detail-handoff-actions"
@@ -199,23 +236,53 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                     Evidence map
                   </Link>
                 </nav>
-                <section className="job-detail-workflow-actions" aria-label="Job workflow actions">
-                  <JobActions
-                    jobId={detail.job.jobKey}
-                    currentStage={detail.job.currentSubstage}
-                    canRetryStage={canRetryStage(currentSubstage)}
-                    canRunCurrentStage={canRunCurrentStage(currentSubstage)}
-                    canRetailor={detail.artifacts.length > 0}
-                    applyApprovalRequired={applyApprovalRequired}
-                    activeApplyRunId={detail.activeApplyRun?.runId ?? null}
-                    isApplied={detail.job.applyStatus?.toLowerCase() === "applied"}
-                  />
-                </section>
+                <div className="job-detail-command-disclosure">
+                  <Button
+                    aria-controls="job-detail-workflow-commands"
+                    aria-expanded={commandsOpen}
+                    className="job-detail-command-trigger"
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                    onClick={() => setCommandsOpen((open) => !open)}
+                  >
+                    More job actions
+                    <IconChevronDown
+                      aria-hidden="true"
+                      data-icon="inline-end"
+                    />
+                  </Button>
+                  <section
+                    className="job-detail-workflow-actions"
+                    aria-label="Job workflow actions"
+                    data-mobile-open={commandsOpen ? "true" : "false"}
+                    id="job-detail-workflow-commands"
+                  >
+                    <JobActions
+                      jobId={detail.job.jobKey}
+                      currentStage={detail.job.currentSubstage}
+                      canRetryStage={canRetryStage(currentSubstage)}
+                      canRunCurrentStage={canRunCurrentStage(currentSubstage)}
+                      canRetailor={detail.artifacts.length > 0}
+                      applyApprovalRequired={applyApprovalRequired}
+                      activeApplyRunId={detail.activeApplyRun?.runId ?? null}
+                      isApplied={
+                        detail.job.applyStatus?.toLowerCase() === "applied"
+                      }
+                    />
+                  </section>
+                </div>
               </div>
             </div>
           }
           inspector={
-            <div className="job-detail-workspace__inspector">
+            <div
+              className="job-detail-workspace__inspector"
+              data-mobile-active={
+                mobileSection === "diagnostics" ? "true" : "false"
+              }
+              id="job-detail-diagnostics-panel"
+            >
               <Section title="Preparation diagnostics">
                 <StageTimeline
                   jobId={detail.job.jobKey}
@@ -234,7 +301,9 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                         disabled={artifact.status === "missing"}
                       />
                       <details className="job-artifact-technical-details">
-                        <summary data-typography="control">Technical details</summary>
+                        <summary data-typography="control">
+                          Technical details
+                        </summary>
                         <code data-typography="code">{artifact.localPath}</code>
                       </details>
                     </div>
@@ -259,7 +328,11 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
             </div>
           }
         >
-          <div className="job-detail-workspace__content">
+          <div
+            className="job-detail-workspace__content"
+            data-mobile-active={mobileSection === "overview" ? "true" : "false"}
+            id="job-detail-overview-panel"
+          >
             <JobAuditTriage detail={detail} />
             <CompensationAuditSection
               jobId={detail.job.jobKey}

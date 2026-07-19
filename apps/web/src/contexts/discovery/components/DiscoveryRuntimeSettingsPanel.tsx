@@ -236,28 +236,21 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
         </form.Field>
       </div>
       <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting })}>
-        {({ isDirty, isSubmitting }) => (
-          <div className="editor-bulk-actions" data-state={isDirty ? "dirty" : "saved"}>
-            <span data-typography="metadata" role="status">
-              {isDirty ? "Unsaved changes" : "No unsaved changes"}
-            </span>
-            <Button
-              type="submit"
-              disabled={!isDirty || isSubmitting}
-              title={!isDirty ? "No unsaved changes" : undefined}
-            >
-              {isSubmitting ? "Saving changes" : "Save changes"}
-            </Button>
-            <Button
-              type="reset"
-              variant="secondary"
-              disabled={!isDirty || isSubmitting}
-              title={!isDirty ? "No unsaved changes" : undefined}
-            >
-              Discard changes
-            </Button>
-          </div>
-        )}
+        {({ isDirty, isSubmitting }) =>
+          isDirty || isSubmitting ? (
+            <div className="editor-bulk-actions" data-state="dirty">
+              <span data-typography="metadata" role="status">
+                {isSubmitting ? "Saving changes" : "Unsaved changes"}
+              </span>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Saving changes" : "Save changes"}
+              </Button>
+              <Button type="reset" variant="secondary" disabled={isSubmitting}>
+                Discard changes
+              </Button>
+            </div>
+          ) : null
+        }
       </form.Subscribe>
       <form.Subscribe selector={(state) => state.errors}>
         {(errors) => {

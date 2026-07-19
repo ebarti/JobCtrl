@@ -16,7 +16,7 @@ import { Checkbox } from "../../shared/ui/checkbox.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
 import { TitleStack } from "../../shared/ui/title-stack.js";
 
-interface ArtifactColumnsOptions {
+export interface ArtifactColumnsOptions {
   rowSelection: RowSelectionState;
   onRowSelectionChange: (next: RowSelectionState) => void;
 }
@@ -90,6 +90,58 @@ function updateSelectedRow(
   updateSelectedRows(rowSelection, onRowSelectionChange, [row], checked);
 }
 
+export function ArtifactMobileRow({
+  options,
+  row,
+}: {
+  readonly options: ArtifactColumnsOptions;
+  readonly row: ArtifactSummary;
+}) {
+  const title = row.title || row.type;
+
+  return (
+    <div className="artifact-mobile-row">
+      <div className="artifact-mobile-row__identity">
+        <Checkbox
+          aria-label={`Select artifact ${title}`}
+          checked={Boolean(options.rowSelection[row.artifactId])}
+          onCheckedChange={(checked) =>
+            updateSelectedRow(
+              options.rowSelection,
+              options.onRowSelectionChange,
+              row,
+              checked,
+            )
+          }
+          onClick={(event: MouseEvent) => event.stopPropagation()}
+        />
+        <div className="artifact-mobile-row__title-stack">
+          <span data-typography="strong-body">{title}</span>
+          <span data-typography="body">{row.company || "Unknown company"}</span>
+        </div>
+      </div>
+      <div
+        className="artifact-mobile-row__status"
+        aria-label="Artifact type and status"
+      >
+        <ArtifactTypeBadge artifactType={row.type} />
+        <ArtifactStatusBadge status={row.status} />
+      </div>
+      <div className="artifact-mobile-row__meta" data-typography="metadata">
+        <RelativeTime value={row.createdAt} />
+        <span aria-hidden="true">·</span>
+        <span>{row.size || formatBytes(row.sizeBytes)}</span>
+      </div>
+      <div className="artifact-mobile-row__actions">
+        <OpenArtifactButton
+          artifactId={row.artifactId}
+          disabled={row.status === "missing"}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function artifactColumns(
   options: ArtifactColumnsOptions,
 ): Array<DataGridColumn<ArtifactSummary>> {
@@ -144,7 +196,7 @@ export function artifactColumns(
           className="title-link"
           onClick={(event) => event.stopPropagation()}
         >
-          <TitleStack primary={row.title || row.type} secondary={row.company} />
+          <TitleStack primary={row.title || row.type} />
         </Link>
       ),
     },
@@ -174,7 +226,8 @@ export function artifactColumns(
       label: "Template",
       sortable: true,
       getFilterValue: (row) => row.resumeTemplate?.state ?? "no template",
-      getFilterSearchValue: (row) => row.resumeTemplate?.effective.templateName ?? "no template",
+      getFilterSearchValue: (row) =>
+        row.resumeTemplate?.effective.templateName ?? "no template",
       render: (row) => <ResumeTemplateStatusBadge state={row.resumeTemplate} />,
     },
     {

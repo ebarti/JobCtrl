@@ -710,7 +710,7 @@ export function StructuredProfileEditor({
       <FieldContent>
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
         <FieldDescription id={descriptionId} aria-live="polite">
-          {isUnanswered ? "Not answered" : answer}
+          {isUnanswered ? "Not answered" : `Selected: ${answer}`}
         </FieldDescription>
       </FieldContent>
     </Field>
@@ -1365,6 +1365,7 @@ export function StructuredProfileEditor({
             defaultOpen
             description="Contact, address, and professional links"
             headingLevel={3}
+            id="profile-personal"
             title="Personal information"
           >
             <AdaptiveFieldGrid>
@@ -1394,6 +1395,7 @@ export function StructuredProfileEditor({
             defaultOpen
             description="Default experience summary and verified evidence"
             headingLevel={3}
+            id="profile-baseline"
             title="Resume baseline"
           >
             <AdaptiveFieldGrid>
@@ -1430,6 +1432,7 @@ export function StructuredProfileEditor({
             defaultOpen={false}
             description="Roles, dates, bullets, and required content"
             headingLevel={3}
+            id="profile-experience"
             title="Experience entries"
           >
             <FieldGroup className="repeat-list">
@@ -1564,6 +1567,7 @@ export function StructuredProfileEditor({
             defaultOpen={false}
             description="Degrees, institutions, completion dates, and required content"
             headingLevel={3}
+            id="profile-education"
             title="Education"
           >
             <FieldGroup className="repeat-list">
@@ -1635,6 +1639,7 @@ export function StructuredProfileEditor({
             defaultOpen={false}
             description="Skill groups, individual skills, and required content"
             headingLevel={3}
+            id="profile-skills"
             title="Skill categories"
           >
             <FieldGroup className="repeat-list">
@@ -1766,6 +1771,7 @@ export function StructuredProfileEditor({
             defaultOpen={false}
             description="Optional demographic information"
             headingLevel={3}
+            id="profile-eeo"
             title="Voluntary EEO"
           >
             <AdaptiveFieldGrid>
@@ -1785,48 +1791,87 @@ export function StructuredProfileEditor({
             defaultOpen
             description="Availability, work authorization, and compensation defaults"
             headingLevel={3}
+            id="preferences-application"
             title="Application configuration"
           >
-            <AdaptiveFieldGrid>
-              {applicationConfigurationFields}
-              {yesNoCheckboxField(
-                "work_authorization.legally_authorized_to_work",
-                "Legally authorized to work",
-              )}
-              {yesNoCheckboxField("work_authorization.require_sponsorship", "Requires sponsorship")}
-              {textField("work_authorization.work_permit_type", "Work permit type")}
-              {textField("personal.password", "Job-site login password", "password", {
-                autoComplete: "new-password",
-              })}
-              {textField("availability.earliest_start_date", "Earliest start date", "date")}
-              {yesNoCheckboxField("availability.available_for_full_time", "Available full-time")}
-              {yesNoCheckboxField("availability.available_for_contract", "Available for contract")}
-              {textField("compensation.salary_expectation", "Salary expectation", "number", {
-                min: 0,
-                step: 1,
-                valueKind: "text",
-              })}
-              {textField("compensation.salary_currency", "Salary currency")}
-              {textField("compensation.salary_range_min", "Salary range min", "number", {
-                min: 0,
-                step: 1,
-                valueKind: "text",
-              })}
-              {textField("compensation.salary_range_max", "Salary range max", "number", {
-                min: 0,
-                step: 1,
-                valueKind: "text",
-              })}
-              {textField(
-                "compensation.currency_conversion_note",
-                "Currency conversion guidance",
-                "text",
-                {
-                  helperText:
-                    "Used for salary questions when a job posting lists compensation in a different currency.",
-                },
-              )}
-            </AdaptiveFieldGrid>
+            <FieldGroup className="preferences-field-groups">
+              {applicationConfigurationFields ? (
+                <AdaptiveFieldGrid className="preferences-two-column-grid">
+                  {applicationConfigurationFields}
+                </AdaptiveFieldGrid>
+              ) : null}
+              <FieldSet className="preferences-field-group preferences-field-group--authorization">
+                <FieldLegend>Work authorization and account</FieldLegend>
+                <AdaptiveFieldGrid className="preferences-two-column-grid">
+                  {yesNoCheckboxField(
+                    "work_authorization.legally_authorized_to_work",
+                    "Legally authorized to work",
+                  )}
+                  {yesNoCheckboxField(
+                    "work_authorization.require_sponsorship",
+                    "Requires sponsorship",
+                  )}
+                  {textField("work_authorization.work_permit_type", "Work permit type", "text", {
+                    helperText: "For example, EU citizen, permanent resident, or permit name.",
+                  })}
+                  {textField("personal.password", "Job-site login password", "password", {
+                    autoComplete: "new-password",
+                    helperText: "Used only for local application workflows that require a saved login.",
+                  })}
+                </AdaptiveFieldGrid>
+              </FieldSet>
+              <FieldSet className="preferences-field-group preferences-field-group--availability">
+                <FieldLegend>Availability</FieldLegend>
+                <AdaptiveFieldGrid className="preferences-two-column-grid">
+                  {textField("availability.earliest_start_date", "Earliest start date", "date", {
+                    helperText: "Leave blank when your start date is flexible.",
+                  })}
+                  {yesNoCheckboxField("availability.available_for_full_time", "Available full-time")}
+                  {yesNoCheckboxField("availability.available_for_contract", "Available for contract")}
+                </AdaptiveFieldGrid>
+              </FieldSet>
+              <FieldSet className="preferences-field-group preferences-field-group--compensation">
+                <FieldLegend>Compensation</FieldLegend>
+                <AdaptiveFieldGrid className="preferences-two-column-grid">
+                  {textField("compensation.salary_expectation", "Salary expectation", "number", {
+                    helperText: "Annual gross amount in the selected currency.",
+                    inputMode: "numeric",
+                    min: 0,
+                    step: 1,
+                    valueKind: "text",
+                  })}
+                  {textField("compensation.salary_currency", "Salary currency", "text", {
+                    autoCapitalize: "characters",
+                    helperText: "Three-letter currency code, such as EUR or USD.",
+                  })}
+                  {textField("compensation.salary_range_min", "Salary range min", "number", {
+                    helperText: "Annual gross minimum in the selected currency.",
+                    inputMode: "numeric",
+                    min: 0,
+                    step: 1,
+                    valueKind: "text",
+                  })}
+                  {textField("compensation.salary_range_max", "Salary range max", "number", {
+                    helperText: "Annual gross maximum in the selected currency.",
+                    inputMode: "numeric",
+                    min: 0,
+                    step: 1,
+                    valueKind: "text",
+                  })}
+                  <AdaptiveFieldSpan span="full">
+                    {textField(
+                      "compensation.currency_conversion_note",
+                      "Currency conversion guidance",
+                      "text",
+                      {
+                        helperText:
+                          "Used for salary questions when a job posting lists compensation in a different currency.",
+                      },
+                    )}
+                  </AdaptiveFieldSpan>
+                </AdaptiveFieldGrid>
+              </FieldSet>
+            </FieldGroup>
           </DisclosureSection>
 
           <DisclosureSection
@@ -1835,6 +1880,7 @@ export function StructuredProfileEditor({
             defaultOpen
             description="Control what JobCtrl may change and how generated resumes are evaluated"
             headingLevel={3}
+            id="preferences-tailoring"
             title="Tailoring controls"
           >
             <Tabs className="tailoring-control-tabs" defaultValue="content-rules">
@@ -1884,6 +1930,7 @@ export function StructuredProfileEditor({
             defaultOpen={false}
             description="Defaults for generated resumes outside the template workspace"
             headingLevel={3}
+            id="preferences-style"
             title="Resume style"
           >
             <AdaptiveFieldGrid>

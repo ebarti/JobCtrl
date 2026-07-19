@@ -22,10 +22,10 @@ describe("Profile and Evidence Map responsive layout contracts", () => {
       /\.profile-resume-plate-editor[\s\S]*?\.resume-plate-scroll\s*\{\s*padding: 8px;/,
     );
     expect(configurationCss).toMatch(
-      /@media \(max-width: 1433px\)[\s\S]*?\.profile-layout:not\(\.profile-layout-single\)\s*\{\s*grid-template-columns: minmax\(0, 1fr\);/,
+      /@media \(max-width: 1540px\)[\s\S]*?\.profile-layout:not\(\.profile-layout-single\)\s*\{\s*grid-template-columns: minmax\(0, 1fr\);/,
     );
     expect(configurationCss).toMatch(
-      /@media \(max-width: 1433px\)[\s\S]*?> \.resume-editor-preview\s*\{[\s\S]*?position: static;[\s\S]*?width: 100%;[\s\S]*?scroll-margin-top: calc\(var\(--topbar-height\) \+ 32px\);/,
+      /@media \(max-width: 1540px\)[\s\S]*?> \.resume-editor-preview\s*\{[\s\S]*?position: static;[\s\S]*?width: 100%;[\s\S]*?scroll-margin-top: calc\(var\(--topbar-height\) \+ 32px\);/,
     );
     expect(configurationCss).toMatch(
       /\.profile-layout \.editor-bulk-actions\s*\{[\s\S]*?flex-wrap: wrap;[\s\S]*?align-items: center;/,

@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -16,6 +16,7 @@ afterEach(() => {
 
 describe("<ProfileEditor>", () => {
   it("renders the Profile baseline resume through the Plate editor pane", async () => {
+    const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -45,6 +46,9 @@ describe("<ProfileEditor>", () => {
     });
 
     expect(await screen.findByRole("heading", { name: "Resume data" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Profile data" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("navigation", { name: "Profile sections" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Resume editor" }));
     expect(await screen.findByText("Baseline resume editor")).toBeInTheDocument();
     expect(await screen.findByText("Plate HTML/CSS editor")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Bold" })).toBeInTheDocument();
@@ -85,6 +89,7 @@ describe("<ProfileEditor>", () => {
     expect(
       await screen.findByRole("heading", { name: "Configuration & templates" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Preferences sections" })).toBeInTheDocument();
     expect(
       await screen.findByRole("heading", { level: 3, name: "Application configuration" }),
     ).toBeInTheDocument();
@@ -121,5 +126,96 @@ describe("<ProfileEditor>", () => {
     await user.keyboard("{Escape}");
     expect(screen.getByLabelText("Size")).toHaveAttribute("type", "number");
     expect(screen.queryByLabelText("Resize profile and resume editor panes")).not.toBeInTheDocument();
+  });
+
+  it("preserves a Profile draft while switching workspace views", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response('<main class="resume-page"><p>Resume</p></main>', {
+        headers: { "content-type": "text/html" },
+      })),
+    );
+    renderWithProviders(<ProfileEditor />, {
+      ports: buildTestPorts({
+        api: {
+          profile: async () => sampleProfileResponse,
+          profilePreviewHtmlUrl: () => "/v1/profile/preview.html?v=0",
+          settings: async () => sampleSettingsResponse,
+        },
+      }),
+      withRouter: true,
+    });
+
+    const fullName = await screen.findByLabelText("Full name");
+    await user.clear(fullName);
+    await user.type(fullName, "Updated Candidate");
+    await user.click(screen.getByRole("button", { name: "Resume editor" }));
+    await user.click(screen.getByRole("button", { name: "Profile data" }));
+
+    expect(screen.getByLabelText("Full name")).toHaveValue("Updated Candidate");
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeInTheDocument();
+  });
+
+  it("preserves the persisted resizable split workspace", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response('<main class="resume-page"><p>Resume</p></main>', {
+        headers: { "content-type": "text/html" },
+      })),
+    );
+    const ports = buildTestPorts({
+      api: {
+        profile: async () => sampleProfileResponse,
+        profilePreviewHtmlUrl: () => "/v1/profile/preview.html?v=0",
+        settings: async () => sampleSettingsResponse,
+      },
+    });
+    ports.storage.set("profile-preview-split-width", 70);
+    const saveWidth = vi.spyOn(ports.storage, "set");
+    const view = renderWithProviders(<ProfileEditor />, { ports, withRouter: true });
+
+    await screen.findByRole("heading", { name: "Resume data" });
+    await user.click(screen.getByRole("button", { name: "Split view" }));
+    expect(screen.getByLabelText("Full name")).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Bold" })).toBeVisible();
+    const resizer = screen.getByRole("button", { name: "Resize profile and resume editor panes" });
+    const workspace = view.container.querySelector<HTMLElement>(".profile-workspace-content");
+    expect(workspace?.style.getPropertyValue("--profile-editor-width")).toBe("70%");
+
+    fireEvent.keyDown(resizer, { key: "ArrowLeft" });
+
+    expect(saveWidth).toHaveBeenLastCalledWith("profile-preview-split-width", 66);
+    expect(workspace?.style.getPropertyValue("--profile-editor-width")).toBe("66%");
+  });
+
+  it("bounds a Profile load failure with a retry action", async () => {
+    const user = userEvent.setup();
+    const profile = vi.fn()
+      .mockRejectedValueOnce(new Error("Saved profile could not be read."))
+      .mockResolvedValue(sampleProfileResponse);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response('<main class="resume-page"><p>Resume</p></main>', {
+        headers: { "content-type": "text/html" },
+      })),
+    );
+    renderWithProviders(<ProfileEditor />, {
+      ports: buildTestPorts({
+        api: {
+          profile,
+          profilePreviewHtmlUrl: () => "/v1/profile/preview.html?v=0",
+          settings: async () => sampleSettingsResponse,
+        },
+      }),
+      withRouter: true,
+    });
+
+    expect(await screen.findByText("Profile unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Saved profile could not be read.")).toBeInTheDocument();
+    expect(screen.queryByText("Loading profile")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByLabelText("Full name")).toBeInTheDocument();
   });
 });

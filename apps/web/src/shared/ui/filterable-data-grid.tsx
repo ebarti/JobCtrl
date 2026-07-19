@@ -143,6 +143,11 @@ export interface FilterableDataGridProps<TData> {
   onColumnWidthsChange?: (next: DataGridColumnWidthsState) => void;
   density?: DataGridDensity | null;
   mobileLayout?: DataGridMobileLayout;
+  mobileListLabel?: string;
+  renderMobileRow?: (
+    row: TData,
+    context: DataGridCellContext<TData>,
+  ) => ReactNode;
   grouping?: DataGridGroupingState | null;
   colorRules?: readonly DataGridColorRule[];
   rowClassName?: (row: TData) => string | undefined;
@@ -421,7 +426,11 @@ function ColumnFilterDialog<TData>({
         <section className="data-grid-filter-condition">
           <div className="data-grid-filter-condition-head">
             <strong>{column.label}</strong>
-            <button type="button" data-grid-control="clear-filter" onClick={onClear}>
+            <button
+              type="button"
+              data-grid-control="clear-filter"
+              onClick={onClear}
+            >
               Clear
             </button>
           </div>
@@ -523,6 +532,8 @@ export function FilterableDataGrid<TData>({
   onColumnWidthsChange,
   density,
   mobileLayout = "table",
+  mobileListLabel,
+  renderMobileRow,
   grouping,
   colorRules = [],
   rowClassName,
@@ -1071,12 +1082,17 @@ export function FilterableDataGrid<TData>({
       (column.sortable ?? Boolean(column.getSortValue)) ||
       Boolean(column.getFilterValue),
   );
+  const hasMobileControls =
+    (mobileLayout === "cards" || Boolean(renderMobileRow)) &&
+    mobileControlColumns.length > 0;
 
   return (
     <div
       className="filterable-data-grid data-surface"
       data-density={density ?? undefined}
       data-mobile-layout={mobileLayout}
+      data-mobile-rows={renderMobileRow ? "custom" : undefined}
+      data-mobile-has-rows={pageRows.length ? "true" : "false"}
     >
       {onColumnOrderChange ? (
         <>
@@ -1130,7 +1146,7 @@ export function FilterableDataGrid<TData>({
           ))}
         </div>
       ) : null}
-      {mobileLayout === "cards" && mobileControlColumns.length ? (
+      {hasMobileControls ? (
         <details
           className="data-grid-mobile-controls"
           open={mobileControlsOpen}
@@ -1155,6 +1171,75 @@ export function FilterableDataGrid<TData>({
             </div>
           ) : null}
         </details>
+      ) : null}
+      {renderMobileRow ? (
+        <ul
+          className="data-grid-mobile-records"
+          aria-label={mobileListLabel ?? title}
+          data-typography="body"
+        >
+          {pageRowGroups.map((group) => (
+            <Fragment key={`mobile-${group.key}`}>
+              {group.label ? (
+                <li
+                  className="data-grid-mobile-group"
+                  data-typography="table-header"
+                >
+                  <span>{group.label}</span>
+                  <span>{group.rows.length}</span>
+                </li>
+              ) : null}
+              {group.rows.map((row) => {
+                const rowId = getRowId(row);
+                const rowIndex = pageRowIndexById.get(rowId) ?? 0;
+                const rowTone = firstMatchingTone(row, columnsById, colorRules);
+                const activationLabel =
+                  rowActivationLabel?.(row) ?? `Open row ${rowId}`;
+                return (
+                  <li
+                    key={rowId}
+                    className={classNames(
+                      "data-grid-mobile-record",
+                      rowClassName?.(row),
+                      toneClass("row", rowTone),
+                      onRowActivate && "data-grid-row-activatable",
+                    )}
+                    data-row-id={rowId}
+                    data-selected={rowAriaSelected?.(row) ? "true" : undefined}
+                    onClick={
+                      onRowActivate
+                        ? (event) => {
+                            if (shouldIgnoreRowActivation(event)) return;
+                            onRowActivate(row);
+                          }
+                        : undefined
+                    }
+                  >
+                    {renderMobileRow(row, { pageRows, rowId, rowIndex })}
+                    {onRowActivate ? (
+                      <button
+                        type="button"
+                        data-grid-control="row-activation"
+                        className={classNames(
+                          "data-grid-row-activation-button",
+                          rowActivationAppearance === "focus-only" &&
+                            "row-activation-focus-only",
+                        )}
+                        aria-label={activationLabel}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onRowActivate(row);
+                        }}
+                      >
+                        <span aria-hidden="true">View details</span>
+                      </button>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </Fragment>
+          ))}
+        </ul>
       ) : null}
       <div className="filterable-data-grid-scroll">
         <table

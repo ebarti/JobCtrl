@@ -6,7 +6,13 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
@@ -210,6 +216,54 @@ describe("<EvidenceMapView>", () => {
       }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Python" })).toBeInTheDocument();
+  });
+
+  it("provides an accessible mobile drill-in and opens details when evidence is selected", async () => {
+    renderEvidenceMap();
+
+    const switcher = await screen.findByRole("group", {
+      name: "Evidence map view",
+      hidden: true,
+    });
+    const evidenceButton = within(switcher).getByRole("button", {
+      name: /Evidence \(/,
+      hidden: true,
+    });
+    const detailsButton = within(switcher).getByRole("button", {
+      name: "Details",
+      hidden: true,
+    });
+    const gapsButton = within(switcher).getByRole("button", {
+      name: /Gaps \(/,
+      hidden: true,
+    });
+
+    expect(evidenceButton).toHaveAttribute("aria-pressed", "true");
+    expect(detailsButton).toHaveAttribute("aria-pressed", "false");
+
+    const entry = await within(
+      screen.getByRole("navigation", { name: "Evidence entries" }),
+    ).findByRole("link", {
+      name: /Reduced incident response time through platform automation/i,
+    });
+    fireEvent.click(entry);
+
+    await waitFor(() =>
+      expect(detailsButton).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(
+      document.querySelector(".evidence-entry-link[aria-current='page']"),
+    ).not.toBeNull();
+    expect(
+      document.querySelector("#evidence-map-details-panel"),
+    ).toHaveAttribute("data-mobile-active", "true");
+
+    fireEvent.click(gapsButton);
+    expect(gapsButton).toHaveAttribute("aria-pressed", "true");
+    expect(document.querySelector("#evidence-map-gaps-panel")).toHaveAttribute(
+      "data-mobile-active",
+      "true",
+    );
   });
 
   it("renders transferable fit as a flat semantic status instead of a legacy pill", async () => {

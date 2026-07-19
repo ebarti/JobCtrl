@@ -24,8 +24,21 @@ function workflowRunsInput(search: RunsSearch): WorkflowRunsListInput {
     status: search.status,
     sort: search.sort,
     dir: search.dir,
+    ...(search.workflowType ? { workflowType: search.workflowType } : {}),
+    ...(search.startedSince ? { startedSince: search.startedSince } : {}),
+    ...(search.startedBefore ? { startedBefore: search.startedBefore } : {}),
   };
 }
+
+const FAILURE_RUN_STATUSES = new Set([
+  "failed",
+  "terminated",
+  "timed_out",
+  "captcha",
+  "login_issue",
+  "expired",
+]);
+const ACTIVE_RUN_STATUSES = new Set(["starting", "in_progress"]);
 
 const SORTABLE_WORKFLOW_RUN_FIELDS: ReadonlySet<WorkflowRunSortField> = new Set(
   WORKFLOW_RUN_SORT_FIELDS,
@@ -42,6 +55,16 @@ export function RunsView() {
     workflowRunsInput(search),
   );
   const message = error instanceof Error ? error.message : null;
+  const pageSummary = useMemo(() => {
+    if (!data) return "Loading run summary";
+    const failures = data.items.filter((run) =>
+      FAILURE_RUN_STATUSES.has(run.status),
+    ).length;
+    const active = data.items.filter((run) =>
+      ACTIVE_RUN_STATUSES.has(run.status),
+    ).length;
+    return `${failures} failed · ${active} active on this page`;
+  }, [data]);
 
   const setSearch = (next: Partial<RunsSearch>) => {
     void navigate({ search: (prev: RunsSearch) => ({ ...prev, ...next }) });
@@ -66,7 +89,11 @@ export function RunsView() {
   // there. The table's `onRowActivate` already supplies the workflow id
   // (which equals `runId` for apply runs).
   const openRun = (workflowId: string) => {
-    void navigate({ to: "/runs/$runId", params: { runId: workflowId } });
+    void navigate({
+      to: "/runs/$runId",
+      params: { runId: workflowId },
+      search: (prev: RunsSearch) => prev,
+    });
   };
 
   return (
@@ -80,7 +107,11 @@ export function RunsView() {
         {message ? <div className="banner inline">{message}</div> : null}
         <RunsFilterBar
           status={search.status}
-          onStatusChange={(status) => setSearch({ status, page: 1 })}
+          workflowType={search.workflowType}
+          startedSince={search.startedSince}
+          startedBefore={search.startedBefore}
+          summary={pageSummary}
+          onChange={(next) => setSearch({ ...next, page: 1 })}
         />
         <RunsTable
           data={data ?? null}

@@ -1,4 +1,5 @@
 import { screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { renderWithProviders } from "../../../test/render.js";
@@ -13,7 +14,9 @@ describe("<ScoringGuidancePanel>", () => {
   });
 
   it("exposes both previously hidden scoring guidance fields", async () => {
+    const user = userEvent.setup();
     renderWithProviders(<ScoringGuidancePanel />);
+    await user.click(screen.getByRole("button", { name: /^Scoring guidance\b/i }));
     const scoringPriorities = await screen.findByLabelText("Scoring priorities");
     const targetGuidance = screen.getByLabelText("Target role guidance");
 
@@ -25,5 +28,9 @@ describe("<ScoringGuidancePanel>", () => {
       "data-slot",
       "button",
     );
+    expect(screen.getByRole("button", { name: "Save scoring guidance" })).toBeDisabled();
+    await user.type(targetGuidance, " Prefer regulated industries.");
+    expect(screen.getByRole("button", { name: "Save scoring guidance" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Discard changes" })).toBeEnabled();
   });
 });

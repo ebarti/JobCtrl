@@ -2,7 +2,7 @@ import {
   IconAlertTriangle,
   IconBan,
   IconCheck,
-  IconExternalLink,
+  IconChevronRight,
   type TablerIcon,
 } from "@tabler/icons-react";
 
@@ -17,6 +17,7 @@ import { CardHeader } from "../../shared/ui/card-header.js";
 import { Button } from "../../shared/ui/button.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
+import type { StatusTagTone } from "../../shared/ui/status-tokens.js";
 
 interface DigestRow {
   readonly key: string;
@@ -24,8 +25,9 @@ interface DigestRow {
   readonly value: string;
   readonly detail: string;
   readonly href: string;
+  readonly actionLabel: string;
   readonly icon?: TablerIcon | undefined;
-  readonly tone?: "warn" | "ok" | undefined;
+  readonly tone?: StatusTagTone | undefined;
 }
 
 function formatMoney(value: number | null): string {
@@ -56,7 +58,7 @@ function digestRows(digest: DailyDigest): readonly DigestRow[] {
       value: String(digest.newMatches.count),
       detail: `${digest.newMatches.highFitCount} high fit at ${digest.highFitThreshold}+`,
       href: digest.deepLinks.newMatches,
-      tone: digest.newMatches.count > 0 ? "ok" : undefined,
+      actionLabel: "Review",
     },
     {
       key: "blocked-sources",
@@ -64,6 +66,7 @@ function digestRows(digest: DailyDigest): readonly DigestRow[] {
       value: String(digest.blockedSources.count),
       detail: blockedSourceNames || "sources normal",
       href: digest.deepLinks.blockedSources,
+      actionLabel: "Inspect",
       icon: digest.blockedSources.count > 0 ? IconBan : undefined,
       tone: digest.blockedSources.count > 0 ? "warn" : undefined,
     },
@@ -73,6 +76,7 @@ function digestRows(digest: DailyDigest): readonly DigestRow[] {
       value: String(digest.reviewNeededMaterials.count),
       detail: "resume or PDF attention",
       href: digest.deepLinks.reviewNeededMaterials,
+      actionLabel: "Review",
       tone: digest.reviewNeededMaterials.count > 0 ? "warn" : undefined,
     },
     {
@@ -81,6 +85,7 @@ function digestRows(digest: DailyDigest): readonly DigestRow[] {
       value: String(digest.pendingApprovals.count),
       detail: "apply review queue",
       href: digest.deepLinks.pendingApprovals,
+      actionLabel: "Review",
       tone: digest.pendingApprovals.count > 0 ? "warn" : undefined,
     },
     {
@@ -89,6 +94,7 @@ function digestRows(digest: DailyDigest): readonly DigestRow[] {
       value: String(digest.staleScores.count),
       detail: "needs rescore",
       href: digest.deepLinks.staleScores,
+      actionLabel: "Review",
       tone: digest.staleScores.count > 0 ? "warn" : undefined,
     },
     {
@@ -97,6 +103,7 @@ function digestRows(digest: DailyDigest): readonly DigestRow[] {
       value: String(digest.followUpsDue.count),
       detail: `${digest.followUpsDue.thresholdDays}d, ${digest.followUpsDue.dayBoundary}`,
       href: digest.deepLinks.followUpsDue,
+      actionLabel: "Review",
       tone: digest.followUpsDue.count > 0 ? "warn" : undefined,
     },
     {
@@ -105,6 +112,7 @@ function digestRows(digest: DailyDigest): readonly DigestRow[] {
       value: digest.budget.status === "over_budget" ? "over" : "ok",
       detail: budgetDetail,
       href: digest.deepLinks.budget,
+      actionLabel: "Open",
       tone: digest.budget.status === "over_budget" ? "warn" : "ok",
     },
   ];
@@ -126,7 +134,10 @@ function DigestRowLink({ row }: { readonly row: DigestRow }) {
           row.value
         )}
       </span>
-      <IconExternalLink size={14} aria-hidden="true" />
+      <span className="digest-row-action" data-typography="control">
+        {row.actionLabel}
+        <IconChevronRight aria-hidden="true" />
+      </span>
     </a>
   );
 }
@@ -135,7 +146,12 @@ export function DigestPanel() {
   const digest = useDigestQuery();
   const acknowledge = useAcknowledgeDigestMutation();
   const data = digest.data;
-  const meta = digest.isFetching && !data ? "loading" : data?.since ? `since ${formatDateTime(data.since)}` : "first run";
+  const meta =
+    digest.isFetching && !data
+      ? "loading"
+      : data?.since
+        ? `since ${formatDateTime(data.since)}`
+        : "first run";
   const acknowledgeError = acknowledge.error instanceof Error ? acknowledge.error.message : null;
 
   return (

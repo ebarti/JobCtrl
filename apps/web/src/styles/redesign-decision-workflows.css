@@ -1,0 +1,445 @@
+/* Route-level decision workflow overrides. Shared primitives stay in their owning stylesheets. */
+
+/* Application review: keep the decision before the diagnostic record. */
+.apply-review-queue-filter,
+.apply-review-queue-mobile {
+  padding: var(--jh-internal-gap) var(--card-spacing);
+}
+
+.apply-review-queue-filter {
+  display: grid;
+  gap: calc(var(--jh-internal-gap) / 2);
+  border-bottom: 1px solid var(--border);
+}
+
+.apply-review-queue-mobile {
+  display: none;
+}
+
+.apply-review-audit-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--jh-internal-gap) / 2);
+}
+
+.apply-review-issue-details {
+  margin-top: var(--jh-internal-gap);
+}
+
+.apply-review-issue-details > summary {
+  display: flex;
+  min-block-size: var(--jh-target-min-size);
+  align-items: center;
+  cursor: pointer;
+}
+
+.apply-review-selected-actions {
+  border-top: 0;
+  border-bottom-color: var(--border);
+  background: color-mix(in oklch, var(--muted) 28%, var(--card));
+}
+
+/* Evidence map: one scrolling evidence rail on desktop and explicit drill-in on mobile. */
+.evidence-map-mobile-switcher {
+  display: none;
+}
+
+.evidence-map-shell {
+  block-size: auto;
+  min-block-size: 0;
+  align-items: start;
+  overflow: visible;
+}
+
+.evidence-entry-list {
+  max-block-size: min(
+    calc(var(--jh-row-height) * 14),
+    calc(100dvh - (var(--topbar-height) + (var(--jh-section-gap) * 4)))
+  );
+  overflow-y: auto;
+}
+
+.evidence-detail,
+.evidence-side-panel {
+  overflow: visible;
+  scrollbar-gutter: auto;
+}
+
+/* Job detail: summary and consequence remain visible; raw scoring and commands disclose on demand. */
+.job-detail-mobile-sections,
+.job-detail-command-trigger {
+  display: none;
+}
+
+.job-detail-command-disclosure {
+  min-width: 0;
+}
+
+.job-audit-rationale {
+  max-inline-size: 68ch;
+}
+
+.job-audit-concern-list,
+.job-audit-tag-group > ul {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.job-audit-concern-list > li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: calc(var(--jh-internal-gap) / 2);
+  padding-block: calc(var(--jh-internal-gap) / 2);
+  color: var(--foreground);
+}
+
+.job-audit-concern-marker {
+  width: calc(var(--jh-internal-gap) / 2);
+  height: calc(var(--jh-internal-gap) / 2);
+  margin-top: calc(var(--jh-internal-gap) / 2);
+  border-radius: 50%;
+  background: var(--warning);
+}
+
+.job-audit-concern-list > li[data-severity="unknown"] .job-audit-concern-marker,
+.job-audit-concern-list > li[data-severity="info"] .job-audit-concern-marker {
+  background: var(--status-info);
+}
+
+.job-audit-tag-group > ul {
+  border-top: 1px solid var(--border);
+}
+
+.job-audit-tag-group > ul > li {
+  padding-block: calc(var(--jh-internal-gap) / 2);
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 78%, transparent);
+  color: var(--foreground);
+}
+
+.job-audit-tag-group > ul[data-tone="warn"] {
+  border-left: 2px solid var(--warning);
+  padding-left: var(--jh-internal-gap);
+}
+
+.job-audit-diagnostics,
+.job-score-technical-details {
+  border-top: 1px solid var(--border);
+  padding-top: var(--jh-internal-gap);
+}
+
+.job-audit-diagnostics > summary,
+.job-score-technical-details > summary {
+  display: flex;
+  min-block-size: var(--jh-target-min-size);
+  align-items: center;
+  color: var(--foreground);
+  cursor: pointer;
+}
+
+.job-audit-diagnostics__content {
+  display: grid;
+  gap: var(--jh-surface-gap);
+  padding-top: var(--jh-internal-gap);
+}
+
+.job-score-technical-details p {
+  margin-block: var(--jh-internal-gap) 0;
+}
+
+@media (max-width: 1000px) {
+  .evidence-map-mobile-switcher {
+    position: sticky;
+    top: var(--topbar-height);
+    z-index: 3;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: calc(var(--jh-internal-gap) / 2);
+    padding: var(--jh-internal-gap);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in oklch, var(--card) 94%, transparent);
+    backdrop-filter: blur(12px);
+  }
+
+  .evidence-map-mobile-switcher [data-slot="button"] {
+    width: 100%;
+    min-width: 0;
+    padding-inline: calc(var(--jh-internal-gap) / 2);
+  }
+
+  .evidence-map-shell {
+    display: block;
+  }
+
+  .evidence-entry-list,
+  .evidence-detail,
+  .evidence-side-panel {
+    display: none;
+    max-block-size: none;
+    border-right: 0;
+    border-bottom: 0;
+    overflow: visible;
+  }
+
+  .evidence-entry-list[data-mobile-active="true"],
+  .evidence-detail[data-mobile-active="true"],
+  .evidence-side-panel[data-mobile-active="true"] {
+    display: grid;
+  }
+
+  .evidence-entry-list[data-mobile-active="true"] {
+    display: block;
+  }
+
+  .job-detail-mobile-sections {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: calc(var(--jh-internal-gap) / 2);
+  }
+
+  .job-detail-mobile-sections [data-slot="button"] {
+    width: 100%;
+    min-width: 0;
+    border-radius: 0;
+    border-bottom: 2px solid transparent;
+  }
+
+  .job-detail-mobile-sections [data-selected="true"] {
+    border-bottom-color: var(--primary);
+    background: color-mix(in oklch, var(--primary) 10%, transparent);
+    color: var(--foreground);
+  }
+
+  .job-detail-command-trigger {
+    display: inline-flex;
+  }
+
+  .job-detail-workflow-actions[data-mobile-open="false"] {
+    display: none;
+  }
+
+  .job-detail-workspace
+    > .route-workspace__grid
+    > .route-workspace__content:has(
+      .job-detail-workspace__content[data-mobile-active="false"]
+    ),
+  .job-detail-workspace
+    > .route-workspace__grid
+    > .route-workspace__inspector:has(
+      .job-detail-workspace__inspector[data-mobile-active="false"]
+    ) {
+    display: none;
+  }
+}
+
+@container apply-review-surface (max-width: 52rem) {
+  .apply-review-shell {
+    gap: var(--jh-section-gap);
+  }
+
+  .apply-review-queue-head,
+  .apply-review-queue-filter,
+  .apply-review-queue-list {
+    display: none;
+  }
+
+  .apply-review-queue-mobile {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: calc(var(--jh-internal-gap) / 2) var(--jh-internal-gap);
+    align-items: end;
+  }
+
+  .apply-review-queue-mobile > label {
+    grid-column: 1 / -1;
+  }
+
+  .apply-review-queue-mobile-trigger {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .apply-review-selected-actions {
+    position: sticky;
+    top: var(--topbar-height);
+    z-index: 4;
+    padding: var(--jh-internal-gap);
+    background: var(--card);
+    box-shadow: 0 1px 0 var(--border);
+  }
+
+  .apply-review-selected-actions .apply-review-actions {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--jh-internal-gap);
+  }
+
+  .apply-review-decision-buttons {
+    display: grid;
+    grid-column: 1;
+    grid-row: 1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .apply-review-decision-buttons [data-slot="button"] {
+    width: 100%;
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .apply-review-selected-actions .apply-review-approval-summary {
+    grid-row: 2;
+  }
+
+  .apply-review-selected-head {
+    gap: var(--jh-internal-gap);
+  }
+
+  .apply-review-selected-card-action {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+    align-items: center;
+  }
+
+  .apply-review-selected-utilities {
+    justify-self: end;
+  }
+
+  .apply-review-issue-details > summary,
+  .apply-review-technical-details > summary {
+    min-block-size: var(--jh-target-min-size);
+  }
+
+  .evidence-map-view > .toolbar {
+    min-height: 0;
+  }
+
+  .evidence-entry-meta {
+    display: none;
+  }
+
+  .evidence-entry-title {
+    display: block;
+    overflow: visible;
+    -webkit-line-clamp: unset;
+  }
+
+  .evidence-entry-link {
+    min-block-size: var(--jh-row-height);
+  }
+
+  .route-page--job-detail {
+    padding-bottom: calc(
+      (var(--jh-control-height) * 2) + (var(--jh-internal-gap) * 3)
+    );
+  }
+
+  .job-overview {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--jh-internal-gap);
+  }
+
+  .job-overview-meta-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--jh-internal-gap);
+  }
+
+  .job-overview-meta-row > .external-link {
+    grid-column: 1 / -1;
+  }
+
+  .job-overview-meta-row
+    > :is(
+      .job-overview-readiness,
+      .job-overview-workflow-state,
+      .job-overview-application-state
+    ) {
+    display: grid;
+    align-content: start;
+    justify-items: start;
+  }
+
+  .job-detail-top-actions {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 20;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(var(--jh-internal-gap) / 2);
+    border-top: 1px solid var(--border);
+    background: color-mix(in oklch, var(--card) 96%, transparent);
+    padding: var(--jh-internal-gap) var(--jh-internal-gap)
+      max(var(--jh-internal-gap), env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 24px
+      color-mix(in oklch, var(--foreground) 10%, transparent);
+    backdrop-filter: blur(12px);
+  }
+
+  .job-detail-handoff-actions {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+  }
+
+  .job-detail-handoff-actions > a:first-child {
+    flex: 1 1 auto;
+  }
+
+  .job-detail-command-disclosure {
+    position: relative;
+  }
+
+  .job-detail-workflow-actions[data-mobile-open="true"] {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + var(--jh-internal-gap));
+    display: block;
+    width: min(calc(100dvw - (var(--jh-internal-gap) * 2)), 32rem);
+    max-height: min(68dvh, 36rem);
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    padding: var(--jh-internal-gap);
+    box-shadow: 0 16px 48px
+      color-mix(in oklch, var(--foreground) 18%, transparent);
+  }
+
+  .job-detail-workflow-actions .action-panel,
+  .job-detail-workflow-actions .job-action-group {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+    gap: calc(var(--jh-internal-gap) / 2);
+  }
+
+  .job-detail-workflow-actions .job-action-group + .job-action-group {
+    margin-top: var(--jh-internal-gap);
+    border-top: 1px solid var(--border);
+    padding-top: var(--jh-internal-gap);
+  }
+
+  .job-detail-workflow-actions [data-slot="button"] {
+    width: 100%;
+  }
+
+  .job-detail-command-trigger[aria-expanded="true"] [data-icon="inline-end"] {
+    transform: rotate(180deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .job-detail-command-trigger [data-icon="inline-end"] {
+    transition: transform 160ms ease;
+  }
+}

@@ -171,6 +171,58 @@ describe("<Topbar>", () => {
     expect(nav).toBeInTheDocument();
   });
 
+  it("expands global search on demand and restores focus when it closes", async () => {
+    const user = userEvent.setup();
+    renderTopbar();
+
+    const trigger = await screen.findByRole("button", {
+      name: "Open global search",
+    });
+    const search = screen.getByRole("textbox", { name: "Global search" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(search.closest(".topbar__search")).toHaveAttribute(
+      "data-state",
+      "closed",
+    );
+
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(search.closest(".topbar__search")).toHaveAttribute(
+      "data-state",
+      "open",
+    );
+    expect(search).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps density and theme capabilities in the labelled display menu", async () => {
+    const user = userEvent.setup();
+    renderTopbar();
+
+    const trigger = await screen.findByRole("button", {
+      name: "Open display preferences",
+    });
+    await user.click(trigger);
+    const compactOption = await screen.findByRole("menuitemradio", {
+      name: "Compact",
+    });
+    const menu = compactOption.closest<HTMLElement>('[role="menu"]');
+    expect(menu).toHaveAttribute("aria-label", "Display preferences");
+    if (!menu) throw new Error("Expected the display preferences menu.");
+    await user.click(
+      within(menu).getByRole("menuitemradio", { name: "Compact" }),
+    );
+    expect(useUiPreferencesStore.getState().density).toBe("compact");
+
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Use dark theme/i }),
+    );
+    expect(useUiPreferencesStore.getState().theme).toBe("dark");
+  });
+
   it("keeps global search Enter navigation scoped to non-empty trimmed queries", async () => {
     const user = userEvent.setup();
     const { router } = renderTopbar();

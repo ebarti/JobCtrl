@@ -875,8 +875,13 @@ describe("<ApplyReviewView>", () => {
     const header = within(selectedHeader as HTMLElement);
     const decisionCard = selectedHeader?.closest('[data-slot="card"]');
     const selectedFacts = decisionCard?.querySelector(".apply-review-selected-facts");
+    const selectedActions = decisionCard?.querySelector(".apply-review-selected-actions");
     expect(decisionCard).toHaveClass("apply-review-decision-card");
     expect(selectedFacts?.parentElement).toBe(decisionCard);
+    expect(
+      (selectedActions?.compareDocumentPosition(selectedFacts as Node) ?? 0) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(header.queryByText("Selected application")).not.toBeInTheDocument();
     expect(header.queryByText("Decision workspace")).not.toBeInTheDocument();
     expect(header.getByRole("heading", { name: "Principal Platform Engineer" })).toBeInTheDocument();
@@ -909,6 +914,16 @@ describe("<ApplyReviewView>", () => {
     });
     expect(reviewWorkspace.querySelector("main")).toBeNull();
     expect(document.querySelector(".apply-review-selected")?.tagName).toBe("SECTION");
+    const reviewQueue = screen.getByRole("complementary", {
+      name: "Application review queue",
+    });
+    expect(within(reviewQueue).getByLabelText("Filter review queue")).toHaveAttribute("data-slot", "input");
+    expect(
+      within(reviewQueue).getByRole("combobox", {
+        name: "Review item",
+        hidden: true,
+      }),
+    ).toHaveAttribute("data-slot", "select-trigger");
     const positionCard = within(reviewWorkspace).getByRole("region", {
       name: "Requirements and original post",
     });
@@ -3143,6 +3158,9 @@ describe("<ApplyReviewView>", () => {
       name: "Application review summary",
     });
     expect(within(summary).getByRole("alert")).toHaveTextContent("1 review issue requires attention");
+    expect(within(summary).getByLabelText("Issue severity summary")).toHaveTextContent("1 warning");
+    const issueDetails = within(summary).getByText("Review issue details (1)").closest("details");
+    expect(issueDetails).not.toHaveAttribute("open");
     expect(summary.querySelectorAll(".apply-review-audit-summary-list li")).toHaveLength(1);
     const technicalDetails = within(summary)
       .getByText("Technical details (1)")

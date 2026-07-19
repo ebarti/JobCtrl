@@ -530,7 +530,7 @@ you pass `--acknowledge`, which marks the displayed digest as reviewed.
 <WorkflowSurfacePanel surface="web">
 
 ![JobCtrl Runs page listing workflow runs with status and mode](../assets/screenshots/runs.png)
-*The Runs page lists workflow runs with status, mode, timing, and a link into the web interface of Temporal, the workflow engine.*
+*The Runs page lists workflow runs with status, mode, timing, and a link into the web interface of Temporal, the workflow engine. Filter the complete history by status, exact workflow type, or an inclusive date range before opening a run timeline.*
 
 </WorkflowSurfacePanel>
 

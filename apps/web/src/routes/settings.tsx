@@ -1,14 +1,24 @@
-import { Link, Outlet, createFileRoute, useRouterState } from "@tanstack/react-router";
+import {
+  Link,
+  Outlet,
+  createFileRoute,
+  useRouterState,
+} from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 
 import { PageHead } from "../shared/ui/page-head.js";
 
 const TABS: ReadonlyArray<{
-  readonly to: "/settings" | "/settings/credentials" | "/settings/models" | "/settings/browser";
+  readonly to:
+    | "/settings"
+    | "/settings/credentials"
+    | "/settings/models"
+    | "/settings/browser";
   readonly label: string;
 }> = [
-  { to: "/settings", label: "general" },
-  { to: "/settings/credentials", label: "credentials" },
-  { to: "/settings/models", label: "model selection" },
+  { to: "/settings", label: "General" },
+  { to: "/settings/credentials", label: "Credentials" },
+  { to: "/settings/models", label: "Model selection" },
   { to: "/settings/browser", label: "Browser & extension" },
 ];
 
@@ -17,7 +27,18 @@ export const Route = createFileRoute("/settings")({
 });
 
 function SettingsLayout() {
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  const activeTabRef = useRef<HTMLAnchorElement | null>(null);
+
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView?.({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [pathname]);
+
   return (
     <>
       <PageHead eyebrow="Setup" title="Settings" />
@@ -28,6 +49,7 @@ function SettingsLayout() {
             return (
               <Link
                 key={tab.to}
+                ref={active ? activeTabRef : undefined}
                 to={tab.to}
                 className={`tab ${active ? "on" : ""}`}
                 aria-current={active ? "page" : undefined}

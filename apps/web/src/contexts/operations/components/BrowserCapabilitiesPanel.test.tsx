@@ -15,10 +15,8 @@ describe("<BrowserCapabilitiesPanel>", () => {
 
     expect(await screen.findByText("Core managed browser")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        /nothing is enabled, launched, or adopted until you confirm/i,
-      ),
-    ).toBeInTheDocument();
+      screen.getAllByText(/nothing is enabled or launched until you confirm/i),
+    ).toHaveLength(3);
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
     expect(
       screen.getAllByRole("button", { name: "Enable Google Chrome" }),
@@ -78,7 +76,7 @@ describe("<BrowserCapabilitiesPanel>", () => {
     const scope = within(card as HTMLElement);
     await user.click(
       scope.getByRole("button", {
-        name: /advanced: use a manual executable path/i,
+        name: /advanced browser path/i,
       }),
     );
     const input = scope.getByLabelText("Chrome or Chromium executable path");
@@ -159,5 +157,23 @@ describe("<BrowserCapabilitiesPanel>", () => {
       consent: true,
       consentMethod: "explicit-ui-v1",
     });
+  });
+
+  it("distinguishes managed, optional, and consent-required access", async () => {
+    const { container } = renderWithProviders(<BrowserCapabilitiesPanel />);
+
+    expect(await screen.findByText("Managed by JobCtrl")).toBeInTheDocument();
+    expect(screen.getByText("Optional browser access")).toBeInTheDocument();
+    expect(
+      screen.getByText("Optional access · separate consent for profile copy"),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('[data-browser-capability="core-browser"]'),
+    ).toHaveAttribute("data-browser-access", "managed");
+    expect(
+      container.querySelector(
+        '[data-browser-capability="authenticated-linkedin-browser"]',
+      ),
+    ).toHaveAttribute("data-browser-access", "consent");
   });
 });
