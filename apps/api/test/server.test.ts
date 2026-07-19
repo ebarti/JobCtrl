@@ -24,6 +24,7 @@ import {
 } from "../src/credentials.js";
 import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 import { PROFILE_PREVIEW_SCRIPT, defaultActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
+import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 
 let tempDir = "";
@@ -6087,6 +6088,7 @@ describe("local TypeScript API", () => {
     expect(response.statusCode, response.body).toBe(200);
     expect(response.headers["content-type"]).toContain("text/html");
     expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers["content-security-policy"]).toContain("font-src data:");
     expect(response.headers["content-security-policy"]).toContain("default-src 'none'");
     expect(response.body).toContain("Jordan Candidate");
     expect(response.body).toContain('data-resume-layout-target="personal:full_name"');
@@ -8522,6 +8524,8 @@ describe("local TypeScript API", () => {
     expect(PROFILE_PREVIEW_SCRIPT).toContain("from jobctrl.infrastructure.materials.html_resume_pdf import HtmlResumePdfAdapter");
     expect(PROFILE_PREVIEW_SCRIPT).not.toContain("jobctrl.infrastructure.materials.latex_pdf");
     expect(PROFILE_PREVIEW_SCRIPT).toContain("HtmlResumePdfAdapter().render_resume_to_pdf(");
+    expect(PROFILE_PREVIEW_SCRIPT).toContain("resume_theme = json.loads(sys.argv[3])");
+    expect(PROFILE_PREVIEW_SCRIPT).toContain("resume_theme=resume_theme");
   });
 
   it("serves a rendered profile PDF preview", async () => {
@@ -8548,6 +8552,7 @@ describe("local TypeScript API", () => {
     expect(renderer).toHaveBeenCalledWith(
       {
         profile: expect.objectContaining({ personal: expect.objectContaining({ full_name: "Jordan Candidate" }) }),
+        resumeTheme: BUILT_IN_RESUME_TEMPLATE_THEME,
         templateText: INERT_RESUME_TEMPLATE,
       },
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
@@ -8577,12 +8582,56 @@ describe("local TypeScript API", () => {
     expect(response.statusCode, response.body).toBe(200);
     expect(response.headers["content-type"]).toContain("text/html");
     expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers["content-security-policy"]).toContain("font-src data:");
     expect(response.body).toContain("mock profile resume");
     expect(renderer).toHaveBeenCalledWith(
       {
         profile: expect.objectContaining({ personal: expect.objectContaining({ full_name: "Jordan Candidate" }) }),
+        resumeTheme: BUILT_IN_RESUME_TEMPLATE_THEME,
         templateText: INERT_RESUME_TEMPLATE,
       },
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    await app.close();
+  });
+
+  it("applies the effective template layout order to profile previews", async () => {
+    const renderer = vi.fn(async () => ({
+      pdfBytes: Buffer.from("%PDF-1.7\nmock preview"),
+      htmlText: '<main class="resume-page">mock profile resume</main>',
+    }));
+    const app = buildApp({ ...options, profilePreviewRenderer: renderer });
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/resume-templates",
+      payload: {
+        displayName: "Ordered profile template",
+        theme: BUILT_IN_RESUME_TEMPLATE_THEME,
+        layout: { sectionOrder: ["skills", "summary", "experience"] },
+      },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const template = created.json().template;
+    const selected = await app.inject({
+      method: "PATCH",
+      url: "/v1/resume-templates/default",
+      payload: {
+        templateId: template.templateId,
+        versionId: template.activeVersion.versionId,
+      },
+    });
+    expect(selected.statusCode, selected.body).toBe(200);
+
+    const response = await app.inject({ method: "GET", url: "/v1/profile/preview.html" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(renderer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resumeTheme: expect.objectContaining({
+          sectionOrder: ["skills", "summary", "experience"],
+        }),
+      }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 

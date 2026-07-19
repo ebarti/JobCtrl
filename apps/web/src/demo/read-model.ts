@@ -1018,6 +1018,7 @@ export const DEMO_READ_MODEL = {
       templates: [resumeTemplate],
       defaultTemplate: templateMetadata,
       builtInDefault: templateMetadata,
+      effectiveDefaultVersion: resumeTemplate.activeVersion,
     },
     templateDetails: {
       [resumeTemplate.templateId]: { ok: true, template: resumeTemplate },

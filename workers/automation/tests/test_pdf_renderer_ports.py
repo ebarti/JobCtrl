@@ -67,9 +67,7 @@ def _profile() -> dict:
             "education_entries": [
                 {"id": "edu", "degree": "BS CS", "institution": "State", "location": "City", "date": "2015"}
             ],
-            "skill_categories": [
-                {"id": "languages", "label": "Languages", "items": ["Python", "Go"]}
-            ],
+            "skill_categories": [{"id": "languages", "label": "Languages", "items": ["Python", "Go"]}],
             "tailoring_rules": {
                 "required_experience_entry_ids": ["acme_swe"],
                 "required_skill_category_ids": ["languages"],
@@ -242,8 +240,8 @@ def test_build_resume_html_escapes_text_and_marks_layout_targets() -> None:
 
     assert "@page" in html
     assert "print-color-adjust: exact" in html
-    assert "data-resume-layout-target=\"personal:full_name\"" in html
-    assert "data-resume-line-number=\"1\"" in html
+    assert 'data-resume-layout-target="personal:full_name"' in html
+    assert 'data-resume-line-number="1"' in html
     assert "Jane &lt;script&gt;alert(1)&lt;/script&gt;" in html
     assert "<script>alert(1)</script>" not in html
 
@@ -254,13 +252,30 @@ def test_build_resume_html_matches_moderncv_contact_and_experience_layout() -> N
     document = build_resume_document(_payload(), profile)
     html = build_resume_html(document)
 
-    assert '<span class="resume-contact-item resume-contact-phone"><a href="tel:+15550100">+1-555-0100</a></span>' in html
-    assert '<span class="resume-contact-item resume-contact-email"><a href="mailto:jane@example.com">jane@example.com</a></span>' in html
-    assert '<span class="resume-contact-item resume-contact-website"><a href="https://janedoe.dev">janedoe.dev</a></span>' in html
-    assert '<span class="resume-contact-item resume-contact-linkedin"><a href="https://www.linkedin.com/in/janedoe">janedoe</a></span>' in html
-    assert '<span class="resume-entry-row resume-entry-company-row"><span class="resume-entry-company">Acme</span><span class="resume-entry-location">Remote</span></span>' in html
+    assert (
+        '<span class="resume-contact-item resume-contact-phone"><a href="tel:+15550100">+1-555-0100</a></span>' in html
+    )
+    assert (
+        '<span class="resume-contact-item resume-contact-email"><a href="mailto:jane@example.com">jane@example.com</a></span>'
+        in html
+    )
+    assert (
+        '<span class="resume-contact-item resume-contact-website"><a href="https://janedoe.dev">janedoe.dev</a></span>'
+        in html
+    )
+    assert (
+        '<span class="resume-contact-item resume-contact-linkedin"><a href="https://www.linkedin.com/in/janedoe">janedoe</a></span>'
+        in html
+    )
+    assert (
+        '<span class="resume-entry-row resume-entry-company-row"><span class="resume-entry-company">Acme</span><span class="resume-entry-location">Remote</span></span>'
+        in html
+    )
     assert document["experience"][0]["date_range"] == "Mar 2024 - Present"
-    assert '<span class="resume-entry-row resume-entry-role-row"><span class="resume-entry-title">Senior SWE</span><span class="resume-entry-date">Mar 2024 - Present</span></span>' in html
+    assert (
+        '<span class="resume-entry-row resume-entry-role-row"><span class="resume-entry-title">Senior SWE</span><span class="resume-entry-date">Mar 2024 - Present</span></span>'
+        in html
+    )
     assert "Mar 2024 -- Present" not in html
     assert html.index("resume-entry-company-row") < html.index("resume-entry-role-row")
 
@@ -369,6 +384,7 @@ def test_html_resume_adapter_applies_template_to_pdf_html_and_layout_metadata(
         output_path=str(out),
         created_at="2024-01-01T00:00:00+00:00",
         resume_theme={
+            "pageSize": "letter",
             "fontFamily": "garamond",
             "density": "compact",
             "bulletSpacing": "loose",
@@ -378,6 +394,8 @@ def test_html_resume_adapter_applies_template_to_pdf_html_and_layout_metadata(
             "alignment": "left",
             "headerLayout": "left",
             "sectionHeadingStyle": "boxed",
+            "sectionOrder": ["skills", "summary", "experience", "education"],
+            "hiddenSections": ["education"],
         },
         resume_template=template,
     )
@@ -392,9 +410,34 @@ def test_html_resume_adapter_applies_template_to_pdf_html_and_layout_metadata(
     assert "margin-block-start: 0.35mm" in html
     assert "margin-block-end: 2.40mm" in html
     assert "text-align: left" in html
+    assert "size: Letter" in html
+    assert "width: 8.5in" in html
+    assert "min-height: 11in" in html
+    assert ".resume-contact-items {\n  justify-content: flex-start;" in html
+    assert ".resume-name,\n.resume-contact,\n.resume-address," in html
+    assert ".resume-entry-company," in html
+    assert ".resume-entry-title," in html
+    assert html.index('data-resume-layout-target="section:skills"') < html.index(
+        'data-resume-layout-target="section:executive_profile"'
+    )
+    assert html.index('data-resume-layout-target="section:executive_profile"') < html.index(
+        'data-resume-layout-target="section:experience"'
+    )
+    assert 'data-resume-layout-target="section:education"' not in html
     assert artifact.metadata["resume_template"] == template
     assert artifact.metadata["html_path"] == str(out.with_suffix(".html"))
     assert artifact.metadata["layout_boxes"][0]["semantic_id"] == "section:experience"
+
+
+def test_default_sans_resume_theme_uses_geist() -> None:
+    geist_stack = '"Geist Variable", "Geist", ui-sans-serif, system-ui'
+    html = html_resume_pdf.build_resume_html_document("<main>Resume</main>", {"fontFamily": "sans"})
+
+    assert geist_stack in html_resume_pdf.RESUME_HTML_STYLE
+    assert geist_stack in html_resume_pdf.resume_theme_css({"fontFamily": "sans"})
+    assert html.count("@font-face {") == 2
+    assert html.count("data:font/woff2;base64,") == 2
+    assert "font-display: block" in html
 
 
 # ---------------------------------------------------------------------------
@@ -447,11 +490,7 @@ def _txt_experience_bullets(payload: dict, profile: dict) -> list[str]:
 
 def _html_experience_bullets(payload: dict, profile: dict) -> list[str]:
     document = build_resume_document(payload, profile)
-    return [
-        bullet["text"]
-        for entry in document["experience"]
-        for bullet in entry["bullets"]
-    ]
+    return [bullet["text"] for entry in document["experience"] for bullet in entry["bullets"]]
 
 
 def test_html_pdf_renderer_renders_all_mandatory_overflow_bullets_like_txt() -> None:

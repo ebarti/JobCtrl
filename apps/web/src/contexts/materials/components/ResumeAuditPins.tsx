@@ -245,7 +245,7 @@ const RESUME_EDITOR_FONT_FAMILY_STYLES: Record<ResumeEditorFontFamily, string | 
   inter: '"Inter", "Aptos", "Arial", sans-serif',
   mono: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
   resume: null,
-  sans: '"Aptos", "Inter", "Arial", sans-serif',
+  sans: '"Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   serif: '"Charter", "Georgia", serif',
   source_sans: '"Source Sans 3", "Source Sans Pro", "Aptos", "Arial", sans-serif',
   source_serif: '"Source Serif 4", "Source Serif Pro", "Georgia", serif',

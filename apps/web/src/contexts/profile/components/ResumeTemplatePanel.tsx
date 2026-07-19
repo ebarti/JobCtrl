@@ -1,7 +1,9 @@
 import type {
+  ResumeTemplateListResponse,
   ResumeTemplateLayout,
   ResumeTemplateSummary,
   ResumeTemplateTheme,
+  ResumeTemplateVersionSummary,
 } from "@jobctrl/contracts";
 import { IconDeviceFloppy, IconStar } from "@tabler/icons-react";
 import { useEffect, useMemo, useState, type CSSProperties, type JSX } from "react";
@@ -21,24 +23,24 @@ interface ResumeTemplatePanelProps {
   readonly profileHtmlPreviewUrl: string | null;
 }
 
-type TemplatePreviewStyle = CSSProperties & Record<`--${string}`, string | number>;
+export type TemplatePreviewStyle = CSSProperties & Record<`--${string}`, string | number>;
 
 const FONT_STACKS: Record<ResumeTemplateTheme["fontFamily"], string> = {
-  avenir: '"Avenir Next", "Avenir", "Nunito Sans", sans-serif',
-  aptos: '"Aptos", "Aptos Display", "Arial", sans-serif',
-  calibri: '"Calibri", "Aptos", "Arial", sans-serif',
-  cambria: '"Cambria", "Georgia", "Times New Roman", serif',
-  charter: '"Charter", "Bitstream Charter", "Georgia", serif',
-  garamond: '"EB Garamond", "Garamond", "Georgia", serif',
-  georgia: '"Georgia", "Times New Roman", serif',
-  helvetica: '"Helvetica Neue", "Helvetica", "Arial", sans-serif',
-  inter: '"Inter", "Aptos", "Arial", sans-serif',
-  sans: '"Aptos", "Inter", "Arial", sans-serif',
-  serif: '"Charter", "Georgia", serif',
-  source_sans: '"Source Sans 3", "Source Sans Pro", "Aptos", "Arial", sans-serif',
-  source_serif: '"Source Serif 4", "Source Serif Pro", "Georgia", serif',
+  avenir: '"Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif',
+  aptos: '"Aptos", "Helvetica Neue", Helvetica, Arial, sans-serif',
+  calibri: '"Calibri", "Aptos", Arial, sans-serif',
+  cambria: '"Cambria", Georgia, "Times New Roman", serif',
+  charter: '"Charter", "Bitstream Charter", Georgia, serif',
+  garamond: '"EB Garamond", "Garamond", Georgia, serif',
+  georgia: 'Georgia, "Times New Roman", Times, serif',
+  helvetica: '"Helvetica Neue", Helvetica, Arial, sans-serif',
+  inter: '"Inter", "Aptos", Arial, sans-serif',
+  sans: '"Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  serif: 'Georgia, "Times New Roman", Times, serif',
+  source_sans: '"Source Sans 3", "Source Sans Pro", "Aptos", Arial, sans-serif',
+  source_serif: '"Source Serif 4", "Source Serif Pro", Georgia, serif',
   system: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  times: '"Times New Roman", "Times", serif',
+  times: '"Times New Roman", Times, serif',
 };
 
 const FONT_LABELS: Record<ResumeTemplateTheme["fontFamily"], string> = {
@@ -107,11 +109,7 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
   const saveTemplate = useSaveResumeTemplateMutation();
   const setDefaultTemplate = useSetDefaultResumeTemplateMutation();
   const templates = templatesQuery.data?.templates ?? [];
-  const fallbackTemplate =
-    templateByMetadata(templates, templatesQuery.data?.defaultTemplate) ??
-    templateByMetadata(templates, templatesQuery.data?.builtInDefault) ??
-    templates[0] ??
-    null;
+  const fallbackTemplate = resolveEffectiveResumeTemplateSummary(templatesQuery.data);
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
   const activeTemplate = templates.find((template) => template.templateId === activeTemplateId) ?? fallbackTemplate;
   const [displayName, setDisplayName] = useState("");
@@ -132,7 +130,7 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
   }, [activeTemplate]);
 
   const previewStyle = useMemo(
-    () => (theme ? previewStyleForTheme(theme) : undefined),
+    () => (theme ? resumeTemplatePreviewStyle(theme) : undefined),
     [theme],
   );
   const saveError = saveTemplate.error instanceof Error ? saveTemplate.error.message : null;
@@ -420,29 +418,51 @@ function templateByMetadata(
   return metadata ? templates.find((template) => template.templateId === metadata.templateId) ?? null : null;
 }
 
-function previewStyleForTheme(theme: ResumeTemplateTheme): TemplatePreviewStyle {
+export function resolveEffectiveResumeTemplateSummary(
+  response: ResumeTemplateListResponse | undefined,
+): ResumeTemplateSummary | null {
+  const templates = response?.templates ?? [];
+  return (
+    templateByMetadata(templates, response?.defaultTemplate) ??
+    templateByMetadata(templates, response?.builtInDefault) ??
+    templates[0] ??
+    null
+  );
+}
+
+export function resolveEffectiveResumeTemplateVersion(
+  response: ResumeTemplateListResponse | undefined,
+): ResumeTemplateVersionSummary | null {
+  return response?.effectiveDefaultVersion ?? resolveEffectiveResumeTemplateSummary(response)?.activeVersion ?? null;
+}
+
+export function resumeTemplatePreviewStyle(theme: ResumeTemplateTheme): TemplatePreviewStyle {
   const density = DENSITY_TOKENS[theme.density];
-  const fontSize = (points: number) => `${Number((points * theme.fontScale).toFixed(2))}pt`;
+  const scaledBodyFontSize = `${Number((10.35 * theme.fontScale).toFixed(3))}pt`;
   const headerTextAlign = theme.headerLayout === "centered" ? "center" : "left";
   const headerJustify = theme.headerLayout === "centered" ? "center" : "flex-start";
   const bodyAlign = theme.alignment === "justified" ? "justify" : "left";
-  const headingRuleOpacity = theme.sectionHeadingStyle === "rule" ? "1" : "0";
-  const headingBoxBorder = theme.sectionHeadingStyle === "boxed" ? `0.6pt solid ${theme.accentColor}` : "0 solid transparent";
+  const pageInlineSize = theme.pageSize === "letter" ? "8.5in" : "210mm";
+  const pageBlockSize = theme.pageSize === "letter" ? "11in" : "297mm";
+  const headingRuleBorder = theme.sectionHeadingStyle === "rule" ? `0.45pt solid ${theme.accentColor}` : "none";
+  const headingBoxBorder = theme.sectionHeadingStyle === "boxed" ? `0.45pt solid ${theme.accentColor}` : "0";
   return {
     "--resume-template-font-family": FONT_STACKS[theme.fontFamily],
-    "--resume-template-body-font-size": fontSize(9.6),
-    "--resume-template-contact-font-size": fontSize(8.8),
-    "--resume-template-entry-meta-font-size": fontSize(8.9),
-    "--resume-template-heading-font-size": fontSize(9.5),
-    "--resume-template-name-font-size": fontSize(22),
+    "--resume-template-body-font-size": scaledBodyFontSize,
+    "--resume-template-contact-font-size": "8.8pt",
+    "--resume-template-entry-meta-font-size": "8.9pt",
+    "--resume-template-heading-font-size": "9.5pt",
+    "--resume-template-name-font-size": "22pt",
     "--resume-template-accent": theme.accentColor,
     "--resume-template-page-padding": `${theme.marginMm.top}mm ${theme.marginMm.right}mm ${theme.marginMm.bottom}mm ${theme.marginMm.left}mm`,
+    "--resume-template-page-inline-size": pageInlineSize,
+    "--resume-template-page-block-size": pageBlockSize,
     "--resume-template-header-justify": headerJustify,
     "--resume-template-header-text-align": headerTextAlign,
     "--resume-template-body-align": bodyAlign,
-    "--resume-template-heading-rule-opacity": headingRuleOpacity,
+    "--resume-template-heading-rule-border": headingRuleBorder,
     "--resume-template-heading-box-border": headingBoxBorder,
-    "--resume-template-heading-padding": theme.sectionHeadingStyle === "boxed" ? "1mm 1.6mm" : "0",
+    "--resume-template-heading-padding": theme.sectionHeadingStyle === "boxed" ? "0.8mm 1.2mm" : "0",
     "--resume-template-line-height": density.lineHeight,
     "--resume-template-meta-line-height": density.metaLineHeight,
     "--resume-template-section-gap": `${density.sectionGapMm}mm`,

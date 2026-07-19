@@ -27,6 +27,7 @@ import {
   PIPELINE_ACTION_JOB_KEY,
   type ActionCommandPayload,
   type ActionRunResponse,
+  type ResumeTemplateTheme,
   type RpcMethod,
 } from "./contracts.js";
 import {
@@ -99,6 +100,7 @@ export type ProfileImporter = (
 
 export interface ProfilePreviewInput {
   profile: unknown;
+  resumeTheme: ResumeTemplateTheme;
   templateText: string;
 }
 
@@ -399,7 +401,7 @@ export function createProfilePreviewRenderer(
         {
           kind: "script",
           script: PROFILE_PREVIEW_SCRIPT,
-          args: [profilePath, outputPath],
+          args: [profilePath, outputPath, JSON.stringify(input.resumeTheme)],
         },
         { appDir: context.appDir },
       );
@@ -862,6 +864,7 @@ from jobctrl.infrastructure.materials.html_resume_pdf import HtmlResumePdfAdapte
 
 profile_path = Path(sys.argv[1])
 output_path = Path(sys.argv[2])
+resume_theme = json.loads(sys.argv[3])
 
 profile = json.loads(profile_path.read_text(encoding="utf-8"))
 resume = profile.get("resume", {}) if isinstance(profile, dict) else {}
@@ -893,6 +896,7 @@ HtmlResumePdfAdapter().render_resume_to_pdf(
     profile_dict=profile,
     output_path=str(output_path),
     created_at=datetime.now(timezone.utc).isoformat(),
+    resume_theme=resume_theme,
 )
 `;
 

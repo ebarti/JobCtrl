@@ -349,16 +349,16 @@
 }
 
 .profile-layout
-  .profile-sections
+  .profile-sections:not(.profile-sections--card-stack)
   > .form-section:not(:first-child)
   > .field-grid,
 .profile-layout
-  .profile-sections
+  .profile-sections:not(.profile-sections--card-stack)
   > .form-section:not(:first-child)
   > .configuration-section__body
   > .adaptive-field-grid,
 .profile-layout
-  .profile-sections
+  .profile-sections:not(.profile-sections--card-stack)
   > .form-section:not(:first-child)
   > .target-preferences-grid {
   padding-inline: 0;
@@ -510,6 +510,32 @@
 .profile-layout .date-range-present:has([data-checked]) {
   background: color-mix(in oklch, var(--foreground) 9%, var(--card));
   color: var(--foreground);
+}
+
+/* Date ranges are compact control groups. The shared Field and month selector
+ * both default to flexible full-width layouts, which otherwise turns a short
+ * month/year choice into a page-width strip. */
+.profile-layout .date-range-body {
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  align-items: flex-end;
+  justify-content: flex-start;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.profile-layout .date-range-body > .month-selector {
+  inline-size: min(280px, 100%);
+  min-inline-size: min(180px, 100%);
+  flex: 0 1 280px;
+}
+
+.profile-layout .date-range-body > .date-range-present,
+.profile-layout .date-range-body > button {
+  inline-size: auto;
+  flex: 0 0 auto;
+  align-self: flex-end;
 }
 
 /* Configuration disclosures share one Base UI-backed hierarchy across

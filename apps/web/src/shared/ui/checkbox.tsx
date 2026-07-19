@@ -22,7 +22,10 @@ export const Checkbox = forwardRef<
     {...props}
   >
     <CheckboxPrimitive.Indicator
-      className={cn("relative z-10 flex items-center justify-center text-current")}
+      data-slot="checkbox-indicator"
+      className={cn(
+        "relative z-10 flex items-center justify-center text-primary-foreground",
+      )}
     >
       <IconCheck className="size-3" />
     </CheckboxPrimitive.Indicator>

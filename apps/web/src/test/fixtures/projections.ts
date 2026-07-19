@@ -1747,6 +1747,30 @@ export const sampleResumeTemplateListResponse: ResumeTemplateListResponse = {
     templateHash: "template-hash-v1",
     assignmentSource: "built_in",
   },
+  effectiveDefaultVersion: {
+    versionId: "built_in:modern-html:v1",
+    templateId: "built_in:modern-html",
+    versionNumber: 1,
+    displayName: "Modern HTML",
+    status: "active",
+    theme: {
+      pageSize: "a4",
+      fontFamily: "sans",
+      fontScale: 1,
+      density: "balanced",
+      marginMm: { top: 16.5, right: 17.5, bottom: 18, left: 17.5 },
+      headerLayout: "centered",
+      sectionHeadingStyle: "rule",
+      alignment: "justified",
+      bulletSpacing: "normal",
+      accentColor: "#111111",
+      sectionOrder: ["summary", "experience", "education", "skills"],
+      hiddenSections: [],
+    },
+    layout: {},
+    contentHash: "template-hash-v1",
+    createdAt: "2026-06-20T10:00:00.000Z",
+  },
 };
 
 export const sampleDiscoverySettingsResponse: DiscoverySettingsResponse = {

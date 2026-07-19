@@ -1345,11 +1345,16 @@ test("Configuration checkboxes share one target, visual, and label alignment", a
     name: "Individual Contributor",
   });
   await expect(discoveryCheckbox).toBeVisible({ timeout: 30_000 });
+  await discoveryCheckbox.click();
+  await expect(discoveryCheckbox).toHaveAttribute("data-checked");
 
   const readGeometry = async (checkbox: Locator) =>
     checkbox.evaluate((element) => {
       const target = element.getBoundingClientRect();
       const visual = getComputedStyle(element, "::before");
+      const indicator = element.querySelector(
+        '[data-slot="checkbox-indicator"]',
+      );
       const labelledBy = element.getAttribute("aria-labelledby");
       const label = labelledBy
         ? document.getElementById(labelledBy)
@@ -1357,6 +1362,9 @@ test("Configuration checkboxes share one target, visual, and label alignment", a
       const labelRect = label?.getBoundingClientRect() ?? null;
       const visualHeight = Number.parseFloat(visual.height);
       return {
+        indicatorColor: indicator
+          ? getComputedStyle(indicator).color
+          : "missing",
         labelLineHeight: label
           ? Number.parseFloat(getComputedStyle(label).lineHeight)
           : 0,
@@ -1367,6 +1375,8 @@ test("Configuration checkboxes share one target, visual, and label alignment", a
           labelRect === null
             ? Number.NaN
             : target.top + (target.height - visualHeight) / 2 - labelRect.top,
+        visualBackgroundColor: visual.backgroundColor,
+        visualBorderColor: visual.borderColor,
         visualWidth: Number.parseFloat(visual.width),
       };
     });
@@ -1407,6 +1417,8 @@ test("Configuration checkboxes share one target, visual, and label alignment", a
       name: "Set Available full-time to not answered",
     }),
   ).toHaveCount(0);
+  await preferencesCheckbox.click();
+  await expect(preferencesCheckbox).toHaveAttribute("data-checked");
 
   for (const density of Object.keys(DENSITY_TOKENS) as Density[]) {
     await setDensity(page, density);
@@ -1437,6 +1449,18 @@ test("Configuration checkboxes share one target, visual, and label alignment", a
       ),
       `${density} checkbox visuals should align with the same label line`,
     ).toBeLessThanOrEqual(1);
+    expect(
+      preferencesGeometry.indicatorColor,
+      `${density} Preferences checkmark color`,
+    ).toBe(expectedGeometry!.indicatorColor);
+    expect(
+      preferencesGeometry.visualBackgroundColor,
+      `${density} Preferences checked surface`,
+    ).toBe(expectedGeometry!.visualBackgroundColor);
+    expect(
+      preferencesGeometry.visualBorderColor,
+      `${density} Preferences checked border`,
+    ).toBe(expectedGeometry!.visualBorderColor);
   }
 });
 
@@ -1872,6 +1896,29 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
     '[data-slot="collapsible-content"]',
   );
   await expect(baselineContent).toBeVisible();
+  const baselineInset = await baselineSection.evaluate((section) => {
+    const card = section.getBoundingClientRect();
+    const leftInput = section.querySelector(
+      "#structured-profile-experience-years-of-experience-total",
+    );
+    const rightInput = section.querySelector(
+      "#structured-profile-experience-current-company",
+    );
+    if (
+      !(leftInput instanceof HTMLElement) ||
+      !(rightInput instanceof HTMLElement)
+    ) {
+      throw new Error("Resume baseline edge inputs are missing");
+    }
+    const left = leftInput.getBoundingClientRect();
+    const right = rightInput.getBoundingClientRect();
+    return {
+      left: left.left - card.left,
+      right: card.right - right.right,
+    };
+  });
+  expect(baselineInset.left).toBeGreaterThanOrEqual(20);
+  expect(baselineInset.right).toBeGreaterThanOrEqual(20);
   await baselineTrigger.click();
   await expect(baselineContent).toBeHidden();
   await baselineTrigger.click();
@@ -1971,6 +2018,66 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
   await expect(resumeStyleContent).toBeHidden();
   await resumeStyleTrigger.click();
   await expect(resumeStyleContent).toBeVisible();
+});
+
+test("Profile experience date ranges stay compact and reflow on mobile", async ({
+  page,
+}) => {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+    { width: 320, height: 568 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/profile");
+    await expect(
+      page.getByRole("heading", { name: "Profile", level: 1 }),
+    ).toBeVisible({ timeout: 30_000 });
+
+    const experienceSection = page
+      .locator(".profile-sections > .profile-disclosure")
+      .filter({
+        has: page.getByRole("heading", { name: "Experience entries" }),
+      });
+    await experienceSection
+      .getByRole("button", { name: /Experience entries/i })
+      .click();
+
+    const dateRange = experienceSection.locator(".date-range-body").first();
+    await expect(dateRange).toBeVisible();
+    const metrics = await dateRange.evaluate((element) => {
+      const body = element.getBoundingClientRect();
+      const section = element
+        .closest(".profile-disclosure")
+        ?.getBoundingClientRect();
+      const start = element
+        .querySelector(".month-selector")
+        ?.getBoundingClientRect();
+      const present = element
+        .querySelector(".date-range-present")
+        ?.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        bodyWidth: body.width,
+        borderWidth: style.borderWidth,
+        documentOverflow:
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
+        presentWidth: present?.width ?? Number.POSITIVE_INFINITY,
+        sectionWidth: section?.width ?? 0,
+        startWidth: start?.width ?? Number.POSITIVE_INFINITY,
+      };
+    });
+
+    expect(metrics.borderWidth).toBe("0px");
+    expect(metrics.documentOverflow).toBeLessThanOrEqual(1);
+    expect(metrics.bodyWidth).toBeLessThanOrEqual(metrics.sectionWidth - 40);
+    expect(metrics.startWidth).toBeLessThanOrEqual(281);
+    expect(metrics.presentWidth).toBeLessThanOrEqual(140);
+    if (viewport.width >= 1000) {
+      expect(metrics.bodyWidth).toBeLessThanOrEqual(480);
+    }
+  }
 });
 
 test("detail workspaces open with seeded data and preserve route navigation", async ({

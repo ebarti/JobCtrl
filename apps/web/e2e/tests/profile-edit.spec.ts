@@ -38,6 +38,34 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   await expect.poll(() => previewRequests.some((url) => url.includes("/v1/profile/preview.html?v=0")), {
     timeout: 30_000,
   }).toBe(true);
+  await expect(
+    page.locator(".profile-resume-plate-editor .resume-page"),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.locator(".profile-resume-plate-editor .resume-name"),
+  ).toBeVisible({ timeout: 30_000 });
+  const templatePresentation = await page.locator(".profile-resume-plate-editor").evaluate(async (editor) => {
+    await document.fonts.ready;
+    const resumePage = editor.querySelector(".resume-page");
+    const resumeName = editor.querySelector(".resume-name");
+    if (!resumePage || !resumeName) {
+      throw new Error("Editable baseline resume template is incomplete");
+    }
+    const pageStyle = getComputedStyle(resumePage);
+    const nameStyle = getComputedStyle(resumeName);
+    return {
+      fontFamily: pageStyle.fontFamily,
+      geistLoaded: document.fonts.check('16px "Geist Variable"'),
+      nameFontSize: nameStyle.fontSize,
+      nameTextAlign: nameStyle.textAlign,
+      paddingTop: Number.parseFloat(pageStyle.paddingTop),
+    };
+  });
+  expect(templatePresentation.fontFamily).toContain("Geist Variable");
+  expect(templatePresentation.geistLoaded).toBe(true);
+  expect(templatePresentation.nameFontSize).toBe("29.3333px");
+  expect(templatePresentation.nameTextAlign).toBe("center");
+  expect(templatePresentation.paddingTop).toBeGreaterThan(62);
 
   await profileDataView.click();
   await expect(profileDataView).toHaveAttribute("aria-pressed", "true");

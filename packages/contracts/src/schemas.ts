@@ -662,6 +662,7 @@ export interface ResumeTemplateListResponse {
   templates: ResumeTemplateSummary[];
   defaultTemplate: ResumeTemplateMetadata | null;
   builtInDefault: ResumeTemplateMetadata;
+  effectiveDefaultVersion: ResumeTemplateVersionSummary;
 }
 
 export interface ResumeTemplateDetailResponse {

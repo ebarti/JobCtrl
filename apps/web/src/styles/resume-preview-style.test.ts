@@ -16,6 +16,29 @@ const cssRuleContaining = (selector: string): string => {
 };
 
 describe("resume preview style contract", () => {
+  it("falls back to the canonical rendered resume when no theme variables are supplied", () => {
+    const unguardedTemplateVariables = [
+      ...globalsCss.matchAll(/var\(--resume-template-(?!default-)([a-z-]+)\)/g),
+    ].map((match) => match[1]);
+
+    expect(unguardedTemplateVariables).toEqual([]);
+    expect(globalsCss).toContain(
+      '--resume-template-default-font-family: "Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;',
+    );
+    expect(globalsCss).toContain(
+      "--resume-template-default-body-font-size: 10.35pt;",
+    );
+    expect(globalsCss).toContain(
+      "padding: var(--resume-template-page-padding, var(--resume-template-default-page-padding));",
+    );
+    expect(globalsCss).toContain(
+      "font-size: var(--resume-template-name-font-size, var(--resume-template-default-name-font-size));",
+    );
+    expect(globalsCss).toContain(
+      "border-block-start: var(--resume-template-heading-rule-border, var(--resume-template-default-heading-rule-border));",
+    );
+  });
+
   it("keeps JobCtrl comment markers outside the resume line layout", () => {
     const lineRule = cssRuleContaining(".resume-plate-document [data-resume-line-number].has-jobctrl-comment");
     const markerRule = cssRuleContaining(".resume-plate-document [data-resume-line-number].has-jobctrl-comment::before");
@@ -45,12 +68,15 @@ describe("resume preview style contract", () => {
     const titleRule = cssRuleContaining(".resume-plate-document .resume-entry-title");
 
     expect(contactRule).toContain("display: inline-flex;");
+    expect(contactRule).toContain(
+      "justify-content: var(--resume-template-header-justify, var(--resume-template-default-header-justify));",
+    );
     expect(contactItemRule).toContain("display: inline-flex;");
     expect(entryHeadingRule).toContain("display: grid;");
     expect(entryRowRule).toContain("grid-template-columns: minmax(0, 1fr) max-content;");
     expect(titleRule).toContain("font-style: italic;");
     expect(globalsCss).toContain(
-      ".resume-plate-document .resume-entry-location {\n  color: var(--resume-template-accent);\n  text-align: end;",
+      ".resume-plate-document .resume-entry-location {\n  color: var(--resume-template-accent, var(--resume-template-default-accent));\n  text-align: end;",
     );
   });
 });

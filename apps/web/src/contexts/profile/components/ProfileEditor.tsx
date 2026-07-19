@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { CardHeader } from "../../../shared/ui/card-header.js";
@@ -10,7 +10,12 @@ import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAu
 import { ProfileForm } from "../forms/profile-form.js";
 import { useProfileHtmlPreviewUrl } from "../hooks/useProfileHtmlPreviewUrl.js";
 import { useProfileQuery } from "../hooks/useProfileQuery.js";
-import { ResumeTemplatePanel } from "./ResumeTemplatePanel.js";
+import { useResumeTemplatesQuery } from "../hooks/useResumeTemplatesQuery.js";
+import {
+  resolveEffectiveResumeTemplateVersion,
+  resumeTemplatePreviewStyle,
+  ResumeTemplatePanel,
+} from "./ResumeTemplatePanel.js";
 
 const SPLIT_STORAGE_KEY = "profile-preview-split-width";
 const DEFAULT_EDITOR_WIDTH = 62;
@@ -26,6 +31,7 @@ export interface ProfileEditorProps {
 export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
   const { storage } = usePorts();
   const profileQuery = useProfileQuery();
+  const resumeTemplatesQuery = useResumeTemplatesQuery();
   const { url: profileHtmlPreviewUrl } = useProfileHtmlPreviewUrl();
   const layoutRef = useRef<HTMLDivElement>(null);
   const [workspaceView, setWorkspaceView] = useState<ProfileWorkspaceView>("profile-data");
@@ -34,6 +40,13 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
     return clampEditorWidth(typeof saved === "number" ? saved : DEFAULT_EDITOR_WIDTH);
   });
   const errorMessage = profileQuery.error?.message ?? "";
+  const effectiveResumeTemplateVersion = resolveEffectiveResumeTemplateVersion(resumeTemplatesQuery.data);
+  const resumePreviewStyle = useMemo(
+    () => effectiveResumeTemplateVersion
+      ? resumeTemplatePreviewStyle(effectiveResumeTemplateVersion.theme)
+      : undefined,
+    [effectiveResumeTemplateVersion],
+  );
   const showPreview = section === "profile";
   const layoutStyle = {
     "--profile-editor-width": `${editorWidth}%`,
@@ -218,8 +231,12 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
               </span>
             </div>
             <ResumeStandalonePlateEditor
+              {...(effectiveResumeTemplateVersion
+                ? { transformKey: effectiveResumeTemplateVersion.versionId }
+                : {})}
               className="profile-resume-plate-editor"
               htmlUrl={profileHtmlPreviewUrl}
+              previewStyle={resumePreviewStyle}
               title="Baseline resume editor"
             />
           </aside>

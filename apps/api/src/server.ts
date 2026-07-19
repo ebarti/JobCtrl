@@ -253,6 +253,7 @@ import {
   listResumeTemplates,
   ResumeTemplateInputError,
   resolveCurrentResumeArtifactIdForOpen,
+  resolveEffectiveResumeTemplate,
   setDefaultResumeTemplate,
   setJobResumeTemplateAssignment,
 } from "./resume-templates.js";
@@ -2012,7 +2013,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     return reply
       .type("text/html; charset=utf-8")
       .header("cache-control", "no-store")
-      .header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'")
+      .header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'")
       .send(fs.createReadStream(preview.htmlPath));
   });
 
@@ -2058,17 +2059,22 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/profile/preview.pdf", async (_request, reply) => {
     try {
-      const profileConfig = withDb(reply, options.dbPath, (db) => readProfileConfig(db));
-      if ("ok" in profileConfig && profileConfig.ok === false) {
-        return profileConfig;
-      }
-      const preview = await profilePreviewRenderer(
-        {
+      const previewInput = withDb(reply, options.dbPath, (db) => {
+        const profileConfig = readProfileConfig(db);
+        const templateVersion = resolveEffectiveResumeTemplate(db).version;
+        const layoutSectionOrder = templateVersion.layout.sectionOrder;
+        return {
           profile: profileConfig.profile,
+          resumeTheme: layoutSectionOrder?.length
+            ? { ...templateVersion.theme, sectionOrder: layoutSectionOrder }
+            : templateVersion.theme,
           templateText: profileConfig.templateText,
-        },
-        actionContext,
-      );
+        };
+      });
+      if ("ok" in previewInput) {
+        return previewInput;
+      }
+      const preview = await profilePreviewRenderer(previewInput, actionContext);
       return reply
         .header("content-type", "application/pdf")
         .header("cache-control", "no-store")
@@ -2085,21 +2091,26 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/profile/preview.html", async (_request, reply) => {
     try {
-      const profileConfig = withDb(reply, options.dbPath, (db) => readProfileConfig(db));
-      if ("ok" in profileConfig && profileConfig.ok === false) {
-        return profileConfig;
-      }
-      const preview = await profilePreviewRenderer(
-        {
+      const previewInput = withDb(reply, options.dbPath, (db) => {
+        const profileConfig = readProfileConfig(db);
+        const templateVersion = resolveEffectiveResumeTemplate(db).version;
+        const layoutSectionOrder = templateVersion.layout.sectionOrder;
+        return {
           profile: profileConfig.profile,
+          resumeTheme: layoutSectionOrder?.length
+            ? { ...templateVersion.theme, sectionOrder: layoutSectionOrder }
+            : templateVersion.theme,
           templateText: profileConfig.templateText,
-        },
-        actionContext,
-      );
+        };
+      });
+      if ("ok" in previewInput) {
+        return previewInput;
+      }
+      const preview = await profilePreviewRenderer(previewInput, actionContext);
       return reply
         .type("text/html; charset=utf-8")
         .header("cache-control", "no-store")
-        .header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'")
+        .header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'")
         .send(preview.htmlText);
     } catch (error) {
       void reply.code(500);

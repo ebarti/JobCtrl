@@ -4,17 +4,39 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   sampleProfileResponse,
+  sampleResumeTemplateListResponse,
   sampleSettingsResponse,
 } from "../../../test/fixtures/projections.js";
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { ProfileEditor } from "./ProfileEditor.js";
+import { resumeTemplatePreviewStyle } from "./ResumeTemplatePanel.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe("<ProfileEditor>", () => {
+  it("serializes resume theme tokens without losing print precision", () => {
+    const style = resumeTemplatePreviewStyle({
+      ...sampleResumeTemplateListResponse.effectiveDefaultVersion.theme,
+      accentColor: "#123456",
+      fontScale: 1.1,
+      headerLayout: "left",
+      sectionHeadingStyle: "plain",
+    });
+
+    expect(style).toMatchObject({
+      "--resume-template-accent": "#123456",
+      "--resume-template-body-font-size": "11.385pt",
+      "--resume-template-header-justify": "flex-start",
+      "--resume-template-header-text-align": "left",
+      "--resume-template-heading-rule-border": "none",
+      "--resume-template-page-block-size": "297mm",
+      "--resume-template-page-inline-size": "210mm",
+    });
+  });
+
   it("renders the Profile baseline resume through the Plate editor pane", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
@@ -54,6 +76,18 @@ describe("<ProfileEditor>", () => {
     expect(await screen.findByRole("button", { name: "Bold" })).toBeInTheDocument();
     expect(document.querySelector("main.resume-page")).toBeNull();
     expect(document.querySelector("div.resume-page")).toBeInTheDocument();
+    const baselineEditor = document.querySelector<HTMLElement>(
+      ".profile-resume-plate-editor",
+    );
+    expect(baselineEditor?.style.getPropertyValue("--resume-template-font-family")).toBe(
+      '"Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    );
+    expect(baselineEditor?.style.getPropertyValue("--resume-template-body-font-size")).toBe(
+      "10.35pt",
+    );
+    expect(baselineEditor?.style.getPropertyValue("--resume-template-page-padding")).toBe(
+      "16.5mm 17.5mm 18mm 17.5mm",
+    );
     expect(screen.queryByText("Baseline resume preview")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /open PDF/i })).not.toBeInTheDocument();
   });
@@ -126,6 +160,67 @@ describe("<ProfileEditor>", () => {
     await user.keyboard("{Escape}");
     expect(screen.getByLabelText("Size")).toHaveAttribute("type", "number");
     expect(screen.queryByLabelText("Resize profile and resume editor panes")).not.toBeInTheDocument();
+  });
+
+  it("uses the exact pinned resume template version instead of the latest revision", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response('<main class="resume-page"><p>Resume</p></main>', {
+        headers: { "content-type": "text/html" },
+      })),
+    );
+    const pinnedVersion = {
+      ...sampleResumeTemplateListResponse.effectiveDefaultVersion,
+      versionId: "built_in:modern-html:v1-pinned",
+      theme: {
+        ...sampleResumeTemplateListResponse.effectiveDefaultVersion.theme,
+        accentColor: "#123456",
+        fontFamily: "georgia" as const,
+      },
+    };
+    const latestVersion = {
+      ...pinnedVersion,
+      versionId: "built_in:modern-html:v2-latest",
+      versionNumber: 2,
+      theme: {
+        ...pinnedVersion.theme,
+        accentColor: "#654321",
+        fontFamily: "sans" as const,
+      },
+    };
+
+    renderWithProviders(<ProfileEditor />, {
+      ports: buildTestPorts({
+        api: {
+          profile: async () => sampleProfileResponse,
+          profilePreviewHtmlUrl: () => "/v1/profile/preview.html?v=0",
+          resumeTemplates: async () => ({
+            ...sampleResumeTemplateListResponse,
+            templates: sampleResumeTemplateListResponse.templates.map((template) => ({
+              ...template,
+              activeVersion: latestVersion,
+            })),
+            effectiveDefaultVersion: pinnedVersion,
+          }),
+          settings: async () => sampleSettingsResponse,
+        },
+      }),
+      withRouter: true,
+    });
+
+    await screen.findByRole("heading", { name: "Resume data" });
+    await user.click(screen.getByRole("button", { name: "Resume editor" }));
+    expect(await screen.findByText("Baseline resume editor")).toBeInTheDocument();
+    const baselineEditor = document.querySelector<HTMLElement>(
+      ".profile-resume-plate-editor",
+    );
+    expect(baselineEditor?.style.getPropertyValue("--resume-template-font-family")).toBe(
+      'Georgia, "Times New Roman", Times, serif',
+    );
+    expect(baselineEditor?.style.getPropertyValue("--resume-template-accent")).toBe(
+      "#123456",
+    );
   });
 
   it("preserves a Profile draft while switching workspace views", async () => {

@@ -943,15 +943,15 @@ describe("DemoLocalCommandExecutor", () => {
       activeVersion: { versionNumber: template.activeVersion.versionNumber + 1 },
     });
     expect(snapshot.state.readModel.materials.resumeTemplates.defaultTemplate?.templateVersionId).toBe(
-      saved.template.activeVersion.versionId,
+      template.activeVersion.versionId,
     );
     expect(snapshot.state.readModel.jobs.details[JOB]?.job.resumeTemplate?.effective).toMatchObject({
       assignmentSource: "job_override",
       templateVersionId: template.activeVersion.versionId,
     });
-    expect(snapshot.state.readModel.materials.list.items.find(
-      (artifact) => artifact.resumeTemplate?.effective.assignmentSource !== "job_override",
-    )?.resumeTemplate?.effective.templateVersionId).toBe(saved.template.activeVersion.versionId);
+    expect(snapshot.state.readModel.materials.resumeTemplates.effectiveDefaultVersion.versionId).toBe(
+      template.activeVersion.versionId,
+    );
     await expect(adapter.setJobResumeTemplate(JOB, {
       templateId: template.templateId,
       versionId: "missing-template-version",
