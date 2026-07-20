@@ -52,7 +52,190 @@ const PAGES = [
     visualSelector: ".data-boundary",
     images: false,
   },
+  {
+    path: "/user/scoring-and-employer-analysis",
+    visualSelector: null,
+    images: false,
+  },
+  { path: "/user/discovery", visualSelector: null, images: false },
+  { path: "/user/apply", visualSelector: null, images: false },
+  {
+    path: "/user/candidate-profile",
+    visualSelector: null,
+    images: false,
+  },
+  {
+    path: "/user/enrichment-and-extraction",
+    visualSelector: null,
+    images: false,
+  },
+  {
+    path: "/user/materials-and-tailoring",
+    visualSelector: null,
+    images: false,
+  },
+  {
+    path: "/user/outcomes-and-feedback",
+    visualSelector: null,
+    images: false,
+  },
+  {
+    path: "/user/contacts-and-outreach",
+    visualSelector: null,
+    images: false,
+  },
+  {
+    path: "/user/compensation-evidence",
+    visualSelector: null,
+    images: false,
+  },
   { path: "/comparison", visualSelector: null, images: true },
+];
+
+const LIFECYCLE_EXPLANATION_CONTRACTS = [
+  {
+    path: "/user/discovery",
+    heading: "#runtime-sources-and-schedule",
+    selectors: [
+      "#runtime-setting-job-boards",
+      "#runtime-setting-parallel-source-families",
+      "#runtime-setting-schedule-cron",
+    ],
+    tokens: ["SQLite", "four", "SKIP", "task-queue depth"],
+  },
+  {
+    path: "/user/apply",
+    heading: "#approval-and-automation-modes",
+    selectors: [
+      "#candidate-profile-application-fields",
+      "#approval-and-automation-modes",
+      "#browser-apply-automation",
+    ],
+    tokens: [
+      "missing_profile_data:<field>",
+      "autoApply",
+      "applyApprovalRequired",
+      "at-most-once",
+      "CAPTCHA",
+    ],
+  },
+  {
+    path: "/user/candidate-profile",
+    heading: "#how-profile-data-becomes-runtime-evidence",
+    labels: [
+      "Import creates a draft.",
+      "Save validates and normalizes.",
+      "Work receives an immutable snapshot.",
+      "Consumers bind to the version they used.",
+      "Propagation remains explicit and recoverable.",
+    ],
+    tokens: ["ProfileSnapshot", "profile version", "Apply approval"],
+  },
+  {
+    path: "/user/enrichment-and-extraction",
+    heading: "#how-a-lead-becomes-a-usable-snapshot",
+    labels: [
+      "Fetch once, then walk the configured extraction cascade.",
+      "Verify active state independently.",
+      "Assign confidence from the extraction evidence.",
+      "Quarantine instead of guessing.",
+      "Surface duplicate candidates from content evidence.",
+    ],
+    tokens: [
+      "JSON-LD",
+      "200 characters",
+      "400 characters",
+      "1.0",
+      "0.95",
+      "0.85",
+      "unknown active state",
+      "operator override",
+    ],
+  },
+  {
+    path: "/user/materials-and-tailoring",
+    heading: "#how-jobctrl-chooses-a-resume",
+    labels: [
+      "Build one deterministic plan.",
+      "Ask each ready generator for structured content.",
+      "Validate the assembled resume, not just model JSON.",
+      "Repair bounded quality failures.",
+      "Require approval from every enabled gate.",
+      "Select and persist the best clean candidate.",
+    ],
+    tokens: [
+      "actual candidate text",
+      "8/10",
+      "85%",
+      "0.82",
+      "PASS",
+      "six-persona",
+      "last accepted generation",
+    ],
+  },
+  {
+    path: "/user/outcomes-and-feedback",
+    heading: "#how-email-becomes-an-outcome-suggestion",
+    labels: [
+      "Start from known applications.",
+      "Score metadata before reading a body.",
+      "Classify with fixed phrase rules.",
+      "Wait for a human decision.",
+      "Gate analytics by sample size.",
+    ],
+    tokens: [
+      "applied_at",
+      "discovered_at",
+      "45-day",
+      "0.70",
+      "0.20",
+      "five applied records",
+      "five response-time samples",
+    ],
+  },
+  {
+    path: "/user/contacts-and-outreach",
+    heading: "#how-research-and-draft-approval-work",
+    labels: [
+      "Check source policy before research.",
+      "Keep findings as proposals.",
+      "Ground the actual draft.",
+      "Run the approval stack.",
+      "Persist the gate result as authority.",
+      "Stop at the clipboard.",
+    ],
+    tokens: [
+      "broad-web discovery",
+      "needs_review",
+      "PASS",
+      "0.82",
+      "persisted approved draft",
+    ],
+  },
+  {
+    path: "/user/compensation-evidence",
+    heading: "#how-compensation-is-calculated",
+    labels: [
+      "Record parse state.",
+      "Interpret bounds conservatively.",
+      "Annualize only with a known period.",
+      "Load only permitted evidence.",
+      "Score the weakest factor.",
+      "Build the range and interval.",
+      "Persist uncertainty.",
+    ],
+    tokens: [
+      "parsed_range",
+      "2,080",
+      "36 months",
+      "0.55",
+      "0.85",
+      "0.62",
+      "Discovery",
+      "explicit compensation refresh",
+      "passive read",
+    ],
+  },
 ];
 
 const REQUIRED_SIDEBAR_LABELS = [
@@ -721,6 +904,103 @@ try {
 
   await page.setViewportSize(BASE_VIEWPORT);
 
+  await page.goto(
+    `http://127.0.0.1:${port}/user/scoring-and-employer-analysis`,
+    { waitUntil: "networkidle" },
+  );
+  const scoringExplanationContract = await page.evaluate(() => {
+    const doc = document.querySelector(".vp-doc");
+    const text = (doc?.textContent ?? "").replace(/\s+/g, " ").trim();
+    const strongLabels = [...(doc?.querySelectorAll("strong") ?? [])].map(
+      (label) => (label.textContent ?? "").replace(/\s+/g, " ").trim(),
+    );
+    const requiredLabels = [
+      "Send the accepted requirements to the scorer.",
+      "Classify the returned evidence.",
+      "Apply evidence credit and requirement priority.",
+      "Assign the display band.",
+      "Confidence is a review signal, not a points adjustment.",
+      "Eligibility is recorded separately from soft fit.",
+      "The minimum-fit threshold does not change the saved score.",
+      "A correction is not a hidden weight change.",
+    ];
+    const requiredTokens = [
+      "requirement-fit-v1",
+      "Direct match",
+      "Strong match",
+      "Transferable evidence",
+      "1.25×",
+      "score = 1 + round(9 × coverage)",
+      "45% technical fit",
+      "30% experience fit",
+      "25% role fit",
+      "evidence ID",
+      "capped at 4",
+      "Unavailable evidence",
+      "0–10",
+    ];
+    return {
+      missingHeadings: [
+        "#how-the-score-is-calculated",
+        "#when-requirement-rows-are-unavailable",
+        "#score-confidence-and-eligibility-are-different",
+      ].filter((selector) => !document.querySelector(selector)),
+      missingLabels: requiredLabels.filter(
+        (label) => !strongLabels.includes(label),
+      ),
+      missingTokens: requiredTokens.filter((token) => !text.includes(token)),
+    };
+  });
+  if (
+    scoringExplanationContract.missingHeadings.length > 0 ||
+    scoringExplanationContract.missingLabels.length > 0 ||
+    scoringExplanationContract.missingTokens.length > 0
+  ) {
+    fail(
+      `/user/scoring-and-employer-analysis: public scoring explanation regressed (${JSON.stringify(scoringExplanationContract)})`,
+    );
+  } else {
+    console.log(
+      "ok    /user/scoring-and-employer-analysis scoring explanation",
+    );
+  }
+
+  for (const contract of LIFECYCLE_EXPLANATION_CONTRACTS) {
+    await page.goto(`http://127.0.0.1:${port}${contract.path}`, {
+      waitUntil: "networkidle",
+    });
+    const lifecycleExplanation = await page.evaluate(
+      ({ heading, labels = [], tokens = [], selectors = [] }) => {
+        const doc = document.querySelector(".vp-doc");
+        const text = (doc?.textContent ?? "").replace(/\s+/g, " ").trim();
+        const strongLabels = [...(doc?.querySelectorAll("strong") ?? [])].map(
+          (label) => (label.textContent ?? "").replace(/\s+/g, " ").trim(),
+        );
+        return {
+          hasExplanationHeading: Boolean(document.querySelector(heading)),
+          missingLabels: labels.filter((label) => !strongLabels.includes(label)),
+          missingTokens: tokens.filter((token) => !text.includes(token)),
+          missingSelectors: selectors.filter(
+            (selector) => !document.querySelector(selector),
+          ),
+        };
+      },
+      contract,
+    );
+    if (
+      !lifecycleExplanation.hasExplanationHeading ||
+      lifecycleExplanation.missingLabels.length > 0 ||
+      lifecycleExplanation.missingTokens.length > 0 ||
+      lifecycleExplanation.missingSelectors.length > 0
+    ) {
+      fail(
+        `${contract.path}: public lifecycle explanation regressed (${JSON.stringify(lifecycleExplanation)})`,
+      );
+    } else {
+      console.log(`ok    ${contract.path} lifecycle explanation`);
+    }
+  }
+
   await page.goto(`http://127.0.0.1:${port}/user/data-and-safety`, {
     waitUntil: "networkidle",
   });
@@ -901,8 +1181,9 @@ try {
     !comparisonDesktop.headings.includes(
       "JobCtrl's UI is part of the product",
     ) ||
-    comparisonDesktop.headings.at(-1) !==
-      "Appendix: evidence-backed capability matrix"
+    comparisonDesktop.headings.at(-2) !==
+      "Appendix: evidence-backed capability matrix" ||
+    comparisonDesktop.headings.at(-1) !== "Snapshot and delta method"
   ) {
     fail(
       `/comparison desktop: visual hierarchy or appendix order regressed (${JSON.stringify(comparisonDesktop)})`,

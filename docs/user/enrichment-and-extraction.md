@@ -6,6 +6,43 @@ state, and a provenance-bearing content snapshot. Extraction is the controlled
 work used to obtain those facts from an API, posting page, browser render, or
 user-mediated capture.
 
+## How A Lead Becomes A Usable Snapshot
+
+Enrichment separates “we found a listing” from “we have enough trustworthy
+posting detail to use it.” The current decision path is:
+
+1. **Fetch once, then walk the configured extraction cascade.** JSON-LD, CSS
+   selectors, and optional LLM-assisted extraction are tried in order. The first
+   result with a usable full description wins; an application URL found by an
+   earlier attempt can be retained for that result.
+2. **Verify active state independently.** Extraction quality and whether the job
+   still appears active are separate findings, so a well-extracted but
+   unverifiable posting is not silently treated as active.
+3. **Assign confidence from the extraction evidence.** Description length,
+   extraction tier, and presence of an application URL determine the current
+   bucket:
+
+   | Extraction result | High | Medium | Low |
+   | --- | --- | --- | --- |
+   | JSON-LD | Application URL and at least 200 characters | At least 200 characters without the URL | Fewer than 200 characters |
+   | CSS selectors | Application URL and at least 400 characters | At least 200 characters | Fewer than 200 characters |
+   | LLM-assisted | — | Application URL and at least 400 characters | Every other result |
+   | Other configured tier | — | At least 200 characters | Fewer than 200 characters |
+
+4. **Quarantine instead of guessing.** Unknown active state, low confidence
+   without an override, or an active posting with no application URL is held for
+   review. An explicit operator override can admit a low-confidence or
+   URL-missing snapshot and is persisted with the audit trail; unknown active
+   state remains quarantined.
+5. **Surface duplicate candidates from content evidence.** An exact description
+   hash is a `1.0` signal, the same normalized application URL is `0.95`, and
+   token-Jaccard content similarity must reach `0.85`. These signals propose a
+   duplicate for Discovery to resolve; Enrichment does not silently merge jobs.
+
+A failed fetch or exhausted cascade records a retryable attempt without
+manufacturing a snapshot. Failure remains isolated to that job, so useful
+results from the rest of the source batch survive.
+
 ## What You Can See And Control
 
 Enrichment is internal work under the user-facing **Discover** stage, not a

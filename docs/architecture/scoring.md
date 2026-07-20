@@ -63,6 +63,49 @@ prompt. `trace_json` records non-sensitive audit metadata: prompt/schema
 versions, model name, criteria version, profile snapshot version, parser
 warnings, and correction history.
 
+### Deterministic Score Resolution
+
+When the accepted employer analysis provides explicit requirement IDs and the
+scorer returns requirement assessments, `requirement-fit-v1` owns the persisted
+score. The scorer response supplies each assessment's requirement identity,
+text, tier, weight, posting-evidence span, fit classification, and profile
+evidence IDs. The parser validates field shape and ranges and requires at least
+one non-empty evidence ID for matched and transferable rows. It does not
+currently reconcile those returned IDs or requirement fields against the
+canonical employer analysis and profile evidence before resolution. The
+formula is therefore deterministic over the accepted parsed response, while
+its grounding still depends on the scorer returning the supplied source fields
+faithfully. Evidence resolution in the read model can later mark an unknown ID
+unavailable, but that display-time result does not retroactively change the
+score.
+
+For each parsed requirement assessment:
+
+- `max_points = requirement weight × tier multiplier`, where must-have is
+  `1.25` and nice-to-have is `1.0`;
+- direct match has fit value `1.0`, strong match `0.85`, transferable evidence
+  `0.6`, and missing, blocked, or not-assessed `0.0`;
+- `awarded_points = max_points × fit value`.
+
+The resolver rounds each row's `max_points` and `awarded_points` to four
+decimal places, then computes
+`weighted_fit = sum(awarded_points) / sum(max_points)` and then
+`score = 1 + floor(9 × weighted_fit + 0.5)`, clamped to 1–10. One or more
+blocked requirement rows cap the result at 4. The report separately records
+must-have coverage, blocker count, and the number of missing or blocked
+requirements whose saved weight is at least `0.75`.
+
+Requirement-led resolution runs only when at least one valid assessment row is
+returned and the employer-analysis generation is greater than zero. Otherwise,
+the compatibility policy resolves three 0–10 model-classified dimensions with
+a deterministic weighted mean: technical fit `0.45`, experience fit `0.30`,
+and role fit `0.25`. It uses nearest-integer half-up rounding, clamps the final
+score to 1–10, and applies the same bands: excellent at 9, strong at 7,
+plausible at 5, stretch at 3, and poor at 1. Confidence and eligibility are
+trace-only policy inputs rather than numeric adjustments. The Discovery
+minimum-fit threshold gates downstream materials but is not an input to either
+score formula.
+
 The score breakdown separates soft fit from hard eligibility. `fit_band`,
 `confidence`, matched/missing/transferable signals, warnings, and hard blockers
 are exposed through the TypeScript API and Job Detail route workspace. User corrections create a new

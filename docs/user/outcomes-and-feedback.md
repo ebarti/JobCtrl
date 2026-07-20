@@ -6,6 +6,48 @@ response. Feedback includes your manual corrections and bounded suggestions
 from linked evidence; it improves the audit trail and analytics without
 changing scoring, ranking, thresholds, or Apply eligibility.
 
+## How Email Becomes An Outcome Suggestion
+
+The Gmail feedback path uses a bounded deterministic link-and-classify process;
+it does not ask a model to read the inbox and decide what happened.
+
+1. **Start from known applications.** A user-started scan builds anchors from
+   applied job rows, reviewed outcomes, and successful live Apply runs, then
+   keeps the earliest qualifying anchor for each job. A job row uses
+   `applied_at` when present; a legacy row marked applied without that timestamp
+   falls back to `discovered_at`. By default the scan checks at most 25 anchors
+   and five search results per anchor inside a 45-day window that starts at the
+   selected anchor.
+2. **Score metadata before reading a body.** The current link signals are
+   additive and capped at `1.0`:
+
+   | Matching signal | Credit |
+   | --- | ---: |
+   | Expected recipient | `0.20` |
+   | Inside the application time window | `0.20` |
+   | Employer name | `0.20` |
+   | Job title | `0.15` |
+   | Application domain | `0.15` |
+   | Known ATS hint | `0.10` |
+   | Outcome wording | `0.10` |
+
+   JobCtrl links a message only at `0.70` or above. It fetches and stores the
+   bounded body only after that metadata gate passes.
+3. **Classify with fixed phrase rules.** The linked subject, snippet, and body
+   are checked in priority order for bounce, offer, rejection, interview,
+   assessment, application confirmation, and recruiter-reply language. If no
+   rule matches, the suggestion is `unknown`; the confidence shown is the
+   rule's fixed confidence, not a learned probability.
+4. **Wait for a human decision.** Accept and correct create a canonical reviewed
+   outcome; ignore closes only the suggestion. Provider/message identity keeps
+   the same email from creating duplicate evidence.
+5. **Gate analytics by sample size.** Raw counts remain visible. Conversion
+   rates require at least five applied records in the cohort, and median
+   response time requires five response-time samples.
+
+This keeps private mail access narrow and preserves the difference between a
+machine suggestion, a reviewed lifecycle fact, and descriptive analytics.
+
 ## What You Can See And Control
 
 - Open `/jobs/:jobId` and use **Application outcomes** to record an outcome,
