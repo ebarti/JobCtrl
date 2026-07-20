@@ -379,7 +379,8 @@ sequenceDiagram
         Entry->>Flow: ApplyWorkflow (per-job ID)
     end
     Flow->>Runner: budget check and heartbeat-backed activity
-    Runner->>Store: lock and ApplyRunStarted
+    Runner->>Store: lock, repeat/approval checks, optional override consumption
+    Runner->>Store: ApplyRunStarted
     Runner->>Store: ApplySubmitIntended checkpoint
     Runner->>Runner: browser guard blocks dry-run writes
     Runner->>Store: submitted dry-run complete or failed
@@ -395,7 +396,7 @@ MCP** and performs any form interaction. Terminal apply outcomes are
 `ApplicationSubmitted` (live submit), `DryRunCompleted` (dry-run),
 `ApplicationFailed`, or `ApplyManualSkip` (manual-ATS skip).
 
-**Three safety invariants, and the mechanisms that enforce them:**
+**Four safety invariants, and the mechanisms that enforce them:**
 
 1. **At-most-once submission.** The launcher takes a `BEGIN IMMEDIATE` stage
    lock, guards on stage state, and writes an `ApplySubmitIntended` checkpoint
@@ -404,12 +405,19 @@ MCP** and performs any form interaction. Terminal apply outcomes are
    one live apply per job) and the **live retry policy of exactly one attempt**,
    a submit is never silently retried into a double application. Dry-runs, which
    submit nothing, get two attempts.
-2. **Binding approval gate.** `approval_required` defaults to `True`. The
+2. **Repeat-application protection.** Every live claim recomputes relationships
+   from canonical job identity, accepted duplicate links, and confirmed
+   application facts. Exact identity blocks by default; same employer plus a
+   materially equivalent role requires an explicit reasoned confirmation. The
+   evidence-bound confirmation is consumed once inside the same claim
+   transaction, before `ApplyRunStarted`. Dry runs cannot submit and are
+   excluded. Distinct roles remain eligible.
+3. **Binding approval gate.** `approval_required` defaults to `True`. The
    launcher requires an explicit `approve_submit` decision before it will
    submit; without approval it stops at the review/dry-run boundary. The gate is
    configurable but binding — it is enforced in the launcher, not merely surfaced
    in the UI.
-3. **Browser-layer dry-run guard (CDP).** In dry-run the browser adapter
+4. **Browser-layer dry-run guard (CDP).** In dry-run the browser adapter
    overrides the form-submit action and uses the CDP Fetch domain to block
    non-local `POST`/`PUT`/`PATCH` requests. So dry-run safety does not rely on
    the agent choosing not to click submit — even a misbehaving agent cannot

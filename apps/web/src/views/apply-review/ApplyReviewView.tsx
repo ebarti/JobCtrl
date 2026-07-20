@@ -7,7 +7,13 @@ import type {
   ResumeReviewDraft,
   ResumeReviewDraftRenderResponse,
 } from "@jobctrl/contracts";
-import { IconAlertTriangle, IconChevronDown, IconExternalLink } from "@tabler/icons-react";
+import {
+  IconAlertTriangle,
+  IconChevronDown,
+  IconExternalLink,
+  IconLock,
+  IconShieldCheck,
+} from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
@@ -15,6 +21,7 @@ import { ApplyReviewDecisionControls } from "../../contexts/apply/components/App
 import {
   useCreateResumeReviewDraftMutation,
   useRenderResumeReviewDraftMutation,
+  useRepeatApplicationOverrideMutation,
   useReplyToResumeReviewCommentMutation,
   useSaveResumeReviewDraftRevisionMutation,
   useSeedResumeReviewCommentThreadsMutation,
@@ -1302,6 +1309,215 @@ function ResumeReviewSurface({
   );
 }
 
+function repeatApplicationLiveBlock(item: ApplyReviewQueueItem): string | null {
+  const { status } = item.repeatApplication;
+  if (status === "blocked") {
+    return "Live-submit authorization is blocked by a confirmed application to this canonical opening.";
+  }
+  if (status === "confirmation_required") {
+    return "Live-submit authorization requires confirmation of the related prior application.";
+  }
+  if (status === "override_consumed") {
+    return "The prior confirmation was already used; confirm the current evidence again for another live attempt.";
+  }
+  return null;
+}
+
+function repeatFactLabel(kind: ApplyReviewQueueItem["repeatApplication"]["matches"][number]["priorApplication"]["factKind"]): string {
+  switch (kind) {
+    case "application_submitted":
+      return "worker-confirmed submission";
+    case "application_manually_marked":
+      return "user-attested external application";
+    case "applied_confirmation":
+      return "confirmed application outcome";
+    case "legacy_applied_status":
+      return "historical applied status";
+  }
+}
+
+function relationshipLabel(
+  relationship: ApplyReviewQueueItem["repeatApplication"]["matches"][number]["relationship"],
+): string {
+  switch (relationship) {
+    case "canonical_job":
+      return "same canonical job";
+    case "canonical_identity":
+      return "matching canonical ATS identity";
+    case "accepted_duplicate":
+      return "accepted duplicate identity";
+    case "same_employer_equivalent_role":
+      return "same employer and equivalent role";
+  }
+}
+
+function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueueItem }) {
+  const assessment = item.repeatApplication;
+  const mutation = useRepeatApplicationOverrideMutation();
+  const [reason, setReason] = useState("");
+  const needsConfirmation = ["blocked", "confirmation_required", "override_consumed"].includes(
+    assessment.status,
+  );
+  const primary = assessment.matches[0] ?? null;
+
+  useEffect(() => {
+    setReason("");
+    mutation.reset();
+  }, [item.jobKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (assessment.status === "clear" && assessment.auditTrail.length === 0) return null;
+
+  const staleError = mutation.error?.message.includes("stale") || mutation.error?.message.includes("changed");
+  const variant = assessment.status === "blocked" ? "destructive" : ["clear", "override_ready"].includes(assessment.status) ? "info" : "warning";
+  return (
+    <section className="repeat-application-guard" aria-label="Repeat application protection">
+      <Alert variant={variant} role={needsConfirmation ? "alert" : "status"}>
+        {["clear", "override_ready"].includes(assessment.status) ? (
+          <IconShieldCheck aria-hidden="true" />
+        ) : (
+          <IconLock aria-hidden="true" />
+        )}
+        <AlertTitle>
+          {assessment.status === "override_ready"
+            ? "Repeat application confirmation recorded"
+            : assessment.status === "clear"
+              ? "Repeat application history"
+            : assessment.status === "blocked"
+              ? "Repeat application blocked"
+              : "Review prior application before live submit"}
+        </AlertTitle>
+        <AlertDescription>{assessment.summary}</AlertDescription>
+      </Alert>
+
+      <div className="repeat-application-evidence">
+        {assessment.matches.map((match) => (
+          <article key={`${match.relationship}:${match.priorApplication.factId}`}>
+            <div className="repeat-application-evidence-heading">
+              <strong>{match.priorApplication.title}</strong>
+              <StatusBadge tone={match.relationship === "same_employer_equivalent_role" ? "warn" : "danger"}>
+                {relationshipLabel(match.relationship)}
+              </StatusBadge>
+            </div>
+            <p>
+              {match.priorApplication.company} · {repeatFactLabel(match.priorApplication.factKind)} on{" "}
+              {formatDateTime(match.priorApplication.confirmedAt)}
+            </p>
+            <p className="meta">{match.reason}</p>
+            <a href={`/jobs/${encodeURIComponent(match.priorApplication.jobKey)}`}>
+              Inspect prior application
+            </a>
+            <details>
+              <summary>Identity and audit evidence</summary>
+              <ul>
+                {match.identityEvidence.map((evidence) => <li key={evidence}>{evidence}</li>)}
+                <li>fact: {match.priorApplication.factId}</li>
+                <li>evidence fingerprint: {assessment.evidenceFingerprint}</li>
+              </ul>
+            </details>
+          </article>
+        ))}
+      </div>
+
+      {assessment.override ? (
+        <details className="repeat-application-override-audit">
+          <summary>Recorded confirmation</summary>
+          <dl>
+            <div><dt>Reason</dt><dd>{assessment.override.reason}</dd></div>
+            <div><dt>Confirmed by</dt><dd>{assessment.override.confirmedBy}</dd></div>
+            <div><dt>Confirmed at</dt><dd>{formatDateTime(assessment.override.confirmedAt)}</dd></div>
+            <div><dt>Confirmation ID</dt><dd>{assessment.override.overrideId}</dd></div>
+            {assessment.override.consumedAt ? (
+              <div><dt>Used at</dt><dd>{formatDateTime(assessment.override.consumedAt)}</dd></div>
+            ) : null}
+          </dl>
+        </details>
+      ) : null}
+
+      {needsConfirmation && primary && assessment.evidenceFingerprint ? (
+        <div className="repeat-application-confirmation-form">
+          <label htmlFor={`repeat-application-reason-${encodeURIComponent(item.jobKey)}`}>
+            Reason for another live attempt
+          </label>
+          <Input
+            id={`repeat-application-reason-${encodeURIComponent(item.jobKey)}`}
+            value={reason}
+            maxLength={400}
+            placeholder="Explain why another application is intentional (at least 10 characters)."
+            onChange={(event) => setReason(event.target.value)}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            disabled={mutation.isPending || reason.trim().length < 10}
+            onClick={() => mutation.mutate({
+              jobId: item.jobKey,
+              body: {
+                evidenceFingerprint: assessment.evidenceFingerprint!,
+                priorJobKey: primary.priorApplication.jobKey,
+                reason: reason.trim(),
+                confirmedBy: "user",
+              },
+            })}
+          >
+            {mutation.isPending ? "Recording confirmation" : "Confirm one live attempt"}
+          </Button>
+          <p className="meta">
+            This confirmation is bound to this target, the prior application above, and the current evidence. It is consumed by one worker claim.
+          </p>
+        </div>
+      ) : null}
+
+      {mutation.isError ? (
+        <Alert variant="destructive">
+          <IconAlertTriangle aria-hidden="true" />
+          <AlertTitle>{staleError ? "Prior-application evidence changed" : "Confirmation was not saved"}</AlertTitle>
+          <AlertDescription>
+            {staleError
+              ? "The page is refreshing. Inspect the current relationship before confirming again."
+              : mutation.error.message || "Try again after refreshing the review queue."}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {assessment.auditTrail.length ? (
+        <details className="repeat-application-audit-trail">
+          <summary>Protection audit trail ({assessment.auditTrail.length})</summary>
+          <ol>
+            {assessment.auditTrail.map((entry) => (
+              <li key={entry.auditId}>
+                <p>
+                  {entry.action.replaceAll("_", " ")} · {formatDateTime(entry.occurredAt)} · {entry.actor}
+                  {entry.reason ? ` — ${entry.reason}` : ""}
+                </p>
+                <details>
+                  <summary>Inspect recorded evidence</summary>
+                  {entry.priorJobKey ? (
+                    <a href={`/jobs/${encodeURIComponent(entry.priorJobKey)}`}>
+                      Inspect selected prior application
+                    </a>
+                  ) : null}
+                  <ul>
+                    {entry.evidence.map((match) => (
+                      <li key={`${entry.auditId}:${match.relationship}:${match.priorApplication.factId}`}>
+                        <a href={`/jobs/${encodeURIComponent(match.priorApplication.jobKey)}`}>
+                          {match.priorApplication.title}
+                        </a>{" "}at {match.priorApplication.company}
+                        {" — "}{relationshipLabel(match.relationship)}; {match.reason}; fact {match.priorApplication.factId}
+                      </li>
+                    ))}
+                    <li>evidence fingerprint: {entry.evidenceFingerprint}</li>
+                    <li>target: {entry.targetJobKey}</li>
+                  </ul>
+                </details>
+              </li>
+            ))}
+          </ol>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
 function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const reviewState = reviewStateLabel(item);
   const activeRun = activeApplyRun(item);
@@ -1434,12 +1650,14 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           <ApplyReviewDecisionControls
             item={item}
             approvalDisabledReason={draftGate.reason}
+            liveSubmitDisabledReason={repeatApplicationLiveBlock(item)}
             approvalNotice={draftGate.notice}
             approvalPreparing={draftGate.preparing}
             onPrepareApproval={draftGate.notice ? handlePrepareApproval : null}
           />
         </CardFooter>
         <CardContent className="apply-review-selected-facts">
+          <RepeatApplicationGuardPanel item={item} />
           <CompensationSummaryStrip
             summary={item.compensationSummary}
             label="Compensation"

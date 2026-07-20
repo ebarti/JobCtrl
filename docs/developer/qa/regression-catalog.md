@@ -9,7 +9,7 @@ individual regression to exact test files.
 
 | Boundary | What must remain true | Proof shape |
 | --- | --- | --- |
-| Apply safety | No live submission without binding approval; dry-run cannot write; submit intent is at most once. | Apply saga/unit tests plus a disposable browser harness. |
+| Apply safety | No live submission without binding approval; dry-run cannot write; submit intent is at most once; confirmed prior applications block or require an evidence-bound one-attempt confirmation. | Apply saga/unit tests plus a disposable browser harness. |
 | Durable workflows | Accepted work resumes or terminalizes correctly across restart, cancellation, and history loss. | Workflow tests plus targeted fault injection. |
 | Storage and projections | Schema versions are guarded; canonical writes and read projections agree; accepted artifacts survive retries. | Repository/projection tests and API readback. |
 | Credentials and privacy | Secrets, profile content, raw mail, contact values, paths, and artifacts do not leak into settings, events, logs, or projections. | Boundary tests plus response/event inspection. |
@@ -76,6 +76,15 @@ Evidence Map read model into human-readable evidence. If resolution fails, keep
 the unavailable reference visible and place the raw key behind technical
 details. Persisted resume comments must likewise remain visible when their
 rendered-line anchor is missing.
+
+For repeat-application decisions, trace the target and prior job through
+canonical identity or an accepted duplicate link, then identify the exact
+confirmed application fact. Verify the evidence fingerprint and immutable
+snapshot on every block, warning, override, and consumption. Pending Gmail
+suggestions, notes, dry runs, failed pre-submit attempts, and intent alone must
+not appear as confirmed facts. Exercise the direct API/RPC path, standing-loop
+polling, concurrent claims, and stale approval as well as the UI path; the final
+worker claim is authoritative.
 
 ## Cumulative Redesign Boundaries
 

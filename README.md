@@ -228,6 +228,17 @@ and narrow targets before allowing live submission.
 The auto-apply toggle, approval requirement, and minimum fit threshold are all
 owned by **Discovery → Runtime settings**.
 
+Repeat-application protection remains active independently of those automation
+settings. A confirmed prior application to the same canonical opening, including
+an accepted duplicate identity reached through another URL, blocks another live
+attempt by default. A confirmed application to the same employer and a
+materially equivalent role requires a deliberate, reasoned confirmation for one
+live attempt. Distinct roles at the same employer remain eligible. The worker
+rechecks the current evidence while atomically claiming the run, so disabling
+Apply Review approval, using the standing loop, or dispatching through the API
+does not bypass this protection. See
+[Apply → Repeat-Application Protection](docs/user/apply.md#repeat-application-protection).
+
 System Chrome/Chromium is never a core requirement. A source checkout uses its
 managed Playwright Chromium installs; the bundled release carries exactly one
 Playwright Chromium headless shell. Inspect the split with
@@ -539,7 +550,7 @@ different CLI surfaces. Source contributors can use
 | `run [stages]` | Start pipeline workflows (default `all`, which maps to `discover`). |
 | `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores reset stale scores. |
 | `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
-| `apply` | Start apply automation; utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, `--gen`, `--continuous`. |
+| `apply` | Start apply automation; utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, inspection-only dry-run prompt generation with `--gen`, and `--continuous`. |
 | `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). |
 | `action <stage>` | Low-level single-action dispatch with JSON output (used by scripts). |
 | `compensation-refresh` | Re-parse posted salaries and refresh market estimates (`--url`, `--observations-json`). |

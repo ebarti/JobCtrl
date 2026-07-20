@@ -18,13 +18,13 @@ const CONTOSO_GENERATION_ONE_ARTIFACT_IDS = [
 
 describe("canonical public demo seed", () => {
   it("has a complete classified API capability manifest", () => {
-    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(127);
+    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(128);
     expect(Object.values(DEMO_CAPABILITY_MANIFEST).every((entry) => entry.reason.length > 0)).toBe(true);
   });
 
   it("is deterministic, immutable by type, and covers the required lifecycle arms", () => {
     expect(() => assertDemoSeedInvariants(DEMO_SEED)).not.toThrow();
-    expect(demoSeedDigest(DEMO_SEED)).toBe("fnv1a-0dc345c3");
+    expect(demoSeedDigest(DEMO_SEED)).toBe("fnv1a-53eb35c5");
     expect(demoSeedDigest({ b: 2, a: ["seed", true] })).toBe(demoSeedDigest({ a: ["seed", true], b: 2 }));
   });
 

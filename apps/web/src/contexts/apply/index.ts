@@ -3,6 +3,7 @@ export { applyKeys } from "./queryKeys.js";
 export { useApplyJobMutation } from "./hooks/useApplyJobMutation.js";
 export {
   useApplyReviewDecisionMutation,
+  useRepeatApplicationOverrideMutation,
   useCreateResumeReviewDraftMutation,
   useOutcomeSuggestionDecisionMutation,
   useRecordManualApplicationOutcomeMutation,

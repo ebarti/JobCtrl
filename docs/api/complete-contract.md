@@ -804,6 +804,14 @@ verification-code MCP server:
   facts. The DTO includes state, label, summary, missing prerequisites, hard
   blockers, eligibility concerns, source metadata, and whether review evidence
   remains available.
+- Both the review-queue item and job detail expose `repeatApplication`. Its
+  `status` is `clear`, `blocked`, `confirmation_required`, `override_ready`, or
+  `override_consumed`; the payload also includes a summary, evaluation time,
+  nullable SHA-256 evidence fingerprint, related confirmed prior applications,
+  relationship reasons and identity evidence, the matching override when one
+  exists, and a bounded append-only audit trail. Exact relationships are
+  `canonical_job`, `canonical_identity`, or `accepted_duplicate`; the only
+  probabilistic relationship is `same_employer_equivalent_role`.
 - The same job-detail payload exposes `activeApplyRun` (or `null` when none)
   from the complete job-scoped run history, rather than the dashboard's bounded
   recent-run feed, so the cancel control retains the exact Temporal run target
@@ -819,6 +827,14 @@ verification-code MCP server:
   `approval_stale_materials`, `approval_stale_profile`, or `approval_stale_url`
   before inserting a decision row. Approval records intent only in this slice;
   it does not dispatch the apply worker.
+- `POST /v1/jobs/:jobKey/repeat-application/override` accepts the displayed
+  `evidenceFingerprint`, one `priorJobKey` present in the current matches, a
+  10–400 character `reason`, and `confirmedBy` (default `user`). It appends an
+  immutable override and audit row, then returns the refreshed assessment. It
+  does not dispatch Apply. Changed evidence returns `409
+  repeat_application_evidence_stale`; a missing prior match returns `409
+  repeat_application_prior_mismatch`; and a clear target returns `409
+  repeat_application_confirmation_not_required`.
 - `GET /v1/outcomes` and `GET /v1/jobs/:jobKey/outcomes` return reviewed
   outcomes and any outcome suggestions.
 - `POST /v1/jobs/:jobKey/outcomes` writes a manual reviewed outcome. For
@@ -840,12 +856,22 @@ bindings, missing dry-run evidence, and invalid partial-run overrides are refuse
 before the decision row is written. The live-apply gate is enforced again at the
 Python worker's claim transaction. `approve_submit` does not dispatch browser
 submission, and `approve_dry_run` does not start a dry run.
+Live `POST /v1/jobs/:jobKey/actions/apply` also performs an early repeat check
+and returns `409 repeat_application_blocked`,
+`repeat_application_confirmation_required`, or
+`repeat_application_override_consumed` before dispatch. This is usability
+feedback, not the authority: the Python launcher recomputes the same evidence
+inside its `BEGIN IMMEDIATE` claim transaction and atomically consumes one
+matching override. Dry-run dispatch bypasses only the repeat check and cannot
+establish an application fact.
 Manual outcomes and suggestion corrections require canonical ISO-8601 UTC
 `occurredAt` timestamps when the field is supplied. Application outcome
 responses include nullable `interviewPrepGeneration`; it is set only for linked
 manual interview reflections.
 
-These routes create `application_review_decisions`, `application_outcomes`,
+These routes create `application_review_decisions`,
+`application_repeat_overrides`, `application_repeat_override_consumptions`,
+`application_repeat_audit`, `application_outcomes`,
 `application_email_evidence`, and `application_outcome_suggestions`
 idempotently in SQLite. Gmail scanning searches only bounded post-application
 windows for anchors already known locally, using recipient, employer/ATS,

@@ -258,20 +258,23 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
       applied_at TEXT
     );
     CREATE TABLE job_stage_states (
-      job_url TEXT,
-      stage TEXT,
-      state TEXT,
-      attempt_count INTEGER,
+      job_url TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending',
+      attempt_count INTEGER DEFAULT 0,
       max_attempts INTEGER,
       started_at TEXT,
-      updated_at TEXT,
+      updated_at TEXT NOT NULL,
       finished_at TEXT,
       duration_ms INTEGER,
       error_code TEXT,
       error_message TEXT,
-      retryable INTEGER,
+      retryable INTEGER DEFAULT 1,
       blocked_by_json TEXT,
-      next_action TEXT
+      next_action TEXT,
+      metadata_json TEXT,
+      version INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (job_url, stage)
     );
     CREATE TABLE job_artifacts (
       job_url TEXT,

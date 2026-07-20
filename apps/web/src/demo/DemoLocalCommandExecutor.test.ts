@@ -48,7 +48,7 @@ const ACTION_RESPONSE_KEYS = [
 ] as const;
 const JOB_DETAIL_RESPONSE_KEYS = [
   "applyAudit", "artifacts", "auditHistory", "compensationAudit", "employerAnalysis", "interviewPrep",
-  "job", "ok", "requirementFitReport", "stages",
+  "job", "ok", "repeatApplication", "requirementFitReport", "stages",
 ] as const;
 const EXPECTED_RESPONSE_KEYS = {
   acknowledgeDigest: ["ok", "state"],
@@ -229,7 +229,7 @@ const LOCAL_CASES = [
 ] as const satisfies readonly LocalCase[];
 
 describe("DemoLocalCommandExecutor", () => {
-  it("keeps the 127-member capability manifest exhaustive with exact class counts", () => {
+  it("keeps the 128-member capability manifest exhaustive with exact class counts", () => {
     const counts = Object.values(DEMO_CAPABILITY_MANIFEST).reduce<Record<string, number>>(
       (result, capability) => {
         result[capability.class] = (result[capability.class] ?? 0) + 1;
@@ -237,12 +237,12 @@ describe("DemoLocalCommandExecutor", () => {
       },
       {},
     );
-    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(127);
+    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(128);
     expect(counts).toEqual({
       browser_local: 92,
       simulated_async: 4,
       rehearsed_external: 4,
-      unavailable: 27,
+      unavailable: 28,
     });
   });
 

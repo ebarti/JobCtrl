@@ -229,6 +229,16 @@ const applyAudit = {
   ],
 } satisfies DemoReadModel["apply"]["queue"]["items"][number]["applyAudit"];
 
+const clearRepeatApplication = {
+  status: "clear",
+  summary: "No confirmed prior application is related to this opening.",
+  evidenceFingerprint: null,
+  evaluatedAt: at("2026-07-11T09:00:00.000Z"),
+  matches: [],
+  override: null,
+  auditTrail: [],
+} satisfies DemoReadModel["apply"]["queue"]["items"][number]["repeatApplication"];
+
 const interviewPrep = {
   jobKey: job.jobKey,
   generation: 1,
@@ -520,6 +530,7 @@ export const DEMO_READ_MODEL = {
         ok: true,
         job: { ...job, descriptionPreview: "Bundled synthetic role description for a platform systems lead." },
         applyAudit,
+        repeatApplication: clearRepeatApplication,
         stages: [
           {
             stage: "tailor",
@@ -597,6 +608,7 @@ export const DEMO_READ_MODEL = {
             },
           ],
         },
+        repeatApplication: clearRepeatApplication,
         stages: [
           {
             stage: "tailor",
@@ -634,6 +646,7 @@ export const DEMO_READ_MODEL = {
           eligibilityConcerns: [],
           sources: [],
         },
+        repeatApplication: clearRepeatApplication,
         stages: [
           {
             stage: "score",
@@ -1047,6 +1060,7 @@ export const DEMO_READ_MODEL = {
           currentState: "pending",
           materials: { hasResume: true, hasCoverLetter: true, hasPdf: true, ready: true },
           applyAudit,
+          repeatApplication: clearRepeatApplication,
           position: {
             descriptionPreview: "Bundled synthetic role description.",
             idealCandidate: "A grounded platform-delivery leader.",

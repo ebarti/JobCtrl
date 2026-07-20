@@ -71,6 +71,7 @@ import {
   WORKFLOW_RUN_STATUSES,
 } from "./contracts.js";
 import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
+import { evaluateRepeatApplication } from "./repeat-application.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { emptyPolitenessOutcomes, politenessOutcomesBySource } from "./source-politeness.js";
 import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
@@ -1177,6 +1178,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
           detailRow?.description_preview,
       ),
     }),
+    repeatApplication: evaluateRepeatApplication(db, listRow.job_id),
     activeApplyRun,
     stages,
     artifacts,

@@ -240,6 +240,16 @@ is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
   is `approve_submit`. Because the check runs inside the claim transaction, no API
   or RPC path can submit without a committed approval. Dry-run claims bypass the
   approval gate (they submit nothing).
+- **Atomic repeat-application decision.** The same live claim transaction
+  recomputes relationships from canonical job identity, accepted duplicate
+  links, and confirmed application facts. Exact identities fail closed; a
+  conservative same-employer/equivalent-role relationship requires a reasoned
+  confirmation. The confirmation is fingerprint-bound to the target and prior
+  evidence, then consumed once in that transaction. Direct dispatch, standing
+  polling, stale clients, approval-disabled mode, and concurrent requests cannot
+  skip or reuse it. Pending Gmail suggestions, notes, dry runs, pre-submit
+  failures, and unverified assumptions are deliberately outside the confirmed
+  fact query.
 - **At-most-once submission.** The launcher writes an `ApplySubmitIntended`
   checkpoint immediately before the agent may submit, and the claim excludes jobs
   already `running`, `succeeded`, or `needs_verification`. Combined with the
@@ -273,6 +283,14 @@ is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
 The product-level no-bypass rule (BR-001) is the policy behind these mechanisms:
 JobCtrl must never bypass CAPTCHA, paywall, login, rate-limit, or bot-control
 gates without explicit user authorization.
+
+Repeat decisions use dedicated append-only audit rows instead of changing
+historical application facts. Assessment rows capture the relationship evidence
+that produced a warning or block; override rows capture actor, reason, timestamp,
+target, selected prior job, and evidence fingerprint; consumption rows bind the
+one-attempt authorization to its run. API reads expose the bounded evidence and
+audit trail without projecting notes, mail bodies, job descriptions, or other
+private payloads.
 
 ## Truthfulness And Integrity Gates
 

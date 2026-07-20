@@ -627,6 +627,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
     "decideRoleMatchFeedbackSuggestion",
   );
   decideApplyReview = this.local("decideApplyReview");
+  confirmRepeatApplication = this.unsupported("confirmRepeatApplication");
   createResumeReviewDraft = this.local("createResumeReviewDraft");
   saveResumeReviewDraftRevision = this.local("saveResumeReviewDraftRevision");
   seedResumeReviewCommentThreads = this.local("seedResumeReviewCommentThreads");

@@ -33,7 +33,9 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v5 (JobStreaming consumption ordering): the provider checkpoint revision that
 # must be acknowledged before a requested cursor reset can be applied, plus
 # replay-idempotent receipts for caller-filtered provider results.
-SCHEMA_VERSION = 5
+# v6 (repeat-application prevention): evidence-bound confirmations,
+# one-attempt consumption, and immutable protection audit records.
+SCHEMA_VERSION = 6
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -291,6 +293,9 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_discovery_run_tables(conn)
     ensure_operational_metric_tables(conn)
     ensure_source_observation_tables(conn)
+    from jobctrl.domain.apply.repeat_application import ensure_repeat_application_tables
+
+    ensure_repeat_application_tables(conn)
     ensure_discovery_execution_tables(conn)
     ensure_discovery_search_unit_tables(conn)
     ensure_discovery_control_tables(conn)
@@ -883,8 +888,13 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
         )
     """)
-    # Forward-migrate: add version column if missing (existing databases)
+    # Forward-migrate columns added after the initial normalized stage table.
+    # This is deliberately additive: existing lifecycle rows and application
+    # facts are preserved while API-seeded or older local databases become
+    # writable by the authoritative worker state transition.
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_stage_states)").fetchall()}
+    if "metadata_json" not in existing_cols:
+        conn.execute("ALTER TABLE job_stage_states ADD COLUMN metadata_json TEXT")
     if "version" not in existing_cols:
         conn.execute("ALTER TABLE job_stage_states ADD COLUMN version INTEGER NOT NULL DEFAULT 0")
     conn.execute("""

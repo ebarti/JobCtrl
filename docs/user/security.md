@@ -32,7 +32,7 @@ boundary.
 | Outbound browsing | Public HTTP(S)-only destination validation across initial URLs, redirects, final pages, popups, and guarded subrequests. Private, loopback, link-local, metadata, and file destinations are blocked. |
 | Credentials and files | Secrets stay outside SQLite and `config.json`; status APIs are secret-free; saved passwords and reviewed artifacts can be used only by origin-bound local tools. |
 | Provider runtimes | JobCtrl-owned provider state, filtered subprocess environments, restricted tool surfaces, and prompt-driven filesystem boundaries isolate model execution from unrelated local data. |
-| Application submission | Bound human approval, browser-enforced dry-run, durable submit intent, at-most-once claiming, and `needs_verification` recovery after an ambiguous crash. |
+| Application submission | Confirmed-history repeat protection, evidence-bound one-attempt confirmation, bound human approval, browser-enforced dry-run, durable submit intent, at-most-once claiming, and `needs_verification` recovery after an ambiguous crash. |
 | Generated content | Structured outputs, literal evidence grounding, fabrication checks, provenance, judge review, and preservation of the last accepted artifact. |
 | Bundled runtime | Payload path confinement, isolated Python startup, manifest verification, and hash-locked provider packs with activation-time revalidation. |
 | Privacy and release | Metadata-only telemetry, synthetic-demo isolation, private local file modes for sensitive control files, and release scanning for secrets and private artifacts. |
@@ -147,6 +147,28 @@ a persistent warning visible.
 
 Email-only applications use the same binding for the exact recipient and resume
 attachment. Missing scope, sender, or fresh approval fails closed.
+
+### Repeat Applications Fail Closed
+
+Every live claim also re-evaluates repeat-application evidence at the Python
+worker boundary. A confirmed application to the same canonical job or an
+accepted duplicate identity blocks by default. A confirmed application to the
+same employer and a conservatively equivalent role requires explicit
+confirmation. Distinct roles and merely similar employer names remain eligible.
+
+The evidence can come only from canonical job identity and confirmed application
+facts. Pending email suggestions, notes, dry runs, failed pre-submit attempts,
+submit intent without confirmation, and assumptions are excluded. Apply Review
+exposes the prior application, relationship reason, identity evidence, and
+audit trail rather than presenting an unexplained warning.
+
+An override records the intended target, selected prior application, current
+evidence fingerprint, actor, reason, and timestamp. The worker consumes it for
+one run while holding the same `BEGIN IMMEDIATE` claim transaction; a stale or
+already-consumed override fails closed. This guard applies even when per-job
+approval is disabled and cannot be bypassed by a direct API/RPC request, the
+standing loop, a stale UI, or concurrent claims. Approval binding, submit intent,
+at-most-once claiming, and `needs_verification` remain separate required gates.
 
 ### Dry-Run Cannot Submit
 

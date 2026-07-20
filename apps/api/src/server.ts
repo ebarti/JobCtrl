@@ -11,6 +11,7 @@ import {
   ActivityListQuerySchema,
   ApplyReviewDecisionRequestSchema,
   ApplyJobRequestSchema,
+  RepeatApplicationOverrideRequestSchema,
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
   type BulkRunPendingPreparationRequest,
@@ -174,6 +175,10 @@ import {
 } from "./discovery-controls.js";
 import { registerEventStreamRoute } from "./event-stream.js";
 import {
+  assertLiveApplicationMayDispatch,
+  recordRepeatApplicationOverride,
+} from "./repeat-application.js";
+import {
   ensureLocalCapabilityToken,
   isAuthorizedLocalCapabilityToken,
   rotateLocalCapabilityToken,
@@ -315,6 +320,12 @@ const APPLY_REVIEW_PRECONDITION_ERRORS = new Set([
   "approval_stale_url",
   "approval_stale_email_candidate",
   "partial_override_evidence_invalid",
+  "repeat_application_blocked",
+  "repeat_application_confirmation_required",
+  "repeat_application_override_consumed",
+  "repeat_application_evidence_stale",
+  "repeat_application_prior_mismatch",
+  "repeat_application_confirmation_not_required",
 ]);
 const TRUSTED_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "none"]);
 const LOOPBACK_ORIGIN_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "same-site", "none"]);
@@ -1310,6 +1321,23 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     },
   );
 
+  app.post<{ Params: { jobKey: string } }>(
+    "/v1/jobs/:jobKey/repeat-application/override",
+    async (request, reply) => {
+      const body = parseBody(reply, RepeatApplicationOverrideRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) => {
+        const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
+        if (!jobUrl) {
+          return { ok: false, error: "job_not_found" };
+        }
+        return recordRepeatApplicationOverride(db, jobUrl, body);
+      });
+    },
+  );
+
   app.get<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/outcomes", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => {
       const outcomes = listJobApplicationOutcomes(db, decodeRouteParam(request.params.jobKey));
@@ -1757,6 +1785,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
       if (!jobUrl) {
         return { ok: false, error: "job_not_found" };
+      }
+      if (!body.dryRun) {
+        assertLiveApplicationMayDispatch(db, jobUrl);
       }
       const command = {
         action: "apply" as const,
@@ -3850,6 +3881,24 @@ async function withWritableDb<T>(
 }
 
 function applyReviewPreconditionMessage(error: string): string {
+  if (error === "repeat_application_blocked") {
+    return "A confirmed application to this canonical opening blocks another live submission. Inspect the prior application before recording an explicit confirmation.";
+  }
+  if (error === "repeat_application_confirmation_required") {
+    return "A confirmed application to the same employer and an equivalent role requires explicit confirmation before live submission.";
+  }
+  if (error === "repeat_application_override_consumed") {
+    return "The matching repeat-application confirmation was already used. Review the evidence and record a new confirmation for another live attempt.";
+  }
+  if (error === "repeat_application_evidence_stale") {
+    return "The prior-application evidence changed. Refresh apply review and inspect the current relationship before confirming.";
+  }
+  if (error === "repeat_application_prior_mismatch") {
+    return "The selected prior application no longer matches the current evidence. Refresh apply review and choose a current record.";
+  }
+  if (error === "repeat_application_confirmation_not_required") {
+    return "No current repeat-application warning requires confirmation.";
+  }
   if (error === "approval_stale_materials") {
     return "The reviewed materials changed before submit approval. Refresh apply review and approve again.";
   }

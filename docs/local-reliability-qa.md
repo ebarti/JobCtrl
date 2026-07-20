@@ -76,6 +76,38 @@ and accepted-artifact preservation. The
 [Regression Catalog](developer/qa/regression-catalog.md) explains which layer
 proves each class of invariant; the complete page maps every risk to exact tests.
 
+### Repeat-application prevention
+
+Use disposable SQLite fixtures and the simulated web dispatch boundary; never
+point this matrix at a real application target. The focused proving surface is:
+
+```bash
+uv --project workers/automation run --extra dev pytest -q \
+  workers/automation/tests/test_repeat_application_prevention.py \
+  workers/automation/tests/test_apply_regressions.py \
+  workers/automation/tests/test_apply_saga.py \
+  workers/automation/tests/test_workflow_apply.py \
+  workers/automation/tests/test_rpc_handlers_apply_workflow.py
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/repeat-application.test.ts \
+  test/application-feedback.test.ts \
+  test/schema-version-guard.test.ts
+corepack pnpm --filter @jobctrl/web exec vitest run \
+  src/views/apply-review/ApplyReviewView.test.tsx \
+  src/contexts/apply/components/ApplyReviewDecisionControls.test.tsx \
+  src/contexts/apply/hooks/useApplyReviewMutations.test.ts
+corepack pnpm --filter @jobctrl/web e2e -- tests/repeat-application.spec.ts
+```
+
+The fixtures must cover same-canonical-job and accepted-duplicate identities,
+alternate URLs, same-employer/equivalent-role confirmation, distinct-role and
+similar-employer allowance, dry-run/failed-attempt/pending-suggestion exclusion,
+direct dispatch, repeated standing polls, concurrent claims, stale approval,
+one-attempt consumption, and immutable audit evidence. The browser path must
+show the exact block, prior evidence, reasoned confirmation, refreshed
+override-ready state, and a simulated live dispatch while proving no
+`ApplicationSubmitted` fact was created.
+
 ### Pipeline history recovery and restart regression
 
 Reproduce the human-reported partial-projection state with an active Discover

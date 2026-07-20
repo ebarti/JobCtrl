@@ -2039,6 +2039,91 @@ describe("application feedback API", () => {
 
     await app.close();
   });
+
+  it("blocks direct live dispatch until the current prior-application evidence is explicitly confirmed", async () => {
+    const seed = new Database(options.dbPath);
+    seed.prepare("UPDATE jobs SET title = ? WHERE url = ?").run(
+      "Principal Platform Engineer",
+      APPLIED_JOB,
+    );
+    seed.close();
+    const app = buildApp(options);
+
+    const queue = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+    expect(queue.statusCode, queue.body).toBe(200);
+    const assessment = queueItem(queue.json(), READY_JOB)?.repeatApplication;
+    expect(assessment).toMatchObject({
+      status: "confirmation_required",
+      matches: [
+        {
+          relationship: "same_employer_equivalent_role",
+          priorApplication: { jobKey: APPLIED_JOB, factKind: "legacy_applied_status" },
+        },
+      ],
+    });
+
+    const blocked = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/actions/apply`,
+      payload: { dryRun: false },
+    });
+    expect(blocked.statusCode, blocked.body).toBe(409);
+    expect(blocked.json()).toMatchObject({
+      ok: false,
+      error: "repeat_application_confirmation_required",
+    });
+    expect(actionDispatcher).not.toHaveBeenCalled();
+
+    const dryRun = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/actions/apply`,
+      payload: { dryRun: true },
+    });
+    expect(dryRun.statusCode, dryRun.body).toBe(202);
+    expect(actionDispatcher).toHaveBeenCalledTimes(1);
+
+    const confirmed = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/repeat-application/override`,
+      payload: {
+        evidenceFingerprint: assessment?.evidenceFingerprint,
+        priorJobKey: APPLIED_JOB,
+        reason: "The prior application was withdrawn before review.",
+        confirmedBy: "api-test-user",
+      },
+    });
+    expect(confirmed.statusCode, confirmed.body).toBe(200);
+    expect(confirmed.json()).toMatchObject({
+      assessment: {
+        status: "override_ready",
+        override: {
+          targetJobKey: READY_JOB,
+          priorJobKey: APPLIED_JOB,
+          confirmedBy: "api-test-user",
+        },
+      },
+    });
+
+    const allowed = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/actions/apply`,
+      payload: { dryRun: false },
+    });
+    expect(allowed.statusCode, allowed.body).toBe(202);
+    expect(actionDispatcher).toHaveBeenCalledTimes(2);
+
+    const audit = new Database(options.dbPath, { readonly: true });
+    const auditActions = audit
+      .prepare(
+        "SELECT action FROM application_repeat_audit WHERE target_job_key = ? ORDER BY occurred_at",
+      )
+      .all(READY_JOB)
+      .map((row) => (row as { action: string }).action);
+    audit.close();
+    expect(auditActions).toEqual(["confirmation_required", "override_recorded"]);
+
+    await app.close();
+  });
 });
 
 function queueItem(body: unknown, jobKey: string): ApplyReviewQueueResponse["items"][number] | undefined {

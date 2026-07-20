@@ -46,11 +46,18 @@ Refresh is an explicit workflow/action, not a read-time side effect.
 | --- | --- |
 | Review queue and drafts | `GET /v1/apply/review-queue`, resume-review draft/revision/render/comment routes |
 | Binding decision | `POST /v1/jobs/:jobKey/apply-review/decision` |
+| Repeat-application evidence and confirmation | `repeatApplication` on review/detail reads; `POST /v1/jobs/:jobKey/repeat-application/override` |
 | Outcomes | job outcome routes plus `/v1/outcomes` and `/v1/analytics/outcomes` |
 | Gmail suggestions | bounded scan plus accept/reject decision routes |
 
 The latest accepted artifact remains reviewable while a replacement is being
 generated. Failed or rejected attempts stay in the audit history.
+
+Live Apply dispatch returns `409` when confirmed prior-application evidence
+blocks the target or requires confirmation. The confirmation endpoint records a
+reasoned, evidence-fingerprint-bound authorization for one later live claim; it
+never submits by itself. The Python worker recomputes and consumes that
+authorization at its authoritative claim boundary.
 
 ## Contacts And Outreach
 

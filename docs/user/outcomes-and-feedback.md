@@ -37,8 +37,12 @@ Both may appear in the same job audit timeline without sharing ownership.
 
 - **Reviewed outcomes** live in canonical `application_outcomes` rows. Manual
   entries and accepted/corrected suggestions use the same outcome record shape.
+- Only a reviewed `applied_confirmation` outcome is a confirmed application
+  fact for repeat-application protection. Other outcome kinds, local notes, and
+  unknown outcomes do not establish application history.
 - **Suggestions** remain separate in `application_outcome_suggestions` until you
-  decide them. Suggestion accuracy is derived from those later decisions.
+  decide them. A pending Gmail suggestion is never treated as a confirmed
+  application; suggestion accuracy is derived from later decisions.
 - **Linked Gmail evidence** stays local. A bounded scan starts from known
   application anchors and reads body content only after metadata reaches the
   link-confidence gate. Raw mail bodies never enter broad projections, events,

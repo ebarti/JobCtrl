@@ -46,6 +46,10 @@ import {
 import { buildApplyAudit } from "./apply-audit.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { refreshProjections } from "./projections.js";
+import {
+  ensureRepeatApplicationTables,
+  evaluateRepeatApplication,
+} from "./repeat-application.js";
 import { resumeTemplateStateForJob } from "./resume-templates.js";
 import { InputError, resolveJobUrl } from "./write-model.js";
 
@@ -222,6 +226,7 @@ export function ensureApplicationFeedbackTables(db: SqliteDatabase): void {
   `);
   ensureApplicationReviewDecisionColumns(db);
   ensureApplicationOutcomeColumns(db);
+  ensureRepeatApplicationTables(db);
 }
 
 function ensureApplicationReviewDecisionColumns(db: SqliteDatabase): void {
@@ -934,6 +939,7 @@ function reviewQueueItemFromRow(
       ready: applyAudit.state === "ready",
     },
     applyAudit,
+    repeatApplication: evaluateRepeatApplication(db, row.job_id),
     position: {
       descriptionPreview: previewText(
         row.full_description || row.description,

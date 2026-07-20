@@ -9,6 +9,8 @@ import type {
   ApplyReviewDecisionRequest,
   ApplyReviewDecisionResponse,
   ApplyReviewQueueResponse,
+  RepeatApplicationOverrideRequest,
+  RepeatApplicationOverrideResponse,
   ArtifactDetail,
   ArtifactListQuery,
   ArtifactOpenResponse,
@@ -241,6 +243,10 @@ export interface ApiClientPort {
     jobKey: string,
     body: ApplyReviewDecisionRequest,
   ): Promise<ApplyReviewDecisionResponse>;
+  confirmRepeatApplication(
+    jobKey: string,
+    body: RepeatApplicationOverrideRequest,
+  ): Promise<RepeatApplicationOverrideResponse>;
   resumeReviewDraft(jobKey: string): Promise<ResumeReviewDraftResponse>;
   createResumeReviewDraft(
     jobKey: string,
