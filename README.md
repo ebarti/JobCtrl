@@ -139,11 +139,11 @@ evidence, qualifications, and the complete capability matrix.
 | Capability | JobCtrl | Career-Ops | AI Job Search |
 | --- | --- | --- | --- |
 | **Primary surface** | Web app + local API/worker; supporting CLI | Files + AI coding CLIs; terminal dashboard | Claude Code commands/skills + local utilities |
-| **Graphical UI** | **Supported product surface** | **Partial:** optional Next.js alpha | **Not evidenced** in the reviewed snapshot |
-| **Tailored documents** | Resume, cover letter, HTML, and PDF | CV/PDF and cover letter | LaTeX CV, cover letter, and PDF |
+| **Graphical UI** | **Supported product surface** | **Partial:** optional Next.js alpha | **Partial:** generated offline HTML dashboard |
+| **Tailored documents** | Resume, cover letter, HTML, and PDF | CV/HTML/PDF and cover letter | LaTeX CV, cover letter, and PDF |
 | **Submission boundary** | Dry run + guarded browser/Gmail paths; approval on by default | Form autofill; the user clicks Submit | Reviewed documents; the user submits |
 | **Interrupted work** | Temporal history, retries, stable workflow identities, and checkpointed broad-board discovery | File integrity + resumable batch flags; no workflow engine | No checkpointed apply resumption evidenced |
-| **Application-level cost control** | Daily estimated-spend ceiling | Model choice + batch cap, dry run, and resume controls | Token-efficiency instructions; no app-level budget evidenced |
+| **Application-level cost control** | Daily estimated-spend ceiling | Spend tiers, batch pre-screen/cap, dry run, and resume controls | Token-efficiency instructions; no app-level budget evidenced |
 
 ## What It Does
 
