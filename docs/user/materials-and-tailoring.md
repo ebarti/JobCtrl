@@ -9,6 +9,26 @@ without turning the job description into evidence about you.
 
 Tailoring is a candidate-selection pipeline, not one unconstrained prompt:
 
+```mermaid
+flowchart TB
+    accTitle: How JobCtrl chooses an accepted resume
+    accDescr: A shared plan feeds candidate generators. Rendered checks and review gates reject or repair candidates. The best approved candidate receives an optional voice refinement and a final truthfulness check before JobCtrl persists it as the accepted resume.
+
+    PLAN("1 · Plan<br/>posting + profile + policy")
+    DRAFT("2 · Generate<br/>candidates share constraints")
+    GATES("3 · Validate + review<br/>rendered checks · judge · personas")
+    SAVE[["4 · Select + refine<br/>truth check · persist · preserve"]]
+
+    PLAN -->|shared plan| DRAFT
+    DRAFT -->|candidate set| GATES
+    GATES -->|approved| SAVE
+    GATES -.->|repair + retry| DRAFT
+```
+
+Solid arrows show the path to an accepted resume; dashed arrows return
+repairable failures to the candidate pool. A failed retry never replaces the
+last accepted resume.
+
 1. **Build one deterministic plan.** JobCtrl combines the accepted posting and
    employer analysis with a versioned Candidate Profile snapshot, requirement
    fit, tailoring permissions, required evidence pins, and writing style. The

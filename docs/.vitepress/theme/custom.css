@@ -1254,11 +1254,15 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
   margin-block-start: 7px;
 }
 
-.jh-compare-card__tradeoff {
+.jh-compare-card__verdict {
   margin-block-start: auto !important;
   padding-block-start: 14px;
   border-top: 1px solid var(--vp-c-divider);
   color: var(--vp-c-text-2);
+}
+
+.jh-compare-card--featured .jh-compare-card__verdict strong {
+  color: var(--vp-c-brand-1);
 }
 
 .jh-compare-card > a {

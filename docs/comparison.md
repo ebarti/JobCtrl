@@ -6,10 +6,12 @@ pageClass: jh-visual-doc jh-comparison-page
 
 JobCtrl, [Career-Ops](https://github.com/santifer/career-ops), and
 [AI Job Search](https://github.com/MadsLorentzen/ai-job-search) address the same
-broad problem through three different operating models. This is an
-evidence-backed capability comparison, not a quality ranking. It was last
-reverified on **2026-07-20**; the [snapshot method](#snapshot-and-delta-method)
-keeps current claims separate from changes since the prior 2026-07-09 review.
+broad problem through three different operating models. Across the capabilities
+reviewed here, JobCtrl is the only option that combines a supported graphical
+product, durable workflows, deterministic grounding gates, and guarded
+submission paths. The comparison was last reverified on **2026-07-20**; the
+[snapshot method](#snapshot-and-delta-method) keeps current claims separate from
+changes since the prior 2026-07-09 review.
 
 ## Three operating models
 
@@ -26,7 +28,7 @@ keeps current claims separate from changes since the prior 2026-07-09 review.
       <li>Long-running work has durable history, retries, and visible recovery.</li>
       <li>Dry runs and review-bound approvals guard live submission.</li>
     </ul>
-    <p class="jh-compare-card__tradeoff"><strong>Trade-off:</strong> the largest local runtime footprint of the three.</p>
+    <p class="jh-compare-card__verdict"><strong>Why JobCtrl leads:</strong> it is the only reviewed option with a supported web UI, durable workflow execution, and guarded live-submission paths in one product.</p>
     <a href="./user/screenshots">Explore the product tour →</a>
   </article>
 
@@ -42,7 +44,7 @@ keeps current claims separate from changes since the prior 2026-07-09 review.
       <li>Freshness, company exclusions, spend tiers, and a metric fact gate now strengthen the file-first workflow.</li>
       <li>Application autofill stops before the user clicks Submit.</li>
     </ul>
-    <p class="jh-compare-card__tradeoff"><strong>Best fit:</strong> people who want inspectable files and CLI choice.</p>
+    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> the operator experience remains file- and CLI-first, the optional web UI is alpha, and interrupted work has no durable workflow engine.</p>
     <a href="#appendix-evidence-backed-capability-matrix">Open the evidence matrix →</a>
   </article>
 
@@ -58,7 +60,7 @@ keeps current claims separate from changes since the prior 2026-07-09 review.
       <li>Optional Gmail and Notion sync commands extend its local tracker.</li>
       <li>Submission remains a user handoff after document preparation.</li>
     </ul>
-    <p class="jh-compare-card__tradeoff"><strong>Best fit:</strong> Claude Code users comfortable with a LaTeX toolchain.</p>
+    <p class="jh-compare-card__verdict"><strong>Gap versus JobCtrl:</strong> no stateful graphical product, browser-form assistance, or checkpointed apply recovery was evidenced in the reviewed snapshot.</p>
     <a href="#appendix-evidence-backed-capability-matrix">Open the evidence matrix →</a>
   </article>
 </div>

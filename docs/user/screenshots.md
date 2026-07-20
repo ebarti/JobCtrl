@@ -28,48 +28,6 @@ and preserves a level-1 heading for assistive technology. Body copy uses the
 shared 14px/20px role in compact, regular, and comfy density; density changes
 row and control geometry, not readability.
 
-## Intended Screenshot Asset Matrix
-
-Every production primary route, detail route, import step, and Settings route
-has one intended canonical desktop asset. Dense representative surfaces also
-have a mobile companion. Filenames remain stable so the README, docs site, and
-capture workflow agree.
-
-| Product surface | Route | Desktop asset | Mobile companion |
-| --- | --- | --- | --- |
-| Dashboard | `/dashboard` | `dashboard.png` | `dashboard-mobile.png` |
-| Analytics | `/analytics` | `analytics.png` | — |
-| Jobs | `/jobs` | `jobs.png` | — |
-| Job Detail | `/jobs/:jobId` | `job-detail.png` | `job-detail-mobile.png` |
-| Job run timeline | `/jobs/:jobId/run/:runId` | `job-run-timeline.png` | — |
-| Apply Review | `/apply-review` | `apply-review.png` | `apply-review-mobile.png` |
-| Pipelines | `/pipelines` | `pipelines.png` | `pipelines-mobile.png` |
-| Discovery | `/discovery` | `discovery.png` | — |
-| Artifacts | `/artifacts` | `artifacts.png` | — |
-| Artifact Detail | `/artifacts/:artifactId` | `artifact-detail.png` | — |
-| Evidence | `/evidence-map` | `evidence-map.png` | — |
-| Contacts | `/outreach` | `contacts.png` | — |
-| Contact Detail | `/outreach/:contactId` | `contact-detail.png` | — |
-| Runs | `/runs` | `runs.png` | — |
-| Run Detail | `/runs/:runId` | `run-detail.png` | — |
-| Debug | `/debug` | `debug.png` | — |
-| Activity Detail | `/activity/:eventId` | `activity-detail.png` | — |
-| Profile | `/profile` | `profile.png` | `profile-mobile.png` |
-| Resume import — upload | `/profile/import/upload` | `profile-import-upload.png` | — |
-| Resume import — options | `/profile/import/preview` | `profile-import-preview.png` | — |
-| Resume import — confirm | `/profile/import/confirm` | `profile-import-confirm.png` | — |
-| Preferences | `/preferences` | `preferences.png` | — |
-| Settings — General | `/settings` | `settings-general.png` | — |
-| Settings — Credentials | `/settings/credentials` | `settings-credentials.png` | — |
-| Settings — Model selection | `/settings/models` | `settings-models.png` | — |
-| Settings — Browser & extension | `/settings/browser` | `settings-browser.png` | `settings-browser-mobile.png` |
-
-All files live under `docs/assets/screenshots/`. The dashboard desktop asset is
-also copied byte-for-byte to `docs/public/assets/screenshots/dashboard.png` for
-the docs-site hero. See
-[Documentation Screenshots](../local-development.md#documentation-screenshots)
-for the reproducible synthetic Playwright workflow and privacy gate.
-
 ## Overview And Work Launch
 
 ### Dashboard
@@ -329,30 +287,3 @@ enable, or persist a browser. Explicitly enabling a detected candidate adopts it
 an advanced manual executable path remains available. If a candidate disappears
 before confirmation, enable fails without changing capability state. Extension
 pairing and authenticated-profile copying remain separate explicit actions.
-
-## Mobile Reflow
-
-The intended mobile captures verify that the same information remains reachable
-in reading order at 390×844; they are not reduced-content mockups.
-
-At 900px and below, record tables on Jobs, Artifacts, Contacts, Discovery, and
-Settings reflow into labelled cards while keeping sort/filter access. Profile,
-Evidence Map, and Apply Review stack their larger work regions independently;
-none should introduce document-level horizontal overflow.
-
-| | |
-| --- | --- |
-| ![JobCtrl Dashboard mobile reflow](../assets/screenshots/dashboard-mobile.png) | ![JobCtrl Pipelines mobile reflow](../assets/screenshots/pipelines-mobile.png) |
-| **Dashboard** — navigation sheet and operational sections | **Pipelines** — controls, scoped ledger, and inspector remain reachable |
-| ![JobCtrl Job Detail mobile route workspace](../assets/screenshots/job-detail-mobile.png) | ![JobCtrl Application Review mobile route workspace](../assets/screenshots/apply-review-mobile.png) |
-| **Job Detail** — evidence before inspector history in reading order | **Apply Review** — queue, evidence, material, and approval flow without hidden state |
-| ![JobCtrl Profile mobile workspace](../assets/screenshots/profile-mobile.png) | ![JobCtrl Browser Settings mobile workspace](../assets/screenshots/settings-browser-mobile.png) |
-| **Profile** — form and baseline resume remain usable | **Browser settings** — detection, adoption, and pairing facts reflow without clipping |
-
-::: info Generating these screenshots
-Run `pnpm docs:screenshots` as documented in
-[Documentation Screenshots](../local-development.md#documentation-screenshots).
-The opt-in Playwright workflow seeds an isolated synthetic workspace and writes
-the canonical assets above. Never point it at a normal `~/.jobctrl` workspace
-or use real profile, resume, credential, browser, or application data.
-:::

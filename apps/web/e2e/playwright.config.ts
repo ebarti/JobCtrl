@@ -14,6 +14,9 @@ const E2E_DB =
   process.env["JOBCTRL_E2E_DB_PATH"] ?? path.join(E2E_DIR, "jobctrl.db");
 const E2E_CONFIG =
   process.env["JOBCTRL_E2E_CONFIG_PATH"] ?? path.join(E2E_DIR, "config.json");
+const E2E_SERVICE_HOME =
+  process.env["JOBCTRL_E2E_SERVICE_HOME"] ?? path.join(E2E_DIR, "service-home");
+const E2E_PLAYWRIGHT_BROWSERS_PATH = process.env["PLAYWRIGHT_BROWSERS_PATH"];
 
 process.env["JOBCTRL_E2E_APP_DIR"] = E2E_DIR;
 process.env["JOBCTRL_E2E_DB_PATH"] = E2E_DB;
@@ -34,6 +37,19 @@ process.env["JOBCTRL_E2E_STATE_FILE"] = E2E_STATE_FILE;
 // is not sufficient evidence that an existing process uses E2E_DIR.
 const REUSE_EXISTING_SERVERS =
   !process.env["CI"] && process.env["JOBCTRL_DOCS_SCREENSHOTS"] !== "1";
+const DOCS_SERVICE_ENVIRONMENT =
+  process.env["JOBCTRL_DOCS_SCREENSHOTS"] === "1"
+    ? {
+        HOME: E2E_SERVICE_HOME,
+        USERPROFILE: E2E_SERVICE_HOME,
+        XDG_CONFIG_HOME: path.join(E2E_SERVICE_HOME, ".config"),
+        XDG_CACHE_HOME: path.join(E2E_SERVICE_HOME, ".cache"),
+        ...(E2E_PLAYWRIGHT_BROWSERS_PATH
+          ? { PLAYWRIGHT_BROWSERS_PATH: E2E_PLAYWRIGHT_BROWSERS_PATH }
+          : {}),
+        TZ: "UTC",
+      }
+    : {};
 
 export default defineConfig({
   testDir: "./tests",
@@ -72,6 +88,7 @@ export default defineConfig({
       port: Number(API_PORT),
       cwd: repoRoot,
       env: {
+        ...DOCS_SERVICE_ENVIRONMENT,
         JOBCTRL_API_PORT: API_PORT,
         JOBCTRL_DIR: E2E_DIR,
         JOBCTRL_DB_PATH: E2E_DB,
@@ -90,6 +107,7 @@ export default defineConfig({
       port: Number(WEB_PORT),
       cwd: repoRoot,
       env: {
+        ...DOCS_SERVICE_ENVIRONMENT,
         VITE_JOBCTRL_API_BASE_URL: "",
         VITE_DEV_API_PROXY_TARGET: `http://127.0.0.1:${API_PORT}`,
         VITE_JOBCTRL_HIDE_DEVTOOLS: "1",

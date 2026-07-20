@@ -71,7 +71,7 @@ const PAGES = [
   },
   {
     path: "/user/materials-and-tailoring",
-    visualSelector: null,
+    visualSelector: ".mermaid svg",
     images: false,
   },
   {
@@ -155,6 +155,7 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
   {
     path: "/user/materials-and-tailoring",
     heading: "#how-jobctrl-chooses-a-resume",
+    selectors: [".mermaid svg"],
     labels: [
       "Build one deterministic plan.",
       "Ask each ready generator for structured content.",
@@ -465,11 +466,22 @@ try {
     );
   }
   const tourOutline = await page.locator(".VPDocAsideOutline").innerText();
+  const tourText = await page.locator(".vp-doc").innerText();
+  const internalTourCopy = [
+    "Intended Screenshot Asset Matrix",
+    "Mobile Reflow",
+    "Generating these screenshots",
+  ];
   if (
     !/On this page/.test(tourOutline) ||
-    !/Set Up Your Profile|Apply Review|Runs History/.test(tourOutline)
+    !/Set Up Your Profile|Apply Review|Runs History/.test(tourOutline) ||
+    internalTourCopy.some(
+      (copy) => tourOutline.includes(copy) || tourText.includes(copy),
+    )
   ) {
-    fail("/user/screenshots: desktop section outline is missing or incomplete");
+    fail(
+      "/user/screenshots: public tour outline is missing product content or exposes internal capture guidance",
+    );
   } else {
     console.log("ok    /user/screenshots section outline");
   }
@@ -978,7 +990,9 @@ try {
         );
         return {
           hasExplanationHeading: Boolean(document.querySelector(heading)),
-          missingLabels: labels.filter((label) => !strongLabels.includes(label)),
+          missingLabels: labels.filter(
+            (label) => !strongLabels.includes(label),
+          ),
           missingTokens: tokens.filter((token) => !text.includes(token)),
           missingSelectors: selectors.filter(
             (selector) => !document.querySelector(selector),
@@ -999,6 +1013,51 @@ try {
     } else {
       console.log(`ok    ${contract.path} lifecycle explanation`);
     }
+  }
+
+  await page.goto(
+    `http://127.0.0.1:${port}/user/normal-flows#workers-activity-slots-and-queue-backlog`,
+    { waitUntil: "networkidle" },
+  );
+  const capacityExplanationContract = await page.evaluate(() => {
+    const doc = document.querySelector(".vp-doc");
+    const text = (doc?.textContent ?? "").replace(/\s+/g, " ").trim();
+    const strongLabels = [...(doc?.querySelectorAll("strong") ?? [])].map(
+      (label) => (label.textContent ?? "").replace(/\s+/g, " ").trim(),
+    );
+    const requiredLabels = [
+      "Worker processes online",
+      "Activity slots in use",
+      "Active work",
+      "Queue backlog",
+    ];
+    const requiredTokens = [
+      "0 of 4",
+      "fresh worker processes",
+      "configured slots minus active slots",
+      "unknown, not zero",
+      "infrastructure pressure",
+    ];
+    return {
+      hasHeading: Boolean(
+        document.querySelector("#workers-activity-slots-and-queue-backlog"),
+      ),
+      missingLabels: requiredLabels.filter(
+        (label) => !strongLabels.includes(label),
+      ),
+      missingTokens: requiredTokens.filter((token) => !text.includes(token)),
+    };
+  });
+  if (
+    !capacityExplanationContract.hasHeading ||
+    capacityExplanationContract.missingLabels.length > 0 ||
+    capacityExplanationContract.missingTokens.length > 0
+  ) {
+    fail(
+      `/user/normal-flows: worker capacity explanation regressed (${JSON.stringify(capacityExplanationContract)})`,
+    );
+  } else {
+    console.log("ok    /user/normal-flows worker capacity explanation");
   }
 
   await page.goto(`http://127.0.0.1:${port}/user/data-and-safety`, {
@@ -1145,18 +1204,26 @@ try {
     waitUntil: "networkidle",
   });
   const comparisonDesktop = await page.evaluate(() => {
-    const cards = [...document.querySelectorAll(".jh-compare-card")].map(
-      (card) => {
-        const box = card.getBoundingClientRect();
-        return { x: box.x, y: box.y, width: box.width };
-      },
-    );
+    const cardElements = [...document.querySelectorAll(".jh-compare-card")];
+    const cards = cardElements.map((card) => {
+      const box = card.getBoundingClientRect();
+      return { x: box.x, y: box.y, width: box.width };
+    });
     const headings = [...document.querySelectorAll(".vp-doc h2")].map(
       (heading) => (heading.textContent ?? "").replaceAll("\u200B", "").trim(),
+    );
+    const verdicts = cardElements.map((card) =>
+      (card.querySelector(".jh-compare-card__verdict")?.textContent ?? "")
+        .replace(/\s+/g, " ")
+        .trim(),
     );
     return {
       cards,
       headings,
+      verdicts,
+      hasDeprecatedFitCopy: cardElements.some((card) =>
+        /Best fit:|Trade-off:/.test(card.textContent ?? ""),
+      ),
       pageOverflows: document.documentElement.scrollWidth > window.innerWidth,
       summaryRegionLabel: document
         .querySelector(".jh-compare-table-wrap")
@@ -1178,6 +1245,12 @@ try {
     comparisonDesktop.pageOverflows ||
     comparisonDesktop.summaryRegionLabel !== "At-a-glance comparison table" ||
     comparisonDesktop.summaryRegionTabIndex !== "0" ||
+    comparisonDesktop.verdicts.length !== 3 ||
+    !comparisonDesktop.verdicts[0]?.startsWith("Why JobCtrl leads:") ||
+    comparisonDesktop.verdicts
+      .slice(1)
+      .some((verdict) => !verdict.startsWith("Gap versus JobCtrl:")) ||
+    comparisonDesktop.hasDeprecatedFitCopy ||
     !comparisonDesktop.headings.includes(
       "JobCtrl's UI is part of the product",
     ) ||

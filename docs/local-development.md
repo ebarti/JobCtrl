@@ -566,8 +566,10 @@ pipeline-operations lineage/projections/ETA samples, and a current worker
 heartbeat), starts the API and web app on E2E ports, and writes PNGs to
 `docs/assets/screenshots/`. The manifest covers all production primary routes,
 detail workspaces, profile-import steps, Settings routes, and fixed mobile
-companions listed in the Product Tour. No real LLM provider, job source, Gmail
-account, or browser submission is involved.
+companions. The internal capture manifest lives in
+`apps/web/e2e/tests/docs-screenshots.spec.ts`; it is not part of the public
+Product Tour. No real LLM provider, job source, Gmail account, or browser
+submission is involved.
 
 The spec is opt-in: it only writes when `JOBCTRL_DOCS_SCREENSHOTS=1` is set,
 which `pnpm docs:screenshots` does for you. A bare full e2e run
@@ -587,16 +589,18 @@ pnpm docs:screenshots
 ```
 
 Refresh checklist: run the command on a clean checkout, confirm every asset in
-the Product Tour matrix was rewritten, review every desktop and mobile PNG for
-private data, broken layout, clipped content, and local-path leaks, and inspect
-Pipelines for the seeded execution, three source families, two reconciliation
-steps, available worker capacity, visual stage flow, stop/recovery controls, and
-active work. Confirm Jobs shows only the Active/Deleted/Hidden queue tabs and
-that Sources/Warnings remain hidden in its default view. Check Apply Review's
-left queue plus sequential review content, Artifact Detail's preview after its
-audit details, and the mobile Profile/Evidence/record-card reflows without
-horizontal overflow. Keep raw IDs and paths inside technical disclosures.
-Confirm the
+the internal capture manifest was rewritten, review every desktop and mobile
+PNG for private data, broken layout, clipped content, and local-path leaks, and
+inspect Pipelines for the seeded execution, three source families, two
+reconciliation steps, available worker capacity, visual stage flow,
+stop/recovery controls, and active work. Confirm Jobs shows only the
+Active/Deleted/Hidden queue tabs and that Sources/Warnings remain hidden in its
+default view. Check Apply Review's left queue plus sequential review content,
+Artifact Detail's preview after its audit details, and the mobile
+Profile/Evidence/record-card reflows without horizontal overflow. Keep raw IDs
+and paths inside technical disclosures. Open the rendered Product Tour and
+confirm it contains only user-facing product explanations and screenshots—not
+the asset manifest, capture commands, or viewport QA criteria. Confirm the
 homepage hero copy at `docs/public/assets/screenshots/dashboard.png` is
 byte-for-byte identical to the gallery dashboard screenshot, update the tour
 if screenshot names changed, and finish with `git diff --check`.

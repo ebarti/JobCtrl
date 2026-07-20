@@ -181,6 +181,33 @@ inventory. Treat ETA as an observed range: calibrating, paused, stale,
 unavailable, and no-work states are deliberately explicit rather than replaced
 by a guessed finish time.
 
+### Workers, Activity Slots, And Queue Backlog
+
+The capacity strip separates worker processes from the concurrency they offer:
+
+- **Worker processes online** counts fresh JobCtrl worker heartbeats for the
+  selected Temporal task queue. One online process can provide several activity
+  slots. Stale heartbeat records are historical registrations outside the
+  freshness window; they are excluded from online capacity.
+- **Activity slots in use** reports concurrent Temporal activities across all
+  online worker processes as `active of configured`. For example, `0 of 4`
+  means the worker pool is healthy and idle: no activity is executing and all
+  four slots are available. Slots are execution capacity, not workers or jobs.
+- **Active work** is the bounded, privacy-safe inventory of allowlisted runtime
+  activities. It may be smaller than the number of occupied slots when details
+  are unavailable or intentionally omitted.
+- **Queue backlog** is the combined approximate count of tasks waiting in
+  Temporal's workflow and activity queues. Workflow tasks wait for workflow
+  pollers, while activity tasks wait for activity workers and their available
+  slots. It is infrastructure pressure, not the selected execution's job total.
+  An unavailable observation means unknown, not zero.
+
+Configured slots are summed across the fresh worker processes, and available
+slots are configured slots minus active slots. The expanded **Freshness and
+capacity** inspector shows the underlying worker, slot, executor-thread, and
+task-queue observations. For the exact API semantics, see
+[Operations & Events](../api/operations-and-events.md#capacity-active-work-and-task-queue).
+
 Selected-run tracking is reconstructed automatically after an upgrade or worker
 restart when an older execution predates native lineage. Pipelines labels that
 transition **Restoring pipeline history**, continues to show fresh worker, queue,
