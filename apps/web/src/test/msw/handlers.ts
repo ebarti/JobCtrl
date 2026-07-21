@@ -552,6 +552,44 @@ export const handlers = [
       },
     });
   }),
+  http.post("*/v1/jobs/:jobKey/repeat-application/override", async ({ params, request }) => {
+    const body = (await request.json()) as {
+      evidenceFingerprint: string;
+      priorJobKey: string;
+      reason: string;
+      confirmedBy?: string;
+    };
+    const jobKey = String(params["jobKey"]);
+    const source = sampleApplyReviewQueue.items.find((item) => item.jobKey === jobKey)
+      ?.repeatApplication;
+    return HttpResponse.json({
+      ok: true,
+      assessment: {
+        ...(source ?? {
+          status: "clear",
+          summary: "No confirmed prior application is related to this opening.",
+          evidenceFingerprint: null,
+          evaluatedAt: "2026-05-06T08:30:00Z",
+          matches: [],
+          override: null,
+          auditTrail: [],
+        }),
+        status: "override_ready",
+        evidenceFingerprint: body.evidenceFingerprint,
+        override: {
+          overrideId: `repeat-override-${jobKey}`,
+          targetJobKey: jobKey,
+          priorJobKey: body.priorJobKey,
+          evidenceFingerprint: body.evidenceFingerprint,
+          reason: body.reason,
+          confirmedBy: body.confirmedBy ?? "user",
+          confirmedAt: "2026-05-06T08:30:00Z",
+          consumedAt: null,
+          consumedRunId: null,
+        },
+      },
+    });
+  }),
   http.get("*/v1/outcomes", () => HttpResponse.json(sampleApplicationOutcomes)),
   http.get("*/v1/jobs/:jobKey/outcomes", ({ params }) =>
     HttpResponse.json({

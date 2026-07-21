@@ -285,8 +285,9 @@ backend domain model [§4.5](../domain-model/tactical.md)):
 
 ## 3.7 Apply Automation
 
-**Purpose:** Trigger apply / dry-run for a job; cancel a running apply;
-observe an apply run's live event timeline.
+**Purpose:** Trigger apply / dry-run for a job; inspect and confirm
+repeat-application evidence; cancel a running apply; observe an apply run's live
+event timeline.
 
 **Ubiquitous language** (matches Apply Automation / `ApplyRunProjection`):
 
@@ -294,13 +295,20 @@ observe an apply run's live event timeline.
 - **DryRun** — apply attempt that does not submit.
 - **SubmissionResult** — `applied | failed | captcha | login_issue | expired | manual | dry_run`.
 - **ApplyRunEvent** — telemetry event within an apply run.
+- **RepeatApplicationAssessment** — the read-only relationship, confirmed fact,
+  override, and audit evidence projected for one target job.
+- **RepeatApplicationOverride** — a reasoned one-live-claim confirmation bound to
+  one target, one prior application, and one evidence fingerprint.
 
 **Backend mirror:** Apply Automation (backend domain model [§3.6](../domain-model/strategic.md), [§4.6](../domain-model/tactical.md), [§5.6](../domain-model/ports.md)).
 
 **Responsibilities:**
 
 - Mutation hooks: `useApplyJobMutation`, `useDryRunApplyMutation`,
-  `useCancelApplyMutation`.
+  `useCancelApplyMutation`, and `useRepeatApplicationOverrideMutation`.
+- Render blocked, confirmation-required, override-ready, override-consumed,
+  loading, stale-evidence, and generic error states without hiding the prior
+  application or enabling live submit before the refreshed assessment allows it.
 - Render the apply timeline (events, tokens, cost) for a selected apply
   run via `<ApplyRunTimeline>`. Live-update the timeline by subscribing
   to `ApplyRunEventRecorded` events scoped to `runId`.
@@ -444,7 +452,7 @@ another view (cross-view navigation goes through the URL).
 | `views/dashboard/`    | `<KpiGrid>`, `<ConversionPanel>`, `<Funnel>`, `<SourceHealthCard>`, `<ApplyRunsCard>` (operations: `useDashboardSummaryQuery`), plus an outcome-suggestions section (operations: `useApplicationOutcomesQuery`; apply: `<OutcomeSuggestionsPanel>`). Funnel/ApplyRunsCard compose pipeline `<StageBadge>` and apply `<ApplyRunBadge>`.                                                                                                                                                |
 | `views/jobs/`         | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`; product filters bind to URL state), `<JobBulkActions>` (discovery: the Active / Deleted / Hidden Tabs plus delete / hide / restore / permanent-delete bulk mutations), legacy-named `<JobDetailDrawer>` rendered as a full `RouteWorkspace` (composes `<JobOverview>` + `<JobActions>` + `<StageTimeline>` + artifact status rows + `<EmployerAnalysisPanel>` + `<ApplyHistory>` + `<JobOutcomePanel>` + `<JobAuditHistory>`). |
 | `views/artifacts/`    | `<ArtifactsTable>` (operations: `useArtifactsListQuery`), `<ArtifactFilterBar>` (URL-bound), `<ArtifactDetailPanel>` (operations: `useArtifactDetailQuery`; materials: `useOpenArtifactMutation`, `<TailoringExplanationSection>`); its summary/evidence/comparison audit precedes the full-width document preview. |
-| `views/apply-review/` | `<ApplyReviewView>` — the human apply-approval workstation. A left review queue (operations: `useApplyReviewQueueQuery`) sits beside one full-width sequence of decision, evidence, and materials sections, including the live Plate resume editor (`<ResumePlateEditor>` from materials, wired to the apply-context draft/comment/reply/render mutations via `useResumeReviewDraftQuery`), grounding-risk + requirement audit panels, `<ApplyReviewDecisionControls>`, and `<CancelApplyButton>`. The queue stacks above the review and decision controls wrap when the surface becomes narrow. |
+| `views/apply-review/` | `<ApplyReviewView>` — the human apply-approval workstation. A left review queue (operations: `useApplyReviewQueueQuery`) sits beside one full-width sequence of decision, repeat-application evidence and one-attempt confirmation, materials, and other audit sections, including the live Plate resume editor (`<ResumePlateEditor>` from materials, wired to the apply-context draft/comment/reply/render mutations via `useResumeReviewDraftQuery`), grounding-risk + requirement audit panels, `<ApplyReviewDecisionControls>`, and `<CancelApplyButton>`. Repeat protection disables only live authorization while dry run remains available. The queue stacks above the review and decision controls wrap when the surface becomes narrow. |
 | `views/runs/`         | `<RunsView>` — unified workflow-runs browser. `<RunsTable>` (operations: `useWorkflowRunsListQuery`), `<RunsFilterBar>` (URL-bound), per-row `<CancelWorkflowRunButton>` ("Stop") and a Temporal Web-UI deep link; legacy-named `<WorkflowRunDrawer>` renders a full detail workspace at `/runs/$runId`.                                                                                                                                                                              |
 | `views/pipelines/`    | `<PipelinesView>` — reads `usePipelineOperationsQuery`, passes the typed snapshot into the pipeline context's `<PipelineOperationsWorkspace>`, and composes `<StageTriggerPanel>` (global/batch stage triggers + `<CancelWorkflowRunButton>`). The workspace renders a live current-execution stage flow, exact outcome disclosure, source/reconciliation progress, collapsed sweep/global-backlog diagnostics, worker capacity, active work, explicit stop, and zero-inventory-gated replacement setup. |
 | `views/discovery/`    | `<DiscoveryView>` — stacks `<TargetSearchSettingsPanel>` + `<DiscoveryAutomationSettingsPanel>` (profile), `<DiscoveryRuntimeSettingsPanel>` + `<DiscoveryProductControls>` (discovery).                                                                                                                                                                                                                                                                                              |

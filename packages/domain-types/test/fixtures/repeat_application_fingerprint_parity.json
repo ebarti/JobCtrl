@@ -1,0 +1,56 @@
+{
+  "targetJobKey": "https://careers.example.test/Target-role",
+  "matches": [
+    {
+      "relationship": "same_employer_equivalent_role",
+      "reason": "The employer identity matches exactly and the normalized role titles are materially equivalent.",
+      "priorApplication": {
+        "jobKey": "https://jobs.example.test/a-role",
+        "title": "Senior Platform Engineer",
+        "company": "Acme",
+        "applicationUrl": "https://jobs.example.test/a-role/apply",
+        "factKind": "application_submitted",
+        "factId": "event:20",
+        "confirmedAt": "2026-07-19T08:00:00.000Z"
+      },
+      "identityEvidence": [
+        "employer:acme",
+        "role:senior platform engineer"
+      ]
+    },
+    {
+      "relationship": "canonical_identity",
+      "reason": "The canonical ATS identity matches the previously applied opening.",
+      "priorApplication": {
+        "jobKey": "https://jobs.example.test/Å-role",
+        "title": "Platform Engineer",
+        "company": "Acme",
+        "applicationUrl": null,
+        "factKind": "application_manually_marked",
+        "factId": "event:3",
+        "confirmedAt": "2026-07-18T08:00:00.000Z"
+      },
+      "identityEvidence": [
+        "canonical_url:https://ats.example.test/jobs/42"
+      ]
+    },
+    {
+      "relationship": "same_employer_equivalent_role",
+      "reason": "The employer identity matches exactly and the normalized role titles are materially equivalent.",
+      "priorApplication": {
+        "jobKey": "https://jobs.example.test/B-role",
+        "title": "Platform Senior Eng",
+        "company": "ACME, INC.",
+        "applicationUrl": "https://jobs.example.test/B-role/apply",
+        "factKind": "applied_confirmation",
+        "factId": "outcome:7",
+        "confirmedAt": "2026-07-20T08:00:00.000Z"
+      },
+      "identityEvidence": [
+        "employer:acme",
+        "role:senior platform engineer"
+      ]
+    }
+  ],
+  "expectedFingerprint": "b975c68b1b1a6025ea9fdd784bd4bf5e4d703fb05ed74949c5bad2533921d17b"
+}

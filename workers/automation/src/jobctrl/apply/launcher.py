@@ -82,6 +82,10 @@ from jobctrl.database import (
     get_connection,
 )
 from jobctrl.domain.apply.services import ApplyPromptBuilder
+from jobctrl.domain.apply.repeat_application import (
+    consume_repeat_application_override,
+    evaluate_repeat_application,
+)
 from jobctrl.domain.apply.value_objects import ApplyPrompt, ApplyRunId, new_apply_run_id
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.operational_metrics import record_operational_attempt_metric
@@ -496,6 +500,35 @@ def _row_to_job_dict(row, *, run_id: ApplyRunId | None = None) -> dict[str, Any]
     return job
 
 
+def _apply_candidate_select_parts() -> tuple[str, str]:
+    attempts_subquery = (
+        "(SELECT COALESCE(jss_a.attempt_count, 0) "
+        "FROM job_stage_states jss_a "
+        "WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply' LIMIT 1) AS apply_attempts"
+    )
+    columns = (
+        f"jobs.url AS url, jobs.title AS title, jobs.site AS site, "
+        f"{_EFFECTIVE_APPLICATION_URL} AS application_url, "
+        f"{_EFFECTIVE_TAILOR_PATH} AS tailored_resume_path, "
+        f"jm.jm_resume_pdf_path AS resume_pdf_path, "
+        f"jm.jm_resume_pdf_artifact_id AS resume_pdf_artifact_id, "
+        f"jm.jm_generation AS materials_generation, "
+        f"{_EFFECTIVE_FIT_SCORE} AS fit_score, "
+        f"jobs.location AS location, jobs.description AS description, "
+        f"{_EFFECTIVE_FULL_DESCRIPTION} AS full_description, "
+        f"{_EFFECTIVE_COVER_PATH} AS cover_letter_path, "
+        f"{_EFFECTIVE_APPLIED_AT} AS applied_at, "
+        f"{_EFFECTIVE_APPLY_STATUS} AS apply_status, "
+        f"{attempts_subquery}"
+    )
+    joins = (
+        f"{_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
+        f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} "
+        f"{_LATEST_APPLY_RUN_JOIN} {_ACTIVE_STATE_JOIN}"
+    )
+    return columns, joins
+
+
 def acquire_job(
     target_url: str | None = None,
     min_score: int = 7,
@@ -516,35 +549,11 @@ def acquire_job(
     try:
         conn.execute("BEGIN IMMEDIATE")
 
-        attempts_subquery = (
-            "(SELECT COALESCE(jss_a.attempt_count, 0) "
-            "FROM job_stage_states jss_a "
-            "WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply' LIMIT 1) AS apply_attempts"
-        )
-        common_columns = (
-            f"jobs.url AS url, jobs.title AS title, jobs.site AS site, "
-            f"{_EFFECTIVE_APPLICATION_URL} AS application_url, "
-            f"{_EFFECTIVE_TAILOR_PATH} AS tailored_resume_path, "
-            f"jm.jm_resume_pdf_path AS resume_pdf_path, "
-            f"jm.jm_resume_pdf_artifact_id AS resume_pdf_artifact_id, "
-            f"jm.jm_generation AS materials_generation, "
-            f"{_EFFECTIVE_FIT_SCORE} AS fit_score, "
-            f"jobs.location AS location, jobs.description AS description, "
-            f"{_EFFECTIVE_FULL_DESCRIPTION} AS full_description, "
-            f"{_EFFECTIVE_COVER_PATH} AS cover_letter_path, "
-            f"{_EFFECTIVE_APPLIED_AT} AS applied_at, "
-            f"{_EFFECTIVE_APPLY_STATUS} AS apply_status, "
-            f"{attempts_subquery}"
-        )
-        common_joins = (
-            f"{_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
-            f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} "
-            f"{_LATEST_APPLY_RUN_JOIN} {_ACTIVE_STATE_JOIN}"
-        )
+        common_columns, common_joins = _apply_candidate_select_parts()
 
         if target_url:
             like = f"%{target_url.split('?')[0].rstrip('/')}%"
-            row = conn.execute(
+            target_row = conn.execute(
                 f"""
                 SELECT {common_columns}
                 FROM jobs {common_joins}
@@ -558,6 +567,7 @@ def acquire_job(
                 """,
                 (target_url, target_url, like, like),
             ).fetchone()
+            candidate_rows = [target_row] if target_row is not None else []
         else:
             blocked_sites, blocked_patterns = _load_blocked()
             params: list[Any] = [
@@ -604,12 +614,37 @@ def acquire_job(
                 """,
                 params,
             ).fetchall()
-            ordered_rows = _order_rows_by_feedback(conn, rows)
-            row = ordered_rows[0] if ordered_rows else None
+            candidate_rows = _order_rows_by_feedback(conn, rows)
 
-        if not row:
+        if not candidate_rows:
             conn.rollback()
             return None
+
+        dry_run = bool(run_ctx.get("dry_run")) if run_ctx else False
+        repeat_assessment: dict[str, Any] | None = None
+        row = candidate_rows[0]
+        if not dry_run:
+            row = None
+            for candidate in candidate_rows:
+                candidate_assessment = evaluate_repeat_application(conn, candidate["url"])
+                if candidate_assessment["status"] in {"clear", "override_ready"}:
+                    row = candidate
+                    repeat_assessment = candidate_assessment
+                    break
+                add_event(
+                    f"[W{worker_id}] Repeat application protection "
+                    f"({candidate_assessment['status']}) for "
+                    f"{(candidate['title'] or candidate['url'])[:40]}"
+                )
+                logger.warning(
+                    "Repeat application protection refused %s; status=%s fingerprint=%s",
+                    candidate["url"],
+                    candidate_assessment["status"],
+                    candidate_assessment.get("evidenceFingerprint"),
+                )
+            if row is None:
+                conn.commit()
+                return None
 
         # Skip manual ATS sites (the agent cannot solve them).
         from jobctrl.config import is_manual_ats
@@ -666,7 +701,6 @@ def acquire_job(
         if attempts >= int(config.DEFAULTS["max_apply_attempts"]):
             conn.rollback()
             return None
-        dry_run = bool(run_ctx.get("dry_run")) if run_ctx else False
         if approval_required and not dry_run:
             refusal_reason = _approval_refusal_reason(
                 conn,
@@ -677,7 +711,11 @@ def acquire_job(
                 application_url=apply_url,
             )
             if refusal_reason:
-                conn.rollback()
+                # The only writes before approval are immutable protection
+                # assessments for higher-ranked candidates that were skipped.
+                # Keep those audit facts even though this candidate cannot be
+                # claimed yet.
+                conn.commit()
                 add_event(
                     f"[W{worker_id}] Awaiting apply approval "
                     f"({refusal_reason}) for {(row['title'] or url)[:40]}"
@@ -693,6 +731,15 @@ def acquire_job(
         run_id = ApplyRunId(
             (run_ctx.get("run_id") if run_ctx else None) or new_apply_run_id()
         )
+        repeat_override_id = None
+        if repeat_assessment and repeat_assessment["status"] == "override_ready":
+            repeat_override_id = consume_repeat_application_override(
+                conn,
+                repeat_assessment,
+                target_job_key=url,
+                run_id=str(run_id),
+                consumed_at=now,
+            )
         ensure_job_stage_rows(conn, url)
         # Reset prior retryable terminal state (failed / exhausted /
         # canceled / skipped) back to pending so the §8.5 state machine accepts
@@ -741,6 +788,12 @@ def acquire_job(
                 "materials_generation": row["materials_generation"],
                 "application_url": apply_url,
                 "profile_version": _current_profile_version(conn, tenant_id=LOCAL_TENANT),
+                "repeat_application_override_id": repeat_override_id,
+                "repeat_application_evidence_fingerprint": (
+                    repeat_assessment.get("evidenceFingerprint")
+                    if repeat_assessment
+                    else None
+                ),
             },
         )
         conn.commit()
@@ -753,6 +806,12 @@ def acquire_job(
             run_ctx["profile_version"] = _current_profile_version(
                 conn,
                 tenant_id=LOCAL_TENANT,
+            )
+            run_ctx["repeat_application_override_id"] = repeat_override_id
+            run_ctx["repeat_application_evidence_fingerprint"] = (
+                repeat_assessment.get("evidenceFingerprint")
+                if repeat_assessment
+                else None
             )
 
         job_dict = _row_to_job_dict(row, run_id=run_id)
@@ -1120,7 +1179,32 @@ def _has_apply_event(conn, url: str, run_id: str, event_types: set[str]) -> bool
 def mark_job(url: str, status: str, reason: str | None = None) -> None:
     """Manually mark a job's apply status."""
     if status == "applied":
-        mark_result(url, "applied", duration_ms=0)
+        conn = get_connection()
+        now = _utc_now()
+        ensure_job_stage_rows(conn, url)
+        set_stage_state(
+            conn,
+            url,
+            "apply",
+            "succeeded",
+            finished_at=now,
+            duration_ms=0,
+            retryable=False,
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            url,
+            "apply",
+            "ApplicationManuallyMarked",
+            message="Job manually marked as applied",
+            payload={
+                "reason": reason or "",
+                "marked_at": now,
+                "source": "user_attestation",
+            },
+        )
+        conn.commit()
     else:
         mark_result(
             url,
@@ -1193,8 +1277,32 @@ def _load_profile_snapshot() -> ProfileSnapshot:
 
 
 # ---------------------------------------------------------------------------
-# gen_prompt (debug helper) — no DB writes
+# gen_prompt (inspection helper) — no DB writes or live apply claim
 # ---------------------------------------------------------------------------
+
+
+def _load_job_for_prompt(target_url: str, min_score: int) -> dict[str, Any] | None:
+    """Read one eligible job without creating an apply attempt or consuming authority."""
+
+    conn = get_connection()
+    common_columns, common_joins = _apply_candidate_select_parts()
+    like = f"%{target_url.split('?')[0].rstrip('/')}%"
+    row = conn.execute(
+        f"""
+        SELECT {common_columns}
+        FROM jobs {common_joins}
+        WHERE (jobs.url = ? OR {_EFFECTIVE_APPLICATION_URL} = ?
+               OR {_EFFECTIVE_APPLICATION_URL} LIKE ? OR jobs.url LIKE ?)
+          AND {_READY_TAILORED_RESUME_WITH_PDF}
+          AND {_EFFECTIVE_FIT_SCORE} >= ?
+          AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
+          AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
+          AND {_NOT_CLOSED_ACTIVE_STATE}
+        LIMIT 1
+        """,
+        (target_url, target_url, like, like, min_score),
+    ).fetchone()
+    return _row_to_job_dict(row) if row is not None else None
 
 
 def gen_prompt(
@@ -1204,8 +1312,9 @@ def gen_prompt(
     worker_id: int = 0,
     snapshot: ProfileSnapshot | None = None,
 ) -> Path | None:
-    """Render the prompt + MCP config for one job for manual debugging."""
-    job = acquire_job(target_url=target_url, min_score=min_score, worker_id=worker_id)
+    """Render an inspection-only dry-run prompt without claiming the job."""
+
+    job = _load_job_for_prompt(target_url, min_score)
     if not job:
         return None
 
@@ -1214,7 +1323,6 @@ def gen_prompt(
 
     decision = validate_public_http_url(apply_url)
     if not decision.allowed:
-        release_lock(job["url"])
         raise ValueError(
             f"unsafe apply target URL: {decision.reason or 'not a public HTTP(S) destination'}"
         )
@@ -1233,10 +1341,8 @@ def gen_prompt(
         tailored_resume=resume_text,
         snapshot=snapshot,
         cdp_port=cdp_port,
-        dry_run=False,
+        dry_run=True,
     )
-
-    release_lock(job["url"])
 
     config.ensure_dirs()
     site_slug = (job.get("site") or "unknown")[:20].replace(" ", "_")
@@ -1247,7 +1353,10 @@ def gen_prompt(
     mcp_path = config.APP_DIR / f".mcp-apply-{worker_id}.json"
     from jobctrl.infrastructure.apply.claude_code_cli import _write_private_json
 
-    _write_private_json(mcp_path, apply_prompt.mcp_config)
+    # Never carry a submit-capable MCP surface into this read-only utility.
+    # Overwriting the per-worker file also prevents a stale live configuration
+    # from being paired with the generated inspection prompt.
+    _write_private_json(mcp_path, {"mcpServers": {}})
 
     return prompt_file
 
@@ -1662,7 +1771,10 @@ def worker_loop(
         )
 
         run_ctx: dict[str, Any] = {
-            "run_id": workflow_id or uuid.uuid4().hex,
+            # One workflow/activity may claim several jobs. Each apply attempt
+            # needs its own run identity; workflow_id remains the Temporal
+            # correlation key in the adjacent field.
+            "run_id": uuid.uuid4().hex,
             "worker_id": worker_id,
             "model": model,
             "dry_run": dry_run,

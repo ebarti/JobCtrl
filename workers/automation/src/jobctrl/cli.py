@@ -1493,7 +1493,7 @@ def apply(
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview actions without submitting."),
     headless: bool = typer.Option(False, "--headless", help="Run browsers in headless mode."),
     url: Optional[str] = typer.Option(None, "--url", help="Apply to a specific job URL."),
-    gen: bool = typer.Option(False, "--gen", help="Generate prompt file for manual debugging instead of running."),
+    gen: bool = typer.Option(False, "--gen", help="Generate an inspection-only dry-run prompt instead of running."),
     mark_applied: Optional[str] = typer.Option(None, "--mark-applied", help="Manually mark a job URL as applied."),
     mark_failed: Optional[str] = typer.Option(None, "--mark-failed", help="Manually mark a job URL as failed (provide URL)."),
     fail_reason: Optional[str] = typer.Option(None, "--fail-reason", help="Reason for --mark-failed."),
@@ -1502,7 +1502,7 @@ def apply(
     """Launch auto-apply to submit job applications."""
     _bootstrap()
 
-    from jobctrl.config import APP_DIR as _app_dir, check_tier
+    from jobctrl.config import check_tier
     from jobctrl.database import count_ready_to_apply, get_connection
     from jobctrl.domain.tenant import LOCAL_TENANT
     from jobctrl.infrastructure.profile import get_profile_repository
@@ -1562,11 +1562,6 @@ def apply(
 
     if gen:
         from jobctrl.apply.launcher import gen_prompt
-        from jobctrl.config import get_apply_max_budget_usd
-        from jobctrl.infrastructure.apply.claude_code_cli import (
-            _ALLOWED_TOOLS,
-            _DISALLOWED_TOOLS,
-        )
         target = url or ""
         if not target:
             console.print("[red]--gen requires --url to specify which job.[/red]")
@@ -1575,16 +1570,11 @@ def apply(
         if not prompt_file:
             console.print("[red]No matching job found for that URL.[/red]")
             raise typer.Exit(code=1)
-        mcp_path = _app_dir / ".mcp-apply-0.json"
         console.print(f"[green]Wrote prompt to:[/green] {prompt_file}")
-        console.print("\n[bold]Run manually:[/bold]")
-        model_args = "" if model in {"", "default"} else f"--model {model} "
         console.print(
-            f"  claude {model_args}-p "
-            f"--mcp-config {mcp_path} "
-            f"--max-budget-usd {get_apply_max_budget_usd():.2f} "
-            f"--allowedTools {_ALLOWED_TOOLS} "
-            f"--disallowedTools {_DISALLOWED_TOOLS} < {prompt_file}"
+            "[yellow]Inspection-only dry-run prompt.[/yellow] No browser or MCP "
+            "execution command is emitted. Use JobCtrl's normal Apply path for "
+            "a live attempt so current approval and repeat evidence are rechecked."
         )
         return
 

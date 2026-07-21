@@ -36,7 +36,7 @@ when implementing or debugging a specific endpoint.
 | --- | --- | --- |
 | Profile and configuration | `/v1/profile`, `/v1/settings`, `/v1/credentials`, `/v1/providers/models`, `/v1/discovery/settings`, `/v1/browser-capabilities`, `/v1/extension/pairing-token` | Synchronous reads and validated patches |
 | Jobs and evidence | `/v1/jobs`, `/v1/jobs/:jobKey`, `/v1/evidence-map`, `/v1/artifacts` | Projection-backed reads |
-| Review and outcomes | `/v1/apply/review-queue`, `/v1/jobs/:jobKey/apply-review/decision`, `/v1/outcomes` | Explicit review commands plus read models |
+| Review and outcomes | `/v1/apply/review-queue`, `/v1/jobs/:jobKey/apply-review/decision`, `/v1/jobs/:jobKey/repeat-application/override`, `/v1/outcomes` | Explicit review commands plus read models |
 | Workflow operations | `/v1/pipeline/actions/run-stage`, `/v1/pipeline/operations`, `/v1/workflow-runs`, `/v1/health` | `202` for accepted asynchronous work; `200` for projection-backed and runtime-backed reads/sync commands |
 | Realtime | `/v1/events/stream` | Server-Sent Events with replay and reconnect support |
 
@@ -109,6 +109,17 @@ Apply review is a user decision boundary, not a background side effect. The
 review queue, editable resume-review drafts, approval decisions, outcomes, and
 bounded Gmail suggestion flow are summarized in
 [Jobs & Materials](api/jobs-and-materials.md#apply-review-and-outcomes).
+
+The queue and job-detail read models include `repeatApplication`: its current
+status, summary, evaluation time, evidence fingerprint, related confirmed prior
+applications, matching reason and identity evidence, matching one-attempt
+override, and bounded audit trail. `POST
+/v1/jobs/:jobKey/repeat-application/override` accepts
+`evidenceFingerprint`, `priorJobKey`, a 10–400 character `reason`, and
+`confirmedBy`; it records intent but does not dispatch Apply. Stale evidence,
+prior mismatch, already-consumed confirmation, and live apply without required
+confirmation return `409` with stable repeat-application error codes. Dry-run
+dispatch does not require this confirmation because it cannot submit.
 
 ## Contacts
 

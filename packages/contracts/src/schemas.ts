@@ -382,6 +382,18 @@ export interface ApplyReviewDecisionResponse {
   decision: ApplyReviewDecision;
 }
 
+export const RepeatApplicationOverrideRequestSchema = z
+  .object({
+    evidenceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    priorJobKey: z.string().trim().min(1).max(2048),
+    reason: z.string().trim().min(10).max(400),
+    confirmedBy: z.string().trim().min(1).max(120).default("user"),
+  })
+  .strict();
+export type RepeatApplicationOverrideRequest = z.infer<
+  typeof RepeatApplicationOverrideRequestSchema
+>;
+
 export interface ApplyReviewIdealRequirement {
   id: string;
   text: string;
@@ -785,6 +797,80 @@ export interface ApplyAudit {
   sources: ApplyAuditSource[];
 }
 
+export type RepeatApplicationRelationship =
+  | "canonical_job"
+  | "canonical_identity"
+  | "accepted_duplicate"
+  | "same_employer_equivalent_role";
+
+export type RepeatApplicationFactKind =
+  | "application_submitted"
+  | "application_manually_marked"
+  | "applied_confirmation"
+  | "legacy_applied_status";
+
+export type RepeatApplicationStatus =
+  | "clear"
+  | "blocked"
+  | "confirmation_required"
+  | "override_ready"
+  | "override_consumed";
+
+export interface RepeatApplicationMatch {
+  relationship: RepeatApplicationRelationship;
+  reason: string;
+  priorApplication: {
+    jobKey: string;
+    title: string;
+    company: string;
+    applicationUrl: string | null;
+    factKind: RepeatApplicationFactKind;
+    factId: string;
+    confirmedAt: string;
+  };
+  identityEvidence: string[];
+}
+
+export interface RepeatApplicationOverride {
+  overrideId: string;
+  targetJobKey: string;
+  priorJobKey: string;
+  evidenceFingerprint: string;
+  reason: string;
+  confirmedBy: string;
+  confirmedAt: string;
+  consumedAt: string | null;
+  consumedRunId: string | null;
+}
+
+export interface RepeatApplicationAuditEntry {
+  auditId: string;
+  targetJobKey: string;
+  action: "blocked" | "confirmation_required" | "override_recorded" | "override_consumed";
+  evidenceFingerprint: string;
+  evidence: RepeatApplicationMatch[];
+  overrideId: string | null;
+  priorJobKey: string | null;
+  actor: string;
+  reason: string | null;
+  occurredAt: string;
+}
+
+export interface RepeatApplicationAssessment {
+  status: RepeatApplicationStatus;
+  summary: string;
+  evidenceFingerprint: string | null;
+  evaluatedAt: string;
+  matches: RepeatApplicationMatch[];
+  override: RepeatApplicationOverride | null;
+  auditTrail: RepeatApplicationAuditEntry[];
+}
+
+export interface RepeatApplicationOverrideResponse {
+  ok: true;
+  assessment: RepeatApplicationAssessment;
+}
+
 export type ApplyReviewDryRunCoverage = "full" | "partial";
 export type ApplyReviewApprovalGateReason =
   | "awaiting_approval"
@@ -845,6 +931,7 @@ export interface ApplyReviewQueueItem {
     ready: boolean;
   };
   applyAudit: ApplyAudit;
+  repeatApplication: RepeatApplicationAssessment;
   position: ApplyReviewPositionEvidence;
   materialsPreview: ApplyReviewMaterialsPreview;
   latestApplyRun: {
@@ -3492,6 +3579,7 @@ export interface JobDetail {
     scoreReasoning: string;
   };
   applyAudit: ApplyAudit;
+  repeatApplication: RepeatApplicationAssessment;
   /**
    * The newest non-terminal apply run for this job, resolved from the
    * job-scoped apply-run projection rather than the bounded dashboard feed.

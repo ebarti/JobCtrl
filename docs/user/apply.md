@@ -96,6 +96,41 @@ The daily LLM ceiling and shared setting precedence remain in
 current materials, profile, application URL, and qualifying dry-run evidence as
 described in [Security](security.md#apply-approval-is-required-by-default).
 
+## Repeat-Application Protection
+
+Before every live application claim, JobCtrl compares the target with confirmed
+prior applications. The Apply Review panel shows the prior job, confirmation
+fact and date, relationship reason, canonical identity evidence, evidence
+fingerprint, and the related audit entries.
+
+- **Blocked** means the prior application belongs to the same canonical job or
+  an accepted duplicate identity, even when another source or apply URL
+  rediscovered it.
+- **Confirmation required** means the employer identity matches and the role
+  title is materially equivalent after conservative normalization. Similar
+  employer names do not match, and clearly distinct roles remain eligible.
+- **Override ready** means the user recorded a reasoned confirmation that is
+  bound to this target, one selected prior application, and the current evidence
+  fingerprint. It authorizes one live claim only.
+- **Override consumed** means that confirmation has already been claimed. A
+  later live attempt needs a fresh confirmation against the then-current
+  evidence.
+
+Recording a confirmation requires an explicit reason. Apply Review shows a
+loading state while saving it, refreshes the evidence afterward, and reports a
+stale-evidence error when the relationship changed before the write completed.
+It also preserves ordinary error feedback rather than enabling live submit on a
+failed write. Dry runs remain available because they cannot submit and do not
+establish application history.
+
+Only canonical identity plus a confirmed `ApplicationSubmitted`, manual
+`ApplicationManuallyMarked`, reviewed `applied_confirmation` outcome, or legacy
+applied fact can trigger this protection. Pending Gmail suggestions, notes,
+failed pre-submit attempts, submit intent alone, and dry runs do not. The worker
+enforces the decision in the same SQLite claim transaction that protects
+approval binding, at-most-once submit intent, and `needs_verification`; turning
+off `applyApprovalRequired` does not turn off repeat protection.
+
 ## Browser Apply Automation
 
 Use **Settings → Browser & extension** to inspect the managed core browser,

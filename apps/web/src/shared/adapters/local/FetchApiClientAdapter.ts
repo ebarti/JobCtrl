@@ -128,6 +128,12 @@ export class FetchApiClientAdapter implements ApiClientPort {
   ) {
     return this.client.decideApplyReview(jobKey, body);
   }
+  confirmRepeatApplication(
+    jobKey: string,
+    body: Parameters<JobCtrlApiClient["confirmRepeatApplication"]>[1],
+  ) {
+    return this.client.confirmRepeatApplication(jobKey, body);
+  }
   resumeReviewDraft(jobKey: string) {
     return this.client.resumeReviewDraft(jobKey);
   }

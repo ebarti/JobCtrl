@@ -83,6 +83,7 @@ the Historical Spec Ledger in `plans/README.md`.
 
 - [Application-Outcome Feedback Loop With Bounded Gmail Ingestion](#_2026-06-01-application-outcome-feedback-loop-with-bounded-gmail-ingestion) · 2026-06-01
 - [At-Most-Once Apply With Binding Approval Gate](#_2026-07-03-at-most-once-apply-with-binding-approval-gate) · 2026-07-03
+- [Confirmed Facts And Canonical Identity Gate Repeat Applications](#_2026-07-20-confirmed-facts-and-canonical-identity-gate-repeat-applications) · 2026-07-20
 
 **Data durability & spend**
 
@@ -1157,6 +1158,47 @@ Consequences:
 - live runs without approval stay pending and record an awaiting-approval event
 - every run persists raw agent output, and successful live results persist
   confirmation evidence with conservative verification confidence
+
+## 2026-07-20: Confirmed Facts And Canonical Identity Gate Repeat Applications
+
+Status: accepted
+
+Decision: every live Apply claim evaluates repeat risk from two explicit source
+families: canonical job identity (including accepted duplicate links) and
+confirmed application facts. A match to the same canonical opening blocks by
+default. A conservative exact normalized employer plus materially equivalent
+role match requires an explicit, reasoned confirmation bound to the target,
+selected prior application, and current SHA-256 evidence fingerprint. That
+confirmation authorizes one live claim and is consumed atomically by the worker.
+
+Confirmed facts are `ApplicationSubmitted`, `ApplicationManuallyMarked`, a
+reviewed `applied_confirmation` outcome, or a compatible historical applied
+fact. Pending suggestions, free-text notes, dry runs, submit intent alone,
+failed pre-submit attempts, and inferred assumptions are excluded. Employer
+normalization removes only presentation differences and legal suffixes; role
+normalization uses a bounded alias set and removes presentation-only work-mode
+tokens. It does not fuzzy-merge employers or distinct roles.
+
+Rationale:
+
+- alternate source and apply URLs can rediscover one opening after an
+  application has already been confirmed;
+- title or employer similarity alone cannot safely rewrite application history;
+- an override is meaningful only when the authoritative mutation boundary can
+  prove what evidence the user inspected and consume it once; and
+- repeat protection complements rather than replaces approval binding,
+  submit-intent at-most-once behavior, and ambiguous-crash verification.
+
+Consequences:
+
+- the API and Apply Review expose the same bounded evidence, status, prior job,
+  reason, override, and audit trail that the worker recomputes;
+- additive override, consumption, and audit tables preserve historical facts
+  unchanged while making decisions inspectable;
+- the standing loop, direct API/RPC dispatch, stale UI state, and concurrent
+  claims cannot bypass or reuse the confirmation; and
+- the identity and audit contract can support later policy gates without adding
+  those policies here.
 
 ## 2026-07-03: Temporal Loop Closure — Finalize Activities + Describe Reconciler, Deterministic Workflow IDs
 

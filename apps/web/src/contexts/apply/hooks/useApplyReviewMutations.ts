@@ -2,6 +2,8 @@ import type {
   ApplicationOutcomeWriteResponse,
   ApplyReviewDecisionRequest,
   ApplyReviewDecisionResponse,
+  RepeatApplicationOverrideRequest,
+  RepeatApplicationOverrideResponse,
   ManualApplicationOutcomeRequest,
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
@@ -36,6 +38,11 @@ import type { JobId } from "../../operations/types.js";
 export interface ApplyReviewDecisionVariables {
   readonly jobId: JobId;
   readonly body: ApplyReviewDecisionRequest;
+}
+
+export interface RepeatApplicationOverrideVariables {
+  readonly jobId: JobId;
+  readonly body: RepeatApplicationOverrideRequest;
 }
 
 export interface ManualApplicationOutcomeVariables {
@@ -105,6 +112,22 @@ export function useApplyReviewDecisionMutation(): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ jobId, body }) => api.decideApplyReview(jobId, body),
+    onSettled: (_data, _error, variables) => {
+      invalidateApplyReviewSurfaces(queryClient, tenantId, variables.jobId);
+    },
+  });
+}
+
+export function useRepeatApplicationOverrideMutation(): UseMutationResult<
+  RepeatApplicationOverrideResponse,
+  Error,
+  RepeatApplicationOverrideVariables
+> {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, body }) => api.confirmRepeatApplication(jobId, body),
     onSettled: (_data, _error, variables) => {
       invalidateApplyReviewSurfaces(queryClient, tenantId, variables.jobId);
     },

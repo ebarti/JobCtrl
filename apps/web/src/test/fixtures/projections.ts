@@ -7,6 +7,7 @@ import type {
   ApplyAudit,
   ApplicationOutcomeListResponse,
   ApplyReviewQueueResponse,
+  RepeatApplicationAssessment,
   CredentialsResponse,
   DashboardSummary,
   DailyDigest,
@@ -409,6 +410,21 @@ export function makeApplyAudit(overrides: Partial<ApplyAudit> = {}): ApplyAudit 
   };
 }
 
+export function makeRepeatApplicationAssessment(
+  overrides: Partial<RepeatApplicationAssessment> = {},
+): RepeatApplicationAssessment {
+  const base: RepeatApplicationAssessment = {
+    status: "clear",
+    summary: "No confirmed prior application is related to this opening.",
+    evidenceFingerprint: null,
+    evaluatedAt: "2026-05-01T12:00:00Z",
+    matches: [],
+    override: null,
+    auditTrail: [],
+  };
+  return { ...base, ...overrides };
+}
+
 export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
   ok: true,
   items: [
@@ -436,6 +452,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         ready: true,
       },
       applyAudit: makeApplyAudit(),
+      repeatApplication: makeRepeatApplicationAssessment(),
       position: {
         descriptionPreview:
           "Globex needs a principal engineer to lead platform reliability, incident response, and developer experience improvements.",
@@ -670,6 +687,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         ready: false,
       },
       applyAudit: makeApplyAudit(),
+      repeatApplication: makeRepeatApplicationAssessment(),
       position: {
         descriptionPreview:
           "Acme is hiring a staff software engineer to own platform reliability and product engineering workflows.",
@@ -882,6 +900,7 @@ export function makeJobDetail(
     artifacts: overrides.artifacts ?? [],
     auditHistory: overrides.auditHistory ?? sampleJobAuditHistory,
     applyAudit: overrides.applyAudit ?? makeApplyAudit(),
+    repeatApplication: overrides.repeatApplication ?? makeRepeatApplicationAssessment(),
     activeApplyRun: overrides.activeApplyRun ?? null,
     employerAnalysis: overrides.employerAnalysis ?? null,
     requirementFitReport: overrides.requirementFitReport ?? null,

@@ -51,6 +51,7 @@ For *synchronous* mutations (return value is the final state):
 | `useCancelStageMutation({ jobId, stage })` | Same |
 | `useMarkAppliedMutation({ jobId })` | `jobsKeys.detail(tenantId, jobId)`, `jobsKeys.lists(tenantId)`, `dashboardKeys.summary(tenantId)` |
 | `useMarkSkippedMutation({ jobId })` | Same |
+| `useRepeatApplicationOverrideMutation({ jobId })` | `applyReviewKeys.queue(tenantId)`, `jobsKeys.detail(tenantId, jobId)`, job lists, dashboard summary, and outcome reads so every related surface refreshes its evidence and audit state |
 | `useRunPipelineStagesMutation({ stages })` without `apply` | `jobsKeys.lists(tenantId)`, `dashboardKeys.summary(tenantId)`, `workflowRunsKeys.lists(tenantId)`, `applyRunsKeys.lists(tenantId)` on settle after the HTTP 200 worker action results return |
 
 For *async* (202) mutation responses (the queued work's final state arrives

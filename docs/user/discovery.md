@@ -108,6 +108,20 @@ auto-apply, and approval controls affect Apply eligibility and submission, so
 their behavior is documented in
 [Apply → Approval And Automation Modes](apply.md#approval-and-automation-modes).
 
+### Canonical identity and repeat applications
+
+Discovery preserves canonical posting identity, source-native identity, source
+observations, and reviewed duplicate links rather than treating every URL as a
+different opening. An accepted duplicate link may therefore prove that an
+alternate URL represents an already-known canonical job. Candidate or rejected
+duplicate links do not establish that relationship.
+
+Identity evidence alone does not claim that an application happened. Repeat
+protection combines it only with a confirmed application fact. A conservative
+same-employer/equivalent-role comparison can require confirmation, but it does
+not merge the jobs or turn either record into application history. See
+[Apply → Repeat-Application Protection](apply.md#repeat-application-protection).
+
 ## Launch And Observe Discovery
 
 Discovery owns the controls that decide what may enter a run; **Pipelines** owns

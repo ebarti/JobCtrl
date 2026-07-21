@@ -39,6 +39,7 @@ export const DEMO_CAPABILITY_MANIFEST = {
   decideRoleMatchFeedbackSuggestion: local("Decides synthetic feedback locally."),
   applyReviewQueue: local("Reads the synthetic review queue."),
   decideApplyReview: local("Records an approval decision locally."),
+  confirmRepeatApplication: unavailable("Repeat-application confirmations require the local audited database."),
   resumeReviewDraft: local("Reads a synthetic review draft."),
   createResumeReviewDraft: local("Creates a synthetic draft locally."),
   saveResumeReviewDraftRevision: local("Saves a draft revision locally."),

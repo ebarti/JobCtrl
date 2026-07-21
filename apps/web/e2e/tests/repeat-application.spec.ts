@@ -1,0 +1,283 @@
+import { execFileSync } from "node:child_process";
+import path from "node:path";
+
+import { expect, test } from "@playwright/test";
+import Database from "better-sqlite3";
+
+import { loadE2eDbPath } from "../fixtures/e2e-state.js";
+
+const TARGET = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
+const PRIOR = "https://alternate.example.test/gitlab/qa-platform-director";
+const CANONICAL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director-canonical";
+const CONFIRMED_AT = "2026-07-20T08:00:00.000Z";
+
+test("repeat application block and reasoned override reach only the simulated submit boundary", async ({
+  page,
+  request,
+}) => {
+  const dbPath = loadE2eDbPath();
+  const db = new Database(dbPath);
+  const hadCanonicalIdentityTable = Boolean(
+    db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get("job_canonical_identities"),
+  );
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS job_canonical_identities (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_url TEXT NOT NULL,
+      canonical_url TEXT NOT NULL,
+      ats_kind TEXT NOT NULL,
+      source_native_id TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      resolved_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, job_url),
+      FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+    )
+  `);
+  const originalIdentity = hadCanonicalIdentityTable
+    ? (db
+        .prepare(
+          "SELECT * FROM job_canonical_identities WHERE tenant_id = 'local' AND job_url = ?",
+        )
+        .get(TARGET) as Record<string, unknown> | undefined)
+    : undefined;
+  const originalApplyStage = db
+    .prepare("SELECT * FROM job_stage_states WHERE job_url = ? AND stage = 'apply'")
+    .get(TARGET) as Record<string, unknown> | undefined;
+
+  try {
+    const target = db.prepare("SELECT * FROM jobs WHERE url = ?").get(TARGET) as Record<
+      string,
+      unknown
+    >;
+    if (!target) throw new Error("QA target job is missing");
+    const prior: Record<string, unknown> = {
+      ...target,
+      url: PRIOR,
+      application_url: `${PRIOR}/apply`,
+      apply_status: "applied",
+      applied_at: CONFIRMED_AT,
+    };
+    const columns = Object.keys(prior);
+    db.prepare(
+      `INSERT OR REPLACE INTO jobs (${columns.map((column) => `"${column}"`).join(", ")})
+       VALUES (${columns.map(() => "?").join(", ")})`,
+    ).run(...columns.map((column) => prior[column]));
+    db.prepare(
+      `INSERT INTO job_events
+       (job_url, stage, event_type, level, message, occurred_at, payload_json)
+       VALUES (?, 'apply', 'ApplicationSubmitted', 'info',
+               'Simulated prior application confirmation', ?, ?)`,
+    ).run(PRIOR, CONFIRMED_AT, JSON.stringify({ run_id: "e2e-prior-run" }));
+    const targetProjection = db
+      .prepare("SELECT * FROM job_list_projections WHERE tenant_id = 'local' AND job_id = ?")
+      .get(TARGET) as Record<string, unknown> | undefined;
+    if (targetProjection) {
+      const priorProjection: Record<string, unknown> = {
+        ...targetProjection,
+        job_id: PRIOR,
+      };
+      const columns = Object.keys(priorProjection);
+      db.prepare(
+        `INSERT OR REPLACE INTO job_list_projections
+         (${columns.map((column) => `"${column}"`).join(", ")})
+         VALUES (${columns.map(() => "?").join(", ")})`,
+      ).run(...columns.map((column) => priorProjection[column]));
+    }
+    const identity = db.prepare(
+      `INSERT OR REPLACE INTO job_canonical_identities
+       (tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at)
+       VALUES ('local', ?, ?, 'greenhouse', 'qa-platform-director', 1, ?)`,
+    );
+    identity.run(TARGET, CANONICAL, CONFIRMED_AT);
+    identity.run(PRIOR, CANONICAL, CONFIRMED_AT);
+
+    await page.goto(`/apply-review?jobKey=${encodeURIComponent(TARGET)}`);
+    await expect(page.getByText("Repeat application blocked", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("matching canonical ATS identity", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Inspect prior application" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Authorize live submit/i })).toBeDisabled();
+    const trustedMutationHeaders = {
+      origin: new URL(page.url()).origin,
+      "sec-fetch-site": "same-origin",
+    };
+
+    const blocked = await request.post(
+      `/v1/jobs/${encodeURIComponent(TARGET)}/actions/apply`,
+      { data: { dryRun: false }, headers: trustedMutationHeaders },
+    );
+    expect(blocked.status()).toBe(409);
+    expect(await blocked.json()).toMatchObject({ error: "repeat_application_blocked" });
+
+    await page.getByLabel("Reason for another live attempt").fill(
+      "The prior application was withdrawn before review; this retry is intentional.",
+    );
+    await page.getByRole("button", { name: "Confirm one live attempt" }).click();
+    await expect(
+      page.getByText("Repeat application confirmation recorded", { exact: true }),
+    ).toBeVisible();
+    await page.getByText("Recorded confirmation", { exact: true }).click();
+    await expect(
+      page.getByText(
+        "The prior application was withdrawn before review; this retry is intentional.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+
+    const acceptedBySimulation = await request.post(
+      `/v1/jobs/${encodeURIComponent(TARGET)}/actions/apply`,
+      { data: { dryRun: false }, headers: trustedMutationHeaders },
+    );
+    expect(acceptedBySimulation.status()).toBe(202);
+    expect(await acceptedBySimulation.json()).toMatchObject({ status: "queued" });
+
+    const repositoryRoot = path.resolve(process.cwd(), "../..");
+    const pythonExecutable = path.join(
+      repositoryRoot,
+      "workers/automation/.venv/bin/python",
+    );
+    const workerSource = path.join(repositoryRoot, "workers/automation/src");
+    const workerClaimScript = `
+import sys
+from jobctrl.apply.launcher import acquire_job
+from jobctrl.database import get_connection, init_db
+from jobctrl.state import set_stage_state
+
+target = sys.argv[1]
+init_db()
+run_ctx = {
+    "dry_run": False,
+    "run_id": "e2e-worker-repeat-claim",
+    "workflow_id": "e2e-repeat-application",
+}
+job = acquire_job(
+    target_url=target,
+    worker_id=91,
+    run_ctx=run_ctx,
+    approval_required=False,
+)
+if job is None:
+    raise SystemExit("authoritative worker claim was refused unexpectedly")
+conn = get_connection()
+set_stage_state(conn, target, "apply", "pending", validate_transition=False)
+conn.commit()
+print(job["url"])
+`;
+    const workerOutput = execFileSync(
+      pythonExecutable,
+      ["-c", workerClaimScript, TARGET],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          JOBCTRL_DIR: path.dirname(dbPath),
+          PYTHONPATH: workerSource,
+        },
+      },
+    );
+    expect(workerOutput.trim()).toBe(TARGET);
+
+    await page.reload();
+    await expect(page.getByText("Review prior application before live submit", { exact: true })).toBeVisible();
+    await expect(page.getByText(/already used; another live attempt requires/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /Authorize live submit/i })).toBeDisabled();
+
+    const refusedAfterConsumption = await request.post(
+      `/v1/jobs/${encodeURIComponent(TARGET)}/actions/apply`,
+      { data: { dryRun: false }, headers: trustedMutationHeaders },
+    );
+    expect(refusedAfterConsumption.status()).toBe(409);
+    expect(await refusedAfterConsumption.json()).toMatchObject({
+      error: "repeat_application_override_consumed",
+    });
+
+    const override = db
+      .prepare(
+        `SELECT target_job_key, prior_job_key, reason, confirmed_by, confirmed_at
+           FROM application_repeat_overrides
+          WHERE tenant_id = 'local' AND target_job_key = ?
+          ORDER BY confirmed_at DESC LIMIT 1`,
+      )
+      .get(TARGET) as Record<string, unknown>;
+    expect(override).toMatchObject({
+      target_job_key: TARGET,
+      prior_job_key: PRIOR,
+      confirmed_by: "user",
+    });
+    expect(String(override.reason)).toContain("withdrawn before review");
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM application_repeat_audit
+            WHERE target_job_key = ?
+              AND action IN ('blocked', 'override_recorded', 'override_consumed')`,
+        )
+        .get(TARGET),
+    ).toMatchObject({ count: 3 });
+    expect(
+      db
+        .prepare(
+          `SELECT c.run_id, a.action, a.evidence_json
+             FROM application_repeat_override_consumptions c
+             JOIN application_repeat_audit a
+               ON a.override_id = c.override_id AND a.action = 'override_consumed'
+            WHERE c.override_id = (
+              SELECT override_id FROM application_repeat_overrides
+               WHERE target_job_key = ? ORDER BY confirmed_at DESC LIMIT 1
+            )`,
+        )
+        .get(TARGET),
+    ).toMatchObject({
+      run_id: "e2e-worker-repeat-claim",
+      action: "override_consumed",
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM job_events
+            WHERE job_url = ? AND event_type = 'ApplicationSubmitted'`,
+        )
+        .get(TARGET),
+    ).toMatchObject({ count: 0 });
+  } finally {
+    db.prepare(
+      "DELETE FROM job_events WHERE job_url = ? AND payload_json LIKE '%e2e-worker-repeat-claim%'",
+    ).run(TARGET);
+    db.prepare("DELETE FROM job_stage_states WHERE job_url = ? AND stage = 'apply'").run(TARGET);
+    if (originalApplyStage) {
+      const columns = Object.keys(originalApplyStage);
+      db.prepare(
+        `INSERT INTO job_stage_states (${columns.map((column) => `"${column}"`).join(", ")})
+         VALUES (${columns.map(() => "?").join(", ")})`,
+      ).run(...columns.map((column) => originalApplyStage[column]));
+    }
+    db.prepare("DELETE FROM application_repeat_audit WHERE target_job_key = ?").run(TARGET);
+    db.prepare(
+      "DELETE FROM application_repeat_override_consumptions WHERE override_id IN (SELECT override_id FROM application_repeat_overrides WHERE target_job_key = ?)",
+    ).run(TARGET);
+    db.prepare("DELETE FROM application_repeat_overrides WHERE target_job_key = ?").run(TARGET);
+    db.prepare(
+      "DELETE FROM job_canonical_identities WHERE tenant_id = 'local' AND job_url IN (?, ?)",
+    ).run(TARGET, PRIOR);
+    if (originalIdentity) {
+      const columns = Object.keys(originalIdentity);
+      db.prepare(
+        `INSERT INTO job_canonical_identities (${columns.map((column) => `"${column}"`).join(", ")})
+         VALUES (${columns.map(() => "?").join(", ")})`,
+      ).run(...columns.map((column) => originalIdentity[column]));
+    }
+    if (!hadCanonicalIdentityTable) {
+      db.exec("DROP TABLE job_canonical_identities");
+    }
+    db.prepare("DELETE FROM job_events WHERE job_url = ?").run(PRIOR);
+    db.prepare("DELETE FROM job_list_projections WHERE tenant_id = 'local' AND job_id = ?").run(
+      PRIOR,
+    );
+    db.prepare("DELETE FROM jobs WHERE url = ?").run(PRIOR);
+    db.close();
+  }
+});

@@ -19,6 +19,7 @@ import { applyReviewKeys } from "../../contexts/operations/applyReviewKeys.js";
 import { routeTree } from "../../routeTree.gen.js";
 import {
   makeApplyAudit,
+  makeRepeatApplicationAssessment,
   makeArtifactDetail,
   makeArtifactTailoringExplanation,
   makeCoverageAudit,
@@ -809,6 +810,200 @@ const pinnedTailoringExplanation: ArtifactTailoringExplanation = {
 };
 
 describe("<ApplyReviewView>", () => {
+  it("shows inspectable repeat evidence, keeps dry-run authorization available, and records a bound confirmation", async () => {
+    const fingerprint = "a".repeat(64);
+    const repeatApplication = makeRepeatApplicationAssessment({
+      status: "confirmation_required",
+      summary: "A confirmed application to the same employer and an equivalent role requires deliberate confirmation.",
+      evidenceFingerprint: fingerprint,
+      matches: [
+        {
+          relationship: "same_employer_equivalent_role",
+          reason: "The employer identity matches exactly and the normalized role titles are materially equivalent.",
+          priorApplication: {
+            jobKey: "https://example.com/jobs/prior-platform",
+            title: "Principal Platform Engineer",
+            company: "Globex",
+            applicationUrl: "https://example.com/jobs/prior-platform/apply",
+            factKind: "application_submitted",
+            factId: "event:42",
+            confirmedAt: "2026-05-01T10:00:00Z",
+          },
+          identityEvidence: ["employer:globex", "role:principal platform engineer"],
+        },
+      ],
+      auditTrail: [
+        {
+          auditId: "audit-repeat-1",
+          targetJobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+          action: "confirmation_required",
+          evidenceFingerprint: fingerprint,
+          evidence: [],
+          overrideId: null,
+          priorJobKey: null,
+          actor: "system",
+          reason: null,
+          occurredAt: "2026-05-06T06:36:00Z",
+        },
+      ],
+    });
+    const queue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0 ? { ...item, repeatApplication } : item,
+      ),
+    };
+    let resolveConfirmation!: (value: {
+      ok: true;
+      assessment: typeof repeatApplication;
+    }) => void;
+    const confirmRepeatApplication = vi.fn(
+      () => new Promise<{ ok: true; assessment: typeof repeatApplication }>((resolve) => {
+        resolveConfirmation = resolve;
+      }),
+    );
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => queue),
+          confirmRepeatApplication,
+        },
+      }),
+    });
+
+    expect(await screen.findByText("Review prior application before live submit")).toBeInTheDocument();
+    expect(screen.getByText("worker-confirmed submission", { exact: false })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Inspect prior application" })).toHaveAttribute(
+      "href",
+      `/jobs/${encodeURIComponent("https://example.com/jobs/prior-platform")}`,
+    );
+    expect(screen.getByRole("button", { name: /Authorize live submit/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Authorize dry run/i })).toBeEnabled();
+
+    await userEvent.type(
+      screen.getByLabelText("Reason for another live attempt"),
+      "The first application was withdrawn before review.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Confirm one live attempt" }));
+    expect(screen.getByRole("button", { name: "Recording confirmation" })).toBeDisabled();
+    expect(confirmRepeatApplication).toHaveBeenCalledWith(queue.items[0]!.jobKey, {
+      evidenceFingerprint: fingerprint,
+      priorJobKey: "https://example.com/jobs/prior-platform",
+      reason: "The first application was withdrawn before review.",
+      confirmedBy: "user",
+    });
+    resolveConfirmation({ ok: true, assessment: repeatApplication });
+  });
+
+  it("surfaces stale repeat evidence as a refresh-and-review error", async () => {
+    const repeatApplication = makeRepeatApplicationAssessment({
+      status: "blocked",
+      summary: "A confirmed application to this canonical opening blocks another live submission by default.",
+      evidenceFingerprint: "b".repeat(64),
+      matches: [
+        {
+          relationship: "canonical_identity",
+          reason: "The canonical ATS identity matches the previously applied opening.",
+          priorApplication: {
+            jobKey: "prior-job",
+            title: "Principal Platform Engineer",
+            company: "Globex",
+            applicationUrl: null,
+            factKind: "application_submitted",
+            factId: "event:99",
+            confirmedAt: "2026-05-01T10:00:00Z",
+          },
+          identityEvidence: ["canonical_url:https://example.com/jobs/99"],
+        },
+      ],
+    });
+    const queue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0 ? { ...item, repeatApplication } : item,
+      ),
+    };
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => queue),
+          confirmRepeatApplication: vi.fn(async () => {
+            throw new Error("repeat_application_evidence_stale");
+          }),
+        },
+      }),
+    });
+
+    await userEvent.type(
+      await screen.findByLabelText("Reason for another live attempt"),
+      "The original submission was withdrawn intentionally.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Confirm one live attempt" }));
+
+    expect(await screen.findByText("Prior-application evidence changed")).toBeInTheDocument();
+    expect(screen.getByText(/Inspect the current relationship before confirming again/i)).toBeInTheDocument();
+  });
+
+  it("keeps immutable repeat-protection evidence inspectable after the current relation clears", async () => {
+    const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
+    const priorJobKey = "https://example.com/jobs/prior-platform";
+    const fingerprint = "c".repeat(64);
+    const historicalMatch = {
+      relationship: "same_employer_equivalent_role" as const,
+      reason: "The employer identity matched when the confirmation was recorded.",
+      priorApplication: {
+        jobKey: priorJobKey,
+        title: "Principal Platform Engineer",
+        company: "Globex",
+        applicationUrl: null,
+        factKind: "application_submitted" as const,
+        factId: "event:historical-42",
+        confirmedAt: "2026-05-01T10:00:00Z",
+      },
+      identityEvidence: ["employer:globex", "role:principal platform engineer"],
+    };
+    const repeatApplication = makeRepeatApplicationAssessment({
+      status: "clear",
+      summary: "No confirmed prior application is related to this opening.",
+      evidenceFingerprint: null,
+      matches: [],
+      auditTrail: [
+        {
+          auditId: "audit-historical-1",
+          targetJobKey: jobKey,
+          action: "override_recorded",
+          evidenceFingerprint: fingerprint,
+          evidence: [historicalMatch],
+          overrideId: "override-historical-1",
+          priorJobKey,
+          actor: "user",
+          reason: "The first application was withdrawn before review.",
+          occurredAt: "2026-05-06T06:36:00Z",
+        },
+      ],
+    });
+    const queue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0 ? { ...item, repeatApplication } : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({ api: { applyReviewQueue: vi.fn(async () => queue) } }),
+    });
+
+    expect(await screen.findByText("Repeat application history")).toBeInTheDocument();
+    expect(screen.getByText("Protection audit trail (1)")).toBeInTheDocument();
+    expect(screen.getByText("Inspect recorded evidence")).toBeInTheDocument();
+    expect(screen.getByText(/event:historical-42/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Inspect selected prior application" })).toHaveAttribute(
+      "href",
+      `/jobs/${encodeURIComponent(priorJobKey)}`,
+    );
+  });
+
   it("renders queue failures as destructive alerts with a semantic icon", async () => {
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({

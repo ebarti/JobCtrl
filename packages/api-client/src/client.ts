@@ -33,6 +33,8 @@ import type {
   ApplyReviewDecisionRequest,
   ApplyReviewDecisionResponse,
   ApplyReviewQueueResponse,
+  RepeatApplicationOverrideRequest,
+  RepeatApplicationOverrideResponse,
   ArtifactDetail,
   ArtifactListQuery,
   ArtifactOpenResponse,
@@ -426,6 +428,16 @@ export class JobCtrlApiClient {
   ): Promise<ApplyReviewDecisionResponse> {
     return this.post(
       `/v1/jobs/${encodeURIComponent(jobKey)}/apply-review/decision`,
+      body,
+    );
+  }
+
+  confirmRepeatApplication(
+    jobKey: string,
+    body: RepeatApplicationOverrideRequest,
+  ): Promise<RepeatApplicationOverrideResponse> {
+    return this.post(
+      `/v1/jobs/${encodeURIComponent(jobKey)}/repeat-application/override`,
       body,
     );
   }

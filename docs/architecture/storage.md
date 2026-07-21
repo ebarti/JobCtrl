@@ -66,7 +66,8 @@ The remaining tables group by owner:
 | Resume templates | `resume_templates`, `resume_template_versions`, `resume_template_defaults`, `resume_template_refresh_attempts`, `job_resume_template_assignments` |
 | Compensation | `job_posted_compensation_facts`, `job_market_compensation_estimates` |
 | Read-model projections | `job_list_projections`, `job_detail_projections`, `dashboard_projections`, `apply_run_projections`, `workflow_run_projections`, `pipeline_step_projections`, `artifact_list_projections`, `event_watermarks`, `digest_state` |
-| Discovery & preparation | `discovery_runs`, `discovery_execution_jobs`, `discovery_search_units`, `discovery_search_unit_jobs`, `discovery_search_unit_filtered_events`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, legacy `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
+| Discovery & preparation | `discovery_runs`, `discovery_execution_jobs`, `discovery_search_units`, `discovery_search_unit_jobs`, `discovery_search_unit_filtered_events`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, `job_canonical_identities`, `job_source_observations`, `job_duplicate_links`, legacy `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
+| Apply review, repeat protection, and outcomes | `application_review_decisions`, `application_repeat_overrides`, `application_repeat_override_consumptions`, `application_repeat_audit`, `application_outcomes`, `application_email_evidence`, `application_outcome_suggestions` |
 | Policies & operations | `tailoring_policies`, `llm_spend`, `job_score_staleness`, `worker_runtime_heartbeats`, `jobctrl_deleted_jobs` |
 
 SQLite in `~/.jobctrl/jobctrl.db` is the local source of truth for jobs,
@@ -80,6 +81,38 @@ preferred model IDs, and Levels.fyi/Glassdoor enablement, access-basis, and
 licensed-feed coverage policy. Public Levels.fyi Markdown needs no credential.
 Credentials, feed paths/URLs, feed contents, and provider payloads do not belong
 in the settings file.
+
+### Repeat-application authority and migration
+
+Historical application facts remain owned by the existing job events, reviewed
+outcomes, and compatible applied status. Schema version 6 adds only three
+decision/audit tables; it does not backfill, reinterpret, or update those facts:
+
+- `application_repeat_overrides` stores the target, selected prior job,
+  relationship, immutable evidence snapshot and SHA-256 fingerprint, reason,
+  actor, and confirmation time.
+- `application_repeat_override_consumptions` binds one override to one apply run
+  and consumption time. Primary and unique constraints prevent reuse by either
+  override or run during concurrent claims.
+- `application_repeat_audit` stores idempotent warning/block assessments plus
+  override-recorded and override-consumed actions with the bounded evidence
+  snapshot that justified each decision.
+
+The evaluator reads canonical job/source identity and accepted
+`job_duplicate_links`, then joins only confirmed application facts. Pending
+suggestions, notes, dry runs, failed attempts, and intent checkpoints are not
+promoted into history. Existing databases advance additively from version 5 to
+6 while their prior application rows and events remain byte-for-byte unchanged.
+Both the TypeScript API and Python worker can create the new tables
+idempotently, and both reject a database created by a newer schema version.
+
+For a live run, the Python launcher opens `BEGIN IMMEDIATE`, recomputes the
+current evidence, performs the existing active-run and approval checks, and
+consumes a matching one-attempt override before transitioning Apply to running.
+The consumption and stage claim commit together. A stale approval does not
+consume the override; a competing claim cannot consume it twice. The later
+submit-intent and `needs_verification` checkpoints retain their existing
+ownership and semantics.
 The `digest_state` projection table stores the local daily digest review
 watermark; passive Dashboard and CLI reads do not update it, and only explicit
 acknowledge actions advance it.

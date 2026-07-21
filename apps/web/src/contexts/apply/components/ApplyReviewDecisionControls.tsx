@@ -18,6 +18,7 @@ import { useApplyReviewDecisionMutation } from "../hooks/useApplyReviewMutations
 export interface ApplyReviewDecisionControlsProps {
   readonly item: ApplyReviewQueueItem;
   readonly approvalDisabledReason?: string | null;
+  readonly liveSubmitDisabledReason?: string | null;
   readonly approvalNotice?: string | null;
   readonly approvalPreparing?: boolean;
   readonly onPrepareApproval?: (() => Promise<boolean>) | null;
@@ -104,6 +105,7 @@ function dryRunEvidenceLabel(item: ApplyReviewQueueItem): string {
 
 export function ApplyReviewDecisionControls({
   approvalDisabledReason = null,
+  liveSubmitDisabledReason = null,
   approvalNotice = null,
   approvalPreparing = false,
   item,
@@ -116,15 +118,19 @@ export function ApplyReviewDecisionControls({
   const fullDryRunEvidence = item.approvalGate.dryRunEvidence;
   const partialDryRunEvidence = item.approvalGate.partialDryRunEvidence;
   const liveSubmitAvailable =
-    fullDryRunEvidence !== null && approvalDisabledReason === null;
+    fullDryRunEvidence !== null && approvalDisabledReason === null && liveSubmitDisabledReason === null;
   const gateMessage = item.approvalGate.reasons
     .map((reason) => GATE_REASON_LABELS[reason] ?? reason)
     .join(", ");
   const approvalMessage =
     approvalDisabledReason ??
+    liveSubmitDisabledReason ??
     approvalNotice ??
     (gateMessage ? `Submit gate: ${gateMessage}.` : null);
-  const approvalBlocked = approvalDisabledReason !== null || (approvalNotice === null && Boolean(gateMessage));
+  const approvalBlocked =
+    approvalDisabledReason !== null ||
+    liveSubmitDisabledReason !== null ||
+    (approvalNotice === null && Boolean(gateMessage));
 
   const submitDecision = async (value: ApplyReviewDecisionValue, partialOverrideRunId?: string) => {
     if (pending) return;
@@ -214,6 +220,7 @@ export function ApplyReviewDecisionControls({
               disabled={
                 pending ||
                 (approvalDisabledReason !== null && value.startsWith("approve_")) ||
+                (value === "approve_submit" && liveSubmitDisabledReason !== null) ||
                 (value === "approve_submit" && !fullDryRunEvidence)
               }
               aria-label={`${DECISION_LABELS[value]} for ${item.title}`}
@@ -263,7 +270,7 @@ export function ApplyReviewDecisionControls({
             size="sm"
             type="button"
             variant="outline"
-            disabled={pending || approvalDisabledReason !== null}
+            disabled={pending || approvalDisabledReason !== null || liveSubmitDisabledReason !== null}
             aria-label={`Authorize live submit with partial dry-run evidence for ${item.title}`}
             onClick={() => {
               void submitDecision("approve_submit", partialDryRunEvidence.runId);

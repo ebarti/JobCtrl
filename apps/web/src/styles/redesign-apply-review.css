@@ -6,6 +6,71 @@
   gap: 24px;
 }
 
+.repeat-application-guard {
+  display: grid;
+  gap: 12px;
+  grid-column: 1 / -1;
+}
+
+.repeat-application-evidence {
+  display: grid;
+  gap: 8px;
+}
+
+.repeat-application-evidence article {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--muted);
+}
+
+.repeat-application-evidence-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.repeat-application-evidence p,
+.repeat-application-confirmation-form p {
+  margin: 0;
+}
+
+.repeat-application-confirmation-form {
+  display: grid;
+  gap: 8px;
+}
+
+.repeat-application-confirmation-form > button {
+  justify-self: start;
+}
+
+.repeat-application-override-audit dl {
+  display: grid;
+  gap: 8px;
+  margin-block: 8px 0;
+}
+
+.repeat-application-override-audit dl > div {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.35fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.repeat-application-override-audit dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.repeat-application-audit-trail ol,
+.repeat-application-evidence ul {
+  margin-block: 8px 0;
+  padding-inline-start: 20px;
+}
+
 .apply-review-layout .page-head {
   margin-bottom: 0;
 }
