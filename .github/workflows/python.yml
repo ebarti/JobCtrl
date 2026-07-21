@@ -43,6 +43,32 @@ jobs:
       - name: Release scan
         run: python scripts/release_check.py
 
+      - name: Validate Python workflow contract
+        run: node scripts/check-python-workflow-contract.mjs
+
+      - name: Enable Linux user namespaces for Bubblewrap
+        if: ${{ runner.os == 'Linux' && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Bubblewrap needs unprivileged user namespaces on GitHub-hosted Linux
+          # runners. This step runs in each Python matrix lane before the
+          # sandboxed Codex SDK regression test.
+          current_userns="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
+          if [ -n "$current_userns" ] && [ "$current_userns" != "1" ]; then
+            echo "Enabling kernel.unprivileged_userns_clone for Bubblewrap."
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+
+          # Ubuntu 24.04+ can additionally block unprivileged user namespaces
+          # via AppArmor, which prevents Bubblewrap from configuring loopback.
+          current_apparmor="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
+          if [ -n "$current_apparmor" ] && [ "$current_apparmor" != "0" ]; then
+            echo "Disabling kernel.apparmor_restrict_unprivileged_userns for Bubblewrap."
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
       - name: Test
         run: pytest workers/automation/tests -v
 
