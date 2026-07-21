@@ -40,7 +40,7 @@ features:
     linkText: Understand the audit trail
   - icon: ✅
     title: Supervised Apply
-    details: Rehearse with dry runs, approve every live submission explicitly, a browser-level guard blocks dry-run submits, and no application is ever submitted twice.
+    details: Rehearse with dry runs, require explicit approval for live submissions by default, a browser-level guard blocks dry-run submits, and no application is ever submitted twice.
     link: /user/apply
     linkText: Understand apply controls
   - icon: 🔒

@@ -3,6 +3,8 @@ import { defineConfig, type DefaultTheme } from "vitepress";
 import { withMermaid } from "vitepress-plugin-mermaid";
 
 const REPO_URL = "https://github.com/ebarti/JobCtrl";
+const DOCS_SITE_URL = "https://jobctrl.dev";
+const SOCIAL_IMAGE_URL = `${DOCS_SITE_URL}/assets/brand/lockup-primary.png`;
 
 // Docs that stay in the repository but are not published on the site.
 // docs/README.md is the repo-facing documentation map (GitHub renders it when
@@ -31,6 +33,14 @@ function routeForRewrittenPage(docPath: string): string | null {
   if (!rewritten) return null;
   // With cleanUrls: `index.md` -> `/`, `developer/index.md` -> `/developer/`.
   return "/" + rewritten.replace(/index\.md$/, "").replace(/\.md$/, "");
+}
+
+function canonicalUrlForPage(docPath: string): string {
+  const rewrittenPath = PAGE_REWRITES[docPath] ?? docPath;
+  const route = rewrittenPath
+    .replace(/(?:^|\/)index\.md$/, "/")
+    .replace(/\.md$/, "");
+  return new URL(route.startsWith("/") ? route : `/${route}`, DOCS_SITE_URL).toString();
 }
 
 // One guide, one navigation tree. The first two groups answer the questions a
@@ -235,9 +245,23 @@ export default withMermaid(
       ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
       ["link", { rel: "apple-touch-icon", sizes: "180x180", href: "/apple-touch-icon.png" }],
       ["link", { rel: "icon", type: "image/png", sizes: "512x512", href: "/assets/brand/app-icon.png" }],
-      ["meta", { property: "og:image", content: "https://jobctrl.dev/assets/brand/lockup-primary.png" }],
       ["meta", { name: "theme-color", content: "#6d28d9" }],
     ],
+    transformHead: ({ pageData, title, description }) => {
+      const canonicalUrl = canonicalUrlForPage(pageData.relativePath);
+      return [
+        ["link", { rel: "canonical", href: canonicalUrl }],
+        ["meta", { property: "og:type", content: "website" }],
+        ["meta", { property: "og:url", content: canonicalUrl }],
+        ["meta", { property: "og:title", content: title }],
+        ["meta", { property: "og:description", content: description }],
+        ["meta", { property: "og:image", content: SOCIAL_IMAGE_URL }],
+        ["meta", { name: "twitter:card", content: "summary_large_image" }],
+        ["meta", { name: "twitter:title", content: title }],
+        ["meta", { name: "twitter:description", content: description }],
+        ["meta", { name: "twitter:image", content: SOCIAL_IMAGE_URL }],
+      ];
+    },
     srcExclude: [
       "plans/**",
       "incidents/**",

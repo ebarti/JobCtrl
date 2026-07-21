@@ -31,6 +31,7 @@ const { chromium } = require("@playwright/test");
 const PAGES = [
   { path: "/", visualSelector: null, images: false },
   { path: "/architecture/", visualSelector: ".system-topology", images: false },
+  { path: "/developer/", visualSelector: null, images: false },
   {
     path: "/architecture/scoring",
     visualSelector: ".mermaid svg",
@@ -91,6 +92,14 @@ const PAGES = [
   },
   { path: "/comparison", visualSelector: null, images: true },
 ];
+
+const SOCIAL_METADATA_ROUTES = new Set([
+  "/",
+  "/architecture/",
+  "/developer/",
+  "/user/apply",
+]);
+const SOCIAL_IMAGE_URL = "https://jobctrl.dev/assets/brand/lockup-primary.png";
 
 const LIFECYCLE_EXPLANATION_CONTRACTS = [
   {
@@ -317,6 +326,50 @@ async function productTourGeometry(page) {
   });
 }
 
+async function assertSocialMetadata(page, route) {
+  const metadata = await page.evaluate(() => {
+    const values = (selector, attribute = "content") =>
+      Array.from(document.head.querySelectorAll(selector)).map((element) =>
+        element.getAttribute(attribute),
+      );
+    return {
+      title: document.title,
+      description: values('meta[name="description"]')[0],
+      canonical: values('link[rel="canonical"]', "href"),
+      ogType: values('meta[property="og:type"]'),
+      ogUrl: values('meta[property="og:url"]'),
+      ogTitle: values('meta[property="og:title"]'),
+      ogDescription: values('meta[property="og:description"]'),
+      ogImage: values('meta[property="og:image"]'),
+      twitterCard: values('meta[name="twitter:card"]'),
+      twitterTitle: values('meta[name="twitter:title"]'),
+      twitterDescription: values('meta[name="twitter:description"]'),
+      twitterImage: values('meta[name="twitter:image"]'),
+    };
+  });
+  const expectedCanonical = `https://jobctrl.dev${route}`;
+  const expected = {
+    canonical: [expectedCanonical],
+    ogType: ["website"],
+    ogUrl: [expectedCanonical],
+    ogTitle: [metadata.title],
+    ogDescription: [metadata.description],
+    ogImage: [SOCIAL_IMAGE_URL],
+    twitterCard: ["summary_large_image"],
+    twitterTitle: [metadata.title],
+    twitterDescription: [metadata.description],
+    twitterImage: [SOCIAL_IMAGE_URL],
+  };
+  const mismatches = Object.entries(expected)
+    .filter(([key, values]) => JSON.stringify(metadata[key]) !== JSON.stringify(values))
+    .map(([key]) => key);
+  if (!metadata.title || !metadata.description || mismatches.length > 0) {
+    fail(`${route}: canonical or social metadata is missing, duplicated, or conflicting (${mismatches.join(", ")})`);
+  } else {
+    console.log(`ok    ${route} canonical and social metadata`);
+  }
+}
+
 const port = await freePort();
 const preview = spawn(
   "corepack",
@@ -371,6 +424,10 @@ try {
     await page.goto(`http://127.0.0.1:${port}${spec.path}`, {
       waitUntil: "networkidle",
     });
+
+    if (SOCIAL_METADATA_ROUTES.has(spec.path)) {
+      await assertSocialMetadata(page, spec.path);
+    }
 
     if (spec.visualSelector) {
       const visual = page.locator(spec.visualSelector).first();
