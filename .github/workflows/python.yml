@@ -28,7 +28,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install -e "workers/automation[dev]"
+        run: pip install -e "workers/automation[dev,providers]"
 
       - name: Install LaTeX
         env:
