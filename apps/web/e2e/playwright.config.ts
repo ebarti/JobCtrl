@@ -48,6 +48,9 @@ const DOCS_SERVICE_ENVIRONMENT =
           ? { PLAYWRIGHT_BROWSERS_PATH: E2E_PLAYWRIGHT_BROWSERS_PATH }
           : {}),
         TZ: "UTC",
+        // Profile screenshot capture uses the real profile-preview renderer.
+        // Its source runtime must not rewrite the committed Python lockfile.
+        UV_LOCKED: "1",
       }
     : {};
 

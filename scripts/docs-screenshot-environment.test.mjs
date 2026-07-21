@@ -32,6 +32,11 @@ test("documentation screenshot environment allows toolchain state but excludes h
     "/Users/example/playwright",
   );
   assert.equal(environment.TZ, "UTC");
+  assert.equal(
+    environment.UV_LOCKED,
+    "1",
+    "profile preview rendering must not rewrite workers/automation/uv.lock",
+  );
   assert.equal(environment.JOBCTRL_DOCS_SCREENSHOTS, "1");
   assert.equal(environment.JOBCTRL_E2E_APP_DIR, appDir);
   assert.equal(

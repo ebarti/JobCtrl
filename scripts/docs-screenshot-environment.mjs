@@ -69,6 +69,10 @@ export function createDocsScreenshotEnvironment({
   return {
     ...environment,
     TZ: "UTC",
+    // The Profile capture exercises the real resume-preview renderer, which
+    // invokes `uv run`. Screenshot generation is an artifact-only workflow:
+    // it must fail on a stale lock rather than rewriting project dependencies.
+    UV_LOCKED: "1",
     JOBCTRL_DOCS_SCREENSHOTS: "1",
     JOBCTRL_E2E_APP_DIR: appDir,
     JOBCTRL_E2E_DB_PATH: path.join(appDir, "jobctrl.db"),
