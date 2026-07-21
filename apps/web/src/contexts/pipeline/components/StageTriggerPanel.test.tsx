@@ -82,6 +82,10 @@ describe("StageTriggerPanel", () => {
     expect(
       await screen.findByRole("button", { name: "Worker unavailable" }),
     ).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveAttribute(
+      "data-typography",
+      "body",
+    );
     expect(screen.getByRole("alert")).toHaveTextContent(
       "No JobCtrl automation worker heartbeat has been written to the API database.",
     );
