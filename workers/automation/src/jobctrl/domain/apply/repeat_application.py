@@ -600,7 +600,7 @@ def _audit_trail(conn, target_job_key: str) -> list[dict[str, Any]]:
           LEFT JOIN application_repeat_overrides o
             ON o.tenant_id = a.tenant_id AND o.override_id = a.override_id
          WHERE a.tenant_id = ? AND a.target_job_key = ?
-         ORDER BY a.occurred_at DESC, a.audit_id DESC LIMIT 50
+         ORDER BY a.occurred_at DESC, a.rowid DESC LIMIT 50
         """,
         (LOCAL_TENANT, target_job_key),
     ).fetchall()

@@ -19,6 +19,7 @@ from jobctrl.apply.launcher import (
 )
 from jobctrl.database import SCHEMA_VERSION, close_connection, get_connection, init_db
 from jobctrl.domain.apply.repeat_application import (
+    consume_repeat_application_override,
     evaluate_repeat_application,
     repeat_evidence_fingerprint,
 )
@@ -248,6 +249,36 @@ def test_equivalent_role_requires_confirmation_but_distinct_and_similar_employer
     )
     conn.commit()
     assert evaluate_repeat_application(conn, TARGET)["status"] == "clear"
+
+
+def test_audit_trail_orders_equal_timestamps_by_sqlite_insertion_order(tmp_path: Path) -> None:
+    conn = _seed_equivalent_repeat(tmp_path / "jobs.db")
+    initial = evaluate_repeat_application(conn, TARGET, evaluated_at=NOW)
+    _insert_override(conn, initial)
+    ready = evaluate_repeat_application(conn, TARGET, record_audit=False, evaluated_at=NOW)
+    assert ready["status"] == "override_ready"
+    consume_repeat_application_override(
+        conn,
+        ready,
+        target_job_key=TARGET,
+        run_id="equal-timestamp-run",
+        consumed_at=NOW,
+    )
+
+    # UUIDs do not encode insertion order.  Force the tied timestamps into
+    # the inverse lexical UUID order to reproduce the production race.
+    conn.execute(
+        "UPDATE application_repeat_audit SET audit_id = ? WHERE action = 'confirmation_required'",
+        ("ffffffff-ffff-ffff-ffff-ffffffffffff",),
+    )
+    conn.execute(
+        "UPDATE application_repeat_audit SET audit_id = ? WHERE action = 'override_consumed'",
+        ("00000000-0000-0000-0000-000000000000",),
+    )
+    ordered = evaluate_repeat_application(conn, TARGET, record_audit=False, evaluated_at=NOW)
+
+    assert ordered["auditTrail"][0]["action"] == "override_consumed"
+    assert ordered["auditTrail"][0]["priorJobKey"] == PRIOR
 
 
 def test_unconfirmed_sources_do_not_establish_application_history(tmp_path: Path) -> None:

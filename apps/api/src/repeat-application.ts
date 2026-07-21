@@ -670,7 +670,7 @@ function auditTrail(db: SqliteDatabase, targetJobKey: string): RepeatApplication
        LEFT JOIN application_repeat_overrides o
          ON o.tenant_id = a.tenant_id AND o.override_id = a.override_id
       WHERE a.tenant_id = ? AND a.target_job_key = ?
-      ORDER BY a.occurred_at DESC, a.audit_id DESC LIMIT 50`,
+      ORDER BY a.occurred_at DESC, a.rowid DESC LIMIT 50`,
     [DEFAULT_TENANT, targetJobKey],
   ).map((row) => ({
     auditId: row.audit_id,
