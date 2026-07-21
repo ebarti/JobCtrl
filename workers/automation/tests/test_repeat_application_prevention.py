@@ -208,6 +208,30 @@ def test_exact_canonical_and_accepted_duplicate_identities_block(tmp_path: Path)
     assert linked["matches"][0]["relationship"] == "accepted_duplicate"
 
 
+def test_projected_employer_preserves_repeat_evidence_when_job_company_is_missing(tmp_path: Path) -> None:
+    conn = init_db(tmp_path / "jobs.db")
+    _insert_job(conn, url=PRIOR, title="Senior Backend Engineer", company="")
+    _insert_job(conn, url=TARGET, title="Backend Senior Eng", company="", ready=True)
+    conn.execute("UPDATE jobs SET company = NULL")
+    conn.execute("DELETE FROM job_list_projections")
+    conn.executemany(
+        """
+        INSERT INTO job_list_projections (tenant_id, job_id, employer)
+        VALUES ('local', ?, 'Acme Inc')
+        """,
+        [(PRIOR,), (TARGET,)],
+    )
+    _confirm_application(conn)
+
+    assessment = evaluate_repeat_application(conn, TARGET)
+
+    assert assessment["status"] == "confirmation_required"
+    match = assessment["matches"][0]
+    assert match["relationship"] == "same_employer_equivalent_role"
+    assert match["priorApplication"]["company"] == "Acme Inc"
+    assert match["identityEvidence"][0] == "employer:acme"
+
+
 def test_equivalent_role_requires_confirmation_but_distinct_and_similar_employers_clear(
     tmp_path: Path,
 ) -> None:

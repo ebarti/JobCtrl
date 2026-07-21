@@ -45,6 +45,7 @@ test("repeat application block and reasoned override reach only the simulated su
   const originalApplyStage = db
     .prepare("SELECT * FROM job_stage_states WHERE job_url = ? AND stage = 'apply'")
     .get(TARGET) as Record<string, unknown> | undefined;
+  let originalTargetApplication: Record<string, unknown> | undefined;
 
   try {
     const target = db.prepare("SELECT * FROM jobs WHERE url = ?").get(TARGET) as Record<
@@ -52,6 +53,14 @@ test("repeat application block and reasoned override reach only the simulated su
       unknown
     >;
     if (!target) throw new Error("QA target job is missing");
+    originalTargetApplication = {
+      apply_status: target.apply_status,
+      applied_at: target.applied_at,
+    };
+    db.prepare("UPDATE jobs SET apply_status = 'applied', applied_at = ? WHERE url = ?").run(
+      CONFIRMED_AT,
+      TARGET,
+    );
     const prior: Record<string, unknown> = {
       ...target,
       url: PRIOR,
@@ -121,6 +130,7 @@ test("repeat application block and reasoned override reach only the simulated su
     await page.getByLabel("Reason for another live attempt").fill(
       "The prior application was withdrawn before review; this retry is intentional.",
     );
+    await page.getByRole("radio", { name: `Confirm prior application: ${PRIOR}` }).check();
     await page.getByRole("button", { name: "Confirm one live attempt" }).click();
     await expect(
       page.getByText("Repeat application confirmation recorded", { exact: true }),
@@ -284,6 +294,13 @@ print(job["url"])
       PRIOR,
     );
     db.prepare("DELETE FROM jobs WHERE url = ?").run(PRIOR);
+    if (originalTargetApplication) {
+      db.prepare("UPDATE jobs SET apply_status = ?, applied_at = ? WHERE url = ?").run(
+        originalTargetApplication.apply_status,
+        originalTargetApplication.applied_at,
+        TARGET,
+      );
+    }
     db.close();
   }
 });

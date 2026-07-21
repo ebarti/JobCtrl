@@ -297,9 +297,22 @@ def _normalize_tokens(value: str | None) -> list[str]:
 
 
 def _job_identity(conn, job_key: str) -> dict[str, Any] | None:
-    row = conn.execute(
+    company_expression = "j.company"
+    company_params: tuple[str, ...] = ()
+    if _table_exists(conn, "job_list_projections"):
+        company_expression = """
+            COALESCE(
+              NULLIF(j.company, ''),
+              (SELECT jlp.employer
+                 FROM job_list_projections jlp
+                WHERE jlp.tenant_id = ? AND jlp.job_id = j.url
+                LIMIT 1)
+            )
         """
-        SELECT j.url, j.title, j.company,
+        company_params = (LOCAL_TENANT,)
+    row = conn.execute(
+        f"""
+        SELECT j.url, j.title, {company_expression} AS company,
                COALESCE(
                  (SELECT je.application_url
                     FROM job_enrichments je
@@ -308,10 +321,10 @@ def _job_identity(conn, job_key: str) -> dict[str, Any] | None:
                  j.application_url,
                  j.url
                ) AS application_url
-          FROM jobs j
+         FROM jobs j
          WHERE j.url = ?
         """,
-        (LOCAL_TENANT, job_key),
+        (*company_params, LOCAL_TENANT, job_key),
     ).fetchone()
     if row is None:
         return None

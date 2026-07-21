@@ -1355,13 +1355,17 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
   const assessment = item.repeatApplication;
   const mutation = useRepeatApplicationOverrideMutation();
   const [reason, setReason] = useState("");
+  const [selectedPriorJobKey, setSelectedPriorJobKey] = useState<string | null>(null);
   const needsConfirmation = ["blocked", "confirmation_required", "override_consumed"].includes(
     assessment.status,
   );
-  const primary = assessment.matches[0] ?? null;
+  const selectedPrior = assessment.matches.find(
+    (match) => match.priorApplication.jobKey === selectedPriorJobKey,
+  ) ?? (assessment.matches.length === 1 ? assessment.matches[0] ?? null : null);
 
   useEffect(() => {
     setReason("");
+    setSelectedPriorJobKey(null);
     mutation.reset();
   }, [item.jobKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1436,8 +1440,23 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
         </details>
       ) : null}
 
-      {needsConfirmation && primary && assessment.evidenceFingerprint ? (
+      {needsConfirmation && assessment.matches.length > 0 && assessment.evidenceFingerprint ? (
         <div className="repeat-application-confirmation-form">
+          <fieldset>
+            <legend>Select the prior application for this confirmation</legend>
+            {assessment.matches.map((match) => (
+              <label key={`${match.relationship}:${match.priorApplication.factId}`}>
+                <input
+                  type="radio"
+                  name={`repeat-application-prior-${encodeURIComponent(item.jobKey)}`}
+                  value={match.priorApplication.jobKey}
+                  checked={selectedPrior?.priorApplication.jobKey === match.priorApplication.jobKey}
+                  onChange={() => setSelectedPriorJobKey(match.priorApplication.jobKey)}
+                />
+                Confirm prior application: {match.priorApplication.jobKey}
+              </label>
+            ))}
+          </fieldset>
           <label htmlFor={`repeat-application-reason-${encodeURIComponent(item.jobKey)}`}>
             Reason for another live attempt
           </label>
@@ -1451,21 +1470,24 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
           <Button
             type="button"
             variant="outline"
-            disabled={mutation.isPending || reason.trim().length < 10}
-            onClick={() => mutation.mutate({
-              jobId: item.jobKey,
-              body: {
-                evidenceFingerprint: assessment.evidenceFingerprint!,
-                priorJobKey: primary.priorApplication.jobKey,
-                reason: reason.trim(),
-                confirmedBy: "user",
-              },
-            })}
+            disabled={mutation.isPending || reason.trim().length < 10 || !selectedPrior}
+            onClick={() => {
+              if (!selectedPrior) return;
+              mutation.mutate({
+                jobId: item.jobKey,
+                body: {
+                  evidenceFingerprint: assessment.evidenceFingerprint!,
+                  priorJobKey: selectedPrior.priorApplication.jobKey,
+                  reason: reason.trim(),
+                  confirmedBy: "user",
+                },
+              });
+            }}
           >
             {mutation.isPending ? "Recording confirmation" : "Confirm one live attempt"}
           </Button>
           <p className="meta">
-            This confirmation is bound to this target, the prior application above, and the current evidence. It is consumed by one worker claim.
+            This confirmation is bound to this target, the selected prior application, and the current evidence. It is consumed by one worker claim.
           </p>
         </div>
       ) : null}
