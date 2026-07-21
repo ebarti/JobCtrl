@@ -1178,6 +1178,10 @@ def _release_distribution_findings(root: Path) -> list[str]:
     sign = jobs.get("sign")
     if sign is not None:
         executable = _workflow_executable_text(sign)
+        if 'python-version: "3.12.10"' not in sign:
+            findings.append(
+                f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: sign safe extraction must pin Python 3.12.10, which is published for macOS arm64"
+            )
         if "environment: release-signing" not in sign or "JOBCTRL_RELEASE_SIGNING_KEY" not in sign:
             findings.append(
                 f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: sign job must own the protected signing credentials"

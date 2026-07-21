@@ -289,10 +289,10 @@ test("local fixture release descriptor, signature, and curl contract bind one ZI
     minimumSafeSequence: 0,
     revokedBuildIds: [],
     buildId: "fixture-build-0001",
-    appVersion: "2.0.0",
+    appVersion: "2.0.1",
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
     artifact: {
-      url: "file:///jobctrl-local-release/jobctrl-2.0.0-darwin-arm64.zip",
+      url: "file:///jobctrl-local-release/jobctrl-2.0.1-darwin-arm64.zip",
       sha256: build.archiveSha256,
       sizeBytes: build.compressedBytes,
       archiveType: "zip",

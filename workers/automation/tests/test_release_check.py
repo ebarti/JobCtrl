@@ -948,6 +948,35 @@ def test_distribution_privileged_jobs_reject_dependency_or_repo_execution(
     )
 
 
+def test_distribution_signing_pins_darwin_arm64_python(
+    tmp_path: Path,
+) -> None:
+    workflow = (
+        release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    policy = (release_check.ROOT / release_check.SIGNING_POLICY_PATH).read_text(
+        encoding="utf-8"
+    )
+    sign = release_check._workflow_job_body(workflow, "sign")
+
+    assert sign is not None
+    assert 'python-version: "3.12.10"' in sign
+
+    unsupported = workflow.replace(
+        '          python-version: "3.12.10"\n',
+        '          python-version: "3.12.13"\n',
+        1,
+    )
+    _write(tmp_path / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH, unsupported)
+    _write(tmp_path / release_check.SIGNING_POLICY_PATH, policy)
+
+    findings = release_check._release_distribution_findings(tmp_path)
+    assert any(
+        "sign safe extraction must pin Python 3.12.10" in item
+        for item in findings
+    )
+
+
 def test_distribution_requires_native_conditional_r2_publication(
     tmp_path: Path,
 ) -> None:

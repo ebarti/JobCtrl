@@ -97,7 +97,7 @@ test("distribution contracts are complete and every version source resolves", as
   assert.equal(report.nodeLicenseEvidenceCount, 13);
   assert.equal(report.capabilityCount, 3);
   assert.deepEqual(report.platforms, ["darwin-arm64"]);
-  assert.equal(report.versions["jobctrl-launcher"], "2.0.0");
+  assert.equal(report.versions["jobctrl-launcher"], "2.0.1");
   assert.equal(report.versions["playwright-python"], "1.58.0");
   assert.equal(report.versions["font-geist"], "5.2.9");
   assert.equal(report.versions["font-jetbrains-mono"], "5.2.8");
