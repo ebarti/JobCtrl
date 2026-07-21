@@ -4,7 +4,10 @@ import path from "node:path";
 import { expect, test } from "@playwright/test";
 import Database from "better-sqlite3";
 
-import { loadE2eDbPath } from "../fixtures/e2e-state.js";
+import {
+  loadE2eDbPath,
+  refreshE2eWorkerHeartbeat,
+} from "../fixtures/e2e-state.js";
 
 const TARGET = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
 const PRIOR = "https://alternate.example.test/gitlab/qa-platform-director";
@@ -205,6 +208,10 @@ test("repeat application block and reasoned override reach only the simulated su
       ),
     ).toBeVisible();
 
+    // The accepted live-submit path enforces the real worker-readiness gate.
+    // Renew this test-owned fixture because the serial E2E suite can outlive
+    // the seeded heartbeat's freshness window before reaching this request.
+    refreshE2eWorkerHeartbeat();
     const acceptedBySimulation = await request.post(
       `/v1/jobs/${encodeURIComponent(TARGET)}/actions/apply`,
       { data: { dryRun: false }, headers: trustedMutationHeaders },
