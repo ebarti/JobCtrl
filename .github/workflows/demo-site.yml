@@ -8,6 +8,7 @@ on:
       - "packages/**"
       - "package.json"
       - "pnpm-lock.yaml"
+      - "scripts/demo-*.mjs"
       - ".github/workflows/demo-site.yml"
   push:
     branches: ["main"]
@@ -17,6 +18,7 @@ on:
       - "packages/**"
       - "package.json"
       - "pnpm-lock.yaml"
+      - "scripts/demo-*.mjs"
       - ".github/workflows/demo-site.yml"
   workflow_dispatch:
 

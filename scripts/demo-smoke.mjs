@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 const CLOUDFLARE_INJECTION_MARKER = /challenge-platform|beacon\.min\.js|\/cdn-cgi\/rum/i;
+const DEMO_SHELL_READY_ATTEMPTS = 31;
+const DEMO_SHELL_READY_DELAY_MS = 3_000;
 const SYNTHETIC_HTML_ASSETS = [
   "/demo/application-preview.html",
   "/demo/profile-resume.html",
@@ -25,20 +27,51 @@ export async function assertSyntheticHtmlAssetsAreClean(request) {
   }
 }
 
+export async function waitForDemoShell(
+  fetchShell,
+  {
+    attempts = DEMO_SHELL_READY_ATTEMPTS,
+    delayMs = DEMO_SHELL_READY_DELAY_MS,
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    log = console.warn,
+  } = {},
+) {
+  let lastStatus = "unknown";
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const response = await fetchShell();
+    if (response.ok) {
+      return response;
+    }
+
+    lastStatus = response.status;
+    await response.body?.cancel?.();
+    if (attempt < attempts) {
+      log(`Demo shell is not ready (attempt ${attempt}/${attempts}): / returned ${lastStatus}`);
+      await sleep(delayMs);
+    }
+  }
+
+  assert.fail(`demo shell was not ready after ${attempts} attempts: / returned ${lastStatus}`);
+}
+
 async function runDemoSmoke() {
   const baseUrl = new URL(process.env.DEMO_BASE_URL ?? process.argv[2] ?? "");
   assert.equal(baseUrl.protocol, "https:", "DEMO_BASE_URL must use HTTPS");
 
-  const request = async (path, init) => {
-    const response = await fetch(new URL(path, baseUrl), {
+  const fetchPath = (path, init) =>
+    fetch(new URL(path, baseUrl), {
       redirect: "manual",
       ...init,
     });
+
+  const request = async (path, init) => {
+    const response = await fetchPath(path, init);
     assert.ok(response.ok, `${path} returned ${response.status}`);
     return response;
   };
 
-  const shell = await request("/");
+  const shell = await waitForDemoShell(() => fetchPath("/"));
   const shellHtml = await shell.text();
   assert.match(shellHtml, /<div id="root"><\/div>/);
   assertNoCloudflareInjection("/", shellHtml);
