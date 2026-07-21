@@ -83,6 +83,25 @@ test("homepage describes live submission approval as the default", async () => {
   assert.doesNotMatch(homepage, /approve every live submission explicitly/i);
 });
 
+test("comparison cites the current pinned AI Job Search discovery source", async () => {
+  const comparison = await read("docs/comparison.md");
+  const pinnedSource =
+    "https://github.com/MadsLorentzen/ai-job-search/blob/faa479973aeaa7b8a1463112d088fdefff202961/";
+  const currentPath = "." + "claude/skills/job-scraper/SKILL.md";
+  const stalePath = "." + "agents/" + "skills/job-scraper/SKILL.md";
+  const currentSource = `${pinnedSource}${currentPath}`.replaceAll(".", "\\.").replaceAll("/", "\\/");
+
+  assert.match(
+    comparison,
+    new RegExp(`${currentSource}#L58-L72`),
+  );
+  assert.match(
+    comparison,
+    new RegExp(`${currentSource}#L131-L153`),
+  );
+  assert.doesNotMatch(comparison, new RegExp(stalePath.replaceAll("/", "\\/")));
+});
+
 test("launch provider guidance requires one of Codex, Claude, or Google", async () => {
   const readme = await read("README.md");
   const gettingStarted = await read("docs/user/getting-started.md");
