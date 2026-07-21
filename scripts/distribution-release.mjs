@@ -933,16 +933,58 @@ export function createReleaseChannelPointer({ descriptorRaw, signatureRaw, descr
   });
 }
 
+const INSTALL_SCRIPT_PIN_HEADER_START = "# BEGIN JOBCTRL RELEASE PINS";
+const INSTALL_SCRIPT_PIN_HEADER_END = "# END JOBCTRL RELEASE PINS";
+
+function installScriptPinHeader(templateRaw) {
+  const markers = new Map([
+    [INSTALL_SCRIPT_PIN_HEADER_START, []],
+    [INSTALL_SCRIPT_PIN_HEADER_END, []],
+  ]);
+  let offset = 0;
+  for (const line of templateRaw.split("\n")) {
+    markers.get(line)?.push(offset);
+    offset += line.length + 1;
+  }
+  const [markerStart] = markers.get(INSTALL_SCRIPT_PIN_HEADER_START);
+  const [headerEnd] = markers.get(INSTALL_SCRIPT_PIN_HEADER_END);
+  invariant(markers.get(INSTALL_SCRIPT_PIN_HEADER_START).length === 1, "install script template must contain exactly one release-pin header start marker");
+  invariant(markers.get(INSTALL_SCRIPT_PIN_HEADER_END).length === 1, "install script template must contain exactly one release-pin header end marker");
+  invariant(markerStart < headerEnd, "install script template release-pin header markers are out of order");
+  const headerStart = markerStart + INSTALL_SCRIPT_PIN_HEADER_START.length + 1;
+  return { header: templateRaw.slice(headerStart, headerEnd), headerStart, headerEnd };
+}
+
+function replaceInstallScriptPin(header, key, value) {
+  const lines = header.split("\n");
+  const assignmentPattern = new RegExp(`^[\\t ]*(?:(?:export|readonly|declare|typeset|local)[\\t ]+)?${key}=`);
+  const assignmentIndexes = lines.reduce((indexes, line, index) => {
+    if (assignmentPattern.test(line)) indexes.push(index);
+    return indexes;
+  }, []);
+  invariant(assignmentIndexes.length === 1, `published install script must contain exactly one ${key} assignment`);
+  const assignmentIndex = assignmentIndexes[0];
+  invariant(
+    new RegExp(`^${key}="[^"\\r\\n]*"$`).test(lines[assignmentIndex]),
+    `published install script has a malformed ${key} assignment`,
+  );
+  lines[assignmentIndex] = `${key}="${value}"`;
+  return lines.join("\n");
+}
+
 export function renderPinnedInstallScript({ templateRaw, installerUrl, installerSha256, installerVersion }) {
   invariant(typeof templateRaw === "string" && templateRaw.startsWith("#!/usr/bin/env bash\n"), "install script template is invalid");
   invariant(typeof installerUrl === "string" && installerUrl.startsWith("https://"), "published installer URL must use HTTPS");
   invariant(SHA256_PATTERN.test(installerSha256), "published installer SHA-256 is invalid");
   invariant(VERSION_PATTERN.test(installerVersion), "published installer version is invalid");
-  const rendered = templateRaw
-    .replace(/^INSTALLER_URL=""$/m, `INSTALLER_URL="${installerUrl}"`)
-    .replace(/^INSTALLER_SHA256=""$/m, `INSTALLER_SHA256="${installerSha256}"`)
-    .replace(/^INSTALLER_VERSION=""$/m, `INSTALLER_VERSION="${installerVersion}"`);
-  invariant(!/^INSTALLER_(?:URL|SHA256|VERSION)=""$/m.test(rendered), "published install script has an unresolved release pin");
+  const pinHeader = installScriptPinHeader(templateRaw);
+  const renderedHeader = [
+    ["INSTALLER_URL", installerUrl],
+    ["INSTALLER_SHA256", installerSha256],
+    ["INSTALLER_VERSION", installerVersion],
+  ].reduce((header, [key, value]) => replaceInstallScriptPin(header, key, value), pinHeader.header);
+  invariant(!/^INSTALLER_(?:URL|SHA256|VERSION)=""$/m.test(renderedHeader), "published install script has an unresolved release pin");
+  const rendered = `${templateRaw.slice(0, pinHeader.headerStart)}${renderedHeader}${templateRaw.slice(pinHeader.headerEnd)}`;
   invariant(rendered.includes("no signed native installer is published yet; P6 release signing is still blocked"), "published install script lost its fail-closed fallback");
   return rendered;
 }
