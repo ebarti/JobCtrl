@@ -106,6 +106,9 @@ line-length = 120
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
+markers = [
+    "system_browser: opt-in smoke requiring a real local system Chrome/Chromium; set JOBCTRL_RUN_SYSTEM_BROWSER_TESTS=1",
+]
 
 [tool.pyright]
 venvPath = "."
