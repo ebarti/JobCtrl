@@ -36,6 +36,9 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
         screen.getByRole("button", { name: `Help for ${settingName}` }),
       ).toBeInTheDocument();
     }
+    expect(
+      screen.getByRole("spinbutton", { name: "Results per board" }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Help for Schedule cron" }));
     const help = await screen.findByRole("dialog", { name: "Schedule cron help" });

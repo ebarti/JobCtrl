@@ -92,7 +92,18 @@ test("forms expose labels, validation state, and an announced upload error", asy
   await expect(page.getByLabel("Minimum fit score")).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByLabel("Results per board")).toBeVisible();
+  await expect(
+    page.getByRole("spinbutton", {
+      name: "Results per board",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Help for Results per board",
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "LinkedIn" })).toBeVisible();
 
   await page.goto("/settings");

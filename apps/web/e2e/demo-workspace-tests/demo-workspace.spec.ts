@@ -907,19 +907,27 @@ scenarioTest("eventless discovery and settings writes resync across tabs and sur
   const second = await context.newPage();
 
   await Promise.all([page.goto("/discovery"), second.goto("/discovery")]);
-  await expect(page.getByLabel("Results per board")).toHaveValue("12");
-  await expect(second.getByLabel("Results per board")).toHaveValue("12");
-  await page.getByLabel("Results per board").fill("23");
+  const resultsPerBoard = page.getByRole("spinbutton", {
+    name: "Results per board",
+    exact: true,
+  });
+  const secondResultsPerBoard = second.getByRole("spinbutton", {
+    name: "Results per board",
+    exact: true,
+  });
+  await expect(resultsPerBoard).toHaveValue("12");
+  await expect(secondResultsPerBoard).toHaveValue("12");
+  await resultsPerBoard.fill("23");
   const discoveryForm = page.locator("form").filter({
-    has: page.getByLabel("Results per board"),
+    has: resultsPerBoard,
   });
   await discoveryForm
     .getByRole("button", { name: "Save changes", exact: true })
     .click();
   await expect(page.getByText("Runtime settings saved.")).toBeVisible();
-  await expect(second.getByLabel("Results per board")).toHaveValue("23");
+  await expect(secondResultsPerBoard).toHaveValue("23");
   await second.reload();
-  await expect(second.getByLabel("Results per board")).toHaveValue("23");
+  await expect(secondResultsPerBoard).toHaveValue("23");
 
   await Promise.all([page.goto("/settings"), second.goto("/settings")]);
   await expect(page.getByLabel("Concurrent applications")).toHaveValue("1");
