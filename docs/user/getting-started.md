@@ -6,7 +6,7 @@ Install it once, then use the same `jobctrl` command from any directory.
 
 ::: tip Want to explore before installing?
 Open the [live demo](https://demo.jobctrl.dev) for an interactive workspace
-with synthetic browser-local data, or use the [Product Tour](screenshots.md)
+with synthetic browser-local data, or use the [Product Tour](product-tour.md)
 for a screen-by-screen walkthrough.
 :::
 

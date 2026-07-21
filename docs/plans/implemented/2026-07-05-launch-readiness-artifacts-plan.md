@@ -47,7 +47,7 @@ refreshed without exposing real job-search data") and the plan ledger in
    QA-fixture-backed flow, with its fixture/data source, exact product path,
    and what it must visibly prove.
 3. **Docs-site launch pages** — hero (`docs/index.md`) and product-tour
-   (`docs/user/screenshots.md`) currency verification, plus the
+   (`docs/user/product-tour.md`) currency verification, plus the
    *infrastructure* for an "alternatives comparison" page (layout, maintenance
    cadence, facts-verified-before-publish rule). This plan never names any
    external product.
@@ -159,7 +159,7 @@ decision — §11.1.)
 | --- | --- |
 | `Claim ID` | Stable, never-reused handle (e.g. `CL-001`), citable by PRs/QA. |
 | `Claim (neutral)` | The public assertion, in neutral language. No external names. |
-| `Surfaces` | Where it appears: `README`, `docs/index.md`, `docs/user/screenshots.md`, a demo asset id, etc. |
+| `Surfaces` | Where it appears: `README`, `docs/index.md`, `docs/user/product-tour.md`, a demo asset id, etc. |
 | `Status` | `Current` \| `Beta` \| `Roadmap`. |
 | `Owner` | The person accountable for the claim staying true. |
 | `Verification pointer` | Where the claim is proven: a `docs/requirements.md` BR/TR id, a test path, a source path, or a passing command. Must resolve. |
@@ -186,7 +186,7 @@ decision — §11.1.)
 **Claim-review process (also serves Goal 1's process requirement).**
 
 1. Enumerate candidate claims from the current public surfaces (`README.md`,
-   `docs/index.md` hero `features`, `docs/user/screenshots.md` captions).
+   `docs/index.md` hero `features`, `docs/user/product-tour.md` captions).
 2. For each, assign Status + owner + verification pointer; resolve every
    `Current` pointer.
 3. Reconcile against `ROADMAP.md` so nothing labeled `Current` is actually a
@@ -359,7 +359,7 @@ gate via `.github/workflows/docs-site.yml`.
 ### 8.1 Hero + product-tour currency verification
 
 **Objective.** The hero (`docs/index.md`) and the Product Tour
-(`docs/user/screenshots.md`) assert only frozen `Current` claims and show
+(`docs/user/product-tour.md`) assert only frozen `Current` claims and show
 current screenshots.
 
 **Invariants.**

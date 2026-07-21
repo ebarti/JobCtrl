@@ -506,7 +506,7 @@ This is the final PR in the stack. Product documentation is not updated
 piecemeal on lower implementation branches.
 
 - Regenerate the synthetic product screenshots and update
-  `docs/user/screenshots.md`.
+  `docs/user/product-tour.md`.
 - Update `README.md` only if the visible product tour or behavior wording is no
   longer accurate.
 - Update `docs/user/candidate-profile.md`,

@@ -55,7 +55,7 @@
     "docs:start": "scripts/dev start docs",
     "docs:status": "scripts/dev status docs",
     "docs:stop": "scripts/dev stop docs",
-    "docs:build": "node scripts/check-install-asset.mjs && vitepress build docs && node scripts/check-docs-site-links.mjs",
+    "docs:build": "node scripts/check-install-asset.mjs && vitepress build docs && node scripts/check-docs-site-links.mjs && node scripts/check-docs-site-redirects.mjs",
     "docs:check:runtime": "node scripts/check-docs-site-runtime.mjs",
     "docs:preview": "vitepress preview docs",
     "distribution:audit": "node scripts/distribution-provider-lock.mjs check && node scripts/distribution-manifest.mjs audit && node scripts/distribution-build.mjs audit",

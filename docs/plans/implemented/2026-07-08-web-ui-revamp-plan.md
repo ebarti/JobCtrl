@@ -236,7 +236,7 @@ Adopt `PageHead` + panel/stat/tag patterns in every view. Order (risk-first):
 
 Per the documentation matrix: regenerate the synthetic documentation
 screenshots (workflow in `docs/local-development.md`) so `docs/user/
-screenshots.md` and the README hero/tour images show the new UI; update
+product-tour.md` and the README hero/tour images show the new UI; update
 `docs/architecture/frontend/` only where it names shell files
 (`NavBar.tsx` → `SideRail.tsx`); note the revamp in `docs/local-reliability-qa.md`
 regression matrix (shell/nav entries). No README claim changes — visuals only.

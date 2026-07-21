@@ -11,7 +11,7 @@ import DailyWorkflowJourney from "../.vitepress/theme/DailyWorkflowJourney.vue";
 This is your daily loop with JobCtrl: set up once, then repeat Discover →
 review → Apply. The web app is the main way you work; the command line stays
 available for maintenance and diagnostics. For a screen-by-screen walkthrough of
-each page below, see the [Product Tour](screenshots.md).
+each page below, see the [Product Tour](product-tour.md).
 
 ::: info Command spelling
 This guide uses the canonical installed spelling, `jobctrl <command>`. The

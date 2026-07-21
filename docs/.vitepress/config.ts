@@ -56,7 +56,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
     text: "Start Here",
     collapsed: false,
     items: [
-      { text: "Product Tour", link: "/user/screenshots" },
+      { text: "Product Tour", link: "/user/product-tour" },
       { text: "Getting Started", link: "/user/getting-started" },
       { text: "Daily Workflow", link: "/user/normal-flows" },
     ],

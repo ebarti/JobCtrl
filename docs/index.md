@@ -14,7 +14,7 @@ hero:
       link: https://demo.jobctrl.dev/
     - theme: alt
       text: Product Tour
-      link: /user/screenshots
+      link: /user/product-tour
     - theme: alt
       text: Run From Source / Release Status
       link: /user/getting-started
@@ -51,6 +51,6 @@ features:
   - icon: ⚙️
     title: Temporal-Native Pipeline
     details: Every stage runs as a durable workflow with heartbeats, classified retries, and a daily LLM spend ceiling.
-    link: /user/screenshots#runs-history
+    link: /user/product-tour#runs-history
     linkText: See run history
 ---
