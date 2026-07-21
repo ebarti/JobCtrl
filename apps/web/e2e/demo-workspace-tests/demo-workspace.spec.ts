@@ -945,7 +945,7 @@ scenarioTest("eventless discovery and settings writes resync across tabs and sur
     has: page.getByLabel("Concurrent applications"),
   });
   await executionForm.getByRole("button", { name: "Save changes", exact: true }).click();
-  await expect(page.getByText("settings saved", { exact: true })).toBeVisible();
+  await expect(executionForm.getByRole("status")).toHaveText("Settings saved.");
   await expect(second.getByLabel("Concurrent applications")).toHaveValue("3");
   await second.reload();
   await expect(second.getByLabel("Concurrent applications")).toHaveValue("3");
