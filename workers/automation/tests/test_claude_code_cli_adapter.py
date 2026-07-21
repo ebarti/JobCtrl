@@ -25,11 +25,16 @@ from jobctrl.infrastructure.apply.claude_code_cli import (
 
 @pytest.fixture(autouse=True)
 def _isolate_apply_tests_from_host_keychain(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep Popen fakes from intercepting config's unrelated Keychain probe."""
+    """Keep command-construction fakes from reaching host runtime probes."""
 
     from jobctrl import config
 
     monkeypatch.setattr(config, "_KEYCHAIN_FALLBACK_DIAGNOSTICS", ())
+    monkeypatch.setattr(
+        claude_code_cli,
+        "resolve_claude_apply_binary",
+        lambda: "/bin/claude",
+    )
 
 
 class _FakeStdin:
