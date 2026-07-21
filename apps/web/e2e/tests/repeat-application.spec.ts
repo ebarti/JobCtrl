@@ -98,7 +98,13 @@ test("repeat application block and reasoned override reach only the simulated su
     await expect(
       page.getByText("matching canonical ATS identity", { exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole("link", { name: "Inspect prior application" })).toBeVisible();
+    const priorApplicationLink = page.getByRole("link", {
+      name: `Inspect prior application: ${PRIOR}`,
+    });
+    await expect(priorApplicationLink).toHaveAttribute(
+      "href",
+      `/jobs/${encodeURIComponent(PRIOR)}`,
+    );
     await expect(page.getByRole("button", { name: /Authorize live submit/i })).toBeDisabled();
     const trustedMutationHeaders = {
       origin: new URL(page.url()).origin,

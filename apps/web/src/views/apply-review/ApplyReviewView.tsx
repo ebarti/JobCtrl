@@ -1403,7 +1403,10 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
               {formatDateTime(match.priorApplication.confirmedAt)}
             </p>
             <p className="meta">{match.reason}</p>
-            <a href={`/jobs/${encodeURIComponent(match.priorApplication.jobKey)}`}>
+            <a
+              href={`/jobs/${encodeURIComponent(match.priorApplication.jobKey)}`}
+              aria-label={`Inspect prior application: ${match.priorApplication.jobKey}`}
+            >
               Inspect prior application
             </a>
             <details>

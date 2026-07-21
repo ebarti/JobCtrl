@@ -874,7 +874,9 @@ describe("<ApplyReviewView>", () => {
 
     expect(await screen.findByText("Review prior application before live submit")).toBeInTheDocument();
     expect(screen.getByText("worker-confirmed submission", { exact: false })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Inspect prior application" })).toHaveAttribute(
+    expect(screen.getByRole("link", {
+      name: "Inspect prior application: https://example.com/jobs/prior-platform",
+    })).toHaveAttribute(
       "href",
       `/jobs/${encodeURIComponent("https://example.com/jobs/prior-platform")}`,
     );
