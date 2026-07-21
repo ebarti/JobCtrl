@@ -612,6 +612,8 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "build" },
+    { name = "cryptography" },
+    { name = "google-auth" },
     { name = "hatchling" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -642,7 +644,9 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
     { name = "claude-agent-sdk", marker = "extra == 'providers'", specifier = "==0.2.115" },
+    { name = "cryptography", marker = "extra == 'dev'", specifier = ">=43.0" },
     { name = "google-antigravity", marker = "extra == 'providers'", specifier = "==0.1.2" },
+    { name = "google-auth", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "hatchling", marker = "extra == 'dev'", specifier = "==1.29.0" },
     { name = "httpx", specifier = ">=0.24" },
     { name = "jobstreaming", specifier = "==0.0.2" },

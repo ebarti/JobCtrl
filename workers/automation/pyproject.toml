@@ -47,7 +47,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["build>=1.2", "hatchling==1.29.0", "pytest>=7.0", "pytest-asyncio>=0.23", "pytest-randomly>=4.0", "ruff>=0.1"]
+dev = [
+    "build>=1.2",
+    "cryptography>=43.0",
+    "google-auth>=2.0",
+    "hatchling==1.29.0",
+    "pytest>=7.0",
+    "pytest-asyncio>=0.23",
+    "pytest-randomly>=4.0",
+    "ruff>=0.1",
+]
 providers = [
     "claude-agent-sdk==0.2.115",
     "openai-codex==0.1.0b3",
