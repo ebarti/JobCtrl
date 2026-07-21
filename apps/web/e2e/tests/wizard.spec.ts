@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
+
 test("Resume import upload keeps continuation unavailable until a PDF is selected", async ({
   page,
 }) => {
@@ -42,6 +44,7 @@ test("Profile import keeps the upload task in the first mobile viewport @mobile"
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 568 });
+  refreshE2eWorkerHeartbeat();
   await page.goto("/profile/import/upload");
 
   const progress = page.getByRole("navigation", {
