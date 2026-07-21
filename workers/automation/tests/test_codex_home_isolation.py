@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import stat
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -42,9 +43,27 @@ def _assert_private_mode(path: Path, expected: int) -> None:
         assert _mode(path) == expected
 
 
+def _write_executable(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    path.chmod(0o700)
+    return path
+
+
+def _profile_filesystem_permissions(overrides: tuple[str, ...]) -> dict[str, object]:
+    profile_override = next(
+        value
+        for value in overrides
+        if value.startswith(f"permissions.{adapter._CODEX_PERMISSION_PROFILE}=")
+    )
+    parsed = tomllib.loads(profile_override)
+    return parsed["permissions"][adapter._CODEX_PERMISSION_PROFILE]["filesystem"]
+
+
 def test_config_overrides_select_workspace_only_permission_profile() -> None:
     profile = adapter._CODEX_PERMISSION_PROFILE
-    overrides = adapter._CODEX_CONFIG_OVERRIDES
+    binary = Path("/trusted/codex-bin")
+    overrides = adapter._codex_config_overrides(binary)
 
     assert "features.plugins=false" in overrides
     assert "features.apps=false" in overrides
@@ -53,11 +72,54 @@ def test_config_overrides_select_workspace_only_permission_profile() -> None:
     assert 'shell_environment_policy={inherit="none"}' in overrides
     assert f'default_permissions="{profile}"' in overrides
 
-    profile_override = next(value for value in overrides if value.startswith(f"permissions.{profile}="))
-    assert '":root"="deny"' in profile_override
-    assert '":minimal"="read"' in profile_override
-    assert '":workspace_roots"={"."="read"}' in profile_override
-    assert "network={enabled=false}" in profile_override
+    filesystem = _profile_filesystem_permissions(overrides)
+    assert filesystem[":root"] == "deny"
+    assert filesystem[":minimal"] == "read"
+    assert filesystem[":workspace_roots"] == {".": "read"}
+    assert filesystem[str(binary)] == "read"
+    assert "network={enabled=false}" in overrides[-1]
+
+
+def test_canonical_codex_binary_resolves_symlink_and_rejects_sibling_access(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    if os.name == "nt":
+        pytest.skip("symlink path semantics are covered on supported Unix runtimes")
+    binary = _write_executable(tmp_path / 'provider-pack/site-packages/codex "binary"')
+    sibling = _write_executable(binary.with_name("sibling-canary"))
+    alias = tmp_path / "codex-alias"
+    alias.symlink_to(binary)
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: alias)
+
+    canonical = adapter._canonical_codex_binary()
+    filesystem = _profile_filesystem_permissions(adapter._codex_config_overrides(canonical))
+
+    assert canonical == binary.resolve()
+    assert filesystem == {
+        ":root": "deny",
+        ":minimal": "read",
+        ":workspace_roots": {".": "read"},
+        str(canonical): "read",
+    }
+    assert str(alias) not in filesystem
+    assert str(canonical.parent) not in filesystem
+    assert str(sibling) not in filesystem
+
+
+@pytest.mark.parametrize("binary_kind", ["missing", "directory", "not-executable"])
+def test_canonical_codex_binary_requires_one_existing_executable_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, binary_kind: str
+) -> None:
+    binary = tmp_path / "codex-bin"
+    if binary_kind == "directory":
+        binary.mkdir()
+    elif binary_kind == "not-executable":
+        binary.write_text("not executable", encoding="utf-8")
+        binary.chmod(0o600)
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
+
+    with pytest.raises(RuntimeError, match="Codex binary"):
+        adapter._canonical_codex_binary()
 
 
 def test_prepare_isolated_codex_home_copies_auth_outside_workspace(
@@ -160,7 +222,8 @@ def test_bundled_codex_factory_uses_persisted_credentials(
     auth.parent.mkdir(parents=True)
     auth.write_text('{"OPENAI_API_KEY":"sk-persisted"}', encoding="utf-8")
     monkeypatch.setattr(jobctrl.runtime, "activate_provider_pack", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: tmp_path / "codex-bin")
+    binary = _write_executable(tmp_path / "codex-bin")
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
 
     class FakeAsyncCodex:
         def __init__(self, *, config: Any) -> None:
@@ -170,12 +233,61 @@ def test_bundled_codex_factory_uses_persisted_credentials(
 
     codex = adapter._load_async_codex_factory()()
 
-    assert codex.config.config_overrides == adapter._CODEX_CONFIG_OVERRIDES
+    assert codex.config.codex_bin == str(binary.resolve())
+    assert codex.config.config_overrides == adapter._codex_config_overrides(binary.resolve())
     assert codex.config.env["OPENAI_API_KEY"] == ""
     assert all(
         codex.config.env[key] == ""
         for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV
     )
+
+
+@pytest.mark.parametrize("factory_name", ["_load_async_codex_factory", "_load_catalog_async_codex_factory"])
+@pytest.mark.parametrize("runtime_mode", ["source", "bundled"])
+def test_codex_factories_grant_only_the_exact_canonical_binary_across_runtime_layouts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    factory_name: str,
+    runtime_mode: str,
+) -> None:
+    import jobctrl.runtime
+    import openai_codex
+
+    app_dir, source_codex_home = _isolate_homes(monkeypatch, tmp_path)
+    (source_codex_home / "auth.json").write_text('{"OPENAI_API_KEY":"sk-source"}', encoding="utf-8")
+    binary = _write_executable(
+        tmp_path / runtime_mode / "site-packages/codex_cli_bin/bin/codex"
+    )
+    sibling = _write_executable(binary.with_name("provider-pack-canary"))
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", runtime_mode)
+    pack_calls: list[tuple[str, Path]] = []
+
+    if runtime_mode == "bundled":
+        auth = app_dir / "codex_home/auth.json"
+        auth.parent.mkdir(parents=True)
+        auth.write_text('{"OPENAI_API_KEY":"sk-bundled"}', encoding="utf-8")
+        monkeypatch.setattr(
+            jobctrl.runtime,
+            "activate_provider_pack",
+            lambda pack_id, *, app_dir: pack_calls.append((pack_id, app_dir)),
+        )
+
+    class FakeAsyncCodex:
+        def __init__(self, *, config: Any) -> None:
+            self.config = config
+
+    monkeypatch.setattr(openai_codex, "AsyncCodex", FakeAsyncCodex)
+
+    codex = getattr(adapter, factory_name)()()
+    canonical = binary.resolve()
+    filesystem = _profile_filesystem_permissions(codex.config.config_overrides)
+
+    assert codex.config.codex_bin == str(canonical)
+    assert filesystem[str(canonical)] == "read"
+    assert str(canonical.parent) not in filesystem
+    assert str(sibling) not in filesystem
+    assert pack_calls == ([('codex-provider-runtime', app_dir)] if runtime_mode == "bundled" else [])
 
 
 @pytest.mark.asyncio
@@ -184,7 +296,8 @@ async def test_live_factory_uses_jobctrl_codex_home_without_cleanup(
 ) -> None:
     app_dir, source_codex_home = _isolate_homes(monkeypatch, tmp_path)
     (source_codex_home / "auth.json").write_text('{"OPENAI_API_KEY":"sk-fake-factory"}')
-    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: tmp_path / "codex-bin")
+    binary = _write_executable(tmp_path / "codex-bin")
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
 
     class FakeAsyncCodex:
         instances: list["FakeAsyncCodex"] = []
@@ -201,7 +314,8 @@ async def test_live_factory_uses_jobctrl_codex_home_without_cleanup(
             assert Path(self.config.env["HOME"]) == codex_home / "home"
             assert (codex_home / "auth.json").is_file()
             assert not (Path(self.config.cwd) / "auth.json").exists()
-            assert self.config.config_overrides == adapter._CODEX_CONFIG_OVERRIDES
+            assert self.config.codex_bin == str(binary.resolve())
+            assert self.config.config_overrides == adapter._codex_config_overrides(binary.resolve())
             return self
 
         async def __aexit__(self, *exc: Any) -> None:
@@ -229,7 +343,8 @@ async def test_live_factory_uses_same_jobctrl_codex_home_when_contexts_overlap(
 ) -> None:
     app_dir, source_codex_home = _isolate_homes(monkeypatch, tmp_path)
     (source_codex_home / "auth.json").write_text('{"OPENAI_API_KEY":"sk-fake-concurrent"}')
-    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: tmp_path / "codex-bin")
+    binary = _write_executable(tmp_path / "codex-bin")
+    monkeypatch.setattr(adapter, "resolve_codex_binary", lambda: binary)
 
     class FakeAsyncCodex:
         instances: list["FakeAsyncCodex"] = []
