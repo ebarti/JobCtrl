@@ -120,6 +120,10 @@ ARCHIVE_DIRS = (
     Path("dist"),
     Path("workers/automation/dist"),
 )
+NON_RELEASE_QA_OUTPUT_DIRS = (
+    Path("dist/playwright-report"),
+    Path("dist/web-storybook"),
+)
 
 FORBIDDEN_PATH_NAMES = {
     ".env",
@@ -580,6 +584,8 @@ def scan_demo_build_outputs(
     """Scan ignored web-build outputs, source maps, and copied demo fixture bytes."""
     findings: list[str] = []
     for build_dir in DEMO_BUILD_DIRS:
+        if build_dir in NON_RELEASE_QA_OUTPUT_DIRS:
+            continue
         path = root / build_dir
         if not path.exists():
             continue
@@ -1656,15 +1662,42 @@ def scan_dist_archives(
         if not dist_path.exists():
             continue
         for archive in sorted(candidate for candidate in dist_path.rglob("*") if candidate.is_file()):
+            if _is_non_release_qa_output(root, archive):
+                continue
             if archive.suffix in {".whl", ".zip"}:
-                findings.extend(scan_zip_archive(root, archive, needles=needles))
+                archive_findings = scan_zip_archive(root, archive, needles=needles)
             elif archive.name.endswith(".tar.gz"):
-                findings.extend(scan_tar_archive(root, archive, needles=needles))
+                archive_findings = scan_tar_archive(root, archive, needles=needles)
+            else:
+                archive_findings = []
+            findings.extend(archive_findings)
             if expected_version is not None and (archive.suffix == ".whl" or archive.name.endswith(".tar.gz")):
-                findings.extend(
-                    _distribution_version_findings(root, archive, expected_version)
-                )
+                if not _has_unreadable_archive_finding(root, archive, archive_findings):
+                    findings.extend(
+                        _distribution_version_findings(root, archive, expected_version)
+                    )
     return findings
+
+
+def _is_non_release_qa_output(root: Path, path: Path) -> bool:
+    """Return whether a file belongs to an ignored non-release QA output tree."""
+    relative = path.relative_to(root)
+    return any(
+        relative.parts[: len(output_dir.parts)] == output_dir.parts
+        for output_dir in NON_RELEASE_QA_OUTPUT_DIRS
+    )
+
+
+def _unreadable_archive_finding(path: Path, root: Path, archive_type: str) -> str:
+    return f"{path.relative_to(root)}: unreadable {archive_type} archive"
+
+
+def _has_unreadable_archive_finding(
+    root: Path,
+    path: Path,
+    findings: Iterable[str],
+) -> bool:
+    return any(finding.startswith(f"{path.relative_to(root)}: unreadable ") for finding in findings)
 
 
 def _distribution_version_findings(
@@ -1674,20 +1707,24 @@ def _distribution_version_findings(
 ) -> list[str]:
     """Verify built wheel/sdist metadata matches the source project version."""
     metadata: list[tuple[str, str]] = []
-    if archive.suffix == ".whl":
-        with zipfile.ZipFile(archive) as bundle:
-            for name in bundle.namelist():
-                if name.endswith(".dist-info/METADATA"):
-                    metadata.append((name, bundle.read(name).decode("utf-8")))
-    elif archive.name.endswith(".tar.gz"):
-        with tarfile.open(archive) as bundle:
-            for info in bundle.getmembers():
-                if info.isfile() and info.name.endswith("/PKG-INFO"):
-                    extracted = bundle.extractfile(info)
-                    if extracted is not None:
-                        metadata.append((info.name, extracted.read().decode("utf-8")))
-    else:
-        return []
+    try:
+        if archive.suffix == ".whl":
+            with zipfile.ZipFile(archive) as bundle:
+                for name in bundle.namelist():
+                    if name.endswith(".dist-info/METADATA"):
+                        metadata.append((name, bundle.read(name).decode("utf-8")))
+        elif archive.name.endswith(".tar.gz"):
+            with tarfile.open(archive) as bundle:
+                for info in bundle.getmembers():
+                    if info.isfile() and info.name.endswith("/PKG-INFO"):
+                        extracted = bundle.extractfile(info)
+                        if extracted is not None:
+                            metadata.append((info.name, extracted.read().decode("utf-8")))
+        else:
+            return []
+    except (OSError, RuntimeError, UnicodeDecodeError, tarfile.TarError, zipfile.BadZipFile):
+        archive_type = "ZIP" if archive.suffix == ".whl" else "tar"
+        return [_unreadable_archive_finding(archive, root, archive_type)]
 
     label = archive.relative_to(root)
     if len(metadata) != 1:
@@ -1714,14 +1751,17 @@ def scan_zip_archive(
 ) -> list[str]:
     """Scan a wheel archive."""
     findings: list[str] = []
-    with zipfile.ZipFile(path) as archive:
-        for info in archive.infolist():
-            member = Path(info.filename)
-            label = f"{path.relative_to(root)}!{info.filename}"
-            name_findings = scan_name(label, member, needles=needles)
-            findings.extend(name_findings)
-            if not name_findings:
-                findings.extend(scan_file_contents(label, member, archive.read(info), needles=needles))
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for info in archive.infolist():
+                member = Path(info.filename)
+                label = f"{path.relative_to(root)}!{info.filename}"
+                name_findings = scan_name(label, member, needles=needles)
+                findings.extend(name_findings)
+                if not name_findings:
+                    findings.extend(scan_file_contents(label, member, archive.read(info), needles=needles))
+    except (OSError, RuntimeError, zipfile.BadZipFile):
+        findings.append(_unreadable_archive_finding(path, root, "ZIP"))
     return findings
 
 
@@ -1733,19 +1773,22 @@ def scan_tar_archive(
 ) -> list[str]:
     """Scan an sdist archive."""
     findings: list[str] = []
-    with tarfile.open(path) as archive:
-        for info in archive.getmembers():
-            if not info.isfile():
-                continue
-            member = Path(info.name)
-            label = f"{path.relative_to(root)}!{info.name}"
-            name_findings = scan_name(label, member, needles=needles)
-            findings.extend(name_findings)
-            if name_findings:
-                continue
-            extracted = archive.extractfile(info)
-            if extracted is not None:
-                findings.extend(scan_file_contents(label, member, extracted.read(), needles=needles))
+    try:
+        with tarfile.open(path) as archive:
+            for info in archive.getmembers():
+                if not info.isfile():
+                    continue
+                member = Path(info.name)
+                label = f"{path.relative_to(root)}!{info.name}"
+                name_findings = scan_name(label, member, needles=needles)
+                findings.extend(name_findings)
+                if name_findings:
+                    continue
+                extracted = archive.extractfile(info)
+                if extracted is not None:
+                    findings.extend(scan_file_contents(label, member, extracted.read(), needles=needles))
+    except (OSError, tarfile.TarError):
+        findings.append(_unreadable_archive_finding(path, root, "tar"))
     return findings
 
 

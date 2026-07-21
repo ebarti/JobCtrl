@@ -213,6 +213,71 @@ def test_demo_build_source_maps_and_archives_scan_fixture_bytes(tmp_path: Path) 
     assert "dist/web/demo-build.zip!demo/profile-resume.pdf: demo PDF fixture does not match its pinned content digest" in archive_findings
 
 
+def test_release_scanner_ignores_non_release_qa_output_archives(tmp_path: Path) -> None:
+    trace = tmp_path / "dist/playwright-report/failure/trace.zip"
+    storybook_archive = tmp_path / "dist/web-storybook/assets/report.zip"
+    for archive in (trace, storybook_archive):
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_bytes(b"not a ZIP archive")
+
+    assert release_check.scan_dist_archives(tmp_path) == []
+    _write(tmp_path / "dist/web-storybook/assets/app.js", "SyntheticSecret")
+    assert release_check.scan_demo_build_outputs(
+        tmp_path,
+        needles=(release_check.ForbiddenNeedle("SyntheticSecret", "synthetic identity"),),
+    ) == []
+
+
+def test_release_scanner_rejects_corrupt_distribution_archives(tmp_path: Path) -> None:
+    _write_version_surfaces(tmp_path, "2.0.0")
+    archive = tmp_path / "dist/jobctrl-2.0.0-darwin-arm64.zip"
+    wheel = tmp_path / "workers/automation/dist/jobctrl-2.0.0-py3-none-any.whl"
+    archive.parent.mkdir(parents=True)
+    wheel.parent.mkdir(parents=True)
+    archive.write_bytes(b"not a ZIP archive")
+    wheel.write_bytes(b"not a ZIP archive")
+
+    assert release_check.scan_dist_archives(tmp_path) == [
+        "dist/jobctrl-2.0.0-darwin-arm64.zip: unreadable ZIP archive",
+        "workers/automation/dist/jobctrl-2.0.0-py3-none-any.whl: unreadable ZIP archive",
+    ]
+
+
+def test_release_scanner_keeps_stale_distribution_wheels_in_scope(tmp_path: Path) -> None:
+    _write_version_surfaces(tmp_path, "2.0.0")
+    wheel = tmp_path / "workers/automation/dist/jobctrl-0.3.0-py3-none-any.whl"
+    wheel.parent.mkdir(parents=True)
+    with zipfile.ZipFile(wheel, "w") as bundle:
+        bundle.writestr(
+            "jobctrl-0.3.0.dist-info/METADATA",
+            "Name: jobctrl\nVersion: 0.3.0\n",
+        )
+
+    assert release_check.scan_dist_archives(tmp_path) == [
+        "workers/automation/dist/jobctrl-0.3.0-py3-none-any.whl!"
+        "jobctrl-0.3.0.dist-info/METADATA: distribution version '0.3.0' does not match "
+        "workers/automation/pyproject.toml '2.0.0'"
+    ]
+
+
+def test_release_scanner_rejects_invalid_utf8_distribution_metadata(tmp_path: Path) -> None:
+    _write_version_surfaces(tmp_path, "2.0.0")
+    wheel = tmp_path / "workers/automation/dist/jobctrl-2.0.0-py3-none-any.whl"
+    sdist = tmp_path / "workers/automation/dist/jobctrl-2.0.0.tar.gz"
+    wheel.parent.mkdir(parents=True)
+    with zipfile.ZipFile(wheel, "w") as bundle:
+        bundle.writestr("jobctrl-2.0.0.dist-info/METADATA", b"\xff")
+    with tarfile.open(sdist, "w:gz") as bundle:
+        info = tarfile.TarInfo("jobctrl-2.0.0/PKG-INFO")
+        info.size = 1
+        bundle.addfile(info, io.BytesIO(b"\xff"))
+
+    assert release_check.scan_dist_archives(tmp_path) == [
+        "workers/automation/dist/jobctrl-2.0.0-py3-none-any.whl: unreadable ZIP archive",
+        "workers/automation/dist/jobctrl-2.0.0.tar.gz: unreadable tar archive",
+    ]
+
+
 def test_source_tree_keeps_scanning_all_utf8_code_while_build_maps_are_scanned_explicitly(
     tmp_path: Path,
 ) -> None:
@@ -1102,6 +1167,20 @@ def test_cli_exit_code_is_nonzero_on_synthetic_violation(
     )
 
     assert release_check.main(()) == 1
+
+
+def test_cli_strict_scan_ignores_corrupt_playwright_report_archives(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    trace = tmp_path / "dist/playwright-report/failure/trace.zip"
+    trace.parent.mkdir(parents=True)
+    trace.write_bytes(b"not a ZIP archive")
+    _track_all(tmp_path)
+
+    monkeypatch.setattr(release_check, "ROOT", tmp_path)
+
+    assert release_check.main(("--strict-prompt",)) == 0
 
 
 def _write_version_surfaces(root: Path, version: str) -> None:
