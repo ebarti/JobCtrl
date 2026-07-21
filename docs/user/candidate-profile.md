@@ -12,6 +12,35 @@ rewrite it to suit a job.
 
 <CandidateProfileFlow />
 
+## How Profile Data Becomes Runtime Evidence
+
+JobCtrl does not let a generated resume or an import silently become truth. The
+profile boundary works in this order:
+
+1. **Import creates a draft.** Resume-PDF import returns extracted profile data
+   and inferred style for review. It does not change the saved profile until you
+   explicitly save the draft.
+2. **Save validates and normalizes.** The API parses the submitted profile
+   through the Candidate Profile domain rules, validates target places when
+   present, and replaces the normalized profile rows in one database
+   transaction. Every accepted save advances the local profile version.
+3. **Work receives an immutable snapshot.** Scoring, Materials, and Apply read a
+   deep-copied `ProfileSnapshot`. Derived compatibility fields are regenerated
+   from the canonical rows, and changing a returned object cannot mutate the
+   source profile.
+4. **Consumers bind to the version they used.** Scores, material generations,
+   and Apply decisions can record that profile version. A later save creates a
+   new version instead of rewriting the evidence behind earlier work.
+5. **Propagation remains explicit and recoverable.** A profile-content change
+   may queue replacement tailoring when eligible accepted resumes exist and the
+   worker is healthy. The save itself does not depend on that follow-up, and a
+   failed replacement does not remove the last accepted material. An Apply
+   approval bound to an older profile version becomes stale rather than being
+   reused against changed evidence.
+
+This version boundary is what lets JobCtrl prove which candidate facts a score,
+resume, or application decision actually used.
+
 ## What You Can See And Control
 
 Use the current web routes according to the kind of change you are making:

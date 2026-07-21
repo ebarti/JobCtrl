@@ -9,6 +9,8 @@ const managedEnvironmentKeys = [
   "JOBCTRL_E2E_APP_DIR",
   "JOBCTRL_E2E_DB_PATH",
   "JOBCTRL_E2E_CONFIG_PATH",
+  "JOBCTRL_E2E_SERVICE_HOME",
+  "PLAYWRIGHT_BROWSERS_PATH",
   "JOBCTRL_E2E_API_PORT",
   "JOBCTRL_E2E_STATE_FILE",
   "JOBCTRL_E2E_WEB_PORT",
@@ -44,9 +46,12 @@ afterEach(() => {
 describe("Playwright server isolation", () => {
   test("documentation screenshots own both servers and their supplied workspace", async () => {
     const appDir = path.join("/tmp", "jobctrl-docs-screenshot-config-test");
+    const serviceHome = path.join(appDir, "service-home");
     const config = await loadPlaywrightConfig({
       JOBCTRL_DOCS_SCREENSHOTS: "1",
       JOBCTRL_E2E_APP_DIR: appDir,
+      JOBCTRL_E2E_SERVICE_HOME: serviceHome,
+      PLAYWRIGHT_BROWSERS_PATH: "/tmp/jobctrl-playwright-browsers",
       JOBCTRL_E2E_API_PORT: "18767",
       JOBCTRL_E2E_WEB_PORT: "15174",
     });
@@ -63,9 +68,21 @@ describe("Playwright server isolation", () => {
       JOBCTRL_DB_PATH: path.join(appDir, "jobctrl.db"),
       JOBCTRL_CONFIG_PATH: path.join(appDir, "config.json"),
       JOBCTRL_E2E_WEB_PORT: "15174",
+      HOME: serviceHome,
+      USERPROFILE: serviceHome,
+      XDG_CONFIG_HOME: path.join(serviceHome, ".config"),
+      XDG_CACHE_HOME: path.join(serviceHome, ".cache"),
+      PLAYWRIGHT_BROWSERS_PATH: "/tmp/jobctrl-playwright-browsers",
+      TZ: "UTC",
     });
     expect(config.webServer[1]?.env).toMatchObject({
       VITE_DEV_API_PROXY_TARGET: "http://127.0.0.1:18767",
+      HOME: serviceHome,
+      USERPROFILE: serviceHome,
+      XDG_CONFIG_HOME: path.join(serviceHome, ".config"),
+      XDG_CACHE_HOME: path.join(serviceHome, ".cache"),
+      PLAYWRIGHT_BROWSERS_PATH: "/tmp/jobctrl-playwright-browsers",
+      TZ: "UTC",
     });
     expect(config.use?.baseURL).toBe("http://127.0.0.1:15174");
     expect(process.env["JOBCTRL_E2E_STATE_FILE"]).toBe(

@@ -5,6 +5,65 @@ records JobCtrl creates from canonical profile evidence and the target posting.
 Tailoring is the versioned, gated process that selects and renders those claims
 without turning the job description into evidence about you.
 
+## How JobCtrl Chooses A Resume
+
+Tailoring is a candidate-selection pipeline, not one unconstrained prompt:
+
+```mermaid
+flowchart TB
+    accTitle: How JobCtrl chooses an accepted resume
+    accDescr: A shared plan feeds candidate generators. Rendered checks and review gates reject or repair candidates. The best approved candidate receives an optional voice refinement and a final truthfulness check before JobCtrl persists it as the accepted resume.
+
+    PLAN("1 · Plan<br/>posting + profile + policy")
+    DRAFT("2 · Generate<br/>candidates share constraints")
+    GATES("3 · Validate + review<br/>rendered checks · judge · personas")
+    SAVE[["4 · Select + refine<br/>truth check · persist · preserve"]]
+
+    PLAN -->|shared plan| DRAFT
+    DRAFT -->|candidate set| GATES
+    GATES -->|approved| SAVE
+    GATES -.->|repair + retry| DRAFT
+```
+
+Solid arrows show the path to an accepted resume; dashed arrows return
+repairable failures to the candidate pool. A failed retry never replaces the
+last accepted resume.
+
+1. **Build one deterministic plan.** JobCtrl combines the accepted posting and
+   employer analysis with a versioned Candidate Profile snapshot, requirement
+   fit, tailoring permissions, required evidence pins, and writing style. The
+   posting may guide emphasis; only profile evidence may support claims about
+   you.
+2. **Ask each ready generator for structured content.** Configured candidate
+   models receive the same plan. Their response must reference known experience
+   and skill-category IDs, preserve source titles, respect bullet limits, and
+   use skills that already exist in the profile.
+3. **Validate the assembled resume, not just model JSON.** Deterministic checks
+   run over the actual candidate text for grounding, preserved employers,
+   education, section structure, prohibited claims, metrics, seniority, and
+   requirement/keyword coverage. A keyword counts as covered only when it is in
+   the rendered grounded text.
+4. **Repair bounded quality failures.** The current post-generation defaults
+   require fit of at least `8/10` and must-have coverage of at least `85%`, with
+   one revision attempt. These are artifact-quality gates after generation, not
+   the Discovery minimum-fit eligibility threshold.
+5. **Require approval from every enabled gate.** In guarded validation, the
+   structured judge must return `PASS`, reach the configurable threshold
+   (`0.82` by default), and report no unsupported claims, fabrications, or
+   missing required evidence. Jobs at or above `8/10` fit also receive a
+   six-persona adversarial review. Repair instructions from rejected candidates
+   feed the bounded retry.
+6. **Select and persist the best clean candidate.** JobCtrl chooses the approved
+   candidate with the best judge result. An optional voice pass is kept only if
+   deterministic voice measures improve and grounding still passes; the final
+   fabrication gate runs again afterward. Rendering and generation persistence
+   complete together, so a PDF failure or rejected replacement leaves the last
+   accepted generation intact.
+
+The artifact inspector exposes the plan, gates, coverage, provenance, judge,
+adversarial result, and lifecycle of warnings so you can inspect why the chosen
+resume was accepted.
+
 ## What You Can See And Control
 
 Eligible jobs receive materials during Discover preparation. You can also

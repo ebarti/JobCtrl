@@ -6,6 +6,40 @@ truthful message to that person, copying an approved version, recording a send
 you performed yourself, and surfacing follow-up reminders. JobCtrl never sends
 outreach.
 
+## How Research And Draft Approval Work
+
+Contacts have two separate trust transitions: a discovered person must become a
+confirmed contact, and a generated message must become an approved draft.
+
+1. **Check source policy before research.** JobCtrl rejects a disallowed source
+   before fetching it. Autonomous broad-web discovery is off by default;
+   login-walled and protected sources remain manual.
+2. **Keep findings as proposals.** Research records source attempts and
+   provenance-bearing candidates in `needs_review`. Explicit confirmation
+   promotes a proposal into the canonical contact record and preserves where
+   each fact came from.
+3. **Ground the actual draft.** A draft may use Candidate Profile evidence,
+   confirmed contact facts, and the linked application context. The
+   never-fabricate check runs on the rendered message itself, not merely on the
+   prompt or recipient record.
+4. **Run the approval stack.** Structural checks require a usable greeting and
+   sign-off and flag prohibited wording, model self-talk, and length problems.
+   The structured judge then evaluates relevance, evidence support,
+   relationship accuracy, safety, and professionalism. Approval requires
+   `PASS`, a score of at least `0.82`, no unsupported claims, and no fabricated
+   relationship.
+5. **Persist the gate result as authority.** Generated and user-edited drafts
+   run the same checks. An edit creates a new generation; it cannot inherit the
+   previous pass. Rejection or a failed replacement leaves the prior approved
+   draft available.
+6. **Stop at the clipboard.** Only a persisted approved draft can be copied.
+   Sending happens in the external channel you operate, and **log a send** is a
+   later user attestation rather than proof produced by JobCtrl.
+
+Claim-to-fact bindings recorded from the accepted message make the approval
+inspectable without turning an employer, recipient, or job description into
+evidence about you.
+
 ## What You Can See And Control
 
 Open **Contacts** at `/outreach`. The route name reflects the bounded context;

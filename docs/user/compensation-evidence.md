@@ -5,6 +5,53 @@ employer posted and what permitted reported-market sources support for a
 company-role match. Posted facts and market estimates stay separate so a parsed
 job-post salary is never presented as crowdsourced market data, or vice versa.
 
+## How Compensation Is Calculated
+
+JobCtrl produces two independent records and displays them together only for
+comparison:
+
+### Employer-posted compensation
+
+1. **Record parse state.** A deterministic parser reads a bounded copy of the
+   posting's salary text and records `missing`, `unparseable`, `ambiguous`, or
+   `parsed_range` rather than forcing every string into a number.
+2. **Interpret bounds conservatively.** One amount becomes an exact or one-sided
+   range according to wording such as “up to” or “from.” More than two amounts,
+   mixed compensation components, or additive bonus wording becomes ambiguous
+   instead of being summed.
+3. **Annualize only with a known period.** Annual amounts stay unchanged,
+   monthly amounts use `12` months, and hourly amounts use `2,080` work hours.
+   Unknown periods are not annualized. Missing currency/period, hourly
+   conversion, broad ranges, and ambiguity lower confidence and remain visible
+   as warnings.
+
+### Reported-market estimate
+
+1. **Load only permitted evidence.** An explicit refresh loads only enabled,
+   supported observations. Rows older than 36 months, unsupported components,
+   and unusable samples are excluded.
+2. **Score the weakest factor.** Candidate rows are matched on company, role,
+   level, location, component, freshness, sample support, agreement, and company
+   tier. The estimate's confidence score is the **lowest** of those factor
+   scores, so one weak link cannot be hidden by stronger unrelated matches.
+   Critical company, role, and level factors below `0.55` are recorded as
+   insufficiency reasons.
+3. **Build the range and interval.** Selected evidence contributes the observed
+   minimum and maximum. The confidence interval widens for fallback scopes, low
+   sample count, location mismatch, dispersion, posted-only evidence, or low
+   confidence. High confidence starts at `0.85` without a low-sample warning;
+   medium starts at `0.62` when an estimated range is otherwise supportable.
+4. **Persist uncertainty.** If the support does not clear the scope-specific
+   evidence floor, JobCtrl persists an explicit insufficient/unavailable state
+   rather than inventing a range. A material difference from the employer-posted
+   range becomes a source conflict warning, never a fit-score adjustment.
+
+Employer-posted facts may be parsed when Discovery ingests or refreshes a job
+and are also reparsed during an explicit compensation refresh. Loading enabled
+reported sources and matching market evidence happen only during that explicit
+refresh. Opening Jobs or Apply Review remains a passive read of persisted
+evidence; it does not fetch or recalculate salary.
+
 ## What You Can See And Control
 
 - `/jobs` has separate sortable/filterable columns for normalized posted

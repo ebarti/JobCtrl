@@ -6,6 +6,93 @@ confidence, blockers, gaps, and requirement-level evidence for your own triage.
 Discovery owns how the employer analysis is generated and which perspectives
 participate; this page owns how that accepted input becomes a fit decision.
 
+## How The Score Is Calculated
+
+JobCtrl does not ask a model for one opaque number and save it. The model
+classifies the evidence for each posting requirement; versioned, deterministic
+code turns those classifications into the persisted 1–10 score.
+
+When Discovery supplies explicit requirements, the calculation works like
+this:
+
+1. **Send the accepted requirements to the scorer.** The scoring request
+   includes each requirement's ID, posting text and evidence, priority weight
+   from 0 to 1, and tier: must-have or nice-to-have. The structured scorer
+   returns those fields with its assessment.
+2. **Classify the returned evidence.** A matched or transferable row must carry
+   at least one non-empty Candidate Profile evidence ID. The current parser
+   checks that an ID is present, but it does not yet verify that every returned
+   ID exists in the saved profile or reconcile every returned requirement
+   field with the accepted analysis. The formula therefore resolves the
+   scorer's validated structured response; inspect the evidence links, and
+   treat any **Unavailable evidence** label as a reason to correct or re-score.
+3. **Apply evidence credit and requirement priority.** The current
+   `requirement-fit-v1` formula uses these values:
+
+   | Evidence classification | Credit |
+   | --- | ---: |
+   | Direct match | 100% |
+   | Strong match | 85% |
+   | Transferable evidence | 60% |
+   | Missing, blocked, or not assessed | 0% |
+
+   A must-have requirement counts **1.25×** its saved weight; a nice-to-have
+   counts **1.0×**. JobCtrl then calculates weighted coverage and maps it to the
+   1–10 scale:
+
+   ```text
+   adjusted weight = requirement weight × tier multiplier
+   coverage = sum(adjusted weight × evidence credit) / sum(adjusted weight)
+   score = 1 + round(9 × coverage)
+   ```
+
+   Each row's adjusted weight and awarded points are rounded to four decimal
+   places before JobCtrl totals them.
+
+   Rounding is to the nearest whole number, with halves rounded up, and the
+   result is limited to 1–10. If any requirement is classified as blocked, the
+   final score is capped at 4 after the weighted calculation.
+4. **Assign the display band.** Scores 9–10 are **Excellent**, 7–8 **Strong**,
+   5–6 **Plausible**, 3–4 **Stretch**, and 1–2 **Poor**.
+
+For example, suppose a must-have with weight `1.0` is a direct match and a
+nice-to-have with weight `0.5` has transferable evidence:
+
+| Requirement | Adjusted weight | Credit | Awarded points |
+| --- | ---: | ---: | ---: |
+| Must-have, direct match | 1.25 | 100% | 1.25 |
+| Nice-to-have, transferable | 0.50 | 60% | 0.30 |
+
+Coverage is `1.55 / 1.75 = 0.886`, so the score is
+`1 + round(9 × 0.886) = 9`: **Excellent**. The Job Detail requirement report
+shows the persisted assessment, evidence links, and contribution for every
+row. Resolved profile evidence is the support you can audit; an unavailable
+reference is not proof of a match.
+
+### When Requirement Rows Are Unavailable
+
+The requirement-led formula runs only when the scorer returns at least one
+valid requirement-assessment row for the current employer-analysis generation.
+Otherwise JobCtrl uses its versioned compatibility rubric: **45% technical
+fit, 30% experience fit, and 25% role fit**. It takes the weighted average of
+those three 0–10 values, rounds halves up, clamps the final score to 1–10, and
+applies the same score bands.
+
+### Score, Confidence, And Eligibility Are Different
+
+- **Confidence is a review signal, not a points adjustment.** Low confidence
+  tells you to inspect the evidence; it does not automatically lower the score.
+- **Eligibility is recorded separately from soft fit.** A blocked requirement
+  caps requirement-led scoring at 4, while hard eligibility blockers can also
+  prevent downstream tailoring. Warnings and eligibility are not added as a
+  generic points penalty.
+- **The minimum-fit threshold does not change the saved score.** It decides
+  whether an existing score is eligible for materials. Changing it does not
+  call the model or recalculate the score.
+- **A correction is not a hidden weight change.** Your correction creates a new
+  reviewed score version and a calibration anchor. An explicit re-score runs
+  the current policy again against the current canonical inputs.
+
 ## What You Can See And Control
 
 Scoring runs inside Discover preparation. Review it on the current product

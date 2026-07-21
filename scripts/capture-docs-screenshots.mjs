@@ -3,6 +3,7 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import docsScreenshotWorkspace from "../apps/web/e2e/fixtures/docs-screenshot-workspace.cjs";
+import { createDocsScreenshotEnvironment } from "./docs-screenshot-environment.mjs";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
 const { createOwnedDocsScreenshotDirectory } = docsScreenshotWorkspace;
@@ -59,15 +60,7 @@ async function run() {
     ],
     {
       cwd: repoRoot,
-      env: {
-        ...process.env,
-        JOBCTRL_DOCS_SCREENSHOTS: "1",
-        JOBCTRL_E2E_APP_DIR: appDir,
-        JOBCTRL_E2E_DB_PATH: path.join(appDir, "jobctrl.db"),
-        JOBCTRL_E2E_CONFIG_PATH: path.join(appDir, "config.json"),
-        JOBCTRL_E2E_API_PORT: String(apiPort),
-        JOBCTRL_E2E_WEB_PORT: String(webPort),
-      },
+      env: createDocsScreenshotEnvironment({ appDir, apiPort, webPort }),
       stdio: "inherit",
     },
   );

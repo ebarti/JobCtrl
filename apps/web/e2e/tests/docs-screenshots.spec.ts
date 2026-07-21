@@ -1,7 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import {
+  expect,
+  type Locator,
+  type Page,
+  type Route,
+  test,
+} from "@playwright/test";
+
+import {
+  sampleCredentialsResponse,
+  sampleProviderModelsResponse,
+  sampleProviderStatusResponse,
+} from "../../src/test/fixtures/projections.js";
 
 const repoRoot = path.resolve(
   fileURLToPath(new URL("../../../../", import.meta.url)),
@@ -56,6 +68,78 @@ const profileCaptureViewport = { width: 1800, height: 1400 } as const;
 const mobileCaptureViewport = { width: 390, height: 844 } as const;
 const profileEditorWidth = 48;
 let stagedScreenshotsDir: string | null = null;
+
+const syntheticCredentialsResponse = {
+  ...sampleCredentialsResponse,
+  credentials: sampleCredentialsResponse.credentials.map((credential) => ({
+    ...credential,
+    configured: false,
+    effectiveSource: "absent" as const,
+  })),
+};
+const syntheticProviderStatusResponse = {
+  ...sampleProviderStatusResponse,
+  providers: sampleProviderStatusResponse.providers.map((provider) => ({
+    ...provider,
+    configured: false,
+    ready: false,
+    mode: null,
+  })),
+};
+const syntheticProviderModelsResponse = {
+  ...sampleProviderModelsResponse,
+  providers: sampleProviderModelsResponse.providers.map((provider) => ({
+    ...provider,
+    configured: false,
+    ready: false,
+    models: [],
+    message: `${provider.provider} is not configured in the synthetic documentation capture.`,
+  })),
+};
+const syntheticBrowserCapabilitiesResponse = {
+  ok: true,
+  detectedBrowsers: [
+    { id: "google-chrome", label: "Google Chrome" },
+    { id: "chromium", label: "Chromium" },
+  ],
+  capabilities: [
+    {
+      id: "core-browser",
+      status: "ready",
+      detail: "Synthetic managed browser status for documentation capture.",
+      mutable: false,
+      enabled: true,
+      profileCopyReady: false,
+    },
+    {
+      id: "auto-apply-browser",
+      status: "disabled",
+      detail: "Disabled until you explicitly enable a detected browser.",
+      mutable: true,
+      enabled: false,
+      profileCopyReady: false,
+    },
+    {
+      id: "authenticated-linkedin-browser",
+      status: "disabled",
+      detail: "Disabled until you explicitly enable a detected browser.",
+      mutable: true,
+      enabled: false,
+      profileCopyReady: false,
+    },
+  ],
+} as const;
+
+type SyntheticEnvironmentRoute =
+  | "browserCapabilities"
+  | "credentials"
+  | "providerModels"
+  | "providerStatus";
+
+interface SyntheticEnvironmentAudit {
+  readonly blockedExternalRequests: string[];
+  readonly requests: Record<SyntheticEnvironmentRoute, number>;
+}
 
 const desktopSurfaces: readonly ScreenshotSurface[] = [
   {
@@ -159,7 +243,7 @@ const desktopSurfaces: readonly ScreenshotSurface[] = [
     name: "profile.png",
     path: "/profile",
     proof: (page) =>
-      page.locator('[aria-label="Editable baseline resume page"]'),
+      page.getByRole("button", { name: "Profile data", exact: true }),
     verify: verifyProfileFraming,
     viewport: profileCaptureViewport,
   },
@@ -204,23 +288,15 @@ const desktopSurfaces: readonly ScreenshotSurface[] = [
     name: "settings-models.png",
     path: "/settings/models",
     proof: (page) =>
-      page.getByRole("link", { name: "model selection", exact: true }),
-    verify: async (page) => {
-      await expect(
-        page.getByRole("link", { name: "model selection", exact: true }),
-      ).toHaveAttribute("aria-current", "page");
-      await expect(page.locator(".model-selection-list")).toHaveAttribute(
-        "aria-busy",
-        "false",
-      );
-      await expect(page.getByText("Checking", { exact: true })).toHaveCount(0);
-    },
+      page.getByRole("link", { name: "Model selection", exact: true }),
+    verify: verifyModelsCaptureReady,
   },
   {
     name: "settings-browser.png",
     path: "/settings/browser",
     proof: (page) =>
       page.getByRole("heading", { name: "Browser capabilities", exact: true }),
+    verify: verifyBrowserCaptureReady,
   },
 ];
 
@@ -256,7 +332,8 @@ const mobileSurfaces: readonly ScreenshotSurface[] = [
     name: "profile-mobile.png",
     path: "/profile",
     proof: (page) =>
-      page.locator('[aria-label="Editable baseline resume page"]'),
+      page.getByRole("button", { name: "Profile data", exact: true }),
+    verify: showProfileSplitView,
     viewport: mobileCaptureViewport,
   },
   {
@@ -264,6 +341,7 @@ const mobileSurfaces: readonly ScreenshotSurface[] = [
     path: "/settings/browser",
     proof: (page) =>
       page.getByRole("heading", { name: "Browser capabilities", exact: true }),
+    verify: verifyBrowserCaptureReady,
     viewport: mobileCaptureViewport,
   },
 ];
@@ -292,6 +370,66 @@ async function waitForRoute(page: Page, proof: Locator): Promise<void> {
   await expect(proof).toBeVisible({ timeout: 30_000 });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(250);
+}
+
+async function installSyntheticEnvironmentRoutes(
+  page: Page,
+): Promise<SyntheticEnvironmentAudit> {
+  const audit: SyntheticEnvironmentAudit = {
+    blockedExternalRequests: [],
+    requests: {
+      browserCapabilities: 0,
+      credentials: 0,
+      providerModels: 0,
+      providerStatus: 0,
+    },
+  };
+
+  await page.route("**/*", async (route) => {
+    const url = new URL(route.request().url());
+    if (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.hostname !== "127.0.0.1" &&
+      url.hostname !== "localhost"
+    ) {
+      audit.blockedExternalRequests.push(url.toString());
+      await route.abort("blockedbyclient");
+      return;
+    }
+    await route.fallback();
+  });
+
+  const fulfill = async (
+    route: Route,
+    key: SyntheticEnvironmentRoute,
+    body: unknown,
+  ) => {
+    if (route.request().method() !== "GET") {
+      throw new Error(
+        `Synthetic documentation route ${key} only supports GET requests.`,
+      );
+    }
+    audit.requests[key] += 1;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(body),
+    });
+  };
+
+  await page.route("**/v1/credentials", (route) =>
+    fulfill(route, "credentials", syntheticCredentialsResponse),
+  );
+  await page.route("**/v1/providers/status", (route) =>
+    fulfill(route, "providerStatus", syntheticProviderStatusResponse),
+  );
+  await page.route("**/v1/providers/models", (route) =>
+    fulfill(route, "providerModels", syntheticProviderModelsResponse),
+  );
+  await page.route("**/v1/browser-capabilities", (route) =>
+    fulfill(route, "browserCapabilities", syntheticBrowserCapabilitiesResponse),
+  );
+
+  return audit;
 }
 
 async function capture(page: Page, name: string): Promise<void> {
@@ -416,14 +554,29 @@ async function nonJobActivityDetailPath(page: Page): Promise<string> {
 }
 
 async function verifyPipelineOperations(page: Page): Promise<void> {
-  for (const heading of [
+  const mobileSurface = (page.viewportSize()?.width ?? 0) <= 900;
+  const visibleHeadings = [
     "Pipelines",
     "Live pipeline",
     "Source families and reconciliation",
-    "Execution inspector",
-    "Active work",
-  ]) {
+    ...(mobileSurface ? [] : ["Execution inspector", "Active work"]),
+  ];
+  for (const heading of visibleHeadings) {
     await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+  }
+
+  if (mobileSurface) {
+    const surfaceControl = page.getByRole("group", { name: "Pipeline view" });
+    await expect(surfaceControl).toBeVisible();
+    await expect(
+      surfaceControl.getByRole("button", { name: "Pipeline", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      surfaceControl.getByRole("button", { name: "Inspector", exact: true }),
+    ).toHaveAttribute("aria-pressed", "false");
+    await expect(
+      page.getByRole("heading", { name: "Execution inspector" }),
+    ).toBeHidden();
   }
 
   await expect(
@@ -465,7 +618,15 @@ async function verifyPipelineOperations(page: Page): Promise<void> {
   });
 }
 
+async function showProfileSplitView(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Split view", exact: true }).click();
+  await expect(
+    page.locator('[aria-label="Editable baseline resume page"]'),
+  ).toBeVisible({ timeout: 30_000 });
+}
+
 async function verifyProfileFraming(page: Page): Promise<void> {
+  await showProfileSplitView(page);
   const previewWorkbench = page.locator(".resume-editor-preview");
   const scrollPane = previewWorkbench.locator(".resume-plate-scroll");
   const resumePage = scrollPane.locator(".resume-plate-page");
@@ -547,9 +708,9 @@ async function verifyCredentialsCaptureReady(page: Page): Promise<void> {
   await expect(settingsNavigation).toBeVisible();
   await expect(settingsTabs).toHaveCount(4);
   for (const name of [
-    "general",
-    "credentials",
-    "model selection",
+    "General",
+    "Credentials",
+    "Model selection",
     "Browser & extension",
   ]) {
     await expect(
@@ -558,7 +719,7 @@ async function verifyCredentialsCaptureReady(page: Page): Promise<void> {
   }
   await expect(
     settingsNavigation.getByRole("link", {
-      name: "credentials",
+      name: "Credentials",
       exact: true,
     }),
   ).toHaveAttribute("aria-current", "page");
@@ -595,6 +756,54 @@ async function verifyCredentialsCaptureReady(page: Page): Promise<void> {
     .toBe(true);
 }
 
+async function verifyModelsCaptureReady(page: Page): Promise<void> {
+  await expect(
+    page.getByRole("link", { name: "Model selection", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(page.locator(".model-selection-list")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
+  await expect(page.getByText("Checking", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByText("Configuration required", { exact: true }),
+  ).toHaveCount(3);
+  await expect(page.getByText("Ready to select", { exact: true })).toHaveCount(
+    0,
+  );
+}
+
+async function verifyBrowserCaptureReady(page: Page): Promise<void> {
+  const card = page.locator("[data-browser-capabilities]");
+  const capabilityList = card.locator('[aria-busy="false"]');
+  await expect(card).toBeVisible();
+  await expect(capabilityList).toBeVisible({ timeout: 30_000 });
+  await expect(card.locator("[data-browser-capability]")).toHaveCount(3);
+  await expect(
+    card.getByLabel("Detected browser for Auto-apply browser"),
+  ).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "Enable Google Chrome" }).first(),
+  ).toBeVisible();
+
+  const geometry = await card.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return {
+      cardLeft: box.left,
+      cardRight: box.right,
+      cardOverflows: element.scrollWidth > element.clientWidth,
+      pageOverflows:
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+      viewportWidth: window.innerWidth,
+    };
+  });
+  expect(geometry.cardLeft).toBeGreaterThanOrEqual(0);
+  expect(geometry.cardRight).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+  expect(geometry.cardOverflows).toBe(false);
+  expect(geometry.pageOverflows).toBe(false);
+}
+
 test("capture public documentation screenshots from synthetic seed data", async ({
   page,
 }) => {
@@ -611,6 +820,7 @@ test("capture public documentation screenshots from synthetic seed data", async 
     ({ key, value }) => window.localStorage.setItem(key, JSON.stringify(value)),
     { key: "jh:profile-import", value: qaProfileImportState },
   );
+  const environmentAudit = await installSyntheticEnvironmentRoutes(page);
   expect(
     desktopSurfaces,
     "The Product Tour requires 26 desktop capture surfaces.",
@@ -630,6 +840,10 @@ test("capture public documentation screenshots from synthetic seed data", async 
     await waitForRoute(page, surface.proof(page));
     await surface.verify?.(page);
     await capture(page, surface.name);
+  }
+  expect(environmentAudit.blockedExternalRequests).toEqual([]);
+  for (const requestCount of Object.values(environmentAudit.requests)) {
+    expect(requestCount).toBeGreaterThan(0);
   }
   await publishStagedScreenshots();
 });
