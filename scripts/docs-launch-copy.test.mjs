@@ -74,6 +74,15 @@ test("comparison omits the annotated recommendation and methodology sections", a
   assert.match(comparison, /^## Appendix: evidence-backed capability matrix$/m);
 });
 
+test("homepage describes live submission approval as the default", async () => {
+  const homepage = await read("docs/index.md");
+
+  assert.match(homepage, /require explicit approval for live submissions by default/i);
+  assert.match(homepage, /browser-level guard blocks dry-run submits/i);
+  assert.match(homepage, /no application is ever submitted twice/i);
+  assert.doesNotMatch(homepage, /approve every live submission explicitly/i);
+});
+
 test("launch provider guidance requires one of Codex, Claude, or Google", async () => {
   const readme = await read("README.md");
   const gettingStarted = await read("docs/user/getting-started.md");
