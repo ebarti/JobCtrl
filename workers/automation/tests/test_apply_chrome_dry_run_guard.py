@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import threading
 import time
@@ -13,6 +14,9 @@ import pytest
 
 from jobctrl.apply import chrome
 from jobctrl.infrastructure.network import PublicUrlDecision
+
+
+_SYSTEM_BROWSER_SMOKE_ENV = "JOBCTRL_RUN_SYSTEM_BROWSER_TESTS"
 
 
 @pytest.fixture(autouse=True)
@@ -99,11 +103,25 @@ class _HostileEmployerHandler(BaseHTTPRequestHandler):
         return
 
 
+@pytest.mark.system_browser
 def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkeypatch):
-    try:
-        chrome.config.get_chrome_path()
-    except FileNotFoundError as exc:
-        pytest.skip(str(exc))
+    """Exercise the real system-browser guard only when explicitly requested.
+
+    Routine unit CI proves the same hostile channels through fake CDP below.
+    Run this optional smoke with ``JOBCTRL_RUN_SYSTEM_BROWSER_TESTS=1 pytest -m
+    system_browser workers/automation/tests/test_apply_chrome_dry_run_guard.py``.
+    Once requested, the test deliberately does not skip an unavailable or
+    unlaunchable browser: that is a failed smoke, not an absent unit-test
+    dependency.
+    """
+
+    if os.environ.get(_SYSTEM_BROWSER_SMOKE_ENV) != "1":
+        pytest.skip(
+            "system-browser smoke is opt-in; "
+            f"set {_SYSTEM_BROWSER_SMOKE_ENV}=1 to run it"
+        )
+
+    chrome.config.get_chrome_path()
 
     _HostileEmployerHandler.posts = []
     _HostileEmployerHandler.deletes = []
@@ -231,6 +249,120 @@ def test_dry_run_request_policy_blocks_all_mutating_methods():
         )
         is False
     )
+
+
+def test_browser_guard_session_blocks_hostile_dry_run_events_before_resume(monkeypatch) -> None:
+    """Keep the CDP guard contract hermetic while covering every hostile channel."""
+
+    class _FakeWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict] = []
+
+        def send(self, payload: str) -> None:
+            self.sent.append(json.loads(payload))
+
+        def close(self) -> None:
+            return None
+
+    class _FakeWebsocketModule:
+        class WebSocketTimeoutException(Exception):
+            pass
+
+    websocket_connection = _FakeWebSocket()
+    guard = chrome._DryRunCdpGuard(port=1)
+    session = chrome._BrowserApplyGuardSession(_FakeWebsocketModule, websocket_connection, guard)
+    monkeypatch.setattr(chrome, "validate_public_http_url", lambda _url: PublicUrlDecision(True))
+
+    session._handle_message(
+        {
+            "method": "Target.attachedToTarget",
+            "params": {
+                "sessionId": "hostile-session",
+                "waitingForDebugger": True,
+                "targetInfo": {"targetId": "hostile-page", "type": "page"},
+            },
+        }
+    )
+    setup_commands = list(websocket_connection.sent)
+    setup_methods = [command["method"] for command in setup_commands]
+    assert setup_methods.index("Page.addScriptToEvaluateOnNewDocument") < setup_methods.index(
+        "Fetch.enable"
+    )
+    assert "Runtime.runIfWaitingForDebugger" not in setup_methods
+
+    for command in setup_commands:
+        session._handle_message({"id": command["id"], "result": {}})
+
+    session_methods = [command["method"] for command in websocket_connection.sent]
+    assert session_methods.index("Fetch.enable") < session_methods.index("Runtime.runIfWaitingForDebugger")
+    assert guard.evidence()["protected_targets"] == 1
+
+    resume_command = next(
+        command
+        for command in websocket_connection.sent
+        if command["method"] == "Runtime.runIfWaitingForDebugger"
+    )
+    session._handle_message({"id": resume_command["id"], "result": {}})
+    assert session._resumed_targets == {"hostile-page"}
+
+    session._handle_message(
+        {
+            "method": "Runtime.bindingCalled",
+            "sessionId": "hostile-session",
+            "params": {
+                "name": "jobctrlDryRunBlocked",
+                "payload": json.dumps(
+                    {
+                        "channel": "form_submit",
+                        "method": "POST",
+                        "url": "https://employer.example/apply?candidate=secret",
+                        "resourceType": "Document",
+                    }
+                ),
+            },
+        }
+    )
+    session._handle_message(
+        {
+            "method": "Network.webSocketCreated",
+            "sessionId": "hostile-session",
+            "params": {"url": "wss://employer.example/exfiltrate?candidate=secret"},
+        }
+    )
+    session._handle_message(
+        {
+            "method": "Fetch.requestPaused",
+            "sessionId": "hostile-session",
+            "params": {
+                "requestId": "hostile-fetch",
+                "networkId": "network-hostile-fetch",
+                "resourceType": "Fetch",
+                "request": {
+                    "method": "POST",
+                    "url": "https://employer.example/exfiltrate?candidate=secret",
+                },
+            },
+        }
+    )
+
+    failed_request = next(
+        command
+        for command in websocket_connection.sent
+        if command["method"] == "Fetch.failRequest"
+    )
+    assert failed_request["sessionId"] == "hostile-session"
+    assert failed_request["params"] == {
+        "requestId": "hostile-fetch",
+        "errorReason": "BlockedByClient",
+    }
+    assert "Fetch.continueRequest" not in [command["method"] for command in websocket_connection.sent]
+    assert set(guard.evidence()["blocked_channels"]) == {
+        "WebSocket:WEBSOCKET",
+        "form_submit:POST",
+        "network:POST",
+    }
+    assert guard.evidence()["coverage"] == "partial"
+    session._close()
 
 
 def test_launch_chrome_installs_public_destination_guard_for_live_runs(tmp_path, monkeypatch):
