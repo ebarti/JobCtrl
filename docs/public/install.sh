@@ -72,6 +72,18 @@ login_profile() {
     *) /usr/bin/printf '%s' "$HOME/.zprofile" ;;
   esac
 }
+profile_mode() {
+  local profile="$1" mode
+  if mode="$(/usr/bin/stat -f '%Lp' "$profile" 2>/dev/null)"; then
+    :
+  elif mode="$(/usr/bin/stat -c '%a' "$profile" 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  /usr/bin/printf '%s' "$mode"
+}
 append_managed_path() {
   local bin_dir="$1" profile mode temporary line
   profile="$(login_profile)"
@@ -81,7 +93,7 @@ append_managed_path() {
   if [[ -e "$profile" && ! -f "$profile" ]]; then fail "login profile is not a regular file: $profile"; fi
   if [[ -f "$profile" ]] && /usr/bin/grep -Fqx "$line" "$profile"; then return; fi
   if [[ -f "$profile" ]]; then
-    mode="$(/usr/bin/stat -f '%Lp' "$profile")"
+    mode="$(profile_mode "$profile")" || fail "could not read login profile mode"
     temporary="$(/usr/bin/mktemp "${profile}.jobctrl.XXXXXX")"
     /bin/cat "$profile" > "$temporary" || { /bin/rm -f "$temporary"; fail "could not read login profile $profile"; }
     /usr/bin/printf '\n%s\n' "$line" >> "$temporary" || { /bin/rm -f "$temporary"; fail "could not update login profile $profile"; }
