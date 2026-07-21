@@ -90,7 +90,7 @@ source and a resolving pointer.
 
 | Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
 | --- | --- | --- | --- | --- | --- | --- |
-| CL-009 | The supported operator surface is a local React/Vite web application backed by the local TypeScript API and Python/Temporal worker. Its first-party routes cover Profile, Discovery, Pipelines, Dashboard, Jobs and job-detail audit, Apply Review, Runs, Artifacts, Evidence, Analytics, Outreach, Preferences, and Debug; mutations go through the API and server-side changes refresh through SSE-backed invalidation. | Comparison (Graphical user interface); Tour; README | Current | repo owner | [frontend architecture](architecture/frontend/index.md); [product tour](user/screenshots.md); `apps/web/src/routes/`; `apps/web/src/contexts/operations/invalidation-router.ts` | 2026-07-09 |
+| CL-009 | The supported operator surface is a local React/Vite web application backed by the local TypeScript API and Python/Temporal worker. Its first-party routes cover Profile, Discovery, Pipelines, Dashboard, Jobs and job-detail audit, Apply Review, Runs, Artifacts, Evidence, Analytics, Outreach, Preferences, and Debug; mutations go through the API and server-side changes refresh through SSE-backed invalidation. | Comparison (Graphical user interface); Tour; README | Current | repo owner | [frontend architecture](architecture/frontend/index.md); [product tour](user/product-tour.md); `apps/web/src/routes/`; `apps/web/src/contexts/operations/invalidation-router.ts` | 2026-07-09 |
 
 ### Discovery and enrichment
 
@@ -260,7 +260,7 @@ Per plan §5 and §8.3, re-run the claim review and refresh each row's
 release**. The review process:
 
 1. Enumerate candidate claims from the live public surfaces (`README.md`,
-   `docs/index.md` hero `features`, `docs/user/screenshots.md` captions,
+   `docs/index.md` hero `features`, `docs/user/product-tour.md` captions,
    `docs/user/normal-flows.md`, `docs/user/data-and-safety.md`,
    `docs/user/security.md`, `docs/comparison.md`, and `docs/requirements.md`).
 2. For each, confirm Status + owner + verification pointer and resolve every

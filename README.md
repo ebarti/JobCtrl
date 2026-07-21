@@ -124,7 +124,7 @@ Full first-run guide: [jobctrl.dev/user/getting-started](https://jobctrl.dev/use
 | [<img src="docs/assets/screenshots/job-detail.png" alt="Route-level Job Detail workspace with requirement evidence and audit history (synthetic data)" width="440" />](docs/assets/screenshots/job-detail.png) | [<img src="docs/assets/screenshots/apply-review.png" alt="Application Review workspace editing a tailored resume with audit evidence (synthetic data)" width="440" />](docs/assets/screenshots/apply-review.png) |
 | **Job detail** — one bookmarkable workspace for fit, provenance, materials, progress, and history | **Apply Review** — edit and approve the exact resume and evidence binding that ships |
 
-Full tour with captions: [Product Tour](https://jobctrl.dev/user/screenshots).
+Full tour with captions: [Product Tour](https://jobctrl.dev/user/product-tour).
 Documentation screenshots must be generated from synthetic data — refresh
 them with `pnpm docs:screenshots`
 ([how it works](https://jobctrl.dev/local-development#documentation-screenshots)).

@@ -47,7 +47,7 @@ const PAGES = [
     visualSelector: ".jh-daily-journey",
     images: true,
   },
-  { path: "/user/screenshots", visualSelector: null, images: true },
+  { path: "/user/product-tour", visualSelector: null, images: true },
   {
     path: "/user/data-and-safety",
     visualSelector: ".data-boundary",
@@ -510,7 +510,7 @@ try {
     console.log("ok    / live demo hero action");
   }
 
-  await page.goto(`http://127.0.0.1:${port}/user/screenshots`, {
+  await page.goto(`http://127.0.0.1:${port}/user/product-tour`, {
     waitUntil: "networkidle",
   });
   const tourSidebar = await page.locator(".VPSidebar").innerText();
@@ -519,7 +519,7 @@ try {
   );
   if (missingDesktopSidebarLabels.length > 0) {
     fail(
-      `/user/screenshots: unified sidebar is missing ${missingDesktopSidebarLabels.join(", ")}`,
+      `/user/product-tour: unified sidebar is missing ${missingDesktopSidebarLabels.join(", ")}`,
     );
   }
   const tourOutline = await page.locator(".VPDocAsideOutline").innerText();
@@ -537,10 +537,10 @@ try {
     )
   ) {
     fail(
-      "/user/screenshots: public tour outline is missing product content or exposes internal capture guidance",
+      "/user/product-tour: public tour outline is missing product content or exposes internal capture guidance",
     );
   } else {
-    console.log("ok    /user/screenshots section outline");
+    console.log("ok    /user/product-tour section outline");
   }
   const footerText = await page.locator(".VPFooter").innerText();
   const obsoleteFooterMessage =
@@ -552,10 +552,10 @@ try {
     footerText.includes(obsoleteFooterMessage)
   ) {
     fail(
-      "/user/screenshots: copyright/license footer is missing or incomplete",
+      "/user/product-tour: copyright/license footer is missing or incomplete",
     );
   } else {
-    console.log("ok    /user/screenshots footer notice");
+    console.log("ok    /user/product-tour footer notice");
   }
   const desktopTour = await productTourGeometry(page);
   if (
@@ -569,10 +569,10 @@ try {
     desktopTour.pageOverflows
   ) {
     fail(
-      `/user/screenshots desktop: media escaped its content track (${JSON.stringify(desktopTour)})`,
+      `/user/product-tour desktop: media escaped its content track (${JSON.stringify(desktopTour)})`,
     );
   } else {
-    console.log("ok    /user/screenshots desktop media track");
+    console.log("ok    /user/product-tour desktop media track");
   }
 
   const zoomableTourImage = page.locator(".vp-doc img").first();
@@ -595,15 +595,15 @@ try {
     expandedAlt !== imageAlt
   ) {
     fail(
-      "/user/screenshots: responsive media lost its zoom or alternative-text semantics",
+      "/user/product-tour: responsive media lost its zoom or alternative-text semantics",
     );
   } else {
-    console.log("ok    /user/screenshots image zoom semantics");
+    console.log("ok    /user/product-tour image zoom semantics");
   }
   await page.locator('.jh-lightbox button[aria-label="Close"]').click();
 
   await page.setViewportSize(REPORTED_TOUR_VIEWPORT);
-  await page.goto(`http://127.0.0.1:${port}/user/screenshots`, {
+  await page.goto(`http://127.0.0.1:${port}/user/product-tour`, {
     waitUntil: "networkidle",
   });
   const reportedTour = await productTourGeometry(page);
@@ -618,10 +618,10 @@ try {
     reportedTour.pageOverflows
   ) {
     fail(
-      `/user/screenshots 1285px: media/outline layout regressed (${JSON.stringify(reportedTour)})`,
+      `/user/product-tour 1285px: media/outline layout regressed (${JSON.stringify(reportedTour)})`,
     );
   } else {
-    console.log("ok    /user/screenshots 1285px media/outline layout");
+    console.log("ok    /user/product-tour 1285px media/outline layout");
   }
 
   const resizeNavigation = page.getByRole("separator", {
@@ -711,7 +711,7 @@ try {
     wideSidebar.pageOverflows
   ) {
     fail(
-      `/user/screenshots sidebar resize: pointer, keyboard, or layout contract regressed (${JSON.stringify(
+      `/user/product-tour sidebar resize: pointer, keyboard, or layout contract regressed (${JSON.stringify(
         {
           separatorContract,
           obsoleteControlCount,
@@ -726,7 +726,7 @@ try {
       )})`,
     );
   } else {
-    console.log("ok    /user/screenshots direct-manipulation sidebar resize");
+    console.log("ok    /user/product-tour direct-manipulation sidebar resize");
   }
 
   const collapseNavigation = page.getByRole("button", {
@@ -786,7 +786,7 @@ try {
     activeHref: document.activeElement?.getAttribute("href") ?? "",
     activeVisible: (document.activeElement?.getClientRects().length ?? 0) > 0,
   }));
-  await page.goto(`http://127.0.0.1:${port}/user/screenshots`, {
+  await page.goto(`http://127.0.0.1:${port}/user/product-tour`, {
     waitUntil: "networkidle",
   });
   await page.waitForFunction(
@@ -851,7 +851,7 @@ try {
     expandedState.collapseExpanded !== "true"
   ) {
     fail(
-      `/user/screenshots sidebar collapse: focus, persistence, or width release regressed (${JSON.stringify(
+      `/user/product-tour sidebar collapse: focus, persistence, or width release regressed (${JSON.stringify(
         {
           collapsedState,
           collapsedHomepageState,
@@ -864,7 +864,7 @@ try {
     );
   } else {
     console.log(
-      "ok    /user/screenshots keyboard sidebar collapse and restore",
+      "ok    /user/product-tour keyboard sidebar collapse and restore",
     );
   }
 
@@ -924,7 +924,7 @@ try {
   }
 
   await page.setViewportSize(NARROW_DESKTOP_VIEWPORT);
-  await page.goto(`http://127.0.0.1:${port}/user/screenshots`, {
+  await page.goto(`http://127.0.0.1:${port}/user/product-tour`, {
     waitUntil: "networkidle",
   });
   const narrowDesktopTour = await productTourGeometry(page);
@@ -938,17 +938,17 @@ try {
     narrowDesktopTour.pageOverflows
   ) {
     fail(
-      `/user/screenshots 1024px: responsive media layout regressed (${JSON.stringify(narrowDesktopTour)})`,
+      `/user/product-tour 1024px: responsive media layout regressed (${JSON.stringify(narrowDesktopTour)})`,
     );
   } else {
-    console.log("ok    /user/screenshots 1024px media layout");
+    console.log("ok    /user/product-tour 1024px media layout");
   }
 
   // A 1440px display at 200% page zoom exposes roughly a 720px-wide CSS
   // viewport. The desktop controls should yield to VitePress's reachable
   // mobile navigation instead of clipping either control set.
   await page.setViewportSize(ZOOMED_DESKTOP_CSS_VIEWPORT);
-  await page.goto(`http://127.0.0.1:${port}/user/screenshots`, {
+  await page.goto(`http://127.0.0.1:${port}/user/product-tour`, {
     waitUntil: "networkidle",
   });
   const zoomedDesktopState = await page.evaluate(() => ({
@@ -965,10 +965,10 @@ try {
     zoomedDesktopState.desktopControlsVisible
   ) {
     fail(
-      `/user/screenshots 200% zoom: navigation became unreachable (${JSON.stringify(zoomedDesktopState)})`,
+      `/user/product-tour 200% zoom: navigation became unreachable (${JSON.stringify(zoomedDesktopState)})`,
     );
   } else {
-    console.log("ok    /user/screenshots 200% zoom navigation fallback");
+    console.log("ok    /user/product-tour 200% zoom navigation fallback");
   }
 
   await page.setViewportSize(BASE_VIEWPORT);
@@ -1552,7 +1552,7 @@ try {
   );
 
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto(`http://127.0.0.1:${port}/user/screenshots`, {
+  await page.goto(`http://127.0.0.1:${port}/user/product-tour`, {
     waitUntil: "networkidle",
   });
   const mobileTourImage = await page
@@ -1566,11 +1566,11 @@ try {
     );
   if (!mobileTourImage || mobileTourImage.width < 700) {
     fail(
-      `/user/screenshots mobile: screenshot did not remain inspectable (${mobileTourImage?.width ?? 0}px)`,
+      `/user/product-tour mobile: screenshot did not remain inspectable (${mobileTourImage?.width ?? 0}px)`,
     );
   } else if (customDesktopControlsVisible) {
     fail(
-      "/user/screenshots mobile: desktop sidebar controls displaced the stock mobile drawer",
+      "/user/product-tour mobile: desktop sidebar controls displaced the stock mobile drawer",
     );
   }
   await page.locator("button.menu").click();
@@ -1583,10 +1583,10 @@ try {
   );
   if (missingMobileSidebarLabels.length > 0) {
     fail(
-      `/user/screenshots mobile: unified menu is missing ${missingMobileSidebarLabels.join(", ")}`,
+      `/user/product-tour mobile: unified menu is missing ${missingMobileSidebarLabels.join(", ")}`,
     );
   } else {
-    console.log("ok    /user/screenshots mobile menu");
+    console.log("ok    /user/product-tour mobile menu");
   }
 
   await page.goto(`http://127.0.0.1:${port}/user/normal-flows`, {

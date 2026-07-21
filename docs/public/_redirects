@@ -1,0 +1,3 @@
+# Preserve the established public Product Tour URL. Fragments are client-side,
+# so the source stays path-only; Cloudflare Pages applies this before static assets.
+/user/screenshots /user/product-tour 301

@@ -754,7 +754,7 @@ Update the owning documents in the PR that changes each contract:
 
 - `README.md` and `docs/user/normal-flows.md` — what Discover completion,
   backlog, capacity, and ETA mean;
-- `docs/user/screenshots.md` — the final operations view after browser QA;
+- `docs/user/product-tour.md` — the final operations view after browser QA;
 - `docs/local-ts-api.md` and `docs/api/operations-and-events.md` — endpoint,
   units, freshness, and SSE/refetch behavior;
 - `docs/architecture/pipeline/index.md`, `concurrency.md`, and `operations.md` —
