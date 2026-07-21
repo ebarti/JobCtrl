@@ -37,6 +37,15 @@ boundary.
 | Bundled runtime | Payload path confinement, isolated Python startup, manifest verification, and hash-locked provider packs with activation-time revalidation. |
 | Privacy and release | Metadata-only telemetry, synthetic-demo isolation, private local file modes for sensitive control files, and release scanning for secrets and private artifacts. |
 
+## Public Demo Boundary
+
+The hosted public demo uses synthetic data in a browser-local workspace. Its
+shortcuts and actions are simulations: they do not contact employers, send
+messages, or make external changes.
+
+For the demo's first-party cookie consent, retention, data-controller identity,
+and privacy contact, read the canonical [Public Demo data notice](data-and-safety.md#public-demo).
+
 ## What Leaves Your Machine
 
 | Outbound call | When | What can be sent |

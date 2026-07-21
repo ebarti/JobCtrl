@@ -41,6 +41,9 @@ returns to `https://jobctrl.dev`; opening the demo again shows the choice again.
 The demo does not initialize its browser-local workspace until the consent
 service confirms acceptance.
 
+The data controller for the public demo is Eloi Barti, acting as an individual.
+For privacy questions, contact [me@eloibarti.com](mailto:me@eloibarti.com).
+
 After acceptance, Cloudflare sets a versioned consent cookie plus random
 HttpOnly visitor and session identifiers. The persistent cookies expire within
 six months, the session cookie at the end of the browser session, and raw demo

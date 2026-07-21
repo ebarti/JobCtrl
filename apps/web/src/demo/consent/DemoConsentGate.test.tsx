@@ -24,6 +24,19 @@ describe("DemoConsentGate", () => {
     const user = userEvent.setup();
 
     expect(screen.getByText(/demo can only be used after accepting first-party analytics cookies/i)).toBeVisible();
+    expect(screen.getByText(/data controller: eloi barti, acting as an individual/i)).toBeVisible();
+    expect(screen.getByRole("link", { name: "me@eloibarti.com" })).toHaveAttribute(
+      "href",
+      "mailto:me@eloibarti.com",
+    );
+    expect(screen.getByRole("link", { name: "demo data notice" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/data-and-safety#public-demo",
+    );
+    expect(screen.getByRole("link", { name: "security boundary" })).toHaveAttribute(
+      "href",
+      "https://jobctrl.dev/user/security#public-demo-boundary",
+    );
     const acceptButton = screen.getByRole("button", { name: "Accept cookies and enter demo" });
     expect(acceptButton).toHaveAttribute("data-slot", "button");
     await user.click(acceptButton);
