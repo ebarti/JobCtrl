@@ -221,18 +221,25 @@ test("job detail keeps its title and actions readable at desktop and mobile widt
     { width: 1440, height: 900 },
     { width: 390, height: 844 },
   ]) {
+    const usesActionDisclosure = viewport.width <= 820;
     await page.setViewportSize(viewport);
     await page.goto(JOB_DETAIL_ROUTE);
 
     const workspace = page.getByRole("article", { name: "Job details" });
     const toolbar = workspace.getByRole("toolbar", { name: "Job actions" });
+    const commandTrigger = workspace.getByRole("button", {
+      name: "More job actions",
+    });
+    const workflowActions = workspace.locator(
+      "#job-detail-workflow-commands",
+    );
+    const preparationActions = toolbar.getByRole("group", {
+      name: "Preparation actions",
+    });
+    const applicationActions = toolbar.getByRole("group", {
+      name: "Application actions",
+    });
     await expect(workspace).toBeVisible({ timeout: 30_000 });
-    await expect(
-      workspace.getByRole("group", { name: "Preparation actions" }),
-    ).toBeVisible();
-    await expect(
-      workspace.getByRole("group", { name: "Application actions" }),
-    ).toBeVisible();
     await expect(
       toolbar.getByRole("link", { name: /apply review/i }),
     ).toHaveCount(0);
@@ -288,6 +295,22 @@ test("job detail keeps its title and actions readable at desktop and mobile widt
     expect(layout.pageScrollWidth).toBeLessThanOrEqual(
       layout.viewportWidth + 1,
     );
+
+    if (usesActionDisclosure) {
+      await expect(commandTrigger).toBeVisible();
+      await expect(commandTrigger).toHaveAttribute("aria-expanded", "false");
+      await expect(workflowActions).toBeHidden();
+      await commandTrigger.click();
+      await expect(commandTrigger).toHaveAttribute("aria-expanded", "true");
+    } else {
+      await expect(commandTrigger).toBeHidden();
+    }
+
+    await expect(preparationActions).toBeVisible();
+    await expect(
+      preparationActions.getByRole("button", { name: "Generate materials" }),
+    ).toBeVisible();
+    await expect(applicationActions).toBeVisible();
   }
 });
 
