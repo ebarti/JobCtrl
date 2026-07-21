@@ -612,6 +612,10 @@ resumes, databases, logs, Gmail tokens, or browser profiles; do not run apply
 automation, mailbox scans, real crawling, or real LLM calls for screenshots;
 keep output deterministic (fixed per-surface viewports, synthetic database,
 seeded pipeline operations and heartbeat, no external providers).
+The Profile preview renderer runs with the Python lock held; its fixed dependency
+cutoff is defined in `workers/automation/pyproject.toml`, not inherited from a
+caller-provided `UV_EXCLUDE_NEWER` value. A stale lock must fail rather than
+being rewritten by screenshot generation.
 
 ### Launch Demo Asset Inventory
 

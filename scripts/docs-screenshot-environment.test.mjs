@@ -15,6 +15,7 @@ test("documentation screenshot environment allows toolchain state but excludes h
       HOME: "/Users/example",
       PLAYWRIGHT_BROWSERS_PATH: "/Users/example/playwright",
       LANG: "en_US.UTF-8",
+      UV_EXCLUDE_NEWER: "8 days",
       OPENAI_API_KEY: "must-not-escape",
       GEMINI_API_KEY: "must-not-escape",
       GOOGLE_APPLICATION_CREDENTIALS: "/private/service-account.json",
@@ -45,6 +46,11 @@ test("documentation screenshot environment allows toolchain state but excludes h
   );
   assert.equal(environment.JOBCTRL_E2E_API_PORT, "18767");
   assert.equal(environment.JOBCTRL_E2E_WEB_PORT, "15174");
+  assert.equal(
+    "UV_EXCLUDE_NEWER" in environment,
+    false,
+    "the fixed cutoff belongs to workers/automation/pyproject.toml",
+  );
 
   for (const key of [
     "OPENAI_API_KEY",

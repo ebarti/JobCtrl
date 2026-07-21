@@ -108,8 +108,11 @@ pythonVersion = "3.11"
 [tool.uv]
 default-groups = ["provider-runtime"]
 
-# The workspace dependency cutoff (UV_EXCLUDE_NEWER) intentionally freezes the
-# broad dependency graph. Provider runtimes and the audited JobStreaming
-# integration move independently, so admit only their reviewed releases
-# without moving the global cutoff for everything else.
+# The workspace dependency cutoff intentionally freezes the broad dependency
+# graph. Keep it as a fixed project value, rather than a caller-provided
+# relative `UV_EXCLUDE_NEWER` value, so locked source runtimes and release
+# workflows resolve against the same graph. Provider runtimes and the audited
+# JobStreaming integration move independently, so admit only their reviewed
+# releases without moving the global cutoff for everything else.
+exclude-newer = "2026-07-09T19:15:43.240437Z"
 exclude-newer-package = { "google-antigravity" = "2026-06-04T21:19:27Z", "claude-agent-sdk" = "2026-07-10T00:00:00Z", "jobstreaming" = "2026-07-18T00:00:00Z" }
