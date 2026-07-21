@@ -7,6 +7,7 @@ import platform
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import tempfile
 import time
@@ -1650,7 +1651,7 @@ def config_file_lock(
                 lock_stat = lock_path.lstat()
             except FileNotFoundError:
                 continue
-            if not lock_path.is_dir() or lock_path.is_symlink():
+            if not stat.S_ISDIR(lock_stat.st_mode):
                 raise ConfigFileError("The settings lock path is not a directory")
             if time.time() - lock_stat.st_mtime > CONFIG_LOCK_STALE_SECONDS:
                 try:

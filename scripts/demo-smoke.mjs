@@ -3,8 +3,14 @@ import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 const CLOUDFLARE_INJECTION_MARKER = /challenge-platform|beacon\.min\.js|\/cdn-cgi\/rum/i;
-const DEMO_SHELL_READY_ATTEMPTS = 31;
-const DEMO_SHELL_READY_DELAY_MS = 3_000;
+// Cloudflare Pages can finish publishing before its custom domain serves the
+// new deployment. Keep the canonical-domain probe bounded, but allow for that
+// propagation rather than treating the previous 90-second window as a deploy
+// failure.
+export const DEMO_SHELL_READY_WINDOW_MS = 5 * 60_000;
+export const DEMO_SHELL_READY_DELAY_MS = 3_000;
+export const DEMO_SHELL_READY_ATTEMPTS = DEMO_SHELL_READY_WINDOW_MS / DEMO_SHELL_READY_DELAY_MS + 1;
+export const DEMO_SHELL_REQUEST_TIMEOUT_MS = 15_000;
 const SYNTHETIC_HTML_ASSETS = [
   "/demo/application-preview.html",
   "/demo/profile-resume.html",
@@ -31,28 +37,55 @@ export async function waitForDemoShell(
   fetchShell,
   {
     attempts = DEMO_SHELL_READY_ATTEMPTS,
+    timeoutMs = DEMO_SHELL_READY_WINDOW_MS,
     delayMs = DEMO_SHELL_READY_DELAY_MS,
+    requestTimeoutMs = DEMO_SHELL_REQUEST_TIMEOUT_MS,
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now = Date.now,
+    createAbortSignal = (timeout) => AbortSignal.timeout(timeout),
     log = console.warn,
   } = {},
 ) {
+  const startedAt = now();
+  const deadlineAt = startedAt + timeoutMs;
   let lastStatus = "unknown";
+  const observedStatuses = new Map();
 
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const response = await fetchShell();
-    if (response.ok) {
-      return response;
+  for (let attempt = 1; attempt <= attempts && now() < deadlineAt; attempt += 1) {
+    const remainingBeforeRequestMs = deadlineAt - now();
+    const signal = createAbortSignal(Math.min(requestTimeoutMs, remainingBeforeRequestMs));
+
+    try {
+      const response = await fetchShell({ signal });
+      if (response.ok) {
+        return response;
+      }
+
+      lastStatus = response.status;
+      observedStatuses.set(lastStatus, (observedStatuses.get(lastStatus) ?? 0) + 1);
+      await response.body?.cancel?.();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastStatus = `request error: ${message}`;
+      observedStatuses.set(lastStatus, (observedStatuses.get(lastStatus) ?? 0) + 1);
     }
 
-    lastStatus = response.status;
-    await response.body?.cancel?.();
-    if (attempt < attempts) {
-      log(`Demo shell is not ready (attempt ${attempt}/${attempts}): / returned ${lastStatus}`);
-      await sleep(delayMs);
+    const remainingBeforeRetryMs = deadlineAt - now();
+    if (attempt < attempts && remainingBeforeRetryMs > 0) {
+      log(
+        `Demo shell is not ready (attempt ${attempt}/${attempts}; ${Math.ceil(remainingBeforeRetryMs / 1_000)}s remaining): / ${lastStatus}`,
+      );
+      await sleep(Math.min(delayMs, remainingBeforeRetryMs));
     }
   }
 
-  assert.fail(`demo shell was not ready after ${attempts} attempts: / returned ${lastStatus}`);
+  const observedSummary = [...observedStatuses]
+    .map(([status, count]) => `${status} x ${count}`)
+    .join(", ");
+  const elapsedMs = Math.max(0, now() - startedAt);
+  assert.fail(
+    `demo shell was not ready within ${timeoutMs}ms after ${elapsedMs}ms: / last observation ${lastStatus}; observed statuses: ${observedSummary || "none"}`,
+  );
 }
 
 async function runDemoSmoke() {
@@ -71,7 +104,7 @@ async function runDemoSmoke() {
     return response;
   };
 
-  const shell = await waitForDemoShell(() => fetchPath("/"));
+  const shell = await waitForDemoShell(({ signal }) => fetchPath("/", { signal }));
   const shellHtml = await shell.text();
   assert.match(shellHtml, /<div id="root"><\/div>/);
   assertNoCloudflareInjection("/", shellHtml);

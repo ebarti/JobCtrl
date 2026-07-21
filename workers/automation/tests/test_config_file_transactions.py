@@ -52,6 +52,38 @@ def test_config_lock_rejects_an_untrusted_non_directory_path(tmp_path: Path) -> 
         update_config_file({"daily_budget_usd": 10}, path=tmp_path / "config.json")
 
 
+def test_config_lock_rejects_a_symlink(tmp_path: Path) -> None:
+    lock_target = tmp_path / "real-lock"
+    lock_target.mkdir()
+    (tmp_path / CONFIG_LOCK_DIRECTORY).symlink_to(lock_target, target_is_directory=True)
+
+    with pytest.raises(ConfigFileError, match="lock path is not a directory"):
+        update_config_file({"daily_budget_usd": 10}, path=tmp_path / "config.json")
+
+
+def test_config_lock_retries_when_owner_releases_after_lstat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config_path = tmp_path / "config.json"
+    lock_path = tmp_path / CONFIG_LOCK_DIRECTORY
+    lock_path.mkdir()
+    original_lstat = Path.lstat
+    released = False
+
+    def release_lock_after_lstat(path: Path):
+        nonlocal released
+        lock_stat = original_lstat(path)
+        if path == lock_path and not released:
+            released = True
+            lock_path.rmdir()
+        return lock_stat
+
+    monkeypatch.setattr(Path, "lstat", release_lock_after_lstat)
+
+    update_config_file({"daily_budget_usd": 10}, path=config_path)
+
+    assert released
+    assert load_config_file(path=config_path, strict=True) == {"daily_budget_usd": 10}
+
+
 def test_config_preserves_existing_custom_parent_permissions(tmp_path: Path) -> None:
     shared_directory = tmp_path / "shared"
     shared_directory.mkdir(mode=0o750)

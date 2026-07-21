@@ -4,12 +4,17 @@ import test from "node:test";
 import {
   assertNoCloudflareInjection,
   assertSyntheticHtmlAssetsAreClean,
+  DEMO_SHELL_READY_ATTEMPTS,
+  DEMO_SHELL_READY_DELAY_MS,
+  DEMO_SHELL_REQUEST_TIMEOUT_MS,
+  DEMO_SHELL_READY_WINDOW_MS,
   waitForDemoShell,
 } from "./demo-smoke.mjs";
 
-test("demo smoke waits for the production custom domain to become ready", async () => {
-  const statuses = [403, 403, 200];
+test("demo smoke waits through custom-domain propagation longer than the former 90-second window", async () => {
+  const statuses = [...Array.from({ length: 32 }, () => 403), 200];
   const delays = [];
+  let elapsedMs = 0;
 
   const response = await waitForDemoShell(
     async () => {
@@ -17,36 +22,105 @@ test("demo smoke waits for the production custom domain to become ready", async 
       return { ok: status >= 200 && status < 300, status };
     },
     {
-      attempts: 3,
-      delayMs: 25,
-      sleep: async (delayMs) => delays.push(delayMs),
+      sleep: async (delayMs) => {
+        delays.push(delayMs);
+        elapsedMs += delayMs;
+      },
+      now: () => elapsedMs,
+      createAbortSignal: () => new AbortController().signal,
       log: () => {},
     },
   );
 
   assert.equal(response.status, 200);
-  assert.deepEqual(delays, [25, 25]);
+  assert.deepEqual(delays, Array.from({ length: 32 }, () => DEMO_SHELL_READY_DELAY_MS));
+  assert.equal(DEMO_SHELL_READY_ATTEMPTS, 101);
+  assert.equal(DEMO_SHELL_READY_WINDOW_MS, 5 * 60_000);
+  assert.equal(DEMO_SHELL_REQUEST_TIMEOUT_MS, 15_000);
 });
 
 test("demo smoke still fails after the bounded readiness window", async () => {
   let requests = 0;
+  let elapsedMs = 0;
 
   await assert.rejects(
     waitForDemoShell(
       async () => {
         requests += 1;
+        elapsedMs += 1;
         return { ok: false, status: 403 };
       },
       {
         attempts: 3,
+        timeoutMs: 1,
         delayMs: 0,
         sleep: async () => {},
+        now: () => elapsedMs,
+        createAbortSignal: () => new AbortController().signal,
         log: () => {},
       },
     ),
-    /demo shell was not ready after 3 attempts: \/ returned 403/,
+    /demo shell was not ready within 1ms after 1ms: \/ last observation 403; observed statuses: 403 x 1/,
   );
-  assert.equal(requests, 3);
+  assert.equal(requests, 1);
+});
+
+test("demo smoke uses the remaining global deadline to cancel requests and report readiness observations", async () => {
+  let elapsedMs = 0;
+  const requestTimeouts = [];
+
+  await assert.rejects(
+    waitForDemoShell(
+      async ({ signal }) => {
+        elapsedMs += signal.timeoutMs;
+        throw new Error("request deadline elapsed");
+      },
+      {
+        attempts: 10,
+        timeoutMs: 50,
+        delayMs: 25,
+        requestTimeoutMs: 15,
+        sleep: async (delayMs) => {
+          elapsedMs += delayMs;
+        },
+        now: () => elapsedMs,
+        createAbortSignal: (timeoutMs) => {
+          requestTimeouts.push(timeoutMs);
+          return { timeoutMs };
+        },
+        log: () => {},
+      },
+    ),
+    /within 50ms after 50ms: \/ last observation request error: request deadline elapsed; observed statuses: request error: request deadline elapsed x 2/,
+  );
+  assert.deepEqual(requestTimeouts, [15, 10]);
+});
+
+test("demo smoke retries a transient network error before the canonical domain becomes ready", async () => {
+  let elapsedMs = 0;
+  const observations = [new Error("socket reset"), { ok: true, status: 200 }];
+
+  const response = await waitForDemoShell(
+    async () => {
+      const observation = observations.shift();
+      if (observation instanceof Error) {
+        throw observation;
+      }
+      return observation;
+    },
+    {
+      timeoutMs: 50,
+      delayMs: 25,
+      sleep: async (delayMs) => {
+        elapsedMs += delayMs;
+      },
+      now: () => elapsedMs,
+      createAbortSignal: () => new AbortController().signal,
+      log: () => {},
+    },
+  );
+
+  assert.equal(response.status, 200);
 });
 
 test("demo smoke rejects known Cloudflare HTML injection markers", () => {
