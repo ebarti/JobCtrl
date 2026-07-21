@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -13,7 +13,8 @@ const SYSTEM_BASH = "/bin/bash";
 
 function makeTmp() { return mkdtempSync(path.join(os.tmpdir(), "jobctrl-get-test-")); }
 function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
-function run(args, env) { return spawnSync(SYSTEM_BASH, [GET, ...args], { encoding: "utf8", env: { ...process.env, ...env } }); }
+function run(args, env, installer = GET) { return spawnSync(SYSTEM_BASH, [installer, ...args], { encoding: "utf8", env: { ...process.env, ...env } }); }
+const GNU_STAT = process.platform === "linux" ? "/usr/bin/stat" : ["/opt/homebrew/bin/gstat", "/usr/local/bin/gstat"].find(existsSync);
 
 function fixture(root, { validDigest = true } = {}) {
   const bin = path.join(root, "bin");
@@ -121,6 +122,20 @@ test("get appends one managed line while preserving a regular login profile's co
     const contents = readFileSync(profile, "utf8");
     assert.match(contents, /^export EXISTING=1$/m);
     assert.equal((contents.match(/JobCtrl managed path/g) ?? []).length, 1);
+    assert.equal(statSync(profile).mode & 0o777, 0o640);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("get preserves a profile's mode through the GNU stat fallback", { skip: GNU_STAT === undefined }, () => {
+  const root = makeTmp(); try {
+    const value = fixture(root);
+    const profile = path.join(root, ".zprofile");
+    const gnuGet = path.join(root, "get-with-gnu-stat");
+    writeFileSync(gnuGet, readFileSync(GET, "utf8").replaceAll("/usr/bin/stat", GNU_STAT));
+    writeFileSync(profile, "export EXISTING=1\n");
+    chmodSync(profile, 0o640);
+    const result = run(["--local-fixture-contract", value.contract], value.env, gnuGet);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.equal(statSync(profile).mode & 0o777, 0o640);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
