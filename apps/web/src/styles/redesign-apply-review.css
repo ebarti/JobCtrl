@@ -44,6 +44,24 @@
   gap: 8px;
 }
 
+.repeat-application-prior-options {
+  gap: 8px;
+}
+
+.repeat-application-prior {
+  min-width: 0;
+}
+
+.repeat-application-prior [data-slot="input"] {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  padding: 0;
+  accent-color: var(--primary);
+}
+
 .repeat-application-confirmation-form > button {
   justify-self: start;
 }

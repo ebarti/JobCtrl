@@ -60,6 +60,13 @@ import {
   CollapsibleTrigger,
 } from "../../shared/ui/collapsible.js";
 import { Empty } from "../../shared/ui/empty.js";
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "../../shared/ui/field.js";
 import { Input } from "../../shared/ui/input.js";
 import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
 import { PageHead } from "../../shared/ui/page-head.js";
@@ -1442,21 +1449,34 @@ function RepeatApplicationGuardPanel({ item }: { readonly item: ApplyReviewQueue
 
       {needsConfirmation && assessment.matches.length > 0 && assessment.evidenceFingerprint ? (
         <div className="repeat-application-confirmation-form">
-          <fieldset>
-            <legend>Select the prior application for this confirmation</legend>
-            {assessment.matches.map((match) => (
-              <label key={`${match.relationship}:${match.priorApplication.factId}`}>
-                <input
-                  type="radio"
-                  name={`repeat-application-prior-${encodeURIComponent(item.jobKey)}`}
-                  value={match.priorApplication.jobKey}
-                  checked={selectedPrior?.priorApplication.jobKey === match.priorApplication.jobKey}
-                  onChange={() => setSelectedPriorJobKey(match.priorApplication.jobKey)}
-                />
-                Confirm prior application: {match.priorApplication.jobKey}
-              </label>
-            ))}
-          </fieldset>
+          <FieldSet>
+            <FieldLegend>Select the prior application for this confirmation</FieldLegend>
+            <FieldGroup data-slot="radio-group" className="repeat-application-prior-options">
+              {assessment.matches.map((match) => {
+                const priorJobKey = match.priorApplication.jobKey;
+                const controlId = `repeat-application-prior-${encodeURIComponent(item.jobKey)}-${encodeURIComponent(priorJobKey)}`;
+                return (
+                  <Field
+                    className="repeat-application-prior"
+                    key={`${match.relationship}:${match.priorApplication.factId}`}
+                    orientation="horizontal"
+                  >
+                    <Input
+                      checked={selectedPrior?.priorApplication.jobKey === priorJobKey}
+                      id={controlId}
+                      name={`repeat-application-prior-${encodeURIComponent(item.jobKey)}`}
+                      onChange={() => setSelectedPriorJobKey(priorJobKey)}
+                      type="radio"
+                      value={priorJobKey}
+                    />
+                    <FieldLabel htmlFor={controlId}>
+                      Confirm prior application: {priorJobKey}
+                    </FieldLabel>
+                  </Field>
+                );
+              })}
+            </FieldGroup>
+          </FieldSet>
           <label htmlFor={`repeat-application-reason-${encodeURIComponent(item.jobKey)}`}>
             Reason for another live attempt
           </label>

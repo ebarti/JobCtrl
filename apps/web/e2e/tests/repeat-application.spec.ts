@@ -10,6 +10,41 @@ const TARGET = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
 const PRIOR = "https://alternate.example.test/gitlab/qa-platform-director";
 const CANONICAL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director-canonical";
 const CONFIRMED_AT = "2026-07-20T08:00:00.000Z";
+type DatabaseRow = Record<string, unknown>;
+type RepeatApplicationTable =
+  | "application_repeat_overrides"
+  | "application_repeat_override_consumptions"
+  | "application_repeat_audit";
+
+function repeatApplicationTablesExist(db: Database.Database): boolean {
+  return Boolean(
+    db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get("application_repeat_overrides"),
+  );
+}
+
+function clearRepeatApplicationState(db: Database.Database): void {
+  db.prepare(
+    "DELETE FROM application_repeat_override_consumptions WHERE override_id IN (SELECT override_id FROM application_repeat_overrides WHERE target_job_key = ?)",
+  ).run(TARGET);
+  db.prepare("DELETE FROM application_repeat_audit WHERE target_job_key = ?").run(TARGET);
+  db.prepare("DELETE FROM application_repeat_overrides WHERE target_job_key = ?").run(TARGET);
+}
+
+function restoreRows(
+  db: Database.Database,
+  table: RepeatApplicationTable,
+  rows: readonly DatabaseRow[],
+): void {
+  for (const row of rows) {
+    const columns = Object.keys(row);
+    db.prepare(
+      `INSERT INTO ${table} (${columns.map((column) => `"${column}"`).join(", ")})
+       VALUES (${columns.map(() => "?").join(", ")})`,
+    ).run(...columns.map((column) => row[column]));
+  }
+}
 
 test("repeat application block and reasoned override reach only the simulated submit boundary", async ({
   page,
@@ -45,9 +80,36 @@ test("repeat application block and reasoned override reach only the simulated su
   const originalApplyStage = db
     .prepare("SELECT * FROM job_stage_states WHERE job_url = ? AND stage = 'apply'")
     .get(TARGET) as Record<string, unknown> | undefined;
+  const hasRepeatApplicationTables = repeatApplicationTablesExist(db);
+  const originalRepeatOverrides = hasRepeatApplicationTables
+    ? (db
+        .prepare(
+          "SELECT * FROM application_repeat_overrides WHERE tenant_id = 'local' AND target_job_key = ?",
+        )
+        .all(TARGET) as Array<Record<string, unknown>>)
+    : [];
+  const originalRepeatOverrideConsumptions = hasRepeatApplicationTables
+    ? (db
+        .prepare(
+          `SELECT c.*
+             FROM application_repeat_override_consumptions c
+             JOIN application_repeat_overrides o
+               ON o.tenant_id = c.tenant_id AND o.override_id = c.override_id
+            WHERE o.tenant_id = 'local' AND o.target_job_key = ?`,
+        )
+        .all(TARGET) as Array<Record<string, unknown>>)
+    : [];
+  const originalRepeatAudit = hasRepeatApplicationTables
+    ? (db
+        .prepare(
+          "SELECT * FROM application_repeat_audit WHERE tenant_id = 'local' AND target_job_key = ?",
+        )
+        .all(TARGET) as Array<Record<string, unknown>>)
+    : [];
   let originalTargetApplication: Record<string, unknown> | undefined;
 
   try {
+    if (hasRepeatApplicationTables) clearRepeatApplicationState(db);
     const target = db.prepare("SELECT * FROM jobs WHERE url = ?").get(TARGET) as Record<
       string,
       unknown
@@ -213,7 +275,7 @@ print(job["url"])
 
     const override = db
       .prepare(
-        `SELECT target_job_key, prior_job_key, reason, confirmed_by, confirmed_at
+        `SELECT override_id, target_job_key, prior_job_key, evidence_fingerprint, reason, confirmed_by, confirmed_at
            FROM application_repeat_overrides
           WHERE tenant_id = 'local' AND target_job_key = ?
           ORDER BY confirmed_at DESC LIMIT 1`,
@@ -225,15 +287,38 @@ print(job["url"])
       confirmed_by: "user",
     });
     expect(String(override.reason)).toContain("withdrawn before review");
-    expect(
-      db
-        .prepare(
-          `SELECT COUNT(*) AS count FROM application_repeat_audit
-            WHERE target_job_key = ?
-              AND action IN ('blocked', 'override_recorded', 'override_consumed')`,
-        )
-        .get(TARGET),
-    ).toMatchObject({ count: 3 });
+    const auditRows = db
+      .prepare(
+        `SELECT action, evidence_fingerprint, override_id
+           FROM application_repeat_audit
+          WHERE tenant_id = 'local'
+            AND target_job_key = ?
+            AND evidence_fingerprint = ?
+            AND action IN ('blocked', 'override_recorded', 'override_consumed')
+          ORDER BY CASE action
+            WHEN 'blocked' THEN 1
+            WHEN 'override_recorded' THEN 2
+            WHEN 'override_consumed' THEN 3
+          END`,
+      )
+      .all(TARGET, override.evidence_fingerprint) as Array<Record<string, unknown>>;
+    expect(auditRows).toEqual([
+      {
+        action: "blocked",
+        evidence_fingerprint: override.evidence_fingerprint,
+        override_id: null,
+      },
+      {
+        action: "override_recorded",
+        evidence_fingerprint: override.evidence_fingerprint,
+        override_id: override.override_id,
+      },
+      {
+        action: "override_consumed",
+        evidence_fingerprint: override.evidence_fingerprint,
+        override_id: override.override_id,
+      },
+    ]);
     expect(
       db
         .prepare(
@@ -241,12 +326,9 @@ print(job["url"])
              FROM application_repeat_override_consumptions c
              JOIN application_repeat_audit a
                ON a.override_id = c.override_id AND a.action = 'override_consumed'
-            WHERE c.override_id = (
-              SELECT override_id FROM application_repeat_overrides
-               WHERE target_job_key = ? ORDER BY confirmed_at DESC LIMIT 1
-            )`,
+            WHERE c.override_id = ?`,
         )
-        .get(TARGET),
+        .get(override.override_id),
     ).toMatchObject({
       run_id: "e2e-worker-repeat-claim",
       action: "override_consumed",
@@ -271,11 +353,16 @@ print(job["url"])
          VALUES (${columns.map(() => "?").join(", ")})`,
       ).run(...columns.map((column) => originalApplyStage[column]));
     }
-    db.prepare("DELETE FROM application_repeat_audit WHERE target_job_key = ?").run(TARGET);
-    db.prepare(
-      "DELETE FROM application_repeat_override_consumptions WHERE override_id IN (SELECT override_id FROM application_repeat_overrides WHERE target_job_key = ?)",
-    ).run(TARGET);
-    db.prepare("DELETE FROM application_repeat_overrides WHERE target_job_key = ?").run(TARGET);
+    if (repeatApplicationTablesExist(db)) {
+      clearRepeatApplicationState(db);
+      restoreRows(db, "application_repeat_overrides", originalRepeatOverrides);
+      restoreRows(
+        db,
+        "application_repeat_override_consumptions",
+        originalRepeatOverrideConsumptions,
+      );
+      restoreRows(db, "application_repeat_audit", originalRepeatAudit);
+    }
     db.prepare(
       "DELETE FROM job_canonical_identities WHERE tenant_id = 'local' AND job_url IN (?, ?)",
     ).run(TARGET, PRIOR);
