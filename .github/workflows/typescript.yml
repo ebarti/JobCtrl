@@ -62,6 +62,9 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
 
+      - name: Install Python Playwright Chromium
+        run: uv --project workers/automation run playwright install chromium
+
       - name: Test web e2e
         run: pnpm --filter @jobctrl/web e2e
 
