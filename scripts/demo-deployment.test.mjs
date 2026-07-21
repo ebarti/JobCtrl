@@ -53,6 +53,10 @@ test("deployment workflow pins Wrangler, gates production, and deploys in safe o
   const edgePackage = await parse("apps/demo-edge/package.json");
   assert.equal(edgePackage.devDependencies.wrangler, "4.107.0");
   assert.match(workflow, /wrangler@4\.107\.0 pages deploy/);
+  const setupNode = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0";
+  assert.equal(workflow.split(setupNode).length - 1, 3);
+  assert.equal((workflow.match(/node-version: 22\.21\.1/g) ?? []).length, 3);
+  assert.doesNotMatch(workflow, /node-version: "20\.19"/);
   assert.match(workflow, /vars\.DEMO_DEPLOY_ENABLED == 'true'/);
   assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
   assert.doesNotMatch(workflow, /pull_request_target/);
