@@ -64,8 +64,10 @@ of a regular Codex CLI `auth.json`; the explicit Codex provider verify action
 uses the same copy-once behavior before checking the isolated login. Existing
 JobCtrl-owned auth is not overwritten, and the normal Codex home is unchanged.
 The auth file stays outside `codex_home/workspace/`; the permissions profile
-denies root reads and grants prompt-driven reads only to that workspace subtree
-plus minimal provider runtime paths.
+denies root reads and grants prompt-driven reads only to that workspace subtree,
+minimal runtime paths, and the one canonical Codex executable required to start
+the app server. It never grants the executable's parent directory, its
+site-packages tree, or sibling files.
 Structured Claude analysis/voice calls expose no built-in tools.
 Codex analysis disables its shell, denies approvals, and gives any command
 child an empty inherited environment, so provider API keys authenticate the SDK

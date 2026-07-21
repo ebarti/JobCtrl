@@ -24,6 +24,7 @@ No timeout (D-19): ``thread.run`` is awaited to completion; effort is pinned to
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -60,12 +61,7 @@ _CODEX_SCOPE = "jobctrl.analysis.codex"
 # public Python wrapper, while the pinned app-server runtime supports
 # default_permissions profiles.
 _CODEX_PERMISSION_PROFILE = "jobctrl-analysis-readonly"
-_CODEX_PERMISSION_PROFILE_OVERRIDE = (
-    f"permissions.{_CODEX_PERMISSION_PROFILE}="
-    '{filesystem={":root"="deny",":minimal"="read",":workspace_roots"={"."="read"}},'
-    "network={enabled=false}}"
-)
-_CODEX_CONFIG_OVERRIDES = (
+_CODEX_STATIC_CONFIG_OVERRIDES = (
     "features.plugins=false",
     "features.apps=false",
     # Employer analysis is a pure structured-generation call. Do not expose a
@@ -76,7 +72,6 @@ _CODEX_CONFIG_OVERRIDES = (
     "allow_login_shell=false",
     'shell_environment_policy={inherit="none"}',
     f'default_permissions="{_CODEX_PERMISSION_PROFILE}"',
-    _CODEX_PERMISSION_PROFILE_OVERRIDE,
 )
 _CODEX_WORKSPACE_DIRNAME = "workspace"
 _CODEX_PROCESS_HOME_DIRNAME = "home"
@@ -131,6 +126,62 @@ def _isolated_codex_env(codex_home: Path, process_home: Path) -> dict[str, str]:
     return env
 
 
+def _canonical_codex_binary() -> Path:
+    """Resolve one executable file trusted by the selected Codex runtime.
+
+    ``resolve_codex_binary`` owns provider-pack verification in bundled mode and
+    the explicit source-install override policy. The sandbox must receive its
+    exact canonical executable path, rather than a directory that could expose
+    sibling package files or be retargeted through a symlink.
+    """
+
+    configured = Path(resolve_codex_binary())
+    try:
+        binary = configured.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError(f"Codex binary could not be canonicalized: {configured}") from exc
+    if not binary.is_file():
+        raise RuntimeError(f"Codex binary is not a regular file: {binary}")
+    if not os.access(binary, os.X_OK):
+        raise RuntimeError(f"Codex binary is not executable: {binary}")
+    return binary
+
+
+def _codex_permission_profile_override(codex_binary: Path) -> str:
+    """Grant the sandbox read access to only the canonical Codex executable.
+
+    The value is a TOML command-line override. JSON string encoding is valid for
+    TOML basic strings and prevents a quote or backslash in an operator-provided
+    source-install path from changing the surrounding permissions structure.
+    """
+
+    quoted_binary = json.dumps(str(codex_binary))
+    return (
+        f"permissions.{_CODEX_PERMISSION_PROFILE}="
+        '{filesystem={":root"="deny",":minimal"="read",":workspace_roots"={"."="read"},'
+        f"{quoted_binary}=\"read\"}},"
+        "network={enabled=false}}"
+    )
+
+
+def _codex_config_overrides(codex_binary: Path) -> tuple[str, ...]:
+    """Build the immutable Codex configuration for one canonical executable."""
+
+    return (*_CODEX_STATIC_CONFIG_OVERRIDES, _codex_permission_profile_override(codex_binary))
+
+
+def _codex_config_kwargs(dirs: _CodexHomeDirs) -> dict[str, Any]:
+    """Build one SDK configuration bound to the exact sandbox-permitted binary."""
+
+    codex_binary = _canonical_codex_binary()
+    return {
+        "cwd": str(dirs.workdir),
+        "env": _isolated_codex_env(dirs.codex_home, dirs.process_home),
+        "config_overrides": _codex_config_overrides(codex_binary),
+        "codex_bin": str(codex_binary),
+    }
+
+
 def _load_async_codex_factory() -> AsyncCodexFactory:
     """Build an ``AsyncCodex`` CM with a locked-down command permissions profile.
 
@@ -146,16 +197,7 @@ def _load_async_codex_factory() -> AsyncCodexFactory:
 
     def _make() -> Any:
         dirs = _prepare_isolated_codex_home()
-        config_kwargs: dict[str, Any] = {
-            "cwd": str(dirs.workdir),
-            "env": _isolated_codex_env(dirs.codex_home, dirs.process_home),
-            "config_overrides": _CODEX_CONFIG_OVERRIDES,
-        }
-        # Prefer the SDK-pinned bundled runtime. A system ``codex`` on PATH may
-        # speak a different app-server protocol; JOBCTRL_CODEX_BIN is the
-        # explicit escape hatch for setup-managed platform fallbacks.
-        config_kwargs["codex_bin"] = str(resolve_codex_binary())
-        return AsyncCodex(config=CodexConfig(**config_kwargs))
+        return AsyncCodex(config=CodexConfig(**_codex_config_kwargs(dirs)))
 
     return _make
 
@@ -178,14 +220,7 @@ def _load_catalog_async_codex_factory() -> AsyncCodexFactory:
 
     def _make() -> Any:
         dirs = _prepare_isolated_codex_home(ensure_auth=False)
-        return AsyncCodex(
-            config=CodexConfig(
-                cwd=str(dirs.workdir),
-                env=_isolated_codex_env(dirs.codex_home, dirs.process_home),
-                config_overrides=_CODEX_CONFIG_OVERRIDES,
-                codex_bin=str(resolve_codex_binary()),
-            )
-        )
+        return AsyncCodex(config=CodexConfig(**_codex_config_kwargs(dirs)))
 
     return _make
 
