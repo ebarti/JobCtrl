@@ -51,6 +51,6 @@ features:
   - icon: ⚙️
     title: Temporal-Native Pipeline
     details: Every stage runs as a durable workflow with heartbeats, classified retries, and a daily LLM spend ceiling.
-    link: /user/product-tour#runs-history
+    link: /user/product-tour#runs
     linkText: See run history
 ---
