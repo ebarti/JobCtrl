@@ -3,9 +3,11 @@
 set -euo pipefail
 
 # P6 renders these from the signed publication. Empty pins fail closed.
+# BEGIN JOBCTRL RELEASE PINS
 INSTALLER_URL=""
 INSTALLER_SHA256=""
 INSTALLER_VERSION=""
+# END JOBCTRL RELEASE PINS
 
 usage() {
   cat <<'EOF'

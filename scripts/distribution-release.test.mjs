@@ -550,7 +550,7 @@ test("published paths, installer pins, and smoke contract use canonical HTTPS as
   assert.equal(urls.descriptorUrl, "https://releases.jobctrl.dev/v1/stable/darwin-arm64.json");
   assert.equal(urls.immutableDescriptorUrl, "https://releases.jobctrl.dev/v1/artifacts/stable-build-0000042/release-descriptor.json");
   const rendered = renderPinnedInstallScript({
-    templateRaw: '#!/usr/bin/env bash\nINSTALLER_URL=""\nINSTALLER_SHA256=""\nINSTALLER_VERSION=""\n# no signed native installer is published yet; P6 release signing is still blocked\n',
+    templateRaw: '#!/usr/bin/env bash\n# BEGIN JOBCTRL RELEASE PINS\nINSTALLER_URL=""\nINSTALLER_SHA256=""\nINSTALLER_VERSION=""\n# END JOBCTRL RELEASE PINS\n# no signed native installer is published yet; P6 release signing is still blocked\n',
     installerUrl: urls.installerUrl,
     installerSha256: "a".repeat(64),
     installerVersion: "2.0.0",
@@ -560,6 +560,80 @@ test("published paths, installer pins, and smoke contract use canonical HTTPS as
   assert.deepEqual(plan.map((step) => step.args[0]), ["--fail", "--fail", "--source", "start", "status", "version", "stop", "status"]);
   assert.ok(plan[2].args.includes("--release-url"));
   assert.ok(!plan[2].args.includes("--descriptor-url"));
+});
+
+test("install-script rendering advances the actual bounded pin header without changing fixture assignments", async () => {
+  const [template, publicInstall] = await Promise.all([
+    readFile(path.join(process.cwd(), "scripts", "get"), "utf8"),
+    readFile(path.join(process.cwd(), "docs", "public", "install.sh"), "utf8"),
+  ]);
+  assert.equal(publicInstall, template, "the public installer must match the canonical template");
+  const fixtureBranch = 'if [[ -n "$FIXTURE_CONTRACT" ]]; then';
+  const fixtureBody = template.slice(template.indexOf(fixtureBranch));
+  assert.ok(fixtureBody.startsWith(fixtureBranch));
+  const first = renderPinnedInstallScript({
+    templateRaw: template,
+    installerUrl: "https://releases.jobctrl.dev/v1/artifacts/stable-build-0000042/jobctrl-installer",
+    installerSha256: "a".repeat(64),
+    installerVersion: "2.0.0",
+  });
+  const rerendered = renderPinnedInstallScript({
+    templateRaw: first,
+    installerUrl: "https://releases.jobctrl.dev/v1/artifacts/stable-build-0000043/jobctrl-installer",
+    installerSha256: "b".repeat(64),
+    installerVersion: "2.0.1",
+  });
+  assert.match(rerendered, /INSTALLER_URL="https:\/\/releases\.jobctrl\.dev\/v1\/artifacts\/stable-build-0000043\/jobctrl-installer"/);
+  assert.match(rerendered, /INSTALLER_SHA256="b{64}"/);
+  assert.match(rerendered, /INSTALLER_VERSION="2\.0\.1"/);
+  assert.doesNotMatch(rerendered, /stable-build-0000042|a{64}|INSTALLER_VERSION="2\.0\.0"/);
+  assert.equal(rerendered.slice(rerendered.indexOf(fixtureBranch)), fixtureBody, "fixture assignments must remain byte-for-byte unchanged");
+
+  assert.throws(
+    () => renderPinnedInstallScript({
+      templateRaw: template.replace('INSTALLER_URL=""', "INSTALLER_URL=https://releases.jobctrl.dev/jobctrl-installer"),
+      installerUrl: "https://releases.jobctrl.dev/v1/artifacts/stable-build-0000043/jobctrl-installer",
+      installerSha256: "b".repeat(64),
+      installerVersion: "2.0.1",
+    }),
+    /malformed INSTALLER_URL assignment/,
+  );
+  assert.throws(
+    () => renderPinnedInstallScript({
+      templateRaw: template.replace('INSTALLER_VERSION=""', 'INSTALLER_VERSION="2.0.0"\nexport INSTALLER_VERSION="2.0.1"'),
+      installerUrl: "https://releases.jobctrl.dev/v1/artifacts/stable-build-0000043/jobctrl-installer",
+      installerSha256: "b".repeat(64),
+      installerVersion: "2.0.1",
+    }),
+    /exactly one INSTALLER_VERSION assignment/,
+  );
+  assert.throws(
+    () => renderPinnedInstallScript({
+      templateRaw: template.replace('# BEGIN JOBCTRL RELEASE PINS', '# BEGIN JOBCTRL RELEASE PINS\n# BEGIN JOBCTRL RELEASE PINS'),
+      installerUrl: "https://releases.jobctrl.dev/v1/artifacts/stable-build-0000043/jobctrl-installer",
+      installerSha256: "b".repeat(64),
+      installerVersion: "2.0.1",
+    }),
+    /exactly one release-pin header start marker/,
+  );
+  assert.throws(
+    () => renderPinnedInstallScript({
+      templateRaw: template.replace('# END JOBCTRL RELEASE PINS', '# END JOBCTRL RELEASE PINS\n# END JOBCTRL RELEASE PINS'),
+      installerUrl: "https://releases.jobctrl.dev/v1/artifacts/stable-build-0000043/jobctrl-installer",
+      installerSha256: "b".repeat(64),
+      installerVersion: "2.0.1",
+    }),
+    /exactly one release-pin header end marker/,
+  );
+  assert.throws(
+    () => renderPinnedInstallScript({
+      templateRaw: template.replace('Usage: scripts/get', '# END JOBCTRL RELEASE PINS\nUsage: scripts/get'),
+      installerUrl: "https://releases.jobctrl.dev/v1/artifacts/stable-build-0000043/jobctrl-installer",
+      installerSha256: "b".repeat(64),
+      installerVersion: "2.0.1",
+    }),
+    /exactly one release-pin header end marker/,
+  );
 });
 
 test("channel pointers atomically bind one immutable descriptor/signature pair", () => {
