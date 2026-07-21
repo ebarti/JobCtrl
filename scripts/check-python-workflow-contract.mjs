@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const workflow = await readFile(new URL("../.github/workflows/python.yml", import.meta.url), "utf8");
+assert.doesNotMatch(
+  workflow,
+  /(?:Install LaTeX|texlive-)/,
+  "Python CI must not install the retired LaTeX renderer toolchain.",
+);
 const setupStep = `      - name: Enable Linux user namespaces for Bubblewrap
         if: \${{ runner.os == 'Linux' && runner.environment == 'github-hosted' }}
         shell: bash

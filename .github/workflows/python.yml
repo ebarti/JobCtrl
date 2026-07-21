@@ -30,13 +30,6 @@ jobs:
       - name: Install dependencies
         run: pip install -e "workers/automation[dev,providers]"
 
-      - name: Install LaTeX
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends texlive-latex-extra texlive-fonts-extra
-
       - name: Lint
         run: ruff check workers/automation/src workers/automation/tests
 
