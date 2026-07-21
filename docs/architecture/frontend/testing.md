@@ -194,16 +194,21 @@ runs, in order:
    compile-time guards (`Record<DomainEventType, InvalidationHandler>`
    exhaustiveness, etc.) fire here — this is the CI-enforced parity guard.
 2. `pnpm --filter @jobctrl/api test` (the API Vitest suite; API only).
-3. `pnpm --filter @jobctrl/web build` (Vite production build).
-4. `pnpm --filter @jobctrl/web storybook:build` (static Storybook build).
-5. `pnpm --filter @jobctrl/web storybook:test` (Storybook test runner —
-   play functions + `@storybook/addon-a11y` axe checks — after installing
-   Playwright Chromium).
+3. `pnpm --filter @jobctrl/web test` (web unit and integration coverage).
+4. `pnpm --filter @jobctrl/web test-d` (web type assertions).
+5. `pnpm --filter @jobctrl/web build` (Vite production build).
+6. `pnpm --filter @jobctrl/web storybook:build` (static Storybook build).
+7. Install Chromium for both the Node Playwright E2E runner and the locked
+   Python Playwright runtime used by API-backed preview routes.
+8. `pnpm --filter @jobctrl/web e2e` (browser coverage against the local API
+   and web servers).
+9. `pnpm --filter @jobctrl/web storybook:test` (Storybook test runner —
+   play functions + `@storybook/addon-a11y` axe checks).
 
 Not yet gated in CI (run locally / pre-merge; tracked in `docs/backlog.md`):
 the web Vitest unit + integration suite — including the event-handler and
-stage-state parity tests (§10.2) — ESLint, and the Playwright e2e suite
-(§10.4). Chromatic / Loki visual regression is named-not-built (§10.5). The
+stage-state parity tests (§10.2) — and ESLint. Chromatic / Loki visual
+regression is named-not-built (§10.5). The
 frontend's parity tests are the analogue of the backend's
 `scripts/check-domain-type-parity.py`; today their CI-enforced half is the
 `pnpm -r check` typecheck, with the runtime backstop running locally.
