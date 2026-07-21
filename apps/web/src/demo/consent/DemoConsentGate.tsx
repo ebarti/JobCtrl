@@ -64,6 +64,10 @@ export function DemoConsentGate({
           experience. The demo uses synthetic jobs and stays in this browser; do not enter
           personal data, credentials, or secrets.
         </p>
+        <p>
+          Data controller: Eloi Barti, acting as an individual. Privacy questions: {" "}
+          <a href="mailto:me@eloibarti.com">me@eloibarti.com</a>.
+        </p>
         {initialChoice === "denied" ? (
           <p className="demo-consent-return-note">
             You previously declined. Accept now to enter, or decline again to return to

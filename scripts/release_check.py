@@ -342,6 +342,40 @@ PUBLIC_COPYRIGHT_SNIPPETS = (
     f"Copyright (C) 2026 {PUBLIC_COPYRIGHT_HOLDER}",
     f"Copyright © 2026 {PUBLIC_COPYRIGHT_HOLDER}",
 )
+PUBLIC_DEMO_CONTROLLER_NAME = "El" + "oi Barti"
+PUBLIC_DEMO_CONTROLLER_EMAIL = "me@" + "el" + "oi" + "barti" + ".com"
+PUBLIC_DEMO_CONTROLLER_SOURCE_SNIPPETS = {
+    Path("apps/web/src/demo/consent/DemoConsentGate.tsx"): (
+        f"Data controller: {PUBLIC_DEMO_CONTROLLER_NAME}, acting as an individual. Privacy questions:",
+        f'<a href="mailto:{PUBLIC_DEMO_CONTROLLER_EMAIL}">{PUBLIC_DEMO_CONTROLLER_EMAIL}</a>',
+    ),
+    Path("apps/web/src/demo/consent/DemoConsentGate.test.tsx"): (
+        f"screen.getByText(/data controller: {PUBLIC_DEMO_CONTROLLER_NAME.lower()}, acting as an individual/i)",
+        f'name: "{PUBLIC_DEMO_CONTROLLER_EMAIL}"',
+        f'"mailto:{PUBLIC_DEMO_CONTROLLER_EMAIL}"',
+    ),
+    Path("docs/user/data-and-safety.md"): (
+        f"The data controller for the public demo is {PUBLIC_DEMO_CONTROLLER_NAME}, acting as an individual.\n"
+        f"For privacy questions, contact [{PUBLIC_DEMO_CONTROLLER_EMAIL}](mailto:{PUBLIC_DEMO_CONTROLLER_EMAIL}).",
+    ),
+    Path("docs/.vitepress/dist/user/data-and-safety.html"): (
+        f"The data controller for the public demo is {PUBLIC_DEMO_CONTROLLER_NAME}, acting as an individual.",
+        f'href="mailto:{PUBLIC_DEMO_CONTROLLER_EMAIL}">{PUBLIC_DEMO_CONTROLLER_EMAIL}</a>',
+    ),
+}
+PUBLIC_DEMO_CONTROLLER_BUILD_ASSET_PREFIXES = (
+    Path("dist/web/assets"),
+    Path("dist/web-storybook/assets"),
+    Path("apps/web/dist/assets"),
+)
+PUBLIC_DEMO_CONTROLLER_BUILD_SNIPPETS = (
+    f"Data controller: {PUBLIC_DEMO_CONTROLLER_NAME}, acting as an individual. Privacy questions:",
+    f'href:"mailto:{PUBLIC_DEMO_CONTROLLER_EMAIL}",children:"{PUBLIC_DEMO_CONTROLLER_EMAIL}"',
+)
+PUBLIC_DEMO_CONTROLLER_BUILD_SOURCE_MAP_SNIPPETS = (
+    f"Data controller: {PUBLIC_DEMO_CONTROLLER_NAME}, acting as an individual. Privacy questions:",
+    f'href=\\"mailto:{PUBLIC_DEMO_CONTROLLER_EMAIL}\\">{PUBLIC_DEMO_CONTROLLER_EMAIL}</a>',
+)
 
 
 def candidate_files(root: Path = ROOT) -> list[Path]:
@@ -576,14 +610,42 @@ def scan_text(
 ) -> list[str]:
     """Scan text content for forbidden strings and non-empty secret assignments."""
     findings = []
+    redacted_text = _redact_public_demo_controller_disclosure(text, rel)
     for needle in needles:
-        scan_target = _redact_public_attribution(text, rel, needle)
+        scan_target = _redact_public_attribution(redacted_text, rel, needle)
         if _contains_needle(scan_target, needle):
             findings.append(f"{label}: contains {needle.reason}")
 
     if _is_secret_assignment_file(rel):
         findings.extend(scan_secret_assignments(label, text))
     return findings
+
+
+def _redact_public_demo_controller_disclosure(text: str, rel: Path) -> str:
+    """Exclude the approved controller disclosure only at its public release surfaces."""
+    snippets = PUBLIC_DEMO_CONTROLLER_SOURCE_SNIPPETS.get(rel)
+    if snippets is None and _is_public_demo_controller_build_asset(rel):
+        snippets = (
+            PUBLIC_DEMO_CONTROLLER_BUILD_SOURCE_MAP_SNIPPETS
+            if rel.suffix.lower() == ".map"
+            else PUBLIC_DEMO_CONTROLLER_BUILD_SNIPPETS
+        )
+    if snippets is None:
+        return text
+
+    redacted = text
+    for snippet in snippets:
+        redacted = redacted.replace(snippet, "<public demo controller disclosure>")
+    return redacted
+
+
+def _is_public_demo_controller_build_asset(rel: Path) -> bool:
+    if rel.is_absolute() or ".." in rel.parts:
+        return False
+    return rel.suffix.lower() in {*MINIFIED_BUILD_SUFFIXES, ".map"} and any(
+        rel.is_relative_to(prefix)
+        for prefix in PUBLIC_DEMO_CONTROLLER_BUILD_ASSET_PREFIXES
+    )
 
 
 def _redact_public_attribution(text: str, rel: Path, needle: ForbiddenNeedle) -> str:

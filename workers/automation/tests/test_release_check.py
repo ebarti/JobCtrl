@@ -46,6 +46,108 @@ def test_public_copyright_attribution_does_not_disable_private_name_detection() 
     ) == ["README.md: contains private first name"]
 
 
+def test_public_demo_controller_disclosure_is_limited_to_exact_public_surfaces() -> None:
+    controller = "El" + "oi Barti"
+    email = "me@" + "el" + "oi" + "barti" + ".com"
+    source_disclosure = (
+        f"Data controller: {controller}, acting as an individual. Privacy questions:\n"
+        f'<a href="mailto:{email}">{email}</a>'
+    )
+    docs_disclosure = (
+        f"The data controller for the public demo is {controller}, acting as an individual.\n"
+        f"For privacy questions, contact [{email}](mailto:{email})."
+    )
+    test_disclosure = (
+        f"screen.getByText(/data controller: {controller.lower()}, acting as an individual/i)\n"
+        f'screen.getByRole("link", {{ name: "{email}" }})).toHaveAttribute(\n'
+        f'  "href",\n  "mailto:{email}",\n)'
+    )
+    emitted_demo_disclosure = (
+        f'Data controller: {controller}, acting as an individual. Privacy questions: "," '
+        f'I.jsx("a",{{href:"mailto:{email}",children:"{email}"}})'
+    )
+
+    assert release_check.scan_text(
+        "apps/web/src/demo/consent/DemoConsentGate.tsx",
+        source_disclosure,
+        Path("apps/web/src/demo/consent/DemoConsentGate.tsx"),
+    ) == []
+    assert release_check.scan_text(
+        "docs/user/data-and-safety.md",
+        docs_disclosure,
+        Path("docs/user/data-and-safety.md"),
+    ) == []
+    assert release_check.scan_text(
+        "apps/web/src/demo/consent/DemoConsentGate.test.tsx",
+        test_disclosure,
+        Path("apps/web/src/demo/consent/DemoConsentGate.test.tsx"),
+    ) == []
+    assert release_check.scan_text(
+        "dist/web/assets/demo.js",
+        emitted_demo_disclosure,
+        Path("dist/web/assets/demo.js"),
+    ) == []
+    assert release_check.scan_text(
+        "dist/web/assets/demo.js.map",
+        source_disclosure.replace('"', '\\"'),
+        Path("dist/web/assets/demo.js.map"),
+    ) == []
+    assert release_check.scan_text(
+        "docs/.vitepress/dist/user/data-and-safety.html",
+        (
+            f"The data controller for the public demo is {controller}, acting as an individual.\n"
+            f'<a href="mailto:{email}">{email}</a>'
+        ),
+        Path("docs/.vitepress/dist/user/data-and-safety.html"),
+    ) == []
+
+    expected = {
+        "contains private username/domain",
+        "contains private first name",
+        "contains private personal domain",
+    }
+    for label, rel in (
+        ("docs/unrelated.md", Path("docs/unrelated.md")),
+        ("dist/web/assets/unrelated.js", Path("dist/web/assets/unrelated.js")),
+        ("dist/web/assets/unrelated.js.map", Path("dist/web/assets/unrelated.js.map")),
+    ):
+        findings = release_check.scan_text(label, f"{controller} {email}", rel)
+        assert {finding.split(": ", 1)[1] for finding in findings} == expected
+
+
+def test_public_demo_controller_build_assets_reject_archive_path_traversal(tmp_path: Path) -> None:
+    controller = "El" + "oi Barti"
+    email = "me@" + "el" + "oi" + "barti" + ".com"
+    payload = (
+        f'Data controller: {controller}, acting as an individual. Privacy questions: "," '
+        f'I.jsx("a",{{href:"mailto:{email}",children:"{email}"}})'
+    ).encode()
+    member = "dist/web/assets/../../private.js"
+    zip_path = tmp_path / "dist/controller.zip"
+    zip_path.parent.mkdir(parents=True)
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr(member, payload)
+
+    tar_path = tmp_path / "dist/controller.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as archive:
+        info = tarfile.TarInfo(member)
+        info.size = len(payload)
+        archive.addfile(info, io.BytesIO(payload))
+
+    assert not release_check._is_public_demo_controller_build_asset(Path(member))
+    assert not release_check._is_public_demo_controller_build_asset(
+        Path("/dist/web/assets/demo.js")
+    )
+    for archive_path, findings in (
+        (zip_path, release_check.scan_zip_archive(tmp_path, zip_path)),
+        (tar_path, release_check.scan_tar_archive(tmp_path, tar_path)),
+    ):
+        assert (
+            f"{archive_path.relative_to(tmp_path)}!{member}: contains private username/domain"
+            in findings
+        )
+
+
 def test_public_demo_fixture_allowlist_is_exact_and_keeps_the_pdf_ban() -> None:
     allowed = Path("apps/web/public/demo/profile-resume.pdf")
 
