@@ -72,8 +72,8 @@ function seedAcceptedPrep(dbPath: string, occurredAt: string): void {
          control, grounding_audit_json, warnings_json, position
        ) VALUES (?, 1, 'prep-e2e-star', 'local', 'star_draft', 'Platform ownership story',
          'Use the platform ownership story to answer systems and team-enablement questions.',
-         '["ev_platform"]', '["r1"]', '["Owned the developer platform across product teams."]',
-         'grounded_prep', 'never_fabricate', '["ev_platform supports the STAR draft."]', '[]', 0)
+         '["ev-platform"]', '["r1"]', '["Owned the developer platform across product teams."]',
+         'grounded_prep', 'never_fabricate', '["ev-platform supports the STAR draft."]', '[]', 0)
        ON CONFLICT(job_url, generation, item_id) DO UPDATE SET
          title = excluded.title,
          generated_text = excluded.generated_text`,
@@ -112,11 +112,16 @@ test("Interview prep: explicit generation queues and accepted prep surfaces with
     .locator("table.jobs-data-grid-table tbody tr")
     .filter({ hasText: "Director of Platform Engineering" });
   await expect(row).toBeVisible({ timeout: 30_000 });
-  await row
-    .getByRole("button", { name: /^Open job Director of Platform Engineering/ })
-    .click();
+  // Desktop exposes the named row-activation control to keyboard users only.
+  // Pointer users activate the visible job title (and Playwright verifies it is
+  // not covered by persistent shell chrome).
+  const visibleTitle = row
+    .locator('[data-slot="title-stack-primary"]')
+    .filter({ hasText: /^Director of Platform Engineering$/ });
+  await expect(visibleTitle).toBeVisible();
+  await visibleTitle.click();
 
-  const drawer = page.getByRole("dialog", { name: "Job details" });
+  const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });
 
   const generateButton = drawer.getByRole("button", { name: /generate interview prep/i });
@@ -168,7 +173,10 @@ test("Interview prep: explicit generation queues and accepted prep surfaces with
   await expect(reflections.getByText(reflectionNote)).toBeVisible();
   await expect(reflections.getByText("prep generation 1")).toBeVisible();
 
-  await expect(drawer.getByRole("link", { name: "ev_platform" })).toBeVisible();
-  await drawer.getByRole("link", { name: "ev_platform" }).click();
-  await expect(page).toHaveURL(/\/evidence-map\?.*entry=ev_platform/);
+  const evidenceLink = drawer.getByRole("link", {
+    name: "Owned platform reliability improvements for incident response.",
+  });
+  await expect(evidenceLink).toHaveAttribute("href", /entry=ev-platform/);
+  await evidenceLink.click();
+  await expect(page).toHaveURL(/\/evidence-map\?.*entry=ev-platform/);
 });

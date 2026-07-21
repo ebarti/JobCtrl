@@ -1726,7 +1726,10 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
   );
   await expectKeyboardFocusIndicator(
     page,
-    page.getByLabel("Results per board"),
+    page.getByRole("spinbutton", {
+      name: "Results per board",
+      exact: true,
+    }),
     "discovery results per board input",
   );
   await expect(page.getByRole("checkbox", { name: "LinkedIn" })).toBeVisible();

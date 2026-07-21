@@ -74,6 +74,7 @@ describe("Playwright server isolation", () => {
       XDG_CACHE_HOME: path.join(serviceHome, ".cache"),
       PLAYWRIGHT_BROWSERS_PATH: "/tmp/jobctrl-playwright-browsers",
       TZ: "UTC",
+      UV_LOCKED: "1",
     });
     expect(config.webServer[1]?.env).toMatchObject({
       VITE_DEV_API_PROXY_TARGET: "http://127.0.0.1:18767",

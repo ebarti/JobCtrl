@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 from jobstreaming import CheckpointConflictError, SearchCheckpoint, build_search_request
 
-from jobctrl.database import close_connection, init_db
+from jobctrl.database import SCHEMA_VERSION, close_connection, init_db
 from jobctrl.domain.discovery import (
     AtsKind,
     CanonicalJobIdentity,
@@ -282,7 +282,10 @@ def test_v4_search_unit_tables_migrate_consumption_ordering(
                AND name = 'discovery_search_unit_filtered_events'
             """
         ).fetchone()[0] == 1
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5
+        # ``user_version`` guards the complete database shape, so reopening a
+        # v4 fixture must advance to the current schema rather than pinning
+        # this search-unit migration to its historical v5 release.
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     finally:
         close_connection(db_path)
 

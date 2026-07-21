@@ -831,6 +831,20 @@ describe("<ApplyReviewView>", () => {
           },
           identityEvidence: ["employer:globex", "role:principal platform engineer"],
         },
+        {
+          relationship: "same_employer_equivalent_role",
+          reason: "The employer identity matches exactly and the normalized role titles are materially equivalent.",
+          priorApplication: {
+            jobKey: "https://alternate.example.test/jobs/prior-platform",
+            title: "Principal Platform Engineer",
+            company: "Globex",
+            applicationUrl: "https://alternate.example.test/jobs/prior-platform/apply",
+            factKind: "application_submitted",
+            factId: "event:43",
+            confirmedAt: "2026-05-01T10:00:00Z",
+          },
+          identityEvidence: ["employer:globex", "role:principal platform engineer"],
+        },
       ],
       auditTrail: [
         {
@@ -873,8 +887,10 @@ describe("<ApplyReviewView>", () => {
     });
 
     expect(await screen.findByText("Review prior application before live submit")).toBeInTheDocument();
-    expect(screen.getByText("worker-confirmed submission", { exact: false })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Inspect prior application" })).toHaveAttribute(
+    expect(screen.getAllByText("worker-confirmed submission", { exact: false })).toHaveLength(2);
+    expect(screen.getByRole("link", {
+      name: "Inspect prior application: https://example.com/jobs/prior-platform",
+    })).toHaveAttribute(
       "href",
       `/jobs/${encodeURIComponent("https://example.com/jobs/prior-platform")}`,
     );
@@ -885,11 +901,15 @@ describe("<ApplyReviewView>", () => {
       screen.getByLabelText("Reason for another live attempt"),
       "The first application was withdrawn before review.",
     );
+    expect(screen.getByRole("button", { name: "Confirm one live attempt" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("radio", {
+      name: "Confirm prior application: https://alternate.example.test/jobs/prior-platform",
+    }));
     await userEvent.click(screen.getByRole("button", { name: "Confirm one live attempt" }));
     expect(screen.getByRole("button", { name: "Recording confirmation" })).toBeDisabled();
     expect(confirmRepeatApplication).toHaveBeenCalledWith(queue.items[0]!.jobKey, {
       evidenceFingerprint: fingerprint,
-      priorJobKey: "https://example.com/jobs/prior-platform",
+      priorJobKey: "https://alternate.example.test/jobs/prior-platform",
       reason: "The first application was withdrawn before review.",
       confirmedBy: "user",
     });

@@ -280,11 +280,17 @@ export function repeatEvidenceFingerprint(
 }
 
 function jobIdentity(db: SqliteDatabase, jobKey: string): JobIdentityRow | null {
-  const companyExpression = columnExists(db, "jobs", "company")
-    ? "j.company"
-    : tableExists(db, "job_list_projections")
-      ? `(SELECT jlp.employer FROM job_list_projections jlp
-           WHERE jlp.tenant_id = ? AND jlp.job_id = j.url LIMIT 1)`
+  const hasCompanyColumn = columnExists(db, "jobs", "company");
+  const hasJobListProjections = tableExists(db, "job_list_projections");
+  const companyExpression = hasJobListProjections
+    ? `COALESCE(
+        ${hasCompanyColumn ? "NULLIF(j.company, '')" : "NULL"},
+        (SELECT jlp.employer FROM job_list_projections jlp
+         WHERE jlp.tenant_id = ? AND jlp.job_id = j.url LIMIT 1),
+        ''
+      )`
+    : hasCompanyColumn
+      ? "COALESCE(j.company, '')"
       : "''";
   const enrichmentExpression = tableExists(db, "job_enrichments")
     ? `(SELECT je.application_url
@@ -293,7 +299,7 @@ function jobIdentity(db: SqliteDatabase, jobKey: string): JobIdentityRow | null 
          ORDER BY je.updated_at DESC LIMIT 1),`
     : "";
   const params = [
-    ...(companyExpression.includes("jlp.tenant_id") ? [DEFAULT_TENANT] : []),
+    ...(hasJobListProjections ? [DEFAULT_TENANT] : []),
     ...(enrichmentExpression ? [DEFAULT_TENANT] : []),
     jobKey,
   ];
@@ -664,7 +670,7 @@ function auditTrail(db: SqliteDatabase, targetJobKey: string): RepeatApplication
        LEFT JOIN application_repeat_overrides o
          ON o.tenant_id = a.tenant_id AND o.override_id = a.override_id
       WHERE a.tenant_id = ? AND a.target_job_key = ?
-      ORDER BY a.occurred_at DESC, a.audit_id DESC LIMIT 50`,
+      ORDER BY a.occurred_at DESC, a.rowid DESC LIMIT 50`,
     [DEFAULT_TENANT, targetJobKey],
   ).map((row) => ({
     auditId: row.audit_id,

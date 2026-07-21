@@ -128,6 +128,10 @@ function jobRow(page: Page, title: string): Locator {
   });
 }
 
+function visible(page: Page, locator: Locator): Locator {
+  return locator.and(page.locator(":visible"));
+}
+
 async function expectJobState(
   page: Page,
   title: string,
@@ -778,7 +782,7 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
       "article",
     ],
     ["/analytics", "Outcome analytics", "bundled-capture"],
-    ["/profile", "Profile", "Baseline resume editor"],
+    ["/profile", "Profile", "Personal information"],
     ["/settings", "Settings", "Config"],
     ["/settings/credentials", "Settings", "Codex"],
     ["/outreach", "Contacts", "Synthetic hiring partner"],
@@ -802,25 +806,29 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
   for (const [route, identity, populatedText, role = "heading"] of routes) {
     await page.goto(STATIC_HOST);
     await page.goto(route);
-    const identityLocator =
+    const identityLocator = visible(
+      page,
       role === "article"
-        ? page.getByRole("article", { name: identity })
-        : page.getByRole("heading", { name: identity }).first();
+        ? page.getByRole("article", { name: identity, exact: true })
+        : page.getByRole("heading", { name: identity, exact: true }),
+    );
+    const contentScope = role === "article" ? identityLocator : page.locator("main");
+    const populatedLocator = visible(
+      page,
+      contentScope.getByText(populatedText, { exact: false }),
+    );
+
+    await expect(identityLocator).toHaveCount(1);
     await expect(identityLocator).toBeVisible();
-    await expect(
-      page.getByText(populatedText, { exact: false }).first(),
-    ).toBeVisible();
+    await expect(populatedLocator).not.toHaveCount(0);
+    await expect(populatedLocator.first()).toBeVisible();
     expect(page.url()).toContain(route);
 
     await page.reload();
-    await expect(
-      role === "article"
-        ? page.getByRole("article", { name: identity })
-        : page.getByRole("heading", { name: identity }).first(),
-    ).toBeVisible();
-    await expect(
-      page.getByText(populatedText, { exact: false }).first(),
-    ).toBeVisible();
+    await expect(identityLocator).toHaveCount(1);
+    await expect(identityLocator).toBeVisible();
+    await expect(populatedLocator).not.toHaveCount(0);
+    await expect(populatedLocator.first()).toBeVisible();
   }
 
   expect(runtimeErrors).toEqual([]);
@@ -907,19 +915,27 @@ scenarioTest("eventless discovery and settings writes resync across tabs and sur
   const second = await context.newPage();
 
   await Promise.all([page.goto("/discovery"), second.goto("/discovery")]);
-  await expect(page.getByLabel("Results per board")).toHaveValue("12");
-  await expect(second.getByLabel("Results per board")).toHaveValue("12");
-  await page.getByLabel("Results per board").fill("23");
+  const resultsPerBoard = page.getByRole("spinbutton", {
+    name: "Results per board",
+    exact: true,
+  });
+  const secondResultsPerBoard = second.getByRole("spinbutton", {
+    name: "Results per board",
+    exact: true,
+  });
+  await expect(resultsPerBoard).toHaveValue("12");
+  await expect(secondResultsPerBoard).toHaveValue("12");
+  await resultsPerBoard.fill("23");
   const discoveryForm = page.locator("form").filter({
-    has: page.getByLabel("Results per board"),
+    has: resultsPerBoard,
   });
   await discoveryForm
     .getByRole("button", { name: "Save changes", exact: true })
     .click();
   await expect(page.getByText("Runtime settings saved.")).toBeVisible();
-  await expect(second.getByLabel("Results per board")).toHaveValue("23");
+  await expect(secondResultsPerBoard).toHaveValue("23");
   await second.reload();
-  await expect(second.getByLabel("Results per board")).toHaveValue("23");
+  await expect(secondResultsPerBoard).toHaveValue("23");
 
   await Promise.all([page.goto("/settings"), second.goto("/settings")]);
   await expect(page.getByLabel("Concurrent applications")).toHaveValue("1");
@@ -929,7 +945,7 @@ scenarioTest("eventless discovery and settings writes resync across tabs and sur
     has: page.getByLabel("Concurrent applications"),
   });
   await executionForm.getByRole("button", { name: "Save changes", exact: true }).click();
-  await expect(page.getByText("settings saved", { exact: true })).toBeVisible();
+  await expect(executionForm.getByRole("status")).toHaveText("Settings saved.");
   await expect(second.getByLabel("Concurrent applications")).toHaveValue("3");
   await second.reload();
   await expect(second.getByLabel("Concurrent applications")).toHaveValue("3");
@@ -999,9 +1015,18 @@ scenarioTest("score correction is browser-local, cross-tab visible, reload durab
   await expect(page.getByText("8/10", { exact: true })).toBeVisible();
   await expect(second.getByText("8/10", { exact: true })).toBeVisible();
 
-  await page.getByLabel("Correct score").fill("9");
-  await page.getByLabel("Reason").fill("Reviewed bundled synthetic evidence");
-  await page.getByRole("button", { name: "Save score correction" }).click();
+  const scoreEvidence = page.locator("details").filter({
+    has: page.locator("summary", { hasText: "Score evidence and controls" }),
+  });
+  const scoreEvidenceToggle = scoreEvidence.locator(":scope > summary");
+  await expect(scoreEvidenceToggle).toHaveText("Score evidence and controls");
+  await expect(scoreEvidence).not.toHaveAttribute("open", "");
+  await scoreEvidenceToggle.click();
+  await expect(scoreEvidence).toHaveAttribute("open", "");
+
+  await scoreEvidence.getByLabel("Correct score").fill("9");
+  await scoreEvidence.getByLabel("Reason").fill("Reviewed bundled synthetic evidence");
+  await scoreEvidence.getByRole("button", { name: "Save score correction" }).click();
   await expect(page.getByText("Scoring policy updated;", { exact: false })).toBeVisible();
   await expect(page.getByText("9/10", { exact: true })).toBeVisible();
   await expect(second.getByText("9/10", { exact: true })).toBeVisible();

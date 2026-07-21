@@ -970,13 +970,22 @@ export function StageTriggerPanel({
           />
         ) : null}
         {!runAvailability.available ? (
-          <span className="status-line" id={unavailableReasonId} role="status">
+          <span
+            className="status-line"
+            data-typography="body"
+            id={unavailableReasonId}
+            role="status"
+          >
             Pipeline runs require the local app. <a href="/runs">Review bundled runs</a>
             {" or "}
             <a href={LOCAL_INSTALL_GUIDE_URL}>install JobCtrl</a>.
           </span>
         ) : workerUnhealthy ? (
-          <span className="status-line danger-action" role="alert">
+          <span
+            className="status-line danger-action"
+            data-typography="body"
+            role="alert"
+          >
             {workerHealthMessage}
           </span>
         ) : runStages.isPending ? (
@@ -986,7 +995,7 @@ export function StageTriggerPanel({
               progress={visibleStageProgress}
             />
           ) : (
-            <span className="status-line" role="status">
+            <span className="status-line" data-typography="body" role="status">
               {relevantPendingActivity
                 ? stageActivityStatusLine(statusStage, relevantPendingActivity)
                 : pendingStageStatusLine(statusStage)}
@@ -1004,12 +1013,17 @@ export function StageTriggerPanel({
                 ? "status-line danger-action"
                 : "status-line"
             }
+            data-typography="body"
             role="status"
           >
             {pipelineRunStatusLine(statusStage, runStages.data)}
           </span>
         ) : runStages.error ? (
-          <span className="status-line danger-action" role="status">
+          <span
+            className="status-line danger-action"
+            data-typography="body"
+            role="status"
+          >
             {pipelineRequestErrorLine(statusStage, runStages.error)}
           </span>
         ) : visibleStageActivity ? (
@@ -1019,6 +1033,7 @@ export function StageTriggerPanel({
                 ? "status-line danger-action"
                 : "status-line"
             }
+            data-typography="body"
             role="status"
           >
             {stageActivityStatusLine(statusStage, visibleStageActivity)}

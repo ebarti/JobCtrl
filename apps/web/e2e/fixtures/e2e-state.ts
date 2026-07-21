@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import Database from "better-sqlite3";
 
 interface E2eState {
   workspace?: { dbPath?: string };
@@ -25,4 +26,28 @@ export function loadE2eDbPath(): string {
     );
   }
   return state.workspace.dbPath;
+}
+
+/**
+ * The E2E seed intentionally models a worker-ready local runtime. Long,
+ * single-worker browser runs can outlive the worker-health freshness window,
+ * so a test that depends on that precondition must renew its fixture instead
+ * of inheriting elapsed suite time.
+ */
+export function refreshE2eWorkerHeartbeat(now = new Date()): void {
+  const db = new Database(loadE2eDbPath());
+  try {
+    const result = db
+      .prepare(
+        "UPDATE worker_runtime_heartbeats SET last_seen_at = ? WHERE component = 'temporal-worker'",
+      )
+      .run(now.toISOString());
+    if (result.changes === 0) {
+      throw new Error(
+        "E2E fixture did not contain a temporal-worker heartbeat to refresh.",
+      );
+    }
+  } finally {
+    db.close();
+  }
 }

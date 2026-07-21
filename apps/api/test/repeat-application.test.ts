@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertLiveApplicationMayDispatch,
@@ -36,6 +36,11 @@ beforeEach(() => {
       tenant_id TEXT NOT NULL,
       application_url TEXT,
       updated_at TEXT NOT NULL
+    );
+    CREATE TABLE job_list_projections (
+      tenant_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      employer TEXT NOT NULL
     );
     CREATE TABLE job_events (
       event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,7 +90,10 @@ beforeEach(() => {
   ensureRepeatApplicationTables(db);
 });
 
-afterEach(() => db.close());
+afterEach(() => {
+  vi.useRealTimers();
+  db.close();
+});
 
 function insertJob(url: string, title: string, company: string): void {
   db.prepare(
@@ -186,6 +194,26 @@ describe("repeat application evidence", () => {
     );
   });
 
+  it("preserves the projected employer in evidence when the writable job value is empty", () => {
+    insertJob(PRIOR, "Senior Backend Engineer", "");
+    insertJob(TARGET, "Backend Senior Eng", "");
+    db.prepare("UPDATE jobs SET company = NULL").run();
+    db.prepare(
+      `INSERT INTO job_list_projections (tenant_id, job_id, employer)
+       VALUES ('local', ?, 'Acme Inc'), ('local', ?, 'Acme Inc')`,
+    ).run(PRIOR, TARGET);
+    confirmPrior();
+
+    const assessment = evaluateRepeatApplication(db, TARGET);
+
+    expect(assessment.status).toBe("confirmation_required");
+    expect(assessment.matches[0]).toMatchObject({
+      relationship: "same_employer_equivalent_role",
+      priorApplication: { company: "Acme Inc" },
+    });
+    expect(assessment.matches[0]?.identityEvidence).toContain("employer:acme");
+  });
+
   it.each([
     ["Engineering Manager", "Acme Inc", "distinct role"],
     ["Senior Backend Engineer", "Acme Health", "similar employer"],
@@ -230,6 +258,8 @@ describe("repeat application evidence", () => {
   });
 
   it("records a reasoned override bound to the complete evidence and rejects stale evidence", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
     insertJob(PRIOR, "Senior Backend Engineer", "Acme Inc");
     insertJob(TARGET, "Senior Backend Engineer", "Acme Inc");
     confirmPrior();
@@ -255,7 +285,21 @@ describe("repeat application evidence", () => {
     expect(response.assessment.auditTrail.map((entry) => entry.action)).toContain(
       "override_recorded",
     );
-    expect(response.assessment.auditTrail[0]).toMatchObject({
+
+    // UUIDs do not encode insertion order.  Force the tied timestamps into
+    // the inverse lexical UUID order to reproduce the production race.
+    db.prepare(
+      "UPDATE application_repeat_audit SET audit_id = ? WHERE action = 'confirmation_required'",
+    ).run("ffffffff-ffff-ffff-ffff-ffffffffffff");
+    db.prepare(
+      "UPDATE application_repeat_audit SET audit_id = ? WHERE action = 'override_recorded'",
+    ).run("00000000-0000-0000-0000-000000000000");
+    const ordered = evaluateRepeatApplication(db, TARGET, {
+      recordAudit: false,
+      evaluatedAt: NOW,
+    });
+    expect(ordered.auditTrail[0]).toMatchObject({
+      action: "override_recorded",
       targetJobKey: TARGET,
       priorJobKey: PRIOR,
       evidence: [

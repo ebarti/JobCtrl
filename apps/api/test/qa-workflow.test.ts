@@ -267,7 +267,10 @@ describe("seeded local QA workflow", () => {
     });
 
     await app.close();
-  }, 10_000);
+  // This exercises four persisted configuration surfaces in one app instance.
+  // The focused path is fast, but parallel API-suite startup and SQLite work can
+  // exceed the default allowance without changing the behavior under test.
+  }, 30_000);
 });
 
 function createMemoryCredentialStore(): CredentialStore {

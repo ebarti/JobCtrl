@@ -19,6 +19,7 @@ from jobctrl.apply.launcher import (
 )
 from jobctrl.database import SCHEMA_VERSION, close_connection, get_connection, init_db
 from jobctrl.domain.apply.repeat_application import (
+    consume_repeat_application_override,
     evaluate_repeat_application,
     repeat_evidence_fingerprint,
 )
@@ -208,6 +209,30 @@ def test_exact_canonical_and_accepted_duplicate_identities_block(tmp_path: Path)
     assert linked["matches"][0]["relationship"] == "accepted_duplicate"
 
 
+def test_projected_employer_preserves_repeat_evidence_when_job_company_is_missing(tmp_path: Path) -> None:
+    conn = init_db(tmp_path / "jobs.db")
+    _insert_job(conn, url=PRIOR, title="Senior Backend Engineer", company="")
+    _insert_job(conn, url=TARGET, title="Backend Senior Eng", company="", ready=True)
+    conn.execute("UPDATE jobs SET company = NULL")
+    conn.execute("DELETE FROM job_list_projections")
+    conn.executemany(
+        """
+        INSERT INTO job_list_projections (tenant_id, job_id, employer)
+        VALUES ('local', ?, 'Acme Inc')
+        """,
+        [(PRIOR,), (TARGET,)],
+    )
+    _confirm_application(conn)
+
+    assessment = evaluate_repeat_application(conn, TARGET)
+
+    assert assessment["status"] == "confirmation_required"
+    match = assessment["matches"][0]
+    assert match["relationship"] == "same_employer_equivalent_role"
+    assert match["priorApplication"]["company"] == "Acme Inc"
+    assert match["identityEvidence"][0] == "employer:acme"
+
+
 def test_equivalent_role_requires_confirmation_but_distinct_and_similar_employers_clear(
     tmp_path: Path,
 ) -> None:
@@ -224,6 +249,36 @@ def test_equivalent_role_requires_confirmation_but_distinct_and_similar_employer
     )
     conn.commit()
     assert evaluate_repeat_application(conn, TARGET)["status"] == "clear"
+
+
+def test_audit_trail_orders_equal_timestamps_by_sqlite_insertion_order(tmp_path: Path) -> None:
+    conn = _seed_equivalent_repeat(tmp_path / "jobs.db")
+    initial = evaluate_repeat_application(conn, TARGET, evaluated_at=NOW)
+    _insert_override(conn, initial)
+    ready = evaluate_repeat_application(conn, TARGET, record_audit=False, evaluated_at=NOW)
+    assert ready["status"] == "override_ready"
+    consume_repeat_application_override(
+        conn,
+        ready,
+        target_job_key=TARGET,
+        run_id="equal-timestamp-run",
+        consumed_at=NOW,
+    )
+
+    # UUIDs do not encode insertion order.  Force the tied timestamps into
+    # the inverse lexical UUID order to reproduce the production race.
+    conn.execute(
+        "UPDATE application_repeat_audit SET audit_id = ? WHERE action = 'confirmation_required'",
+        ("ffffffff-ffff-ffff-ffff-ffffffffffff",),
+    )
+    conn.execute(
+        "UPDATE application_repeat_audit SET audit_id = ? WHERE action = 'override_consumed'",
+        ("00000000-0000-0000-0000-000000000000",),
+    )
+    ordered = evaluate_repeat_application(conn, TARGET, record_audit=False, evaluated_at=NOW)
+
+    assert ordered["auditTrail"][0]["action"] == "override_consumed"
+    assert ordered["auditTrail"][0]["priorJobKey"] == PRIOR
 
 
 def test_unconfirmed_sources_do_not_establish_application_history(tmp_path: Path) -> None:

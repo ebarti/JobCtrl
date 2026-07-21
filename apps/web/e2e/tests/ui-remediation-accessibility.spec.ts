@@ -1,6 +1,8 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { getViolations, injectAxe } from "axe-playwright";
 
+import { sampleHealthResponse } from "../../src/test/fixtures/projections.js";
+
 const REPRESENTATIVE_ROUTES = [
   "/dashboard",
   "/jobs",
@@ -76,6 +78,28 @@ async function expectMinimumTarget(locator: Locator, label: string) {
   expect(box!.height, `${label} target height`).toBeGreaterThanOrEqual(24);
 }
 
+async function expectRejectedResumeUpload(page: Page) {
+  const resumeImport = page.getByRole("region", {
+    name: "Resume import",
+    exact: true,
+  });
+  const fileInput = resumeImport.getByLabel("Resume PDF");
+  const continueButton = resumeImport.getByRole("button", {
+    name: "Continue to options",
+  });
+  await expect(fileInput).toBeAttached({ timeout: 30_000 });
+  await expect(continueButton).toBeDisabled();
+  await fileInput.setInputFiles({
+    name: "resume.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("synthetic resume"),
+  });
+  await expect(resumeImport.getByRole("alert")).toContainText(
+    "Choose a PDF file.",
+  );
+  await expect(continueButton).toBeDisabled();
+}
+
 test("representative remediated routes have no critical or serious axe violations", async ({
   page,
 }) => {
@@ -92,7 +116,18 @@ test("forms expose labels, validation state, and an announced upload error", asy
   await expect(page.getByLabel("Minimum fit score")).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByLabel("Results per board")).toBeVisible();
+  await expect(
+    page.getByRole("spinbutton", {
+      name: "Results per board",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Help for Results per board",
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "LinkedIn" })).toBeVisible();
 
   await page.goto("/settings");
@@ -101,20 +136,31 @@ test("forms expose labels, validation state, and an announced upload error", asy
   });
 
   await page.goto("/profile/import/upload");
-  const fileInput = page.getByLabel("Resume PDF");
-  const continueButton = page.getByRole("button", {
-    name: "Continue to options",
+  await expectRejectedResumeUpload(page);
+});
+
+test("resume upload error remains announced with a stale worker warning", async ({
+  page,
+}) => {
+  await page.route("**/v1/health", async (route) => {
+    await route.fulfill({
+      json: {
+        ...sampleHealthResponse,
+        worker: {
+          ...sampleHealthResponse.worker,
+          status: "stale",
+          message:
+            "JobCtrl automation worker heartbeat is stale; last seen at test time.",
+        },
+      },
+    });
   });
-  await expect(fileInput).toBeAttached({ timeout: 30_000 });
-  await expect(continueButton).toBeDisabled();
-  await fileInput.setInputFiles({
-    name: "resume.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("synthetic resume"),
-  });
-  const alert = page.getByRole("alert");
-  await expect(alert).toContainText("Choose a PDF file.");
-  await expect(continueButton).toBeDisabled();
+
+  await page.goto("/profile/import/upload");
+  await expect(page.locator(".connection-banner")).toContainText(
+    "worker heartbeat is stale",
+  );
+  await expectRejectedResumeUpload(page);
 });
 
 test("200 percent text-scale approximation preserves representative task access", async ({

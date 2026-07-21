@@ -15,7 +15,6 @@ resolution-markers = [
 
 [options]
 exclude-newer = "2026-07-09T19:15:43.240437Z"
-exclude-newer-span = "P8D"
 
 [options.exclude-newer-package]
 claude-agent-sdk = "2026-07-10T00:00:00Z"

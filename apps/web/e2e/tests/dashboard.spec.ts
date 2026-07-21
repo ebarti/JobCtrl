@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 
+import { refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
+
 test("Dashboard renders KPIs, click 'Jobs' KPI navigates to /jobs and row count matches", async ({
   page,
 }) => {
@@ -63,6 +65,7 @@ test("Dashboard renders KPIs, click 'Jobs' KPI navigates to /jobs and row count 
 
 test("@mobile Dashboard keeps the operational overview in the first viewport", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 568 });
+  refreshE2eWorkerHeartbeat();
   await page.goto("/dashboard");
 
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
