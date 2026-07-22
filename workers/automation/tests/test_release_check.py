@@ -1109,7 +1109,7 @@ def test_homebrew_sync_cannot_run_before_channel_pointer_cas(tmp_path: Path) -> 
     homebrew = release_check._workflow_job_body(workflow, "sync-homebrew")
     promote = release_check._workflow_job_body(workflow, "promote-channel-pointer")
 
-    assert "group: release-distribution-${{ inputs.channel }}-darwin-arm64" in workflow
+    assert "group: release-distribution-${{ inputs.channel || 'stable' }}-darwin-arm64" in workflow
     assert homebrew is not None
     assert "needs: [resolve, sign, package-signed-candidate, smoke-and-verify, promote-channel-pointer]" in homebrew
     assert promote is not None
@@ -1117,7 +1117,7 @@ def test_homebrew_sync_cannot_run_before_channel_pointer_cas(tmp_path: Path) -> 
     assert "sync-homebrew" not in promote.partition("\n    steps:")[0]
 
     stale_order = workflow.replace(
-        "group: release-distribution-${{ inputs.channel }}-darwin-arm64",
+        "group: release-distribution-${{ inputs.channel || 'stable' }}-darwin-arm64",
         "group: release-distribution-${{ inputs.release_tag }}",
         1,
     ).replace(

@@ -6,6 +6,11 @@ name: Release distribution
 # channel pointer. Immutable GitHub publication gates the final stable-only
 # PyPI publication lane.
 on:
+  # v2.0.3 is the one-time first-public-release fallback for environments where
+  # the repository app can publish refs but cannot call workflow_dispatch.
+  push:
+    tags:
+      - v2.0.3
   workflow_dispatch:
     inputs:
       release_tag:
@@ -45,7 +50,7 @@ env:
   GH_REPO: ${{ github.repository }}
 
 concurrency:
-  group: release-distribution-${{ inputs.channel }}-darwin-arm64
+  group: release-distribution-${{ inputs.channel || 'stable' }}-darwin-arm64
   cancel-in-progress: false
 
 jobs:
@@ -63,14 +68,14 @@ jobs:
       - name: Check out the exact release tag
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ inputs.release_tag || github.ref_name }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Reassert the release tag and current main before preparation
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           set -euo pipefail
           head_sha="$(git rev-parse HEAD)"
@@ -82,9 +87,9 @@ jobs:
       - name: Require explicit revocations, protected trust, and blocked tracked policy
         id: release-ref
         env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          RELEASE_CHANNEL: ${{ inputs.channel }}
-          REVOKED_BUILD_IDS: ${{ inputs.revoked_build_ids }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+          REVOKED_BUILD_IDS: ${{ inputs.revoked_build_ids || '[]' }}
           JOBCTRL_RELEASE_PUBLIC_KEY: ${{ vars.JOBCTRL_RELEASE_PUBLIC_KEY }}
           JOBCTRL_RELEASE_KEY_ID: ${{ vars.JOBCTRL_RELEASE_KEY_ID }}
         run: |
@@ -118,7 +123,7 @@ jobs:
     permissions:
       contents: read
     env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
       RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
     steps:
       - name: Prove checkout-free release commands before signing
@@ -148,8 +153,8 @@ jobs:
       actions: read
       contents: read
     env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
-      RELEASE_CHANNEL: ${{ inputs.channel }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
       RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
       RELEASE_BUILD_ID: ${{ needs.resolve.outputs.release_build_id }}
       SOURCE_DATE_EPOCH: ${{ needs.resolve.outputs.source_date_epoch }}
@@ -249,8 +254,8 @@ jobs:
       actions: read
       contents: read
     env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
-      RELEASE_CHANNEL: ${{ inputs.channel }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
       RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
       RELEASE_BUILD_ID: ${{ needs.resolve.outputs.release_build_id }}
       SOURCE_DATE_EPOCH: ${{ needs.resolve.outputs.source_date_epoch }}
@@ -388,10 +393,10 @@ jobs:
 
       - name: Sign inside-out, notarize, staple apps, and create final assets
         env:
-          RELEASE_CHANNEL: ${{ inputs.channel }}
-          RELEASE_SEQUENCE: ${{ inputs.sequence }}
-          MINIMUM_SAFE_SEQUENCE: ${{ inputs.minimum_safe_sequence }}
-          REVOKED_BUILD_IDS: ${{ inputs.revoked_build_ids }}
+          RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+          RELEASE_SEQUENCE: ${{ inputs.sequence || '1' }}
+          MINIMUM_SAFE_SEQUENCE: ${{ inputs.minimum_safe_sequence || '1' }}
+          REVOKED_BUILD_IDS: ${{ inputs.revoked_build_ids || '[]' }}
           JOBCTRL_RELEASE_SIGNING_KEY: ${{ secrets.JOBCTRL_RELEASE_SIGNING_KEY }}
           JOBCTRL_APPLE_SIGNING_IDENTITY: ${{ secrets.JOBCTRL_APPLE_SIGNING_IDENTITY }}
           JOBCTRL_APPLE_NOTARY_PROFILE: ${{ secrets.JOBCTRL_APPLE_NOTARY_PROFILE }}
@@ -526,8 +531,8 @@ jobs:
       actions: read
       contents: write
     env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
-      RELEASE_CHANNEL: ${{ inputs.channel }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
       RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
     steps:
       - name: Download the immutable signed candidate
@@ -677,7 +682,7 @@ jobs:
       actions: read
       contents: read
     env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
       RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
       EXPECTED_FORMULA_SHA256: ${{ needs.sign.outputs.formula_sha256 }}
     steps:
@@ -729,7 +734,7 @@ jobs:
           node scripts/distribution-release.mjs record-smoke --release-dir "$release" --smoke "$RUNNER_TEMP/published-candidate-smoke.json"
 
       - name: Verify the signer-rendered stable formula and write smoke evidence
-        if: ${{ inputs.channel == 'stable' }}
+        if: ${{ (inputs.channel || 'stable') == 'stable' }}
         run: |
           set -euo pipefail
           release="$RUNNER_TEMP/release"
@@ -747,7 +752,7 @@ jobs:
           NODE
 
       - name: Audit, install, test, and run the rendered formula lifecycle
-        if: ${{ inputs.channel == 'stable' }}
+        if: ${{ (inputs.channel || 'stable') == 'stable' }}
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
           JOBCTRL_RUNTIME_HOME: ${{ runner.temp }}/homebrew-runtime
@@ -780,14 +785,14 @@ jobs:
   sync-homebrew:
     name: Sync verified stable Homebrew formula
     needs: [resolve, sign, package-signed-candidate, smoke-and-verify, promote-channel-pointer]
-    if: ${{ inputs.channel == 'stable' }}
+    if: ${{ (inputs.channel || 'stable') == 'stable' }}
     uses: ./.github/workflows/sync-homebrew-tap.yml
     with:
       release_artifact_name: jobctrl-release-candidate-${{ github.run_id }}
       smoke_artifact_name: jobctrl-smoke-evidence-${{ github.run_id }}
       descriptor_url: ${{ format('https://releases.jobctrl.dev/v1/artifacts/{0}/release-descriptor.json', needs.resolve.outputs.release_build_id) }}
       release_ref: ${{ needs.resolve.outputs.release_ref }}
-      release_tag: ${{ inputs.release_tag }}
+      release_tag: ${{ inputs.release_tag || github.ref_name }}
       expected_formula_sha256: ${{ needs.sign.outputs.formula_sha256 }}
   promote-channel-pointer:
     name: Atomically promote only the signer-rooted pointer
@@ -799,11 +804,11 @@ jobs:
       actions: read
       contents: read
     env:
-      RELEASE_CHANNEL: ${{ inputs.channel }}
-      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
       RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
       RELEASE_BUILD_ID: ${{ needs.resolve.outputs.release_build_id }}
-      EXPECTED_CHANNEL_POINTER_SHA256: ${{ inputs.expected_channel_pointer_sha256 }}
+      EXPECTED_CHANNEL_POINTER_SHA256: ${{ inputs.expected_channel_pointer_sha256 || 'absent' }}
       EXPECTED_SIGNER_POINTER_SHA256: ${{ needs.sign.outputs.channel_pointer_sha256 }}
     steps:
       - name: Download the untouched signer/package candidate
@@ -966,8 +971,8 @@ jobs:
       actions: read
       contents: write
     env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
-      RELEASE_CHANNEL: ${{ inputs.channel }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
       RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
     steps:
       - name: Download the untouched signer/package candidate
@@ -1066,7 +1071,7 @@ jobs:
   pypi-resolve:
     name: Verify the immutable signed stable release for PyPI
     needs: [resolve, publish-github-release]
-    if: ${{ inputs.channel == 'stable' && needs['publish-github-release'].result == 'success' }}
+    if: ${{ (inputs.channel || 'stable') == 'stable' && needs['publish-github-release'].result == 'success' }}
     runs-on: ubuntu-24.04
     outputs:
       source_commit: ${{ steps.identity.outputs.source_commit }}
@@ -1074,7 +1079,7 @@ jobs:
     permissions:
       contents: read
     env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
       EXPECTED_SOURCE_COMMIT: ${{ needs.resolve.outputs.release_ref }}
       EXPECTED_SOURCE_DATE_EPOCH: ${{ needs.resolve.outputs.source_date_epoch }}
       EXPECTED_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
@@ -1180,7 +1185,7 @@ jobs:
     permissions:
       contents: read
     env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
       RELEASE_REF: ${{ needs.pypi-resolve.outputs.source_commit }}
       SOURCE_DATE_EPOCH: ${{ needs.pypi-resolve.outputs.source_date_epoch }}
     steps:
@@ -1264,7 +1269,7 @@ jobs:
 
       - name: Reassert refs and verify the built closure
         env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
           GH_TOKEN: ${{ github.token }}
           DIST_DIR: ${{ runner.temp }}/jobctrl-pypi-dists
           EXPECTED_SOURCE_COMMIT: ${{ needs.pypi-resolve.outputs.source_commit }}

@@ -1041,7 +1041,7 @@ def _release_distribution_findings(root: Path) -> list[str]:
     required_markers = {
         "workflow_dispatch:": "has no owner-controlled manual release path",
         "GH_REPO: ${{ github.repository }}": "does not bind checkout-free GitHub CLI release operations to the audited repository",
-        "group: release-distribution-${{ inputs.channel }}-darwin-arm64": "does not serialize release mutation by channel and platform",
+        "group: release-distribution-${{ inputs.channel || 'stable' }}-darwin-arm64": "does not serialize release mutation by channel and platform",
         'test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"': "does not bind the workflow definition ref to the selected release tag",
         'test "$GITHUB_SHA" = "$head_sha"': "does not bind the workflow definition SHA to the audited release commit",
         "revoked_build_ids:": "does not require explicit revocation input",
@@ -1374,7 +1374,7 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
     if resolve is not None:
         for marker in (
             "needs: [resolve, publish-github-release]",
-            "inputs.channel == 'stable'",
+            "(inputs.channel || 'stable') == 'stable'",
             "persist-credentials: false",
             "actions/setup-node@",
             "isImmutable",
