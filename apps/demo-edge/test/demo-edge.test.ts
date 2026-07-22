@@ -244,7 +244,7 @@ describe("API Worker consent and telemetry boundaries", () => {
     const granted = await dispatchDemoApi(grantedContext.request, testEnv);
     expect(granted.status).toBe(200);
     const cookies = setCookies(granted);
-    expect(cookies).toContain("__Host-jobctrl_demo_consent=v1.granted; Max-Age=15544800; Path=/; Secure; SameSite=Lax");
+    expect(cookies).toContain("__Host-jobctrl_demo_consent=v2.granted; Max-Age=15544800; Path=/; Secure; SameSite=Lax");
     expect(cookies).toEqual(expect.arrayContaining([
       expect.stringMatching(/^__Host-jobctrl_demo_vid=[A-Za-z0-9_-]{32,128}; Max-Age=15544800; Path=\/; Secure; SameSite=Lax; HttpOnly$/),
       expect.stringMatching(/^__Host-jobctrl_demo_session=[A-Za-z0-9_-]{32,128}; Path=\/; Secure; SameSite=Lax; HttpOnly$/),
@@ -275,7 +275,7 @@ describe("API Worker consent and telemetry boundaries", () => {
     }, cookieHeader("granted")), repeatedAt);
     expect(response.status).toBe(200);
     expect(setCookies(response)).toEqual([
-      "__Host-jobctrl_demo_consent=v1.granted; Max-Age=15544800; Path=/; Secure; SameSite=Lax",
+      "__Host-jobctrl_demo_consent=v2.granted; Max-Age=15544800; Path=/; Secure; SameSite=Lax",
       `__Host-jobctrl_demo_vid=${visitorId}; Max-Age=15544800; Path=/; Secure; SameSite=Lax; HttpOnly`,
     ]);
     expect(await eventCount()).toBe(1);
@@ -357,7 +357,7 @@ describe("API Worker consent and telemetry boundaries", () => {
 
     expect(response.status).toBe(200);
     expect(setCookies(response)).toEqual([
-      "__Host-jobctrl_demo_consent=v1.denied; Max-Age=15544800; Path=/; Secure; SameSite=Lax",
+      "__Host-jobctrl_demo_consent=v2.denied; Max-Age=15544800; Path=/; Secure; SameSite=Lax",
     ]);
     expect(await activeIdentityCount()).toBe(0);
   });
@@ -442,7 +442,7 @@ describe("API Worker consent and telemetry boundaries", () => {
 
   it("returns unknown and immediately expires identifiers for a stale consent contract", async () => {
     const staleCookies = [
-      "__Host-jobctrl_demo_consent=v0.granted",
+      "__Host-jobctrl_demo_consent=v1.granted",
       `__Host-jobctrl_demo_vid=${visitorId}`,
       `__Host-jobctrl_demo_session=${sessionId}`,
     ].join("; ");

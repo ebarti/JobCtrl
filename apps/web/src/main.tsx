@@ -7,6 +7,7 @@ import {
   DemoConsentClient,
   DemoConsentGate,
   DemoTelemetryAdapter,
+  loadDemoGoogleAnalytics,
   type DemoConsentChoice,
 } from "./demo/consent/index.js";
 import { createAppComposition, resolveAppMode } from "./demo/portFactory.js";
@@ -89,6 +90,7 @@ function renderConsentGate(client: DemoConsentClient, initialChoice: DemoConsent
 }
 
 function enterDemo(client: DemoConsentClient): Promise<void> {
+  loadDemoGoogleAnalytics();
   demoAdmission ??= mountApplication(client);
   return demoAdmission;
 }

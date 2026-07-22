@@ -43,9 +43,10 @@ scoring evidence, tailored materials, dry-run rehearsals, and workflow history
 before installing JobCtrl. Demo actions are simulated and cannot contact
 employers, providers, Gmail, job boards, or the local JobCtrl app.
 
-The demo requires first-party analytics-cookie acceptance before it
-creates its browser-local workspace. Declining returns to `jobctrl.dev`; a
-later visit asks again. Read the
+The demo requires analytics-cookie acceptance before it creates its
+browser-local workspace. Acceptance enables bounded first-party demo
+measurement and Google Analytics with advertising and personalization signals
+disabled. Declining returns to `jobctrl.dev`; a later visit asks again. Read the
 [demo data notice](https://jobctrl.dev/user/data-and-safety#public-demo) before
 entering, and do not type personal data, credentials, or secrets.
 When a deployment updates the canonical synthetic examples, the next demo load

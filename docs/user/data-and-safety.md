@@ -36,28 +36,38 @@ models, and live apply contacts an employer only when you use those features.
 ## Public Demo
 
 The hosted synthetic demo is separate from the local product described above.
-It can only be used after accepting first-party analytics cookies. Declining
-returns to `https://jobctrl.dev`; opening the demo again shows the choice again.
-The demo does not initialize its browser-local workspace until the consent
-service confirms acceptance.
+It can only be used after accepting analytics cookies for JobCtrl's bounded
+first-party demo measurement and Google Analytics. Declining returns to
+`https://jobctrl.dev`; opening the demo again shows the choice again. The demo
+does not initialize its browser-local workspace or load the Google tag until
+the consent service confirms acceptance. The `v2` consent contract replaces the
+earlier first-party-only choice, so existing visitors are asked again once.
 
 The data controller for the public demo is Eloi Barti, acting as an individual.
 For privacy questions, contact [me@eloibarti.com](mailto:me@eloibarti.com).
 
 After acceptance, Cloudflare sets a versioned consent cookie plus random
-HttpOnly visitor and session identifiers. The persistent cookies expire within
-six months, the session cookie at the end of the browser session, and raw demo
-events and non-linkable operational counters expire within 90 days. Events use
-closed route/action/result categories: they exclude names, contact details,
-profile or resume text, job/company content, URLs, searches, comments, local
-paths, raw errors, and demo entity/workspace identifiers. IP addresses may be
-used transiently by Cloudflare rate limiting but are not written to D1 or
-application logs.
+HttpOnly visitor and session identifiers. JobCtrl's persistent cookies expire
+within six months, the session cookie at the end of the browser session, and raw
+demo events and non-linkable operational counters expire within 90 days. Those
+first-party events use closed route/action/result categories: they exclude
+names, contact details, profile or resume text, job/company content, URLs,
+searches, comments, local paths, raw errors, and demo entity/workspace
+identifiers. IP addresses may be used transiently by Cloudflare rate limiting
+but are not written to D1 or application logs.
+
+The accepted page also loads Google tag `G-6MJGD17JN0`. Google Analytics may set
+`_ga` cookies scoped to the demo host for up to six months and receive standard
+web-measurement data such as page location, referrer, browser/device details,
+interaction data, and an IP address used for geolocation before it is discarded.
+JobCtrl disables Google Signals plus advertising and personalization signals in
+the tag configuration. Google's handling of that data is described in
+[Safeguarding your data](https://support.google.com/analytics/answer/6004245).
 
 The demo contains synthetic data. Do not enter personal data, credentials, or
 secrets. Post-accept withdrawal and immediate visitor-event deletion are not
-yet available in this MVP; retained data expires on the schedules above. The
-consent screen links to this disclosure before entry.
+yet available in this MVP; retained data and cookies expire on the schedules
+above. The consent screen links to this disclosure before entry.
 
 After entry, the compact **Demo guide** links to seeded scoring evidence,
 tailored-material review, Apply Review/dry-run, and run history. Every shortcut

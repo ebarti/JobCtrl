@@ -19,6 +19,8 @@ const MODULE_URLS = {
 } as const;
 const STATIC_HOST = "/demo/source-preview.html";
 const CURRENT_DEMO_SEED_VERSION = "2026-07-12.2";
+const GOOGLE_TAG_ORIGIN = "https://www.googletagmanager.com";
+const GOOGLE_TAG_MEASUREMENT_ID = "G-6MJGD17JN0";
 
 function configuredOrigin(baseURL: string | undefined): string {
   if (!baseURL) throw new Error("Demo Playwright baseURL is required.");
@@ -36,7 +38,7 @@ const scenarioTest = test.extend<{ demoNetworkBoundary: void }>({
         if (requestUrl.origin === demoOrigin && requestUrl.pathname === "/api/demo-consent") {
           await route.fulfill({
             contentType: "application/json",
-            body: JSON.stringify({ choice: "granted", version: "v1" }),
+            body: JSON.stringify({ choice: "granted", version: "v2" }),
           });
           return;
         }
@@ -46,6 +48,14 @@ const scenarioTest = test.extend<{ demoNetworkBoundary: void }>({
             requestUrl.pathname === "/api/demo-telemetry")
         ) {
           await route.fulfill({ status: 204, body: "" });
+          return;
+        }
+        if (
+          requestUrl.origin === GOOGLE_TAG_ORIGIN &&
+          requestUrl.pathname === "/gtag/js" &&
+          requestUrl.searchParams.get("id") === GOOGLE_TAG_MEASUREMENT_ID
+        ) {
+          await route.fulfill({ contentType: "application/javascript", body: "" });
           return;
         }
         const forbidden =
@@ -264,11 +274,16 @@ scenarioTest("pipeline demo capability actions stay contained at 320 CSS pixels"
   ).toBeLessThanOrEqual(layout.viewportWidth + 1);
 });
 
-test("consent grant precedes IndexedDB, health, telemetry, and populated demo entry", async ({
+test("consent grant precedes Google Analytics, IndexedDB, health, telemetry, and populated demo entry", async ({
   page,
   context,
 }) => {
   const requests: Array<{ path: string; method: string; body: unknown }> = [];
+  const googleTagRequests: string[] = [];
+  await context.route("**/gtag/js**", async (route) => {
+    googleTagRequests.push(route.request().url());
+    await route.fulfill({ contentType: "application/javascript", body: "" });
+  });
   await context.route("**/api/demo-consent", async (route) => {
     const request = route.request();
     requests.push({
@@ -280,7 +295,7 @@ test("consent grant precedes IndexedDB, health, telemetry, and populated demo en
       contentType: "application/json",
       body: JSON.stringify({
         choice: request.method() === "POST" ? "granted" : "unknown",
-        version: "v1",
+        version: "v2",
       }),
     });
   });
@@ -299,6 +314,7 @@ test("consent grant precedes IndexedDB, health, telemetry, and populated demo en
   await expect(page.getByRole("heading", { name: /Explore JobCtrl/i })).toBeVisible();
   await expect(page.getByText(/demo can only be used after accepting.*analytics cookies/i)).toBeVisible();
   expect(requests.map(({ path }) => path)).toEqual(["/api/demo-consent"]);
+  expect(googleTagRequests).toEqual([]);
   expect(await page.evaluate(async () =>
     (await indexedDB.databases()).some((database) => database.name === "jobctrl-demo"),
   )).toBe(false);
@@ -310,6 +326,8 @@ test("consent grant precedes IndexedDB, health, telemetry, and populated demo en
   )).toBe(true);
   await expect.poll(() => requests.some(({ path }) => path === "/api/demo-health")).toBe(true);
   await expect.poll(() => requests.some(({ path }) => path === "/api/demo-telemetry")).toBe(true);
+  await expect.poll(() => googleTagRequests).toHaveLength(1);
+  expect(new URL(googleTagRequests[0]!).searchParams.get("id")).toBe(GOOGLE_TAG_MEASUREMENT_ID);
 
   const grantIndex = requests.findIndex(({ path, method }) =>
     path === "/api/demo-consent" && method === "POST");
@@ -326,6 +344,11 @@ test("decline stays anonymous and redirects even when consent measurement fails"
   context,
 }) => {
   const requests: Array<{ path: string; body: unknown }> = [];
+  const googleTagRequests: string[] = [];
+  await context.route("**/gtag/js**", (route) => {
+    googleTagRequests.push(route.request().url());
+    return route.abort("blockedbyclient");
+  });
   await context.route("**/api/demo-consent", async (route) => {
     const request = route.request();
     requests.push({
@@ -338,7 +361,7 @@ test("decline stays anonymous and redirects even when consent measurement fails"
     }
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ choice: "unknown", version: "v1" }),
+      body: JSON.stringify({ choice: "unknown", version: "v2" }),
     });
   });
   await context.route("https://jobctrl.dev/**", (route) =>
@@ -355,6 +378,7 @@ test("decline stays anonymous and redirects even when consent measurement fails"
     choice: "denied",
     operationKey: expect.stringMatching(/^[A-Za-z0-9_-]{32,128}$/),
   });
+  expect(googleTagRequests).toEqual([]);
   expect(await page.evaluate(async () =>
     (await indexedDB.databases()).some((database) => database.name === "jobctrl-demo"),
   )).toBe(false);
@@ -365,7 +389,7 @@ test("a denied revisit reopens the acceptance-required gate", async ({ page, con
   await context.route("**/api/demo-consent", (route) =>
     route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ choice: "denied", version: "v1" }),
+      body: JSON.stringify({ choice: "denied", version: "v2" }),
     }),
   );
   for (const path of ["/api/demo-health", "/api/demo-telemetry"] as const) {
@@ -427,14 +451,14 @@ test("a fresh grant wins over a stale denied consent read", async ({ page, conte
     if (route.request().method() === "POST") {
       await route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify({ choice: "granted", version: "v1" }),
+        body: JSON.stringify({ choice: "granted", version: "v2" }),
       });
       return;
     }
     await stalledRead;
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ choice: "denied", version: "v1" }),
+      body: JSON.stringify({ choice: "denied", version: "v2" }),
     });
     confirmReadResponse?.();
   });

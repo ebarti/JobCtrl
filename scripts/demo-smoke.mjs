@@ -126,7 +126,7 @@ async function runDemoSmoke() {
       "sec-fetch-site": "same-origin",
     },
   });
-  assert.deepEqual(await initial.json(), { choice: "unknown", version: "v1" });
+  assert.deepEqual(await initial.json(), { choice: "unknown", version: "v2" });
 
   const operationKey = () => randomBytes(24).toString("base64url");
   const choose = (choice) => request("/api/demo-consent", {
@@ -141,16 +141,16 @@ async function runDemoSmoke() {
   });
 
   const denied = await choose("denied");
-  assert.deepEqual(await denied.json(), { choice: "denied", version: "v1" });
+  assert.deepEqual(await denied.json(), { choice: "denied", version: "v2" });
   const deniedCookies = denied.headers.get("set-cookie") ?? "";
-  assert.match(deniedCookies, /__Host-jobctrl_demo_consent=v1\.denied/);
+  assert.match(deniedCookies, /__Host-jobctrl_demo_consent=v2\.denied/);
   assert.doesNotMatch(deniedCookies, /__Host-jobctrl_demo_(?:vid|session)=/);
 
   const granted = await choose("granted");
-  assert.deepEqual(await granted.json(), { choice: "granted", version: "v1" });
+  assert.deepEqual(await granted.json(), { choice: "granted", version: "v2" });
   const grantedCookies = granted.headers.get("set-cookie") ?? "";
   for (const cookie of [
-    "__Host-jobctrl_demo_consent=v1.granted",
+    "__Host-jobctrl_demo_consent=v2.granted",
     "__Host-jobctrl_demo_vid=",
     "__Host-jobctrl_demo_session=",
   ]) {

@@ -1,4 +1,4 @@
-export const CONSENT_CONTRACT_VERSION = "v1";
+export const CONSENT_CONTRACT_VERSION = "v2";
 export const CONSENT_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
 export const MAX_REQUEST_BYTES = 2_048;
 export const OPERATIONAL_RATE_LIMIT_PER_MINUTE = 120;
