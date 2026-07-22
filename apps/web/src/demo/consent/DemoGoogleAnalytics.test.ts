@@ -6,7 +6,7 @@ import {
 } from "./DemoGoogleAnalytics.js";
 
 interface GoogleAnalyticsWindow extends Window {
-  dataLayer?: unknown[][];
+  dataLayer?: IArguments[];
   gtag?: (...command: unknown[]) => void;
 }
 
@@ -32,7 +32,9 @@ describe("loadDemoGoogleAnalytics", () => {
     );
     expect((scripts[0] as HTMLScriptElement).async).toBe(true);
 
-    const commands = (window as GoogleAnalyticsWindow).dataLayer;
+    const queuedCommands = (window as GoogleAnalyticsWindow).dataLayer;
+    expect(Array.isArray(queuedCommands?.[0])).toBe(false);
+    const commands = queuedCommands?.map((command) => Array.from(command));
     expect(commands?.[0]).toEqual([
       "consent",
       "default",

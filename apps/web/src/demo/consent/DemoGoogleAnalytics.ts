@@ -6,7 +6,7 @@ const GOOGLE_ANALYTICS_COOKIE_MAX_AGE_SECONDS = 15_544_800;
 type GoogleTag = (...command: unknown[]) => void;
 
 interface GoogleAnalyticsWindow extends Window {
-  dataLayer?: unknown[][];
+  dataLayer?: IArguments[];
   gtag?: GoogleTag;
 }
 
@@ -26,11 +26,13 @@ export function loadDemoGoogleAnalytics(
   try {
     const dataLayer = windowRef.dataLayer ?? [];
     windowRef.dataLayer = dataLayer;
-    const googleTag =
+    const googleTag: GoogleTag =
       windowRef.gtag ??
-      ((...command: unknown[]) => {
-        dataLayer.push(command);
-      });
+      function googleTag() {
+        // Google processes queued commands as the `arguments` objects produced
+        // by its canonical snippet. Plain arrays load the tag but are ignored.
+        dataLayer.push(arguments);
+      };
     windowRef.gtag = googleTag;
 
     googleTag("consent", "default", {
