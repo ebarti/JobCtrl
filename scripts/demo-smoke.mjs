@@ -14,6 +14,11 @@ export const DEMO_SHELL_REQUEST_TIMEOUT_MS = 15_000;
 export const DEMO_CONSENT_READY_WINDOW_MS = 60_000;
 export const DEMO_CONSENT_READY_DELAY_MS = 3_000;
 export const DEMO_CONSENT_READY_ATTEMPTS = DEMO_CONSENT_READY_WINDOW_MS / DEMO_CONSENT_READY_DELAY_MS + 1;
+const GOOGLE_ANALYTICS_CSP = {
+  connect: "connect-src 'self' https://*.google-analytics.com",
+  image: "img-src 'self' data: blob: https://*.google-analytics.com",
+  script: "script-src 'self' https://www.googletagmanager.com",
+};
 const SYNTHETIC_HTML_ASSETS = [
   "/demo/application-preview.html",
   "/demo/profile-resume.html",
@@ -46,6 +51,7 @@ export async function waitForDemoShell(
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now = Date.now,
     createAbortSignal = (timeout) => AbortSignal.timeout(timeout),
+    isReady = (response) => response.ok,
     log = console.warn,
   } = {},
 ) {
@@ -60,11 +66,11 @@ export async function waitForDemoShell(
 
     try {
       const response = await fetchShell({ signal });
-      if (response.ok) {
+      if (response.ok && isReady(response)) {
         return response;
       }
 
-      lastStatus = response.status;
+      lastStatus = response.ok ? `${response.status} (deployment marker pending)` : response.status;
       observedStatuses.set(lastStatus, (observedStatuses.get(lastStatus) ?? 0) + 1);
       await response.body?.cancel?.();
     } catch (error) {
@@ -89,6 +95,11 @@ export async function waitForDemoShell(
   assert.fail(
     `demo shell was not ready within ${timeoutMs}ms after ${elapsedMs}ms: / last observation ${lastStatus}; observed statuses: ${observedSummary || "none"}`,
   );
+}
+
+export function hasGoogleAnalyticsCsp(response) {
+  const policy = response.headers.get("content-security-policy") ?? "";
+  return Object.values(GOOGLE_ANALYTICS_CSP).every((directive) => policy.includes(directive));
 }
 
 export async function waitForDemoConsentContract(
@@ -159,15 +170,18 @@ async function runDemoSmoke() {
     return response;
   };
 
-  const shell = await waitForDemoShell(({ signal }) => fetchPath("/", { signal }));
+  const shell = await waitForDemoShell(
+    ({ signal }) => fetchPath("/", { signal }),
+    { isReady: hasGoogleAnalyticsCsp },
+  );
   const shellHtml = await shell.text();
   assert.match(shellHtml, /<div id="root"><\/div>/);
   assertNoCloudflareInjection("/", shellHtml);
   const contentSecurityPolicy = shell.headers.get("content-security-policy") ?? "";
   assert.match(contentSecurityPolicy, /default-src 'self'/);
-  assert.match(contentSecurityPolicy, /connect-src 'self' https:\/\/\*\.google-analytics\.com/);
-  assert.match(contentSecurityPolicy, /img-src 'self' data: blob: https:\/\/\*\.google-analytics\.com/);
-  assert.match(contentSecurityPolicy, /script-src 'self' https:\/\/www\.googletagmanager\.com/);
+  for (const directive of Object.values(GOOGLE_ANALYTICS_CSP)) {
+    assert.ok(contentSecurityPolicy.includes(directive), `CSP is missing ${directive}`);
+  }
   assert.equal(shell.headers.get("referrer-policy"), "no-referrer");
   assert.equal(shell.headers.get("x-content-type-options"), "nosniff");
 
