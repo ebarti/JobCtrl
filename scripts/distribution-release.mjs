@@ -307,7 +307,7 @@ const FINAL_RELEASE_ASSETS = [
   "audit/notarization.json",
   "audit/notary-log.json",
   "audit/publication-status.json",
-  "audit/pre-sign-comparison.json",
+  "audit/pre-sign-verification.json",
   "audit/size-report.json",
 ];
 
@@ -768,41 +768,6 @@ export async function verifyPreparedCandidate({ preparedDirectory, channel, publ
   };
 }
 
-export async function comparePreparedBuilds(firstDirectory, secondDirectory, { channel, publicKeyBase64, root = REPO_ROOT, runner = defaultCommandRunner } = {}) {
-  const [first, second] = await Promise.all([
-    verifyPreparedCandidate({ preparedDirectory: firstDirectory, channel, publicKeyBase64, root, runner }),
-    verifyPreparedCandidate({ preparedDirectory: secondDirectory, channel, publicKeyBase64, root, runner }),
-  ]);
-  const fields = [
-    "buildId",
-    "appVersion",
-    "sourceDateEpoch",
-    "archiveSha256",
-    "manifestSha256",
-    "compressedBytes",
-    "installedBytes",
-    "nativeLauncherReleaseChannel",
-    "nativeLauncherReleaseTrustKeySha256",
-  ];
-  const mismatches = fields.filter((field) => first[field] !== second[field]);
-  invariant(mismatches.length === 0, `unsigned pre-sign builds differ: ${mismatches.join(", ")}`);
-  return {
-    schemaVersion: 1,
-    status: "identical-unsigned-pre-sign-builds",
-    comparedFields: fields,
-    buildId: first.buildId,
-    appVersion: first.appVersion,
-    sourceDateEpoch: first.sourceDateEpoch,
-    archiveSha256: first.archiveSha256,
-    manifestSha256: first.manifestSha256,
-    compressedBytes: first.compressedBytes,
-    installedBytes: first.installedBytes,
-    nativeLauncherReleaseChannel: first.nativeLauncherReleaseChannel,
-    nativeLauncherReleaseTrustKeySha256: first.nativeLauncherReleaseTrustKeySha256,
-    note: "Signed and stapled ZIP bytes are intentionally not compared for deterministic equality.",
-  };
-}
-
 export async function verifyPreparedNativeBinding({ preparedDirectory, channel, publicKeyBase64, runner = defaultCommandRunner }) {
   invariant(channel === "stable" || channel === "prerelease", "prepared native binding requires a network channel");
   requireNetworkReleasePublicKey(publicKeyBase64, "prepared native binding");
@@ -823,8 +788,8 @@ export async function verifyPreparedNativeBinding({ preparedDirectory, channel, 
   return { binaries, channel, publicKeySha256: prepared.nativeLauncherReleaseTrustKeySha256 };
 }
 
-export function assertPreSignComparisonMatches(prepared, comparison) {
-  invariant(comparison?.status === "identical-unsigned-pre-sign-builds", "a passing unsigned pre-sign build comparison is required before signing");
+export function assertPreSignVerificationMatches(prepared, verification) {
+  invariant(verification?.status === "verified-unsigned-pre-sign-candidate", "a passing unsigned pre-sign verification is required before signing");
   const fields = [
     "buildId",
     "archiveSha256",
@@ -834,7 +799,7 @@ export function assertPreSignComparisonMatches(prepared, comparison) {
     "nativeLauncherReleaseChannel",
     "nativeLauncherReleaseTrustKeySha256",
   ];
-  for (const field of fields) invariant(comparison[field] === prepared[field], `pre-sign comparison does not bind prepared ${field}`);
+  for (const field of fields) invariant(verification[field] === prepared[field], `pre-sign verification does not bind prepared ${field}`);
   return true;
 }
 
@@ -1059,7 +1024,7 @@ export async function finalizeNetworkRelease({
   notaryProfile,
   sourceDateEpoch,
   sourceCommit,
-  preSignComparison,
+  preSignVerification,
   runner = defaultCommandRunner,
   root = REPO_ROOT,
 }) {
@@ -1077,11 +1042,11 @@ export async function finalizeNetworkRelease({
   });
   const prepared = JSON.parse(await readFile(path.join(preparedDirectory, "build-result.json"), "utf8"));
   invariant(prepared.releaseChannel === "local" && prepared.nativeLauncherReleaseChannel === channel, "prepared build is not a matching unsigned pre-sign network build");
-  assertPreSignComparisonMatches(verifiedPrepared, preSignComparison);
+  assertPreSignVerificationMatches(verifiedPrepared, preSignVerification);
   const nativeBinding = verifiedPrepared.nativeBinding;
   const payloadRoot = path.join(preparedDirectory, "payload");
   const preparedManifest = JSON.parse(await readFile(path.join(payloadRoot, "manifest.json"), "utf8"));
-  invariant(preparedManifest.sourceDateEpoch === sourceDateEpoch, "finalization SOURCE_DATE_EPOCH must match the compared pre-sign build");
+  invariant(preparedManifest.sourceDateEpoch === sourceDateEpoch, "finalization SOURCE_DATE_EPOCH must match the verified pre-sign build");
   const archiveFileName = `jobctrl-${preparedManifest.appVersion}-darwin-arm64.zip`;
   const urls = canonicalReleaseUrls(channel, archiveFileName, prepared.buildId);
   const notaryArchive = path.join(preparedDirectory, `notary-${archiveFileName}`);
@@ -1150,7 +1115,7 @@ export async function finalizeNetworkRelease({
     copyFile(path.join(preparedDirectory, "size-report.json"), path.join(releaseDirectory, "audit", "size-report.json")),
     writeFile(path.join(releaseDirectory, "audit", "notarization.json"), notarizationEvidenceRaw, { mode: 0o644 }),
     writeFile(path.join(releaseDirectory, "audit", "notary-log.json"), notarization.logRaw, { mode: 0o644 }),
-    writeFile(path.join(releaseDirectory, "audit", "pre-sign-comparison.json"), canonicalJson(preSignComparison), { mode: 0o644 }),
+    writeFile(path.join(releaseDirectory, "audit", "pre-sign-verification.json"), canonicalJson(preSignVerification), { mode: 0o644 }),
   ]);
   await copyReleaseMetadata(payloadRoot, path.join(releaseDirectory, "audit"));
   const channelPointer = createReleaseChannelPointer({
@@ -1181,7 +1146,7 @@ export async function finalizeNetworkRelease({
     manifest: { sha256: sha256Bytes(Buffer.from(manifestRaw, "utf8")), keyId: contracts.signingPolicy.manifestSigning.keyId },
     descriptor: { sha256: sha256Bytes(Buffer.from(descriptorRaw, "utf8")), keyId: contracts.signingPolicy.manifestSigning.keyId },
     channelPointer: { sha256: sha256Bytes(Buffer.from(channelPointerRaw, "utf8")), url: urls.immutableChannelPointerUrl },
-    signing: { codeSigning: "Developer ID Application", notarization: "nested-apps-stapled", unsignedBuildComparisonRequired: true, nativeBinding: publicNativeBinding },
+    signing: { codeSigning: "Developer ID Application", notarization: "nested-apps-stapled", independentPreSignVerificationRequired: true, nativeBinding: publicNativeBinding },
   };
   const installScript = renderPinnedInstallScript({
     templateRaw: await readFile(path.join(root, "scripts", "get"), "utf8"),
@@ -1210,13 +1175,6 @@ export async function finalizeNetworkRelease({
   await writeChecksumFile(releaseDirectory, (await releaseRegularFiles(releaseDirectory)).filter((file) => file !== "SHA256SUMS"));
   const inventory = await assertReleaseAssetInventory(releaseDirectory, { archiveFileName });
   return { archivePath: finalArchivePath, archiveFileName, descriptorRaw, descriptorSignature, channelPointer, manifestRaw, manifestSignature, releaseKeys, metadata, inventory };
-}
-
-export async function writePreSignComparison({ firstDirectory, secondDirectory, releaseDirectory, channel, publicKeyBase64, root = REPO_ROOT, runner = defaultCommandRunner }) {
-  const comparison = await comparePreparedBuilds(firstDirectory, secondDirectory, { channel, publicKeyBase64, root, runner });
-  await mkdir(path.join(releaseDirectory, "audit"), { recursive: true, mode: 0o755 });
-  await writeFile(path.join(releaseDirectory, "audit", "pre-sign-comparison.json"), canonicalJson(comparison), { mode: 0o644 });
-  return comparison;
 }
 
 export function publishedCandidateSmokePlan({ descriptorUrl, installerPath, outputHome }) {
@@ -1509,16 +1467,6 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(canonicalJson({ status: "prepared", buildId: result.buildId, archiveSha256: result.archiveSha256, manifestSha256: result.manifestSha256, nativeLauncherReleaseChannel: result.nativeLauncherReleaseChannel, nativeLauncherReleaseTrustKeySha256: result.nativeLauncherReleaseTrustKeySha256 }));
     return;
   }
-  if (command === "compare") {
-    requireOptions(options, ["first", "second", "channel", "public-key", "output"], command);
-    const comparison = await comparePreparedBuilds(path.resolve(options.first), path.resolve(options.second), {
-      channel: options.channel,
-      publicKeyBase64: options["public-key"],
-    });
-    await writeFile(path.resolve(options.output), canonicalJson(comparison), { mode: 0o644 });
-    process.stdout.write(canonicalJson(comparison));
-    return;
-  }
   if (command === "verify-prepared") {
     requireOptions(options, ["prepared", "channel", "public-key"], command);
     const verification = await verifyPreparedCandidate({
@@ -1530,8 +1478,8 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
   if (command === "finalize") {
-    requireOptions(options, ["prepared", "comparison", "output", "channel", "sequence", "minimum-safe-sequence", "revoked-build-ids", "source-date-epoch", "source-commit"], command);
-    const comparison = JSON.parse(await readFile(path.resolve(options.comparison), "utf8"));
+    requireOptions(options, ["prepared", "verification", "output", "channel", "sequence", "minimum-safe-sequence", "revoked-build-ids", "source-date-epoch", "source-commit"], command);
+    const verification = JSON.parse(await readFile(path.resolve(options.verification), "utf8"));
     const result = await finalizeNetworkRelease({
       preparedDirectory: path.resolve(options.prepared),
       releaseDirectory: path.resolve(options.output),
@@ -1541,7 +1489,7 @@ export async function main(argv = process.argv.slice(2)) {
       revokedBuildIds: JSON.parse(options["revoked-build-ids"]),
       sourceDateEpoch: parseCanonicalIntegerOption(options["source-date-epoch"], "source-date-epoch"),
       sourceCommit: options["source-commit"],
-      preSignComparison: comparison,
+      preSignVerification: verification,
       signingKeyBase64: process.env.JOBCTRL_RELEASE_SIGNING_KEY ?? "",
       appleIdentity: process.env.JOBCTRL_APPLE_SIGNING_IDENTITY ?? "",
       notaryProfile: process.env.JOBCTRL_APPLE_NOTARY_PROFILE ?? "",
@@ -1595,7 +1543,7 @@ export async function main(argv = process.argv.slice(2)) {
     })));
     return;
   }
-  throw new Error("usage: distribution-release.mjs inspect|validate-pointer|prepare|compare|verify-prepared|finalize|smoke|record-smoke|pointer|verify-pypi-gate");
+  throw new Error("usage: distribution-release.mjs inspect|validate-pointer|prepare|verify-prepared|finalize|smoke|record-smoke|pointer|verify-pypi-gate");
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";

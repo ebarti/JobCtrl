@@ -14,12 +14,11 @@ import {
   chromiumEntitlementsForTarget,
   assertCandidateIdentity,
   assertPublishedVersion,
-  assertPreSignComparisonMatches,
+  assertPreSignVerificationMatches,
   assertRunningStatus,
   assertStoppedStatus,
   candidateIdentityFromDescriptor,
   classifyAppleSigningTargets,
-  comparePreparedBuilds,
   createReleaseChannelPointer,
   createAppleSigningPlan,
   notarizeAndStaplePayload,
@@ -36,6 +35,7 @@ import {
   validateReleaseDescriptor,
   validateReleaseChannelPointer,
   validateReleaseDescriptorSignature,
+  verifyPreparedCandidate,
 } from "./distribution-release.mjs";
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
@@ -61,6 +61,15 @@ test("release signing accepts standard canonical Ed25519 PKCS#8 DER", () => {
   const { privateKey: ecPrivateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const ecPrivateKeyBase64 = Buffer.from(ecPrivateKey.export({ format: "der", type: "pkcs8" })).toString("base64");
   assert.throws(() => privateKeyFromBase64(ecPrivateKeyBase64), /release signing key must be Ed25519/);
+});
+
+test("public release metadata describes the independent pre-sign verification gate", async () => {
+  const source = await readFile(
+    path.join(process.cwd(), "scripts", "distribution-release.mjs"),
+    "utf8",
+  );
+  assert.match(source, /independentPreSignVerificationRequired: true/);
+  assert.doesNotMatch(source, /unsignedBuildComparisonRequired/);
 });
 
 test("tracked release-authority bundles are byte-reproducible with pinned esbuild", async (context) => {
@@ -154,12 +163,12 @@ test("tracked release-authority bundles dispatch exactly one intended CLI", asyn
 test("release CLI rejects non-canonical owner-supplied integers", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-release-integers-"));
   context.after(async () => rm(root, { recursive: true, force: true }));
-  const comparison = path.join(root, "comparison.json");
-  await writeFile(comparison, "{}\n");
+  const verification = path.join(root, "verification.json");
+  await writeFile(verification, "{}\n");
   const args = (sequence, minimumSafeSequence, sourceDateEpoch) => [
     "finalize",
     "--prepared", path.join(root, "prepared"),
-    "--comparison", comparison,
+    "--verification", verification,
     "--output", path.join(root, "release"),
     "--channel", "stable",
     "--sequence", sequence,
@@ -289,10 +298,10 @@ test("local fixture release descriptor, signature, and curl contract bind one ZI
     minimumSafeSequence: 0,
     revokedBuildIds: [],
     buildId: "fixture-build-0001",
-    appVersion: "2.0.1",
+    appVersion: "2.0.2",
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
     artifact: {
-      url: "file:///jobctrl-local-release/jobctrl-2.0.1-darwin-arm64.zip",
+      url: "file:///jobctrl-local-release/jobctrl-2.0.2-darwin-arm64.zip",
       sha256: build.archiveSha256,
       sizeBytes: build.compressedBytes,
       archiveType: "zip",
@@ -482,8 +491,8 @@ test("Apple verification codesigns every Mach-O and uses notarization verificati
   assert.equal(result.notarizationVerifiedStandaloneExecutables, 1);
 });
 
-test("pre-sign comparison binds release channel and compiled public-key digest", async (context) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-compare-"));
+test("pre-sign verification binds release channel and compiled public-key digest", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jobctrl-verify-"));
   context.after(async () => rm(root, { recursive: true, force: true }));
   const { privateKey } = generateKeyPairSync("ed25519");
   const publicKeyBase64 = releasePublicKeyBase64(privateKey);
@@ -510,27 +519,18 @@ test("pre-sign comparison binds release channel and compiled public-key digest",
     assert.equal(command, "/usr/bin/strings");
     return { stdout: `${publicKeyBase64}\nstable\n`, stderr: "" };
   };
-  const one = await writePreparedFixture("one", "fixture-build-0001");
-  const two = await writePreparedFixture("two", "fixture-build-0001");
-  const comparison = await comparePreparedBuilds(one, two, {
+  const prepared = await writePreparedFixture("candidate", "fixture-build-0001");
+  const verification = await verifyPreparedCandidate({
+    preparedDirectory: prepared,
     channel: "stable",
     publicKeyBase64,
     runner,
   });
-  assert.equal(comparison.status, "identical-unsigned-pre-sign-builds");
-  assert.equal(comparison.nativeLauncherReleaseTrustKeySha256, trustKeySha256);
-  await writePreparedFixture("two", "fixture-build-0002");
-  await assert.rejects(
-    comparePreparedBuilds(one, two, {
-      channel: "stable",
-      publicKeyBase64,
-      runner,
-    }),
-    /unsigned pre-sign builds differ:.*buildId/,
-  );
+  assert.equal(verification.status, "verified-unsigned-pre-sign-candidate");
+  assert.equal(verification.nativeLauncherReleaseTrustKeySha256, trustKeySha256);
 });
 
-test("finalization cannot reuse a passing pre-sign comparison for another build", () => {
+test("finalization cannot reuse a passing pre-sign verification for another build", () => {
   const prepared = {
     buildId: "fixture-build-0001",
     archiveSha256: "a".repeat(64),
@@ -540,9 +540,9 @@ test("finalization cannot reuse a passing pre-sign comparison for another build"
     nativeLauncherReleaseChannel: "stable",
     nativeLauncherReleaseTrustKeySha256: "c".repeat(64),
   };
-  const comparison = { schemaVersion: 1, status: "identical-unsigned-pre-sign-builds", ...prepared };
-  assert.doesNotThrow(() => assertPreSignComparisonMatches(prepared, comparison));
-  assert.throws(() => assertPreSignComparisonMatches(prepared, { ...comparison, buildId: "fixture-build-0002" }), /prepared buildId/);
+  const verification = { schemaVersion: 1, status: "verified-unsigned-pre-sign-candidate", ...prepared };
+  assert.doesNotThrow(() => assertPreSignVerificationMatches(prepared, verification));
+  assert.throws(() => assertPreSignVerificationMatches(prepared, { ...verification, buildId: "fixture-build-0002" }), /prepared buildId/);
 });
 
 test("published paths, installer pins, and smoke contract use canonical HTTPS assets and lifecycle commands", () => {
@@ -766,8 +766,11 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     "runs-on: macos-15",
     "environment: release-signing",
     "environment: release-publication",
+    "GH_REPO: ${{ github.repository }}",
+    "Preflight checkout-free GitHub publication access",
+    "gh repo view \"$GH_REPO\" --json nameWithOwner",
     "distribution-release.mjs prepare",
-    "distribution-release.finalizer.bundle.mjs compare",
+    "distribution-release.finalizer.bundle.mjs verify-prepared",
     "distribution-release.finalizer.bundle.mjs finalize",
     "distribution-release.mjs smoke",
     "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
@@ -786,6 +789,19 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     "immutableDescriptorUrl",
     "brew audit --strict --formula \"$release/jobctrl.rb\"",
   ]) assert.ok(releaseWorkflow.includes(marker), `missing release workflow marker ${marker}`);
+  for (const removedJob of ["prepare-a", "prepare-b", "pypi-build-a", "pypi-build-b", "pypi-compare"]) {
+    assert.doesNotMatch(releaseWorkflow, new RegExp(`^  ${removedJob}:`, "m"));
+  }
+  assert.match(releaseWorkflow, /^  prepare:/m);
+  assert.match(releaseWorkflow, /^  pypi-build:/m);
+  const publicationPreflight = releaseWorkflow.slice(
+    releaseWorkflow.indexOf("  publication-preflight:"),
+    releaseWorkflow.indexOf("  prepare:"),
+  );
+  assert.match(publicationPreflight, /needs: resolve/);
+  assert.match(publicationPreflight, /gh release view "\$RELEASE_TAG"/);
+  assert.doesNotMatch(publicationPreflight, /actions\/checkout@/);
+  assert.match(releaseWorkflow, /needs: \[resolve, publication-preflight, prepare\]/);
   assert.doesNotMatch(releaseWorkflow, /JOBCTRL_RELEASE_UPLOAD_BASE_URL/);
   assert.doesNotMatch(homebrewWorkflow, /workflow_dispatch:/);
   assert.match(homebrewWorkflow, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
@@ -804,7 +820,7 @@ test("release workflows use protected manual signing, artifact handoff, candidat
   assert.match(releaseWorkflow, /filter="data"/);
   const pypiResolve = releaseWorkflow.slice(
     releaseWorkflow.indexOf("  pypi-resolve:"),
-    releaseWorkflow.indexOf("  pypi-build-a:"),
+    releaseWorkflow.indexOf("  pypi-build:"),
   );
   assert.doesNotMatch(pypiResolve, /(?:corepack|pnpm|npm|npx|uv|pip)\s/);
 });

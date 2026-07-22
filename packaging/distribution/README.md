@@ -111,11 +111,13 @@ Stable artifacts require:
 
 ## P6 release transport and recovery
 
-The owner-only `release-distribution.yml` path builds the unsigned candidate on
-two independent macOS runners and byte-compares their data on a third runner
-before any signing credentials are available. Tracked, checksum-bound bundles
-are the only JobCtrl authority code executed by the comparison and signing
-jobs. It must be dispatched from `refs/tags/<release_tag>`, with the workflow
+The owner-only `release-distribution.yml` path builds the unsigned candidate
+once on a clean macOS runner. A fresh protected signing runner safely extracts
+the checksum-bound handoff and independently verifies its manifest, payload,
+archive, native channel, and embedded public key before any signing credential
+is used. Tracked, checksum-bound bundles are the only JobCtrl authority code
+executed by that verification and signing job. It must be dispatched from
+`refs/tags/<release_tag>`, with the workflow
 SHA equal to that audited tag's current-main commit; every release environment
 admits protected `v*` tags and no branches. The path separates
 `release-signing` (the Ed25519 private key, Developer
@@ -156,11 +158,11 @@ Stable PyPI publication is the last lane of the same workflow. A clean gate
 first checks out the exact immutable-release source, checksum-verifies the
 tracked finalizer bundle and its third-party notice, safely extracts the signed
 release audit, and verifies the candidate with the protected Ed25519 key and
-key ID before any project dependencies run. Two independent builders then
-install only the locked `release-build` group under Python 3.12.13, build
-fixed-epoch wheel and source archives, and hand only package bytes to a fresh
-byte-comparison job. The minimal OIDC publisher consumes only that
-compare-sealed artifact.
+key ID before any project dependencies run. One clean builder then installs
+only the locked `release-build` group under Python 3.12.13, builds the wheel and
+source archive, and hands only their checksum-bound bytes to the minimal OIDC
+publisher. The publisher reasserts the immutable tag and release before it
+uploads those unchanged package bytes.
 
 Local artifacts remain explicitly unsigned and cannot be promoted to the stable
 channel. Prerelease artifacts use the same release manifest key, Developer ID
