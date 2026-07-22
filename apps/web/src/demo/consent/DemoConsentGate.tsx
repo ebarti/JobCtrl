@@ -57,11 +57,12 @@ export function DemoConsentGate({
         <p className="demo-consent-kicker">JobCtrl public demo</p>
         <h1 id="demo-consent-title">Explore JobCtrl with synthetic data</h1>
         <p className="demo-consent-requirement">
-          The live demo can only be used after accepting first-party analytics cookies.
+          The live demo can only be used after accepting analytics cookies.
         </p>
         <p>
-          Acceptance lets us measure coarse routes and demo actions so we can improve the
-          experience. The demo uses synthetic jobs and stays in this browser; do not enter
+          Acceptance enables JobCtrl&apos;s coarse demo measurement and Google Analytics so
+          we can improve the experience. Advertising and personalization signals are
+          disabled. The demo uses synthetic jobs and stays in this browser; do not enter
           personal data, credentials, or secrets.
         </p>
         <p>

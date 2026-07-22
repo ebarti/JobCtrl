@@ -9,10 +9,10 @@ const KEY = "k".repeat(32);
 
 describe("DemoConsentClient", () => {
   it("reads the versioned same-origin consent choice", async () => {
-    const fetcher = vi.fn(async () => json({ choice: "denied", version: "v1" }));
+    const fetcher = vi.fn(async () => json({ choice: "denied", version: "v2" }));
     const client = new DemoConsentClient({ fetcher: fetcher as typeof fetch });
 
-    await expect(client.getChoice()).resolves.toEqual({ choice: "denied", version: "v1" });
+    await expect(client.getChoice()).resolves.toEqual({ choice: "denied", version: "v2" });
     expect(fetcher).toHaveBeenCalledWith("/api/demo-consent", expect.objectContaining({
       method: "GET",
       credentials: "same-origin",
@@ -22,7 +22,7 @@ describe("DemoConsentClient", () => {
   it("retains one operation key across a failed grant retry", async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
-      .mockResolvedValueOnce(json({ choice: "granted", version: "v1" }));
+      .mockResolvedValueOnce(json({ choice: "granted", version: "v2" }));
     const client = new DemoConsentClient({
       fetcher: fetcher as typeof fetch,
       createOperationKey: () => KEY,
@@ -41,7 +41,7 @@ describe("DemoConsentClient", () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(json({ choice: "granted", version: "v2" }));
+      .mockResolvedValueOnce(json({ choice: "granted", version: "v1" }));
     const client = new DemoConsentClient({
       fetcher: fetcher as typeof fetch,
       createOperationKey: () => KEY,
@@ -71,7 +71,7 @@ describe("DemoConsentClient", () => {
   it("bounds a never-settling grant and retains its operation key for retry", async () => {
     const fetcher = vi.fn()
       .mockImplementationOnce(() => new Promise<Response>(() => undefined))
-      .mockResolvedValueOnce(json({ choice: "granted", version: "v1" }));
+      .mockResolvedValueOnce(json({ choice: "granted", version: "v2" }));
     const client = new DemoConsentClient({
       fetcher: fetcher as typeof fetch,
       createOperationKey: () => KEY,

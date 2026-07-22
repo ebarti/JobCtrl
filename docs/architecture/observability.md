@@ -164,7 +164,10 @@ Both Worker configs disable automatic invocation logs and traces. The Workers
 emit only closed lifecycle fields and never log request bodies, cookies, IPs,
 URLs, user agents, or referrers. Optional product measurement uses the typed,
 consent-gated D1 event contract; non-linkable operational counters and
-consented reports remain separate populations.
+consented reports remain separate populations. After the versioned consent
+service confirms acceptance, the demo also loads GA4 tag `G-6MJGD17JN0` with
+Google Signals, advertising, and personalization disabled. The Google tag is a
+separate third-party measurement boundary and is never loaded before consent.
 
 ## Out of Scope
 

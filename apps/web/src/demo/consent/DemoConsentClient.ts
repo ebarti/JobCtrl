@@ -1,4 +1,4 @@
-export const DEMO_CONSENT_VERSION = "v1" as const;
+export const DEMO_CONSENT_VERSION = "v2" as const;
 export const DEMO_CONSENT_REQUEST_TIMEOUT_MS = 3_000;
 
 export type DemoConsentChoice = "unknown" | "granted" | "denied";

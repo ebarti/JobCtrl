@@ -43,8 +43,9 @@ The hosted public demo uses synthetic data in a browser-local workspace. Its
 shortcuts and actions are simulations: they do not contact employers, send
 messages, or make external changes.
 
-For the demo's first-party cookie consent, retention, data-controller identity,
-and privacy contact, read the canonical [Public Demo data notice](data-and-safety.md#public-demo).
+For the demo's analytics-cookie consent, Google Analytics scope, retention,
+data-controller identity, and privacy contact, read the canonical
+[Public Demo data notice](data-and-safety.md#public-demo).
 
 ## What Leaves Your Machine
 

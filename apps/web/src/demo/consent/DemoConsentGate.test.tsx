@@ -11,7 +11,7 @@ describe("DemoConsentGate", () => {
   it("discloses the hard gate and retries a failed acceptance without entering", async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
-      .mockResolvedValueOnce(json({ choice: "granted", version: "v1" }));
+      .mockResolvedValueOnce(json({ choice: "granted", version: "v2" }));
     const onGranted = vi.fn();
     render(
       <DemoConsentGate
@@ -23,7 +23,8 @@ describe("DemoConsentGate", () => {
     );
     const user = userEvent.setup();
 
-    expect(screen.getByText(/demo can only be used after accepting first-party analytics cookies/i)).toBeVisible();
+    expect(screen.getByText(/demo can only be used after accepting analytics cookies/i)).toBeVisible();
+    expect(screen.getByText(/coarse demo measurement and Google Analytics/i)).toBeVisible();
     expect(screen.getByText(/data controller: eloi barti, acting as an individual/i)).toBeVisible();
     expect(screen.getByRole("link", { name: "me@eloibarti.com" })).toHaveAttribute(
       "href",
