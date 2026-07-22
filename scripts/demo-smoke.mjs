@@ -11,6 +11,9 @@ export const DEMO_SHELL_READY_WINDOW_MS = 5 * 60_000;
 export const DEMO_SHELL_READY_DELAY_MS = 3_000;
 export const DEMO_SHELL_READY_ATTEMPTS = DEMO_SHELL_READY_WINDOW_MS / DEMO_SHELL_READY_DELAY_MS + 1;
 export const DEMO_SHELL_REQUEST_TIMEOUT_MS = 15_000;
+export const DEMO_CONSENT_READY_WINDOW_MS = 60_000;
+export const DEMO_CONSENT_READY_DELAY_MS = 3_000;
+export const DEMO_CONSENT_READY_ATTEMPTS = DEMO_CONSENT_READY_WINDOW_MS / DEMO_CONSENT_READY_DELAY_MS + 1;
 const SYNTHETIC_HTML_ASSETS = [
   "/demo/application-preview.html",
   "/demo/profile-resume.html",
@@ -88,6 +91,58 @@ export async function waitForDemoShell(
   );
 }
 
+export async function waitForDemoConsentContract(
+  fetchConsent,
+  {
+    expectedVersion = "v2",
+    attempts = DEMO_CONSENT_READY_ATTEMPTS,
+    timeoutMs = DEMO_CONSENT_READY_WINDOW_MS,
+    delayMs = DEMO_CONSENT_READY_DELAY_MS,
+    requestTimeoutMs = DEMO_SHELL_REQUEST_TIMEOUT_MS,
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now = Date.now,
+    createAbortSignal = (timeout) => AbortSignal.timeout(timeout),
+    log = console.warn,
+  } = {},
+) {
+  const startedAt = now();
+  const deadlineAt = startedAt + timeoutMs;
+  let lastObservation = "unknown";
+
+  for (let attempt = 1; attempt <= attempts && now() < deadlineAt; attempt += 1) {
+    const remainingBeforeRequestMs = deadlineAt - now();
+    const signal = createAbortSignal(Math.min(requestTimeoutMs, remainingBeforeRequestMs));
+
+    try {
+      const response = await fetchConsent({ signal });
+      if (response.ok) {
+        const state = await response.json();
+        if (state?.choice === "unknown" && state?.version === expectedVersion) return state;
+        lastObservation = `choice=${state?.choice ?? "invalid"}, version=${state?.version ?? "invalid"}`;
+      } else {
+        lastObservation = `status=${response.status}`;
+        await response.body?.cancel?.();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastObservation = `request error: ${message}`;
+    }
+
+    const remainingBeforeRetryMs = deadlineAt - now();
+    if (attempt < attempts && remainingBeforeRetryMs > 0) {
+      log(
+        `Demo consent contract is not ready (attempt ${attempt}/${attempts}; ${Math.ceil(remainingBeforeRetryMs / 1_000)}s remaining): ${lastObservation}`,
+      );
+      await sleep(Math.min(delayMs, remainingBeforeRetryMs));
+    }
+  }
+
+  const elapsedMs = Math.max(0, now() - startedAt);
+  assert.fail(
+    `demo consent contract ${expectedVersion} was not ready within ${timeoutMs}ms after ${elapsedMs}ms: ${lastObservation}`,
+  );
+}
+
 async function runDemoSmoke() {
   const baseUrl = new URL(process.env.DEMO_BASE_URL ?? process.argv[2] ?? "");
   assert.equal(baseUrl.protocol, "https:", "DEMO_BASE_URL must use HTTPS");
@@ -108,7 +163,11 @@ async function runDemoSmoke() {
   const shellHtml = await shell.text();
   assert.match(shellHtml, /<div id="root"><\/div>/);
   assertNoCloudflareInjection("/", shellHtml);
-  assert.match(shell.headers.get("content-security-policy") ?? "", /default-src 'self'/);
+  const contentSecurityPolicy = shell.headers.get("content-security-policy") ?? "";
+  assert.match(contentSecurityPolicy, /default-src 'self'/);
+  assert.match(contentSecurityPolicy, /connect-src 'self' https:\/\/\*\.google-analytics\.com/);
+  assert.match(contentSecurityPolicy, /img-src 'self' data: blob: https:\/\/\*\.google-analytics\.com/);
+  assert.match(contentSecurityPolicy, /script-src 'self' https:\/\/www\.googletagmanager\.com/);
   assert.equal(shell.headers.get("referrer-policy"), "no-referrer");
   assert.equal(shell.headers.get("x-content-type-options"), "nosniff");
 
@@ -119,14 +178,16 @@ async function runDemoSmoke() {
 
   await assertSyntheticHtmlAssetsAreClean(request);
 
-  const initial = await request("/api/demo-consent", {
-    headers: {
-      accept: "application/json",
-      origin: baseUrl.origin,
-      "sec-fetch-site": "same-origin",
-    },
-  });
-  assert.deepEqual(await initial.json(), { choice: "unknown", version: "v2" });
+  const initialState = await waitForDemoConsentContract(({ signal }) =>
+    fetchPath("/api/demo-consent", {
+      signal,
+      headers: {
+        accept: "application/json",
+        origin: baseUrl.origin,
+        "sec-fetch-site": "same-origin",
+      },
+    }));
+  assert.deepEqual(initialState, { choice: "unknown", version: "v2" });
 
   const operationKey = () => randomBytes(24).toString("base64url");
   const choose = (choice) => request("/api/demo-consent", {
