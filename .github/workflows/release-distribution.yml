@@ -6,11 +6,11 @@ name: Release distribution
 # channel pointer. Immutable GitHub publication gates the final stable-only
 # PyPI publication lane.
 on:
-  # v2.0.3 is the one-time first-public-release fallback for environments where
+  # v2.0.4 is the one-time first-public-release fallback for environments where
   # the repository app can publish refs but cannot call workflow_dispatch.
   push:
     tags:
-      - v2.0.3
+      - v2.0.4
   workflow_dispatch:
     inputs:
       release_tag:
@@ -634,6 +634,26 @@ jobs:
           [[ "$R2_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]
           r2_endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           release="$RUNNER_TEMP/release"
+          verify_public_immutable() {
+            local destination="$1" expected="$2" existing="$3" actual status
+            for attempt in {1..24}; do
+              status="$(curl --silent --show-error --output "$existing" --write-out '%{http_code}' --proto '=https' --tlsv1.2 "https://releases.jobctrl.dev/$destination" || true)"
+              if [[ "$status" = 200 ]]; then
+                actual="$(shasum -a 256 "$existing" | awk '{print $1}')"
+                test "$actual" = "$expected"
+                return
+              fi
+              if [[ "$status" != 404 ]]; then
+                echo "failed to read immutable release path $destination (HTTP $status)" >&2
+                exit 1
+              fi
+              if [[ "$attempt" -lt 24 ]]; then
+                sleep 5
+              fi
+            done
+            echo "immutable release path $destination did not become public after upload" >&2
+            exit 1
+          }
           upload_immutable() {
             local source="$1" destination="$2" expected actual existing status
             expected="$(shasum -a 256 "$source" | awk '{print $1}')"
@@ -655,12 +675,9 @@ jobs:
               --body "$source" \
               --if-none-match '*' \
               --no-cli-pager >/dev/null; then
-              actual="$(curl --fail --silent --show-error --proto '=https' --tlsv1.2 "https://releases.jobctrl.dev/$destination" | shasum -a 256 | awk '{print $1}')"
-              test "$actual" = "$expected"
-              return
+              echo "immutable object creation did not complete; checking for a concurrent or delayed public object" >&2
             fi
-            actual="$(curl --fail --silent --show-error --proto '=https' --tlsv1.2 "https://releases.jobctrl.dev/$destination" | shasum -a 256 | awk '{print $1}')"
-            test "$actual" = "$expected"
+            verify_public_immutable "$destination" "$expected" "$existing"
           }
           build_id="$(jq -r '.buildId' "$release/release-metadata.json")"
           archive="$(jq -r '.archive.file' "$release/release-metadata.json")"
@@ -760,11 +777,21 @@ jobs:
         run: |
           set -euo pipefail
           release="$RUNNER_TEMP/release"
+          tap_name="jobctrl/release-smoke-${GITHUB_RUN_ID}"
+          brew tap-new --no-git "$tap_name"
+          tap_repo="$(brew --repository "$tap_name")"
+          install -m 0644 "$release/jobctrl.rb" "$tap_repo/Formula/jobctrl.rb"
+          formula="$tap_name/jobctrl"
           formula_bin="$(brew --prefix)/bin/jobctrl"
-          trap '"$formula_bin" stop >/dev/null 2>&1 || true; brew uninstall --formula jobctrl >/dev/null 2>&1 || true' EXIT
-          brew audit --strict --formula "$release/jobctrl.rb"
-          brew install --formula "$release/jobctrl.rb"
-          brew test jobctrl
+          cleanup() {
+            "$formula_bin" stop >/dev/null 2>&1 || true
+            brew uninstall --formula "$formula" >/dev/null 2>&1 || true
+            brew untap "$tap_name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          brew audit --strict --formula "$formula"
+          brew install --formula "$formula"
+          brew test "$formula"
           "$formula_bin" start --no-open
           status="$("$formula_bin" status --json)"
           STATUS="$status" node -e 'const status=JSON.parse(process.env.STATUS); if (status.status !== "running" || !["temporal", "worker", "api"].every((name) => status.components?.[name]?.state === "running")) process.exit(1)'
