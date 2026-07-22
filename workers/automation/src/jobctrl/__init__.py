@@ -1,3 +1,3 @@
 """JobCtrl — AI-powered end-to-end job application pipeline."""
 
-__version__ = "2.0.3"
+__version__ = "2.0.4"

@@ -298,10 +298,10 @@ test("local fixture release descriptor, signature, and curl contract bind one ZI
     minimumSafeSequence: 0,
     revokedBuildIds: [],
     buildId: "fixture-build-0001",
-    appVersion: "2.0.3",
+    appVersion: "2.0.4",
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
     artifact: {
-      url: "file:///jobctrl-local-release/jobctrl-2.0.3-darwin-arm64.zip",
+      url: "file:///jobctrl-local-release/jobctrl-2.0.4-darwin-arm64.zip",
       sha256: build.archiveSha256,
       sizeBytes: build.compressedBytes,
       archiveType: "zip",
@@ -761,7 +761,7 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     /ENOENT/,
   );
   assert.match(releaseWorkflow, /workflow_dispatch:/);
-  assert.match(releaseWorkflow, /^  push:\n    tags:\n      - v2\.0\.3$/m);
+  assert.match(releaseWorkflow, /^  push:\n    tags:\n      - v2\.0\.4$/m);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.release_tag \|\| github\.ref_name \}\}/);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.channel \|\| 'stable' \}\}/);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.sequence \|\| '1' \}\}/);
@@ -793,8 +793,18 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     "JOBCTRL_R2_BUCKET",
     "channel-promotion-evidence.json",
     "immutableDescriptorUrl",
-    "brew audit --strict --formula \"$release/jobctrl.rb\"",
+    "tap_name=\"jobctrl/release-smoke-${GITHUB_RUN_ID}\"",
+    "brew tap-new --no-git \"$tap_name\"",
+    "install -m 0644 \"$release/jobctrl.rb\" \"$tap_repo/Formula/jobctrl.rb\"",
+    "formula=\"$tap_name/jobctrl\"",
+    "brew audit --strict --formula \"$formula\"",
+    "brew install --formula \"$formula\"",
+    "brew test \"$formula\"",
+    "for attempt in {1..24}",
+    "sleep 5",
   ]) assert.ok(releaseWorkflow.includes(marker), `missing release workflow marker ${marker}`);
+  assert.doesNotMatch(releaseWorkflow, /brew audit --strict --formula \"\$release\/jobctrl\.rb\"/);
+  assert.doesNotMatch(releaseWorkflow, /brew install --formula \"\$release\/jobctrl\.rb\"/);
   for (const removedJob of ["prepare-a", "prepare-b", "pypi-build-a", "pypi-build-b", "pypi-compare"]) {
     assert.doesNotMatch(releaseWorkflow, new RegExp(`^  ${removedJob}:`, "m"));
   }

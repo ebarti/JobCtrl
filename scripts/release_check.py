@@ -1087,8 +1087,14 @@ def _release_distribution_findings(root: Path) -> list[str]:
         "gh release verify-asset": "does not compare post-lock release assets to local trusted bytes",
         "gh release verify \"$RELEASE_TAG\"": "does not verify the immutable release attestation",
         "uses: ./.github/workflows/sync-homebrew-tap.yml": "does not call the artifact-only Homebrew promotion workflow",
-        "brew audit --strict --formula \"$release/jobctrl.rb\"": "does not audit the rendered Homebrew formula before tap credentials are used",
-        "brew test jobctrl": "does not run the rendered Homebrew formula test before tap credentials are used",
+        "tap_name=\"jobctrl/release-smoke-${GITHUB_RUN_ID}\"": "does not isolate the temporary verification tap by release run",
+        "brew tap-new --no-git \"$tap_name\"": "does not create an isolated temporary tap for formula verification without CI Git side effects",
+        "install -m 0644 \"$release/jobctrl.rb\" \"$tap_repo/Formula/jobctrl.rb\"": "does not install the signed render into the isolated verification tap",
+        "formula=\"$tap_name/jobctrl\"": "does not address the rendered formula through its temporary tap name",
+        "brew audit --strict --formula \"$formula\"": "does not audit the rendered Homebrew formula by its supported formula name before tap credentials are used",
+        "brew test \"$formula\"": "does not run the rendered Homebrew formula test before tap credentials are used",
+        "for attempt in {1..24}": "does not bound retries while waiting for immutable R2 objects to become public",
+        "sleep 5": "does not wait for immutable R2 public propagation before verification",
     }
     findings = [
         f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: {message}"
