@@ -778,11 +778,11 @@ def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> No
         release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
     ).read_text(encoding="utf-8")
     resolve = release_check._workflow_job_body(workflow, "pypi-resolve")
-    compare = release_check._workflow_job_body(workflow, "pypi-compare")
+    build = release_check._workflow_job_body(workflow, "pypi-build")
     publish = release_check._workflow_job_body(workflow, "publish-pypi")
 
     assert resolve is not None
-    assert compare is not None
+    assert build is not None
     assert publish is not None
     assert not (release_check.ROOT / release_check.PUBLISH_WORKFLOW_PATH).exists()
 
@@ -800,34 +800,30 @@ def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> No
     assert "corepack pnpm" not in resolve
     assert "uv --project" not in resolve
 
-    for job_name, artifact in (
-        ("pypi-build-a", "jobctrl-pypi-a-"),
-        ("pypi-build-b", "jobctrl-pypi-b-"),
-    ):
-        build = release_check._workflow_job_body(workflow, job_name)
-        assert build is not None
-        assert "needs: pypi-resolve" in build
-        assert "actions/setup-python@" in build
-        assert "astral-sh/setup-uv@" in build
-        assert "actions/setup-node@" not in build
-        assert "corepack pnpm" not in build
-        assert "verify-pypi-gate" not in build
-        assert "JOBCTRL_RELEASE_PUBLIC_KEY" not in build
-        assert "JOBCTRL_RELEASE_KEY_ID" not in build
-        sync = "uv --project workers/automation sync --python 3.12.13 --locked --no-default-groups --only-group release-build --no-install-project"
-        build_command = "uv --project workers/automation run --python 3.12.13 --no-sync python -m build --no-isolation workers/automation"
-        assert sync in build
-        assert build_command in build
-        assert build.index(sync) < build.index(build_command) < build.index(
-            "python3 scripts/release_check.py --strict-prompt"
-        ) < build.index("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02")
-        assert artifact in build
-
-    assert "needs: [pypi-resolve, pypi-build-a, pypi-build-b]" in compare
-    assert 'cmp "$a/$name" "$b/$name"' in compare
-    assert "shasum -a 256 packages/* > SHA256SUMS" in compare
+    assert "needs: pypi-resolve" in build
+    assert "actions/setup-python@" in build
+    assert "astral-sh/setup-uv@" in build
+    assert "actions/setup-node@" not in build
+    assert "corepack pnpm" not in build
+    assert "verify-pypi-gate" not in build
+    assert "JOBCTRL_RELEASE_PUBLIC_KEY" not in build
+    assert "JOBCTRL_RELEASE_KEY_ID" not in build
+    sync = "uv --project workers/automation sync --python 3.12.13 --locked --no-default-groups --only-group release-build --no-install-project"
+    build_command = "uv --project workers/automation run --python 3.12.13 --no-sync python -m build --no-isolation workers/automation"
+    assert sync in build
+    assert build_command in build
+    assert build.index(sync) < build.index(build_command) < build.index(
+        "python3 scripts/release_check.py --strict-prompt"
+    ) < build.index("shasum -a 256 packages/* > SHA256SUMS") < build.index(
+        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+    )
+    assert "jobctrl-pypi-distributions-" in build
+    assert "pypi-build-a" not in workflow
+    assert "pypi-build-b" not in workflow
+    assert "pypi-compare" not in workflow
 
     assert "environment: pypi" in publish
+    assert "needs: [pypi-resolve, pypi-build]" in publish
     assert "id-token: write" in publish
     assert "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" in publish
     assert "actions/checkout@" not in publish
@@ -845,6 +841,7 @@ def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> No
     assert 'test "$tag_sha" = "$main_sha"' in publish
     assert "packages-dir: ${{ runner.temp }}/jobctrl-pypi-dists/packages" in publish
     assert "SHA256SUMS" in publish
+    assert "jobctrl-pypi-distributions-" in publish
     assert "uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d" in publish
 
 
@@ -904,12 +901,12 @@ def test_distribution_privileged_jobs_reject_dependency_or_repo_execution(
         encoding="utf-8"
     )
     workflow = workflow.replace(
-        "      - name: Download the independently compared candidate\n",
+        "      - name: Download the prepared candidate\n",
         "      - name: Install forbidden signing dependencies\n"
         "        run: |\n"
         "          corepack pnpm install --frozen-lockfile\n"
         "          node scripts/distribution-release.mjs inspect fixture fixture\n\n"
-        "      - name: Download the independently compared candidate\n",
+        "      - name: Download the prepared candidate\n",
         1,
     ).replace(
         "      - name: Download the immutable signed candidate\n",
@@ -943,6 +940,59 @@ def test_distribution_privileged_jobs_reject_dependency_or_repo_execution(
     )
     assert any(
         "credential-free job smoke-and-verify receives signing or publication authority"
+        in item
+        for item in findings
+    )
+
+
+def test_distribution_checkout_free_jobs_bind_github_cli_repository(
+    tmp_path: Path,
+) -> None:
+    workflow = (
+        release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    policy = (release_check.ROOT / release_check.SIGNING_POLICY_PATH).read_text(
+        encoding="utf-8"
+    )
+    workflow = workflow.replace(
+        "env:\n"
+        "  # Checkout-free publication jobs must never rely on gh inferring a repository.\n"
+        "  GH_REPO: ${{ github.repository }}\n\n",
+        "",
+        1,
+    )
+    _write(tmp_path / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH, workflow)
+    _write(tmp_path / release_check.SIGNING_POLICY_PATH, policy)
+
+    findings = release_check._release_distribution_findings(tmp_path)
+
+    assert any(
+        "does not bind checkout-free GitHub CLI release operations" in item
+        for item in findings
+    )
+
+
+def test_distribution_preflights_checkout_free_release_access_before_signing(
+    tmp_path: Path,
+) -> None:
+    workflow = (
+        release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
+    ).read_text(encoding="utf-8")
+    policy = (release_check.ROOT / release_check.SIGNING_POLICY_PATH).read_text(
+        encoding="utf-8"
+    )
+    workflow = workflow.replace(
+        "          test \"$(gh repo view \"$GH_REPO\" --json nameWithOwner --jq '.nameWithOwner')\" = \"$GITHUB_REPOSITORY\"\n",
+        "",
+        1,
+    )
+    _write(tmp_path / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH, workflow)
+    _write(tmp_path / release_check.SIGNING_POLICY_PATH, policy)
+
+    findings = release_check._release_distribution_findings(tmp_path)
+
+    assert any(
+        "publication preflight does not prove checkout-free GitHub release access"
         in item
         for item in findings
     )

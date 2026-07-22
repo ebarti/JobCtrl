@@ -40,6 +40,10 @@ permissions:
   actions: read
   contents: read
 
+env:
+  # Checkout-free publication jobs must never rely on gh inferring a repository.
+  GH_REPO: ${{ github.repository }}
+
 concurrency:
   group: release-distribution-${{ inputs.channel }}-darwin-arm64
   cancel-in-progress: false
@@ -107,173 +111,40 @@ jobs:
           test "$(jq -r '.manifestSigning.publicKeyStatus' packaging/distribution/signing-policy.json)" = unprovisioned
           test "$(jq -r '.appleSigning.teamIdStatus' packaging/distribution/signing-policy.json)" = unprovisioned
 
-  prepare-a:
-    name: Build unsigned candidate A on an independent runner
+  publication-preflight:
+    name: Preflight checkout-free GitHub publication access
     needs: resolve
-    runs-on: macos-15
-    permissions:
-      actions: read
-      contents: read
-    env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
-      RELEASE_CHANNEL: ${{ inputs.channel }}
-      RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
-      RELEASE_BUILD_ID: ${{ needs.resolve.outputs.release_build_id }}
-      SOURCE_DATE_EPOCH: ${{ needs.resolve.outputs.source_date_epoch }}
-      JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
-    steps:
-      - name: Check out the exact audited source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ needs.resolve.outputs.release_ref }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up pinned build runtimes
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22.21.1
-
-      - name: Set up pinned uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-        with:
-          version: 0.11.7
-
-      - name: Reassert audited refs before dependency execution
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$RELEASE_REF"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
-
-      - name: Install locked workspace dependencies
-        run: corepack pnpm install --frozen-lockfile
-
-      - name: Rebuild and verify tracked release-authority bundles
-        run: |
-          set -euo pipefail
-          corepack pnpm exec esbuild scripts/distribution-release-finalizer-entry.mjs --bundle --platform=node --format=esm --target=node22 --outfile="$RUNNER_TEMP/distribution-release.finalizer.bundle.mjs"
-          corepack pnpm exec esbuild scripts/distribution-homebrew-render-entry.mjs --bundle --platform=node --format=esm --target=node22 --outfile="$RUNNER_TEMP/distribution-homebrew.render.bundle.mjs"
-          cmp scripts/distribution-release.finalizer.bundle.mjs "$RUNNER_TEMP/distribution-release.finalizer.bundle.mjs"
-          cmp scripts/distribution-homebrew.render.bundle.mjs "$RUNNER_TEMP/distribution-homebrew.render.bundle.mjs"
-          (
-            cd scripts
-            shasum -a 256 -c distribution-release.finalizer.bundle.mjs.sha256
-            shasum -a 256 -c distribution-homebrew.render.bundle.mjs.sha256
-          )
-
-      - name: Run pre-sign release gates
-        run: |
-          set -euo pipefail
-          corepack pnpm distribution:audit
-          corepack pnpm scripts:test
-          python3 scripts/release_check.py --strict-prompt --release-tag "$RELEASE_TAG"
-
-      - name: Build unsigned candidate A
-        run: node scripts/distribution-release.mjs prepare --output "$RUNNER_TEMP/pre-sign" --channel "$RELEASE_CHANNEL" --build-id "$RELEASE_BUILD_ID" --source-date-epoch "$SOURCE_DATE_EPOCH"
-
-      - name: Upload only candidate A data
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/build-a"
-          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/build-a/prepared-candidate.tar" -C "$RUNNER_TEMP" pre-sign
-
-      - name: Retain candidate A
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: jobctrl-prepared-a-${{ github.run_id }}
-          path: ${{ runner.temp }}/build-a
-          if-no-files-found: error
-          retention-days: 14
-
-  prepare-b:
-    name: Build unsigned candidate B on an independent runner
-    needs: resolve
-    runs-on: macos-15
-    permissions:
-      actions: read
-      contents: read
-    env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
-      RELEASE_CHANNEL: ${{ inputs.channel }}
-      RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
-      RELEASE_BUILD_ID: ${{ needs.resolve.outputs.release_build_id }}
-      SOURCE_DATE_EPOCH: ${{ needs.resolve.outputs.source_date_epoch }}
-      JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
-    steps:
-      - name: Check out the exact audited source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ needs.resolve.outputs.release_ref }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up pinned build runtimes
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22.21.1
-
-      - name: Set up pinned uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-        with:
-          version: 0.11.7
-
-      - name: Reassert audited refs before dependency execution
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$RELEASE_REF"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
-
-      - name: Install locked workspace dependencies
-        run: corepack pnpm install --frozen-lockfile
-
-      - name: Rebuild and verify tracked release-authority bundles
-        run: |
-          set -euo pipefail
-          corepack pnpm exec esbuild scripts/distribution-release-finalizer-entry.mjs --bundle --platform=node --format=esm --target=node22 --outfile="$RUNNER_TEMP/distribution-release.finalizer.bundle.mjs"
-          corepack pnpm exec esbuild scripts/distribution-homebrew-render-entry.mjs --bundle --platform=node --format=esm --target=node22 --outfile="$RUNNER_TEMP/distribution-homebrew.render.bundle.mjs"
-          cmp scripts/distribution-release.finalizer.bundle.mjs "$RUNNER_TEMP/distribution-release.finalizer.bundle.mjs"
-          cmp scripts/distribution-homebrew.render.bundle.mjs "$RUNNER_TEMP/distribution-homebrew.render.bundle.mjs"
-          (
-            cd scripts
-            shasum -a 256 -c distribution-release.finalizer.bundle.mjs.sha256
-            shasum -a 256 -c distribution-homebrew.render.bundle.mjs.sha256
-          )
-
-      - name: Run pre-sign release gates
-        run: |
-          set -euo pipefail
-          corepack pnpm distribution:audit
-          corepack pnpm scripts:test
-          python3 scripts/release_check.py --strict-prompt --release-tag "$RELEASE_TAG"
-
-      - name: Build unsigned candidate B
-        run: node scripts/distribution-release.mjs prepare --output "$RUNNER_TEMP/pre-sign" --channel "$RELEASE_CHANNEL" --build-id "$RELEASE_BUILD_ID" --source-date-epoch "$SOURCE_DATE_EPOCH"
-
-      - name: Upload only candidate B data
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/build-b"
-          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/build-b/prepared-candidate.tar" -C "$RUNNER_TEMP" pre-sign
-
-      - name: Retain candidate B
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: jobctrl-prepared-b-${{ github.run_id }}
-          path: ${{ runner.temp }}/build-b
-          if-no-files-found: error
-          retention-days: 14
-
-  compare:
-    name: Compare two independent candidates with checkout-rooted code
-    needs: [resolve, prepare-a, prepare-b]
     runs-on: ubuntu-24.04
     permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
+    steps:
+      - name: Prove checkout-free release commands before signing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = "$GITHUB_REPOSITORY"
+          test "$(gh repo view "$GH_REPO" --json nameWithOwner --jq '.nameWithOwner')" = "$GITHUB_REPOSITORY"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
+          release="$RUNNER_TEMP/preflight-release.json"
+          error="$RUNNER_TEMP/preflight-release.err"
+          if gh release view "$RELEASE_TAG" --json isDraft,targetCommitish,tagName > "$release" 2> "$error"; then
+            test "$(jq -r '.tagName' "$release")" = "$RELEASE_TAG"
+            test "$(jq -r '.targetCommitish' "$release")" = "$RELEASE_REF"
+          elif ! grep -Eqi 'HTTP 404|release not found' "$error"; then
+            cat "$error" >&2
+            exit 1
+          fi
+
+  prepare:
+    name: Build unsigned candidate once
+    needs: resolve
+    runs-on: macos-15
+    permissions:
       actions: read
       contents: read
     env:
@@ -282,39 +153,27 @@ jobs:
       RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
       RELEASE_BUILD_ID: ${{ needs.resolve.outputs.release_build_id }}
       SOURCE_DATE_EPOCH: ${{ needs.resolve.outputs.source_date_epoch }}
-      EXPECTED_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
+      JOBCTRL_RELEASE_PUBLIC_KEY: ${{ needs.resolve.outputs.release_public_key }}
       EXPECTED_RELEASE_KEY_ID: ${{ needs.resolve.outputs.release_key_id }}
     steps:
-      - name: Check out only the exact audited comparison code
+      - name: Check out the exact audited source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.resolve.outputs.release_ref }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up the pinned audited runtimes
+      - name: Set up pinned build runtimes
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.21.1
 
-      - name: Set up safe archive extraction
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
-          python-version: "3.12.13"
+          version: 0.11.7
 
-      - name: Download candidate A data
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: jobctrl-prepared-a-${{ github.run_id }}
-          path: ${{ runner.temp }}/build-a
-
-      - name: Download candidate B data
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: jobctrl-prepared-b-${{ github.run_id }}
-          path: ${{ runner.temp }}/build-b
-
-      - name: Reassert audited refs before comparison
+      - name: Reassert audited refs before dependency execution
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -323,81 +182,64 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
-      - name: Verify checkout-rooted release authority
+      - name: Install locked workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Rebuild and verify tracked release-authority bundles
         run: |
           set -euo pipefail
+          corepack pnpm exec esbuild scripts/distribution-release-finalizer-entry.mjs --bundle --platform=node --format=esm --target=node22 --outfile="$RUNNER_TEMP/distribution-release.finalizer.bundle.mjs"
+          corepack pnpm exec esbuild scripts/distribution-homebrew-render-entry.mjs --bundle --platform=node --format=esm --target=node22 --outfile="$RUNNER_TEMP/distribution-homebrew.render.bundle.mjs"
+          cmp scripts/distribution-release.finalizer.bundle.mjs "$RUNNER_TEMP/distribution-release.finalizer.bundle.mjs"
+          cmp scripts/distribution-homebrew.render.bundle.mjs "$RUNNER_TEMP/distribution-homebrew.render.bundle.mjs"
           (
             cd scripts
             shasum -a 256 -c distribution-release.finalizer.bundle.mjs.sha256
             shasum -a 256 -c distribution-homebrew.render.bundle.mjs.sha256
           )
 
-      - name: Safely unpack candidate data
+      - name: Run pre-sign release gates
         run: |
           set -euo pipefail
-          for label in a b; do
-            archive="$RUNNER_TEMP/build-$label/prepared-candidate.tar"
-            destination="$RUNNER_TEMP/compare-$label"
-            test -f "$archive" && test ! -L "$archive"
-            mkdir -p "$destination"
-            python3 - "$archive" "$destination" <<'PY'
-          import pathlib
-          import sys
-          import tarfile
+          corepack pnpm distribution:audit
+          corepack pnpm scripts:test
+          python3 scripts/release_check.py --strict-prompt --release-tag "$RELEASE_TAG"
 
-          archive_path, destination = sys.argv[1:]
-          with tarfile.open(archive_path, "r:") as archive:
-              members = archive.getmembers()
-              if not members:
-                  raise SystemExit("prepared candidate archive is empty")
-              seen = set()
-              for member in members:
-                  path = pathlib.PurePosixPath(member.name)
-                  if path.is_absolute() or not path.parts or path.parts[0] != "pre-sign":
-                      raise SystemExit(f"unsafe prepared candidate path: {member.name}")
-                  if ".." in path.parts or member.name in seen:
-                      raise SystemExit(f"unsafe or duplicate prepared candidate path: {member.name}")
-                  seen.add(member.name)
-              archive.extractall(destination, members=members, filter="data")
-          PY
-          done
+      - name: Build unsigned candidate
+        run: node scripts/distribution-release.mjs prepare --output "$RUNNER_TEMP/pre-sign" --channel "$RELEASE_CHANNEL" --build-id "$RELEASE_BUILD_ID" --source-date-epoch "$SOURCE_DATE_EPOCH"
 
-      - name: Compare independent candidate bytes with the tracked finalizer
-        run: node scripts/distribution-release.finalizer.bundle.mjs compare --first "$RUNNER_TEMP/compare-a/pre-sign" --second "$RUNNER_TEMP/compare-b/pre-sign" --channel "$RELEASE_CHANNEL" --public-key "$EXPECTED_RELEASE_PUBLIC_KEY" --output "$RUNNER_TEMP/pre-sign-comparison.json"
-
-      - name: Seal only compared candidate data
+      - name: Package the prepared handoff
         run: |
           set -euo pipefail
-          sealed="$RUNNER_TEMP/compared-candidate"
-          mkdir -p "$sealed"
-          COPYFILE_DISABLE=1 tar -cf "$sealed/prepared-candidate.tar" -C "$RUNNER_TEMP/compare-a" pre-sign
-          install -m 0644 "$RUNNER_TEMP/pre-sign-comparison.json" "$sealed/pre-sign-comparison.json"
+          handoff="$RUNNER_TEMP/prepared-candidate"
+          mkdir -p "$handoff"
+          COPYFILE_DISABLE=1 tar -cf "$handoff/prepared-candidate.tar" -C "$RUNNER_TEMP" pre-sign
           jq -n \
             --arg releaseTag "$RELEASE_TAG" \
             --arg releaseRef "$RELEASE_REF" \
             --arg releaseChannel "$RELEASE_CHANNEL" \
             --arg releaseBuildId "$RELEASE_BUILD_ID" \
             --arg sourceDateEpoch "$SOURCE_DATE_EPOCH" \
-            --arg releasePublicKey "$EXPECTED_RELEASE_PUBLIC_KEY" \
+            --arg releasePublicKey "$JOBCTRL_RELEASE_PUBLIC_KEY" \
             --arg releaseKeyId "$EXPECTED_RELEASE_KEY_ID" \
             '{schemaVersion: 1, releaseTag: $releaseTag, releaseRef: $releaseRef, releaseChannel: $releaseChannel, releaseBuildId: $releaseBuildId, sourceDateEpoch: $sourceDateEpoch, releasePublicKey: $releasePublicKey, releaseKeyId: $releaseKeyId}' \
-            > "$sealed/release-contract.json"
+            > "$handoff/release-contract.json"
           (
-            cd "$sealed"
-            shasum -a 256 prepared-candidate.tar pre-sign-comparison.json release-contract.json > COMPARE_SHA256SUMS
+            cd "$handoff"
+            shasum -a 256 prepared-candidate.tar release-contract.json > PREPARED_SHA256SUMS
           )
 
-      - name: Upload the independently compared handoff
+      - name: Retain the prepared candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: jobctrl-compared-candidate-${{ github.run_id }}
-          path: ${{ runner.temp }}/compared-candidate
+          name: jobctrl-prepared-candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/prepared-candidate
           if-no-files-found: error
           retention-days: 14
 
   sign:
     name: Sign and notarize on a fresh protected runner
-    needs: [resolve, compare]
+    needs: [resolve, publication-preflight, prepare]
     runs-on: macos-15
     environment: release-signing
     outputs:
@@ -432,11 +274,11 @@ jobs:
         with:
           python-version: "3.12.10"
 
-      - name: Download the independently compared candidate
+      - name: Download the prepared candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: jobctrl-compared-candidate-${{ github.run_id }}
-          path: ${{ runner.temp }}/compared-candidate
+          name: jobctrl-prepared-candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/prepared-candidate
 
       - name: Reassert the audited source before accepting the prepared handoff
         env:
@@ -447,7 +289,7 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
-      - name: Verify checkout-rooted release authority and the compared handoff
+      - name: Verify checkout-rooted release authority and the prepared handoff
         run: |
           set -euo pipefail
           (
@@ -455,13 +297,13 @@ jobs:
             shasum -a 256 -c distribution-release.finalizer.bundle.mjs.sha256
             shasum -a 256 -c distribution-homebrew.render.bundle.mjs.sha256
           )
-          artifact="$RUNNER_TEMP/compared-candidate"
-          for path in COMPARE_SHA256SUMS pre-sign-comparison.json prepared-candidate.tar release-contract.json; do
+          artifact="$RUNNER_TEMP/prepared-candidate"
+          for path in PREPARED_SHA256SUMS prepared-candidate.tar release-contract.json; do
             test -f "$artifact/$path" && test ! -L "$artifact/$path"
           done
           (
             cd "$artifact"
-            shasum -a 256 -c COMPARE_SHA256SUMS
+            shasum -a 256 -c PREPARED_SHA256SUMS
           )
           mkdir -p "$RUNNER_TEMP/prepared"
           python3 - "$artifact/prepared-candidate.tar" "$RUNNER_TEMP/prepared" <<'PY'
@@ -473,14 +315,14 @@ jobs:
           with tarfile.open(archive_path, "r:") as archive:
               members = archive.getmembers()
               if not members:
-                  raise SystemExit("compared candidate archive is empty")
+                  raise SystemExit("prepared candidate archive is empty")
               seen = set()
               for member in members:
                   path = pathlib.PurePosixPath(member.name)
                   if path.is_absolute() or not path.parts or path.parts[0] != "pre-sign":
-                      raise SystemExit(f"unsafe compared candidate path: {member.name}")
+                      raise SystemExit(f"unsafe prepared candidate path: {member.name}")
                   if ".." in path.parts or member.name in seen:
-                      raise SystemExit(f"unsafe or duplicate compared candidate path: {member.name}")
+                      raise SystemExit(f"unsafe or duplicate prepared candidate path: {member.name}")
                   seen.add(member.name)
               archive.extractall(destination, members=members, filter="data")
           PY
@@ -494,7 +336,15 @@ jobs:
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
 
       - name: Reverify the selected candidate tree before any signing secret
-        run: node scripts/distribution-release.finalizer.bundle.mjs verify-prepared --prepared "$RUNNER_TEMP/prepared/pre-sign" --channel "$RELEASE_CHANNEL" --public-key "$EXPECTED_RELEASE_PUBLIC_KEY"
+        run: |
+          set -euo pipefail
+          artifact="$RUNNER_TEMP/prepared-candidate"
+          node scripts/distribution-release.finalizer.bundle.mjs verify-prepared \
+            --prepared "$RUNNER_TEMP/prepared/pre-sign" \
+            --channel "$RELEASE_CHANNEL" \
+            --public-key "$EXPECTED_RELEASE_PUBLIC_KEY" \
+            > "$artifact/pre-sign-verification.json"
+          test -s "$artifact/pre-sign-verification.json"
 
       - name: Bind the protected private key to the configured public trust
         env:
@@ -550,7 +400,7 @@ jobs:
           # Bundled equivalent of: node scripts/distribution-release.mjs finalize
           node scripts/distribution-release.finalizer.bundle.mjs finalize \
             --prepared "$RUNNER_TEMP/prepared/pre-sign" \
-            --comparison "$RUNNER_TEMP/compared-candidate/pre-sign-comparison.json" \
+            --verification "$RUNNER_TEMP/prepared-candidate/pre-sign-verification.json" \
             --output "$RUNNER_TEMP/release" \
             --channel "$RELEASE_CHANNEL" \
             --sequence "$RELEASE_SEQUENCE" \
@@ -559,7 +409,7 @@ jobs:
             --source-date-epoch "$SOURCE_DATE_EPOCH" \
             --source-commit "$(git rev-parse HEAD)"
           test -f "$RUNNER_TEMP/release/audit/notary-log.json"
-          test -f "$RUNNER_TEMP/release/audit/pre-sign-comparison.json"
+          test -f "$RUNNER_TEMP/release/audit/pre-sign-verification.json"
           test -f "$RUNNER_TEMP/release/SHA256SUMS"
 
       - name: Root pointer and stable formula identity in the audited signer
@@ -1323,8 +1173,8 @@ jobs:
           echo "source_commit=$EXPECTED_SOURCE_COMMIT" >> "$GITHUB_OUTPUT"
           echo "source_date_epoch=$EXPECTED_SOURCE_DATE_EPOCH" >> "$GITHUB_OUTPUT"
 
-  pypi-build-a:
-    name: Build PyPI distributions on independent runner A
+  pypi-build:
+    name: Build and seal PyPI distributions once
     needs: pypi-resolve
     runs-on: ubuntu-24.04
     permissions:
@@ -1376,149 +1226,29 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          artifact_root="$RUNNER_TEMP/jobctrl-pypi-a/packages"
+          artifact_root="$RUNNER_TEMP/jobctrl-pypi-dists/packages"
           mkdir -p "$artifact_root"
           wheels=(workers/automation/dist/*.whl)
           sdists=(workers/automation/dist/*.tar.gz)
           test "${#wheels[@]}" = 1
           test "${#sdists[@]}" = 1
           install -m 0644 "${wheels[0]}" "${sdists[0]}" "$artifact_root/"
-
-      - name: Upload only build A package bytes
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: jobctrl-pypi-a-${{ github.run_id }}
-          path: ${{ runner.temp }}/jobctrl-pypi-a
-          if-no-files-found: error
-          retention-days: 14
-
-  pypi-build-b:
-    name: Build PyPI distributions on independent runner B
-    needs: pypi-resolve
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
-      RELEASE_REF: ${{ needs.pypi-resolve.outputs.source_commit }}
-      SOURCE_DATE_EPOCH: ${{ needs.pypi-resolve.outputs.source_date_epoch }}
-    steps:
-      - name: Check out the exact audited source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ needs.pypi-resolve.outputs.source_commit }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: "3.12.13"
-
-      - name: Set up pinned uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
-        with:
-          version: 0.11.7
-
-      - name: Reassert audited refs before dependency execution
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$RELEASE_REF"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
-
-      - name: Set up only the exact locked release-build dependencies
-        run: uv --project workers/automation sync --python 3.12.13 --locked --no-default-groups --only-group release-build --no-install-project
-
-      - name: Build exact fixed-epoch PyPI distributions without isolation
-        run: |
-          set -euo pipefail
-          rm -rf workers/automation/dist
-          uv --project workers/automation run --python 3.12.13 --no-sync python -m build --no-isolation workers/automation
-
-      - name: Scan source and built distributions
-        run: python3 scripts/release_check.py --strict-prompt --release-tag "$RELEASE_TAG"
-
-      - name: Stage exactly one wheel and one source distribution
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          artifact_root="$RUNNER_TEMP/jobctrl-pypi-b/packages"
-          mkdir -p "$artifact_root"
-          wheels=(workers/automation/dist/*.whl)
-          sdists=(workers/automation/dist/*.tar.gz)
-          test "${#wheels[@]}" = 1
-          test "${#sdists[@]}" = 1
-          install -m 0644 "${wheels[0]}" "${sdists[0]}" "$artifact_root/"
-
-      - name: Upload only build B package bytes
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: jobctrl-pypi-b-${{ github.run_id }}
-          path: ${{ runner.temp }}/jobctrl-pypi-b
-          if-no-files-found: error
-          retention-days: 14
-
-  pypi-compare:
-    name: Compare and seal independent PyPI builds
-    needs: [pypi-resolve, pypi-build-a, pypi-build-b]
-    runs-on: ubuntu-24.04
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: Download build A bytes
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: jobctrl-pypi-a-${{ github.run_id }}
-          path: ${{ runner.temp }}/pypi-a
-
-      - name: Download build B bytes
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: jobctrl-pypi-b-${{ github.run_id }}
-          path: ${{ runner.temp }}/pypi-b
-
-      - name: Require exact byte-identical wheel and source archive
-        run: |
-          set -euo pipefail
-          a="$RUNNER_TEMP/pypi-a/packages"
-          b="$RUNNER_TEMP/pypi-b/packages"
-          for root in "$a" "$b"; do
-            test -d "$root" && test ! -L "$root"
-            test -z "$(find "$root" -mindepth 1 ! -type f -print)"
-            test "$(find "$root" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = 2
-            test "$(find "$root" -mindepth 1 -maxdepth 1 -type f -name '*.whl' | wc -l | tr -d ' ')" = 1
-            test "$(find "$root" -mindepth 1 -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')" = 1
-          done
-          find "$a" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | sort > "$RUNNER_TEMP/names-a"
-          find "$b" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | sort > "$RUNNER_TEMP/names-b"
-          cmp "$RUNNER_TEMP/names-a" "$RUNNER_TEMP/names-b"
-          sealed="$RUNNER_TEMP/jobctrl-pypi-sealed"
-          mkdir -p "$sealed/packages"
-          while IFS= read -r name; do
-            [[ "$name" != */* && "$name" != .* ]]
-            cmp "$a/$name" "$b/$name"
-            install -m 0644 "$a/$name" "$sealed/packages/$name"
-          done < "$RUNNER_TEMP/names-a"
           (
-            cd "$sealed"
+            cd "$RUNNER_TEMP/jobctrl-pypi-dists"
             shasum -a 256 packages/* > SHA256SUMS
           )
 
-      - name: Upload only compare-sealed PyPI bytes
+      - name: Upload only built package bytes
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: jobctrl-pypi-sealed-${{ github.run_id }}
-          path: ${{ runner.temp }}/jobctrl-pypi-sealed
+          name: jobctrl-pypi-distributions-${{ github.run_id }}
+          path: ${{ runner.temp }}/jobctrl-pypi-dists
           if-no-files-found: error
           retention-days: 14
 
   publish-pypi:
-    name: Publish only compare-sealed packages with PyPI OIDC
-    needs: [pypi-resolve, pypi-compare]
+    name: Publish verified packages with PyPI OIDC
+    needs: [pypi-resolve, pypi-build]
     runs-on: ubuntu-24.04
     environment: pypi
     permissions:
@@ -1526,13 +1256,13 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Download only compare-sealed distributions
+      - name: Download only built distributions
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: jobctrl-pypi-sealed-${{ github.run_id }}
+          name: jobctrl-pypi-distributions-${{ github.run_id }}
           path: ${{ runner.temp }}/jobctrl-pypi-dists
 
-      - name: Reassert refs and verify the compare-authored closure
+      - name: Reassert refs and verify the built closure
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
           GH_TOKEN: ${{ github.token }}
@@ -1556,7 +1286,7 @@ jobs:
             shasum -a 256 -c SHA256SUMS
           )
 
-      - name: Publish compare-sealed distributions to PyPI
+      - name: Publish verified distributions to PyPI
         uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d # v1.14.0
         with:
           packages-dir: ${{ runner.temp }}/jobctrl-pypi-dists/packages

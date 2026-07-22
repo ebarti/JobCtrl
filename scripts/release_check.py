@@ -1040,6 +1040,7 @@ def _release_distribution_findings(root: Path) -> list[str]:
         return [f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: missing P6 signed distribution workflow"]
     required_markers = {
         "workflow_dispatch:": "has no owner-controlled manual release path",
+        "GH_REPO: ${{ github.repository }}": "does not bind checkout-free GitHub CLI release operations to the audited repository",
         "group: release-distribution-${{ inputs.channel }}-darwin-arm64": "does not serialize release mutation by channel and platform",
         'test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"': "does not bind the workflow definition ref to the selected release tag",
         'test "$GITHUB_SHA" = "$head_sha"': "does not bind the workflow definition SHA to the audited release commit",
@@ -1054,9 +1055,8 @@ def _release_distribution_findings(root: Path) -> list[str]:
         "environment: release-publication": "does not isolate public-release side effects from signing credentials",
         "JOBCTRL_RELEASE_PUBLIC_KEY: ${{ vars.JOBCTRL_RELEASE_PUBLIC_KEY }}": "does not prepare against the protected public release key",
         "JOBCTRL_RELEASE_KEY_ID: ${{ vars.JOBCTRL_RELEASE_KEY_ID }}": "does not prepare against the protected release key ID",
-        "node scripts/distribution-release.mjs prepare": "does not build pre-sign candidates",
-        "node scripts/distribution-release.finalizer.bundle.mjs compare": "does not compare independent unsigned builds with checkout-rooted code",
-        "node scripts/distribution-release.finalizer.bundle.mjs verify-prepared": "does not reverify selected candidate bytes before signing credentials",
+        "node scripts/distribution-release.mjs prepare": "does not build the pre-sign candidate",
+        "node scripts/distribution-release.finalizer.bundle.mjs verify-prepared": "does not independently verify the selected candidate before signing credentials",
         "corepack pnpm exec esbuild scripts/distribution-release-finalizer-entry.mjs --bundle --platform=node --format=esm --target=node22": "does not reproduce the tracked audited finalizer",
         "distribution-release.finalizer.bundle.mjs.sha256": "does not bind the tracked audited finalizer and third-party notice",
         "distribution-homebrew.render.bundle.mjs.sha256": "does not bind the tracked audited Homebrew renderer and third-party notice",
@@ -1097,9 +1097,8 @@ def _release_distribution_findings(root: Path) -> list[str]:
     ]
     required_jobs = (
         "resolve",
-        "prepare-a",
-        "prepare-b",
-        "compare",
+        "publication-preflight",
+        "prepare",
         "sign",
         "package-signed-candidate",
         "publish-immutable",
@@ -1107,9 +1106,7 @@ def _release_distribution_findings(root: Path) -> list[str]:
         "promote-channel-pointer",
         "publish-github-release",
         "pypi-resolve",
-        "pypi-build-a",
-        "pypi-build-b",
-        "pypi-compare",
+        "pypi-build",
         "publish-pypi",
     )
     jobs: dict[str, str] = {}
@@ -1145,38 +1142,45 @@ def _release_distribution_findings(root: Path) -> list[str]:
                 f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: resolve must prove the executing workflow comes from the audited release tag and commit"
             )
 
-    for job_name, artifact_name in (
-        ("prepare-a", "jobctrl-prepared-a-"),
-        ("prepare-b", "jobctrl-prepared-b-"),
-    ):
-        body = jobs.get(job_name)
-        if body is None:
-            continue
-        if "persist-credentials: false" not in body or artifact_name not in body:
-            findings.append(
-                f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: {job_name} must independently build and upload only its candidate data"
-            )
-    compare = jobs.get("compare")
-    if compare is not None:
+    publication_preflight = jobs.get("publication-preflight")
+    if publication_preflight is not None:
         for marker in (
-            "needs: [resolve, prepare-a, prepare-b]",
-            "jobctrl-prepared-a-",
-            "jobctrl-prepared-b-",
-            "distribution-release.finalizer.bundle.mjs compare",
-            "COMPARE_SHA256SUMS",
+            "needs: resolve",
+            'gh repo view "$GH_REPO" --json nameWithOwner',
+            'gh release view "$RELEASE_TAG"',
+            'test "$GH_REPO" = "$GITHUB_REPOSITORY"',
         ):
-            if marker not in compare:
+            if marker not in publication_preflight:
                 findings.append(
-                    f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: compare job does not independently authenticate both prepared candidates"
+                    f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: publication preflight does not prove checkout-free GitHub release access before signing"
                 )
                 break
-        if re.search(r"(?im)^\s+(?:run:\s*)?(?:corepack|pnpm|npm|npx|uv|pip)\b", _workflow_executable_text(compare)):
+        if "actions/checkout@" in publication_preflight:
             findings.append(
-                f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: compare job must not install dependency tooling"
+                f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: publication preflight must reproduce a checkout-free publication runner"
             )
+
+    prepare = jobs.get("prepare")
+    if prepare is not None:
+        for marker in (
+            "persist-credentials: false",
+            "jobctrl-prepared-candidate-",
+            "PREPARED_SHA256SUMS",
+            "prepared-candidate.tar",
+            "release-contract.json",
+        ):
+            if marker not in prepare:
+                findings.append(
+                    f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: prepare must build one candidate and upload a checksum-bound handoff"
+                )
+                break
 
     sign = jobs.get("sign")
     if sign is not None:
+        if "needs: [resolve, publication-preflight, prepare]" not in sign:
+            findings.append(
+                f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: sign job must wait for checkout-free publication preflight"
+            )
         executable = _workflow_executable_text(sign)
         if 'python-version: "3.12.10"' not in sign:
             findings.append(
@@ -1203,21 +1207,23 @@ def _release_distribution_findings(root: Path) -> list[str]:
                 f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: sign job does not execute the sealed bundled finalizer"
             )
 
-        if "jobctrl-compared-candidate-" not in sign or "scripts/distribution-release.bundle.mjs" in sign:
+        if (
+            "jobctrl-prepared-candidate-" not in sign
+            or "PREPARED_SHA256SUMS" not in sign
+            or "pre-sign-verification.json" not in sign
+            or "--verification" not in sign
+            or "scripts/distribution-release.bundle.mjs" in sign
+        ):
             findings.append(
-                f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: sign job must consume only compared data and checkout-rooted authority code"
+                f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: sign job must consume one checksum-bound candidate and independently verify it with checkout-rooted authority code"
             )
 
     for job_name in (
-        "prepare-a",
-        "prepare-b",
-        "compare",
+        "prepare",
         "package-signed-candidate",
         "smoke-and-verify",
         "pypi-resolve",
-        "pypi-build-a",
-        "pypi-build-b",
-        "pypi-compare",
+        "pypi-build",
     ):
         body = jobs.get(job_name)
         if body is None:
@@ -1349,15 +1355,13 @@ def _release_distribution_findings(root: Path) -> list[str]:
 
 
 def _pypi_release_workflow_findings(workflow: str) -> list[str]:
-    """Require a clean signed-release gate, two builders, and minimal OIDC."""
+    """Require a clean signed-release gate, one checksum-bound build, and minimal OIDC."""
     findings: list[str] = []
     jobs = {
         name: _workflow_job_body(workflow, name)
         for name in (
             "pypi-resolve",
-            "pypi-build-a",
-            "pypi-build-b",
-            "pypi-compare",
+            "pypi-build",
             "publish-pypi",
         )
     }
@@ -1386,7 +1390,7 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
         ):
             if marker not in resolve:
                 findings.append(
-                    f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: PyPI resolution must cleanly verify the immutable signed release before builders run"
+                    f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: PyPI resolution must cleanly verify the immutable signed release before the builder runs"
                 )
                 break
         executable = _workflow_executable_text(resolve)
@@ -1399,28 +1403,23 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
             findings.append(
                 f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: PyPI signed-release gate must run before all project dependency execution and use only the tracked bundled verifier"
             )
-    for name, artifact in (
-        ("pypi-build-a", "jobctrl-pypi-a-"),
-        ("pypi-build-b", "jobctrl-pypi-b-"),
-    ):
-        build = jobs[name]
-        if build is None:
-            continue
+    build = jobs["pypi-build"]
+    if build is not None:
         for marker in (
             "needs: pypi-resolve",
             "SOURCE_DATE_EPOCH:",
             "uv --project workers/automation sync --python 3.12.13 --locked --no-default-groups --only-group release-build --no-install-project",
             "uv --project workers/automation run --python 3.12.13 --no-sync python -m build --no-isolation workers/automation",
-            artifact,
+            "jobctrl-pypi-distributions-",
+            "shasum -a 256 packages/* > SHA256SUMS",
         ):
             if marker not in build:
                 findings.append(
-                    f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: {name} does not independently verify and build the fixed-epoch distributions"
+                    f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: pypi-build does not build and checksum the fixed-epoch distributions"
                 )
                 break
         if (
-            "shasum -a 256 packages/" in build
-            or "id-token: write" in build
+            "id-token: write" in build
             or "environment: pypi" in build
             or "verify-pypi-gate" in build
             or "gh release download" in build
@@ -1431,23 +1430,8 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
             or "--extra dev" in build
         ):
             findings.append(
-                f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: {name} must only build after the clean shared gate and must not receive verification or publication authority"
+                f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: pypi-build must only build after the clean shared gate and must not receive verification or publication authority"
             )
-    compare = jobs["pypi-compare"]
-    if compare is not None:
-        for marker in (
-            "needs: [pypi-resolve, pypi-build-a, pypi-build-b]",
-            "jobctrl-pypi-a-",
-            "jobctrl-pypi-b-",
-            'cmp "$a/$name" "$b/$name"',
-            "jobctrl-pypi-sealed-",
-            "shasum -a 256 packages/* > SHA256SUMS",
-        ):
-            if marker not in compare:
-                findings.append(
-                    f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: PyPI compare job does not byte-compare and seal both builders"
-                )
-                break
     publish = jobs["publish-pypi"]
     if publish is None:
         return findings
@@ -1458,9 +1442,9 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
     for marker, message in {
         "environment: pypi": "does not put OIDC publication behind the PyPI environment",
         "id-token: write": "does not request PyPI OIDC only in the publication job",
-        "jobctrl-pypi-sealed-": "does not consume only the compare-sealed artifact",
+        "jobctrl-pypi-distributions-": "does not consume only the checksum-bound build artifact",
         "EXPECTED_SOURCE_COMMIT: ${{ needs.pypi-resolve.outputs.source_commit }}": "does not bind publication to the resolved source commit",
-        "packages-dir: ${{ runner.temp }}/jobctrl-pypi-dists/packages": "does not limit PyPI to the sealed package directory",
+        "packages-dir: ${{ runner.temp }}/jobctrl-pypi-dists/packages": "does not limit PyPI to the verified package directory",
         "uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d": "does not use the pinned PyPI publisher",
     }.items():
         if marker not in publish:
