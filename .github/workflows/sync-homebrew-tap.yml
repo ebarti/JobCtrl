@@ -57,13 +57,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify the propagated audited commit
+      - name: Verify the propagated audited commit remains in main history
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Set up pinned Node for signed-render verification
@@ -157,12 +158,13 @@ jobs:
           )
           test "$(shasum -a 256 "$verified/jobctrl.rb" | awk '{print $1}')" = "$EXPECTED_FORMULA_SHA256"
 
-      - name: Reassert the audited source before loading the tap deploy key
+      - name: Reassert the audited source lineage before loading the tap deploy key
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Check out Homebrew tap
@@ -178,12 +180,13 @@ jobs:
           install -m 0644 "$RUNNER_TEMP/jobctrl-verified/jobctrl.rb" homebrew-tap/Formula/jobctrl.rb
           git -C homebrew-tap diff --check
 
-      - name: Reassert the audited source immediately before tap publication
+      - name: Reassert the audited source lineage immediately before tap publication
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Commit synchronized formula

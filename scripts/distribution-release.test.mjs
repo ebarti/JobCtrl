@@ -298,10 +298,10 @@ test("local fixture release descriptor, signature, and curl contract bind one ZI
     minimumSafeSequence: 0,
     revokedBuildIds: [],
     buildId: "fixture-build-0001",
-    appVersion: "2.0.4",
+    appVersion: "2.0.5",
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
     artifact: {
-      url: "file:///jobctrl-local-release/jobctrl-2.0.4-darwin-arm64.zip",
+      url: "file:///jobctrl-local-release/jobctrl-2.0.5-darwin-arm64.zip",
       sha256: build.archiveSha256,
       sizeBytes: build.compressedBytes,
       archiveType: "zip",
@@ -761,7 +761,7 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     /ENOENT/,
   );
   assert.match(releaseWorkflow, /workflow_dispatch:/);
-  assert.match(releaseWorkflow, /^  push:\n    tags:\n      - v2\.0\.4$/m);
+  assert.match(releaseWorkflow, /^  push:\n    tags:\n      - v2\.0\.5$/m);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.release_tag \|\| github\.ref_name \}\}/);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.channel \|\| 'stable' \}\}/);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.sequence \|\| '1' \}\}/);
@@ -839,4 +839,22 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     releaseWorkflow.indexOf("  pypi-build:"),
   );
   assert.doesNotMatch(pypiResolve, /(?:corepack|pnpm|npm|npx|uv|pip)\s/);
+});
+
+test("release lineage allows main to advance without loosening exact tag identity", async () => {
+  const [releaseWorkflow, homebrewWorkflow] = await Promise.all([
+    readFile(path.join(process.cwd(), ".github", "workflows", "release-distribution.yml"), "utf8"),
+    readFile(path.join(process.cwd(), ".github", "workflows", "sync-homebrew-tap.yml"), "utf8"),
+  ]);
+  const workflows = `${releaseWorkflow}\n${homebrewWorkflow}`;
+  assert.doesNotMatch(workflows, /repos\/\$GITHUB_REPOSITORY\/commits\/main/);
+  for (const marker of [
+    "compare/$head_sha...main",
+    "compare/$RELEASE_REF...main",
+    "compare/$EXPECTED_SOURCE_COMMIT...main",
+    "compare/$tag_sha...main",
+    "commits/$RELEASE_TAG",
+  ]) assert.ok(workflows.includes(marker), `missing release-lineage marker ${marker}`);
+  const lineageAssertions = workflows.match(/\[\[ "\$main_relation" = ahead \|\| "\$main_relation" = identical \]\]/g) ?? [];
+  assert.ok(lineageAssertions.length >= 16, "every release side-effect boundary must preserve main ancestry");
 });

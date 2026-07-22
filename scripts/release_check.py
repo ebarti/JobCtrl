@@ -919,12 +919,18 @@ def _homebrew_sync_findings(root: Path) -> list[str]:
         "git status --short --untracked-files=all -- Formula/jobctrl.rb": "does not detect an absent or untracked tap formula",
         "actions/download-artifact@": "does not download the immutable P6 artifact on its own runner",
         '--trust "$TRUST_PATH"': "does not verify against the candidate-provided release trust registry",
+        'compare/$RELEASE_REF...main': "does not preserve release lineage while allowing later main commits",
+        '[[ "$main_relation" = ahead || "$main_relation" = identical ]]': "does not reject a release commit outside current main history",
     }
     findings.extend(
         f"{HOMEBREW_SYNC_WORKFLOW_PATH}: {message}"
         for marker, message in required_markers.items()
         if marker not in workflow
     )
+    if 'commits/main' in workflow:
+        findings.append(
+            f"{HOMEBREW_SYNC_WORKFLOW_PATH}: tap sync must verify main ancestry without requiring the live main head to remain frozen"
+        )
     verify = _workflow_job_body(workflow, "verify")
     publish = _workflow_job_body(workflow, "publish")
     call_interface = workflow.partition("\njobs:")[0]
@@ -1046,7 +1052,9 @@ def _release_distribution_findings(root: Path) -> list[str]:
         'test "$GITHUB_SHA" = "$head_sha"': "does not bind the workflow definition SHA to the audited release commit",
         "revoked_build_ids:": "does not require explicit revocation input",
         "expected_channel_pointer_sha256:": "does not require a compare-and-swap precondition for channel promotion",
-        'gh api "repos/$GITHUB_REPOSITORY/commits/main"': "does not reassert current main through bounded authenticated reads",
+        'compare/$head_sha...main': "does not prove the release commit remains in current main history",
+        'compare/$RELEASE_REF...main': "does not reassert release lineage through bounded authenticated reads",
+        '[[ "$main_relation" = ahead || "$main_relation" = identical ]]': "does not reject release commits outside current main history",
         'gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG"': "does not reassert the release tag through bounded authenticated reads",
         "release_build_id=\"${RELEASE_TAG#v}-${sha}-darwin-arm64\"": "does not bind the build ID to the full immutable commit SHA",
         "runs-on: macos-15": "does not use a clean macOS signing/notarization runner",
@@ -1101,6 +1109,10 @@ def _release_distribution_findings(root: Path) -> list[str]:
         for marker, message in required_markers.items()
         if marker not in workflow
     ]
+    if 'commits/main' in workflow:
+        findings.append(
+            f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: release jobs must verify main ancestry without requiring the live main head to remain frozen"
+        )
     required_jobs = (
         "resolve",
         "publication-preflight",
