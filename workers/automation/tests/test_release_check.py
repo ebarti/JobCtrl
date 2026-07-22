@@ -836,9 +836,9 @@ def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> No
     assert "JOBCTRL_RELEASE_KEY_ID" not in publish
     assert "EXPECTED_SOURCE_COMMIT: ${{ needs.pypi-resolve.outputs.source_commit }}" in publish
     assert 'gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG"' in publish
-    assert 'gh api "repos/$GITHUB_REPOSITORY/commits/main"' in publish
+    assert 'gh api "repos/$GITHUB_REPOSITORY/compare/$tag_sha...main"' in publish
     assert 'test "$EXPECTED_SOURCE_COMMIT" = "$tag_sha"' in publish
-    assert 'test "$tag_sha" = "$main_sha"' in publish
+    assert '[[ "$main_relation" = ahead || "$main_relation" = identical ]]' in publish
     assert "packages-dir: ${{ runner.temp }}/jobctrl-pypi-dists/packages" in publish
     assert "SHA256SUMS" in publish
     assert "jobctrl-pypi-distributions-" in publish

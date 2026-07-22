@@ -258,8 +258,8 @@ especially §§11–14. This is a release precondition, not permission to publis
   plus its QA/deploy evidence, and every protected release environment in 9.4a
   is configured. The PyPI Trusted Publisher is already configured; verify its
   mapping rather than creating a second publisher or using a PyPI API token.
-- **Recovery note.** Preserve the failed `v2.0.0` and `v2.0.1` tags, the
-  unpublished `v2.0.2` tag, and the partially published `v2.0.3` tag at their
+- **Recovery note.** Preserve the failed `v2.0.0`, `v2.0.1`, and `v2.0.4`
+  tags, the unpublished `v2.0.2` tag, and the partially published `v2.0.3` tag at their
   original commits as audit evidence. `v2.0.0` stopped before signing because
   the signing runner requested an unavailable Python build. `v2.0.1` completed
   its builds, signing, Apple notarization, stapling, and audit packaging, then
@@ -272,15 +272,20 @@ especially §§11–14. This is a release precondition, not permission to publis
   pointer or publish the GitHub Release, Homebrew formula, or PyPI package
   because the current Homebrew CLI rejects auditing a formula by file path.
   Its immutable objects and draft are recovery evidence, not a stable release.
+  `v2.0.4` passed identity, preflight, and the single candidate build, then
+  stopped before signing when another merged PR advanced `main` during the
+  candidate handoff. The tag and candidate stayed exact; the obsolete live-head
+  equality check caused the failure. Nothing was signed or published.
   Do not move, delete, or dispatch any of these tags again.
 - **Action.** Fetch `origin/main` and tags, verify that the audited local commit
   and `origin/main` resolve to the same SHA, then create and push the exact
-  `v2.0.4` tag on that commit. Verify the remote tag and `main` still resolve to
-  that SHA. Pushing this exact tag starts `Release distribution` with these
+  `v2.0.5` tag on that commit. Verify the remote tag resolves to that exact SHA
+  and the tagged commit remains identical to or an ancestor of current `main`.
+  Pushing this exact tag starts `Release distribution` with these
   first-release defaults; the manual dispatch path remains available:
 
   ```text
-  release_tag=v2.0.4
+  release_tag=v2.0.5
   channel=stable
   sequence=1
   minimum_safe_sequence=1
@@ -377,7 +382,7 @@ Phase 7 and its Definition of Done.
   `renderPinnedInstallScript` regression fix. Its contract must replace an
   existing release's URL, SHA-256, and version pins with the next release's
   values, not only replace empty pins; its regression coverage must prove a
-  `v2.0.4` render cannot retain `v2.0.3` pins. Do not use a manually edited
+  `v2.0.5` render cannot retain `v2.0.4` pins. Do not use a manually edited
   installer as a workaround.
 - **Action.** Run and record the plan's published-artifact acceptance matrix:
   clean Apple-silicon macOS installs through both curl and Homebrew; no source
@@ -391,7 +396,7 @@ Phase 7 and its Definition of Done.
 - **Mandatory canonical-installer cutover.** Treat the immutable signed release
   and the public installer deployment as two linked but different records:
 
-  1. Record the immutable `v2.0.4` tag/release SHA and tree as **R**. Retrieve
+  1. Record the immutable `v2.0.5` tag/release SHA and tree as **R**. Retrieve
      that release's immutable pinned `install.sh` and `SHA256SUMS`, verify
      `install.sh` against its published SHA-256, and retain the verified asset
      URL and checksum with R. Do not reconstruct or edit the retrieved script.
@@ -547,8 +552,9 @@ Perform the following in order and stop at the first failed gate:
    after the exact-tree local gate passes.
 2. Rerun the standard hosted workflows on the recorded SHA and require green
    runs with executed steps.
-3. On that final validated `main` SHA, create and push `v2.0.4`, verify the
-   remote tag and `origin/main` resolve to that same SHA, and confirm the exact
+3. On that final validated `main` SHA, create and push `v2.0.5`, verify the
+   remote tag resolves to that exact SHA and remains in `origin/main` history,
+   and confirm the exact
    tag-triggered `Release distribution` run uses the six first-release defaults
    in 9.4. Complete the signed release, channel-pointer promotion, PyPI
    publication, Homebrew formula sync, and immutable release evidence as R.
@@ -608,7 +614,7 @@ rollback evidence, and publish corrections where a public claim proved wrong.
 | 9.1 Visibility flip | Owner | Run the exact-tree local gate, make the repository public, then rerun every standard hosted gate with real executed steps. |
 | 9.2 Docs-site verification | Owner | Docs are already public and deploy is enabled; dispatch at the gated `main` SHA and record the public deployment proof. |
 | 9.3 Rename redirect | Owner | Verify old-URL redirects after the flip and repair any stale repository links. |
-| 9.4 Release and PyPI | Owner | Preserve `v2.0.0`, `v2.0.1`, unpublished `v2.0.2`, and partial `v2.0.3`; create `v2.0.4` on audited `main`, then verify the exact tag-triggered run uses the recorded first-release defaults and completes the signed release. |
+| 9.4 Release and PyPI | Owner | Preserve failed `v2.0.0`, `v2.0.1`, and `v2.0.4`, unpublished `v2.0.2`, and partial `v2.0.3`; create `v2.0.5` on audited `main`, then verify the exact tag-triggered run uses the recorded first-release defaults and completes the signed release. |
 | 9.5 Homebrew tap | Signed workflow | Replace the legacy formula only with the verified signed render after release-origin smoke passes. |
 | 9.6 Installer and artifact acceptance | Owner | Verify immutable `install.sh` from R, land matching `scripts/get` and `docs/public/install.sh` in a separate post-release PR, validate/deploy D, then run public curl/Homebrew smoke. |
 | 9.7 Public live demo | Owner | The demo is already public and deploy is enabled; verify the audited deployment externally and record its release evidence. |

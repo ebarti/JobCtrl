@@ -1,20 +1,20 @@
 name: Release distribution
 
-# The sole public-release path. A release tag must resolve to the current
-# audited main commit. Candidate bytes are staged under an immutable build ID,
+# The sole public-release path. A release tag must resolve to an audited commit
+# that remains in current main history. Candidate bytes are staged under an immutable build ID,
 # exercised from that immutable URL, and only then atomically promoted as a
 # channel pointer. Immutable GitHub publication gates the final stable-only
 # PyPI publication lane.
 on:
-  # v2.0.4 is the one-time first-public-release fallback for environments where
+  # v2.0.5 is the one-time first-public-release fallback for environments where
   # the repository app can publish refs but cannot call workflow_dispatch.
   push:
     tags:
-      - v2.0.4
+      - v2.0.5
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing v<semver> tag that resolves to current main
+        description: Existing v<semver> tag whose commit remains in current main history
         required: true
         type: string
       channel:
@@ -72,7 +72,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Reassert the release tag and current main before preparation
+      - name: Reassert the release tag and current main lineage before preparation
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
@@ -81,7 +81,8 @@ jobs:
           head_sha="$(git rev-parse HEAD)"
           test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
           test "$GITHUB_SHA" = "$head_sha"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$head_sha"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$head_sha...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$head_sha"
 
       - name: Require explicit revocations, protected trust, and blocked tracked policy
@@ -133,7 +134,8 @@ jobs:
           set -euo pipefail
           test "$GH_REPO" = "$GITHUB_REPOSITORY"
           test "$(gh repo view "$GH_REPO" --json nameWithOwner --jq '.nameWithOwner')" = "$GITHUB_REPOSITORY"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           release="$RUNNER_TEMP/preflight-release.json"
           error="$RUNNER_TEMP/preflight-release.err"
@@ -184,7 +186,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Install locked workspace dependencies
@@ -291,7 +294,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Verify checkout-rooted release authority and the prepared handoff
@@ -563,7 +567,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           release="$RUNNER_TEMP/release"
           draft="$RUNNER_TEMP/release-draft.json"
@@ -611,12 +616,13 @@ jobs:
             exit 1
           fi
 
-      - name: Reassert audited tag and main before immutable host upload
+      - name: Reassert audited tag and main lineage before immutable host upload
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Publish checksum-checked immutable candidate assets to R2
@@ -724,7 +730,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Download the signed candidate metadata
@@ -922,12 +929,13 @@ jobs:
           printf '%s\n' "$promotion_result" > "$RUNNER_TEMP/channel-result"
           echo "requires_write=$requires_write" >> "$GITHUB_OUTPUT"
 
-      - name: Reassert audited tag and main before channel promotion
+      - name: Reassert audited tag and main lineage before channel promotion
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Atomically promote one R2 channel pointer with compare-and-swap
@@ -1030,7 +1038,8 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$ADMIN_READ_TOKEN"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           candidate="$RUNNER_TEMP/release"
           smoke="$RUNNER_TEMP/smoke-evidence/published-candidate-smoke.json"
@@ -1069,7 +1078,8 @@ jobs:
             cmp "$asset" "$downloaded/${asset##*/}"
           done
           cmp "$smoke" "$downloaded/published-candidate-smoke.json"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           test "$(GH_TOKEN="$ADMIN_READ_TOKEN" gh api -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$GITHUB_REPOSITORY/immutable-releases" --jq '.enabled')" = true
           if [[ "$(jq -r '.isDraft' "$release")" = true ]]; then
@@ -1130,7 +1140,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$EXPECTED_SOURCE_COMMIT"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$EXPECTED_SOURCE_COMMIT...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$EXPECTED_SOURCE_COMMIT"
           test "$(gh release view "$RELEASE_TAG" --json isImmutable --jq '.isImmutable')" = true
           gh release verify "$RELEASE_TAG"
@@ -1239,7 +1250,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
 
       - name: Set up only the exact locked release-build dependencies
@@ -1303,9 +1315,9 @@ jobs:
         run: |
           set -euo pipefail
           tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
-          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$tag_sha...main" --jq '.status')"
           test "$EXPECTED_SOURCE_COMMIT" = "$tag_sha"
-          test "$tag_sha" = "$main_sha"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh release view "$RELEASE_TAG" --json isImmutable --jq '.isImmutable')" = true
           test -f "$DIST_DIR/SHA256SUMS" && test ! -L "$DIST_DIR/SHA256SUMS"
           packages="$DIST_DIR/packages"
