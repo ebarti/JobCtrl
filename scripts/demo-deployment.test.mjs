@@ -24,9 +24,11 @@ test("demo build and Pages files select the fail-closed demo composition", async
   assert.match(headers, /\/\*\n  Cache-Control: no-transform/);
   for (const required of [
     "Content-Security-Policy: default-src 'self'",
-    "connect-src 'self'",
+    "connect-src 'self' https://*.google-analytics.com",
     "frame-ancestors 'none'",
+    "img-src 'self' data: blob: https://*.google-analytics.com",
     "Referrer-Policy: no-referrer",
+    "script-src 'self' https://www.googletagmanager.com",
     "X-Content-Type-Options: nosniff",
   ]) {
     assert.match(headers, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

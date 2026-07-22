@@ -8,8 +8,38 @@ import {
   DEMO_SHELL_READY_DELAY_MS,
   DEMO_SHELL_REQUEST_TIMEOUT_MS,
   DEMO_SHELL_READY_WINDOW_MS,
+  DEMO_CONSENT_READY_DELAY_MS,
+  waitForDemoConsentContract,
   waitForDemoShell,
 } from "./demo-smoke.mjs";
+
+test("demo smoke waits for the deployed consent contract to replace the previous version", async () => {
+  const states = [
+    { choice: "unknown", version: "v1" },
+    { choice: "unknown", version: "v2" },
+  ];
+  const delays = [];
+  let elapsedMs = 0;
+
+  const state = await waitForDemoConsentContract(
+    async () => ({
+      ok: true,
+      json: async () => states.shift(),
+    }),
+    {
+      sleep: async (delayMs) => {
+        delays.push(delayMs);
+        elapsedMs += delayMs;
+      },
+      now: () => elapsedMs,
+      createAbortSignal: () => new AbortController().signal,
+      log: () => {},
+    },
+  );
+
+  assert.deepEqual(state, { choice: "unknown", version: "v2" });
+  assert.deepEqual(delays, [DEMO_CONSENT_READY_DELAY_MS]);
+});
 
 test("demo smoke waits through custom-domain propagation longer than the former 90-second window", async () => {
   const statuses = [...Array.from({ length: 32 }, () => 403), 200];
