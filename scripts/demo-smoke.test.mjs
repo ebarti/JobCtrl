@@ -9,6 +9,7 @@ import {
   DEMO_SHELL_REQUEST_TIMEOUT_MS,
   DEMO_SHELL_READY_WINDOW_MS,
   DEMO_CONSENT_READY_DELAY_MS,
+  hasGoogleAnalyticsCsp,
   waitForDemoConsentContract,
   waitForDemoShell,
 } from "./demo-smoke.mjs";
@@ -67,6 +68,37 @@ test("demo smoke waits through custom-domain propagation longer than the former 
   assert.equal(DEMO_SHELL_READY_ATTEMPTS, 101);
   assert.equal(DEMO_SHELL_READY_WINDOW_MS, 5 * 60_000);
   assert.equal(DEMO_SHELL_REQUEST_TIMEOUT_MS, 15_000);
+});
+
+test("demo smoke waits until the custom domain serves the deployed analytics CSP", async () => {
+  const policies = [
+    "default-src 'self'; connect-src 'self'; script-src 'self'",
+    "default-src 'self'; connect-src 'self' https://*.google-analytics.com; img-src 'self' data: blob: https://*.google-analytics.com; script-src 'self' https://www.googletagmanager.com",
+  ];
+  const delays = [];
+  let elapsedMs = 0;
+
+  const response = await waitForDemoShell(
+    async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-security-policy": policies.shift() }),
+    }),
+    {
+      isReady: hasGoogleAnalyticsCsp,
+      sleep: async (delayMs) => {
+        delays.push(delayMs);
+        elapsedMs += delayMs;
+      },
+      now: () => elapsedMs,
+      createAbortSignal: () => new AbortController().signal,
+      log: () => {},
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(hasGoogleAnalyticsCsp(response), true);
+  assert.deepEqual(delays, [DEMO_SHELL_READY_DELAY_MS]);
 });
 
 test("demo smoke still fails after the bounded readiness window", async () => {
