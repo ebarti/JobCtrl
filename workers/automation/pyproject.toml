@@ -55,7 +55,7 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.23",
     "pytest-randomly>=4.0",
-    "ruff>=0.1",
+    "ruff==0.15.8",
 ]
 providers = [
     "claude-agent-sdk==0.2.115",
