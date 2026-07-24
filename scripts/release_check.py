@@ -906,17 +906,11 @@ def _homebrew_sync_findings(root: Path) -> list[str]:
     required_markers = {
         "workflow_call:": "is not reusable by the P6 release workflow",
         "  verify:": "does not isolate signed-render verification in a credential-free job",
-        "  publish:": "does not publish from a fresh tap-only job",
-        "needs: verify": "does not require credential-free verification before tap publication",
-        'repository: ebarti/homebrew-tap': "does not target ebarti/homebrew-tap",
-        'ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}': "does not use the write-scoped tap deploy key",
         "node scripts/distribution-homebrew.mjs verify-promotion": "does not independently verify signed descriptor and promotion evidence",
         "jobctrl-verified": "does not stage the verified formula at a fixed runner path",
-        "jobctrl.rb.sha256": "does not seal the exact verified formula for the publish job",
+        "jobctrl.rb.sha256": "does not seal the exact verified formula for the protected caller job",
         "expected_formula_sha256:": "does not require the signer-rooted formula digest",
         "smoke_artifact_name:": "does not consume smoke as a separate gate artifact",
-        "homebrew-tap/Formula/jobctrl.rb": "does not write the tap formula path",
-        "git status --short --untracked-files=all -- Formula/jobctrl.rb": "does not detect an absent or untracked tap formula",
         "actions/download-artifact@": "does not download the immutable P6 artifact on its own runner",
         '--trust "$TRUST_PATH"': "does not verify against the candidate-provided release trust registry",
         'compare/$RELEASE_REF...main': "does not preserve release lineage while allowing later main commits",
@@ -932,13 +926,12 @@ def _homebrew_sync_findings(root: Path) -> list[str]:
             f"{HOMEBREW_SYNC_WORKFLOW_PATH}: tap sync must verify main ancestry without requiring the live main head to remain frozen"
         )
     verify = _workflow_job_body(workflow, "verify")
-    publish = _workflow_job_body(workflow, "publish")
     call_interface = workflow.partition("\njobs:")[0]
     if "HOMEBREW_TAP_DEPLOY_KEY" in call_interface or re.search(
         r"(?m)^\s{4}secrets:\s*$", call_interface
     ):
         findings.append(
-            f"{HOMEBREW_SYNC_WORKFLOW_PATH}: tap deploy key must be an environment secret resolved only by publish, not a workflow_call secret"
+            f"{HOMEBREW_SYNC_WORKFLOW_PATH}: tap deploy key must be an environment secret resolved only by the protected caller job, not a workflow_call secret"
         )
     if verify is None:
         findings.append(f"{HOMEBREW_SYNC_WORKFLOW_PATH}: missing credential-free verify job")
@@ -955,31 +948,14 @@ def _homebrew_sync_findings(root: Path) -> list[str]:
         }.items():
             if marker not in verify:
                 findings.append(f"{HOMEBREW_SYNC_WORKFLOW_PATH}: {message}")
-    if publish is None:
-        findings.append(f"{HOMEBREW_SYNC_WORKFLOW_PATH}: missing fresh tap publish job")
-    else:
-        executable = _workflow_executable_text(publish)
-        if "HOMEBREW_TAP_DEPLOY_KEY" not in publish:
-            findings.append(f"{HOMEBREW_SYNC_WORKFLOW_PATH}: publish job does not receive the tap deploy key")
-        if "environment: release-publication" not in publish:
-            findings.append(
-                f"{HOMEBREW_SYNC_WORKFLOW_PATH}: tap publish job must resolve its deploy key behind release-publication approval"
-            )
-        if "Check out JobCtrl" in publish or re.search(
-            r"(?im)^\s+(?:run:\s*)?(?:corepack|pnpm|npm|npx|uv|pip|python(?:3)?|node)\b",
-            executable,
-        ) or re.search(r"(?m)^\s+run:.*(?:scripts|workers|apps|launcher)/", executable):
-            findings.append(
-                f"{HOMEBREW_SYNC_WORKFLOW_PATH}: tap publish job executes JobCtrl or dependency code with the deploy key"
-            )
-        if "actions/download-artifact@" not in publish or "jobctrl.rb.sha256" not in publish:
-            findings.append(
-                f"{HOMEBREW_SYNC_WORKFLOW_PATH}: tap publish job does not consume and checksum the sealed formula artifact"
-            )
-        if "EXPECTED_FORMULA_SHA256" not in publish:
-            findings.append(
-                f"{HOMEBREW_SYNC_WORKFLOW_PATH}: tap publish job does not recheck the signer-rooted formula digest"
-            )
+    if (
+        _workflow_job_body(workflow, "publish") is not None
+        or "HOMEBREW_TAP_DEPLOY_KEY" in workflow
+        or "environment: release-publication" in workflow
+    ):
+        findings.append(
+            f"{HOMEBREW_SYNC_WORKFLOW_PATH}: reusable tap verification must remain credential-free; the caller owns protected publication"
+        )
     if "workflow_dispatch:" in workflow or re.search(r"(?m)^\s*push\s*:", workflow) or "types: [published]" in workflow:
         findings.append(f"{HOMEBREW_SYNC_WORKFLOW_PATH}: must be workflow_call-only and never expose a manual secret-bearing promotion path")
     return findings
@@ -1046,6 +1022,7 @@ def _release_distribution_findings(root: Path) -> list[str]:
         return [f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: missing P6 signed distribution workflow"]
     required_markers = {
         "workflow_dispatch:": "has no owner-controlled manual release path",
+        "pypi_recovery_only:": "has no tightly scoped PyPI recovery mode",
         "GH_REPO: ${{ github.repository }}": "does not bind checkout-free GitHub CLI release operations to the audited repository",
         "group: release-distribution-${{ inputs.channel || 'stable' }}-darwin-arm64": "does not serialize release mutation by channel and platform",
         'test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"': "does not bind the workflow definition ref to the selected release tag",
@@ -1094,6 +1071,7 @@ def _release_distribution_findings(root: Path) -> list[str]:
         "immutable-releases": "does not fail closed unless immutable GitHub Releases are enabled",
         "gh release verify-asset": "does not compare post-lock release assets to local trusted bytes",
         "gh release verify \"$RELEASE_TAG\"": "does not verify the immutable release attestation",
+        "Prove immutable v2.0.7 release before PyPI recovery": "does not isolate read-only immutable-release recovery preflight",
         "uses: ./.github/workflows/sync-homebrew-tap.yml": "does not call the artifact-only Homebrew promotion workflow",
         "tap_name=\"jobctrl/release-smoke-${GITHUB_RUN_ID}\"": "does not isolate the temporary verification tap by release run",
         "brew tap-new --no-git \"$tap_name\"": "does not create an isolated temporary tap for formula verification without CI Git side effects",
@@ -1123,6 +1101,9 @@ def _release_distribution_findings(root: Path) -> list[str]:
         "smoke-and-verify",
         "promote-channel-pointer",
         "publish-github-release",
+        "sync-homebrew",
+        "publish-homebrew",
+        "pypi-recovery-preflight",
         "pypi-resolve",
         "pypi-build",
         "publish-pypi",
@@ -1141,6 +1122,26 @@ def _release_distribution_findings(root: Path) -> list[str]:
         findings.append(
             f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: signing, publication, and smoke must not share combined jobs"
         )
+
+    recovery_exclusion = "github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true"
+    for job_name in (
+        "publication-preflight",
+        "prepare",
+        "sign",
+        "package-signed-candidate",
+        "publish-immutable",
+        "smoke-and-verify",
+        "sync-homebrew",
+        "publish-homebrew",
+        "promote-channel-pointer",
+        "publish-github-release",
+    ):
+        body = jobs.get(job_name)
+        header = body.partition("\n    steps:")[0] if body is not None else ""
+        if recovery_exclusion not in header:
+            findings.append(
+                f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: {job_name} must be explicitly skipped by PyPI recovery"
+            )
 
     resolve = jobs.get("resolve")
     if resolve is not None:
@@ -1343,6 +1344,60 @@ def _release_distribution_findings(root: Path) -> list[str]:
         findings.append(
             f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: Homebrew publication must bind the base candidate formula to the signer digest without passing the environment-scoped deploy key"
         )
+    homebrew_publish = jobs.get("publish-homebrew")
+    if homebrew_publish is None or any(
+        marker not in homebrew_publish
+        for marker in (
+            "needs: [resolve, sign, sync-homebrew, promote-channel-pointer]",
+            "environment: release-publication",
+            "HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}",
+            'test -n "$HOMEBREW_TAP_DEPLOY_KEY"',
+            "jobctrl-homebrew-verified-",
+            "jobctrl.rb.sha256",
+            "repository: ebarti/homebrew-tap",
+            "ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}",
+            'test "$(git -C homebrew-tap remote get-url origin)" = "git@github.com:ebarti/homebrew-tap.git"',
+            "homebrew-tap/Formula/jobctrl.rb",
+            "git status --short --untracked-files=all -- Formula/jobctrl.rb",
+        )
+    ):
+        findings.append(
+            f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: protected Homebrew publication must consume the sealed formula with a nonempty deploy key and SSH tap origin"
+        )
+    elif (
+        homebrew_publish.index("Require the SSH Homebrew tap origin")
+        > homebrew_publish.index("Commit synchronized formula")
+        or re.search(
+            r"(?im)^\s+(?:run:\s*)?(?:corepack|pnpm|npm|npx|uv|pip|python(?:3)?|node)\b",
+            _workflow_executable_text(homebrew_publish),
+        )
+    ):
+        findings.append(
+            f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: protected Homebrew publication must prove its SSH origin before commit and never execute repository code"
+        )
+    recovery = jobs.get("pypi-recovery-preflight")
+    if recovery is not None:
+        for marker in (
+            "needs: resolve",
+            "inputs.pypi_recovery_only == true",
+            'test "$RELEASE_TAG" = v2.0.7',
+            'compare/$RELEASE_REF...main',
+            'commits/$RELEASE_TAG',
+            "targetCommitish",
+            "isDraft",
+            "isPrerelease",
+            "isImmutable",
+            'gh release verify "$RELEASE_TAG"',
+        ):
+            if marker not in recovery:
+                findings.append(
+                    f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: PyPI recovery must prove the exact ancestral immutable GitHub Release before building"
+                )
+                break
+        if re.search(r"\b(?:aws|git\s+push|gh\s+release\s+(?:create|edit|upload))\b", _workflow_executable_text(recovery)):
+            findings.append(
+                f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: PyPI recovery preflight must remain read-only"
+            )
     smoke = jobs.get("smoke-and-verify")
     if smoke is not None and "distribution-homebrew.mjs render" in _workflow_executable_text(smoke):
         findings.append(
@@ -1379,6 +1434,7 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
         name: _workflow_job_body(workflow, name)
         for name in (
             "pypi-resolve",
+            "pypi-recovery-preflight",
             "pypi-build",
             "publish-pypi",
         )
@@ -1391,8 +1447,11 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
     resolve = jobs["pypi-resolve"]
     if resolve is not None:
         for marker in (
-            "needs: [resolve, publish-github-release]",
+            "needs: [resolve, publish-github-release, pypi-recovery-preflight]",
             "(inputs.channel || 'stable') == 'stable'",
+            "always()",
+            "needs['publish-github-release'].result == 'success'",
+            "needs['pypi-recovery-preflight'].result == 'success'",
             "persist-credentials: false",
             "actions/setup-node@",
             "isImmutable",
@@ -1463,10 +1522,14 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
         "jobctrl-pypi-distributions-": "does not consume only the checksum-bound build artifact",
         "EXPECTED_SOURCE_COMMIT: ${{ needs.pypi-resolve.outputs.source_commit }}": "does not bind publication to the resolved source commit",
         "packages-dir: ${{ runner.temp }}/jobctrl-pypi-dists/packages": "does not limit PyPI to the verified package directory",
-        "uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d": "does not use the pinned PyPI publisher",
+        "uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b": "does not use the peeled v1.14.0 PyPI publisher commit",
     }.items():
         if marker not in publish:
             findings.append(f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: {message}")
+    if "pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d" in publish:
+        findings.append(
+            f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: PyPI publisher must pin the peeled v1.14.0 commit, not its annotated tag object"
+        )
     for marker, message in {
         "actions/checkout@": "must not check out source in the OIDC publication job",
         "actions/setup-python@": "must not install Python tooling in the OIDC publication job",

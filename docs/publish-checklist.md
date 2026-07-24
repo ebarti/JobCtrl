@@ -288,12 +288,17 @@ especially §§11–14. This is a release precondition, not permission to publis
   installation, so the stable pointer, public GitHub Release, Homebrew tap, and
   PyPI package were not published.
   Do not move, delete, or dispatch any of these tags again.
-- **Action.** Fetch `origin/main` and tags, verify that the audited local commit
-  and `origin/main` resolve to the same SHA, then create and push the exact
-  `v2.0.7` tag on that commit. Verify the remote tag resolves to that exact SHA
-  and the tagged commit remains identical to or an ancestor of current `main`.
-  Pushing this exact tag starts `Release distribution` with these
-  first-release defaults; the manual dispatch path remains available:
+- **Current release record.** `v2.0.7` is the first published stable release.
+  Its immutable GitHub Release, signed R2 assets, stable channel pointer, native
+  lifecycle proof, and verified Homebrew formula were published from audited
+  commit `db257efe1087ec00ac2ec49b846a95d2423aecc2`. The initial PyPI upload
+  stopped before publication because the publisher action referenced the
+  annotated `v1.14.0` tag object rather than its peeled executable commit.
+  This is a publication-pipeline defect, not a product change: preserve
+  `v2.0.7` and do not create another product version to recover the missing
+  PyPI channel.
+- **Original release inputs.** The exact `v2.0.7` tag-triggered run used these
+  first-release defaults:
 
   ```text
   release_tag=v2.0.7
@@ -304,13 +309,29 @@ especially §§11–14. This is a release precondition, not permission to publis
   expected_channel_pointer_sha256=absent
   ```
 
-  The final `absent` value is required because the live stable pointer currently
-  returns 404; it is the workflow's explicit conditional-create precondition.
+  The final `absent` value was required because the live stable pointer did not
+  exist before this first promotion; it was the workflow's explicit
+  conditional-create precondition.
   After immutable GitHub publication, the credential-free `pypi-resolve` job
   verifies the exact ref, release attestation, audit evidence, and public trust
   before the single clean PyPI builder produces checksum-bound distributions.
   The `pypi` job then publishes only those unchanged bytes through OIDC. Verify
   the PyPI package and immutable GitHub Release after the workflow succeeds.
+- **PyPI-only recovery.** Dispatch `Release distribution` from `main` with the
+  original stable inputs, `release_tag=v2.0.7`, and
+  `pypi_recovery_only=true`. The resolver must require that exact tag and
+  stable channel, prove the tag remains in `main`, and verify the existing
+  immutable public Release before any build. In this mode the workflow must
+  skip signing, notarization, R2 publication, native and Homebrew smoke, stable
+  pointer promotion, Homebrew publication, and GitHub Release publication. It
+  may run only the read-only recovery preflight and the existing
+  `pypi-resolve`, `pypi-build`, and OIDC `publish-pypi` chain. Because the
+  corrected workflow definition exists on `main` while the immutable release
+  tag retains its original workflow, temporarily admit the `main` branch to
+  only the `release-verification` and `pypi` environments for this recovery.
+  Remove those two temporary branch policies immediately after the run reaches
+  a terminal state and verify both environments again admit only `v*` tags.
+  Do not change the policies of `release-signing` or `release-publication`.
 - **Rollback.** Preserve the immutable Release and tag as audit evidence. Yank
   a bad PyPI file/version when necessary, then publish a new higher-sequence
   signed release that explicitly revokes or supersedes the affected build.
@@ -361,9 +382,9 @@ exact SHA-256. A credential-free job smoke-tests that formula and published ZIP
 without re-rendering either. The reusable tap workflow receives the untouched
 signed candidate and separate smoke evidence,
 re-verifies the signer-rooted formula digest, and seals the exact formula
-without tap credentials before handing only the formula and checksum to a
-fresh deploy-key job. It never triggers from `main` or merely from a published
-GitHub Release.
+without tap credentials before handing only the formula and checksum to the
+protected deploy-key job in the top-level release workflow. It never triggers
+from `main` or merely from a published GitHub Release.
 The formula writes only its Homebrew prefix: its `bin/jobctrl` target is a
 native first-invocation bootstrap holding the signed descriptor resources and
 cached ZIP. It must not create `~/.jobctrl`, mutate a Cellar payload, or link a
@@ -625,8 +646,8 @@ rollback evidence, and publish corrections where a public claim proved wrong.
 | 9.1 Visibility flip | Owner | Run the exact-tree local gate, make the repository public, then rerun every standard hosted gate with real executed steps. |
 | 9.2 Docs-site verification | Owner | Docs are already public and deploy is enabled; dispatch at the gated `main` SHA and record the public deployment proof. |
 | 9.3 Rename redirect | Owner | Verify old-URL redirects after the flip and repair any stale repository links. |
-| 9.4 Release and PyPI | Owner | Preserve failed `v2.0.0`, `v2.0.1`, `v2.0.4`, `v2.0.5`, and `v2.0.6`, unpublished `v2.0.2`, and partial `v2.0.3`; create `v2.0.7` on audited `main`, then verify the exact tag-triggered run uses the recorded first-release defaults and completes the signed release. |
-| 9.5 Homebrew tap | Signed workflow | Replace the legacy formula only with the verified signed render after release-origin smoke passes. |
+| 9.4 Release and PyPI | Owner | Keep the published `v2.0.7` GitHub/R2/Homebrew release unchanged; merge the peeled PyPI action pin and isolated recovery path, then run the `v2.0.7` PyPI-only recovery and verify the public wheel and source distribution. |
+| 9.5 Homebrew tap | Signed workflow | Completed for `v2.0.7`; retain the verified formula and land the protected top-level deploy-key publication fix for future releases. |
 | 9.6 Installer and artifact acceptance | Owner | Verify immutable `install.sh` from R, land matching `scripts/get` and `docs/public/install.sh` in a separate post-release PR, validate/deploy D, then run public curl/Homebrew smoke. |
 | 9.7 Public live demo | Owner | The demo is already public and deploy is enabled; verify the audited deployment externally and record its release evidence. |
 | 10 Publicization | Owner | Prepare factual assets and platform access today; on launch day announce only after the public release and command smoke pass, then cover responses and record the 1h–72h metrics. |

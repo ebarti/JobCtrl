@@ -768,6 +768,7 @@ test("release workflows use protected manual signing, artifact handoff, candidat
   assert.match(releaseWorkflow, /\$\{\{ inputs\.minimum_safe_sequence \|\| '1' \}\}/);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.revoked_build_ids \|\| '\[\]' \}\}/);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.expected_channel_pointer_sha256 \|\| 'absent' \}\}/);
+  assert.match(releaseWorkflow, /pypi_recovery_only:/);
   for (const marker of [
     "runs-on: macos-15",
     "environment: release-signing",
@@ -826,15 +827,41 @@ test("release workflows use protected manual signing, artifact handoff, candidat
   assert.doesNotMatch(homebrewWorkflow, /workflow_dispatch:/);
   assert.match(homebrewWorkflow, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
   assert.match(homebrewWorkflow, /--trust "\$TRUST_PATH"/);
-  assert.match(homebrewWorkflow, /environment: release-publication/);
+  assert.doesNotMatch(homebrewWorkflow, /environment: release-publication|HOMEBREW_TAP_DEPLOY_KEY|^  publish:/m);
+  const syncHomebrew = releaseWorkflow.slice(
+    releaseWorkflow.indexOf("  sync-homebrew:"),
+    releaseWorkflow.indexOf("  publish-homebrew:"),
+  );
+  const publishHomebrew = releaseWorkflow.slice(
+    releaseWorkflow.indexOf("  publish-homebrew:"),
+    releaseWorkflow.indexOf("  promote-channel-pointer:"),
+  );
+  const githubRelease = releaseWorkflow.slice(
+    releaseWorkflow.indexOf("  publish-github-release:"),
+    releaseWorkflow.indexOf("  pypi-resolve:"),
+  );
+  assert.match(syncHomebrew, /uses: \.\/\.github\/workflows\/sync-homebrew-tap\.yml/);
+  assert.doesNotMatch(syncHomebrew, /HOMEBREW_TAP_DEPLOY_KEY|environment: release-publication/);
+  assert.match(publishHomebrew, /needs: \[resolve, sign, sync-homebrew, promote-channel-pointer\]/);
+  assert.match(publishHomebrew, /environment: release-publication/);
+  assert.match(publishHomebrew, /test -n "\$HOMEBREW_TAP_DEPLOY_KEY"/);
+  assert.match(publishHomebrew, /ssh-key: \$\{\{ secrets\.HOMEBREW_TAP_DEPLOY_KEY \}\}/);
+  assert.match(publishHomebrew, /git -C homebrew-tap remote get-url origin\)" = "git@github\.com:ebarti\/homebrew-tap\.git"/);
+  assert.ok(
+    publishHomebrew.indexOf("Require the SSH Homebrew tap origin") < publishHomebrew.indexOf("Commit synchronized formula"),
+    "the tap checkout must prove its SSH origin before commit or push",
+  );
+  assert.match(githubRelease, /needs: \[resolve, sign, package-signed-candidate, smoke-and-verify, publish-homebrew, promote-channel-pointer\]/);
+  assert.match(githubRelease, /needs\['publish-homebrew'\]\.result == 'success'/);
   assert.doesNotMatch(`${releaseWorkflow}\n${homebrewWorkflow}`, /uses:\s+[^\s@]+@(?![0-9a-f]{40}(?:\s|$|#))/);
   const releaseGate = releaseWorkflow.indexOf("distribution-release.finalizer.bundle.mjs verify-pypi-gate");
   const buildDependencies = releaseWorkflow.indexOf("--only-group release-build");
-  const publish = releaseWorkflow.indexOf("uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d");
+  const publish = releaseWorkflow.indexOf("uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b");
   assert.ok(
     releaseGate >= 0 && releaseGate < buildDependencies && buildDependencies < publish,
     "PyPI must verify signed evidence before build dependencies and upload",
   );
+  assert.doesNotMatch(releaseWorkflow, /pypa\/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d/);
   assert.match(releaseWorkflow, /JOBCTRL_RELEASE_PUBLIC_KEY: \$\{\{ needs\.resolve\.outputs\.release_public_key \}\}/);
   assert.match(releaseWorkflow, /JOBCTRL_RELEASE_KEY_ID: \$\{\{ needs\.resolve\.outputs\.release_key_id \}\}/);
   assert.match(releaseWorkflow, /filter="data"/);
@@ -842,7 +869,42 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     releaseWorkflow.indexOf("  pypi-resolve:"),
     releaseWorkflow.indexOf("  pypi-build:"),
   );
+  assert.match(pypiResolve, /needs: \[resolve, publish-github-release, pypi-recovery-preflight\]/);
+  assert.match(pypiResolve, /needs\['publish-github-release'\]\.result == 'success'/);
+  assert.match(pypiResolve, /needs\['pypi-recovery-preflight'\]\.result == 'success'/);
   assert.doesNotMatch(pypiResolve, /(?:corepack|pnpm|npm|npx|uv|pip)\s/);
+
+  const releaseJob = (name) => {
+    const start = releaseWorkflow.indexOf(`  ${name}:\n`);
+    assert.ok(start >= 0, `missing ${name} job`);
+    const remainder = releaseWorkflow.slice(start + 1);
+    const next = remainder.search(/\n  [A-Za-z0-9-]+:\n/);
+    return next < 0 ? remainder : remainder.slice(0, next);
+  };
+  const recoveryExclusion = "github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true";
+  for (const jobName of [
+    "publication-preflight",
+    "prepare",
+    "sign",
+    "package-signed-candidate",
+    "publish-immutable",
+    "smoke-and-verify",
+    "sync-homebrew",
+    "publish-homebrew",
+    "promote-channel-pointer",
+    "publish-github-release",
+  ]) assert.ok(releaseJob(jobName).includes(recoveryExclusion), `${jobName} must skip PyPI recovery`);
+  const recovery = releaseJob("pypi-recovery-preflight");
+  assert.match(recovery, /github\.event_name == 'workflow_dispatch' && inputs\.pypi_recovery_only == true/);
+  for (const marker of [
+    'test "$RELEASE_TAG" = v2.0.7',
+    "compare/$RELEASE_REF...main",
+    "isDraft",
+    "isPrerelease",
+    "isImmutable",
+    'gh release verify "$RELEASE_TAG"',
+  ]) assert.ok(recovery.includes(marker), `recovery must prove ${marker}`);
+  assert.doesNotMatch(recovery, /\baws\b|git push|gh release (?:create|edit|upload)/);
 });
 
 test("release lineage allows main to advance without loosening exact tag identity", async () => {
