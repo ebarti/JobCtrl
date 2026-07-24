@@ -6,11 +6,11 @@ name: Release distribution
 # channel pointer. Immutable GitHub publication gates the final stable-only
 # PyPI publication lane.
 on:
-  # v2.0.5 is the one-time first-public-release fallback for environments where
+  # v2.0.6 is the one-time first-public-release fallback for environments where
   # the repository app can publish refs but cannot call workflow_dispatch.
   push:
     tags:
-      - v2.0.5
+      - v2.0.6
   workflow_dispatch:
     inputs:
       release_tag:
@@ -638,12 +638,17 @@ jobs:
           test -n "$AWS_SECRET_ACCESS_KEY"
           [[ "$R2_ACCOUNT_ID" =~ ^[a-f0-9]{32}$ ]]
           [[ "$R2_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]
           r2_endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           release="$RUNNER_TEMP/release"
+          # Cloudflare can cache a first-read 404 longer than this bounded
+          # verifier waits. Use a fresh cache key after the immutable write.
           verify_public_immutable() {
-            local destination="$1" expected="$2" existing="$3" actual status
+            local destination="$1" expected="$2" existing="$3" actual readback_url status
             for attempt in {1..24}; do
-              status="$(curl --silent --show-error --output "$existing" --write-out '%{http_code}' --proto '=https' --tlsv1.2 "https://releases.jobctrl.dev/$destination" || true)"
+              readback_url="https://releases.jobctrl.dev/$destination?jobctrl-release-readback=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-post-${attempt}"
+              status="$(curl --silent --show-error --output "$existing" --write-out '%{http_code}' --proto '=https' --tlsv1.2 "$readback_url" || true)"
               if [[ "$status" = 200 ]]; then
                 actual="$(shasum -a 256 "$existing" | awk '{print $1}')"
                 test "$actual" = "$expected"
@@ -661,10 +666,11 @@ jobs:
             exit 1
           }
           upload_immutable() {
-            local source="$1" destination="$2" expected actual existing status
+            local source="$1" destination="$2" expected actual existing precheck_url status
             expected="$(shasum -a 256 "$source" | awk '{print $1}')"
             existing="$RUNNER_TEMP/immutable-${destination//\//_}"
-            status="$(curl --silent --show-error --output "$existing" --write-out '%{http_code}' --proto '=https' --tlsv1.2 "https://releases.jobctrl.dev/$destination" || true)"
+            precheck_url="https://releases.jobctrl.dev/$destination?jobctrl-release-readback=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-pre"
+            status="$(curl --silent --show-error --output "$existing" --write-out '%{http_code}' --proto '=https' --tlsv1.2 "$precheck_url" || true)"
             if [[ "$status" = 200 ]]; then
               actual="$(shasum -a 256 "$existing" | awk '{print $1}')"
               test "$actual" = "$expected"
@@ -879,9 +885,12 @@ jobs:
           next_sequence="$(jq -er '.sequence' "$pointer")"
           destination="v1/$RELEASE_CHANNEL/darwin-arm64.json"
           public_url="https://releases.jobctrl.dev/$destination"
+          # Keep this existence check from poisoning the post-write readback
+          # with Cloudflare's negative cache for a first channel publication.
+          precheck_url="${public_url}?jobctrl-release-readback=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-channel-pre"
           headers="$RUNNER_TEMP/channel-pointer.headers"
           current="$RUNNER_TEMP/channel-pointer.current"
-          status="$(curl --silent --show-error --output "$current" --dump-header "$headers" --write-out '%{http_code}' --proto '=https' --tlsv1.2 "$public_url" || true)"
+          status="$(curl --silent --show-error --output "$current" --dump-header "$headers" --write-out '%{http_code}' --proto '=https' --tlsv1.2 "$precheck_url" || true)"
           prior_sha=""
           etag=""
           requires_write=false
@@ -979,7 +988,25 @@ jobs:
           set -euo pipefail
           public_url="https://releases.jobctrl.dev/v1/$RELEASE_CHANNEL/darwin-arm64.json"
           pointer_sha="$EXPECTED_SIGNER_POINTER_SHA256"
-          readback_sha="$(curl --fail --silent --show-error --proto '=https' --tlsv1.2 "$public_url" | shasum -a 256 | awk '{print $1}')"
+          readback="$RUNNER_TEMP/channel-pointer.readback"
+          readback_sha=""
+          for attempt in {1..24}; do
+            readback_url="${public_url}?jobctrl-release-readback=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-channel-post-${attempt}"
+            status="$(curl --silent --show-error --output "$readback" --write-out '%{http_code}' --proto '=https' --tlsv1.2 "$readback_url" || true)"
+            if [[ "$status" = 200 ]]; then
+              candidate_sha="$(shasum -a 256 "$readback" | awk '{print $1}')"
+              if [[ "$candidate_sha" = "$pointer_sha" ]]; then
+                readback_sha="$candidate_sha"
+                break
+              fi
+            elif [[ "$status" != 404 ]]; then
+              echo "failed to read promoted channel pointer (HTTP $status)" >&2
+              exit 1
+            fi
+            if [[ "$attempt" -lt 24 ]]; then
+              sleep 5
+            fi
+          done
           test "$readback_sha" = "$pointer_sha"
           status="$(<"$RUNNER_TEMP/channel-prior-status")"
           prior_sha="$(<"$RUNNER_TEMP/channel-prior-sha256")"

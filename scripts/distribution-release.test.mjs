@@ -298,10 +298,10 @@ test("local fixture release descriptor, signature, and curl contract bind one ZI
     minimumSafeSequence: 0,
     revokedBuildIds: [],
     buildId: "fixture-build-0001",
-    appVersion: "2.0.5",
+    appVersion: "2.0.6",
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
     artifact: {
-      url: "file:///jobctrl-local-release/jobctrl-2.0.5-darwin-arm64.zip",
+      url: "file:///jobctrl-local-release/jobctrl-2.0.6-darwin-arm64.zip",
       sha256: build.archiveSha256,
       sizeBytes: build.compressedBytes,
       archiveType: "zip",
@@ -761,7 +761,7 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     /ENOENT/,
   );
   assert.match(releaseWorkflow, /workflow_dispatch:/);
-  assert.match(releaseWorkflow, /^  push:\n    tags:\n      - v2\.0\.5$/m);
+  assert.match(releaseWorkflow, /^  push:\n    tags:\n      - v2\.0\.6$/m);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.release_tag \|\| github\.ref_name \}\}/);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.channel \|\| 'stable' \}\}/);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.sequence \|\| '1' \}\}/);
@@ -802,6 +802,10 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     "brew test \"$formula\"",
     "for attempt in {1..24}",
     "sleep 5",
+    "jobctrl-release-readback=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-pre",
+    "jobctrl-release-readback=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-post-${attempt}",
+    "jobctrl-release-readback=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-channel-pre",
+    "jobctrl-release-readback=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-channel-post-${attempt}",
   ]) assert.ok(releaseWorkflow.includes(marker), `missing release workflow marker ${marker}`);
   assert.doesNotMatch(releaseWorkflow, /brew audit --strict --formula \"\$release\/jobctrl\.rb\"/);
   assert.doesNotMatch(releaseWorkflow, /brew install --formula \"\$release\/jobctrl\.rb\"/);
