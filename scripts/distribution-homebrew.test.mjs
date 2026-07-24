@@ -80,9 +80,9 @@ test("Homebrew render uses the exact signed curl ZIP identity without a toolchai
   assert.match(rendered.formula, /bin\.install_symlink bootstrap\/"jobctrl"/);
   assert.doesNotMatch(rendered.formula, /Pathname\.new\(Dir\.home\)/);
   assert.match(rendered.formula, /Open3\.capture2e/);
-  assert.match(rendered.formula, /--verify", "--deep", "--strict", "--check-notarization", "-R=notarized/);
+  assert.match(rendered.formula, /"--verify",\s*"--deep",\s*"--strict",\s*"--check-notarization",\s*"-R=notarized"/);
   assert.match(rendered.formula, /def verify_notarized_executable!/);
-  assert.match(rendered.formula, /--assess", "--type", "execute", "--verbose=4/);
+  assert.match(rendered.formula, /"--assess",\s*"--type",\s*"execute",\s*"--verbose=4"/);
   assert.doesNotMatch(rendered.formula, /context:primary-signature/);
   assert.match(rendered.formula, /source=Notarized Developer ID/);
   assert.match(rendered.formula, /managed_headless_shell/);
@@ -223,8 +223,16 @@ test("Homebrew formula validation rejects a render that omits launcher or Chromi
     /launcher\/jobctrl/,
   );
   assert.throws(
-    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('gatekeeper_output.include?("source=Notarized Developer ID")', "true"), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
-    /source=Notarized Developer ID/,
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('gatekeeper_output.exclude?("source=Notarized Developer ID")', "true"), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    /gatekeeper_status/,
+  );
+  assert.throws(
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace("!gatekeeper_status.success? || ", ""), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    /gatekeeper_status/,
+  );
+  assert.throws(
+    () => validateRenderedHomebrewFormula({ formula: rendered.formula.replace('"--check-notarization",', '"--notarization-unchecked",'), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),
+    /security call/,
   );
   assert.throws(
     () => validateRenderedHomebrewFormula({ formula: rendered.formula.replaceAll("managed_headless_shell", "chromium_headless"), descriptor: stableDescriptor(), descriptorRaw, signatureRaw, descriptorUrl }),

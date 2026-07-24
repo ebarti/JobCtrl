@@ -298,10 +298,10 @@ test("local fixture release descriptor, signature, and curl contract bind one ZI
     minimumSafeSequence: 0,
     revokedBuildIds: [],
     buildId: "fixture-build-0001",
-    appVersion: "2.0.6",
+    appVersion: "2.0.7",
     platform: { id: "darwin-arm64", os: "darwin", arch: "arm64" },
     artifact: {
-      url: "file:///jobctrl-local-release/jobctrl-2.0.6-darwin-arm64.zip",
+      url: "file:///jobctrl-local-release/jobctrl-2.0.7-darwin-arm64.zip",
       sha256: build.archiveSha256,
       sizeBytes: build.compressedBytes,
       archiveType: "zip",
@@ -761,7 +761,7 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     /ENOENT/,
   );
   assert.match(releaseWorkflow, /workflow_dispatch:/);
-  assert.match(releaseWorkflow, /^  push:\n    tags:\n      - v2\.0\.6$/m);
+  assert.match(releaseWorkflow, /^  push:\n    tags:\n      - v2\.0\.7$/m);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.release_tag \|\| github\.ref_name \}\}/);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.channel \|\| 'stable' \}\}/);
   assert.match(releaseWorkflow, /\$\{\{ inputs\.sequence \|\| '1' \}\}/);

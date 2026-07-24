@@ -6,11 +6,11 @@ name: Release distribution
 # channel pointer. Immutable GitHub publication gates the final stable-only
 # PyPI publication lane.
 on:
-  # v2.0.6 is the one-time first-public-release fallback for environments where
+  # v2.0.7 is the one-time first-public-release fallback for environments where
   # the repository app can publish refs but cannot call workflow_dispatch.
   push:
     tags:
-      - v2.0.6
+      - v2.0.7
   workflow_dispatch:
     inputs:
       release_tag:
