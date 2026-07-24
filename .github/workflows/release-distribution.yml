@@ -23,6 +23,11 @@ on:
         default: stable
         type: choice
         options: [stable, prerelease]
+      pypi_recovery_only:
+        description: Rebuild and publish PyPI from immutable v2.0.7 on main without signing or release publication
+        required: false
+        default: false
+        type: boolean
       sequence:
         description: Monotonic signed descriptor sequence
         required: true
@@ -76,11 +81,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+          PYPI_RECOVERY_ONLY: ${{ inputs.pypi_recovery_only || false }}
         run: |
           set -euo pipefail
           head_sha="$(git rev-parse HEAD)"
-          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
-          test "$GITHUB_SHA" = "$head_sha"
+          if [[ "$PYPI_RECOVERY_ONLY" = true ]]; then
+            test "$GITHUB_EVENT_NAME" = workflow_dispatch
+            test "$GITHUB_REF" = refs/heads/main
+            test "$RELEASE_TAG" = v2.0.7
+            test "$RELEASE_CHANNEL" = stable
+          else
+            test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
+            test "$GITHUB_SHA" = "$head_sha"
+          fi
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$head_sha...main" --jq '.status')"
           [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$head_sha"
@@ -120,6 +134,7 @@ jobs:
   publication-preflight:
     name: Preflight checkout-free GitHub publication access
     needs: resolve
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -150,6 +165,7 @@ jobs:
   prepare:
     name: Build unsigned candidate once
     needs: resolve
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true }}
     runs-on: macos-15
     permissions:
       actions: read
@@ -248,6 +264,7 @@ jobs:
   sign:
     name: Sign and notarize on a fresh protected runner
     needs: [resolve, publication-preflight, prepare]
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true }}
     runs-on: macos-15
     environment: release-signing
     outputs:
@@ -466,6 +483,7 @@ jobs:
   package-signed-candidate:
     name: Package signed audit evidence without credentials
     needs: [resolve, sign]
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true }}
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -529,6 +547,7 @@ jobs:
   publish-immutable:
     name: Publish the signed immutable candidate from a fresh runner
     needs: [resolve, sign, package-signed-candidate]
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true }}
     runs-on: ubuntu-24.04
     environment: release-publication
     permissions:
@@ -706,6 +725,7 @@ jobs:
   smoke-and-verify:
     name: Smoke public assets and verify the native and Homebrew lifecycles
     needs: [resolve, sign, package-signed-candidate, publish-immutable]
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true }}
     runs-on: macos-15
     permissions:
       actions: read
@@ -823,9 +843,9 @@ jobs:
           retention-days: 14
 
   sync-homebrew:
-    name: Sync verified stable Homebrew formula
+    name: Verify stable Homebrew formula without tap credentials
     needs: [resolve, sign, package-signed-candidate, smoke-and-verify, promote-channel-pointer]
-    if: ${{ (inputs.channel || 'stable') == 'stable' }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true) && (inputs.channel || 'stable') == 'stable' }}
     uses: ./.github/workflows/sync-homebrew-tap.yml
     with:
       release_artifact_name: jobctrl-release-candidate-${{ github.run_id }}
@@ -834,10 +854,100 @@ jobs:
       release_ref: ${{ needs.resolve.outputs.release_ref }}
       release_tag: ${{ inputs.release_tag || github.ref_name }}
       expected_formula_sha256: ${{ needs.sign.outputs.formula_sha256 }}
+
+  publish-homebrew:
+    name: Publish the verified stable Homebrew formula
+    needs: [resolve, sign, sync-homebrew, promote-channel-pointer]
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true) && (inputs.channel || 'stable') == 'stable' }}
+    runs-on: ubuntu-24.04
+    environment: release-publication
+    permissions:
+      actions: read
+      contents: read
+    env:
+      RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      EXPECTED_FORMULA_SHA256: ${{ needs.sign.outputs.formula_sha256 }}
+    steps:
+      - name: Download the exact verified formula
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: jobctrl-homebrew-verified-${{ github.run_id }}
+          path: ${{ runner.temp }}/jobctrl-verified
+
+      - name: Verify the sealed formula checksum
+        run: |
+          set -euo pipefail
+          verified="$RUNNER_TEMP/jobctrl-verified"
+          test -f "$verified/jobctrl.rb" && test ! -L "$verified/jobctrl.rb"
+          test -f "$verified/jobctrl.rb.sha256" && test ! -L "$verified/jobctrl.rb.sha256"
+          (
+            cd "$verified"
+            shasum -a 256 -c jobctrl.rb.sha256
+          )
+          test "$(shasum -a 256 "$verified/jobctrl.rb" | awk '{print $1}')" = "$EXPECTED_FORMULA_SHA256"
+
+      - name: Reassert the audited source lineage before loading the tap deploy key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
+
+      - name: Require the protected Homebrew tap deploy key
+        env:
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$HOMEBREW_TAP_DEPLOY_KEY"
+
+      - name: Check out Homebrew tap
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: ebarti/homebrew-tap
+          path: homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+
+      - name: Require the SSH Homebrew tap origin
+        run: |
+          set -euo pipefail
+          test "$(git -C homebrew-tap remote get-url origin)" = "git@github.com:ebarti/homebrew-tap.git"
+
+      - name: Synchronize the verified rendered formula
+        run: |
+          set -euo pipefail
+          install -m 0644 "$RUNNER_TEMP/jobctrl-verified/jobctrl.rb" homebrew-tap/Formula/jobctrl.rb
+          git -C homebrew-tap diff --check
+
+      - name: Reassert the audited source lineage immediately before tap publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
+
+      - name: Commit synchronized formula
+        working-directory: homebrew-tap
+        run: |
+          set -euo pipefail
+          if [[ -z "$(git status --short --untracked-files=all -- Formula/jobctrl.rb)" ]]; then
+            echo "Formula/jobctrl.rb already matches the P6-verified render."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/jobctrl.rb
+          git commit -m "chore: sync JobCtrl stable formula"
+          git push origin HEAD:main
+
   promote-channel-pointer:
     name: Atomically promote only the signer-rooted pointer
     needs: [resolve, sign, package-signed-candidate, smoke-and-verify]
-    if: ${{ always() && needs.sign.result == 'success' && needs['package-signed-candidate'].result == 'success' && needs['smoke-and-verify'].result == 'success' }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true) && always() && needs.sign.result == 'success' && needs['package-signed-candidate'].result == 'success' && needs['smoke-and-verify'].result == 'success' }}
     runs-on: ubuntu-24.04
     environment: release-publication
     permissions:
@@ -1025,8 +1135,8 @@ jobs:
 
   publish-github-release:
     name: Publish the verified GitHub Release
-    needs: [resolve, sign, package-signed-candidate, smoke-and-verify, sync-homebrew, promote-channel-pointer]
-    if: ${{ always() && needs['smoke-and-verify'].result == 'success' && needs['promote-channel-pointer'].result == 'success' && (needs['sync-homebrew'].result == 'success' || needs['sync-homebrew'].result == 'skipped') }}
+    needs: [resolve, sign, package-signed-candidate, smoke-and-verify, publish-homebrew, promote-channel-pointer]
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true) && always() && needs['smoke-and-verify'].result == 'success' && needs['promote-channel-pointer'].result == 'success' && (needs['publish-homebrew'].result == 'success' || needs['publish-homebrew'].result == 'skipped') }}
     runs-on: ubuntu-24.04
     environment: release-publication
     permissions:
@@ -1132,10 +1242,40 @@ jobs:
           done
           gh release verify "$RELEASE_TAG"
 
+  pypi-recovery-preflight:
+    name: Prove immutable v2.0.7 release before PyPI recovery
+    needs: resolve
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.pypi_recovery_only == true }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
+    steps:
+      - name: Prove the existing stable release is exact, ancestral, immutable, and verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_TAG" = v2.0.7
+          tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
+          test "$tag_sha" = "$RELEASE_REF"
+          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
+          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
+          release="$RUNNER_TEMP/recovery-release.json"
+          gh release view "$RELEASE_TAG" --json isDraft,isImmutable,isPrerelease,targetCommitish,tagName > "$release"
+          test "$(jq -r '.tagName' "$release")" = "$RELEASE_TAG"
+          test "$(jq -r '.targetCommitish' "$release")" = "$RELEASE_REF"
+          test "$(jq -r '.isDraft' "$release")" = false
+          test "$(jq -r '.isPrerelease' "$release")" = false
+          test "$(jq -r '.isImmutable' "$release")" = true
+          gh release verify "$RELEASE_TAG"
+
   pypi-resolve:
     name: Verify the immutable signed stable release for PyPI
-    needs: [resolve, publish-github-release]
-    if: ${{ (inputs.channel || 'stable') == 'stable' && needs['publish-github-release'].result == 'success' }}
+    needs: [resolve, publish-github-release, pypi-recovery-preflight]
+    if: ${{ always() && needs.resolve.result == 'success' && (inputs.channel || 'stable') == 'stable' && (((github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true) && needs['publish-github-release'].result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.pypi_recovery_only == true && needs['pypi-recovery-preflight'].result == 'success')) }}
     runs-on: ubuntu-24.04
     outputs:
       source_commit: ${{ steps.identity.outputs.source_commit }}
@@ -1358,6 +1498,6 @@ jobs:
           )
 
       - name: Publish verified distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d # v1.14.0
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
         with:
           packages-dir: ${{ runner.temp }}/jobctrl-pypi-dists/packages

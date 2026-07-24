@@ -686,20 +686,21 @@ def test_homebrew_tap_key_is_resolved_only_behind_publication_environment() -> N
     ).read_text(encoding="utf-8")
     interface = workflow.partition("\njobs:")[0]
     verify = release_check._workflow_job_body(workflow, "verify")
-    publish = release_check._workflow_job_body(workflow, "publish")
 
     assert "HOMEBREW_TAP_DEPLOY_KEY" not in interface
     assert verify is not None and "HOMEBREW_TAP_DEPLOY_KEY" not in verify
-    assert publish is not None
-    assert "environment: release-publication" in publish
-    assert "secrets.HOMEBREW_TAP_DEPLOY_KEY" in publish
+    assert release_check._workflow_job_body(workflow, "publish") is None
     release_workflow = (
         release_check.ROOT / release_check.RELEASE_DISTRIBUTION_WORKFLOW_PATH
     ).read_text(encoding="utf-8")
     caller = release_check._workflow_job_body(release_workflow, "sync-homebrew")
+    publish = release_check._workflow_job_body(release_workflow, "publish-homebrew")
     assert caller is not None
     assert "HOMEBREW_TAP_DEPLOY_KEY" not in caller
     assert "secrets:" not in caller
+    assert publish is not None
+    assert "environment: release-publication" in publish
+    assert "secrets.HOMEBREW_TAP_DEPLOY_KEY" in publish
 
 
 def test_homebrew_tap_key_cannot_be_a_workflow_call_secret(tmp_path: Path) -> None:
@@ -713,12 +714,11 @@ def test_homebrew_tap_key_cannot_be_a_workflow_call_secret(tmp_path: Path) -> No
         "        required: true\n"
         "\npermissions:\n",
         1,
-    ).replace("    environment: release-publication\n", "", 1)
+    )
     _write_homebrew_p4_contract(tmp_path, workflow)
 
     findings = release_check._homebrew_sync_findings(tmp_path)
     assert any("must be an environment secret" in finding for finding in findings)
-    assert any("behind release-publication approval" in finding for finding in findings)
 
 
 def test_homebrew_template_rejects_toolchain_or_head_spec(tmp_path: Path) -> None:
@@ -750,12 +750,6 @@ def test_homebrew_tap_publish_cannot_mix_verification_with_deploy_key(
         "    env:\n      LEAKED_TAP_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}\n"
         "    permissions:\n      actions: read\n      contents: read\n",
         1,
-    ).replace(
-        "      - name: Download the exact verified formula\n",
-        "      - name: Execute forbidden JobCtrl verification\n"
-        "        run: node scripts/distribution-homebrew.mjs verify-promotion\n\n"
-        "      - name: Download the exact verified formula\n",
-        1,
     )
     _write_homebrew_p4_contract(
         tmp_path,
@@ -767,10 +761,7 @@ def test_homebrew_tap_publish_cannot_mix_verification_with_deploy_key(
         "verify job must not receive tap publication credentials" in finding
         for finding in findings
     )
-    assert any(
-        "tap publish job executes JobCtrl or dependency code" in finding
-        for finding in findings
-    )
+    assert any("must remain credential-free" in finding for finding in findings)
 
 
 def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> None:
@@ -786,7 +777,7 @@ def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> No
     assert publish is not None
     assert not (release_check.ROOT / release_check.PUBLISH_WORKFLOW_PATH).exists()
 
-    assert "needs: [resolve, publish-github-release]" in resolve
+    assert "needs: [resolve, publish-github-release, pypi-recovery-preflight]" in resolve
     assert "persist-credentials: false" in resolve
     assert "distribution-release.finalizer.bundle.mjs.sha256" in resolve
     assert "distribution-release-authority-bundles.NOTICE.txt" in resolve
@@ -842,7 +833,8 @@ def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> No
     assert "packages-dir: ${{ runner.temp }}/jobctrl-pypi-dists/packages" in publish
     assert "SHA256SUMS" in publish
     assert "jobctrl-pypi-distributions-" in publish
-    assert "uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d" in publish
+    assert "uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b" in publish
+    assert "uses: pypa/gh-action-pypi-publish@6733eb7d741f0b11ec6a39b58540dab7590f9b7d" not in publish
 
 
 def test_pypi_no_isolation_backend_is_exactly_pinned_and_locked() -> None:

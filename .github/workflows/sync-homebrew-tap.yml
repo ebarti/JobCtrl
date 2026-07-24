@@ -3,8 +3,8 @@ name: Sync Homebrew Tap
 # This is deliberately reusable only after P6 has downloaded the candidate
 # from the public HTTPS origin. Callers pass an Actions artifact name, never
 # workspace file paths: the formula, descriptor, trust registry, and smoke
-# evidence are authenticated again on this clean runner before tap credentials
-# are loaded.
+# evidence are authenticated again on this clean runner. The caller publishes
+# the sealed formula from its protected environment after this verification.
 on:
   workflow_call:
     inputs:
@@ -126,79 +126,3 @@ jobs:
           path: ${{ runner.temp }}/jobctrl-verified
           if-no-files-found: error
           retention-days: 14
-
-  publish:
-    name: Publish only the sealed formula on a fresh runner
-    needs: verify
-    runs-on: ubuntu-24.04
-    environment: release-publication
-    permissions:
-      actions: read
-      contents: read
-    env:
-      RELEASE_REF: ${{ inputs.release_ref }}
-      RELEASE_TAG: ${{ inputs.release_tag }}
-      EXPECTED_FORMULA_SHA256: ${{ inputs.expected_formula_sha256 }}
-    steps:
-      - name: Download the exact verified formula
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: jobctrl-homebrew-verified-${{ github.run_id }}
-          path: ${{ runner.temp }}/jobctrl-verified
-
-      - name: Verify the sealed formula checksum
-        run: |
-          set -euo pipefail
-          verified="$RUNNER_TEMP/jobctrl-verified"
-          test -f "$verified/jobctrl.rb" && test ! -L "$verified/jobctrl.rb"
-          test -f "$verified/jobctrl.rb.sha256" && test ! -L "$verified/jobctrl.rb.sha256"
-          (
-            cd "$verified"
-            shasum -a 256 -c jobctrl.rb.sha256
-          )
-          test "$(shasum -a 256 "$verified/jobctrl.rb" | awk '{print $1}')" = "$EXPECTED_FORMULA_SHA256"
-
-      - name: Reassert the audited source lineage before loading the tap deploy key
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
-
-      - name: Check out Homebrew tap
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          repository: ebarti/homebrew-tap
-          path: homebrew-tap
-          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
-
-      - name: Synchronize the verified rendered formula
-        run: |
-          set -euo pipefail
-          install -m 0644 "$RUNNER_TEMP/jobctrl-verified/jobctrl.rb" homebrew-tap/Formula/jobctrl.rb
-          git -C homebrew-tap diff --check
-
-      - name: Reassert the audited source lineage immediately before tap publication
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
-          [[ "$main_relation" = ahead || "$main_relation" = identical ]]
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
-
-      - name: Commit synchronized formula
-        working-directory: homebrew-tap
-        run: |
-          set -euo pipefail
-          if [[ -z "$(git status --short --untracked-files=all -- Formula/jobctrl.rb)" ]]; then
-            echo "Formula/jobctrl.rb already matches the P6-verified render."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/jobctrl.rb
-          git commit -m "chore: sync JobCtrl stable formula"
-          git push origin HEAD:main
