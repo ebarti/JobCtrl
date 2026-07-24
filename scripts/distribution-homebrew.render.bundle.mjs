@@ -13982,10 +13982,7 @@ function validateRenderedHomebrewFormula({ formula, descriptor, descriptorRaw, s
     `JOBCTRL_DESCRIPTOR_SHA256 = "${values.DESCRIPTOR_SHA256}"`,
     `JOBCTRL_SIGNATURE_SHA256 = "${values.SIGNATURE_SHA256}"`,
     'require "open3"',
-    '"/usr/bin/codesign", "--verify", "--deep", "--strict", "--check-notarization", "-R=notarized", "--verbose=2", bundle.to_s',
-    '"/usr/bin/codesign", "--verify", "--strict", "--check-notarization", "-R=notarized", "--verbose=2", executable.to_s',
-    '"/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", bundle.to_s',
-    'gatekeeper_output.include?("source=Notarized Developer ID")',
+    'if !gatekeeper_status.success? || gatekeeper_output.exclude?("source=Notarized Developer ID")',
     'verify_notarized_executable!(buildpath/"launcher/jobctrl")',
     'verify_notarized_executable!(buildpath/"launcher/jobctrl-installer")',
     "managed_headless_shell",
@@ -13999,6 +13996,12 @@ function validateRenderedHomebrewFormula({ formula, descriptor, descriptorRaw, s
     'bin.install_symlink bootstrap/"jobctrl"'
   ];
   for (const marker of required) invariant5(formula.includes(marker), `rendered Homebrew formula is missing ${marker}`);
+  const requiredCalls = [
+    /Open3\.capture2e\(\s*"\/usr\/bin\/codesign",\s*"--verify",\s*"--deep",\s*"--strict",\s*"--check-notarization",\s*"-R=notarized",\s*"--verbose=2",\s*bundle\.to_s,?\s*\)/,
+    /Open3\.capture2e\(\s*"\/usr\/bin\/codesign",\s*"--verify",\s*"--strict",\s*"--check-notarization",\s*"-R=notarized",\s*"--verbose=2",\s*executable\.to_s,?\s*\)/,
+    /Open3\.capture2e\(\s*"\/usr\/sbin\/spctl",\s*"--assess",\s*"--type",\s*"execute",\s*"--verbose=4",\s*bundle\.to_s,?\s*\)/
+  ];
+  for (const pattern of requiredCalls) invariant5(pattern.test(formula), `rendered Homebrew formula is missing security call ${pattern}`);
   invariant5(formula.includes("Formula installation remains entirely prefix-owned"), "rendered Homebrew formula must use first-invocation bootstrap");
   invariant5(!formula.includes('verify_notarized_app!(buildpath/"launcher/jobctrl")'), "rendered Homebrew formula must not Gatekeeper-assess raw launcher executables");
   invariant5(!formula.includes("Pathname.new(Dir.home)"), "rendered Homebrew formula must not write the user home during install");

@@ -9,11 +9,11 @@ require "json"
 class Jobctrl < Formula
   desc "Local-first job search mission control: discover, score, tailor, apply"
   homepage "https://jobctrl.dev"
-  license "AGPL-3.0-only"
 
   url "{{ARTIFACT_URL}}"
-  sha256 "{{ARTIFACT_SHA256}}"
   version "{{APP_VERSION}}"
+  sha256 "{{ARTIFACT_SHA256}}"
+  license "AGPL-3.0-only"
 
   JOBCTRL_BUILD_ID = "{{BUILD_ID}}"
   JOBCTRL_MANIFEST_SHA256 = "{{MANIFEST_SHA256}}"
@@ -33,29 +33,51 @@ class Jobctrl < Formula
 
   def verify_notarized_app!(bundle)
     codesign_output, codesign_status = Open3.capture2e(
-      "/usr/bin/codesign", "--verify", "--deep", "--strict", "--check-notarization", "-R=notarized", "--verbose=2", bundle.to_s
+      "/usr/bin/codesign",
+      "--verify",
+      "--deep",
+      "--strict",
+      "--check-notarization",
+      "-R=notarized",
+      "--verbose=2",
+      bundle.to_s,
     )
-    odie "JobCtrl release signature verification failed for #{bundle}: #{codesign_output}" unless codesign_status.success?
+    unless codesign_status.success?
+      odie "JobCtrl release signature verification failed for #{bundle}: #{codesign_output}"
+    end
 
     gatekeeper_output, gatekeeper_status = Open3.capture2e(
-      "/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", bundle.to_s
+      "/usr/sbin/spctl",
+      "--assess",
+      "--type",
+      "execute",
+      "--verbose=4",
+      bundle.to_s,
     )
-    unless gatekeeper_status.success? && gatekeeper_output.include?("source=Notarized Developer ID")
+    if !gatekeeper_status.success? || gatekeeper_output.exclude?("source=Notarized Developer ID")
       odie "JobCtrl release is not Gatekeeper-notarized for #{bundle}: #{gatekeeper_output}"
     end
   end
 
   def verify_notarized_executable!(executable)
     codesign_output, codesign_status = Open3.capture2e(
-      "/usr/bin/codesign", "--verify", "--strict", "--check-notarization", "-R=notarized", "--verbose=2", executable.to_s
+      "/usr/bin/codesign",
+      "--verify",
+      "--strict",
+      "--check-notarization",
+      "-R=notarized",
+      "--verbose=2",
+      executable.to_s,
     )
-    odie "JobCtrl release executable signature verification failed for #{executable}: #{codesign_output}" unless codesign_status.success?
+    unless codesign_status.success?
+      odie "JobCtrl release executable signature verification failed for #{executable}: #{codesign_output}"
+    end
   end
 
   def managed_headless_shell
     candidates = Dir[(buildpath/"chromium").join("**", "chrome-headless-shell")]
     candidates.select! { |candidate| File.file?(candidate) && File.executable?(candidate) }
-    odie "JobCtrl release has no managed Chromium headless shell to verify" unless candidates.length == 1
+    odie "JobCtrl release has no managed Chromium headless shell to verify" if candidates.length != 1
     Pathname.new(candidates.first)
   end
 
@@ -71,17 +93,25 @@ class Jobctrl < Formula
     bootstrap.install buildpath/"launcher/jobctrl"
     bootstrap.install buildpath/"launcher/jobctrl-installer"
     bootstrap.install cached_download => "jobctrl-release.zip"
-    resource("jobctrl-release-descriptor").stage { bootstrap.install "release-descriptor.json" => "homebrew-release.json" }
-    resource("jobctrl-release-descriptor-signature").stage { bootstrap.install "release-descriptor.json.sig" => "homebrew-release.json.sig" }
-    (bootstrap/"homebrew-bootstrap.json").write(JSON.generate({
-      schemaVersion: 1,
-      descriptorUrl: JOBCTRL_DESCRIPTOR_URL,
-      descriptor: "homebrew-release.json",
-      signature: "homebrew-release.json.sig",
-      archive: "jobctrl-release.zip",
-      buildId: JOBCTRL_BUILD_ID,
-      descriptorSha256: JOBCTRL_DESCRIPTOR_SHA256
-    }))
+    resource("jobctrl-release-descriptor").stage do
+      bootstrap.install "release-descriptor.json" => "homebrew-release.json"
+    end
+    resource("jobctrl-release-descriptor-signature").stage do
+      bootstrap.install "release-descriptor.json.sig" => "homebrew-release.json.sig"
+    end
+    (bootstrap/"homebrew-bootstrap.json").write(
+      JSON.generate(
+        {
+          schemaVersion:    1,
+          descriptorUrl:    JOBCTRL_DESCRIPTOR_URL,
+          descriptor:       "homebrew-release.json",
+          signature:        "homebrew-release.json.sig",
+          archive:          "jobctrl-release.zip",
+          buildId:          JOBCTRL_BUILD_ID,
+          descriptorSha256: JOBCTRL_DESCRIPTOR_SHA256,
+        },
+      ),
+    )
     bin.install_symlink bootstrap/"jobctrl"
   end
 
@@ -97,7 +127,7 @@ class Jobctrl < Formula
   end
 
   test do
-    assert_predicate libexec/"bootstrap"/"homebrew-bootstrap.json", :exist?
+    assert_path_exists libexec/"bootstrap"/"homebrew-bootstrap.json"
     assert_predicate bin/"jobctrl", :symlink?
   end
 end
