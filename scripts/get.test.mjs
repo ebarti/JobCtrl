@@ -150,14 +150,16 @@ test("get rejects tampered installer bytes and does not execute them", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("local fixture mode cannot select a network release and normal mode fails closed before P6", () => {
+test("local fixture mode cannot select a network release and the released path carries immutable P6 pins", () => {
   const root = makeTmp(); try {
     const value = fixture(root);
     const local = run(["--local-fixture-contract", value.contract, "--release-url", "https://attacker.example/release"], value.env);
     assert.equal(local.status, 1);
     assert.match(local.stderr, /cannot use --release-url/);
-    const normal = run([], value.env);
-    assert.equal(normal.status, 1);
-    assert.match(normal.stderr, /no signed native installer is published yet/);
+    const source = readFileSync(GET, "utf8");
+    assert.match(source, /^INSTALLER_URL="https:\/\/releases\.jobctrl\.dev\/v1\/artifacts\/2\.0\.7-db257efe1087ec00ac2ec49b846a95d2423aecc2-darwin-arm64\/jobctrl-installer"$/m);
+    assert.match(source, /^INSTALLER_SHA256="d862a8edc7fa68aa23b6f32a98af6d06f5e8f2898966f71e0146a29ec24ee749"$/m);
+    assert.match(source, /^INSTALLER_VERSION="2\.0\.7"$/m);
+    assert.doesNotMatch(source, /^INSTALLER_URL=""$/m);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

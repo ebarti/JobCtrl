@@ -591,7 +591,7 @@ test("install-script rendering advances the actual bounded pin header without ch
 
   assert.throws(
     () => renderPinnedInstallScript({
-      templateRaw: template.replace('INSTALLER_URL=""', "INSTALLER_URL=https://releases.jobctrl.dev/jobctrl-installer"),
+      templateRaw: template.replace(/^INSTALLER_URL=.*$/m, "INSTALLER_URL=https://releases.jobctrl.dev/jobctrl-installer"),
       installerUrl: "https://releases.jobctrl.dev/v1/artifacts/stable-build-0000043/jobctrl-installer",
       installerSha256: "b".repeat(64),
       installerVersion: "2.0.1",
@@ -600,7 +600,7 @@ test("install-script rendering advances the actual bounded pin header without ch
   );
   assert.throws(
     () => renderPinnedInstallScript({
-      templateRaw: template.replace('INSTALLER_VERSION=""', 'INSTALLER_VERSION="2.0.0"\nexport INSTALLER_VERSION="2.0.1"'),
+      templateRaw: template.replace(/^INSTALLER_VERSION=.*$/m, '$&\nexport INSTALLER_VERSION="2.0.1"'),
       installerUrl: "https://releases.jobctrl.dev/v1/artifacts/stable-build-0000043/jobctrl-installer",
       installerSha256: "b".repeat(64),
       installerVersion: "2.0.1",
