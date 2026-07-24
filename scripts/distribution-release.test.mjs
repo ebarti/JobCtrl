@@ -869,18 +869,24 @@ test("release workflows use protected manual signing, artifact handoff, candidat
     releaseWorkflow.indexOf("  pypi-resolve:"),
     releaseWorkflow.indexOf("  pypi-build:"),
   );
+  const pypiBuild = releaseJob("pypi-build");
+  const pypiPublish = releaseJob("publish-pypi");
   assert.match(pypiResolve, /needs: \[resolve, publish-github-release, pypi-recovery-preflight\]/);
   assert.match(pypiResolve, /needs\['publish-github-release'\]\.result == 'success'/);
   assert.match(pypiResolve, /needs\['pypi-recovery-preflight'\]\.result == 'success'/);
+  assert.match(pypiResolve, /if: \$\{\{ !cancelled\(\) && needs\.resolve\.result == 'success'/);
+  assert.match(pypiBuild, /if: \$\{\{ !cancelled\(\) && needs\.pypi-resolve\.result == 'success' \}\}/);
+  assert.match(pypiPublish, /if: \$\{\{ !cancelled\(\) && needs\.pypi-resolve\.result == 'success' && needs\.pypi-build\.result == 'success' \}\}/);
+  assert.doesNotMatch(`${pypiResolve}\n${pypiBuild}\n${pypiPublish}`, /\balways\(\)/);
   assert.doesNotMatch(pypiResolve, /(?:corepack|pnpm|npm|npx|uv|pip)\s/);
 
-  const releaseJob = (name) => {
+  function releaseJob(name) {
     const start = releaseWorkflow.indexOf(`  ${name}:\n`);
     assert.ok(start >= 0, `missing ${name} job`);
     const remainder = releaseWorkflow.slice(start + 1);
     const next = remainder.search(/\n  [A-Za-z0-9-]+:\n/);
     return next < 0 ? remainder : remainder.slice(0, next);
-  };
+  }
   const recoveryExclusion = "github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true";
   for (const jobName of [
     "publication-preflight",

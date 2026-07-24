@@ -1275,7 +1275,7 @@ jobs:
   pypi-resolve:
     name: Verify the immutable signed stable release for PyPI
     needs: [resolve, publish-github-release, pypi-recovery-preflight]
-    if: ${{ always() && needs.resolve.result == 'success' && (inputs.channel || 'stable') == 'stable' && (((github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true) && needs['publish-github-release'].result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.pypi_recovery_only == true && needs['pypi-recovery-preflight'].result == 'success')) }}
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && (inputs.channel || 'stable') == 'stable' && (((github.event_name != 'workflow_dispatch' || inputs.pypi_recovery_only != true) && needs['publish-github-release'].result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.pypi_recovery_only == true && needs['pypi-recovery-preflight'].result == 'success')) }}
     runs-on: ubuntu-24.04
     outputs:
       source_commit: ${{ steps.identity.outputs.source_commit }}
@@ -1386,6 +1386,7 @@ jobs:
   pypi-build:
     name: Build and seal PyPI distributions once
     needs: pypi-resolve
+    if: ${{ !cancelled() && needs.pypi-resolve.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1460,6 +1461,7 @@ jobs:
   publish-pypi:
     name: Publish verified packages with PyPI OIDC
     needs: [pypi-resolve, pypi-build]
+    if: ${{ !cancelled() && needs.pypi-resolve.result == 'success' && needs.pypi-build.result == 'success' }}
     runs-on: ubuntu-24.04
     environment: pypi
     permissions:
