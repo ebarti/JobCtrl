@@ -325,7 +325,11 @@ especially §§11–14. This is a release precondition, not permission to publis
   skip signing, notarization, R2 publication, native and Homebrew smoke, stable
   pointer promotion, Homebrew publication, and GitHub Release publication. It
   may run only the read-only recovery preflight and the existing
-  `pypi-resolve`, `pypi-build`, and OIDC `publish-pypi` chain. Because the
+  `pypi-resolve`, `pypi-build`, and OIDC `publish-pypi` chain. Each downstream
+  PyPI job must explicitly require its direct PyPI dependency to succeed while
+  using `!cancelled()` to override skip propagation from the intentionally
+  skipped release-mutation branch without overriding an operator cancellation.
+  Because the
   corrected workflow definition exists on `main` while the immutable release
   tag retains its original workflow, temporarily admit the `main` branch to
   only the `release-verification` and `pypi` environments for this recovery.

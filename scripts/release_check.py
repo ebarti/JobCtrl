@@ -1449,7 +1449,7 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
         for marker in (
             "needs: [resolve, publish-github-release, pypi-recovery-preflight]",
             "(inputs.channel || 'stable') == 'stable'",
-            "always()",
+            "!cancelled()",
             "needs['publish-github-release'].result == 'success'",
             "needs['pypi-recovery-preflight'].result == 'success'",
             "persist-credentials: false",
@@ -1484,6 +1484,7 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
     if build is not None:
         for marker in (
             "needs: pypi-resolve",
+            "if: ${{ !cancelled() && needs.pypi-resolve.result == 'success' }}",
             "SOURCE_DATE_EPOCH:",
             "uv --project workers/automation sync --python 3.12.13 --locked --no-default-groups --only-group release-build --no-install-project",
             "uv --project workers/automation run --python 3.12.13 --no-sync python -m build --no-isolation workers/automation",
@@ -1517,6 +1518,7 @@ def _pypi_release_workflow_findings(workflow: str) -> list[str]:
             f"{RELEASE_DISTRIBUTION_WORKFLOW_PATH}: PyPI OIDC job must not receive release verification inputs"
         )
     for marker, message in {
+        "if: ${{ !cancelled() && needs.pypi-resolve.result == 'success' && needs.pypi-build.result == 'success' }}": "does not explicitly continue past the intentionally skipped release branch after successful PyPI verification and build without overriding cancellation",
         "environment: pypi": "does not put OIDC publication behind the PyPI environment",
         "id-token: write": "does not request PyPI OIDC only in the publication job",
         "jobctrl-pypi-distributions-": "does not consume only the checksum-bound build artifact",

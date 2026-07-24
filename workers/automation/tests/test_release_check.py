@@ -792,6 +792,7 @@ def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> No
     assert "uv --project" not in resolve
 
     assert "needs: pypi-resolve" in build
+    assert "if: ${{ !cancelled() && needs.pypi-resolve.result == 'success' }}" in build
     assert "actions/setup-python@" in build
     assert "astral-sh/setup-uv@" in build
     assert "actions/setup-node@" not in build
@@ -815,6 +816,10 @@ def test_pypi_workflow_keeps_build_verification_outside_oidc_publication() -> No
 
     assert "environment: pypi" in publish
     assert "needs: [pypi-resolve, pypi-build]" in publish
+    assert (
+        "if: ${{ !cancelled() && needs.pypi-resolve.result == 'success' && "
+        "needs.pypi-build.result == 'success' }}" in publish
+    )
     assert "id-token: write" in publish
     assert "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" in publish
     assert "actions/checkout@" not in publish
