@@ -9,6 +9,11 @@ test("public onboarding leads with bundled acquisition and keeps source advanced
   const gettingStarted = await read("docs/user/getting-started.md");
   const readme = await read("README.md");
 
+  assert.match(
+    readme,
+    /\[Join the discussion\]\(https:\/\/github\.com\/ebarti\/JobCtrl\/discussions\)/,
+  );
+
   for (const document of [gettingStarted, readme]) {
     assert.match(document, /curl -fsSL https:\/\/jobctrl\.dev\/install\.sh \| sh/);
     assert.match(document, /brew install ebarti\/tap\/jobctrl/);
@@ -77,10 +82,31 @@ test("comparison omits the annotated recommendation and methodology sections", a
 test("homepage describes live submission approval as the default", async () => {
   const homepage = await read("docs/index.md");
 
+  assert.match(homepage, /text: Run your job search\. Keep your data\./);
+  assert.match(homepage, /text: Try the Live Demo\s+link: https:\/\/demo\.jobctrl\.dev\//);
+  assert.match(homepage, /text: Install on Apple silicon\s+link: \/user\/getting-started/);
+  assert.match(homepage, /text: See How It Works\s+link: \/user\/product-tour/);
+  assert.match(homepage, /text: View on GitHub\s+link: https:\/\/github\.com\/ebarti\/JobCtrl/);
   assert.match(homepage, /require explicit approval for live submissions by default/i);
+  assert.match(homepage, /keep live submission behind your approval by default/i);
   assert.match(homepage, /browser-level guard blocks dry-run submits/i);
   assert.match(homepage, /no application is ever submitted twice/i);
   assert.doesNotMatch(homepage, /approve every live submission explicitly/i);
+  assert.doesNotMatch(homepage, /Run From Source \/ Release Status/i);
+});
+
+test("public docs emit crawl and social-discovery metadata", async () => {
+  const config = await read("docs/.vitepress/config.ts");
+  const robots = await read("docs/public/robots.txt");
+
+  assert.match(config, /SOCIAL_IMAGE_URL = `\$\{DOCS_SITE_URL\}\/assets\/brand\/social-preview\.png`/);
+  assert.match(config, /sitemap:\s*\{\s*hostname: DOCS_SITE_URL,/);
+  assert.match(config, /\["meta", \{ property: "og:image:width", content: "1200" \}\]/);
+  assert.match(config, /\["meta", \{ property: "og:image:height", content: "630" \}\]/);
+  assert.equal(
+    robots,
+    "User-agent: *\nAllow: /\n\nSitemap: https://jobctrl.dev/sitemap.xml\n",
+  );
 });
 
 test("comparison cites the current pinned AI Job Search discovery source", async () => {
