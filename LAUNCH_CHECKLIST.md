@@ -1,11 +1,27 @@
-# JobCtrl Launch Checklist
+# JobCtrl Public Launch Status
 
-Keep every item unchecked until it is reverified during launch. Detailed release procedure remains in [`docs/publish-checklist.md`](docs/publish-checklist.md).
+JobCtrl launched its first stable public macOS release,
+[`v2.0.7`](https://github.com/ebarti/JobCtrl/releases/tag/v2.0.7), on
+2026-07-24. The detailed release and recovery record remains in
+[`docs/publish-checklist.md`](docs/publish-checklist.md).
 
-- [ ] Restore the GitHub billing/plan state and prove Actions jobs can start.
-- [ ] Require owner approval and allow only `v*` tags (no branches) for `release-signing`, `release-publication`, `release-verification`, and `pypi`.
-- [ ] Reverify the protected environment secret and variable names, token expiry, and PyPI Trusted Publisher configuration without exposing values.
-- [ ] Confirm the retired Homebrew deploy key and repository-level secret remain absent, and the environment-scoped replacement is still limited to `ebarti/homebrew-tap`.
-- [ ] Merge the native R2 publication workflow after its hosted checks can run and pass.
-- [ ] Cut the audited `v*` tag from current `main`, dispatch the first signed release, and verify notarization, immutable R2 assets, channel compare-and-swap, immutable GitHub Release, Homebrew tap, and PyPI publication.
-- [ ] Publish user-facing curl and Homebrew install instructions only after the hosted release path passes end to end.
+## Live Public Surfaces
+
+- [x] Public source repository, issue intake, documentation, and security
+  reporting.
+- [x] Interactive browser demo using synthetic data.
+- [x] Signed and notarized Apple-silicon macOS release with immutable release
+  evidence.
+- [x] Public installer at `https://jobctrl.dev/install.sh`.
+- [x] Homebrew installation through `ebarti/tap/jobctrl`.
+- [x] Public product tour, safety documentation, and evidence-backed comparison.
+
+## Remaining Distribution Follow-Up
+
+- [ ] Publish and verify the supported `2.0.7` Python package through the
+  protected PyPI recovery path. The current `0.0.1` package is an identity
+  marker and is not a JobCtrl application install path.
+
+Public users should install JobCtrl with the bundled installer or Homebrew.
+Do not advertise `pip install jobctrl` until the supported package publication
+and verification are complete.

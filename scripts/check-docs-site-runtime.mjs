@@ -99,7 +99,9 @@ const SOCIAL_METADATA_ROUTES = new Set([
   "/developer/",
   "/user/apply",
 ]);
-const SOCIAL_IMAGE_URL = "https://jobctrl.dev/assets/brand/lockup-primary.png";
+const SOCIAL_IMAGE_URL = "https://jobctrl.dev/assets/brand/social-preview.png";
+const SOCIAL_IMAGE_ALT =
+  "JobCtrl: run your job search, keep your data, and inspect key AI-assisted decisions.";
 
 const LIFECYCLE_EXPLANATION_CONTRACTS = [
   {
@@ -341,10 +343,14 @@ async function assertSocialMetadata(page, route) {
       ogTitle: values('meta[property="og:title"]'),
       ogDescription: values('meta[property="og:description"]'),
       ogImage: values('meta[property="og:image"]'),
+      ogImageWidth: values('meta[property="og:image:width"]'),
+      ogImageHeight: values('meta[property="og:image:height"]'),
+      ogImageAlt: values('meta[property="og:image:alt"]'),
       twitterCard: values('meta[name="twitter:card"]'),
       twitterTitle: values('meta[name="twitter:title"]'),
       twitterDescription: values('meta[name="twitter:description"]'),
       twitterImage: values('meta[name="twitter:image"]'),
+      twitterImageAlt: values('meta[name="twitter:image:alt"]'),
     };
   });
   const expectedCanonical = `https://jobctrl.dev${route}`;
@@ -355,10 +361,14 @@ async function assertSocialMetadata(page, route) {
     ogTitle: [metadata.title],
     ogDescription: [metadata.description],
     ogImage: [SOCIAL_IMAGE_URL],
+    ogImageWidth: ["1200"],
+    ogImageHeight: ["630"],
+    ogImageAlt: [SOCIAL_IMAGE_ALT],
     twitterCard: ["summary_large_image"],
     twitterTitle: [metadata.title],
     twitterDescription: [metadata.description],
     twitterImage: [SOCIAL_IMAGE_URL],
+    twitterImageAlt: [SOCIAL_IMAGE_ALT],
   };
   const mismatches = Object.entries(expected)
     .filter(([key, values]) => JSON.stringify(metadata[key]) !== JSON.stringify(values))
@@ -508,6 +518,36 @@ try {
     );
   } else {
     console.log("ok    / live demo hero action");
+  }
+
+  const heroActions = await page
+    .locator(".VPHome .VPHero .actions .VPButton")
+    .evaluateAll((actions) =>
+      actions
+        .filter((action) => action.getClientRects().length > 0)
+        .map((action) => ({
+          text: action.textContent?.trim(),
+          href: action.href,
+        })),
+    );
+  const expectedHeroActions = [
+    { text: "Try the Live Demo", href: "https://demo.jobctrl.dev/" },
+    {
+      text: "Install on Apple silicon",
+      href: `http://127.0.0.1:${port}/user/getting-started`,
+    },
+    {
+      text: "See How It Works",
+      href: `http://127.0.0.1:${port}/user/product-tour`,
+    },
+    { text: "View on GitHub", href: "https://github.com/ebarti/JobCtrl" },
+  ];
+  if (JSON.stringify(heroActions) !== JSON.stringify(expectedHeroActions)) {
+    fail(
+      `/: launch actions do not match the demo/install/tour/source contract (${JSON.stringify(heroActions)})`,
+    );
+  } else {
+    console.log("ok    / launch hero actions");
   }
 
   await page.goto(`http://127.0.0.1:${port}/user/product-tour`, {

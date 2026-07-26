@@ -8,8 +8,10 @@ at the top of `docs/`.
   that has landed, been superseded by canonical docs, or been closed with a
   recorded outcome.
 
-As of 2026-07-17, the plans below remain active at the top level. Distribution
-and live-demo implementation have landed but retain publication/cutover gates.
+As of 2026-07-26, the plans below remain active at the top level. Distribution
+and live-demo implementation are public; distribution retains a PyPI recovery
+gate, while the growth sprint records the demo's analytics-required entry as a
+conversion and trust decision for the owner.
 Pipeline operations and the end-to-end redesign are implemented in an open
 stack but retain canonical-documentation, cumulative-QA, review, merge, and
 closeout gates. Earlier completed plans live under `implemented/`. Add new
@@ -30,11 +32,12 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 
 | Date | Plan | Status |
 | --- | --- | --- |
-| 2026-07-10 | [Bundled JobCtrl Distribution](2026-07-10-bundled-jobctrl-distribution-plan.md) | Active — P0–P7 code/docs landed in #396 and #399–#405; signed/notarized publication and published-artifact product QA remain open |
-| 2026-07-11 | [Public JobCtrl Live Demo](2026-07-11-public-live-demo-plan.md) | Active — P0–P7 landed in #408–#417 and a private candidate is deployed; public cutover, hosted reruns, and privacy approval remain open |
+| 2026-07-10 | [Bundled JobCtrl Distribution](2026-07-10-bundled-jobctrl-distribution-plan.md) | Active — signed/notarized `v2.0.7`, curl, Homebrew, GitHub Release, and published-artifact smoke are live; supported PyPI package recovery remains open |
+| 2026-07-11 | [Public JobCtrl Live Demo](2026-07-11-public-live-demo-plan.md) | Active — public demo and consent-gated analytics are live; any analytics-optional demo access is outside the approved plan and requires a separate owner/privacy decision plus Tier 3 delivery |
 | 2026-07-13 | [Discovery Pipeline Operations Visibility](2026-07-13-discovery-pipeline-operations-visibility-plan.md) | Active — implementation published in #459–#462; final docs, cumulative QA, review, merge, and archive evidence remain open |
 | 2026-07-14 | [End-to-End Product Redesign](2026-07-14-end-to-end-product-redesign.md) | Active — primitive/redesign/operations stack published in #453–#463; final docs, cumulative QA, review, merge, and archive evidence remain open |
 | 2026-07-17 | [Resumable JobStreaming Discovery](2026-07-17-resumable-jobstreaming-discovery-plan.md) | Active — #468, #469, and final Temporal resume/docs/QA layer #470 published; independent gates passed |
+| 2026-07-26 | [Public Launch Growth Sprint](2026-07-26-public-launch-growth-sprint.md) | Active — conversion-surface fixes and campaign kit in progress; no external post is published without owner approval |
 
 ## Historical Spec Ledger
 

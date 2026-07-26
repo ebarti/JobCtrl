@@ -10,6 +10,12 @@ truthful materials you review, and helps you apply with guardrails — while
 your profile, job database, generated resumes, browser state, and logs stay
 on your machine.
 
+**[Try the live demo](https://demo.jobctrl.dev) ·
+[Install on Apple-silicon macOS](https://jobctrl.dev/user/getting-started) ·
+[Take the product tour](https://jobctrl.dev/user/product-tour) ·
+[Compare approaches](https://jobctrl.dev/comparison) ·
+[Join the discussion](https://github.com/ebarti/JobCtrl/discussions)**
+
 [![TypeScript CI](https://github.com/ebarti/JobCtrl/actions/workflows/typescript.yml/badge.svg)](https://github.com/ebarti/JobCtrl/actions/workflows/typescript.yml)
 [![Release Privacy Gate](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml/badge.svg)](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
@@ -20,6 +26,9 @@ on your machine.
 
 *Every screenshot in this repo is generated from synthetic sample data —
 no real people, resumes, or applications.*
+
+If JobCtrl's local-first approach is useful to you, starring the repository
+helps other job seekers and open-source contributors find it.
 
 </div>
 

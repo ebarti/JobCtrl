@@ -4,7 +4,9 @@ import { withMermaid } from "vitepress-plugin-mermaid";
 
 const REPO_URL = "https://github.com/ebarti/JobCtrl";
 const DOCS_SITE_URL = "https://jobctrl.dev";
-const SOCIAL_IMAGE_URL = `${DOCS_SITE_URL}/assets/brand/lockup-primary.png`;
+const SOCIAL_IMAGE_URL = `${DOCS_SITE_URL}/assets/brand/social-preview.png`;
+const SOCIAL_IMAGE_ALT =
+  "JobCtrl: run your job search, keep your data, and inspect key AI-assisted decisions.";
 
 // Docs that stay in the repository but are not published on the site.
 // docs/README.md is the repo-facing documentation map (GitHub renders it when
@@ -240,7 +242,10 @@ export default withMermaid(
   defineConfig({
     title: "JobCtrl",
     description:
-      "Local-first, AI-assisted job application pipeline: discovery, scoring, tailored materials, and supervised apply.",
+      "Run your job search without surrendering your data: local discovery, evidence-backed scoring, truthful tailoring, and supervised apply.",
+    sitemap: {
+      hostname: DOCS_SITE_URL,
+    },
     head: [
       ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
       ["link", { rel: "apple-touch-icon", sizes: "180x180", href: "/apple-touch-icon.png" }],
@@ -256,10 +261,14 @@ export default withMermaid(
         ["meta", { property: "og:title", content: title }],
         ["meta", { property: "og:description", content: description }],
         ["meta", { property: "og:image", content: SOCIAL_IMAGE_URL }],
+        ["meta", { property: "og:image:width", content: "1200" }],
+        ["meta", { property: "og:image:height", content: "630" }],
+        ["meta", { property: "og:image:alt", content: SOCIAL_IMAGE_ALT }],
         ["meta", { name: "twitter:card", content: "summary_large_image" }],
         ["meta", { name: "twitter:title", content: title }],
         ["meta", { name: "twitter:description", content: description }],
         ["meta", { name: "twitter:image", content: SOCIAL_IMAGE_URL }],
+        ["meta", { name: "twitter:image:alt", content: SOCIAL_IMAGE_ALT }],
       ];
     },
     srcExclude: [

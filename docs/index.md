@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: JobCtrl
-  text: Local-first, AI-assisted job application pipeline
-  tagline: Discover jobs, score fit against your real profile, generate audited tailored materials, and apply behind explicit approval gates — all on your own machine.
+  text: Run your job search. Keep your data.
+  tagline: Discover jobs, prove the fit, tailor truthful materials, and keep live submission behind your approval by default — from one local, auditable workspace.
   image:
     src: /assets/screenshots/dashboard.png
     alt: JobCtrl dashboard showing pipeline progress, job counts, and apply runs
@@ -13,16 +13,21 @@ hero:
       text: Try the Live Demo
       link: https://demo.jobctrl.dev/
     - theme: alt
-      text: Product Tour
-      link: /user/product-tour
-    - theme: alt
-      text: Run From Source / Release Status
+      text: Install on Apple silicon
       link: /user/getting-started
     - theme: alt
-      text: Contribute
-      link: /developer/
+      text: See How It Works
+      link: /user/product-tour
+    - theme: alt
+      text: View on GitHub
+      link: https://github.com/ebarti/JobCtrl
 
 features:
+  - icon: 🔒
+    title: Your Workspace, Locally
+    details: No account and no hosted backend. Your profile, job database, generated files, browser state, and logs stay on your machine by default.
+    link: /user/data-and-safety
+    linkText: See the data boundary
   - icon: 🔎
     title: Profile-Driven Discovery
     details: Multi-source discovery driven by your target roles, locations, and seniority — tracking where each job came from, removing duplicates, and retiring postings that have closed.
@@ -43,14 +48,9 @@ features:
     details: Rehearse with dry runs, require explicit approval for live submissions by default, a browser-level guard blocks dry-run submits, and no application is ever submitted twice.
     link: /user/apply
     linkText: Understand apply controls
-  - icon: 🔒
-    title: Local-First & Private
-    details: One SQLite database and generated files under your home directory. Nothing leaves your machine except steps you explicitly configured.
-    link: /user/data-and-safety
-    linkText: Data, Privacy & Safety
   - icon: ⚙️
-    title: Temporal-Native Pipeline
-    details: Every stage runs as a durable workflow with heartbeats, classified retries, and a daily LLM spend ceiling.
+    title: Work That Survives Interruptions
+    details: Durable workflows preserve progress through restarts, retry classified failures, and block new spendful runs when the estimated daily total exceeds a configurable threshold.
     link: /user/product-tour#runs
     linkText: See run history
 ---
