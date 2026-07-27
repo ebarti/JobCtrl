@@ -46,7 +46,7 @@ def test_public_copyright_attribution_does_not_disable_private_name_detection() 
     ) == ["README.md: contains private first name"]
 
 
-def test_public_demo_controller_disclosure_is_limited_to_exact_public_surfaces() -> None:
+def test_public_controller_disclosures_are_limited_to_exact_public_surfaces() -> None:
     controller = "El" + "oi Barti"
     email = "me@" + "el" + "oi" + "barti" + ".com"
     source_disclosure = (
@@ -56,6 +56,11 @@ def test_public_demo_controller_disclosure_is_limited_to_exact_public_surfaces()
     docs_disclosure = (
         f"The data controller for the public demo is {controller}, acting as an individual.\n"
         f"For privacy questions, contact [{email}](mailto:{email})."
+    )
+    docs_analytics_disclosure = (
+        f"The data controller for this documentation measurement is {controller}, acting as\n"
+        "an individual. For privacy questions, contact\n"
+        f"[{email}](mailto:{email})."
     )
     test_disclosure = (
         f"screen.getByText(/data controller: {controller.lower()}, acting as an individual/i)\n"
@@ -78,6 +83,11 @@ def test_public_demo_controller_disclosure_is_limited_to_exact_public_surfaces()
         Path("docs/user/data-and-safety.md"),
     ) == []
     assert release_check.scan_text(
+        "docs/user/data-and-safety.md",
+        docs_analytics_disclosure,
+        Path("docs/user/data-and-safety.md"),
+    ) == []
+    assert release_check.scan_text(
         "apps/web/src/demo/consent/DemoConsentGate.test.tsx",
         test_disclosure,
         Path("apps/web/src/demo/consent/DemoConsentGate.test.tsx"),
@@ -95,8 +105,18 @@ def test_public_demo_controller_disclosure_is_limited_to_exact_public_surfaces()
     assert release_check.scan_text(
         "docs/.vitepress/dist/user/data-and-safety.html",
         (
-            f"The data controller for the public demo is {controller}, acting as an individual.\n"
-            f'<a href="mailto:{email}">{email}</a>'
+            f"The data controller for the public demo is {controller}, acting as an individual. "
+            "For privacy questions, contact "
+            f'<a href="mailto:{email}" target="_blank" rel="noreferrer">{email}</a>.'
+        ),
+        Path("docs/.vitepress/dist/user/data-and-safety.html"),
+    ) == []
+    assert release_check.scan_text(
+        "docs/.vitepress/dist/user/data-and-safety.html",
+        (
+            f"The data controller for this documentation measurement is {controller}, "
+            "acting as an individual. For privacy questions, contact "
+            f'<a href="mailto:{email}" target="_blank" rel="noreferrer">{email}</a>.'
         ),
         Path("docs/.vitepress/dist/user/data-and-safety.html"),
     ) == []
@@ -106,6 +126,23 @@ def test_public_demo_controller_disclosure_is_limited_to_exact_public_surfaces()
         "contains private first name",
         "contains private personal domain",
     }
+    same_page_findings = release_check.scan_text(
+        "docs/user/data-and-safety.md",
+        f"Unapproved controller reference: {controller} {email}",
+        Path("docs/user/data-and-safety.md"),
+    )
+    assert {finding.split(": ", 1)[1] for finding in same_page_findings} == expected
+    emitted_same_page_findings = release_check.scan_text(
+        "docs/.vitepress/dist/user/data-and-safety.html",
+        (
+            "Unapproved contact: "
+            f'<a href="mailto:{email}" target="_blank" rel="noreferrer">{email}</a>'
+        ),
+        Path("docs/.vitepress/dist/user/data-and-safety.html"),
+    )
+    assert {
+        finding.split(": ", 1)[1] for finding in emitted_same_page_findings
+    } == expected
     for label, rel in (
         ("docs/unrelated.md", Path("docs/unrelated.md")),
         ("dist/web/assets/unrelated.js", Path("dist/web/assets/unrelated.js")),
