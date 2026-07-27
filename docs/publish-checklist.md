@@ -231,13 +231,22 @@ especially §§11–14. This is a release precondition, not permission to publis
   - The release record names the same SHA and tree used by 9.1. Stable install
     wording remains provisional until the post-release installer cutover and
     public smoke in 9.6 pass.
+  - In the GA4 web data stream for `G-KB495KG6MS`, **Enhanced measurement →
+    Page views → Page changes based on browser history events** is disabled.
+    The docs theme sends one sanitized manual view per accepted VitePress
+    route; GA4's independent history listener would otherwise double-count it.
 - **Action.** Manually dispatch `Docs Site` at the audited `main` ref; do not
   toggle the already-enabled variable or wait for an unrelated push.
 - **Verification.** Confirm the dispatched run SHA equals the gated and frozen
   `main` SHA, the `deploy` job runs rather than skips, and `pnpm docs:build` +
   `pnpm docs:check:runtime` are green on that built artifact. Record this
   deployment SHA separately from the immutable release/tag SHA when the later
-  post-release installer/docs cutover in 9.6 changes `main`.
+  post-release installer/docs cutover in 9.6 changes `main`. In a fresh browser
+  profile, verify the hosted site makes no Google request before consent,
+  declining leaves the guide available, and acceptance records exactly one
+  initial view plus one view per client-side route in GA4 Realtime or
+  Tag Assistant. Reopen **Cookie settings**, withdraw, and verify later routes
+  send no views.
 - **Rollback.** Redeploy the previous known-good `docs-site-dist` artifact or a
   corrective audited commit. Do not represent a reverted deployment as stable
   release evidence.

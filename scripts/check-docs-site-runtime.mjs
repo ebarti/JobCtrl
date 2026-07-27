@@ -102,6 +102,11 @@ const SOCIAL_METADATA_ROUTES = new Set([
 const SOCIAL_IMAGE_URL = "https://jobctrl.dev/assets/brand/social-preview.png";
 const SOCIAL_IMAGE_ALT =
   "JobCtrl: run your job search, keep your data, and inspect key AI-assisted decisions.";
+const DOCS_GOOGLE_TAG_ORIGIN = "https://www.googletagmanager.com";
+const DOCS_GOOGLE_TAG_MEASUREMENT_ID = "G-KB495KG6MS";
+const DOCS_GOOGLE_TAG_SCRIPT_ID = "jobctrl-docs-google-analytics";
+const DOCS_ANALYTICS_CONSENT_STORAGE_KEY =
+  "jobctrl-docs-analytics-consent-v1";
 
 const LIFECYCLE_EXPLANATION_CONTRACTS = [
   {
@@ -380,6 +385,600 @@ async function assertSocialMetadata(page, route) {
   }
 }
 
+async function assertDocsAnalyticsConsent(page, baseUrl, fail) {
+  const googleTagRequests = [];
+  const stubGoogleTag = async (route) => {
+    googleTagRequests.push(route.request().url());
+    await route.fulfill({
+      contentType: "application/javascript",
+      body: "",
+    });
+  };
+  await page.route(`${DOCS_GOOGLE_TAG_ORIGIN}/**`, stubGoogleTag);
+
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+  const initialState = await page.evaluate(
+    ({ scriptId, storageKey }) => {
+      const banner = document.querySelector("[data-jh-cookie-banner]");
+      const box = banner?.getBoundingClientRect();
+      return {
+        banner: box
+          ? {
+              bottom: box.bottom,
+              left: box.left,
+              right: box.right,
+              top: box.top,
+            }
+          : null,
+        choice: localStorage.getItem(storageKey),
+        dataLayerPresent: "dataLayer" in window,
+        gtagPresent: "gtag" in window,
+        pageOverflows:
+          document.documentElement.scrollWidth > window.innerWidth,
+        scriptCount: document.querySelectorAll(`#${scriptId}`).length,
+      };
+    },
+    {
+      scriptId: DOCS_GOOGLE_TAG_SCRIPT_ID,
+      storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY,
+    },
+  );
+  const initialActions = await page
+    .locator("[data-jh-cookie-banner] button")
+    .allTextContents();
+  if (
+    !initialState.banner ||
+    initialState.banner.left < 0 ||
+    initialState.banner.right > MOBILE_VIEWPORT.width + 1 ||
+    initialState.banner.top < 0 ||
+    initialState.banner.bottom > MOBILE_VIEWPORT.height + 1 ||
+    initialState.pageOverflows ||
+    initialState.choice !== null ||
+    initialState.scriptCount !== 0 ||
+    initialState.dataLayerPresent ||
+    initialState.gtagPresent ||
+    googleTagRequests.length !== 0 ||
+    !initialActions.some((label) => label.includes("Decline analytics")) ||
+    !initialActions.some((label) => label.includes("Accept analytics"))
+  ) {
+    fail(
+      `/: analytics consent did not start private, optional, and viewport-contained (${JSON.stringify(
+        { initialState, initialActions, googleTagRequests },
+      )})`,
+    );
+  } else {
+    console.log("ok    / analytics defaults to no Google request");
+  }
+
+  await page
+    .getByRole("button", { name: "Decline analytics", exact: true })
+    .click();
+  const declinedState = await page.evaluate(
+    ({ scriptId, storageKey }) => ({
+      activeHref: document.activeElement?.getAttribute("href") ?? "",
+      bannerCount: document.querySelectorAll("[data-jh-cookie-banner]").length,
+      choice: localStorage.getItem(storageKey),
+      dataLayerPresent: "dataLayer" in window,
+      gtagPresent: "gtag" in window,
+      scriptCount: document.querySelectorAll(`#${scriptId}`).length,
+    }),
+    {
+      scriptId: DOCS_GOOGLE_TAG_SCRIPT_ID,
+      storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY,
+    },
+  );
+  if (
+    declinedState.activeHref !== "/" ||
+    declinedState.bannerCount !== 0 ||
+    declinedState.choice !== "denied" ||
+    declinedState.scriptCount !== 0 ||
+    declinedState.dataLayerPresent ||
+    declinedState.gtagPresent ||
+    googleTagRequests.length !== 0
+  ) {
+    fail(
+      `/: declining analytics loaded or retained the Google tag (${JSON.stringify(
+        { declinedState, googleTagRequests },
+      )})`,
+    );
+  } else {
+    console.log("ok    / analytics decline persists without Google");
+  }
+
+  await page
+    .getByRole("button", { name: "Cookie settings", exact: true })
+    .click();
+  await page
+    .getByRole("heading", {
+      name: "Optional documentation analytics",
+      exact: true,
+    })
+    .waitFor({ state: "visible" });
+  await page
+    .getByRole("button", { name: "Accept analytics", exact: true })
+    .click();
+  await page.waitForFunction(
+    (scriptId) => Boolean(document.getElementById(scriptId)),
+    DOCS_GOOGLE_TAG_SCRIPT_ID,
+  );
+  await page.waitForTimeout(100);
+
+  const acceptedState = await page.evaluate(
+    ({ measurementId, scriptId, storageKey }) => {
+      const commands = (window.dataLayer ?? []).map((command) =>
+        Array.from(command),
+      );
+      return {
+        choice: localStorage.getItem(storageKey),
+        config: commands.find(
+          (command) =>
+            command[0] === "config" && command[1] === measurementId,
+        ),
+        consent: commands.find(
+          (command) =>
+            command[0] === "consent" && command[1] === "default",
+        ),
+        pageViews: commands.filter(
+          (command) =>
+            command[0] === "event" && command[1] === "page_view",
+        ),
+        scriptSrc: document
+          .getElementById(scriptId)
+          ?.getAttribute("src"),
+      };
+    },
+    {
+      measurementId: DOCS_GOOGLE_TAG_MEASUREMENT_ID,
+      scriptId: DOCS_GOOGLE_TAG_SCRIPT_ID,
+      storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY,
+    },
+  );
+  const acceptedConfig = acceptedState.config?.[2];
+  const acceptedConsent = acceptedState.consent?.[2];
+  if (
+    acceptedState.choice !== "granted" ||
+    acceptedState.scriptSrc !==
+      `${DOCS_GOOGLE_TAG_ORIGIN}/gtag/js?id=${DOCS_GOOGLE_TAG_MEASUREMENT_ID}` ||
+    googleTagRequests.length !== 1 ||
+    googleTagRequests[0] !==
+      `${DOCS_GOOGLE_TAG_ORIGIN}/gtag/js?id=${DOCS_GOOGLE_TAG_MEASUREMENT_ID}` ||
+    acceptedState.pageViews.length !== 1 ||
+    acceptedState.pageViews[0]?.[2]?.page_path !== "/" ||
+    acceptedState.pageViews[0]?.[2]?.page_location !== `${baseUrl}/` ||
+    acceptedConfig?.send_page_view !== false ||
+    acceptedConfig?.allow_google_signals !== false ||
+    acceptedConfig?.allow_ad_personalization_signals !== false ||
+    acceptedConfig?.cookie_domain !== "none" ||
+    acceptedConfig?.cookie_expires !== 15_544_800 ||
+    acceptedConfig?.cookie_update !== false ||
+    acceptedConsent?.analytics_storage !== "granted" ||
+    acceptedConsent?.ad_storage !== "denied" ||
+    acceptedConsent?.ad_user_data !== "denied" ||
+    acceptedConsent?.ad_personalization !== "denied"
+  ) {
+    fail(
+      `/: accepting analytics did not load the bounded Google tag (${JSON.stringify(
+        { acceptedState, googleTagRequests },
+      )})`,
+    );
+  } else {
+    console.log("ok    / analytics accept loads the bounded Google tag");
+  }
+
+  await page.setViewportSize(BASE_VIEWPORT);
+  await page
+    .locator('.VPHome .VPHero a[href="/user/product-tour"]')
+    .click();
+  await page.waitForURL(`${baseUrl}/user/product-tour`);
+  await page.waitForFunction(
+    () =>
+      (window.dataLayer ?? []).filter(
+        (command) =>
+          command[0] === "event" && command[1] === "page_view",
+      ).length === 2,
+  );
+  const spaPageViews = await page.evaluate(() =>
+    (window.dataLayer ?? [])
+      .filter(
+        (command) =>
+          command[0] === "event" && command[1] === "page_view",
+      )
+      .map((command) => Array.from(command)),
+  );
+  if (
+    spaPageViews.at(-1)?.[2]?.page_path !== "/user/product-tour" ||
+    spaPageViews.at(-1)?.[2]?.page_location !==
+      `${baseUrl}/user/product-tour` ||
+    spaPageViews.at(-1)?.[2]?.page_referrer !== `${baseUrl}/` ||
+    !String(spaPageViews.at(-1)?.[2]?.page_title).includes("Product Tour")
+  ) {
+    fail(
+      `/user/product-tour: SPA analytics page view was missing or overbroad (${JSON.stringify(
+        spaPageViews,
+      )})`,
+    );
+  } else {
+    console.log("ok    /user/product-tour analytics tracks SPA navigation");
+  }
+
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForFunction(
+    (scriptId) => Boolean(document.getElementById(scriptId)),
+    DOCS_GOOGLE_TAG_SCRIPT_ID,
+  );
+  await page.waitForTimeout(100);
+  const restoredGrant = await page.evaluate(
+    ({ storageKey }) => ({
+      bannerCount: document.querySelectorAll("[data-jh-cookie-banner]").length,
+      choice: localStorage.getItem(storageKey),
+      pageViews: (window.dataLayer ?? []).filter(
+        (command) =>
+          command[0] === "event" && command[1] === "page_view",
+      ).length,
+    }),
+    { storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY },
+  );
+  if (
+    restoredGrant.choice !== "granted" ||
+    restoredGrant.bannerCount !== 0 ||
+    restoredGrant.pageViews !== 1 ||
+    googleTagRequests.length !== 2
+  ) {
+    fail(
+      `/user/product-tour: analytics grant did not restore cleanly (${JSON.stringify(
+        { restoredGrant, googleTagRequests },
+      )})`,
+    );
+  } else {
+    console.log("ok    / analytics grant restores without reopening banner");
+  }
+
+  await page.evaluate(() => {
+    document.cookie = "_ga=GA1.1.test; Path=/; SameSite=Lax";
+    document.cookie = "_ga_KB495KG6MS=GS1.1.test; Path=/; SameSite=Lax";
+    document.cookie = "_gid=test; Path=/; SameSite=Lax";
+  });
+  await page
+    .getByRole("button", { name: "Cookie settings", exact: true })
+    .click();
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "networkidle" }),
+    page
+      .getByRole("button", { name: "Decline analytics", exact: true })
+      .click(),
+  ]);
+  const withdrawnState = await page.evaluate(
+    ({ scriptId, storageKey }) => ({
+      analyticsCookies: document.cookie
+        .split(";")
+        .map((cookie) => cookie.split("=", 1)[0]?.trim())
+        .filter(
+          (name) =>
+            name?.startsWith("_ga") ||
+            name?.startsWith("_gid") ||
+            name?.startsWith("_gat"),
+        ),
+      bannerCount: document.querySelectorAll("[data-jh-cookie-banner]").length,
+      choice: localStorage.getItem(storageKey),
+      dataLayerPresent: "dataLayer" in window,
+      gtagPresent: "gtag" in window,
+      scriptCount: document.querySelectorAll(`#${scriptId}`).length,
+    }),
+    {
+      scriptId: DOCS_GOOGLE_TAG_SCRIPT_ID,
+      storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY,
+    },
+  );
+  if (
+    withdrawnState.choice !== "denied" ||
+    withdrawnState.bannerCount !== 0 ||
+    withdrawnState.scriptCount !== 0 ||
+    withdrawnState.dataLayerPresent ||
+    withdrawnState.gtagPresent ||
+    withdrawnState.analyticsCookies.length !== 0
+  ) {
+    fail(
+      `/user/product-tour: analytics withdrawal did not stop and clean up tracking (${JSON.stringify(
+        withdrawnState,
+      )})`,
+    );
+  } else {
+    console.log("ok    / analytics withdrawal stops tracking and clears cookies");
+  }
+
+  await page
+    .locator('.VPNavBarTitle a[href="/"]')
+    .click();
+  await page.waitForURL(`${baseUrl}/`);
+  const postWithdrawalState = await page.evaluate(
+    ({ scriptId, storageKey }) => ({
+      choice: localStorage.getItem(storageKey),
+      dataLayerPresent: "dataLayer" in window,
+      gtagPresent: "gtag" in window,
+      scriptCount: document.querySelectorAll(`#${scriptId}`).length,
+    }),
+    {
+      scriptId: DOCS_GOOGLE_TAG_SCRIPT_ID,
+      storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY,
+    },
+  );
+  if (
+    postWithdrawalState.choice !== "denied" ||
+    postWithdrawalState.scriptCount !== 0 ||
+    postWithdrawalState.dataLayerPresent ||
+    postWithdrawalState.gtagPresent ||
+    googleTagRequests.length !== 2
+  ) {
+    fail(
+      `/: tracking resumed after withdrawal (${JSON.stringify(
+        { postWithdrawalState, googleTagRequests },
+      )})`,
+    );
+  } else {
+    console.log("ok    / analytics remains disabled after SPA navigation");
+  }
+
+  await page.reload({ waitUntil: "networkidle" });
+  const restoredDenial = await page.evaluate(
+    ({ scriptId, storageKey }) => ({
+      bannerCount: document.querySelectorAll("[data-jh-cookie-banner]").length,
+      choice: localStorage.getItem(storageKey),
+      dataLayerPresent: "dataLayer" in window,
+      gtagPresent: "gtag" in window,
+      scriptCount: document.querySelectorAll(`#${scriptId}`).length,
+    }),
+    {
+      scriptId: DOCS_GOOGLE_TAG_SCRIPT_ID,
+      storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY,
+    },
+  );
+  if (
+    restoredDenial.choice !== "denied" ||
+    restoredDenial.bannerCount !== 0 ||
+    restoredDenial.scriptCount !== 0 ||
+    restoredDenial.dataLayerPresent ||
+    restoredDenial.gtagPresent ||
+    googleTagRequests.length !== 2
+  ) {
+    fail(
+      `/: analytics denial did not persist across reload (${JSON.stringify(
+        { restoredDenial, googleTagRequests },
+      )})`,
+    );
+  } else {
+    console.log("ok    / analytics denial persists across reload");
+  }
+
+  await page
+    .getByRole("button", { name: "Cookie settings", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Accept analytics", exact: true })
+    .click();
+  await page.waitForFunction(
+    (scriptId) => Boolean(document.getElementById(scriptId)),
+    DOCS_GOOGLE_TAG_SCRIPT_ID,
+  );
+
+  const secondPage = await page.context().newPage();
+  await secondPage.setViewportSize(BASE_VIEWPORT);
+  await secondPage.route(`${DOCS_GOOGLE_TAG_ORIGIN}/**`, stubGoogleTag);
+  await secondPage.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+  await secondPage.waitForFunction(
+    (scriptId) => Boolean(document.getElementById(scriptId)),
+    DOCS_GOOGLE_TAG_SCRIPT_ID,
+  );
+
+  const consentedTabStates = await Promise.all(
+    [page, secondPage].map((tab) =>
+      tab.evaluate(
+        ({ scriptId, storageKey }) => ({
+          choice: localStorage.getItem(storageKey),
+          pageViews: (window.dataLayer ?? []).filter(
+            (command) =>
+              command[0] === "event" && command[1] === "page_view",
+          ).length,
+          scriptCount: document.querySelectorAll(`#${scriptId}`).length,
+        }),
+        {
+          scriptId: DOCS_GOOGLE_TAG_SCRIPT_ID,
+          storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY,
+        },
+      ),
+    ),
+  );
+
+  await page
+    .getByRole("button", { name: "Cookie settings", exact: true })
+    .click();
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "networkidle" }),
+    secondPage.waitForNavigation({ waitUntil: "networkidle" }),
+    page
+      .getByRole("button", { name: "Decline analytics", exact: true })
+      .click(),
+  ]);
+
+  const deniedTabStates = await Promise.all(
+    [page, secondPage].map((tab) =>
+      tab.evaluate(
+        ({ scriptId, storageKey }) => ({
+          bannerCount:
+            document.querySelectorAll("[data-jh-cookie-banner]").length,
+          choice: localStorage.getItem(storageKey),
+          dataLayerPresent: "dataLayer" in window,
+          gtagPresent: "gtag" in window,
+          scriptCount: document.querySelectorAll(`#${scriptId}`).length,
+        }),
+        {
+          scriptId: DOCS_GOOGLE_TAG_SCRIPT_ID,
+          storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY,
+        },
+      ),
+    ),
+  );
+  const requestsAfterCrossTabDenial = googleTagRequests.length;
+
+  await secondPage
+    .locator('.VPHome .VPHero a[href="/user/product-tour"]')
+    .click();
+  await secondPage.waitForURL(`${baseUrl}/user/product-tour`);
+  const secondTabPostDenial = await secondPage.evaluate(
+    ({ scriptId, storageKey }) => ({
+      choice: localStorage.getItem(storageKey),
+      dataLayerPresent: "dataLayer" in window,
+      gtagPresent: "gtag" in window,
+      scriptCount: document.querySelectorAll(`#${scriptId}`).length,
+    }),
+    {
+      scriptId: DOCS_GOOGLE_TAG_SCRIPT_ID,
+      storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY,
+    },
+  );
+
+  await page
+    .getByRole("button", { name: "Cookie settings", exact: true })
+    .click();
+  await Promise.all([
+    secondPage.waitForNavigation({ waitUntil: "networkidle" }),
+    page
+      .getByRole("button", { name: "Accept analytics", exact: true })
+      .click(),
+  ]);
+  await Promise.all(
+    [page, secondPage].map((tab) =>
+      tab.waitForFunction(
+        (scriptId) => Boolean(document.getElementById(scriptId)),
+        DOCS_GOOGLE_TAG_SCRIPT_ID,
+      ),
+    ),
+  );
+
+  await secondPage
+    .getByRole("button", { name: "Cookie settings", exact: true })
+    .click();
+  const synchronizedGrantState = await secondPage.evaluate(
+    ({ scriptId, storageKey }) => ({
+      bannerText:
+        document.querySelector("[data-jh-cookie-banner]")?.textContent ?? "",
+      choice: localStorage.getItem(storageKey),
+      pageViews: (window.dataLayer ?? []).filter(
+        (command) =>
+          command[0] === "event" && command[1] === "page_view",
+      ).length,
+      scriptCount: document.querySelectorAll(`#${scriptId}`).length,
+    }),
+    {
+      scriptId: DOCS_GOOGLE_TAG_SCRIPT_ID,
+      storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY,
+    },
+  );
+
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "networkidle" }),
+    secondPage.waitForNavigation({ waitUntil: "networkidle" }),
+    secondPage
+      .getByRole("button", { name: "Decline analytics", exact: true })
+      .click(),
+  ]);
+  const synchronizedDenialStates = await Promise.all(
+    [page, secondPage].map((tab) =>
+      tab.evaluate(
+        ({ scriptId, storageKey }) => ({
+          bannerCount:
+            document.querySelectorAll("[data-jh-cookie-banner]").length,
+          choice: localStorage.getItem(storageKey),
+          dataLayerPresent: "dataLayer" in window,
+          gtagPresent: "gtag" in window,
+          scriptCount: document.querySelectorAll(`#${scriptId}`).length,
+        }),
+        {
+          scriptId: DOCS_GOOGLE_TAG_SCRIPT_ID,
+          storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY,
+        },
+      ),
+    ),
+  );
+  const requestsAfterSynchronizedDenial = googleTagRequests.length;
+
+  await secondPage
+    .locator('.VPNavBarTitle a[href="/"]')
+    .click();
+  await secondPage.waitForURL(`${baseUrl}/`);
+  const secondTabAfterSynchronizedDenial = await secondPage.evaluate(
+    ({ scriptId, storageKey }) => ({
+      choice: localStorage.getItem(storageKey),
+      dataLayerPresent: "dataLayer" in window,
+      gtagPresent: "gtag" in window,
+      scriptCount: document.querySelectorAll(`#${scriptId}`).length,
+    }),
+    {
+      scriptId: DOCS_GOOGLE_TAG_SCRIPT_ID,
+      storageKey: DOCS_ANALYTICS_CONSENT_STORAGE_KEY,
+    },
+  );
+  await secondPage.close();
+
+  if (
+    consentedTabStates.some(
+      (state) =>
+        state.choice !== "granted" ||
+        state.pageViews !== 1 ||
+        state.scriptCount !== 1,
+    ) ||
+    deniedTabStates.some(
+      (state) =>
+        state.choice !== "denied" ||
+        state.bannerCount !== 0 ||
+        state.scriptCount !== 0 ||
+        state.dataLayerPresent ||
+        state.gtagPresent,
+    ) ||
+    requestsAfterCrossTabDenial !== 4 ||
+    secondTabPostDenial.choice !== "denied" ||
+    secondTabPostDenial.scriptCount !== 0 ||
+    secondTabPostDenial.dataLayerPresent ||
+    secondTabPostDenial.gtagPresent ||
+    synchronizedGrantState.choice !== "granted" ||
+    synchronizedGrantState.scriptCount !== 1 ||
+    synchronizedGrantState.pageViews !== 1 ||
+    !synchronizedGrantState.bannerText.includes(
+      "Current choice: analytics enabled",
+    ) ||
+    synchronizedDenialStates.some(
+      (state) =>
+        state.choice !== "denied" ||
+        state.bannerCount !== 0 ||
+        state.scriptCount !== 0 ||
+        state.dataLayerPresent ||
+        state.gtagPresent,
+    ) ||
+    requestsAfterSynchronizedDenial !== 6 ||
+    secondTabAfterSynchronizedDenial.choice !== "denied" ||
+    secondTabAfterSynchronizedDenial.scriptCount !== 0 ||
+    secondTabAfterSynchronizedDenial.dataLayerPresent ||
+    secondTabAfterSynchronizedDenial.gtagPresent ||
+    googleTagRequests.length !== requestsAfterSynchronizedDenial
+  ) {
+    fail(
+      `/: cross-tab analytics withdrawal left stale consent (${JSON.stringify(
+        {
+          consentedTabStates,
+          deniedTabStates,
+          secondTabPostDenial,
+          synchronizedGrantState,
+          synchronizedDenialStates,
+          secondTabAfterSynchronizedDenial,
+          googleTagRequests,
+        },
+      )})`,
+    );
+  } else {
+    console.log("ok    / analytics consent synchronizes across open docs tabs");
+  }
+}
+
 const port = await freePort();
 const preview = spawn(
   "corepack",
@@ -420,7 +1019,8 @@ if (
 
 const browser = await chromium.launch();
 try {
-  const page = await browser.newPage({ viewport: BASE_VIEWPORT });
+  const context = await browser.newContext({ viewport: BASE_VIEWPORT });
+  const page = await context.newPage();
   const badRequests = [];
   page.on("requestfailed", (r) =>
     badRequests.push(`${r.url()} ${r.failure()?.errorText ?? ""}`),
@@ -428,6 +1028,12 @@ try {
   page.on("response", (r) => {
     if (r.status() >= 400) badRequests.push(`${r.url()} HTTP ${r.status()}`);
   });
+
+  await assertDocsAnalyticsConsent(
+    page,
+    `http://127.0.0.1:${port}`,
+    fail,
+  );
 
   for (const spec of PAGES) {
     badRequests.length = 0;
@@ -589,6 +1195,7 @@ try {
     !footerText.includes("Copyright © 2026 Eloi Barti") ||
     !footerText.includes("AGPL-3.0-only") ||
     !footerText.includes("Source code") ||
+    !footerText.includes("Cookie settings") ||
     footerText.includes(obsoleteFooterMessage)
   ) {
     fail(
@@ -1184,6 +1791,16 @@ try {
         text.includes("not that a credential is absent"),
       hasRetryBoundary: text.includes("unlock it and retry"),
       hasDefaultProtection: text.includes("Protected by default"),
+      hasDocsAnalyticsDisclosure:
+        Boolean(document.querySelector("#documentation-site-analytics")) &&
+        text.includes("G-KB495KG6MS") &&
+        text.includes("Before acceptance") &&
+        text.includes("does not load or contact Google Analytics") &&
+        text.includes("jobctrl-docs-analytics-consent-v1") &&
+        text.includes("Cookie settings") &&
+        text.includes("without URL query strings or fragments") &&
+        text.includes("within six months") &&
+        text.includes("separate from JobCtrl's local product telemetry"),
     };
   });
   const requiredQuickAnswers = [
@@ -1191,7 +1808,8 @@ try {
     "Are the database and generated files stored locally?",
     "Does JobCtrl call AI models or other providers automatically?",
     "Does Discovery make network requests?",
-    "Is telemetry enabled by default?",
+    "Is product telemetry enabled by default?",
+    "Does this documentation site use analytics?",
     "Can Discovery or enrichment launch a browser?",
     "Does application-submission browser automation run continuously?",
     "Does JobCtrl submit applications or send employer-facing email by default?",
@@ -1222,7 +1840,8 @@ try {
     !privacyContract.hasLinuxBoundary ||
     !privacyContract.hasInspectionFailureBoundary ||
     !privacyContract.hasRetryBoundary ||
-    !privacyContract.hasDefaultProtection
+    !privacyContract.hasDefaultProtection ||
+    !privacyContract.hasDocsAnalyticsDisclosure
   ) {
     fail(
       `/user/data-and-safety: privacy/path/credential contract regressed (${JSON.stringify(privacyContract)})`,
@@ -1676,6 +2295,17 @@ try {
           "[data-jh-comparison-carousel] .jh-comparison-screenshot-carousel__status",
         )
         ?.textContent?.trim() === "2 of 2",
+  );
+  await page.waitForFunction(
+    () => {
+      const image = document.querySelector(
+        "[data-jh-comparison-carousel] img",
+      );
+      if (!(image instanceof HTMLImageElement)) return false;
+      const box = image.getBoundingClientRect();
+      return image.complete && image.naturalWidth > 100 && box.width > 220;
+    },
+    { timeout: 5000 },
   );
   const comparisonMobile = await page.evaluate(() => {
     const cards = [...document.querySelectorAll(".jh-compare-card")].map(

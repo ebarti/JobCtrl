@@ -8,6 +8,10 @@ import WorkflowSurfacePanel from "./WorkflowSurfacePanel.vue";
 import WorkflowSurfaceSelector from "./WorkflowSurfaceSelector.vue";
 import { setupAriaCurrent } from "./aria-current";
 import { setupChannelSelector } from "./channel-selector";
+import {
+  createDocsAnalyticsController,
+  docsAnalyticsControllerKey,
+} from "./docs-analytics";
 import { setupLightbox } from "./lightbox";
 import { setupSearchA11y } from "./search-a11y";
 import "./custom.css";
@@ -23,11 +27,14 @@ export default {
   extends: DefaultTheme,
   Layout: JobCtrlLayout,
   enhanceApp({ app, router }) {
+    const docsAnalytics = createDocsAnalyticsController(router);
+    app.provide(docsAnalyticsControllerKey, docsAnalytics);
     app.component("ComparisonScreenshotCarousel", ComparisonScreenshotCarousel);
     app.component("Mermaid", MermaidRenderer);
     app.component("WorkflowSurfacePanel", WorkflowSurfacePanel);
     app.component("WorkflowSurfaceSelector", WorkflowSurfaceSelector);
     if (inBrowser) {
+      docsAnalytics.install();
       setupLightbox();
       setupAriaCurrent(router);
       setupChannelSelector(router);

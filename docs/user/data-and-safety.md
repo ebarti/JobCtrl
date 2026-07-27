@@ -22,7 +22,8 @@ providers, precedence, and spend controls live in
 | Are the database and generated files stored locally? | ✓ **Yes, by default.** They live under `JOBCTRL_DIR` (normally `~/.jobctrl/`). |
 | Does JobCtrl call AI models or other providers automatically? | ◐ **Only when you use a configured feature.** Generation and opted-in research call providers during runs you start or schedules you explicitly enable. |
 | Does Discovery make network requests? | ✓ **Yes—that is how it searches configured job sources and, for AI-assisted steps, communicates with the model providers you selected.** Requests occur during runs you start or schedules you explicitly enable. |
-| Is telemetry enabled by default? | ✕ **No.** Langfuse requires configuration; `LANGFUSE_DISABLE=1` overrides it. |
+| Is product telemetry enabled by default? | ✕ **No.** Langfuse requires configuration; `LANGFUSE_DISABLE=1` overrides it. |
+| Does this documentation site use analytics? | ◐ **Only after you accept.** The optional Google Analytics tag stays unloaded until you choose **Accept analytics**; declining keeps the documentation fully available. |
 | Can Discovery or enrichment launch a browser? | ◐ **Only when needed.** Smart extraction and some detail enrichment use Playwright during runs you start or schedules you explicitly enable. |
 | Does application-submission browser automation run continuously? | ✕ **No.** It starts only through apply/dry-run work you initiate or a standing loop you explicitly enable. |
 | Does JobCtrl submit applications or send employer-facing email by default? | ✕ **No.** Browser submission and Gmail application sending are explicit guarded actions. |
@@ -32,6 +33,38 @@ Local-first does not mean offline. Discovery fetches sources, generation calls
 models, and live apply contacts an employer only when you use those features.
 
 <DataBoundaryMap />
+
+## Documentation Site Analytics
+
+The documentation at `https://jobctrl.dev` uses optional Google Analytics 4
+measurement only after consent. On a first visit, the cookie banner offers
+**Decline analytics** and **Accept analytics** without blocking the guide.
+Before acceptance, the site does not load or contact Google Analytics.
+
+The consent choice is stored in browser local storage under the versioned key
+`jobctrl-docs-analytics-consent-v1`. The footer's **Cookie settings** control
+reopens the choice at any time. Declining or withdrawing consent stops new page
+views, removes the Google tag from the page, and attempts to delete the
+documentation site's `_ga`, `_gid`, and `_gat` cookies. Withdrawing reloads the
+current documentation page so the previously loaded third-party runtime is no
+longer present. It cannot delete measurement data Google already received.
+
+After acceptance, the site loads Google tag `G-KB495KG6MS`. Page views contain
+the documentation path and page title, without URL query strings or fragments.
+Google may also receive the referrer, browser/device details, interaction data,
+and an IP address used for geolocation before it is discarded. JobCtrl disables
+Google Signals plus advertising and personalization signals, and configures
+host-only Google Analytics cookies that are not sent to `demo.jobctrl.dev` and
+expire within six months. A denial or withdrawal in one documentation tab
+reloads other open documentation tabs so none keep a stale consented tag.
+Google's handling of that data is described in
+[Safeguarding your data](https://support.google.com/analytics/answer/6004245).
+
+The data controller for this documentation measurement is Eloi Barti, acting as
+an individual. For privacy questions, contact
+[me@eloibarti.com](mailto:me@eloibarti.com). This hosted documentation
+measurement is separate from JobCtrl's local product telemetry and from the
+public demo measurement described below.
 
 ## Public Demo
 
