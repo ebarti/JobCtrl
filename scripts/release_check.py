@@ -346,25 +346,34 @@ PUBLIC_COPYRIGHT_SNIPPETS = (
     f"Copyright (C) 2026 {PUBLIC_COPYRIGHT_HOLDER}",
     f"Copyright © 2026 {PUBLIC_COPYRIGHT_HOLDER}",
 )
-PUBLIC_DEMO_CONTROLLER_NAME = "El" + "oi Barti"
-PUBLIC_DEMO_CONTROLLER_EMAIL = "me@" + "el" + "oi" + "barti" + ".com"
-PUBLIC_DEMO_CONTROLLER_SOURCE_SNIPPETS = {
+PUBLIC_CONTROLLER_NAME = "El" + "oi Barti"
+PUBLIC_CONTROLLER_EMAIL = "me@" + "el" + "oi" + "barti" + ".com"
+PUBLIC_CONTROLLER_SOURCE_SNIPPETS = {
     Path("apps/web/src/demo/consent/DemoConsentGate.tsx"): (
-        f"Data controller: {PUBLIC_DEMO_CONTROLLER_NAME}, acting as an individual. Privacy questions:",
-        f'<a href="mailto:{PUBLIC_DEMO_CONTROLLER_EMAIL}">{PUBLIC_DEMO_CONTROLLER_EMAIL}</a>',
+        f"Data controller: {PUBLIC_CONTROLLER_NAME}, acting as an individual. Privacy questions:",
+        f'<a href="mailto:{PUBLIC_CONTROLLER_EMAIL}">{PUBLIC_CONTROLLER_EMAIL}</a>',
     ),
     Path("apps/web/src/demo/consent/DemoConsentGate.test.tsx"): (
-        f"screen.getByText(/data controller: {PUBLIC_DEMO_CONTROLLER_NAME.lower()}, acting as an individual/i)",
-        f'name: "{PUBLIC_DEMO_CONTROLLER_EMAIL}"',
-        f'"mailto:{PUBLIC_DEMO_CONTROLLER_EMAIL}"',
+        f"screen.getByText(/data controller: {PUBLIC_CONTROLLER_NAME.lower()}, acting as an individual/i)",
+        f'name: "{PUBLIC_CONTROLLER_EMAIL}"',
+        f'"mailto:{PUBLIC_CONTROLLER_EMAIL}"',
     ),
     Path("docs/user/data-and-safety.md"): (
-        f"The data controller for the public demo is {PUBLIC_DEMO_CONTROLLER_NAME}, acting as an individual.\n"
-        f"For privacy questions, contact [{PUBLIC_DEMO_CONTROLLER_EMAIL}](mailto:{PUBLIC_DEMO_CONTROLLER_EMAIL}).",
+        f"The data controller for the public demo is {PUBLIC_CONTROLLER_NAME}, acting as an individual.\n"
+        f"For privacy questions, contact [{PUBLIC_CONTROLLER_EMAIL}](mailto:{PUBLIC_CONTROLLER_EMAIL}).",
+        f"The data controller for this documentation measurement is {PUBLIC_CONTROLLER_NAME}, acting as\n"
+        "an individual. For privacy questions, contact\n"
+        f"[{PUBLIC_CONTROLLER_EMAIL}](mailto:{PUBLIC_CONTROLLER_EMAIL}).",
     ),
     Path("docs/.vitepress/dist/user/data-and-safety.html"): (
-        f"The data controller for the public demo is {PUBLIC_DEMO_CONTROLLER_NAME}, acting as an individual.",
-        f'href="mailto:{PUBLIC_DEMO_CONTROLLER_EMAIL}">{PUBLIC_DEMO_CONTROLLER_EMAIL}</a>',
+        f"The data controller for the public demo is {PUBLIC_CONTROLLER_NAME}, acting as an individual. "
+        "For privacy questions, contact "
+        f'<a href="mailto:{PUBLIC_CONTROLLER_EMAIL}" target="_blank" rel="noreferrer">'
+        f"{PUBLIC_CONTROLLER_EMAIL}</a>.",
+        f"The data controller for this documentation measurement is {PUBLIC_CONTROLLER_NAME}, acting as an individual. "
+        "For privacy questions, contact "
+        f'<a href="mailto:{PUBLIC_CONTROLLER_EMAIL}" target="_blank" rel="noreferrer">'
+        f"{PUBLIC_CONTROLLER_EMAIL}</a>.",
     ),
 }
 PUBLIC_DEMO_CONTROLLER_BUILD_ASSET_PREFIXES = (
@@ -373,12 +382,12 @@ PUBLIC_DEMO_CONTROLLER_BUILD_ASSET_PREFIXES = (
     Path("apps/web/dist/assets"),
 )
 PUBLIC_DEMO_CONTROLLER_BUILD_SNIPPETS = (
-    f"Data controller: {PUBLIC_DEMO_CONTROLLER_NAME}, acting as an individual. Privacy questions:",
-    f'href:"mailto:{PUBLIC_DEMO_CONTROLLER_EMAIL}",children:"{PUBLIC_DEMO_CONTROLLER_EMAIL}"',
+    f"Data controller: {PUBLIC_CONTROLLER_NAME}, acting as an individual. Privacy questions:",
+    f'href:"mailto:{PUBLIC_CONTROLLER_EMAIL}",children:"{PUBLIC_CONTROLLER_EMAIL}"',
 )
 PUBLIC_DEMO_CONTROLLER_BUILD_SOURCE_MAP_SNIPPETS = (
-    f"Data controller: {PUBLIC_DEMO_CONTROLLER_NAME}, acting as an individual. Privacy questions:",
-    f'href=\\"mailto:{PUBLIC_DEMO_CONTROLLER_EMAIL}\\">{PUBLIC_DEMO_CONTROLLER_EMAIL}</a>',
+    f"Data controller: {PUBLIC_CONTROLLER_NAME}, acting as an individual. Privacy questions:",
+    f'href=\\"mailto:{PUBLIC_CONTROLLER_EMAIL}\\">{PUBLIC_CONTROLLER_EMAIL}</a>',
 )
 
 
@@ -616,7 +625,7 @@ def scan_text(
 ) -> list[str]:
     """Scan text content for forbidden strings and non-empty secret assignments."""
     findings = []
-    redacted_text = _redact_public_demo_controller_disclosure(text, rel)
+    redacted_text = _redact_public_controller_disclosures(text, rel)
     for needle in needles:
         scan_target = _redact_public_attribution(redacted_text, rel, needle)
         if _contains_needle(scan_target, needle):
@@ -627,9 +636,9 @@ def scan_text(
     return findings
 
 
-def _redact_public_demo_controller_disclosure(text: str, rel: Path) -> str:
-    """Exclude the approved controller disclosure only at its public release surfaces."""
-    snippets = PUBLIC_DEMO_CONTROLLER_SOURCE_SNIPPETS.get(rel)
+def _redact_public_controller_disclosures(text: str, rel: Path) -> str:
+    """Exclude approved controller disclosures only at their public release surfaces."""
+    snippets = PUBLIC_CONTROLLER_SOURCE_SNIPPETS.get(rel)
     if snippets is None and _is_public_demo_controller_build_asset(rel):
         snippets = (
             PUBLIC_DEMO_CONTROLLER_BUILD_SOURCE_MAP_SNIPPETS
