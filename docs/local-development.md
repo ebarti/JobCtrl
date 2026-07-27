@@ -542,12 +542,25 @@ the browser, so a build that passes can still contain a diagram that fails to
 parse. `pnpm docs:check:runtime` starts a fresh preview and checks hydration,
 images, navigation, responsive diagrams, search, the comparison screenshot-carousel
 interaction, and the desktop/mobile comparison layout (including keyboard access to
-its wide table) in Chromium;
+its wide table) in Chromium. It also intercepts the Google tag and proves the
+documentation cookie banner makes no analytics request before acceptance,
+persists both choices, emits SPA page views only after acceptance, and stops
+tracking plus clears site analytics cookies after withdrawal;
 run it after `pnpm docs:build` for public-doc changes. Note that
 `pnpm docs:preview` snapshots the built file list at startup: after any
 rebuild, restart the preview server or hashed assets will 404. Deploys to
 Cloudflare Pages run from `main` once the `DOCS_DEPLOY_ENABLED` repository
 variable and the Cloudflare credentials are configured.
+
+The docs theme sends its own sanitized `page_view` for the initial accepted
+route and each VitePress navigation. In the GA4 web data stream for
+`G-KB495KG6MS`, keep **Enhanced measurement → Page views → Page changes based
+on browser history events** disabled. The tag's `send_page_view: false`
+setting suppresses only its automatic load-time view; leaving GA4's separate
+history listener enabled would double-count client-side navigations. The
+repository runtime check stubs Google and proves the manual client contract;
+the matching data-stream setting and live event count are owner-side
+deployment checks.
 
 ## Documentation Screenshots
 

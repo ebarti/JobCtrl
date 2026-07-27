@@ -322,7 +322,7 @@ export default withMermaid(
       sidebar: SIDEBAR,
       socialLinks: [{ icon: "github", link: REPO_URL }],
       footer: {
-        copyright: `Copyright © 2026 Eloi Barti and JobCtrl contributors. Licensed under <a href="${REPO_URL}/blob/main/LICENSE">AGPL-3.0-only</a>. <a href="${REPO_URL}">Source code</a>.`,
+        copyright: `Copyright © 2026 Eloi Barti and JobCtrl contributors. Licensed under <a href="${REPO_URL}/blob/main/LICENSE">AGPL-3.0-only</a>. <a href="${REPO_URL}">Source code</a>. <button type="button" class="jh-cookie-settings-link" data-jh-cookie-settings>Cookie settings</button>.`,
       },
       search: {
         provider: "local",

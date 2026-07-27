@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import DefaultTheme from "vitepress/theme";
+import DocsAnalyticsConsent from "./DocsAnalyticsConsent.vue";
 
 const VitePressLayout = DefaultTheme.Layout;
 
@@ -201,6 +202,7 @@ watch([sidebarExpanded, sidebarWidth], () => {
           </svg>
         </button>
       </div>
+      <DocsAnalyticsConsent />
     </template>
   </VitePressLayout>
 </template>
