@@ -292,9 +292,11 @@ employers, accounts, provider APIs, and third-party sites as live operations:
   recipient and attachment candidate and Apply Review approves that exact
   binding; the path requires Gmail `gmail.send` and otherwise fails closed.
 - Browser automation can type non-secret profile fields. For job-site
-  password fields, the apply agent calls a local credential tool that types
-  the stored password into the focused field without returning the value to
-  the model; if the tool is unavailable, login fails closed.
+  password fields, the apply agent can call a local credential tool only when
+  the active application origin exactly matches an independently configured
+  trusted credential origin. The tool types the stored password into the
+  focused field without returning the value to the model; without that
+  enrollment, login fails closed.
 - CAPTCHA solving is available only through the owned local solver tool for
   supported widgets. Image/audio, unsupported, or unconfigured challenges
   fail closed. Do not solve challenges manually, switch to stealth browsers,

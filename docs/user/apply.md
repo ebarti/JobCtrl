@@ -168,6 +168,7 @@ dry-run, approval, and submission gates.
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `JOBCTRL_CLAUDE_BIN` | unset | Explicit apply-agent Claude runtime override. By default apply uses a system `claude` when present, then the pinned Claude Agent SDK bundled binary. |
+| `JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS` | unset | Comma-separated exact HTTP(S) origins that may receive the saved job-site password, for example `https://jobs.example.com`. The current application origin must also match one entry; a job or page URL cannot enroll itself. When unset or unmatched, the credential tool is not exposed and login fails closed. Restart the worker after changing it. |
 | `CAPSOLVER_API_KEY` | unset | Configure from **Settings → Credentials** on macOS or the environment elsewhere. It explicitly opts a started apply run into sending a supported widget's site key and page URL to CapSolver. Restart the relevant Python worker after a Keychain edit. The owned solver keeps keys and tokens out of the model prompt; unsupported, unconfigured, or failed solves stop the apply path. |
 | `JOBCTRL_LINKEDIN_APPLY_RESOLVER` | capability-controlled | Set to `0` to disable authenticated LinkedIn posting and outbound apply-URL recovery after it has been explicitly enabled. It cannot enable the feature or grant profile-copy consent by itself. |
 | `JOBCTRL_LINKEDIN_APPLY_CHROME_PROFILE` | browser default | Chrome profile name inside the resolver user-data directory. |

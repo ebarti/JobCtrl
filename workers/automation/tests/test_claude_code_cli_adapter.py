@@ -260,7 +260,7 @@ def test_apply_adapter_uses_tool_allowlist_and_filtered_env(monkeypatch, tmp_pat
     assert "mcp__playwright__browser_navigate" in allowed_tools
     assert "mcp__gmail__get_verification_code" in allowed_tools
     assert "mcp__apply_tools__solve_captcha" in allowed_tools
-    assert "mcp__apply_tools__type_credential" in allowed_tools
+    assert "mcp__apply_tools__type_credential" not in allowed_tools
     assert "mcp__apply_tools__upload_artifact" in allowed_tools
     assert "browser_evaluate" not in allowed_tools
     assert "browser_file_upload" not in allowed_tools
@@ -295,7 +295,7 @@ def test_apply_adapter_omits_captcha_tool_when_solver_key_absent(monkeypatch, tm
     allowed_tools = _FakePopen.calls[0][_FakePopen.calls[0].index("--allowedTools") + 1]
     assert result.submission_result.kind == "dry_run_complete"
     assert "mcp__apply_tools__solve_captcha" not in allowed_tools
-    assert "mcp__apply_tools__type_credential" in allowed_tools
+    assert "mcp__apply_tools__type_credential" not in allowed_tools
     assert "mcp__apply_tools__upload_artifact" in allowed_tools
 
 
@@ -372,6 +372,36 @@ def test_apply_allowlist_matches_pinned_tool_surface() -> None:
     }
     assert set(claude_code_cli._allowed_tools_for_mcp_config(with_captcha).split(",")) == (
         expected | {claude_code_cli.CAPTCHA_APPLY_TOOL}
+    )
+
+
+def test_credential_tool_requires_a_nonempty_origin_policy() -> None:
+    without_policy = {
+        "mcpServers": {
+            "apply_tools": {
+                "env": {"JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS": ""}
+            }
+        }
+    }
+    with_policy = {
+        "mcpServers": {
+            "apply_tools": {
+                "env": {
+                    "JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS": (
+                        "https://apply.example.com"
+                    )
+                }
+            }
+        }
+    }
+
+    assert (
+        "mcp__apply_tools__type_credential"
+        not in claude_code_cli._allowed_tools_for_mcp_config(without_policy)
+    )
+    assert (
+        "mcp__apply_tools__type_credential"
+        in claude_code_cli._allowed_tools_for_mcp_config(with_policy)
     )
 
 

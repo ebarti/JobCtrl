@@ -229,7 +229,10 @@ class ApplyToolsMcpServer:
         raise ValueError(f"no reviewed {kind} artifact exists for this run")
 
     def _tools(self) -> list[dict[str, Any]]:
-        return _tools(captcha_configured=bool(self._captcha_key_resolver()))
+        return _tools(
+            captcha_configured=bool(self._captcha_key_resolver()),
+            credential_configured=bool(self._allowed_credential_origins),
+        )
 
 
 class _UploadDestinationRejected(RuntimeError):
@@ -239,7 +242,11 @@ class _UploadDestinationRejected(RuntimeError):
         self.approved_application_url = approved_application_url
 
 
-def _tools(*, captcha_configured: bool | None = None) -> list[dict[str, Any]]:
+def _tools(
+    *,
+    captcha_configured: bool | None = None,
+    credential_configured: bool = True,
+) -> list[dict[str, Any]]:
     tools = [
         {
             "name": "upload_artifact",
@@ -255,23 +262,26 @@ def _tools(*, captcha_configured: bool | None = None) -> list[dict[str, Any]]:
                 "required": ["kind"],
                 "additionalProperties": False,
             },
-        },
-        {
-            "name": "type_credential",
-            "description": "Type a locally stored credential into the currently focused credential field. The credential value is resolved by this server and is never returned to the model.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "kind": {
-                        "type": "string",
-                        "enum": ["job_site_password"],
-                    }
-                },
-                "required": ["kind"],
-                "additionalProperties": False,
-            },
-        },
+        }
     ]
+    if credential_configured:
+        tools.append(
+            {
+                "name": "type_credential",
+                "description": "Type a locally stored credential into the currently focused credential field. The credential value is resolved by this server and is never returned to the model.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["job_site_password"],
+                        }
+                    },
+                    "required": ["kind"],
+                    "additionalProperties": False,
+                },
+            }
+        )
     configured = bool(_captcha_api_key()) if captcha_configured is None else captcha_configured
     if configured:
         tools.insert(

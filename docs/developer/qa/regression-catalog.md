@@ -9,7 +9,7 @@ individual regression to exact test files.
 
 | Boundary | What must remain true | Proof shape |
 | --- | --- | --- |
-| Apply safety | No live submission without binding approval; every Apply page/request stays on the reviewed canonical origin; dry-run cannot write; submit intent is at most once; confirmed prior applications block or require an evidence-bound one-attempt confirmation. | Apply saga/unit tests plus a disposable browser harness. |
+| Apply safety | No live submission without binding approval; every Apply page/request stays on the reviewed canonical origin; an application URL cannot enroll its own origin for saved-password use; dry-run cannot write; submit intent is at most once; confirmed prior applications block or require an evidence-bound one-attempt confirmation. | Apply saga/unit tests plus a disposable browser harness. |
 | Durable workflows | Accepted work resumes or terminalizes correctly across restart, cancellation, and history loss. | Workflow tests plus targeted fault injection. |
 | Storage and projections | Schema versions are guarded; canonical writes and read projections agree; accepted artifacts survive retries. | Repository/projection tests and API readback. |
 | Credentials and privacy | Secrets, profile content, raw mail, contact values, paths, and artifacts do not leak into settings, events, logs, or projections. | Boundary tests plus response/event inspection. |

@@ -601,6 +601,7 @@ def test_apply_tools_mcp_omits_captcha_tool_when_key_absent(tmp_path):
     server = ApplyToolsMcpServer(
         upload_dir=tmp_path,
         cdp_endpoint="http://localhost:9222",
+        allowed_credential_origins=("https://apply.example.com",),
         captcha_key_resolver=lambda: "",
     )
 
@@ -612,10 +613,27 @@ def test_apply_tools_mcp_omits_captcha_tool_when_key_absent(tmp_path):
     }
 
 
+def test_apply_tools_mcp_omits_credential_tool_without_origin_policy(tmp_path):
+    server = ApplyToolsMcpServer(
+        upload_dir=tmp_path,
+        cdp_endpoint="http://localhost:9222",
+        captcha_key_resolver=lambda: "",
+    )
+
+    response = server.handle_json(
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    )
+
+    assert {tool["name"] for tool in response["result"]["tools"]} == {
+        "upload_artifact",
+    }
+
+
 def test_apply_tools_mcp_lists_captcha_tool_when_key_present(tmp_path):
     server = ApplyToolsMcpServer(
         upload_dir=tmp_path,
         cdp_endpoint="http://localhost:9222",
+        allowed_credential_origins=("https://apply.example.com",),
         captcha_key_resolver=lambda: "configured-key",
     )
 
