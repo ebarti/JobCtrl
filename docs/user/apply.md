@@ -109,6 +109,9 @@ URL, but no applicant profile, job-description, resume, cover-letter, other
 generated prose, local artifact path, or artifact-upload capability. Reviewed
 materials remain local for manual completion, so a hostile page cannot reflect
 their contents back into model-visible DOM.
+The agent also has no generic typing, form-fill, keypress, saved-credential, or
+Gmail verification-code capability. Stop at that boundary and complete any
+private or write-bearing fields manually.
 
 ### Final Browser Submission Is Manual
 

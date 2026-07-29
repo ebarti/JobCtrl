@@ -140,20 +140,15 @@ domain on those targets. A page or model cannot grant itself a second public
 origin; an unexpected cross-origin ATS transition stops the run and needs a
 newly reviewed application destination.
 
-The saved-credential browser tool also has a destination binding:
+The page-reading model receives no generic text-entry, form-fill, keypress,
+select, drag, dialog-response, saved-credential, Gmail verification-code, or
+artifact-upload capability. The default MCP configuration does not start the
+Gmail connector or pass the profile database and credential-origin policy to
+the inspection agent. These tools are also explicitly denied even if a caller
+supplies a broader MCP configuration.
 
-- `type_credential` is exposed only when the approved application origin
-  exactly matches an origin independently enrolled through
-  `JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS`. It then reads the password
-  locally, rechecks the active page origin, confirms the focused element is a
-  password field, and types the secret without returning it to the model. The
-  application URL cannot enroll its own origin.
-
-This check limits the impact of a malicious page or prompt injection that tries
-to navigate elsewhere before requesting a password. Reviewed artifacts are not
-staged in the browser worker and `upload_artifact` is explicitly denied to the
-page-reading model, preventing a same-origin page from reflecting their contents
-back through model-visible DOM.
+Reviewed artifacts are not staged in the browser worker, preventing a
+same-origin page from reflecting their contents back through model-visible DOM.
 
 ## Approval And Control Gates
 
@@ -352,9 +347,10 @@ databases, resumes, tokens, logs, and other blocked user artifacts.
 ## The Apply Agent
 
 The local Claude runtime drives Chrome through an explicit apply-tool allowlist.
-It has browser form tools and bounded verification-code access—not shell/file
-access, raw mailbox/send tools, broad permission bypass, or arbitrary page
-script evaluation. Owned JobCtrl code performs approved email application sends.
+It has inspection navigation, snapshots/screenshots, and a bounded CAPTCHA
+capability—not generic form-entry, credential, verification-code, artifact,
+shell/file, raw mailbox/send, broad permission-bypass, or arbitrary page-script
+tools. Owned JobCtrl code performs approved email application sends.
 
 ::: warning Prompt injection remains a real risk
 The agent reads untrusted pages that can attempt to manipulate it. The controls

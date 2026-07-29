@@ -6,15 +6,11 @@ See ddd-target.md §4.6 (Domain Services). Two services live here:
                                  ready to apply (URL present, materials
                                  approved, not already applied, within
                                  attempt limits).
-  ``ApplyPromptBuilder``      — pure-ish service that assembles the
-                                 autonomous-agent prompt + MCP config
-                                 into an ``ApplyPrompt`` value object.
-                                 Wraps the legacy ``apply/prompt.py``
-                                 string-building logic and isolates
-                                 the side effects (resume PDF copy,
-                                 cover-letter PDF copy) into named
-                                 collaborator functions so the use
-                                 case can swap them in tests.
+  ``ApplyPromptBuilder``      — service that assembles the inspection-agent
+                                 prompt + bounded MCP config into an
+                                 ``ApplyPrompt`` value object. Wraps the
+                                 legacy ``apply/prompt.py`` string-building
+                                 logic so the use case can swap it in tests.
 
 The third apply domain service is the ``ApplySaga`` (the apply
 process manager from §8.3) — that lives in
@@ -27,7 +23,6 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import time
 from dataclasses import dataclass
 from ipaddress import ip_address
 from typing import Any, Mapping
@@ -232,15 +227,10 @@ def _default_mcp_config(
     from jobctrl.runtime import is_bundled_runtime, payload_path
 
     application_url = str((job or {}).get("application_url") or (job or {}).get("url") or "")
-    personal = snapshot.personal if snapshot is not None else {}
     upload_root = str(upload_dir or (_config.APPLY_WORKER_DIR / "current"))
     apply_tools_env = {
         "JOBCTRL_APPLY_CDP_ENDPOINT": f"http://localhost:{cdp_port}",
         "JOBCTRL_APPLY_APPROVED_APPLICATION_URL": application_url,
-        "JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS": ",".join(
-            _credential_origins(application_url)
-        ),
-        "JOBCTRL_APPLY_PROFILE_DB_PATH": str(_config.DB_PATH),
         "JOBCTRL_APPLY_UPLOAD_DIR": upload_root,
     }
     captcha_key = os.environ.get("CAPSOLVER_API_KEY", "").strip()
@@ -282,14 +272,6 @@ def _default_mcp_config(
             f"--cdp-endpoint=http://localhost:{cdp_port}",
             f"--viewport-size={_config.DEFAULTS['viewport']}",
         ]
-    gmail_env = {
-        **bundled_env,
-        "JOBCTRL_GMAIL_ALLOWED_DOMAINS": ",".join(_verification_sender_domains(application_url)),
-        "JOBCTRL_GMAIL_AFTER_MS": str(int(time.time() * 1000)),
-        "JOBCTRL_GMAIL_TO_EMAIL": str(personal.get("email") or ""),
-        "JOBCTRL_GMAIL_TOKEN_PATH": str(_config.get_gmail_mcp_credentials_path()),
-        "JOBCTRL_GMAIL_OAUTH_CLIENT_PATH": str(_config.get_gmail_mcp_oauth_keys_path()),
-    }
     apply_tools_env = {**bundled_env, **apply_tools_env}
     return {
         "mcpServers": {
@@ -297,11 +279,6 @@ def _default_mcp_config(
                 "command": playwright_command,
                 "args": playwright_args,
                 **({"env": bundled_env} if bundled_env else {}),
-            },
-            "gmail": {
-                "command": sys.executable,
-                "args": [*python_args_prefix, "-m", "jobctrl.infrastructure.gmail.mcp_server"],
-                "env": gmail_env,
             },
             "apply_tools": {
                 "command": sys.executable,

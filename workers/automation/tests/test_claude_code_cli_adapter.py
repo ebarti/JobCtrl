@@ -359,13 +359,18 @@ def test_apply_adapter_uses_tool_allowlist_and_filtered_env(monkeypatch, tmp_pat
     allowed_tools = cmd[cmd.index("--allowedTools") + 1]
     disallowed_tools = cmd[cmd.index("--disallowedTools") + 1]
     assert "mcp__playwright__browser_navigate" in allowed_tools
-    assert "mcp__gmail__get_verification_code" in allowed_tools
+    assert claude_code_cli.GMAIL_VERIFICATION_TOOL not in allowed_tools
+    assert claude_code_cli.GMAIL_VERIFICATION_TOOL in disallowed_tools
     assert "mcp__apply_tools__solve_captcha" in allowed_tools
-    assert "mcp__apply_tools__type_credential" not in allowed_tools
+    assert claude_code_cli.CREDENTIAL_APPLY_TOOL not in allowed_tools
+    assert claude_code_cli.CREDENTIAL_APPLY_TOOL in disallowed_tools
     assert claude_code_cli.UPLOAD_ARTIFACT_TOOL not in allowed_tools
     assert claude_code_cli.UPLOAD_ARTIFACT_TOOL in disallowed_tools
     assert "browser_evaluate" not in allowed_tools
     assert "browser_file_upload" not in allowed_tools
+    for write_tool in claude_code_cli.PLAYWRIGHT_WRITE_TOOLS:
+        assert write_tool not in allowed_tools
+        assert write_tool in disallowed_tools
     assert "mcp__gmail__search_emails" not in allowed_tools
     assert "mcp__gmail__read_email" not in allowed_tools
     assert "Bash" in disallowed_tools
@@ -397,7 +402,8 @@ def test_apply_adapter_omits_captcha_tool_when_solver_key_absent(monkeypatch, tm
     allowed_tools = _FakePopen.calls[0][_FakePopen.calls[0].index("--allowedTools") + 1]
     assert result.submission_result.kind == "dry_run_complete"
     assert "mcp__apply_tools__solve_captcha" not in allowed_tools
-    assert "mcp__apply_tools__type_credential" not in allowed_tools
+    assert claude_code_cli.CREDENTIAL_APPLY_TOOL not in allowed_tools
+    assert claude_code_cli.GMAIL_VERIFICATION_TOOL not in allowed_tools
     assert claude_code_cli.UPLOAD_ARTIFACT_TOOL not in allowed_tools
 
 
@@ -471,6 +477,15 @@ def test_apply_allowlist_matches_pinned_tool_surface() -> None:
     assert claude_code_cli.UPLOAD_ARTIFACT_TOOL in set(
         claude_code_cli._DISALLOWED_TOOLS.split(",")
     )
+    assert claude_code_cli.CREDENTIAL_APPLY_TOOL in set(
+        claude_code_cli._DISALLOWED_TOOLS.split(",")
+    )
+    assert claude_code_cli.GMAIL_VERIFICATION_TOOL in set(
+        claude_code_cli._DISALLOWED_TOOLS.split(",")
+    )
+    assert claude_code_cli.PLAYWRIGHT_WRITE_TOOLS <= set(
+        claude_code_cli._DISALLOWED_TOOLS.split(",")
+    )
     with_captcha = {
         "mcpServers": {
             "apply_tools": {"env": {"CAPSOLVER_API_KEY": "capsolver-secret"}}
@@ -503,7 +518,7 @@ def test_hostile_same_origin_page_cannot_obtain_artifact_upload_authority() -> N
     assert claude_code_cli.UPLOAD_ARTIFACT_TOOL in disallowed
 
 
-def test_credential_tool_requires_a_nonempty_origin_policy() -> None:
+def test_private_connector_tools_stay_denied_even_when_configured() -> None:
     without_policy = {
         "mcpServers": {
             "apply_tools": {
@@ -523,14 +538,12 @@ def test_credential_tool_requires_a_nonempty_origin_policy() -> None:
         }
     }
 
-    assert (
-        "mcp__apply_tools__type_credential"
-        not in claude_code_cli._allowed_tools_for_mcp_config(without_policy)
-    )
-    assert (
-        "mcp__apply_tools__type_credential"
-        in claude_code_cli._allowed_tools_for_mcp_config(with_policy)
-    )
+    for config in (without_policy, with_policy):
+        allowed = set(
+            claude_code_cli._allowed_tools_for_mcp_config(config).split(",")
+        )
+        assert claude_code_cli.CREDENTIAL_APPLY_TOOL not in allowed
+        assert claude_code_cli.GMAIL_VERIFICATION_TOOL not in allowed
 
 
 def test_adapter_records_llm_spend_from_sdk_usage(monkeypatch, tmp_path) -> None:
