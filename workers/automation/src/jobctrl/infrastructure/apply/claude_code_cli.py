@@ -94,10 +94,10 @@ PLAYWRIGHT_APPLY_TOOLS = frozenset(
 GMAIL_APPLY_TOOLS = frozenset({"mcp__gmail__get_verification_code"})
 BASE_OWNED_APPLY_TOOLS = frozenset(
     {
-        "mcp__apply_tools__type_credential",
         "mcp__apply_tools__upload_artifact",
     }
 )
+CREDENTIAL_APPLY_TOOL = "mcp__apply_tools__type_credential"
 CAPTCHA_APPLY_TOOL = "mcp__apply_tools__solve_captcha"
 DISALLOWED_CLAUDE_TOOLS = (
     "Bash",
@@ -499,8 +499,13 @@ def _allowed_tools_for_mcp_config(mcp_config: Mapping[str, Any]) -> str:
     tools = set(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS)
     apply_tools = ((mcp_config.get("mcpServers") or {}).get("apply_tools") or {})
     env = apply_tools.get("env") if isinstance(apply_tools, Mapping) else {}
-    if isinstance(env, Mapping) and str(env.get("CAPSOLVER_API_KEY") or "").strip():
-        tools.add(CAPTCHA_APPLY_TOOL)
+    if isinstance(env, Mapping):
+        if str(env.get("CAPSOLVER_API_KEY") or "").strip():
+            tools.add(CAPTCHA_APPLY_TOOL)
+        if str(
+            env.get("JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS") or ""
+        ).strip():
+            tools.add(CREDENTIAL_APPLY_TOOL)
     return ",".join(sorted(tools))
 
 

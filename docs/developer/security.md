@@ -283,9 +283,11 @@ is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
   `--allowedTools` surface, explicit `--disallowedTools`, and a filtered
   environment. The allowlist is limited to the safe Playwright apply subset,
   read-only Gmail verification-code lookup, and owned apply tools. Job-site
-  passwords and CAPTCHA provider keys stay out of the model prompt: the local
-  `type_credential` tool types configured credentials into the focused field,
-  and the local `solve_captcha` tool owns provider-key use when configured.
+  passwords and CAPTCHA provider keys stay out of the model prompt. The local
+  `type_credential` tool is omitted unless the current application origin
+  intersects the independently configured exact-origin enrollment, then
+  rechecks that origin and the focused password field before typing. The local
+  `solve_captcha` tool owns provider-key use when configured.
   Gmail send is not exposed as an agent tool; email-only applications are
   recorded as review candidates and sent only by the owned email sender after a
   matching Apply Review approval.
@@ -345,7 +347,10 @@ their planned native adapters ship. The
 CapSolver key is an env var scoped to the
 owned CAPTCHA tool. A job-site login password, if the user provides one,
 remains local profile data consumed by the owned `type_credential` tool; it is
-not interpolated into the apply prompt.
+not interpolated into the apply prompt. The application URL is untrusted input
+and therefore cannot authorize credential use: the tool is exposed only when
+its canonical origin exactly matches an entry in
+`JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS`.
 
 **Keep detection separate from browser adoption.** The browser-capability list
 may inspect known installation locations, but the RPC/API response exposes only

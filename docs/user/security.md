@@ -141,10 +141,12 @@ newly reviewed application destination.
 
 The two most sensitive browser tools also have a destination binding:
 
-- `type_credential` reads the password locally, verifies that the active page
-  origin is one derived from the approved application URL, confirms the focused
-  element is a password field, and then types the secret without returning it to
-  the model;
+- `type_credential` is exposed only when the approved application origin
+  exactly matches an origin independently enrolled through
+  `JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS`. It then reads the password
+  locally, rechecks the active page origin, confirms the focused element is a
+  password field, and types the secret without returning it to the model. The
+  application URL cannot enroll its own origin;
 - `upload_artifact` resolves only the reviewed resume or cover letter, requires
   a live file input on the current page, and rejects and records an upload when
   the page origin differs from the approved application origin.

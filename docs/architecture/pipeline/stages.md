@@ -429,6 +429,11 @@ MCP** and performs any form interaction. Terminal apply outcomes are
    targets are closed before execution because they lack Chrome's required
    interception domain. Cross-origin ATS transitions stop and require a new
    reviewed destination.
+6. **Independent credential-origin enrollment.** The application URL cannot
+   authorize disclosure of the saved job-site password. The current canonical
+   application origin must exactly match an operator-configured entry in
+   `JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS`; otherwise the credential tool
+   is omitted from both the MCP tool surface and the agent allowlist.
 
 **Timeouts and retries.** The apply activity runs with a 2-hour window for a
 normal batch and a 1-hour window per batch in continuous mode; heartbeat timeout

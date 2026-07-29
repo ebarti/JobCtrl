@@ -35,11 +35,15 @@ from urllib.parse import urlparse
 
 from publicsuffix2 import PublicSuffixList
 
+from jobctrl.apply.origins import canonical_http_origin
 from jobctrl.domain.apply.value_objects import ApplyPrompt
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 
 log = logging.getLogger(__name__)
 _PUBLIC_SUFFIX_LIST = PublicSuffixList()
+_TRUSTED_CREDENTIAL_ORIGINS_ENV = (
+    "JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -336,22 +340,23 @@ def _verification_sender_domains(application_url: str) -> tuple[str, ...]:
 
 def _credential_origins(application_url: str) -> tuple[str, ...]:
     try:
-        parsed = urlparse(application_url)
-    except Exception:
-        return ()
-    scheme = parsed.scheme.lower()
-    if scheme not in {"http", "https"} or not parsed.hostname:
-        return ()
-    host = parsed.hostname.lower()
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"
-    try:
-        port = parsed.port
+        application_origin = canonical_http_origin(application_url)
     except ValueError:
         return ()
-    default_port = 443 if scheme == "https" else 80
-    port_suffix = "" if port is None or port == default_port else f":{port}"
-    return (f"{scheme}://{host}{port_suffix}",)
+
+    enrolled: set[str] = set()
+    raw = os.environ.get(_TRUSTED_CREDENTIAL_ORIGINS_ENV, "")
+    for candidate in raw.split(","):
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        try:
+            enrolled.add(canonical_http_origin(candidate))
+        except ValueError:
+            continue
+    if application_origin not in enrolled:
+        return ()
+    return (application_origin,)
 
 
 __all__ = [

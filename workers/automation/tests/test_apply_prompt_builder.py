@@ -8,7 +8,12 @@ from pathlib import Path
 
 from jobctrl import config as jobctrl_config
 from jobctrl.apply import prompt as prompt_mod
-from jobctrl.domain.apply.services import ApplyPromptBuilder, _default_mcp_config, _verification_sender_domains
+from jobctrl.domain.apply.services import (
+    ApplyPromptBuilder,
+    _credential_origins,
+    _default_mcp_config,
+    _verification_sender_domains,
+)
 from jobctrl.domain.apply.value_objects import ApplyPrompt
 from jobctrl.infrastructure.apply import claude_code_cli
 
@@ -244,6 +249,10 @@ def test_attestation_lines_render_full_partial_and_empty_sets() -> None:
 
 def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> None:
     monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "source")
+    monkeypatch.setenv(
+        "JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS",
+        "https://apply.example.com",
+    )
     monkeypatch.delenv("CAPSOLVER_API_KEY", raising=False)
     config = _default_mcp_config(
         9222,
@@ -277,6 +286,108 @@ def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> Non
     assert "CAPSOLVER_API_KEY" not in apply_tools["env"]
     assert "mcp__apply_tools__solve_captcha" not in claude_code_cli._allowed_tools_for_mcp_config(config)
     assert "DistinctivePasswordShouldNeverRender" not in json.dumps(apply_tools["env"])
+
+
+def test_default_mcp_config_does_not_derive_credential_authority_from_application_url(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "source")
+    monkeypatch.delenv(
+        "JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS",
+        raising=False,
+    )
+
+    config = _default_mcp_config(
+        9222,
+        job={"application_url": "https://attacker.example/login"},
+        snapshot=_FakeSnapshot(),
+        upload_dir="/tmp/worker-0",
+    )
+
+    apply_tools = config["mcpServers"]["apply_tools"]
+    assert apply_tools["env"]["JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS"] == ""
+    assert (
+        "mcp__apply_tools__type_credential"
+        not in claude_code_cli._allowed_tools_for_mcp_config(config)
+    )
+
+
+def test_default_mcp_config_intersects_application_origin_with_independent_enrollment(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "source")
+    monkeypatch.setenv(
+        "JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS",
+        "https://apply.example.com:443, https://other.example",
+    )
+
+    trusted = _default_mcp_config(
+        9222,
+        job={"application_url": "https://apply.example.com/job/123"},
+        snapshot=_FakeSnapshot(),
+        upload_dir="/tmp/worker-0",
+    )
+    hostile = _default_mcp_config(
+        9223,
+        job={"application_url": "https://attacker.example/login"},
+        snapshot=_FakeSnapshot(),
+        upload_dir="/tmp/worker-1",
+    )
+
+    trusted_env = trusted["mcpServers"]["apply_tools"]["env"]
+    hostile_env = hostile["mcpServers"]["apply_tools"]["env"]
+    assert (
+        trusted_env["JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS"]
+        == "https://apply.example.com"
+    )
+    assert (
+        "mcp__apply_tools__type_credential"
+        in claude_code_cli._allowed_tools_for_mcp_config(trusted)
+    )
+    assert hostile_env["JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS"] == ""
+    assert (
+        "mcp__apply_tools__type_credential"
+        not in claude_code_cli._allowed_tools_for_mcp_config(hostile)
+    )
+
+
+@pytest.mark.parametrize(
+    ("enrollment", "application_url", "expected"),
+    [
+        (
+            "https://apply.example.com:443",
+            "https://apply.example.com/job",
+            ("https://apply.example.com",),
+        ),
+        (
+            "https://apply.example.com",
+            "https://sub.apply.example.com/job",
+            (),
+        ),
+        (
+            "https://apply.example.com.evil.test",
+            "https://apply.example.com/job",
+            (),
+        ),
+        (
+            "https://user:password@apply.example.com",
+            "https://apply.example.com/job",
+            (),
+        ),
+    ],
+)
+def test_credential_origin_enrollment_is_exact_and_canonical(
+    monkeypatch,
+    enrollment,
+    application_url,
+    expected,
+) -> None:
+    monkeypatch.setenv(
+        "JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS",
+        enrollment,
+    )
+
+    assert _credential_origins(application_url) == expected
 
 
 def test_bundled_mcp_config_uses_only_signed_payload_commands(
