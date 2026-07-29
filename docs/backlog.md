@@ -30,17 +30,15 @@ of legacy `jobs.*` storage fallbacks, table/artifact/profile UX improvements,
 browser QA gaps, frontend a11y deferrals, and tooling / CI enforcement gaps.
 Hosted product, hosted data, hosted automation, and cloud-mode frontend adapters
 remain deferred until the local product is solid. Native distribution is
-implemented and the signed/notarized `v2.0.7` GitHub, R2, and Homebrew release
-is live. The missing PyPI channel and P7 clean-machine product QA remain
-operational release follow-ups rather than unfinished implementation.
+implemented and the signed/notarized `v2.0.7` GitHub, R2, Homebrew, and PyPI
+release is live. P7 clean-machine product QA remains an operational release
+follow-up rather than unfinished implementation.
 
 ## Release Hardening Follow-Ups
 
-- Complete the implemented bundled-distribution plan's remaining release
-  operations: recover the missing `v2.0.7` PyPI channel unless a separately
-  approved later release supersedes it, then run the published-artifact,
-  lifecycle, clean-machine, and real-path TTFV acceptance matrix recorded in
-  `docs/publish-checklist.md`.
+- Publish the approved `v2.0.8` security patch through the signed stable
+  workflow, then run the published-artifact, lifecycle, clean-machine, and
+  real-path TTFV acceptance matrix recorded in `docs/publish-checklist.md`.
 - Treat analytics-optional public-demo access and post-accept
   withdrawal/current-visitor erasure as separately scoped privacy work. Keep
   the shipped consent-required behavior unchanged unless an explicit
@@ -314,9 +312,8 @@ Delivered by
 the signed Apple-silicon release, immutable GitHub/R2 assets, authenticated
 stable pointer, and Homebrew formula are live.
 
-- Recover the missing `v2.0.7` PyPI package through the isolated path in
-  `docs/publish-checklist.md`, or record an explicit superseding-release
-  decision before changing that recovery contract.
+- Publish the approved `v2.0.8` security patch with a new signed sequence and
+  explicit `v2.0.7` rollback revocation.
 - Run the P7 clean-machine curl/Homebrew, no-toolchain/no-system-Chrome,
   upgrade, provider-auth, capability, update/rollback, uninstall, and real-path
   TTFV matrix against published bytes.
