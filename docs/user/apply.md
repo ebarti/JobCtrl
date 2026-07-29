@@ -104,6 +104,12 @@ are blocked. A multi-page application therefore needs another reviewed target
 or a supervised live/manual path; dry-run does not learn navigation authority
 from the page or model.
 
+The rehearsal prompt is inspection-only. It contains the reviewed application
+URL, but no applicant profile, job-description, resume, cover-letter, other
+generated prose, local artifact path, or artifact-upload capability. Reviewed
+materials remain local for manual completion, so a hostile page cannot reflect
+their contents back into model-visible DOM.
+
 ### Final Browser Submission Is Manual
 
 The page-reading model never owns the final browser commit. Every model-driven

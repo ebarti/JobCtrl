@@ -1479,17 +1479,10 @@ def gen_prompt(
         )
 
     snapshot = snapshot or _load_profile_snapshot()
-    resume_path = job.get("tailored_resume_path")
-    txt_path = Path(resume_path).with_suffix(".txt") if resume_path else None
-    resume_text = ""
-    if txt_path and txt_path.exists():
-        resume_text = txt_path.read_text(encoding="utf-8")
-
     cdp_port = BASE_CDP_PORT + worker_id
     builder = ApplyPromptBuilder()
     apply_prompt: ApplyPrompt = builder.build(
         job=job,
-        tailored_resume=resume_text,
         snapshot=snapshot,
         cdp_port=cdp_port,
         dry_run=True,

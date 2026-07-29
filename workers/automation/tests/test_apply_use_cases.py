@@ -411,9 +411,12 @@ def test_execute_passes_worker_dir_to_prompt_builder(monkeypatch, repo):
     )
 
     assert seen["upload_dir"] == "/tmp/apply-worker-1"
+    assert "tailored_resume" not in seen
+    assert "cover_letter" not in seen
+    assert "search_config" not in seen
 
 
-def test_execute_keeps_upload_files_after_local_chrome_launch(
+def test_execute_keeps_reviewed_materials_outside_agent_worker(
     monkeypatch, tmp_path, repo
 ):
     worker_id = 4
@@ -452,9 +455,9 @@ def test_execute_keeps_upload_files_after_local_chrome_launch(
     class PathCheckingAgent:
         def submit_application(self, *, prompt, **_kwargs):
             upload_path = Path(worker_dir) / "Test_Applicant_Resume.pdf"
-            assert upload_path.exists()
+            assert not upload_path.exists()
             assert str(upload_path) not in prompt.text
-            assert 'upload_artifact(kind="resume")' in prompt.text
+            assert "upload_artifact" not in prompt.text
             return AgentResult(
                 submission_result=DryRunComplete(
                     navigated_to="https://example.com/apply",
