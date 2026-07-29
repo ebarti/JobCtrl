@@ -272,6 +272,9 @@ class SubmitApplicationUseCase:
             headless=headless,
             user_data_dir=worker_dir,
             dry_run=dry_run,
+            approved_application_url=str(
+                job.get("application_url") or job.get("url") or ""
+            ),
         )
 
         # 6. Drive the saga — it persists the aggregate at every step

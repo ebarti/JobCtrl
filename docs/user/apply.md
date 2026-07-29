@@ -144,6 +144,12 @@ resolves the selection again at enable time and fails closed if the installation
 has disappeared. **Advanced: enter executable path** is the explicit manual
 fallback; an adopted path remains write-only and is not shown again.
 
+Each Apply browser is confined to the canonical origin of the reviewed
+application URL. Unexpected public redirects, popups, or ATS handoffs to a
+different origin are blocked rather than silently inheriting the approval.
+Review the new application destination and start a fresh run when a legitimate
+provider transition requires another origin.
+
 A source profile path is cleared after the copy request and is never returned,
 logged, or persisted. Profile copying retains its separate affirmative consent;
 selecting or enabling a browser does not grant that consent. Rotating the
