@@ -79,7 +79,7 @@ test("comparison omits the annotated recommendation and methodology sections", a
   assert.match(comparison, /^## Appendix: evidence-backed capability matrix$/m);
 });
 
-test("homepage describes live submission approval as the default", async () => {
+test("homepage describes supervised browser and email submission", async () => {
   const homepage = await read("docs/index.md");
 
   assert.match(homepage, /text: Run your job search\. Keep your data\./);
@@ -87,10 +87,10 @@ test("homepage describes live submission approval as the default", async () => {
   assert.match(homepage, /text: Install on Apple silicon\s+link: \/user\/getting-started/);
   assert.match(homepage, /text: See How It Works\s+link: \/user\/product-tour/);
   assert.match(homepage, /text: View on GitHub\s+link: https:\/\/github\.com\/ebarti\/JobCtrl/);
-  assert.match(homepage, /require explicit approval for live submissions by default/i);
   assert.match(homepage, /keep live submission behind your approval by default/i);
-  assert.match(homepage, /browser-level guard blocks dry-run submits/i);
-  assert.match(homepage, /no application is ever submitted twice/i);
+  assert.match(homepage, /keep final browser submission manual/i);
+  assert.match(homepage, /allow only exact-approved email applications/i);
+  assert.match(homepage, /owned at-most-once sender/i);
   assert.doesNotMatch(homepage, /approve every live submission explicitly/i);
   assert.doesNotMatch(homepage, /Run From Source \/ Release Status/i);
 });
