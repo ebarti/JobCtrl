@@ -782,18 +782,18 @@ def retire_invalid_source_jobs(
             COALESCE(MIN(o.source_id), '') AS source_id
         FROM jobs j
         LEFT JOIN job_enrichments e
-          ON e.tenant_id = ? AND e.job_url = j.url
+          ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
         LEFT JOIN job_canonical_identities c
-          ON c.tenant_id = ? AND c.job_id = j.job_id
+          ON c.tenant_id = j.tenant_id AND c.job_id = j.job_id
         LEFT JOIN job_source_observations o
-          ON o.tenant_id = ? AND o.job_id = j.job_id
+          ON o.tenant_id = j.tenant_id AND o.job_id = j.job_id
         LEFT JOIN jobctrl_deleted_jobs d
           ON d.job_url = j.url
          AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-        WHERE d.job_url IS NULL
+        WHERE j.tenant_id = ? AND d.job_url IS NULL
         GROUP BY j.url
         """,
-        (str(LOCAL_TENANT), str(LOCAL_TENANT), str(LOCAL_TENANT)),
+        (str(LOCAL_TENANT),),
     ).fetchall()
 
     for row in rows:
@@ -1204,10 +1204,13 @@ def build_discovery_acceptance_report(
         """
         SELECT COUNT(*)
         FROM jobs j
-        JOIN job_enrichments e ON e.job_url = j.url AND e.tenant_id = ?
+        JOIN job_enrichments e
+          ON e.tenant_id = j.tenant_id
+         AND e.job_id = j.job_id
         LEFT JOIN discovery_quarantine_entries q
           ON q.tenant_id = ? AND q.job_id = j.url AND q.status = 'pending'
-        WHERE e.current_status = 'enriched'
+        WHERE j.tenant_id = ?
+          AND e.current_status = 'enriched'
           AND j.fit_score IS NULL
           AND q.job_id IS NULL
         """,

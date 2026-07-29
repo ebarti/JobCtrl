@@ -4710,12 +4710,19 @@ function closedActiveStatePredicate(
     return null;
   }
   const placeholders = CLOSED_ACTIVE_STATES.map(() => "?").join(", ");
+  const jobReference = hasCompositeJobIdForeignKey(db, "posting_snapshot_sets")
+    ? `(SELECT j.job_id
+          FROM jobs j
+         WHERE j.tenant_id = ${tenantColumn}
+           AND j.url = ${jobColumn}
+         LIMIT 1)`
+    : jobColumn;
   return {
     sql: `EXISTS (
       SELECT 1
       FROM posting_snapshot_sets pss
       WHERE pss.tenant_id = ${tenantColumn}
-        AND pss.job_url = ${jobColumn}
+        AND pss.${hasCompositeJobIdForeignKey(db, "posting_snapshot_sets") ? "job_id" : "job_url"} = ${jobReference}
         AND pss.latest_active_state IN (${placeholders})
     )`,
     params: [...CLOSED_ACTIVE_STATES],
@@ -4763,11 +4770,23 @@ function jobProjectionSelect(db: SqliteDatabase): string {
        NULL AS score_stale_old_policy_version,
        NULL AS score_stale_new_policy_version,
        NULL AS score_stale_marked_at`;
+  const stableSnapshotReference = hasCompositeJobIdForeignKey(
+    db,
+    "posting_snapshot_sets",
+  );
   const activeStateSelect = tableExists(db, "posting_snapshot_sets")
     ? `(SELECT pss.latest_active_state
           FROM posting_snapshot_sets pss
          WHERE pss.tenant_id = job_list_projections.tenant_id
-           AND pss.job_url = job_list_projections.job_id
+           AND pss.${stableSnapshotReference ? "job_id" : "job_url"} = ${
+             stableSnapshotReference
+               ? `(SELECT j.job_id
+                     FROM jobs j
+                    WHERE j.tenant_id = job_list_projections.tenant_id
+                      AND j.url = job_list_projections.job_id
+                    LIMIT 1)`
+               : "job_list_projections.job_id"
+           }
          LIMIT 1) AS active_state`
     : "'unknown' AS active_state";
   return `job_list_projections.*,

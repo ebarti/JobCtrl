@@ -779,7 +779,9 @@ class SqliteJobRepository:
                        AS enriched_description,
                    CASE WHEN d.job_url IS NULL THEN 0 ELSE 1 END AS is_deleted
             FROM jobs j
-            LEFT JOIN job_enrichments je ON je.job_url = j.url
+            LEFT JOIN job_enrichments je
+              ON je.tenant_id = j.tenant_id
+             AND je.job_id = j.job_id
             LEFT JOIN jobctrl_deleted_jobs d
               ON d.job_url = j.url
              AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))

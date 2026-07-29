@@ -1058,14 +1058,23 @@ def test_discover_jobs_use_case_matches_fresh_listing_against_enriched_owner(
         ],
         run_id="run-greenhouse",
     )
+    survivor_job_id = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+        (survivor,),
+    ).fetchone()[0]
     conn.execute(
         """
         INSERT INTO job_enrichments (
-            job_url, tenant_id, current_status, full_description,
+            job_id, tenant_id, current_status, full_description,
             enriched_at, updated_at
         ) VALUES (?, 'local', 'enriched', ?, ?, ?)
         """,
-        (survivor, enriched, "2026-05-12T01:00:00Z", "2026-05-12T01:00:00Z"),
+        (
+            survivor_job_id,
+            enriched,
+            "2026-05-12T01:00:00Z",
+            "2026-05-12T01:00:00Z",
+        ),
     )
     conn.commit()
     publisher.events.clear()

@@ -37,6 +37,7 @@ from playwright.sync_api import sync_playwright
 
 from jobctrl import database as db_module
 from jobctrl.database import (
+    close_connection,
     ensure_discovery_control_tables,
     init_db,
     reassign_discovery_identity_references,
@@ -67,7 +68,7 @@ from jobctrl.domain.enrichment.value_objects import (
     ApplicationUrl,
     FullDescription,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
@@ -883,7 +884,7 @@ def _record_enrich_politeness_deferral(
     message = str(cascade_result.get("error") or "request budget exhausted; will retry")[:500]
     error = EnrichmentError(code="ENRICH_POLITENESS_DEFERRED", message=message, retryable=True)
     failed = aggregate.fail_attempt(error=error, finished_at=finished_at)
-    repo.save(failed)
+    repo.save_by_posting_url(failed, PostingUrl(value=url))
     set_stage_state(
         conn,
         url,
@@ -963,7 +964,10 @@ def _record_enrich_aggregate_failure(
 ) -> None:
     """Persist the canonical failed JobEnrichment attempt for an isolated crash."""
     repo = SqliteEnrichmentRepository(conn)
-    existing = repo.load(LOCAL_TENANT, JobId(url))
+    existing = repo.load_by_posting_url(
+        LOCAL_TENANT,
+        PostingUrl(value=url),
+    )
     if existing is not None and existing.is_enriched:
         # Do not destroy an accepted enrichment artifact from a later audit-only
         # failure path. The stage event below still preserves the crash.
@@ -976,7 +980,10 @@ def _record_enrich_aggregate_failure(
     )
     aggregate = existing or JobEnrichment.empty(
         tenant_id=LOCAL_TENANT,
-        job_id=JobId(url),
+        job_id=repo.job_id_for_posting_url(
+            LOCAL_TENANT,
+            PostingUrl(value=url),
+        ),
         updated_at=finished_at,
     )
     running = (
@@ -987,7 +994,10 @@ def _record_enrich_aggregate_failure(
             started_at=finished_at,
         )
     )
-    repo.save(running.fail_attempt(error=error, finished_at=finished_at))
+    repo.save_by_posting_url(
+        running.fail_attempt(error=error, finished_at=finished_at),
+        PostingUrl(value=url),
+    )
 
 
 def scrape_site_batch(
@@ -1143,7 +1153,10 @@ def scrape_site_batch(
 
                 # Already-enriched rows need no navigation — reaffirm and skip
                 # before the gate so a robots change can't relabel finished work.
-                aggregate = repo.load(LOCAL_TENANT, JobId(url))
+                aggregate = repo.load_by_posting_url(
+                    LOCAL_TENANT,
+                    PostingUrl(value=url),
+                )
                 if aggregate is not None and aggregate.is_enriched:
                     stats["processed"] += 1
                     stats["ok"] += 1
@@ -1193,7 +1206,10 @@ def scrape_site_batch(
 
                     aggregate = aggregate or JobEnrichment.empty(
                         tenant_id=LOCAL_TENANT,
-                        job_id=JobId(url),
+                        job_id=repo.job_id_for_posting_url(
+                            LOCAL_TENANT,
+                            PostingUrl(value=url),
+                        ),
                         updated_at=started_at,
                     )
                     aggregate = aggregate.start_attempt(
@@ -1283,7 +1299,10 @@ def scrape_site_batch(
                             extraction_tier=_tier_from_legacy(tier),
                             finished_at=finished_at,
                         )
-                        repo.save(succeeded)
+                        repo.save_by_posting_url(
+                            succeeded,
+                            PostingUrl(value=url),
+                        )
                         _record_posting_snapshot_from_cascade(
                             conn,
                             url=url,
@@ -1352,7 +1371,10 @@ def scrape_site_batch(
                         failed = aggregate.fail_attempt(
                             error=err, finished_at=finished_at
                         )
-                        repo.save(failed)
+                        repo.save_by_posting_url(
+                            failed,
+                            PostingUrl(value=url),
+                        )
                         set_stage_state(
                             conn,
                             url,
@@ -1413,7 +1435,10 @@ def scrape_site_batch(
                         failed = aggregate.fail_attempt(
                             error=err, finished_at=finished_at
                         )
-                        repo.save(failed)
+                        repo.save_by_posting_url(
+                            failed,
+                            PostingUrl(value=url),
+                        )
                         set_stage_state(
                             conn,
                             url,
@@ -1532,9 +1557,13 @@ def _record_posting_snapshot_from_cascade(
     resolved_source_id = _source_id_for_enriched_job(conn, url, fallback=source_id)
     try:
         repo = SqlitePostingSnapshotSetRepository(conn)
-        snapshot_set = repo.load(LOCAL_TENANT, JobId(url)) or PostingSnapshotSet.empty(
+        posting_url = PostingUrl(value=url)
+        snapshot_set = repo.load_by_posting_url(
+            LOCAL_TENANT,
+            posting_url,
+        ) or PostingSnapshotSet.empty(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=repo.job_id_for_posting_url(LOCAL_TENANT, posting_url),
             updated_at=captured_at,
         )
         previous_active = snapshot_set.latest_active_state
@@ -1576,7 +1605,7 @@ def _record_posting_snapshot_from_cascade(
                 f"apply_url_present:{str(apply_url is not None).lower()}",
             ),
         )
-        repo.save(snapshot_set)
+        repo.save_by_posting_url(snapshot_set, posting_url)
 
         from jobctrl.state import record_job_event
 
@@ -1684,9 +1713,13 @@ def _record_posting_snapshot_failure_from_cascade(
     resolved_source_id = _source_id_for_enriched_job(conn, url, fallback=source_id)
     try:
         repo = SqlitePostingSnapshotSetRepository(conn)
-        snapshot_set = repo.load(LOCAL_TENANT, JobId(url)) or PostingSnapshotSet.empty(
+        posting_url = PostingUrl(value=url)
+        snapshot_set = repo.load_by_posting_url(
+            LOCAL_TENANT,
+            posting_url,
+        ) or PostingSnapshotSet.empty(
             tenant_id=LOCAL_TENANT,
-            job_id=JobId(url),
+            job_id=repo.job_id_for_posting_url(LOCAL_TENANT, posting_url),
             updated_at=failed_at,
         )
         error_class = str(cascade_result.get("error") or "DETAIL_ERROR")[:120]
@@ -1702,7 +1735,7 @@ def _record_posting_snapshot_failure_from_cascade(
             active_state=active_state,
             verified_at=failed_at,
         )
-        repo.save(snapshot_set)
+        repo.save_by_posting_url(snapshot_set, posting_url)
 
         from jobctrl.state import record_job_event
 
@@ -1908,7 +1941,9 @@ def _reset_authenticated_linkedin_retry_candidates(
         f"""
         SELECT j.url, e.current_status, e.application_url, e.attempts_json
         FROM jobs j
-        JOIN job_enrichments e ON e.job_url = j.url
+        JOIN job_enrichments e
+          ON e.tenant_id = j.tenant_id
+         AND e.job_id = j.job_id
         WHERE {' AND '.join(where)}
         ORDER BY e.updated_at DESC
         """,
@@ -1938,7 +1973,10 @@ def _reset_authenticated_linkedin_retry_candidates(
                     continue
                 url = str(row["url"] if isinstance(row, sqlite3.Row) else row[0])
                 now = utc_now()
-                aggregate = repo.load(LOCAL_TENANT, JobId(url))
+                aggregate = repo.load_by_posting_url(
+                    LOCAL_TENANT,
+                    PostingUrl(value=url),
+                )
                 if aggregate is None:
                     continue
 
@@ -1985,13 +2023,14 @@ def _reset_authenticated_linkedin_retry_candidates(
                     # never-resolving row is bounded by attempt count exactly
                     # like the extraction cascade; the description is never
                     # touched.
-                    repo.save(
+                    repo.save_by_posting_url(
                         aggregate.record_apply_url_recovery(
                             application_url=recovered,
                             extraction_tier=ExtractionTier.CSS_SELECTORS,
                             started_at=now,
                             finished_at=utc_now(),
-                        )
+                        ),
+                        PostingUrl(value=url),
                     )
                     record_job_event(
                         conn,
@@ -2022,7 +2061,10 @@ def _reset_authenticated_linkedin_retry_candidates(
                         break
                     continue
 
-                repo.save(aggregate.reset(reset_at=now))
+                repo.save_by_posting_url(
+                    aggregate.reset(reset_at=now),
+                    PostingUrl(value=url),
+                )
                 conn.execute(
                     "UPDATE jobs SET detail_error = NULL, detail_scraped_at = NULL WHERE url = ?",
                     (url,),
@@ -2230,24 +2272,26 @@ def _run_detail_scraper(
     gateway = PolitenessGateway()
 
     if workers > 1 and len(order) > 1:
+        database_row = conn.execute("PRAGMA database_list").fetchone()
+        worker_db_path = (
+            str(database_row[2] or "")
+            if database_row is not None and len(database_row) > 2
+            else ""
+        )
+        if not worker_db_path:
+            raise ConfigurationError(
+                "parallel enrichment requires a file-backed SQLite database"
+            )
+
         def _scrape_site(site: str) -> dict:
             if cancel_event is not None and cancel_event.is_set():
                 raise TransientNetworkError("enrichment canceled")
             jobs = site_jobs[site]
             log.info("%s -- %d jobs", site, len(jobs))
-            if cancel_event is None:
+            worker_conn = init_db(worker_db_path)
+            try:
                 stats = scrape_site_batch(
-                    None,
-                    site,
-                    jobs,
-                    max_jobs=max_per_site,
-                    gateway=gateway,
-                    run_budget=run_budget,
-                    on_job_enriched=on_job_enriched,
-                )
-            else:
-                stats = scrape_site_batch(
-                    None,
+                    worker_conn,
                     site,
                     jobs,
                     max_jobs=max_per_site,
@@ -2256,6 +2300,8 @@ def _run_detail_scraper(
                     run_budget=run_budget,
                     on_job_enriched=on_job_enriched,
                 )
+            finally:
+                close_connection(worker_db_path)
             log.info(
                 "%s summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
                 site,

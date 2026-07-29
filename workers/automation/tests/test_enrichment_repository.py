@@ -47,6 +47,15 @@ def _insert_job(conn: sqlite3.Connection, url: str, **legacy_cols) -> None:
     conn.commit()
 
 
+def _stable_job_id(conn: sqlite3.Connection, url: str) -> JobId:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+        (str(LOCAL_TENANT), url),
+    ).fetchone()
+    assert row is not None
+    return JobId(str(row[0]))
+
+
 def _make_enriched(url: str = "https://example.com/jobs/1") -> JobEnrichment:
     agg = JobEnrichment.empty(
         tenant_id=LOCAL_TENANT,
@@ -116,7 +125,7 @@ def test_list_pending_includes_jobs_with_no_enrichment(conn: sqlite3.Connection)
     # Save an enrichment for A only
     repo.save(_make_enriched("https://example.com/jobs/A"))
     pending = repo.list_pending(LOCAL_TENANT)
-    assert pending == [JobId("https://example.com/jobs/B")]
+    assert pending == [_stable_job_id(conn, "https://example.com/jobs/B")]
 
 
 def test_list_pending_includes_jobs_with_pending_status(conn: sqlite3.Connection) -> None:
@@ -129,7 +138,33 @@ def test_list_pending_includes_jobs_with_pending_status(conn: sqlite3.Connection
     )
     repo.save(pending_agg)
     pending = repo.list_pending(LOCAL_TENANT)
-    assert pending == [JobId("https://example.com/jobs/A")]
+    assert pending == [_stable_job_id(conn, "https://example.com/jobs/A")]
+
+
+def test_list_pending_does_not_cross_tenant_boundary(
+    conn: sqlite3.Connection,
+) -> None:
+    local_url = "https://example.com/jobs/local"
+    _insert_job(conn, local_url)
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, tenant_id, job_id, title, site, discovered_at
+        ) VALUES (
+            'https://example.com/jobs/other-tenant',
+            'other-tenant',
+            '00000000-0000-4000-8000-000000000002',
+            'Other tenant role',
+            'greenhouse',
+            '2026-05-02T00:00:00+00:00'
+        )
+        """
+    )
+    conn.commit()
+
+    assert SqliteEnrichmentRepository(conn).list_pending(
+        LOCAL_TENANT,
+    ) == [_stable_job_id(conn, local_url)]
 
 
 def test_list_pending_excludes_running_and_failed(conn: sqlite3.Connection) -> None:
@@ -268,7 +303,14 @@ def test_backfill_creates_enriched_rows_from_legacy_columns(tmp_path) -> None:
     assert loaded.last_attempt.succeeded
     # The attempts_json carries the "backfilled": true flag
     raw = conn.execute(
-        "SELECT attempts_json FROM job_enrichments WHERE job_url = ?",
+        """
+        SELECT je.attempts_json
+        FROM job_enrichments je
+        JOIN jobs j
+          ON j.tenant_id = je.tenant_id
+         AND j.job_id = je.job_id
+        WHERE j.url = ?
+        """,
         ("https://example.com/jobs/1",),
     ).fetchone()
     payload = json.loads(raw[0])

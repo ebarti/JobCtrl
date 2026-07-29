@@ -740,6 +740,7 @@ function resetEnrichmentAggregate(db: SqliteDatabase, jobUrl: string): void {
     return;
   }
   const now = new Date().toISOString();
+  const stableReference = hasCompositeJobIdForeignKey(db, "job_enrichments");
   db.prepare(
     `UPDATE job_enrichments
        SET current_status = 'pending',
@@ -748,7 +749,9 @@ function resetEnrichmentAggregate(db: SqliteDatabase, jobUrl: string): void {
            enriched_at = NULL,
            extraction_tier = NULL,
            updated_at = ?
-     WHERE job_url = ?`,
+     WHERE ${stableReference
+       ? "tenant_id = 'local' AND job_id = (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ? LIMIT 1)"
+       : "job_url = ?"}`,
   ).run(now, jobUrl);
 }
 
@@ -807,7 +810,7 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   deleteWhere(db, "job_score_staleness", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_materials_artifacts", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_materials", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_enrichments", "job_url = ?", [jobUrl]);
+  deleteEnrichmentJobReferences(db, jobId, jobUrl);
   deletePreparationJobReferences(db, jobId, jobUrl);
   if (jobId) {
     deleteWhere(db, "job_source_observations", "job_id = ?", [jobId]);
@@ -843,6 +846,31 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   ]);
   deleteWhere(db, "discovery_feedback", "job_key = ?", [jobUrl]);
   deleteWhere(db, "jobs", "url = ?", [jobUrl]);
+}
+
+function deleteEnrichmentJobReferences(
+  db: SqliteDatabase,
+  jobId: string | undefined,
+  jobUrl: string,
+): void {
+  for (const tableName of ["job_enrichments", "posting_snapshot_sets"] as const) {
+    if (!tableExists(db, tableName)) continue;
+    if (jobId && hasCompositeJobIdForeignKey(db, tableName)) {
+      deleteWhere(
+        db,
+        tableName,
+        "tenant_id = 'local' AND job_id = ?",
+        [jobId],
+      );
+      continue;
+    }
+    deleteWhere(
+      db,
+      tableName,
+      `tenant_id = 'local' AND job_url = ?`,
+      [jobUrl],
+    );
+  }
 }
 
 function deletePreparationJobReferences(

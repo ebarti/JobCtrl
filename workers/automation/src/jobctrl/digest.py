@@ -451,11 +451,23 @@ def _active_job_clauses(conn: sqlite3.Connection, alias: str) -> tuple[list[str]
         )
     if _table_exists(conn, "posting_snapshot_sets"):
         placeholders = ", ".join("?" for _ in _CLOSED_ACTIVE_STATES)
+        stable_reference = (
+            "job_id" in _table_columns(conn, "posting_snapshot_sets")
+        )
+        reference_predicate = (
+            "pss.job_id = ("
+            "SELECT j.job_id FROM jobs j "
+            f"WHERE j.tenant_id = {alias}.tenant_id "
+            f"AND j.url = {alias}.job_id LIMIT 1"
+            ")"
+            if stable_reference
+            else f"pss.job_url = {alias}.job_id"
+        )
         clauses.append(
             "NOT EXISTS ("
             "SELECT 1 FROM posting_snapshot_sets pss "
             f"WHERE pss.tenant_id = {alias}.tenant_id "
-            f"AND pss.job_url = {alias}.job_id "
+            f"AND {reference_predicate} "
             f"AND pss.latest_active_state IN ({placeholders})"
             ")"
         )

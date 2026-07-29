@@ -2517,13 +2517,30 @@ class ProjectionBuilder:
 
     def _load_enrichment(self, job_url: str) -> dict:
         try:
+            stable_reference = _has_column(
+                self._conn,
+                "job_enrichments",
+                "job_id",
+            )
             row = self._conn.execute(
-                """
+                (
+                    """
+                SELECT full_description, application_url, enriched_at,
+                       current_status, extraction_tier
+                FROM job_enrichments je
+                JOIN jobs j
+                  ON j.tenant_id = je.tenant_id
+                 AND j.job_id = je.job_id
+                WHERE j.url = ?
+                    """
+                    if stable_reference
+                    else """
                 SELECT full_description, application_url, enriched_at,
                        current_status, extraction_tier
                 FROM job_enrichments
                 WHERE job_url = ?
-                """,
+                    """
+                ),
                 (job_url,),
             ).fetchone()
         except sqlite3.OperationalError:
@@ -2732,15 +2749,34 @@ class ProjectionBuilder:
 
     def _closed_projection_jobs(self) -> set[str]:
         try:
+            stable_reference = _has_column(
+                self._conn,
+                "posting_snapshot_sets",
+                "job_id",
+            )
             rows = self._conn.execute(
-                """
+                (
+                    """
+                SELECT j.url AS job_url
+                FROM posting_snapshot_sets pss
+                JOIN jobs j
+                  ON j.tenant_id = pss.tenant_id
+                 AND j.job_id = pss.job_id
+                WHERE pss.tenant_id = ?
+                  AND pss.latest_active_state IN (
+                    'closed', 'expired', 'removed', 'location_incompatible'
+                  )
+                    """
+                    if stable_reference
+                    else """
                 SELECT job_url
                 FROM posting_snapshot_sets
                 WHERE tenant_id = ?
                   AND latest_active_state IN (
                     'closed', 'expired', 'removed', 'location_incompatible'
                   )
-                """,
+                    """
+                ),
                 (str(self._tenant_id),),
             ).fetchall()
         except sqlite3.OperationalError:
@@ -2920,17 +2956,36 @@ class ProjectionBuilder:
         # ``jobctrl_deleted_jobs`` so the user-visible value agrees
         # regardless of which writer (Python or TS) ran last.
         try:
+            stable_snapshot_reference = _has_column(
+                self._conn,
+                "posting_snapshot_sets",
+                "job_id",
+            )
+            snapshot_join = (
+                """
+                    LEFT JOIN jobs snapshot_job
+                        ON snapshot_job.tenant_id = arp.tenant_id
+                       AND snapshot_job.url = arp.job_id
+                    LEFT JOIN posting_snapshot_sets pss
+                        ON pss.tenant_id = arp.tenant_id
+                       AND pss.job_id = snapshot_job.job_id
+                """
+                if stable_snapshot_reference
+                else """
+                    LEFT JOIN posting_snapshot_sets pss
+                        ON pss.tenant_id = arp.tenant_id
+                       AND pss.job_url = arp.job_id
+                """
+            )
             dry_runs = int(
                 self._conn.execute(
-                    """
+                    f"""
                     SELECT COUNT(*)
                     FROM apply_run_projections arp
                     LEFT JOIN jobctrl_deleted_jobs d
                         ON d.job_url = arp.job_id
                        AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-                    LEFT JOIN posting_snapshot_sets pss
-                        ON pss.tenant_id = arp.tenant_id
-                       AND pss.job_url = arp.job_id
+                    {snapshot_join}
                     WHERE arp.dry_run = 1
                       AND d.job_url IS NULL
                       AND (

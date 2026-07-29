@@ -44,7 +44,14 @@ import {
   STAGE_STATES,
 } from "./contracts.js";
 import { buildApplyAudit } from "./apply-audit.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import {
+  allRows,
+  getRow,
+  hasCompositeJobIdForeignKey,
+  tableExists,
+  type SqliteDatabase,
+  type SqliteValue,
+} from "./db.js";
 import { refreshProjections } from "./projections.js";
 import {
   ensureRepeatApplicationTables,
@@ -268,10 +275,23 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
          WHERE h.job_url = jlp.job_id AND h.unhidden_at IS NULL
        )`
     : "";
+  const stableSnapshotReference = hasCompositeJobIdForeignKey(
+    db,
+    "posting_snapshot_sets",
+  );
   const closedWhere = tableExists(db, "posting_snapshot_sets")
     ? `AND NOT EXISTS (
          SELECT 1 FROM posting_snapshot_sets pss
-         WHERE pss.job_url = jlp.job_id
+         WHERE pss.tenant_id = jlp.tenant_id
+           AND pss.${stableSnapshotReference ? "job_id" : "job_url"} = ${
+             stableSnapshotReference
+               ? `(SELECT j.job_id
+                     FROM jobs j
+                    WHERE j.tenant_id = jlp.tenant_id
+                      AND j.url = jlp.job_id
+                    LIMIT 1)`
+               : "jlp.job_id"
+           }
            AND pss.latest_active_state IN (${CLOSED_ACTIVE_STATES.map(() => "?").join(", ")})
        )`
     : "";

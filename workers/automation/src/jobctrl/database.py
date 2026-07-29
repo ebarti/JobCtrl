@@ -46,7 +46,10 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v10 (preparation references): the legacy preparation work-item ledger
 # references ``(tenant_id, job_id)`` while preserving its opaque historical
 # idempotency keys for the later quiescent workflow cutover.
-SCHEMA_VERSION = 10
+# v11 (enrichment references): JobEnrichment and PostingSnapshotSet authorities
+# reference ``(tenant_id, job_id)``; embedded snapshot aggregate identity and
+# duplicate-candidate references are upcast in the same transaction.
+SCHEMA_VERSION = 11
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -187,6 +190,7 @@ def _schema_migrations() -> tuple[
         (8, ensure_discovery_identity_references_v8),
         (9, ensure_execution_search_references_v9),
         (10, ensure_preparation_references_v10),
+        (11, ensure_enrichment_snapshot_references_v11),
     )
 
 
@@ -3028,42 +3032,43 @@ def ensure_enrichment_tables(conn: sqlite3.Connection | None = None) -> list[str
     if conn is None:
         conn = get_connection()
 
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS job_enrichments (
-            job_url             TEXT PRIMARY KEY,
-            tenant_id           TEXT NOT NULL DEFAULT 'local',
-            current_status      TEXT NOT NULL,
-            full_description    TEXT,
-            application_url     TEXT,
-            enriched_at         TEXT,
-            extraction_tier     TEXT,
-            attempts_json       TEXT NOT NULL DEFAULT '[]',
-            updated_at          TEXT NOT NULL,
-            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+    current_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if current_version >= _ENRICHMENT_SNAPSHOT_REFERENCE_SCHEMA_VERSION:
+        _create_job_enrichments_v11(conn)
+    else:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS job_enrichments (
+                job_url             TEXT PRIMARY KEY,
+                tenant_id           TEXT NOT NULL DEFAULT 'local',
+                current_status      TEXT NOT NULL,
+                full_description    TEXT,
+                application_url     TEXT,
+                enriched_at         TEXT,
+                extraction_tier     TEXT,
+                attempts_json       TEXT NOT NULL DEFAULT '[]',
+                updated_at          TEXT NOT NULL,
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            )
+            """
         )
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_job_enrichments_tenant_status
-        ON job_enrichments(tenant_id, current_status, updated_at DESC)
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_job_enrichments_enriched_at
-        ON job_enrichments(enriched_at DESC)
-        """
-    )
+    _create_job_enrichment_indexes(conn)
 
     # Idempotent one-shot backfill from the legacy columns.
     backfill_count = conn.execute("SELECT COUNT(*) FROM job_enrichments").fetchone()[0]
     if backfill_count == 0:
+        job_columns = _table_columns(conn, "jobs")
+        tenant_select = (
+            "tenant_id" if "tenant_id" in job_columns else "'local' AS tenant_id"
+        )
+        job_id_select = (
+            "job_id" if "job_id" in job_columns else "NULL AS job_id"
+        )
         legacy_rows = conn.execute(
-            """
+            f"""
             SELECT url, full_description, application_url,
-                   detail_scraped_at, detail_error
+                   detail_scraped_at, detail_error,
+                   {tenant_select}, {job_id_select}
             FROM jobs
             WHERE full_description IS NOT NULL
                OR application_url IS NOT NULL
@@ -3090,28 +3095,27 @@ def ensure_posting_snapshot_tables(conn: sqlite3.Connection | None = None) -> li
     if conn is None:
         conn = get_connection()
 
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS posting_snapshot_sets (
-            tenant_id                TEXT NOT NULL DEFAULT 'local',
-            job_url                  TEXT NOT NULL,
-            snapshot_set_json        TEXT NOT NULL,
-            latest_snapshot_version  INTEGER NOT NULL DEFAULT 0,
-            latest_active_state      TEXT NOT NULL DEFAULT 'unknown',
-            latest_confidence        TEXT,
-            latest_quarantine_reason TEXT,
-            updated_at               TEXT NOT NULL,
-            PRIMARY KEY (tenant_id, job_url),
-            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+    current_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if current_version >= _ENRICHMENT_SNAPSHOT_REFERENCE_SCHEMA_VERSION:
+        _create_posting_snapshot_sets_v11(conn)
+    else:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS posting_snapshot_sets (
+                tenant_id                TEXT NOT NULL DEFAULT 'local',
+                job_url                  TEXT NOT NULL,
+                snapshot_set_json        TEXT NOT NULL,
+                latest_snapshot_version  INTEGER NOT NULL DEFAULT 0,
+                latest_active_state      TEXT NOT NULL DEFAULT 'unknown',
+                latest_confidence        TEXT,
+                latest_quarantine_reason TEXT,
+                updated_at               TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, job_url),
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            )
+            """
         )
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_posting_snapshot_sets_updated
-        ON posting_snapshot_sets(tenant_id, updated_at DESC)
-        """
-    )
+    _create_posting_snapshot_set_indexes(conn)
     # The latest snapshot's confidence + quarantine reason are promoted onto
     # the row so the read model can gate the tailoring queue and surface the
     # enrichment quality signal without parsing snapshot_set_json per read.
@@ -3139,8 +3143,14 @@ def _backfill_latest_snapshot_quality(conn: sqlite3.Connection) -> None:
     Runs once when the columns are first added so pre-existing snapshot rows
     carry the same quality signal new writes persist directly.
     """
+    reference_column = (
+        "job_id"
+        if "job_id" in _table_columns(conn, "posting_snapshot_sets")
+        else "job_url"
+    )
     rows = conn.execute(
-        "SELECT tenant_id, job_url, snapshot_set_json FROM posting_snapshot_sets"
+        f"SELECT tenant_id, {reference_column}, snapshot_set_json "
+        "FROM posting_snapshot_sets"
     ).fetchall()
     for row in rows:
         raw_json = row["snapshot_set_json"] if isinstance(row, sqlite3.Row) else row[2]
@@ -3154,12 +3164,12 @@ def _backfill_latest_snapshot_quality(conn: sqlite3.Connection) -> None:
         conn.execute(
             "UPDATE posting_snapshot_sets "
             "SET latest_confidence = ?, latest_quarantine_reason = ? "
-            "WHERE tenant_id = ? AND job_url = ?",
+            f"WHERE tenant_id = ? AND {reference_column} = ?",
             (
                 latest.get("confidence"),
                 latest.get("quarantine_reason"),
                 row["tenant_id"] if isinstance(row, sqlite3.Row) else row[0],
-                row["job_url"] if isinstance(row, sqlite3.Row) else row[1],
+                row[reference_column] if isinstance(row, sqlite3.Row) else row[1],
             ),
         )
 
@@ -3325,6 +3335,16 @@ def _backfill_one_enrichment_row(
     application_url = row["application_url"] if isinstance(row, sqlite3.Row) else row[2]
     detail_scraped_at = row["detail_scraped_at"] if isinstance(row, sqlite3.Row) else row[3]
     detail_error = row["detail_error"] if isinstance(row, sqlite3.Row) else row[4]
+    tenant_id = (
+        str(row["tenant_id"] or "local")
+        if isinstance(row, sqlite3.Row)
+        else str(row[5] or "local")
+    )
+    stable_job_id = (
+        str(row["job_id"] or "")
+        if isinstance(row, sqlite3.Row)
+        else str(row[6] or "")
+    )
 
     enriched_at: str | None = None
     extraction_tier: str | None = None
@@ -3367,16 +3387,25 @@ def _backfill_one_enrichment_row(
         current_status = "pending"
         attempts = []
 
+    reference_column = (
+        "job_id" if "job_id" in _table_columns(conn, "job_enrichments") else "job_url"
+    )
+    job_reference = stable_job_id if reference_column == "job_id" else str(url)
+    if not job_reference:
+        raise RuntimeError(
+            "enrichment backfill requires stable JobId on schema v11"
+        )
     conn.execute(
-        """
+        f"""
         INSERT OR IGNORE INTO job_enrichments (
-            job_url, tenant_id, current_status, full_description,
+            {reference_column}, tenant_id, current_status, full_description,
             application_url, enriched_at, extraction_tier,
             attempts_json, updated_at
-        ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            url,
+            job_reference,
+            tenant_id,
             current_status,
             full_description if full_description else None,
             application_url if application_url else None,
@@ -4188,6 +4217,413 @@ def _reassign_discovery_identity_references(
             """,
             (surviving_job_id, tenant_id, losing_job_id),
         )
+    if _has_enrichment_snapshot_reference_schema_v11(conn):
+        _reassign_enrichment_snapshot_references_v11(
+            conn,
+            tenant_id=tenant_id,
+            losing_job_id=losing_job_id,
+            surviving_job_id=surviving_job_id,
+        )
+
+
+def _reassign_enrichment_snapshot_references_v11(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    _merge_enrichment_rows_v11(
+        conn,
+        tenant_id=tenant_id,
+        losing_job_id=losing_job_id,
+        surviving_job_id=surviving_job_id,
+    )
+    _merge_snapshot_rows_v11(
+        conn,
+        tenant_id=tenant_id,
+        losing_job_id=losing_job_id,
+        surviving_job_id=surviving_job_id,
+    )
+
+
+def _merge_enrichment_rows_v11(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT job_id, current_status, full_description, application_url,
+               enriched_at, extraction_tier, attempts_json, updated_at
+        FROM job_enrichments
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    by_job_id = {str(row[0]): row for row in rows}
+    losing = by_job_id.get(losing_job_id)
+    if losing is None:
+        return
+    surviving = by_job_id.get(surviving_job_id)
+    if surviving is None:
+        conn.execute(
+            """
+            UPDATE job_enrichments
+            SET job_id = ?
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (surviving_job_id, tenant_id, losing_job_id),
+        )
+        return
+
+    merged_values = _merged_enrichment_values_v11(
+        surviving=surviving,
+        losing=losing,
+    )
+    conn.execute(
+        """
+        UPDATE job_enrichments
+        SET current_status = ?,
+            full_description = ?,
+            application_url = ?,
+            enriched_at = ?,
+            extraction_tier = ?,
+            attempts_json = ?,
+            updated_at = ?
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (
+            *merged_values,
+            tenant_id,
+            surviving_job_id,
+        ),
+    )
+    conn.execute(
+        """
+        DELETE FROM job_enrichments
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (tenant_id, losing_job_id),
+    )
+
+
+def _merged_enrichment_values_v11(
+    *,
+    surviving: Any,
+    losing: Any,
+    allow_conflicting_descriptions: bool = False,
+) -> tuple[str, Any, Any, Any, Any, str, str]:
+    """Merge two enrichment authorities without discarding newer facts."""
+    surviving_description = surviving[2]
+    losing_description = losing[2]
+    if (
+        surviving_description
+        and losing_description
+        and str(surviving_description) != str(losing_description)
+        and not allow_conflicting_descriptions
+    ):
+        raise RuntimeError(
+            "URL collision merge found conflicting canonical enrichment "
+            "descriptions"
+        )
+
+    attempts: list[dict[str, Any]] = []
+    for source_index, row in enumerate((surviving, losing)):
+        try:
+            source_attempts = json.loads(str(row[6] or "[]"))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "URL collision merge found invalid enrichment attempt history"
+            ) from exc
+        if not isinstance(source_attempts, list) or any(
+            not isinstance(attempt, dict) for attempt in source_attempts
+        ):
+            raise RuntimeError(
+                "URL collision merge found invalid enrichment attempt history"
+            )
+        for attempt_index, attempt in enumerate(source_attempts):
+            copied = dict(attempt)
+            copied["_merge_order"] = (source_index, attempt_index)
+            attempts.append(copied)
+    attempts.sort(
+        key=lambda attempt: (
+            str(attempt.get("started_at") or ""),
+            attempt["_merge_order"],
+        )
+    )
+    if sum(
+        1 for attempt in attempts if str(attempt.get("status")) == "running"
+    ) > 1:
+        raise RuntimeError(
+            "URL collision merge found multiple running enrichment attempts"
+        )
+    for number, attempt in enumerate(attempts, start=1):
+        attempt.pop("_merge_order", None)
+        attempt["attempt_number"] = number
+
+    canonical_rows = [
+        row
+        for row in (surviving, losing)
+        if row[2] or str(row[1]) == "enriched"
+    ]
+    authority = max(
+        canonical_rows or [surviving, losing],
+        key=lambda row: (
+            str(row[4] or ""),
+            str(row[7] or ""),
+            row is surviving,
+        ),
+    )
+    fallback = losing if authority is surviving else surviving
+    return (
+        str(authority[1]),
+        authority[2] or fallback[2],
+        authority[3] or fallback[3],
+        authority[4] or fallback[4],
+        authority[5] or fallback[5],
+        json.dumps(attempts, sort_keys=True),
+        max(str(surviving[7]), str(losing[7])),
+    )
+
+
+def _merge_snapshot_rows_v11(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    losing_job_id: str,
+    surviving_job_id: str,
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT job_id, snapshot_set_json, latest_snapshot_version,
+               latest_active_state, latest_confidence,
+               latest_quarantine_reason, updated_at
+        FROM posting_snapshot_sets
+        WHERE tenant_id = ? AND job_id IN (?, ?)
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    ).fetchall()
+    by_job_id = {str(row[0]): row for row in rows}
+    losing = by_job_id.get(losing_job_id)
+    surviving = by_job_id.get(surviving_job_id)
+    if losing is not None and surviving is None:
+        data = _snapshot_json_object_for_merge(losing[1])
+        data["tenant_id"] = tenant_id
+        data["job_id"] = surviving_job_id
+        conn.execute(
+            """
+            UPDATE posting_snapshot_sets
+            SET job_id = ?, snapshot_set_json = ?
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (
+                surviving_job_id,
+                json.dumps(data, sort_keys=True),
+                tenant_id,
+                losing_job_id,
+            ),
+        )
+    elif losing is not None and surviving is not None:
+        merged_values = _merged_snapshot_record_values_v11(
+            surviving=tuple(surviving),
+            losing=tuple(losing),
+            tenant_id=tenant_id,
+            surviving_job_id=surviving_job_id,
+            losing_job_id=losing_job_id,
+        )
+        conn.execute(
+            """
+            UPDATE posting_snapshot_sets
+            SET snapshot_set_json = ?,
+                latest_snapshot_version = ?,
+                latest_active_state = ?,
+                latest_confidence = ?,
+                latest_quarantine_reason = ?,
+                updated_at = ?
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (
+                *merged_values[1:],
+                tenant_id,
+                surviving_job_id,
+            ),
+        )
+        conn.execute(
+            """
+            DELETE FROM posting_snapshot_sets
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (tenant_id, losing_job_id),
+        )
+
+    snapshot_rows = conn.execute(
+        """
+        SELECT job_id, snapshot_set_json
+        FROM posting_snapshot_sets
+        WHERE tenant_id = ?
+        """,
+        (tenant_id,),
+    ).fetchall()
+    for row in snapshot_rows:
+        owner_job_id = str(row[0])
+        data = _snapshot_json_object_for_merge(row[1])
+        changed = False
+        candidates = data.get("duplicate_candidates") or []
+        if not isinstance(candidates, list):
+            raise RuntimeError(
+                "URL collision merge found invalid duplicate candidates"
+            )
+        rewritten_candidates: dict[str, dict[str, Any]] = {}
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                raise RuntimeError(
+                    "URL collision merge found an invalid duplicate candidate"
+                )
+            candidate_job_id = str(
+                candidate.get("candidate_job_id") or ""
+            )
+            if candidate_job_id == losing_job_id:
+                candidate_job_id = surviving_job_id
+                changed = True
+            if candidate_job_id == owner_job_id:
+                changed = True
+                continue
+            copied = dict(candidate)
+            copied["candidate_job_id"] = candidate_job_id
+            if candidate_job_id in rewritten_candidates:
+                changed = True
+                continue
+            rewritten_candidates[candidate_job_id] = copied
+        if changed:
+            data["tenant_id"] = tenant_id
+            data["job_id"] = owner_job_id
+            data["duplicate_candidates"] = list(
+                rewritten_candidates.values()
+            )
+            conn.execute(
+                """
+                UPDATE posting_snapshot_sets
+                SET snapshot_set_json = ?
+                WHERE tenant_id = ? AND job_id = ?
+                """,
+                (json.dumps(data, sort_keys=True), tenant_id, owner_job_id),
+            )
+
+
+def _snapshot_json_object_for_merge(raw_json: Any) -> dict[str, Any]:
+    try:
+        data = json.loads(str(raw_json))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "URL collision merge found invalid snapshot aggregate JSON"
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            "URL collision merge found non-object snapshot aggregate JSON"
+        )
+    for field in ("snapshots", "failures", "duplicate_candidates"):
+        value = data.get(field) or []
+        if not isinstance(value, list):
+            raise RuntimeError(
+                f"URL collision merge found invalid snapshot {field}"
+            )
+        if any(not isinstance(item, dict) for item in value):
+            raise RuntimeError(
+                f"URL collision merge found invalid item in snapshot {field}"
+            )
+    return data
+
+
+def _merged_snapshot_record_values_v11(
+    *,
+    surviving: tuple[str, str, int, str, Any, Any, str],
+    losing: tuple[str, str, int, str, Any, Any, str],
+    tenant_id: str,
+    surviving_job_id: str,
+    losing_job_id: str,
+) -> tuple[str, str, int, str, Any, Any, str]:
+    """Merge two snapshot authorities while retaining every history item."""
+    surviving_data = _snapshot_json_object_for_merge(surviving[1])
+    losing_data = _snapshot_json_object_for_merge(losing[1])
+    snapshots = [
+        dict(snapshot)
+        for data in (surviving_data, losing_data)
+        for snapshot in data.get("snapshots") or []
+    ]
+    snapshots.sort(key=lambda snapshot: str(snapshot.get("captured_at") or ""))
+    for version, snapshot in enumerate(snapshots, start=1):
+        snapshot["snapshot_version"] = version
+    failures = [
+        dict(failure)
+        for data in (surviving_data, losing_data)
+        for failure in data.get("failures") or []
+    ]
+    failures.sort(key=lambda failure: str(failure.get("failed_at") or ""))
+
+    authority, fallback = (
+        (surviving, losing)
+        if (str(surviving[6]), True) >= (str(losing[6]), False)
+        else (losing, surviving)
+    )
+    authority_data = (
+        surviving_data if authority is surviving else losing_data
+    )
+    fallback_data = losing_data if authority is surviving else surviving_data
+    candidate_by_job_id: dict[str, dict[str, Any]] = {}
+    for data in (authority_data, fallback_data):
+        for candidate in data.get("duplicate_candidates") or []:
+            candidate_job_id = str(
+                candidate.get("candidate_job_id") or ""
+            )
+            if candidate_job_id == losing_job_id:
+                candidate_job_id = surviving_job_id
+            if candidate_job_id == surviving_job_id:
+                continue
+            copied = dict(candidate)
+            copied["candidate_job_id"] = candidate_job_id
+            candidate_by_job_id.setdefault(candidate_job_id, copied)
+
+    updated_at = max(str(surviving[6]), str(losing[6]))
+    latest = snapshots[-1] if snapshots else None
+    latest_state = (
+        str(latest.get("active_state") or "unknown")
+        if latest is not None
+        else str(authority[3] or "unknown")
+    )
+    latest_confidence = (
+        latest.get("confidence")
+        if latest is not None
+        else authority[4] or fallback[4]
+    )
+    latest_quarantine_reason = (
+        latest.get("quarantine_reason")
+        if latest is not None
+        else authority[5] or fallback[5]
+    )
+    merged = dict(authority_data)
+    merged.update(
+        {
+            "tenant_id": tenant_id,
+            "job_id": surviving_job_id,
+            "snapshots": snapshots,
+            "failures": failures,
+            "duplicate_candidates": list(candidate_by_job_id.values()),
+            "latest_active_state": latest_state,
+            "updated_at": updated_at,
+        }
+    )
+    return (
+        surviving_job_id,
+        json.dumps(merged, sort_keys=True),
+        len(snapshots),
+        latest_state,
+        latest_confidence,
+        latest_quarantine_reason,
+        updated_at,
+    )
 
 
 def _reassign_execution_memberships(
@@ -5402,6 +5838,659 @@ def _verify_preparation_references_v10(
             "preparation reference migration found a foreign-key violation"
         )
 
+
+_ENRICHMENT_SNAPSHOT_REFERENCE_SCHEMA_VERSION = 11
+_ENRICHMENT_SNAPSHOT_REFERENCE_TABLES = (
+    "job_enrichments",
+    "posting_snapshot_sets",
+)
+
+
+def ensure_enrichment_snapshot_references_v11(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move Enrichment-owned references and embedded identity to JobIds."""
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _ENRICHMENT_SNAPSHOT_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _PREPARATION_REFERENCE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "enrichment/snapshot reference migration requires preparation "
+            "schema v10"
+        )
+
+    conn.execute("SAVEPOINT enrichment_snapshot_references_v11")
+    try:
+        _verify_enrichment_snapshot_prerequisites_v11(conn)
+        before_counts = {
+            table: int(
+                conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            )
+            for table in _ENRICHMENT_SNAPSHOT_REFERENCE_TABLES
+        }
+        expected_counts = dict(before_counts)
+
+        if not _has_enrichment_snapshot_reference_schema_v11(conn):
+            enrichment_reference = _enrichment_snapshot_reference_column(
+                conn,
+                "job_enrichments",
+            )
+            snapshot_reference = _enrichment_snapshot_reference_column(
+                conn,
+                "posting_snapshot_sets",
+            )
+            reference_columns = {
+                "job_enrichments": enrichment_reference,
+                "posting_snapshot_sets": snapshot_reference,
+            }
+            for table, reference_column in reference_columns.items():
+                legacy_url = reference_column == "job_url"
+                resolved_job_id = _resolved_job_id_sql(
+                    "source",
+                    reference_column,
+                    legacy_url=legacy_url,
+                )
+                unresolved = conn.execute(
+                    f"""
+                    SELECT source.{reference_column}
+                    FROM {table} AS source
+                    WHERE {resolved_job_id} IS NULL
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if unresolved is not None:
+                    raise RuntimeError(
+                        "enrichment/snapshot reference migration could not "
+                        f"resolve {table}.{reference_column}={unresolved[0]!r}"
+                    )
+
+            conn.execute("DROP TABLE IF EXISTS job_enrichments_v11")
+            conn.execute("DROP TABLE IF EXISTS posting_snapshot_sets_v11")
+            _create_job_enrichments_v11(
+                conn,
+                table_name="job_enrichments_v11",
+            )
+            _create_posting_snapshot_sets_v11(
+                conn,
+                table_name="posting_snapshot_sets_v11",
+            )
+
+            enrichment_rows = conn.execute(
+                f"""
+                SELECT
+                    source.tenant_id,
+                    source.{enrichment_reference},
+                    source.current_status,
+                    source.full_description,
+                    source.application_url,
+                    source.enriched_at,
+                    source.extraction_tier,
+                    source.attempts_json,
+                    source.updated_at
+                FROM job_enrichments AS source
+                ORDER BY source.tenant_id, source.{enrichment_reference}
+                """
+            ).fetchall()
+            canonical_enrichments: dict[
+                tuple[str, str],
+                tuple[str, str, Any, Any, Any, Any, str, str],
+            ] = {}
+            for row in enrichment_rows:
+                tenant_id = str(row[0])
+                raw_reference = str(row[1])
+                stable_job_id = _resolve_job_reference_value(
+                    conn,
+                    tenant_id=tenant_id,
+                    reference=raw_reference,
+                    legacy_url=enrichment_reference == "job_url",
+                )
+                if stable_job_id is None:
+                    raise RuntimeError(
+                        "enrichment/snapshot reference migration could not "
+                        "resolve job_enrichments identity for "
+                        f"{raw_reference!r}"
+                    )
+                candidate = (
+                    stable_job_id,
+                    str(row[2]),
+                    row[3],
+                    row[4],
+                    row[5],
+                    row[6],
+                    str(row[7] or "[]"),
+                    str(row[8]),
+                )
+                key = (tenant_id, stable_job_id)
+                existing = canonical_enrichments.get(key)
+                if existing is not None:
+                    candidate = (
+                        stable_job_id,
+                        *_merged_enrichment_values_v11(
+                            surviving=existing,
+                            losing=candidate,
+                            allow_conflicting_descriptions=True,
+                        ),
+                    )
+                canonical_enrichments[key] = candidate
+            conn.executemany(
+                """
+                INSERT INTO job_enrichments_v11 (
+                    tenant_id, job_id, current_status, full_description,
+                    application_url, enriched_at, extraction_tier,
+                    attempts_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (tenant_id, *record)
+                    for (tenant_id, _job_id), record
+                    in canonical_enrichments.items()
+                ),
+            )
+            expected_counts["job_enrichments"] = len(
+                canonical_enrichments
+            )
+
+            snapshot_rows = conn.execute(
+                f"""
+                SELECT
+                    source.tenant_id,
+                    source.{snapshot_reference},
+                    source.snapshot_set_json,
+                    source.latest_snapshot_version,
+                    source.latest_active_state,
+                    source.latest_confidence,
+                    source.latest_quarantine_reason,
+                    source.updated_at
+                FROM posting_snapshot_sets AS source
+                ORDER BY source.tenant_id, source.{snapshot_reference}
+                """
+            ).fetchall()
+            canonical_snapshots: dict[
+                tuple[str, str],
+                tuple[str, str, int, str, Any, Any, str],
+            ] = {}
+            for row in snapshot_rows:
+                tenant_id = str(row[0])
+                raw_reference = str(row[1])
+                stable_job_id = _resolve_job_reference_value(
+                    conn,
+                    tenant_id=tenant_id,
+                    reference=raw_reference,
+                    legacy_url=snapshot_reference == "job_url",
+                )
+                if stable_job_id is None:
+                    raise RuntimeError(
+                        "enrichment/snapshot reference migration could not "
+                        "resolve posting_snapshot_sets embedded identity for "
+                        f"{raw_reference!r}"
+                    )
+                rewritten_json = _rewrite_snapshot_set_identity_v11(
+                    conn,
+                    tenant_id=tenant_id,
+                    stable_job_id=stable_job_id,
+                    raw_json=str(row[2]),
+                    legacy_url=snapshot_reference == "job_url",
+                )
+                candidate = (
+                    stable_job_id,
+                    rewritten_json,
+                    int(row[3]),
+                    str(row[4]),
+                    row[5],
+                    row[6],
+                    str(row[7]),
+                )
+                key = (tenant_id, stable_job_id)
+                existing = canonical_snapshots.get(key)
+                if existing is not None:
+                    candidate = _merged_snapshot_record_values_v11(
+                        surviving=existing,
+                        losing=candidate,
+                        tenant_id=tenant_id,
+                        surviving_job_id=stable_job_id,
+                        losing_job_id=stable_job_id,
+                    )
+                canonical_snapshots[key] = candidate
+            conn.executemany(
+                """
+                INSERT INTO posting_snapshot_sets_v11 (
+                    tenant_id, job_id, snapshot_set_json,
+                    latest_snapshot_version, latest_active_state,
+                    latest_confidence, latest_quarantine_reason, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (tenant_id, *record)
+                    for (tenant_id, _job_id), record
+                    in canonical_snapshots.items()
+                ),
+            )
+            expected_counts["posting_snapshot_sets"] = len(
+                canonical_snapshots
+            )
+
+            for table in _ENRICHMENT_SNAPSHOT_REFERENCE_TABLES:
+                conn.execute(f'DROP TABLE "{table}"')
+                conn.execute(
+                    f'ALTER TABLE "{table}_v11" RENAME TO "{table}"'
+                )
+            _create_job_enrichment_indexes(conn)
+            _create_posting_snapshot_set_indexes(conn)
+
+        _verify_enrichment_snapshot_references_v11(
+            conn,
+            expected_counts=expected_counts,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_ENRICHMENT_SNAPSHOT_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute("RELEASE SAVEPOINT enrichment_snapshot_references_v11")
+        conn.commit()
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT enrichment_snapshot_references_v11")
+        conn.execute("RELEASE SAVEPOINT enrichment_snapshot_references_v11")
+        raise
+
+    return list(_ENRICHMENT_SNAPSHOT_REFERENCE_TABLES)
+
+
+def _verify_enrichment_snapshot_prerequisites_v11(
+    conn: sqlite3.Connection,
+) -> None:
+    """Verify the v10 authority without inspecting v11 migration targets."""
+    if not _has_preparation_reference_schema_v10(conn):
+        raise RuntimeError(
+            "enrichment/snapshot reference migration requires the stable "
+            "preparation reference schema"
+        )
+    orphan = conn.execute(
+        """
+        SELECT source.job_id
+        FROM preparation_work_items AS source
+        LEFT JOIN jobs j
+          ON j.tenant_id = source.tenant_id
+         AND j.job_id = source.job_id
+        WHERE j.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if orphan is not None:
+        raise RuntimeError(
+            "enrichment/snapshot reference migration found an unresolved "
+            "preparation_work_items.job_id prerequisite"
+        )
+
+
+def _enrichment_snapshot_reference_column(
+    conn: sqlite3.Connection,
+    table: str,
+) -> str:
+    columns = _table_columns(conn, table)
+    if "job_id" in columns:
+        return "job_id"
+    if "job_url" in columns:
+        return "job_url"
+    raise RuntimeError(
+        "enrichment/snapshot reference migration found no job reference "
+        f"in {table}"
+    )
+
+
+def _create_job_enrichments_v11(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str = "job_enrichments",
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            job_id              TEXT NOT NULL,
+            current_status      TEXT NOT NULL,
+            full_description    TEXT,
+            application_url     TEXT,
+            enriched_at         TEXT,
+            extraction_tier     TEXT,
+            attempts_json       TEXT NOT NULL DEFAULT '[]',
+            updated_at          TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, job_id),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_posting_snapshot_sets_v11(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str = "posting_snapshot_sets",
+) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            tenant_id                TEXT NOT NULL DEFAULT 'local',
+            job_id                   TEXT NOT NULL,
+            snapshot_set_json        TEXT NOT NULL,
+            latest_snapshot_version  INTEGER NOT NULL DEFAULT 0,
+            latest_active_state      TEXT NOT NULL DEFAULT 'unknown',
+            latest_confidence        TEXT,
+            latest_quarantine_reason TEXT,
+            updated_at               TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, job_id),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_job_enrichment_indexes(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_enrichments_tenant_status
+        ON job_enrichments(tenant_id, current_status, updated_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_enrichments_enriched_at
+        ON job_enrichments(enriched_at DESC)
+        """
+    )
+
+
+def _create_posting_snapshot_set_indexes(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_posting_snapshot_sets_updated
+        ON posting_snapshot_sets(tenant_id, updated_at DESC)
+        """
+    )
+
+
+def _has_enrichment_snapshot_reference_schema_v11(
+    conn: sqlite3.Connection,
+) -> bool:
+    return (
+        "job_id" in _table_columns(conn, "job_enrichments")
+        and "job_url" not in _table_columns(conn, "job_enrichments")
+        and _primary_key_columns(conn, "job_enrichments")
+        == ("tenant_id", "job_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "job_enrichments",
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            "job_enrichments",
+            "idx_job_enrichments_tenant_status",
+            ("tenant_id", "current_status", "updated_at"),
+            unique=False,
+        )
+        and _has_index(
+            conn,
+            "job_enrichments",
+            "idx_job_enrichments_enriched_at",
+            ("enriched_at",),
+            unique=False,
+        )
+        and "job_id" in _table_columns(conn, "posting_snapshot_sets")
+        and "job_url" not in _table_columns(conn, "posting_snapshot_sets")
+        and _primary_key_columns(conn, "posting_snapshot_sets")
+        == ("tenant_id", "job_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "posting_snapshot_sets",
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            "posting_snapshot_sets",
+            "idx_posting_snapshot_sets_updated",
+            ("tenant_id", "updated_at"),
+            unique=False,
+        )
+    )
+
+
+def _resolve_job_reference_value(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    reference: str,
+    legacy_url: bool,
+) -> str | None:
+    by_job_id = (
+        "SELECT job_id FROM jobs "
+        "WHERE tenant_id = ? AND job_id = ? LIMIT 1"
+    )
+    by_storage_url = (
+        "SELECT job_id FROM jobs "
+        "WHERE tenant_id = ? AND url = ? LIMIT 1"
+    )
+    by_posting_alias = """
+        SELECT a.job_id
+        FROM job_identity_aliases a
+        JOIN jobs j
+          ON j.tenant_id = a.tenant_id
+         AND j.job_id = a.job_id
+        WHERE a.tenant_id = ?
+          AND a.alias_kind = 'posting_url'
+          AND a.alias_value = ?
+        LIMIT 1
+    """
+    lookups = (
+        (by_storage_url, by_posting_alias, by_job_id)
+        if legacy_url
+        else (by_job_id, by_storage_url, by_posting_alias)
+    )
+    for sql in lookups:
+        row = conn.execute(sql, (tenant_id, reference)).fetchone()
+        if row is not None:
+            return str(row[0])
+    return None
+
+
+def _rewrite_snapshot_set_identity_v11(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: str,
+    stable_job_id: str,
+    raw_json: str,
+    legacy_url: bool,
+) -> str:
+    try:
+        data = json.loads(raw_json)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "enrichment/snapshot reference migration found invalid "
+            "posting_snapshot_sets.snapshot_set_json"
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            "enrichment/snapshot reference migration requires snapshot JSON "
+            "to be an object"
+        )
+
+    embedded_tenant = str(data.get("tenant_id") or tenant_id)
+    if embedded_tenant != tenant_id:
+        raise RuntimeError(
+            "enrichment/snapshot reference migration found a snapshot tenant "
+            "that does not match its row"
+        )
+    embedded_reference = str(data.get("job_id") or "").strip()
+    if embedded_reference:
+        embedded_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=embedded_reference,
+            legacy_url=legacy_url,
+        )
+        if embedded_job_id != stable_job_id:
+            raise RuntimeError(
+                "enrichment/snapshot reference migration found embedded "
+                "snapshot identity that does not match its row"
+            )
+
+    candidates = data.get("duplicate_candidates") or []
+    if not isinstance(candidates, list):
+        raise RuntimeError(
+            "enrichment/snapshot reference migration requires "
+            "duplicate_candidates to be a list"
+        )
+    rewritten_candidates: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            raise RuntimeError(
+                "enrichment/snapshot reference migration found an invalid "
+                "duplicate candidate"
+            )
+        candidate_reference = str(
+            candidate.get("candidate_job_id") or ""
+        ).strip()
+        candidate_job_id = _resolve_job_reference_value(
+            conn,
+            tenant_id=tenant_id,
+            reference=candidate_reference,
+            legacy_url=legacy_url,
+        )
+        if candidate_job_id is None:
+            raise RuntimeError(
+                "enrichment/snapshot reference migration could not resolve "
+                "embedded duplicate candidate "
+                f"{candidate_reference!r}"
+            )
+        if candidate_job_id == stable_job_id:
+            continue
+        copied = dict(candidate)
+        copied["candidate_job_id"] = candidate_job_id
+        rewritten_candidates.setdefault(candidate_job_id, copied)
+
+    data["tenant_id"] = tenant_id
+    data["job_id"] = stable_job_id
+    data["duplicate_candidates"] = list(rewritten_candidates.values())
+    return json.dumps(data, sort_keys=True)
+
+
+def _verify_enrichment_snapshot_references_v11(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_enrichment_snapshot_reference_schema_v11(conn):
+        raise RuntimeError(
+            "enrichment/snapshot reference migration did not create the "
+            "stable reference schema"
+        )
+    for table, expected_count in expected_counts.items():
+        observed_count = int(
+            conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        )
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "enrichment/snapshot reference migration changed row count "
+                f"for {table}: expected {expected_count}, found {observed_count}"
+            )
+        orphan = conn.execute(
+            f"""
+            SELECT source.job_id
+            FROM {table} AS source
+            LEFT JOIN jobs j
+              ON j.tenant_id = source.tenant_id
+             AND j.job_id = source.job_id
+            WHERE j.job_id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if orphan is not None:
+            raise RuntimeError(
+                "enrichment/snapshot reference migration left an unresolved "
+                f"reference in {table}.job_id"
+            )
+
+    snapshot_rows = conn.execute(
+        """
+        SELECT tenant_id, job_id, snapshot_set_json, latest_snapshot_version
+        FROM posting_snapshot_sets
+        """
+    ).fetchall()
+    for row in snapshot_rows:
+        tenant_id = str(row[0])
+        job_id = str(row[1])
+        _validate_job_uuid(job_id)
+        try:
+            data = json.loads(str(row[2]))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "enrichment/snapshot reference migration persisted invalid "
+                "snapshot JSON"
+            ) from exc
+        if not isinstance(data, dict):
+            raise RuntimeError(
+                "enrichment/snapshot reference migration persisted non-object "
+                "snapshot JSON"
+            )
+        if str(data.get("tenant_id") or "") != tenant_id:
+            raise RuntimeError(
+                "enrichment/snapshot reference migration persisted mismatched "
+                "snapshot tenant identity"
+            )
+        if str(data.get("job_id") or "") != job_id:
+            raise RuntimeError(
+                "enrichment/snapshot reference migration persisted mismatched "
+                "snapshot JobId"
+            )
+        snapshots = data.get("snapshots") or []
+        if not isinstance(snapshots, list) or len(snapshots) != int(row[3]):
+            raise RuntimeError(
+                "enrichment/snapshot reference migration changed snapshot "
+                "version history"
+            )
+        candidates = data.get("duplicate_candidates") or []
+        if not isinstance(candidates, list):
+            raise RuntimeError(
+                "enrichment/snapshot reference migration persisted invalid "
+                "duplicate candidates"
+            )
+        for candidate in candidates:
+            candidate_job_id = str(
+                candidate.get("candidate_job_id") if isinstance(candidate, dict) else ""
+            )
+            _validate_job_uuid(candidate_job_id)
+            if candidate_job_id == job_id:
+                raise RuntimeError(
+                    "enrichment/snapshot reference migration persisted a "
+                    "self-referential duplicate candidate"
+                )
+            exists = conn.execute(
+                """
+                SELECT 1
+                FROM jobs
+                WHERE tenant_id = ? AND job_id = ?
+                LIMIT 1
+                """,
+                (tenant_id, candidate_job_id),
+            ).fetchone()
+            if exists is None:
+                raise RuntimeError(
+                    "enrichment/snapshot reference migration persisted an "
+                    "unresolved duplicate candidate"
+                )
+
+    foreign_key_error = conn.execute("PRAGMA foreign_key_check").fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "enrichment/snapshot reference migration found a foreign-key "
+            "violation"
+        )
+
+
 # ---------------------------------------------------------------------------
 # job_enrichments read fragments — used by every selector / stat that
 # previously read bare ``jobs.full_description`` / ``jobs.application_url``
@@ -5414,7 +6503,8 @@ def _verify_preparation_references_v10(
 # ---------------------------------------------------------------------------
 
 _ENRICHMENT_JOIN: str = (
-    "LEFT JOIN job_enrichments je ON je.job_url = jobs.url "
+    "LEFT JOIN job_enrichments je "
+    "ON je.tenant_id = jobs.tenant_id AND je.job_id = jobs.job_id "
     "LEFT JOIN job_stage_states jss_enrich "
     "ON jss_enrich.job_url = jobs.url AND jss_enrich.stage = 'enrich'"
 )
@@ -5437,7 +6527,7 @@ _ENRICHMENT_DONE: str = "(je.current_status = 'enriched' OR jobs.detail_scraped_
 # rejects succeeded -> running. A reset clears the stage row back to pending,
 # so retries still work even when legacy detail columns remain populated.
 _ENRICHMENT_PENDING: str = (
-    "(je.job_url IS NULL OR je.current_status = 'pending') "
+    "(je.job_id IS NULL OR je.current_status = 'pending') "
     "AND COALESCE(jss_enrich.state, CASE WHEN jobs.detail_scraped_at IS NOT NULL THEN 'succeeded' ELSE 'pending' END) = 'pending'"
 )
 
@@ -5447,7 +6537,7 @@ _ENRICHMENT_PENDING: str = (
 _CLOSED_ACTIVE_STATES_SQL = "'closed', 'expired', 'removed', 'location_incompatible'"
 _ACTIVE_STATE_JOIN: str = (
     "LEFT JOIN posting_snapshot_sets pss "
-    "ON pss.tenant_id = 'local' AND pss.job_url = jobs.url"
+    "ON pss.tenant_id = jobs.tenant_id AND pss.job_id = jobs.job_id"
 )
 _NOT_CLOSED_ACTIVE_STATE: str = (
     f"(pss.latest_active_state IS NULL OR pss.latest_active_state NOT IN ({_CLOSED_ACTIVE_STATES_SQL}))"

@@ -221,6 +221,42 @@ describe("repeat application evidence", () => {
     expect(assessment.matches[0]?.identityEvidence).toContain("employer:acme");
   });
 
+  it("loads application evidence through stable enrichment JobId references", () => {
+    insertJob(PRIOR, "Senior Backend Engineer", "Acme Inc");
+    insertJob(TARGET, "Backend Senior Eng", "Acme Inc");
+    confirmPrior();
+    db.exec(`
+      DROP TABLE job_enrichments;
+      CREATE UNIQUE INDEX idx_jobs_tenant_job_id_fixture
+        ON jobs(tenant_id, job_id);
+      CREATE TABLE job_enrichments (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        application_url TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, job_id),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+    `);
+    db.prepare(
+      `INSERT INTO job_enrichments (
+        tenant_id, job_id, application_url, updated_at
+      ) VALUES ('local', ?, ?, ?)`,
+    ).run(
+      testJobId(PRIOR),
+      "https://apply.example.test/canonical-prior",
+      NOW,
+    );
+
+    const assessment = evaluateRepeatApplication(db, TARGET);
+
+    expect(assessment.status).toBe("confirmation_required");
+    expect(assessment.matches[0]?.priorApplication.applicationUrl).toBe(
+      "https://apply.example.test/canonical-prior",
+    );
+  });
+
   it.each([
     ["Engineering Manager", "Acme Inc", "distinct role"],
     ["Senior Backend Engineer", "Acme Health", "similar employer"],

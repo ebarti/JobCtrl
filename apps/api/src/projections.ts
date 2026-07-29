@@ -21,7 +21,14 @@
  * materialises it.
  */
 import { PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import {
+  allRows,
+  getRow,
+  hasCompositeJobIdForeignKey,
+  tableExists,
+  type SqliteDatabase,
+  type SqliteValue,
+} from "./db.js";
 import { normalizeJobLocation } from "./location-normalization.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
@@ -2851,7 +2858,11 @@ interface EnrichmentLatest {
   currentStatus: string | null;
 }
 
-function loadEnrichment(db: SqliteDatabase, jobUrl: string): EnrichmentLatest {
+function loadEnrichment(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+): EnrichmentLatest {
   const empty: EnrichmentLatest = {
     fullDescription: null,
     applicationUrl: null,
@@ -2861,6 +2872,10 @@ function loadEnrichment(db: SqliteDatabase, jobUrl: string): EnrichmentLatest {
   if (!tableExists(db, "job_enrichments")) {
     return empty;
   }
+  const stableReference = hasCompositeJobIdForeignKey(
+    db,
+    "job_enrichments",
+  );
   const row = getRow<{
     full_description: string | null;
     application_url: string | null;
@@ -2868,8 +2883,18 @@ function loadEnrichment(db: SqliteDatabase, jobUrl: string): EnrichmentLatest {
     current_status: string | null;
   }>(
     db,
-    "SELECT full_description, application_url, enriched_at, current_status FROM job_enrichments WHERE job_url = ?",
-    [jobUrl],
+    `SELECT je.full_description, je.application_url,
+            je.enriched_at, je.current_status
+       FROM job_enrichments je
+       ${stableReference
+         ? `JOIN jobs j
+              ON j.tenant_id = je.tenant_id
+             AND j.job_id = je.job_id`
+         : ""}
+      WHERE ${stableReference
+        ? "je.tenant_id = ? AND j.url = ?"
+        : "je.tenant_id = ? AND je.job_url = ?"}`,
+    [tenantId, jobUrl],
   );
   if (!row) return empty;
   return {
@@ -3146,7 +3171,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const requirementFitReportJson = loadRequirementFitReportJson(db, tenantId, jobUrl);
   const requirementFitBand = fitBand(loadLatestRequirementFitBand(db, tenantId, jobUrl));
   const interviewPrepJson = loadInterviewPrepJson(db, tenantId, jobUrl);
-  const enrichment = loadEnrichment(db, jobUrl);
+  const enrichment = loadEnrichment(db, tenantId, jobUrl);
   const apply = loadLatestApplyRun(db, jobUrl);
   const deletedAt = loadDeletedAt(db, jobUrl);
   const stages = loadStages(db, jobUrl);
@@ -4101,11 +4126,23 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
          WHERE h.job_url = jlp.job_id AND h.unhidden_at IS NULL
        )`
     : "";
+  const stableSnapshotReference = hasCompositeJobIdForeignKey(
+    db,
+    "posting_snapshot_sets",
+  );
   const closedWhere = tableExists(db, "posting_snapshot_sets")
     ? `AND NOT EXISTS (
          SELECT 1 FROM posting_snapshot_sets pss
          WHERE pss.tenant_id = jlp.tenant_id
-           AND pss.job_url = jlp.job_id
+           AND pss.${stableSnapshotReference ? "job_id" : "job_url"} = ${
+             stableSnapshotReference
+               ? `(SELECT j.job_id
+                     FROM jobs j
+                    WHERE j.tenant_id = jlp.tenant_id
+                      AND j.url = jlp.job_id
+                    LIMIT 1)`
+               : "jlp.job_id"
+           }
            AND pss.latest_active_state IN (${CLOSED_ACTIVE_STATES.map((state) => `'${state}'`).join(", ")})
        )`
     : "";
@@ -4166,7 +4203,9 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
         ? " LEFT JOIN jobctrl_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
         : "";
       const snapshotJoin = hasSnapshots
-        ? " LEFT JOIN posting_snapshot_sets pss ON pss.tenant_id = arp.tenant_id AND pss.job_url = arp.job_id"
+        ? stableSnapshotReference
+          ? " LEFT JOIN jobs snapshot_job ON snapshot_job.tenant_id = arp.tenant_id AND snapshot_job.url = arp.job_id LEFT JOIN posting_snapshot_sets pss ON pss.tenant_id = arp.tenant_id AND pss.job_id = snapshot_job.job_id"
+          : " LEFT JOIN posting_snapshot_sets pss ON pss.tenant_id = arp.tenant_id AND pss.job_url = arp.job_id"
         : "";
       const lifecycleWhere = [
         hasDeleted ? "d.job_url IS NULL" : "",

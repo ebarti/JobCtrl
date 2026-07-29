@@ -289,7 +289,9 @@ def test_repository_persists_latest_confidence_and_quarantine(
 
     row = conn.execute(
         "SELECT latest_confidence, latest_quarantine_reason "
-        "FROM posting_snapshot_sets WHERE job_url = ?",
+        "FROM posting_snapshot_sets pss "
+        "JOIN jobs j ON j.tenant_id = pss.tenant_id AND j.job_id = pss.job_id "
+        "WHERE j.url = ?",
         (url,),
     ).fetchone()
     assert row["latest_confidence"] == "low"

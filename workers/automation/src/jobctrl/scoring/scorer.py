@@ -1015,7 +1015,9 @@ def _preferred_direct_score_for_repost(
                COALESCE(c.ats_kind, 'other') AS ats_kind,
                s.scored_at
         FROM jobs j
-        LEFT JOIN job_enrichments je ON je.job_url = j.url
+        LEFT JOIN job_enrichments je
+          ON je.tenant_id = j.tenant_id
+         AND je.job_id = j.job_id
         LEFT JOIN job_canonical_identities c
           ON c.tenant_id = ? AND c.job_id = j.job_id
         {deleted_join}
@@ -1142,7 +1144,9 @@ def _reusable_scores_by_content_key(
         SELECT j.url, j.title, j.company,
                COALESCE(je.full_description, j.full_description) AS full_description
         FROM jobs j
-        LEFT JOIN job_enrichments je ON je.job_url = j.url
+        LEFT JOIN job_enrichments je
+          ON je.tenant_id = j.tenant_id
+         AND je.job_id = j.job_id
         INNER JOIN (
             SELECT s.job_url, MAX(s.version) AS max_version
             FROM job_scores s

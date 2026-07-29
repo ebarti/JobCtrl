@@ -316,7 +316,7 @@ def _job_identity(conn, job_key: str) -> dict[str, Any] | None:
                COALESCE(
                  (SELECT je.application_url
                     FROM job_enrichments je
-                   WHERE je.job_url = j.url AND je.tenant_id = ?
+                   WHERE je.job_id = j.job_id AND je.tenant_id = ?
                    ORDER BY je.updated_at DESC LIMIT 1),
                  j.application_url,
                  j.url

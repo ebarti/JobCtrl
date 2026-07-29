@@ -24,14 +24,21 @@ def scoring_current_policy_job_urls(
     current_version = _current_scoring_policy_version(conn, tenant_id)
     requested = _clean_job_urls(job_urls)
     requested_sql, requested_params = _requested_filter("j.url", requested)
-    active_sql = _active_job_filter(conn, "j.url")
+    active_sql = _active_job_filter(
+        conn,
+        "j.url",
+        tenant_expr="j.tenant_id",
+        job_id_expr="j.job_id",
+    )
     limit_sql, limit_params = _limit_filter(limit)
 
     rows = conn.execute(
         f"""
         SELECT j.url
         FROM jobs j
-        LEFT JOIN job_enrichments je ON je.job_url = j.url
+        LEFT JOIN job_enrichments je
+          ON je.tenant_id = j.tenant_id
+         AND je.job_id = j.job_id
         LEFT JOIN (
             SELECT s.job_url, s.trace_json, s.correction_json
             FROM job_scores s
@@ -76,7 +83,12 @@ def tailoring_current_policy_job_urls(
     current_version = _current_tailoring_policy_version(conn, tenant_id)
     requested = _clean_job_urls(job_urls)
     requested_sql, requested_params = _requested_filter("j.url", requested)
-    active_sql = _active_job_filter(conn, "j.url")
+    active_sql = _active_job_filter(
+        conn,
+        "j.url",
+        tenant_expr="j.tenant_id",
+        job_id_expr="j.job_id",
+    )
     limit_sql, limit_params = _limit_filter(limit)
     effective_tailor_path = (
         "((lm.materials_job_url IS NOT NULL AND lm.tailored_resume_path IS NOT NULL "
@@ -89,7 +101,9 @@ def tailoring_current_policy_job_urls(
         f"""
         SELECT j.url
         FROM jobs j
-        LEFT JOIN job_enrichments je ON je.job_url = j.url
+        LEFT JOIN job_enrichments je
+          ON je.tenant_id = j.tenant_id
+         AND je.job_id = j.job_id
         LEFT JOIN (
             SELECT s.job_url, s.fit_score, s.breakdown_json
             FROM job_scores s
@@ -187,7 +201,13 @@ def _current_tailoring_policy_version(conn: sqlite3.Connection, tenant_id: str) 
     return _positive_int(row[0] if row else None, default=1)
 
 
-def _active_job_filter(conn: sqlite3.Connection, job_url_expr: str) -> str:
+def _active_job_filter(
+    conn: sqlite3.Connection,
+    job_url_expr: str,
+    *,
+    tenant_expr: str,
+    job_id_expr: str,
+) -> str:
     clauses: list[str] = []
     if _table_exists(conn, "jobctrl_deleted_jobs"):
         clauses.append(
@@ -208,7 +228,8 @@ def _active_job_filter(conn: sqlite3.Connection, job_url_expr: str) -> str:
         clauses.append(
             "NOT EXISTS ("
             "SELECT 1 FROM posting_snapshot_sets pss "
-            f"WHERE pss.tenant_id = 'local' AND pss.job_url = {job_url_expr} "
+            f"WHERE pss.tenant_id = {tenant_expr} "
+            f"AND pss.job_id = {job_id_expr} "
             "AND pss.latest_active_state IN "
             "('closed', 'expired', 'removed', 'location_incompatible')"
             ")"

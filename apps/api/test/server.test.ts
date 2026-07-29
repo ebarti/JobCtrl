@@ -2739,6 +2739,240 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("separates closed postings through stable snapshot JobId references", async () => {
+    const jobUrl = "https://example.com/jobs/failed-score";
+    const jobId = `test-job:${jobUrl}`;
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_tenant_job_id_fixture
+        ON jobs(tenant_id, job_id);
+      CREATE TABLE posting_snapshot_sets (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        snapshot_set_json TEXT NOT NULL,
+        latest_snapshot_version INTEGER NOT NULL DEFAULT 0,
+        latest_active_state TEXT NOT NULL DEFAULT 'unknown',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, job_id),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+    `);
+    db.prepare(
+      `INSERT INTO posting_snapshot_sets (
+        tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
+        latest_active_state, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "local",
+      jobId,
+      JSON.stringify({
+        tenant_id: "local",
+        job_id: jobId,
+        latest_active_state: "removed",
+      }),
+      0,
+      "removed",
+      "2026-07-29T10:00:00+00:00",
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const active = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?deleted=active&sort=title&dir=asc",
+    });
+    const closed = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?deleted=closed",
+    });
+    const summary = await app.inject({
+      method: "GET",
+      url: "/v1/dashboard/summary",
+    });
+
+    expect(active.statusCode, active.body).toBe(200);
+    expect(
+      active.json().items.map((job: { jobKey: string }) => job.jobKey),
+    ).not.toContain(jobUrl);
+    expect(closed.statusCode, closed.body).toBe(200);
+    expect(closed.json().items).toEqual([
+      expect.objectContaining({
+        jobKey: jobUrl,
+        activeState: "removed",
+      }),
+    ]);
+    expect(summary.statusCode, summary.body).toBe(200);
+    expect(summary.json().totals).toMatchObject({
+      jobs: 2,
+      failures: 0,
+      blocked: 1,
+      ready: 1,
+    });
+
+    await app.close();
+  });
+
+  it("permanently deletes stable enrichment and snapshot references", async () => {
+    const jobUrl = "https://example.com/jobs/ready";
+    const jobId = `test-job:${jobUrl}`;
+    const setup = new Database(options.dbPath);
+    setup.exec(`
+      DROP TABLE job_enrichments;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_tenant_job_id_fixture
+        ON jobs(tenant_id, job_id);
+      CREATE TABLE job_enrichments (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        current_status TEXT NOT NULL,
+        full_description TEXT,
+        application_url TEXT,
+        enriched_at TEXT,
+        extraction_tier TEXT,
+        attempts_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, job_id),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+      CREATE TABLE posting_snapshot_sets (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        snapshot_set_json TEXT NOT NULL,
+        latest_snapshot_version INTEGER NOT NULL DEFAULT 0,
+        latest_active_state TEXT NOT NULL DEFAULT 'unknown',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, job_id),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+    `);
+    setup
+      .prepare(
+        `INSERT INTO job_enrichments (
+          tenant_id, job_id, current_status, full_description,
+          application_url, enriched_at, extraction_tier,
+          attempts_json, updated_at
+        ) VALUES ('local', ?, 'enriched', 'description', ?, ?, 'json_ld', '[]', ?)`,
+      )
+      .run(
+        jobId,
+        `${jobUrl}/apply`,
+        "2026-07-29T10:00:00+00:00",
+        "2026-07-29T10:00:00+00:00",
+      );
+    setup
+      .prepare(
+        `INSERT INTO posting_snapshot_sets (
+          tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
+          latest_active_state, updated_at
+        ) VALUES ('local', ?, ?, 0, 'active', ?)`,
+      )
+      .run(
+        jobId,
+        JSON.stringify({
+          tenant_id: "local",
+          job_id: jobId,
+          snapshots: [],
+          failures: [],
+          duplicate_candidates: [],
+          latest_active_state: "active",
+        }),
+        "2026-07-29T10:00:00+00:00",
+      );
+    setup.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-delete-permanent",
+      payload: { allMatching: false, jobKeys: [jobUrl] },
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    await app.close();
+
+    const verify = new Database(options.dbPath);
+    try {
+      expect(countRows(verify, "job_enrichments", "job_id", jobId)).toBe(0);
+      expect(countRows(verify, "posting_snapshot_sets", "job_id", jobId)).toBe(
+        0,
+      );
+      expect(countRows(verify, "jobs", "url", jobUrl)).toBe(0);
+    } finally {
+      verify.close();
+    }
+  });
+
+  it("permanently deletes schema-v10 URL enrichment and snapshot references", async () => {
+    const jobUrl = "https://example.com/jobs/ready";
+    const setup = new Database(options.dbPath);
+    setup.exec(`
+      CREATE TABLE posting_snapshot_sets (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_url TEXT NOT NULL,
+        snapshot_set_json TEXT NOT NULL,
+        latest_snapshot_version INTEGER NOT NULL DEFAULT 0,
+        latest_active_state TEXT NOT NULL DEFAULT 'unknown',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, job_url)
+      );
+    `);
+    setup
+      .prepare(
+        `INSERT INTO job_enrichments (
+          job_url, tenant_id, current_status, full_description,
+          application_url, enriched_at, extraction_tier,
+          attempts_json, updated_at
+        ) VALUES (?, 'local', 'enriched', 'description', ?, ?, 'json_ld', '[]', ?)`,
+      )
+      .run(
+        jobUrl,
+        `${jobUrl}/apply`,
+        "2026-07-29T10:00:00+00:00",
+        "2026-07-29T10:00:00+00:00",
+      );
+    setup
+      .prepare(
+        `INSERT INTO posting_snapshot_sets (
+          tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+          latest_active_state, updated_at
+        ) VALUES ('local', ?, ?, 0, 'active', ?)`,
+      )
+      .run(
+        jobUrl,
+        JSON.stringify({
+          tenant_id: "local",
+          job_id: jobUrl,
+          snapshots: [],
+          failures: [],
+          duplicate_candidates: [],
+          latest_active_state: "active",
+        }),
+        "2026-07-29T10:00:00+00:00",
+      );
+    setup.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-delete-permanent",
+      payload: { allMatching: false, jobKeys: [jobUrl] },
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    await app.close();
+
+    const verify = new Database(options.dbPath);
+    try {
+      expect(countRows(verify, "job_enrichments", "job_url", jobUrl)).toBe(0);
+      expect(countRows(verify, "posting_snapshot_sets", "job_url", jobUrl)).toBe(
+        0,
+      );
+      expect(countRows(verify, "jobs", "url", jobUrl)).toBe(0);
+    } finally {
+      verify.close();
+    }
+  });
+
   it("permanently deletes job rows and clears delete/hide tombstones so rediscovery can add them again", async () => {
     const readyUrl = "https://example.com/jobs/ready";
     const blockedUrl = "https://example.com/jobs/blocked-tailor";
@@ -3068,6 +3302,78 @@ describe("local TypeScript API", () => {
       type: "tailored_resume_txt",
       status: "active",
       size: "12b",
+    });
+
+    await app.close();
+  });
+
+  it("projects stable enrichment fields through the JobId owner", async () => {
+    const jobUrl = "https://example.com/jobs/ready";
+    const jobId = `test-job:${jobUrl}`;
+    const seedDb = new Database(options.dbPath);
+    seedDb.exec(`
+      DROP TABLE job_enrichments;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_tenant_job_id_fixture
+        ON jobs(tenant_id, job_id);
+      CREATE TABLE job_enrichments (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        current_status TEXT NOT NULL,
+        full_description TEXT,
+        application_url TEXT,
+        enriched_at TEXT,
+        extraction_tier TEXT,
+        attempts_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, job_id),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+    `);
+    seedDb
+      .prepare(
+        `INSERT INTO job_enrichments (
+          tenant_id, job_id, current_status, full_description,
+          application_url, enriched_at, extraction_tier,
+          attempts_json, updated_at
+        ) VALUES ('local', ?, 'enriched', ?, ?, ?, 'json_ld', '[]', ?)`,
+      )
+      .run(
+        jobId,
+        "Stable aggregate description",
+        "https://apply.example.com/stable-owner",
+        "2026-07-29T10:00:00+00:00",
+        "2026-07-29T10:00:00+00:00",
+      );
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/jobs/${encodeURIComponent(jobUrl)}`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().job).toMatchObject({
+      jobKey: jobUrl,
+      applicationUrl: "https://apply.example.com/stable-owner",
+    });
+
+    const verify = new Database(options.dbPath);
+    const projection = verify
+      .prepare(
+        `SELECT application_url, full_description
+           FROM job_list_projections
+          WHERE tenant_id = 'local' AND job_id = ?`,
+      )
+      .get(jobUrl) as {
+      application_url: string;
+      full_description: string;
+    };
+    verify.close();
+    expect(projection).toEqual({
+      application_url: "https://apply.example.com/stable-owner",
+      full_description: "Stable aggregate description",
     });
 
     await app.close();
@@ -6975,6 +7281,81 @@ describe("local TypeScript API", () => {
     expect(enrichment.extraction_tier).toBeNull();
     expect(legacyJob.detail_scraped_at).toBeNull();
     expect(legacyJob.detail_error).toBeNull();
+
+    await app.close();
+  });
+
+  it("retry-enrich resets a stable JobId enrichment aggregate", async () => {
+    const jobUrl = "https://example.com/jobs/failed-score";
+    const jobId = `test-job:${jobUrl}`;
+    const seedDb = new Database(options.dbPath);
+    seedDb.exec(`
+      DROP TABLE job_enrichments;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_tenant_job_id_fixture
+        ON jobs(tenant_id, job_id);
+      CREATE TABLE job_enrichments (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        current_status TEXT NOT NULL,
+        full_description TEXT,
+        application_url TEXT,
+        enriched_at TEXT,
+        extraction_tier TEXT,
+        attempts_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, job_id),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+    `);
+    seedDb
+      .prepare(
+        `INSERT INTO job_enrichments (
+          tenant_id, job_id, current_status, full_description,
+          application_url, enriched_at, extraction_tier,
+          attempts_json, updated_at
+        ) VALUES ('local', ?, 'enriched', 'description', ?, ?, 'json_ld', '[]', ?)`,
+      )
+      .run(
+        jobId,
+        `${jobUrl}/apply`,
+        "2026-07-29T10:00:00+00:00",
+        "2026-07-29T10:00:00+00:00",
+      );
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(jobUrl)}/actions/retry-stage`,
+      payload: { stage: "enrich", resetAttempts: true },
+    });
+    expect(response.statusCode, response.body).toBe(200);
+
+    const db = new Database(options.dbPath);
+    const enrichment = db
+      .prepare(
+        `SELECT current_status, full_description, application_url,
+                enriched_at, extraction_tier
+           FROM job_enrichments
+          WHERE tenant_id = 'local' AND job_id = ?`,
+      )
+      .get(jobId) as {
+      current_status: string;
+      full_description: string | null;
+      application_url: string | null;
+      enriched_at: string | null;
+      extraction_tier: string | null;
+    };
+    db.close();
+
+    expect(enrichment).toEqual({
+      current_status: "pending",
+      full_description: null,
+      application_url: null,
+      enriched_at: null,
+      extraction_tier: null,
+    });
 
     await app.close();
   });

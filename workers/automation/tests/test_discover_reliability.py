@@ -517,9 +517,12 @@ def test_scrape_site_batch_isolates_single_job_failure(
 
         bad_enrichment = conn.execute(
             """
-            SELECT current_status, attempts_json
-            FROM job_enrichments
-            WHERE job_url = ?
+            SELECT je.current_status, je.attempts_json
+            FROM job_enrichments je
+            JOIN jobs j
+              ON j.tenant_id = je.tenant_id
+             AND j.job_id = je.job_id
+            WHERE j.url = ?
             """,
             (bad_url,),
         ).fetchone()
@@ -544,7 +547,14 @@ def test_scrape_site_batch_isolates_single_job_failure(
         assert payload["retryable"] is True
 
         good = conn.execute(
-            "SELECT current_status FROM job_enrichments WHERE job_url = ?",
+            """
+            SELECT je.current_status
+            FROM job_enrichments je
+            JOIN jobs j
+              ON j.tenant_id = je.tenant_id
+             AND j.job_id = je.job_id
+            WHERE j.url = ?
+            """,
             (good_url,),
         ).fetchone()
         assert good["current_status"] == "enriched"

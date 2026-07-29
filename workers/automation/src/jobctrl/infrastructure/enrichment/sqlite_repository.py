@@ -2,9 +2,9 @@
 
 Persists ``JobEnrichment`` aggregates to the ``job_enrichments`` table
 created by ``database.ensure_enrichment_tables``. The aggregate identity
-is ``(tenant_id, job_id)`` and the table primary key is ``job_url``;
-local mode collapses ``JobId`` onto the legacy ``jobs.url`` per the
-migration plan §8 (deferred narrowing).
+and table primary key are both ``(tenant_id, job_id)``. Posting URLs are
+resolved only through explicit compatibility methods while legacy workflow
+inputs are cut over.
 
 The repository is an upsert on every save — versioning is per-attempt
 inside the aggregate's ``attempts_json`` blob, not per-row.
@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from typing import Any
 
+from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.enrichment.aggregate import (
     EnrichmentLifecycle,
     JobEnrichment,
@@ -43,7 +45,7 @@ from jobctrl.domain.enrichment.value_objects import (
     ExtractionTier,
     FullDescription,
 )
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 
 
@@ -57,20 +59,65 @@ class SqliteEnrichmentRepository:
     """
 
     def __init__(self, conn: sqlite3.Connection) -> None:
+        from jobctrl.infrastructure.discovery.sqlite_identity_resolver import (
+            SqliteJobIdentityResolver,
+        )
+
         self._conn = conn
+        self._identity_resolver = SqliteJobIdentityResolver(conn)
 
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
 
     def load(self, tenant_id: TenantId, job_id: JobId) -> JobEnrichment | None:
+        resolved_job_id = self._resolve_job_id(tenant_id, job_id)
+        if resolved_job_id is None:
+            return None
+        return self._load_resolved(tenant_id, resolved_job_id)
+
+    def load_by_posting_url(
+        self,
+        tenant_id: TenantId,
+        posting_url: PostingUrl,
+    ) -> JobEnrichment | None:
+        """Resolve one bounded legacy URL input before stable lookup."""
+        identity = self._identity_resolver.resolve_by_posting_url(
+            tenant_id,
+            posting_url,
+        )
+        if identity is None:
+            return None
+        return self._load_resolved(tenant_id, identity.job_id)
+
+    def job_id_for_posting_url(
+        self,
+        tenant_id: TenantId,
+        posting_url: PostingUrl,
+    ) -> JobId:
+        """Return the stable identity owned by a legacy posting URL."""
+        identity = self._identity_resolver.resolve_by_posting_url(
+            tenant_id,
+            posting_url,
+        )
+        if identity is None:
+            raise KeyError(
+                f"No stable Job identity for enrichment: {posting_url.value}"
+            )
+        return identity.job_id
+
+    def _load_resolved(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> JobEnrichment | None:
         row = self._conn.execute(
             """
-            SELECT job_url, tenant_id, current_status, full_description,
+            SELECT job_id, tenant_id, current_status, full_description,
                    application_url, enriched_at, extraction_tier,
                    attempts_json, updated_at
             FROM job_enrichments
-            WHERE job_url = ? AND tenant_id = ?
+            WHERE job_id = ? AND tenant_id = ?
             LIMIT 1
             """,
             (str(job_id), str(tenant_id)),
@@ -92,12 +139,13 @@ class SqliteEnrichmentRepository:
         flight) or ``failed`` (the orchestrator has the failed list to
         decide whether to retry).
         """
-        params: list[Any] = [str(tenant_id)]
+        params: list[Any] = [str(tenant_id), str(tenant_id)]
         sql = (
-            "SELECT j.url FROM jobs j "
+            "SELECT j.job_id FROM jobs j "
             "LEFT JOIN job_enrichments e "
-            "  ON e.job_url = j.url AND e.tenant_id = ? "
-            "WHERE e.job_url IS NULL OR e.current_status = 'pending' "
+            "  ON e.job_id = j.job_id AND e.tenant_id = ? "
+            "WHERE j.tenant_id = ? "
+            "  AND (e.job_id IS NULL OR e.current_status = 'pending') "
             "ORDER BY j.discovered_at DESC NULLS LAST"
         )
         if limit > 0:
@@ -109,7 +157,7 @@ class SqliteEnrichmentRepository:
     def list_failed(self, tenant_id: TenantId, *, limit: int = 0) -> list[JobEnrichment]:
         params: list[Any] = [str(tenant_id)]
         sql = (
-            "SELECT job_url, tenant_id, current_status, full_description, "
+            "SELECT job_id, tenant_id, current_status, full_description, "
             "application_url, enriched_at, extraction_tier, attempts_json, "
             "updated_at "
             "FROM job_enrichments "
@@ -127,6 +175,34 @@ class SqliteEnrichmentRepository:
     # ------------------------------------------------------------------
 
     def save(self, enrichment: JobEnrichment) -> None:
+        resolved_job_id = self._resolve_job_id(
+            enrichment.tenant_id,
+            enrichment.job_id,
+        )
+        if resolved_job_id is None:
+            raise KeyError(
+                "No stable Job identity for enrichment: "
+                f"{enrichment.job_id}"
+            )
+        self._save_resolved(
+            replace(enrichment, job_id=resolved_job_id),
+        )
+
+    def save_by_posting_url(
+        self,
+        enrichment: JobEnrichment,
+        posting_url: PostingUrl,
+    ) -> None:
+        """Persist an aggregate supplied by a legacy URL-bearing caller."""
+        stable_job_id = self.job_id_for_posting_url(
+            enrichment.tenant_id,
+            posting_url,
+        )
+        self._save_resolved(
+            replace(enrichment, job_id=stable_job_id),
+        )
+
+    def _save_resolved(self, enrichment: JobEnrichment) -> None:
         attempts_json = json.dumps(
             [a.to_dict() for a in enrichment.attempts],
             sort_keys=True,
@@ -134,12 +210,11 @@ class SqliteEnrichmentRepository:
         self._conn.execute(
             """
             INSERT INTO job_enrichments (
-                job_url, tenant_id, current_status, full_description,
+                job_id, tenant_id, current_status, full_description,
                 application_url, enriched_at, extraction_tier,
                 attempts_json, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(job_url) DO UPDATE SET
-                tenant_id = excluded.tenant_id,
+            ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 current_status = excluded.current_status,
                 full_description = excluded.full_description,
                 application_url = excluded.application_url,
@@ -178,10 +253,39 @@ class SqliteEnrichmentRepository:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _resolve_job_id(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> JobId | None:
+        raw_reference = str(job_id or "").strip()
+        if not raw_reference:
+            raise ValueError("job_id must be non-empty")
+        try:
+            stable_job_id = canonical_job_id(raw_reference)
+        except ValueError:
+            stable_job_id = None
+        identity = (
+            self._identity_resolver.resolve_by_job_id(
+                tenant_id,
+                stable_job_id,
+            )
+            if stable_job_id is not None
+            else None
+        )
+        if identity is None:
+            # Non-UUID legacy references are unambiguous. UUID-shaped posting
+            # URLs must use ``load_by_posting_url`` / ``save_by_posting_url``.
+            identity = self._identity_resolver.resolve_by_posting_url(
+                tenant_id,
+                PostingUrl(raw_reference),
+            )
+        return identity.job_id if identity is not None else None
+
     @staticmethod
     def _row_to_enrichment(row: Any, tenant_id: TenantId | None = None) -> JobEnrichment:
         if isinstance(row, sqlite3.Row):
-            job_url = row["job_url"]
+            job_id = row["job_id"]
             current_status = row["current_status"]
             full_description = row["full_description"]
             application_url = row["application_url"]
@@ -191,7 +295,7 @@ class SqliteEnrichmentRepository:
             updated_at = row["updated_at"]
         else:
             (
-                job_url,
+                job_id,
                 _tenant,
                 current_status,
                 full_description,
@@ -210,7 +314,7 @@ class SqliteEnrichmentRepository:
         # to surface that as a clear error rather than a silent rewrite.
         return JobEnrichment(
             tenant_id=tenant_id or LOCAL_TENANT,
-            job_id=JobId(str(job_url)),
+            job_id=JobId(str(job_id)),
             current_status=str(current_status or EnrichmentLifecycle.PENDING),
             attempts=attempts,
             full_description=(
@@ -229,14 +333,59 @@ class SqlitePostingSnapshotSetRepository:
     """SQLite-backed ``PostingSnapshotSetRepository`` implementation."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
+        from jobctrl.infrastructure.discovery.sqlite_identity_resolver import (
+            SqliteJobIdentityResolver,
+        )
+
         self._conn = conn
+        self._identity_resolver = SqliteJobIdentityResolver(conn)
 
     def load(self, tenant_id: TenantId, job_id: JobId) -> PostingSnapshotSet | None:
+        resolved_job_id = self._resolve_job_id(tenant_id, job_id)
+        if resolved_job_id is None:
+            return None
+        return self._load_resolved(tenant_id, resolved_job_id)
+
+    def load_by_posting_url(
+        self,
+        tenant_id: TenantId,
+        posting_url: PostingUrl,
+    ) -> PostingSnapshotSet | None:
+        """Resolve one bounded legacy URL input before stable lookup."""
+        identity = self._identity_resolver.resolve_by_posting_url(
+            tenant_id,
+            posting_url,
+        )
+        if identity is None:
+            return None
+        return self._load_resolved(tenant_id, identity.job_id)
+
+    def job_id_for_posting_url(
+        self,
+        tenant_id: TenantId,
+        posting_url: PostingUrl,
+    ) -> JobId:
+        identity = self._identity_resolver.resolve_by_posting_url(
+            tenant_id,
+            posting_url,
+        )
+        if identity is None:
+            raise KeyError(
+                "No stable Job identity for posting snapshot: "
+                f"{posting_url.value}"
+            )
+        return identity.job_id
+
+    def _load_resolved(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> PostingSnapshotSet | None:
         row = self._conn.execute(
             """
             SELECT snapshot_set_json
             FROM posting_snapshot_sets
-            WHERE tenant_id = ? AND job_url = ?
+            WHERE tenant_id = ? AND job_id = ?
             LIMIT 1
             """,
             (str(tenant_id), str(job_id)),
@@ -248,15 +397,42 @@ class SqlitePostingSnapshotSetRepository:
         return _snapshot_set_from_dict(data)
 
     def save(self, snapshot_set: PostingSnapshotSet) -> None:
+        resolved_job_id = self._resolve_job_id(
+            snapshot_set.tenant_id,
+            snapshot_set.job_id,
+        )
+        if resolved_job_id is None:
+            raise KeyError(
+                "No stable Job identity for posting snapshot: "
+                f"{snapshot_set.job_id}"
+            )
+        self._save_resolved(
+            replace(snapshot_set, job_id=resolved_job_id),
+        )
+
+    def save_by_posting_url(
+        self,
+        snapshot_set: PostingSnapshotSet,
+        posting_url: PostingUrl,
+    ) -> None:
+        stable_job_id = self.job_id_for_posting_url(
+            snapshot_set.tenant_id,
+            posting_url,
+        )
+        self._save_resolved(
+            replace(snapshot_set, job_id=stable_job_id),
+        )
+
+    def _save_resolved(self, snapshot_set: PostingSnapshotSet) -> None:
         latest = snapshot_set.latest_snapshot
         self._conn.execute(
             """
             INSERT INTO posting_snapshot_sets (
-                tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+                tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
                 latest_active_state, latest_confidence, latest_quarantine_reason,
                 updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+            ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 snapshot_set_json = excluded.snapshot_set_json,
                 latest_snapshot_version = excluded.latest_snapshot_version,
                 latest_active_state = excluded.latest_active_state,
@@ -285,7 +461,7 @@ class SqlitePostingSnapshotSetRepository:
     ) -> list[DedupeIndexEntry]:
         rows = self._conn.execute(
             """
-            SELECT job_url, snapshot_set_json
+            SELECT job_id, snapshot_set_json
             FROM posting_snapshot_sets
             WHERE tenant_id = ?
             ORDER BY updated_at DESC
@@ -294,8 +470,8 @@ class SqlitePostingSnapshotSetRepository:
         ).fetchall()
         entries: list[DedupeIndexEntry] = []
         for row in rows:
-            job_url = row["job_url"] if isinstance(row, sqlite3.Row) else row[0]
-            if exclude_job_id is not None and str(job_url) == str(exclude_job_id):
+            job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[0]
+            if exclude_job_id is not None and str(job_id) == str(exclude_job_id):
                 continue
             raw_json = row["snapshot_set_json"] if isinstance(row, sqlite3.Row) else row[1]
             data = json.loads(raw_json) if raw_json else {}
@@ -311,6 +487,33 @@ class SqlitePostingSnapshotSetRepository:
                 )
             )
         return entries
+
+    def _resolve_job_id(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> JobId | None:
+        raw_reference = str(job_id or "").strip()
+        if not raw_reference:
+            raise ValueError("job_id must be non-empty")
+        try:
+            stable_job_id = canonical_job_id(raw_reference)
+        except ValueError:
+            stable_job_id = None
+        identity = (
+            self._identity_resolver.resolve_by_job_id(
+                tenant_id,
+                stable_job_id,
+            )
+            if stable_job_id is not None
+            else None
+        )
+        if identity is None:
+            identity = self._identity_resolver.resolve_by_posting_url(
+                tenant_id,
+                PostingUrl(raw_reference),
+            )
+        return identity.job_id if identity is not None else None
 
 
 def _snapshot_set_from_dict(data: dict[str, Any]) -> PostingSnapshotSet:

@@ -172,7 +172,14 @@ def test_activity_reconstructs_exact_result_after_import_commit(tmp_path: Path) 
             "SELECT COUNT(*) FROM job_events"
         ).fetchone()[0]
         snapshot_version_before_replay = conn.execute(
-            "SELECT latest_snapshot_version FROM posting_snapshot_sets WHERE job_url = ?",
+            """
+            SELECT pss.latest_snapshot_version
+            FROM posting_snapshot_sets pss
+            JOIN jobs j
+              ON j.tenant_id = pss.tenant_id
+             AND j.job_id = pss.job_id
+            WHERE j.url = ?
+            """,
             (_CAPTURE_URL,),
         ).fetchone()[0]
         replay = execute_manual_capture_import(payload, conn=conn)
@@ -180,7 +187,14 @@ def test_activity_reconstructs_exact_result_after_import_commit(tmp_path: Path) 
             "SELECT COUNT(*) FROM job_events"
         ).fetchone()[0]
         snapshot_version_after_replay = conn.execute(
-            "SELECT latest_snapshot_version FROM posting_snapshot_sets WHERE job_url = ?",
+            """
+            SELECT pss.latest_snapshot_version
+            FROM posting_snapshot_sets pss
+            JOIN jobs j
+              ON j.tenant_id = pss.tenant_id
+             AND j.job_id = pss.job_id
+            WHERE j.url = ?
+            """,
             (_CAPTURE_URL,),
         ).fetchone()[0]
         row = conn.execute(

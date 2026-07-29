@@ -60,17 +60,21 @@ def _seed_enriched_job(conn: sqlite3.Connection, url: str) -> None:
 
 
 def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> None:
+    job_id = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = ? AND url = ?",
+        (str(LOCAL_TENANT), url),
+    ).fetchone()[0]
     conn.execute(
         """
         INSERT INTO posting_snapshot_sets (
-            tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+            tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
             latest_active_state, updated_at
         ) VALUES (?, ?, '{}', 0, ?, ?)
-        ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+        ON CONFLICT(tenant_id, job_id) DO UPDATE SET
             latest_active_state = excluded.latest_active_state,
             updated_at = excluded.updated_at
         """,
-        (str(LOCAL_TENANT), url, state, utc_now()),
+        (str(LOCAL_TENANT), job_id, state, utc_now()),
     )
     conn.commit()
 

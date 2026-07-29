@@ -77,7 +77,15 @@ def _blocked_metric(conn: sqlite3.Connection, url: str) -> sqlite3.Row | None:
 
 def _enrichment_status(conn: sqlite3.Connection, url: str) -> str | None:
     row = conn.execute(
-        "SELECT current_status FROM job_enrichments WHERE job_url = ?", (url,)
+        """
+        SELECT je.current_status
+        FROM job_enrichments je
+        JOIN jobs j
+          ON j.tenant_id = je.tenant_id
+         AND j.job_id = je.job_id
+        WHERE j.url = ?
+        """,
+        (url,),
     ).fetchone()
     return None if row is None else row[0]
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import uuid
 from io import StringIO
 from pathlib import Path
 from typing import Any, Iterator
@@ -497,8 +498,12 @@ def test_canonical_ats_scheduler_routes_postings_through_discovery_use_case(
     }
     enrichments = conn.execute(
         """
-        SELECT job_url, current_status, full_description, extraction_tier
-        FROM job_enrichments
+        SELECT j.url AS job_url, je.current_status, je.full_description,
+               je.extraction_tier
+        FROM job_enrichments je
+        JOIN jobs j
+          ON j.tenant_id = je.tenant_id
+         AND j.job_id = je.job_id
         """
     ).fetchall()
     assert {row["job_url"] for row in enrichments} == expected_urls
@@ -951,11 +956,14 @@ def test_discovery_hygiene_treats_serialized_null_descriptions_as_missing(
     conn.execute(
         """
         INSERT INTO job_enrichments (
-            job_url, tenant_id, current_status, full_description, updated_at
+            job_id, tenant_id, current_status, full_description, updated_at
         ) VALUES (?, ?, ?, ?, ?)
         """,
         (
-            "https://www.linkedin.com/jobs/view/enrichment-sentinel-with-fallback",
+            _stable_job_id(
+                conn,
+                "https://www.linkedin.com/jobs/view/enrichment-sentinel-with-fallback",
+            ),
             "local",
             "success",
             "<NA>",
@@ -993,6 +1001,132 @@ def test_discovery_hygiene_treats_serialized_null_descriptions_as_missing(
     assert "missing_description" in deleted[
         "https://www.linkedin.com/jobs/view/nan-description"
     ]
+
+
+def test_discovery_hygiene_does_not_join_jobs_across_tenants(
+    conn: sqlite3.Connection,
+) -> None:
+    shared_job_id = str(uuid.uuid4())
+    local_url = "https://example.com/jobs/local-engineering-manager"
+    foreign_url = "https://example.com/jobs/foreign-sales-manager"
+    conn.executemany(
+        """
+        INSERT INTO jobs (
+            url, tenant_id, job_id, title, description, location,
+            site, strategy, discovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'linkedin', 'jobspy', ?)
+        """,
+        (
+            (
+                local_url,
+                "local",
+                shared_job_id,
+                "Engineering Manager",
+                "Lead engineering teams in Barcelona.",
+                "Barcelona, Spain",
+                "2026-07-29T10:00:00+00:00",
+            ),
+            (
+                foreign_url,
+                "other-tenant",
+                shared_job_id,
+                "Sales Manager",
+                "Lead enterprise sales in the United States.",
+                "United States",
+                "2026-07-29T10:00:00+00:00",
+            ),
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_source_observations (
+            tenant_id, source_observation_id, job_id, source_id,
+            source_native_id, observed_url, normalized_observed_url,
+            run_id, observed_at
+        ) VALUES (
+            'local', 'tenant-isolation-observation', ?,
+            'jobspy:linkedin', 'local-job', ?, ?,
+            'tenant-isolation', '2026-07-29T10:00:00+00:00'
+        )
+        """,
+        (shared_job_id, local_url, local_url),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_enrichments (
+            tenant_id, job_id, current_status, full_description, updated_at
+        ) VALUES (
+            'local', ?, 'enriched',
+            'Lead engineering teams in Barcelona.',
+            '2026-07-29T10:01:00+00:00'
+        )
+        """,
+        (shared_job_id,),
+    )
+    conn.commit()
+
+    result = retire_invalid_source_jobs(
+        conn,
+        search_cfg={
+            "queries": [{"query": "Engineering Manager", "tier": 1}],
+            "locations": [{"location": "Spain"}],
+            "location_accept": ["Spain", "Barcelona, Spain"],
+            "location_reject_non_remote": [
+                "United States",
+                "USA",
+                "US only",
+            ],
+        },
+        run_id="hygiene:tenant-isolation",
+    )
+
+    assert result["retired_jobs"] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM jobctrl_deleted_jobs"
+    ).fetchone()[0] == 0
+
+
+def test_acceptance_report_scoring_handoff_is_tenant_scoped(
+    conn: sqlite3.Connection,
+) -> None:
+    shared_job_id = str(uuid.uuid4())
+    conn.executemany(
+        """
+        INSERT INTO jobs (
+            url, tenant_id, job_id, title, discovered_at
+        ) VALUES (?, ?, ?, 'Engineering Manager', ?)
+        """,
+        (
+            (
+                "https://example.com/jobs/local-handoff",
+                "local",
+                shared_job_id,
+                "2026-07-29T10:00:00+00:00",
+            ),
+            (
+                "https://example.com/jobs/foreign-handoff",
+                "other-tenant",
+                shared_job_id,
+                "2026-07-29T10:00:00+00:00",
+            ),
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_enrichments (
+            tenant_id, job_id, current_status, full_description, updated_at
+        ) VALUES (
+            'local', ?, 'enriched', 'Canonical description',
+            '2026-07-29T10:01:00+00:00'
+        )
+        """,
+        (shared_job_id,),
+    )
+    conn.commit()
+
+    report = build_discovery_acceptance_report(conn)
+
+    assert report.scoring_handoff_count == 1
 
 
 def test_discovery_hygiene_applies_to_workday_and_smart_extract_rows(
@@ -1423,18 +1557,24 @@ def test_manual_capture_import_runs_discovery_enrichment_and_snapshot_pipeline(
     ).fetchone()["strategy"] == "manual"
     enrichment_row = conn.execute(
         """
-        SELECT current_status, extraction_tier
-        FROM job_enrichments
-        WHERE job_url = ?
+        SELECT je.current_status, je.extraction_tier
+        FROM job_enrichments je
+        JOIN jobs j
+          ON j.tenant_id = je.tenant_id
+         AND j.job_id = je.job_id
+        WHERE j.url = ?
         """,
         (outcome.job_id,),
     ).fetchone()
     assert tuple(enrichment_row) == ("enriched", "json_ld")
     snapshot_row = conn.execute(
         """
-        SELECT latest_snapshot_version, latest_active_state
-        FROM posting_snapshot_sets
-        WHERE job_url = ?
+        SELECT pss.latest_snapshot_version, pss.latest_active_state
+        FROM posting_snapshot_sets pss
+        JOIN jobs j
+          ON j.tenant_id = pss.tenant_id
+         AND j.job_id = pss.job_id
+        WHERE j.url = ?
         """,
         (outcome.job_id,),
     ).fetchone()
@@ -1569,7 +1709,14 @@ def test_manual_capture_import_cli_routes_api_bridge_through_worker_pipeline(
         )
         assert (
             verify_conn.execute(
-                "SELECT current_status FROM job_enrichments WHERE job_url = ?",
+                """
+                SELECT je.current_status
+                FROM job_enrichments je
+                JOIN jobs j
+                  ON j.tenant_id = je.tenant_id
+                 AND j.job_id = je.job_id
+                WHERE j.url = ?
+                """,
                 ("https://login.protected.example/jobs/vp-engineering",),
             ).fetchone()["current_status"]
             == "enriched"

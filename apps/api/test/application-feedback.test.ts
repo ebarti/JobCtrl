@@ -207,6 +207,59 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("excludes closed jobs through stable snapshot JobId references", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      ALTER TABLE jobs ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local';
+      ALTER TABLE jobs ADD COLUMN job_id TEXT;
+      UPDATE jobs SET job_id = 'stable:' || url;
+      CREATE UNIQUE INDEX idx_jobs_tenant_job_id_fixture
+        ON jobs(tenant_id, job_id);
+      CREATE TABLE posting_snapshot_sets (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        snapshot_set_json TEXT NOT NULL,
+        latest_snapshot_version INTEGER NOT NULL DEFAULT 0,
+        latest_active_state TEXT NOT NULL DEFAULT 'unknown',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, job_id),
+        FOREIGN KEY (tenant_id, job_id)
+          REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+      );
+    `);
+    db.prepare(
+      `INSERT INTO posting_snapshot_sets (
+        tenant_id, job_id, snapshot_set_json, latest_snapshot_version,
+        latest_active_state, updated_at
+      ) VALUES ('local', ?, ?, 0, 'removed', ?)`,
+    ).run(
+      `stable:${READY_JOB}`,
+      JSON.stringify({
+        tenant_id: "local",
+        job_id: `stable:${READY_JOB}`,
+        snapshots: [],
+        failures: [],
+        duplicate_candidates: [],
+        latest_active_state: "removed",
+      }),
+      NOW,
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/apply/review-queue",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(
+      response.json().items.map((item: { jobKey: string }) => item.jobKey),
+    ).toEqual([DRY_RUN_JOB]);
+
+    await app.close();
+  });
+
   it("keeps jobs in review queue while existing materials are being refreshed", async () => {
     const db = new Database(options.dbPath);
     db.prepare(

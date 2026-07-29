@@ -855,19 +855,23 @@ def _reset_enrichment_aggregate(conn, job_url: str) -> None:
     The repository is loaded inline so we don't hit a circular import
     (the enrichment package imports ``state``).
     """
-    from jobctrl.domain.identifiers import JobId
+    from jobctrl.domain.discovery.value_objects import PostingUrl
     from jobctrl.domain.tenant import LOCAL_TENANT
     from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
 
     repo = SqliteEnrichmentRepository(conn)
-    aggregate = repo.load(LOCAL_TENANT, JobId(job_url))
+    posting_url = PostingUrl(value=job_url)
+    aggregate = repo.load_by_posting_url(LOCAL_TENANT, posting_url)
     if aggregate is None:
         # Nothing to reset — the next pipeline run will create the row
         # in the empty state when start_attempt fires.
         return
     if aggregate.is_pending and aggregate.full_description is None:
         return
-    repo.save(aggregate.reset(reset_at=utc_now()))
+    repo.save_by_posting_url(
+        aggregate.reset(reset_at=utc_now()),
+        posting_url,
+    )
 
 
 def _resettable_material_generation(conn, job_url: str, stage: str) -> int | None:

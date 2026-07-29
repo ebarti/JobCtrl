@@ -228,9 +228,12 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
 
         enrichment = conn.execute(
             """
-            SELECT current_status, full_description, attempts_json
-            FROM job_enrichments
-            WHERE job_url = ?
+            SELECT je.current_status, je.full_description, je.attempts_json
+            FROM job_enrichments je
+            JOIN jobs j
+              ON j.tenant_id = je.tenant_id
+             AND j.job_id = je.job_id
+            WHERE j.url = ?
             """,
             (job_url,),
         ).fetchone()
@@ -311,9 +314,18 @@ def test_inactive_cascade_snapshot_persists_closed_state(tmp_path: Path) -> None
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
+        job_url = "https://example.com/jobs/closed"
+        conn.execute(
+            """
+            INSERT INTO jobs (url, title, site, discovered_at)
+            VALUES (?, 'Closed engineering role', 'jobspy', ?)
+            """,
+            (job_url, "2026-05-29T11:00:00+00:00"),
+        )
+        conn.commit()
         _record_posting_snapshot_from_cascade(
             conn,
-            url="https://example.com/jobs/closed",
+            url=job_url,
             source_id="jobspy",
             title="Closed engineering role",
             cascade_result={
@@ -330,10 +342,13 @@ def test_inactive_cascade_snapshot_persists_closed_state(tmp_path: Path) -> None
         snapshot_set = conn.execute(
             """
             SELECT latest_active_state
-            FROM posting_snapshot_sets
-            WHERE tenant_id = 'local' AND job_url = ?
+            FROM posting_snapshot_sets pss
+            JOIN jobs j
+              ON j.tenant_id = pss.tenant_id
+             AND j.job_id = pss.job_id
+            WHERE pss.tenant_id = 'local' AND j.url = ?
             """,
-            ("https://example.com/jobs/closed",),
+            (job_url,),
         ).fetchone()
         event = conn.execute(
             """

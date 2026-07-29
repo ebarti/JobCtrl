@@ -11,7 +11,13 @@ import type {
   RepeatApplicationOverrideResponse,
   RepeatApplicationRelationship,
 } from "./contracts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase } from "./db.js";
+import {
+  allRows,
+  getRow,
+  hasCompositeJobIdForeignKey,
+  tableExists,
+  type SqliteDatabase,
+} from "./db.js";
 import { InputError } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
@@ -295,7 +301,8 @@ function jobIdentity(db: SqliteDatabase, jobKey: string): JobIdentityRow | null 
   const enrichmentExpression = tableExists(db, "job_enrichments")
     ? `(SELECT je.application_url
           FROM job_enrichments je
-         WHERE je.job_url = j.url AND je.tenant_id = ?
+         WHERE je.${hasCompositeJobIdForeignKey(db, "job_enrichments") ? "job_id = j.job_id" : "job_url = j.url"}
+           AND je.tenant_id = ?
          ORDER BY je.updated_at DESC LIMIT 1),`
     : "";
   const params = [
