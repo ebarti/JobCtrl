@@ -85,6 +85,10 @@ and explain any intentional stacked deferral in the PR body.
 - Do not resolve material ambiguity by assumption. Ask for clarification when the goal, scope, constraints, or expected validation are unclear.
 - If a reasonable assumption is low-risk and needed to make progress, state it explicitly before acting.
 - Treat payloads, local generated artifacts, and job/application data as sensitive. Do not expose secrets, profile data, API keys, resumes, cover letters, generated PDFs, browser profiles, SQLite databases, or application logs unless the user explicitly requests them.
+- Treat owner-only launch/growth strategy, campaign sequencing, targeting,
+  unpublished messaging, and private traffic or conversion analysis as private.
+  Never commit those materials to this public repository; commit only
+  owner-approved public copy/assets and factual product documentation.
 - Prefer repo-grounded answers and edits over generic advice. Check the referenced docs and current code before making architectural claims.
 - **Subagent spawning:** Use subagents only for genuinely independent work or
   for the review/QA gates required by the validation tiers below. Do not add

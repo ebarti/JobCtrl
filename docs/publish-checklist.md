@@ -414,7 +414,7 @@ runtime payload from the Cellar during `brew install`.
 ### 9.6 — Published-artifact acceptance and user-doc cutover (owner-only)
 
 The owning contract is
-[`docs/plans/2026-07-10-bundled-jobctrl-distribution-plan.md`](plans/2026-07-10-bundled-jobctrl-distribution-plan.md)
+[`docs/plans/implemented/2026-07-10-bundled-jobctrl-distribution-plan.md`](plans/implemented/2026-07-10-bundled-jobctrl-distribution-plan.md)
 Phase 7 and its Definition of Done.
 
 - **Preconditions.** Steps 9.4 and 9.5 publish the signed release, immutable
@@ -486,7 +486,7 @@ Phase 7 and its Definition of Done.
 ### 9.7 — Public live-demo deployment verification (owner-only)
 
 The owning implementation and privacy contract is
-[`docs/plans/2026-07-11-public-live-demo-plan.md`](plans/2026-07-11-public-live-demo-plan.md).
+[`docs/plans/implemented/2026-07-11-public-live-demo-plan.md`](plans/implemented/2026-07-11-public-live-demo-plan.md).
 The demo is already public; this is release-time deployment and privacy
 verification, not a visibility cutover.
 

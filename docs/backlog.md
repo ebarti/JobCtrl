@@ -29,12 +29,23 @@ work below: realtime cache patching beyond apply-run timeline events, cleanup
 of legacy `jobs.*` storage fallbacks, table/artifact/profile UX improvements,
 browser QA gaps, frontend a11y deferrals, and tooling / CI enforcement gaps.
 Hosted product, hosted data, hosted automation, and cloud-mode frontend adapters
-remain deferred until the local product is solid. Native distribution is now
-an active release lane: the P0–P6 implementation stack exists, while signed
-publication and P7 clean-machine product QA remain open.
+remain deferred until the local product is solid. Native distribution is
+implemented and the signed/notarized `v2.0.7` GitHub, R2, and Homebrew release
+is live. The missing PyPI channel and P7 clean-machine product QA remain
+operational release follow-ups rather than unfinished implementation.
 
 ## Release Hardening Follow-Ups
 
+- Complete the implemented bundled-distribution plan's remaining release
+  operations: recover the missing `v2.0.7` PyPI channel unless a separately
+  approved later release supersedes it, then run the published-artifact,
+  lifecycle, clean-machine, and real-path TTFV acceptance matrix recorded in
+  `docs/publish-checklist.md`.
+- Treat analytics-optional public-demo access and post-accept
+  withdrawal/current-visitor erasure as separately scoped privacy work. Keep
+  the shipped consent-required behavior unchanged unless an explicit
+  owner/privacy decision authorizes a Tier 3 implementation and production
+  verification.
 - Design local/custom LLM support as a complete provider contract after the
   public release. It must define guided endpoint/auth setup, structured-output
   capability checks, connection verification, model discovery, telemetry and
@@ -298,17 +309,19 @@ These items are intentionally deferred until local validation is solid.
 
 ### Packaging And Distribution
 
-- Provision the Developer ID, notarization, Ed25519, release-origin, immutable
-  Release, and protected tap/PyPI publication authorities without exposing
-  credentials to build jobs.
-- Execute the signed Apple-silicon release workflow and read back immutable
-  assets, the authenticated channel pointer, and the stable Homebrew formula.
+Delivered by
+[`docs/plans/implemented/2026-07-10-bundled-jobctrl-distribution-plan.md`](plans/implemented/2026-07-10-bundled-jobctrl-distribution-plan.md):
+the signed Apple-silicon release, immutable GitHub/R2 assets, authenticated
+stable pointer, and Homebrew formula are live.
+
+- Recover the missing `v2.0.7` PyPI package through the isolated path in
+  `docs/publish-checklist.md`, or record an explicit superseding-release
+  decision before changing that recovery contract.
 - Run the P7 clean-machine curl/Homebrew, no-toolchain/no-system-Chrome,
   upgrade, provider-auth, capability, update/rollback, uninstall, and real-path
   TTFV matrix against published bytes.
 - Promote the installation claim only after both acquisition paths report the
-  same build and manifest identity; keep the active plan outside
-  `docs/plans/implemented/` until then.
+  same build and manifest identity.
 
 ## Frontend Cloud-Mode Adapters
 
