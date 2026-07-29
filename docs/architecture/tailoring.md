@@ -486,8 +486,17 @@ A hard finding with retry budget remaining records its per-candidate
 the later system or user message. When every candidate trips the gate, the
 resume is NOT approved and the prior accepted generation is preserved. The
 cover-letter body runs the same never-fabricate and prose skill/tool gates
-before acceptance; a fabricated letter is rejected while the aggregate stays
-`resume_approved`, with the failure kept as `fabrication_audit` history.
+before acceptance. A failed first attempt remains a rejected artifact while the
+aggregate stays `resume_approved`. A failed refresh is written to a distinct
+rejected audit path and appended to `cover_letter_attempts`; the approved cover
+letter bytes, artifact slot, lifecycle state, and projection remain authoritative
+until a replacement passes validation and its versioned path is durably saved.
+Successful refresh candidates also use new immutable paths, so a repository
+failure cannot mutate the bytes referenced by the prior approved artifact. When
+new cover-letter text is approved, any prior cover-letter PDF is persisted as
+`superseded` and the aggregate returns to `cover_letter_ready`; a failed PDF
+render therefore remains pending instead of projecting stale PDF bytes as
+approved.
 
 ## Persistence And Audit Data
 

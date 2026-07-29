@@ -302,9 +302,17 @@ class MaterialsSet:
             if validation.passed
             else self.status
         )
+        cover_letter_pdf = self.cover_letter_pdf
+        if (
+            validation.passed
+            and cover_letter_pdf is not None
+            and cover_letter_pdf.status is ArtifactStatus.APPROVED
+        ):
+            cover_letter_pdf = cover_letter_pdf.supersede(at=updated_at)
         return replace(
             self,
             cover_letter=approved_artifact,
+            cover_letter_pdf=cover_letter_pdf,
             last_validation=validation,
             status=next_status,
             updated_at=updated_at,

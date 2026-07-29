@@ -44,6 +44,7 @@ from jobctrl.domain.materials.use_cases import (
     TailorResumeUseCase,
     _bullet_limit_overflow_metadata,
     _claim_mappings_from_payload,
+    _safe_filename_prefix,
 )
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
@@ -281,6 +282,17 @@ class _FakeRepository:
         suppressed = materials.suppress_active_artifacts(at=suppressed_at, reason=reason)
         self.save(suppressed)
         return suppressed
+
+
+class _FailingSaveRepository(_FakeRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_saves = False
+
+    def save(self, materials: MaterialsSet) -> None:
+        if self.fail_saves:
+            raise RuntimeError("forced repository failure")
+        super().save(materials)
 
 
 class _TemplateRepository(_FakeRepository):
@@ -2253,6 +2265,174 @@ def _seed_approved_cover_materials(repo: _FakeRepository, job: dict, tmp_path: P
 def _cover_letter_text(body: str, *, name: str = "Jane") -> str:
     """A structurally valid cover letter whose single body paragraph is ``body``."""
     return f"Dear Hiring Manager,\n\n{body}\n\n{name}\n{COVER_LETTER_COMPLETION_MARKER}"
+
+
+def _seed_existing_approved_cover_letter(
+    repo: _FakeRepository,
+    job: dict,
+    tmp_path: Path,
+) -> tuple[MaterialsSet, Path, str]:
+    _seed_approved_cover_materials(repo, job, tmp_path)
+    approved_path = tmp_path / f"{_safe_filename_prefix(job)}_CL.txt"
+    approved_text = "Dear Hiring Manager,\n\nApproved, grounded letter.\n\nJane"
+    approved_path.write_text(approved_text, encoding="utf-8")
+    approved = repo.saved[-1].with_cover_letter(
+        Artifact.create(
+            type=ArtifactType.COVER_LETTER,
+            path=str(approved_path),
+            created_at="2024-01-03T00:00:00+00:00",
+            render_format=RenderFormat.TEXT,
+            size_bytes=approved_path.stat().st_size,
+        ),
+        validation=ValidationResult.success(),
+        updated_at="2024-01-03T00:00:00+00:00",
+    )
+    repo.save(approved)
+    assert approved.cover_letter is not None
+    return approved, approved_path, approved_text
+
+
+def test_cover_letter_failed_refresh_preserves_last_approved_artifact(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    approved, approved_path, approved_text = _seed_existing_approved_cover_letter(
+        repo,
+        job,
+        tmp_path,
+    )
+
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=_ScriptedLlm([
+            _cover_letter_text("I increased revenue 300% at my last company."),
+        ]),
+        validator=ContentValidator(),
+        max_retries=0,
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
+
+    assert outcome.status == "failed_validation"
+    assert outcome.text_path is not None
+    rejected_path = Path(outcome.text_path)
+    assert rejected_path != approved_path
+    assert rejected_path.is_file()
+    assert "300%" in rejected_path.read_text(encoding="utf-8")
+    assert approved_path.read_text(encoding="utf-8") == approved_text
+
+    current = repo.load_current_approved(LOCAL_TENANT, JobId(job["url"]))
+    assert current is not None
+    assert current.status == MaterialsLifecycle.COVER_LETTER_READY
+    assert current.cover_letter == approved.cover_letter
+    assert current.last_validation == approved.last_validation
+    history = current.metadata["cover_letter_attempts"]
+    assert history[-1]["artifact"]["status"] == ArtifactStatus.REJECTED.value
+    assert history[-1]["artifact"]["path"] == str(rejected_path)
+    assert history[-1]["validation"]["passed"] is False
+
+
+def test_cover_letter_refresh_persistence_failure_preserves_approved_bytes(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FailingSaveRepository()
+    approved, approved_path, approved_text = _seed_existing_approved_cover_letter(
+        repo,
+        job,
+        tmp_path,
+    )
+    repo.fail_saves = True
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=_ScriptedLlm([
+            _cover_letter_text("I built distributed systems that map to this role."),
+        ]),
+        validator=ContentValidator(),
+        max_retries=0,
+    )
+
+    with pytest.raises(RuntimeError, match="forced repository failure"):
+        use_case.execute(
+            job=job,
+            profile_snapshot=snapshot,
+            cover_letter_dir=tmp_path,
+        )
+
+    assert approved_path.read_text(encoding="utf-8") == approved_text
+    current = repo.load_current_approved(LOCAL_TENANT, JobId(job["url"]))
+    assert current is approved
+    assert current.cover_letter == approved.cover_letter
+
+
+def test_cover_letter_refresh_drops_stale_pdf_before_renderer_failure(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    class FailingCoverRenderer:
+        def __init__(self) -> None:
+            self.cover_calls = 0
+
+        def render_resume_to_pdf(self, **_kwargs):
+            raise AssertionError("resume rendering was not requested")
+
+        def render_cover_letter_to_pdf(self, **_kwargs):
+            self.cover_calls += 1
+            raise RuntimeError("cover PDF render failed")
+
+    repo = _FakeRepository()
+    approved, _approved_path, _approved_text = _seed_existing_approved_cover_letter(
+        repo,
+        job,
+        tmp_path,
+    )
+    old_pdf_path = tmp_path / "approved-cover.pdf"
+    old_pdf_path.write_bytes(b"%PDF-old")
+    complete = approved.with_cover_letter_pdf(
+        Artifact.create(
+            type=ArtifactType.COVER_LETTER_PDF,
+            path=str(old_pdf_path),
+            created_at="2024-01-03T01:00:00+00:00",
+            render_format=RenderFormat.HTML_PDF,
+            size_bytes=old_pdf_path.stat().st_size,
+        ),
+        updated_at="2024-01-03T01:00:00+00:00",
+    )
+    repo.save(complete)
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=_ScriptedLlm([
+            _cover_letter_text("I built distributed systems that map to this role."),
+        ]),
+        validator=ContentValidator(),
+        max_retries=0,
+    )
+
+    refreshed = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        cover_letter_dir=tmp_path,
+    )
+
+    assert refreshed.status == "ok"
+    assert refreshed.materials is not None
+    assert refreshed.materials.status == MaterialsLifecycle.COVER_LETTER_READY
+    assert refreshed.materials.cover_letter_pdf is not None
+    assert refreshed.materials.cover_letter_pdf.status is ArtifactStatus.SUPERSEDED
+    renderer = FailingCoverRenderer()
+    render_outcome = RenderPdfUseCase(
+        repository=repo,
+        resume_renderer=renderer,
+        cover_letter_renderer=renderer,
+    ).execute(job_id=JobId(job["url"]))
+    assert render_outcome.status == "noop"
+    assert renderer.cover_calls == 1
+    current = repo.load_current_approved(LOCAL_TENANT, JobId(job["url"]))
+    assert current is not None
+    assert current.cover_letter_pdf is not None
+    assert current.cover_letter_pdf.status is ArtifactStatus.SUPERSEDED
 
 
 def test_cover_letter_use_case_rejects_fabricated_skill(
