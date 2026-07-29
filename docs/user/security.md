@@ -267,8 +267,9 @@ permission prompts and stops on SSO/OAuth or unsupported CAPTCHA. Supported
 CAPTCHA solving uses only the owned local tool; provider keys/tokens never enter
 the model prompt. Setting `CAPSOLVER_API_KEY` is explicit authority to send the
 supported widget's site key and page URL during apply work you start or a
-standing loop you enable. Without that authority, or for unsupported/failed
-challenges, the apply path stops.
+standing loop you enable. The local solver permits one outbound provider attempt
+per apply run; a failed attempt is not retried. Without that authority, or for
+unsupported/failed challenges, the apply path stops.
 
 ### Crawl Politeness
 

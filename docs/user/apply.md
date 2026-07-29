@@ -186,6 +186,13 @@ provider transition requires another origin.
 Origin confinement limits rehearsal navigation; it does not authorize final
 browser submission. The final browser action remains manual as described above.
 
+CAPTCHA handling during a rehearsal is also bounded. With CapSolver explicitly
+configured, JobCtrl may send a supported visible hCaptcha, reCAPTCHA, or
+Turnstile widget's site key and page URL through the owned solver at most once.
+The provider key and returned token stay outside the model prompt. An
+unsupported challenge, missing configuration, or failed solve stops the apply
+path; solving a challenge never grants form-entry or final-submit authority.
+
 A source profile path is cleared after the copy request and is never returned,
 logged, or persisted. Profile copying retains its separate affirmative consent;
 selecting or enabling a browser does not grant that consent. Rotating the
