@@ -151,7 +151,7 @@ evidence, qualifications, and the complete capability matrix.
 | **Primary surface** | Web app + local API/worker; supporting CLI | Files + AI coding CLIs; terminal dashboard | Claude Code commands/skills + local utilities |
 | **Graphical UI** | **Supported product surface** | **Partial:** optional Next.js alpha | **Partial:** generated offline HTML dashboard |
 | **Tailored documents** | Resume, cover letter, HTML, and PDF | CV/HTML/PDF and cover letter | LaTeX CV, cover letter, and PDF |
-| **Submission boundary** | Dry run + guarded browser/Gmail paths; approval on by default | Form autofill; the user clicks Submit | Reviewed documents; the user submits |
+| **Submission boundary** | Browser rehearsal + manual final submit; exact-approval Gmail sends | Form autofill; the user clicks Submit | Reviewed documents; the user submits |
 | **Interrupted work** | Temporal history, retries, stable workflow identities, and checkpointed broad-board discovery | File integrity + resumable batch flags; no workflow engine | No checkpointed apply resumption evidenced |
 | **Application-level cost control** | Daily estimated-spend ceiling | Spend tiers, batch pre-screen/cap, dry run, and resume controls | Token-efficiency instructions; no app-level budget evidenced |
 
@@ -221,22 +221,22 @@ evidence, qualifications, and the complete capability matrix.
   it drafts, previews, and records only, with no send transport of any kind.
 - Optionally run browser-based apply automation, starting with dry runs.
 
-Auto-apply is powerful and must be treated as an explicit submission tool. It
-is off by default (`autoApply: false`), so no standing apply loop runs unless
-you opt in. It also requires the separately disabled
-`auto-apply-browser` capability to be enabled with an explicit Chrome/Chromium
-executable choice. When `autoApply: true`, a worker maintains one continuous Apply
-workflow, visible in Runs as the standing apply loop. With the default
-approval gate still on (`applyApprovalRequired: true`), that loop only submits
-jobs already approved in Apply Review and parks the rest for review. If you
-turn the approval gate off under **Discovery → Runtime settings**, the form shows a
-persistent warning because the standing loop may submit eligible prepared
-jobs autonomously — still bounded by minimum fit score, the daily spend
-ceiling, at-most-once submit intent tracking, CAPTCHA fail-closed behavior,
-and the dry-run guard when a dry-run apply path is used. Use dry-run paths
-and narrow targets before allowing live submission. The dry-run browser grants
-only one exact navigation to the reviewed application URL; replays and
-path/query changes are blocked and recorded.
+Auto-apply is powerful and must be treated as an employer-facing tool. It is off
+by default (`autoApply: false`), so no standing apply loop runs unless you opt
+in. It also requires the separately disabled `auto-apply-browser` capability to
+be enabled with an explicit Chrome/Chromium executable choice. When
+`autoApply: true`, a worker maintains one continuous Apply workflow, visible in
+Runs as the standing apply loop. The model-driven browser is transport-locked:
+it may rehearse a form, but it cannot perform the final browser submit. Browser
+form runs stop with `trusted_final_submit_required` before a live browser or
+model starts, so you complete the reviewed form manually. The only automated
+live submission path is JobCtrl's owned Gmail sender, after a dry run records
+the exact recipient/attachment candidate and Apply Review approves that binding.
+Turning `applyApprovalRequired` off can remove the claim-time review gate, but
+it does not grant browser-submit authority or bypass the email sender's exact
+approval check. The dry-run browser grants only one exact navigation to the
+reviewed application URL; replays and path/query changes are blocked and
+recorded.
 The auto-apply toggle, approval requirement, and minimum fit threshold are all
 owned by **Discovery → Runtime settings**.
 
@@ -284,11 +284,9 @@ and has no submission path.
 JobCtrl is an applicant-side automation tool. Treat the paths that touch
 employers, accounts, provider APIs, and third-party sites as live operations:
 
-- Live apply automation can submit real applications to real employers. Keep
-  `autoApply` off until you intentionally want a standing loop, keep
-  `applyApprovalRequired` on unless you intentionally want autonomous submit,
-  rehearse with dry runs, and target one job or site at a time until you
-  trust the behavior.
+- Browser apply automation can inspect and fill employer forms, but it cannot
+  perform the final browser submit. Rehearse with dry runs, target one job or
+  site at a time, then review and complete the form manually.
 - Email-based application sending is also a live employer submission. JobCtrl
   sends only through its owned Gmail connector after a dry-run records the
   recipient and attachment candidate and Apply Review approves that exact
@@ -511,12 +509,11 @@ fixtures are never a production upgrade path.
    accepted artifact before approval. The desktop queue stays beside a
    full-width, top-to-bottom review flow; narrow screens move the queue above it
    and wrap decision actions without dropping evidence.
-8. Run apply dry-runs before approving any real browser submission; the
-   default live path requires an `approve_submit` decision in Apply Review
-   before the backend claim can proceed. If you enable Auto apply, Runs shows
-   the standing loop; with approval still required it parks unapproved jobs
-   for review, and with approval disabled it may submit eligible jobs
-   autonomously.
+8. Run apply dry-runs before browser-form work. The model-driven browser cannot
+   perform the final submit; live browser claims stop for manual completion.
+   Apply Review approval can authorize the exact recipient and attachment for
+   JobCtrl's owned Gmail sender. If you enable Auto apply, Runs shows the
+   standing loop and its rehearsals, manual boundaries, or approved email sends.
 9. Track progress in Dashboard, Pipelines, Analytics, Jobs, Runs, Artifacts,
    Evidence, Apply Review, and Debug; open their route-level detail
    workspaces when you need the complete timeline, payload, provenance, or

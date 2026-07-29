@@ -32,7 +32,7 @@ boundary.
 | Outbound browsing | Public HTTP(S)-only destination validation across initial URLs, redirects, final pages, popups, and guarded subrequests. Private, loopback, link-local, metadata, and file destinations are blocked. |
 | Credentials and files | Secrets stay outside SQLite and `config.json`; status APIs are secret-free; saved passwords and reviewed artifacts can be used only by origin-bound local tools. |
 | Provider runtimes | JobCtrl-owned provider state, filtered subprocess environments, restricted tool surfaces, and prompt-driven filesystem boundaries isolate model execution from unrelated local data. |
-| Application submission | Confirmed-history repeat protection, evidence-bound one-attempt confirmation, bound human approval, browser-enforced dry-run, durable submit intent, at-most-once claiming, and `needs_verification` recovery after an ambiguous crash. |
+| Application submission | Model-driven browsers are transport-locked and require manual final submit. The owned Gmail sender requires exact recipient/attachment approval, records durable submit intent immediately before send, and retains at-most-once claiming and `needs_verification` recovery. |
 | Generated content | Structured outputs, literal evidence grounding, fabrication checks, provenance, judge review, and preservation of the last accepted artifact. |
 | Bundled runtime | Payload path confinement, isolated Python startup, manifest verification, and hash-locked provider packs with activation-time revalidation. |
 | Privacy and release | Metadata-only telemetry, synthetic-demo isolation, private local file modes for sensitive control files, and release scanning for secrets and private artifacts. |
@@ -165,11 +165,11 @@ an explicit approval for that run and its blocked channels.
 
 The Python launcher's atomic claim checks the binding. This is not a UI-only
 warning, so API/RPC dispatch cannot bypass it while enabled. Turning the setting
-off permits a claimed live run to submit without per-job approval; the UI keeps
-a persistent warning visible.
+off removes the claim-time approval wait, but does not grant final browser-submit
+authority or bypass a sink-specific approval check.
 
 Email-only applications use the same binding for the exact recipient and resume
-attachment. Missing scope, sender, or fresh approval fails closed.
+attachment. Missing scope, sender, or exact approval fails closed.
 
 ### Repeat Applications Fail Closed
 
@@ -226,12 +226,22 @@ separate explicit mutation selecting either the current detected ID or a
 write-only executable path. Detected IDs are revalidated at adoption time; a
 stale ID fails closed rather than silently selecting another installation.
 
-### Applications Submit At Most Once
+### Browser Final Submit Is Not Delegated
 
-An apply run cannot claim a job already running, succeeded, or awaiting
-verification. Immediately before a live submit it records a durable submit
-intent. If the process then dies without a terminal result, recovery parks the
-job in `needs_verification` instead of retrying.
+The page-reading model can inspect a transport-locked rehearsal, but it cannot
+perform the final browser submit. A live browser-form run stops with
+`trusted_final_submit_required` before prompt rendering, browser launch, or
+agent execution. The same fail-closed rule is enforced by the use case, saga,
+and agent adapter, so a direct internal call cannot recover generic browser
+submit authority.
+
+The remaining automated live sink is JobCtrl's owned Gmail sender. An apply run
+cannot claim a job already running, succeeded, or awaiting verification. The
+sender rechecks its capability and records durable submit intent immediately
+before sending the exact approved recipient/attachment candidate. If the
+process dies or the provider raises after that checkpoint without a confirmed
+terminal result, JobCtrl parks the job in `needs_verification` instead of
+retrying.
 
 ### Daily LLM Spend Ceiling
 
@@ -337,8 +347,9 @@ The agent reads untrusted pages that can attempt to manipulate it. The controls
 limit consequences; they cannot make untrusted page content safe.
 :::
 
-The practical containment layers are browser-enforced dry-run, bound approval,
-at-most-once submission, spend limits, local credential tools, and hard prompt
+The practical containment layers are a transport-locked browser, browser-enforced
+dry-run, manual final browser submit, exact approval for the owned email sender,
+at-most-once owned sends, spend limits, local credential tools, and hard prompt
 rules against fabricated answers, permissions, or sensitive payments. If a
 legal/screening attestation is missing, the agent stops instead of guessing.
 

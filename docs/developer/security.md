@@ -157,17 +157,20 @@ draft is usually lower severity than injection that bypasses these gates or
 ships false claims to an employer.
 
 **Apply automation.** Apply is the highest-risk path because it drives a real
-browser and can submit a real application. The current apply agent runs as a
-local Claude subprocess with `--no-session-persistence`, explicit
+browser over an employer form and the owned Gmail adapter can submit a real
+application. The current apply agent runs as a local Claude subprocess with
+`--no-session-persistence`, explicit
 `--allowedTools`, explicit `--disallowedTools`, a filtered environment, and an
 owned MCP config. The allowlist covers the safe Playwright apply subset,
 read-only Gmail verification-code lookup, and owned tools such as
 `type_credential`, `upload_artifact`, and optional `solve_captcha`; it does not
 expose shell/file tools, raw Gmail send tools, broad mailbox access, raw
-page-script evaluation, or broad permission bypass. Job-site passwords and
-CAPTCHA provider keys are not placed in the model prompt: owned local tools read
-them locally and fail closed. Gmail email applications are sent by JobCtrl's
-owned sender only after Apply Review approval, not by an agent mailbox tool.
+page-script evaluation, or broad permission bypass. Model-driven browser
+sessions are transport-locked and cannot perform final browser submission.
+Job-site passwords and CAPTCHA provider keys are not placed in the model prompt:
+owned local tools read them locally and fail closed. Gmail email applications
+are sent by JobCtrl's owned sender only after exact Apply Review approval, not
+by an agent mailbox tool.
 The detailed containment rules are below in
 [Apply-Path Containment](#apply-path-containment).
 
@@ -226,20 +229,30 @@ tenant isolation exist.
 
 ## Apply-Path Containment
 
-Apply is the riskiest surface: it drives a real browser and can submit a real
-application, and it delegates form interaction to an autonomous agent that reads
-untrusted page content. It is isolated in its own Temporal workflow with tighter
-retries and layered containment. The launcher (`apply/launcher.py`), the browser
-adapter (`apply/chrome.py`), and the agent adapter
+Apply is the riskiest surface: it drives a real browser over employer-controlled
+content, delegates form inspection to an autonomous agent, and retains an owned
+Gmail submission sink. It is isolated in its own Temporal workflow with tighter
+retries and layered containment. The use case
+(`domain/apply/use_cases.py`), saga (`domain/apply/process_manager.py`), launcher
+(`apply/launcher.py`), browser adapter (`apply/chrome.py`), and agent adapter
 (`infrastructure/apply/claude_code_cli.py`) enforce it; the full stage walkthrough
 is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
 
+- **No model-owned final browser commit.** Every model-driven browser session
+  is transport-locked. A live browser-form run returns
+  `trusted_final_submit_required` before prompt rendering or browser launch.
+  The saga rejects an unlocked live browser config before launching, and the
+  agent adapter rejects `dry_run=False` before writing files or spawning a
+  subprocess. This conservative manual boundary remains until a trusted
+  canonical final-form manifest and one-shot mediator exist below the model.
 - **Atomic approval claim.** The launcher opens a `BEGIN IMMEDIATE` stage-lock
   transaction and, while `approval_required` is on for a live (non-dry-run)
-  submission, refuses to proceed unless the latest recorded decision for the job
-  is `approve_submit`. Because the check runs inside the claim transaction, no API
-  or RPC path can submit without a committed approval. Dry-run claims bypass the
-  approval gate (they submit nothing).
+  claim, refuses to proceed unless the latest recorded decision for the job is
+  `approve_submit`. Because the check runs inside the claim transaction, no API
+  or RPC path can bypass it while enabled. Disabling the claim gate does not
+  grant browser-submit authority or bypass the owned email sink's exact
+  recipient/attachment check. Dry-run claims bypass the approval gate because
+  they submit nothing.
 - **Atomic repeat-application decision.** The same live claim transaction
   recomputes relationships from canonical job identity, accepted duplicate
   links, and confirmed application facts. Exact identities fail closed; a
@@ -250,14 +263,16 @@ is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
   skip or reuse it. Pending Gmail suggestions, notes, dry runs, pre-submit
   failures, and unverified assumptions are deliberately outside the confirmed
   fact query.
-- **At-most-once submission.** The launcher writes an `ApplySubmitIntended`
-  checkpoint immediately before the agent may submit, and the claim excludes jobs
-  already `running`, `succeeded`, or `needs_verification`. Combined with the
-  per-job workflow ID (`apply-{tenant}-{jobKey}` + `USE_EXISTING`) and a live
-  retry policy of exactly one attempt, a submit is never silently retried into a
-  double application. A crash after the checkpoint parks the run as
-  `needs_verification` for a human instead of blindly re-submitting; a run with no
-  submit intent can be safely rewound to `pending`.
+- **At-most-once owned submission.** The model never records browser submit
+  intent. For an exact-approved email candidate, the saga rechecks the active
+  capability and writes `ApplySubmitIntended` immediately before invoking the
+  owned Gmail sender. The claim excludes jobs already `running`, `succeeded`, or
+  `needs_verification`. Combined with the per-job workflow ID
+  (`apply-{tenant}-{jobKey}` + `USE_EXISTING`) and a live retry policy of exactly
+  one attempt, an owned send is never silently retried into a duplicate. A crash
+  or provider exception after the checkpoint parks the run as
+  `needs_verification`; a run with no submit intent can be safely rewound to
+  `pending`.
 - **Browser-layer dry-run guard.** In dry-run, `chrome.py` attaches a CDP session
   that enables the `Fetch` domain with one run-bound grant for an exact initial
   `GET` to the reviewed application URL. It consumes and records that grant,
@@ -280,8 +295,10 @@ is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
   runs before the apply activity, so a runaway or injected loop cannot spend past
   the daily ceiling.
 - **Prompt-injection surface.** The agent is a Claude apply-runtime subprocess
-  reading untrusted third-party page text live, so prompt injection is a genuine
-  exposure — the controls above bound the blast radius, they do not eliminate it.
+  reading untrusted third-party page text, so prompt injection is a genuine
+  exposure. Transport locking removes generic final-browser-submit authority;
+  the remaining controls bound other consequences but do not make page content
+  trusted.
   The subprocess runs with `--no-session-persistence`, an explicit
   `--allowedTools` surface, explicit `--disallowedTools`, and a filtered
   environment. The allowlist is limited to the safe Playwright apply subset,

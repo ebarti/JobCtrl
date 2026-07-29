@@ -1,8 +1,8 @@
-"""ApplySaga happy-path + compensation branches.
+"""ApplySaga lifecycle, compensation, and final-submit boundaries.
 
 The saga exercises the ``ApplyRun`` aggregate against an in-memory
-fake repository. P2 requires live runs to persist a submit-intent
-checkpoint immediately before the autonomous agent may submit.
+fake repository. Model-driven browser work is transport-locked; the
+owned email sender records submit intent immediately before its commit.
 """
 
 from typing import Any
@@ -80,9 +80,11 @@ class _FakeAgent:
     def __init__(self, *, behaviour: str = "applied"):
         self.behaviour = behaviour
         self.calls = 0
+        self.last_kwargs: dict[str, Any] = {}
 
     def submit_application(self, **kwargs: Any) -> AgentResult:
         self.calls += 1
+        self.last_kwargs = dict(kwargs)
         if self.behaviour == "timeout":
             raise TimeoutError("agent timed out")
         if self.behaviour == "crash":
@@ -142,8 +144,13 @@ def _starting() -> ApplyRun:
     )
 
 
-def _config() -> BrowserWorkerConfig:
-    return BrowserWorkerConfig(worker_id=1, cdp_port=9222, headless=False)
+def _config(*, transport_locked: bool = True) -> BrowserWorkerConfig:
+    return BrowserWorkerConfig(
+        worker_id=1,
+        cdp_port=9222,
+        headless=False,
+        dry_run=transport_locked,
+    )
 
 
 def _prompt() -> ApplyPrompt:
@@ -166,7 +173,7 @@ def _email_context(**overrides) -> EmailApplicationContext:
     return EmailApplicationContext(**values)
 
 
-def test_happy_path_drives_run_to_succeeded(repo):
+def test_live_rehearsal_stops_at_manual_boundary(repo):
     browser = _FakeBrowser()
     agent = _FakeAgent(behaviour="applied")
     saga = ApplySaga(browser_port=browser, agent_port=agent, repository=repo)
@@ -176,7 +183,11 @@ def test_happy_path_drives_run_to_succeeded(repo):
         prompt=_prompt(),
         model="sonnet",
     )
-    assert outcome.apply_run.is_succeeded
+    assert isinstance(outcome.apply_run.submission_result, Manual)
+    assert (
+        outcome.apply_run.submission_result.reason
+        == "trusted_final_submit_required"
+    )
     assert outcome.browser_launched is True
     assert outcome.agent_invoked is True
     assert browser.cleanups == 1
@@ -238,7 +249,7 @@ def test_agent_crash_routes_to_failed_with_agent_crash_marker(repo):
     assert browser.cleanups == 1
 
 
-def test_live_saga_records_submit_intent_before_agent_result(repo):
+def test_live_rehearsal_never_records_browser_submit_intent(repo):
     saga = ApplySaga(browser_port=_FakeBrowser(), agent_port=_FakeAgent(), repository=repo)
     outcome = saga.run(
         apply_run=_starting(),
@@ -248,22 +259,49 @@ def test_live_saga_records_submit_intent_before_agent_result(repo):
         material_version="7",
     )
     event_types = [event.event_type for event in outcome.apply_run.events]
-    assert "ApplySubmitIntended" in event_types
-    assert event_types.index("ApplySubmitIntended") < event_types.index("AgentResult")
-    intent = next(event for event in outcome.apply_run.events if event.event_type == "ApplySubmitIntended")
-    assert intent.payload["job_key"] == "https://example.com/job"
-    assert intent.payload["material_version"] == "7"
+    assert "ApplySubmitIntended" not in event_types
+    assert "AgentResult" in event_types
+    assert isinstance(outcome.apply_run.submission_result, Manual)
 
 
-def test_live_saga_revocation_after_browser_launch_blocks_intent_and_agent(repo):
-    """A capability can change after launch; submit must still fail closed."""
-
+def test_live_saga_refuses_unlocked_browser_before_launch(repo):
     browser = _FakeBrowser()
     agent = _FakeAgent()
+    saga = ApplySaga(browser_port=browser, agent_port=agent, repository=repo)
+
+    outcome = saga.run(
+        apply_run=_starting(),
+        browser_config=_config(transport_locked=False),
+        prompt=_prompt(),
+        model="sonnet",
+    )
+
+    assert isinstance(outcome.apply_run.submission_result, Manual)
+    assert (
+        outcome.apply_run.submission_result.reason
+        == "trusted_final_submit_required"
+    )
+    assert browser.launches == 0
+    assert browser.cleanups == 0
+    assert agent.calls == 0
+    assert outcome.browser_launched is False
+    assert outcome.agent_invoked is False
+    event_types = [event.event_type for event in outcome.apply_run.events]
+    assert "ApplySubmissionBlocked" in event_types
+    assert "ApplySubmitIntended" not in event_types
+
+
+def test_owned_email_revocation_after_browser_launch_blocks_send(repo):
+    """A capability can change after rehearsal; the owned send still fails closed."""
+
+    browser = _FakeBrowser()
+    agent = _FakeAgent(behaviour="email_only")
+    sender = _FakeEmailSender()
     saga = ApplySaga(
         browser_port=browser,
         agent_port=agent,
         repository=repo,
+        email_sender=sender,
         submission_authorizer=lambda: (_ for _ in ()).throw(
             BrowserCapabilityDisabledError("auto-apply-browser disabled mid-run")
         ),
@@ -274,14 +312,19 @@ def test_live_saga_revocation_after_browser_launch_blocks_intent_and_agent(repo)
         browser_config=_config(),
         prompt=_prompt(),
         model="sonnet",
+        email_application_context=_email_context(
+            approved_recipient_email="apply@example.com",
+            approved_attachment_artifact_id="resume-pdf-1",
+        ),
     )
 
     event_types = [event.event_type for event in outcome.apply_run.events]
     assert "BrowserLaunched" in event_types
     assert "ApplySubmissionBlocked" in event_types
     assert "ApplySubmitIntended" not in event_types
-    assert agent.calls == 0
-    assert outcome.agent_invoked is False
+    assert agent.calls == 1
+    assert sender.sent == []
+    assert outcome.agent_invoked is True
     assert isinstance(outcome.apply_run.submission_result, Failed)
     assert "SUBMISSION_AUTHORIZATION_REVOKED" in outcome.apply_run.submission_result.error
     assert browser.cleanups == 1
@@ -550,7 +593,7 @@ def test_email_only_live_send_records_intent_before_owned_send(repo):
     assert event_types.index("ApplySubmitIntended") < event_types.index("EmailApplicationSent")
 
 
-def test_email_only_missing_send_scope_is_actionable_failure(repo):
+def test_email_sender_exception_is_ambiguous_after_submit_intent(repo):
     sender = _FakeEmailSender(fail=True)
     saga = ApplySaga(
         browser_port=_FakeBrowser(),
@@ -572,7 +615,19 @@ def test_email_only_missing_send_scope_is_actionable_failure(repo):
 
     submission = outcome.apply_run.submission_result
     assert isinstance(submission, Failed)
+    assert submission.retryable is False
+    assert "email_send_outcome_ambiguous" in submission.error
     assert "gmail.send scope" in submission.error
+    event_types = [event.event_type for event in outcome.apply_run.events]
+    assert event_types.index("ApplySubmitIntended") < event_types.index(
+        "EmailApplicationSendFailed"
+    )
+    failed = next(
+        event
+        for event in outcome.apply_run.events
+        if event.event_type == "EmailApplicationSendFailed"
+    )
+    assert failed.payload["reason"] == "email_send_outcome_ambiguous"
 
 
 def test_dry_run_violation_does_not_record_completion_evidence(repo):

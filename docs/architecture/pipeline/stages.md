@@ -350,10 +350,12 @@ workflow/run identity. As a prep step it retries under the Cover retry policy.
 
 ## Apply
 
-Apply drives browser/agent automation to submit or dry-run applications. It is
-the riskiest, longest-running stage, so it is isolated in its own workflow with a
-tighter retry policy and explicit safety controls. It owns apply-run lifecycle,
-browser execution, dry-run safety, cancellation, and apply artifacts/logs.
+Apply drives transport-locked browser rehearsals and exact-approved email
+applications. It is the riskiest, longest-running stage, so it is isolated in
+its own workflow with a tighter retry policy and explicit safety controls. It
+owns apply-run lifecycle, browser execution, dry-run safety, the manual
+final-browser-submit boundary, owned email sending, cancellation, and apply
+artifacts/logs.
 
 There are **two entry paths** into `ApplyWorkflow`:
 
@@ -381,9 +383,14 @@ sequenceDiagram
     Flow->>Runner: budget check and heartbeat-backed activity
     Runner->>Store: lock, repeat/approval checks, optional override consumption
     Runner->>Store: ApplyRunStarted
-    Runner->>Store: ApplySubmitIntended checkpoint
-    Runner->>Runner: browser guard blocks dry-run writes
-    Runner->>Store: submitted dry-run complete or failed
+    alt browser form
+        Runner->>Runner: browser guard confines transport-locked rehearsal
+        Runner->>Store: dry-run complete or trusted final submit required
+    else exact-approved email candidate
+        Runner->>Store: ApplySubmitIntended checkpoint
+        Runner->>Runner: owned Gmail sender commits exact candidate
+        Runner->>Store: submitted or failed
+    end
     opt continuous
         Flow->>Flow: continue as new after each bounded batch
     end
@@ -392,46 +399,61 @@ sequenceDiagram
 The launcher **orchestrates**; it does not fill or submit forms itself. A local
 **Claude apply runtime** (system `claude`, the pinned SDK-bundled binary, or
 `JOBCTRL_CLAUDE_BIN`) drives the CDP-controlled Chrome through **Playwright
-MCP** and performs any form interaction. Terminal apply outcomes are
-`ApplicationSubmitted` (live submit), `DryRunCompleted` (dry-run),
-`ApplicationFailed`, or `ApplyManualSkip` (manual-ATS skip).
+MCP** for transport-locked rehearsal. It never receives final browser-submit
+authority. Live browser-form claims stop before prompt/browser work with
+`trusted_final_submit_required`; the user performs the final browser action.
+The separate owned Gmail sender may commit only an exact-approved
+recipient/attachment candidate. Terminal apply outcomes are
+`ApplicationSubmitted` (owned email send), `DryRunCompleted` (rehearsal),
+`ApplicationFailed` (including the manual final-submit boundary), or
+`ApplyManualSkip` (manual-ATS skip).
 
-**Five safety invariants, and the mechanisms that enforce them:**
+**Seven safety invariants, and the mechanisms that enforce them:**
 
-1. **At-most-once submission.** The launcher takes a `BEGIN IMMEDIATE` stage
-   lock, guards on stage state, and writes an `ApplySubmitIntended` checkpoint
-   before the actual submit, marking the result idempotently afterward. Combined
-   with the per-job workflow ID (`apply-{tenant}-{jobKey}` + `USE_EXISTING`,
-   one live apply per job) and the **live retry policy of exactly one attempt**,
-   a submit is never silently retried into a double application. Dry-runs, which
-   submit nothing, get two attempts.
-2. **Repeat-application protection.** Every live claim recomputes relationships
+1. **No model-owned final browser commit.** The use case stops ordinary live
+   browser forms before prompt rendering and browser launch. The saga rejects
+   any direct unlocked live browser configuration before launch, and the agent
+   adapter rejects `dry_run=False` before file writes or subprocess creation.
+   A trusted canonical final-form manifest plus a one-shot mediator is required
+   before this manual boundary can be removed.
+2. **At-most-once owned submission.** The launcher takes a `BEGIN IMMEDIATE`
+   stage lock and guards on stage state. For an exact-approved email candidate,
+   the saga rechecks the active capability and writes `ApplySubmitIntended`
+   immediately before the owned Gmail sender commits, then marks the result
+   idempotently. Combined with the per-job workflow ID
+   (`apply-{tenant}-{jobKey}` + `USE_EXISTING`, one live apply per job) and the
+   **live retry policy of exactly one attempt**, an owned send is never silently
+   retried into a duplicate. A crash or provider exception after intent parks
+   the stage in `needs_verification`. Dry-runs, which submit nothing, get two
+   attempts.
+3. **Repeat-application protection.** Every live claim recomputes relationships
    from canonical job identity, accepted duplicate links, and confirmed
    application facts. Exact identity blocks by default; same employer plus a
    materially equivalent role requires an explicit reasoned confirmation. The
    evidence-bound confirmation is consumed once inside the same claim
    transaction, before `ApplyRunStarted`. Dry runs cannot submit and are
    excluded. Distinct roles remain eligible.
-3. **Binding approval gate.** `approval_required` defaults to `True`. The
-   launcher requires an explicit `approve_submit` decision before it will
-   submit; without approval it stops at the review/dry-run boundary. The gate is
-   configurable but binding — it is enforced in the launcher, not merely surfaced
-   in the UI.
-4. **Browser-layer dry-run guard (CDP).** In dry-run the browser adapter
+4. **Binding approval gate.** `approval_required` defaults to `True`. The
+   launcher requires an explicit `approve_submit` decision before a live claim;
+   without approval it stops at the review/dry-run boundary. The gate is
+   configurable but binding while enabled. Disabling it does not grant browser
+   final-submit authority or bypass the owned email sender's exact
+   recipient/attachment approval.
+5. **Browser-layer dry-run guard (CDP).** In dry-run the browser adapter
    overrides the form-submit action and uses the CDP Fetch domain to grant one
    exact initial `GET` to the reviewed application URL. The grant is consumed
    once and recorded with a sanitized URL plus fingerprint; `HEAD`, replays,
    path/query changes, redirects, later document navigation, and every other
    request are blocked. Full coverage requires the recorded grant, so a
    misbehaving agent cannot manufacture a qualifying rehearsal by narration.
-5. **Approval-origin confinement.** The reviewed application URL is carried
+6. **Approval-origin confinement.** The reviewed application URL is carried
    through `BrowserWorkerConfig` into the browser-level CDP guard. Every page,
    popup, redirect, subresource, and form request must remain on that canonical
    HTTP(S) origin in addition to passing the public-destination check. Worker
    targets are closed before execution because they lack Chrome's required
    interception domain. Cross-origin ATS transitions stop and require a new
    reviewed destination.
-6. **Independent credential-origin enrollment.** The application URL cannot
+7. **Independent credential-origin enrollment.** The application URL cannot
    authorize disclosure of the saved job-site password. The current canonical
    application origin must exactly match an operator-configured entry in
    `JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS`; otherwise the credential tool

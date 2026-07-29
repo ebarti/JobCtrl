@@ -42,14 +42,14 @@ flowchart LR
     REVIEW@{ icon: "tabler:user-check", form: "rounded", label: "Apply Review<br/>decision", h: 64 }
     CLAIM@{ icon: "tabler:lock", form: "rounded", label: "Atomic<br/>apply claim", h: 64 }
     INTENT@{ icon: "tabler:clipboard-list", form: "rounded", label: "Submit-intent<br/>checkpoint", h: 64 }
-    SUBMIT@{ icon: "tabler:send", form: "rounded", label: "Live<br/>submission", h: 64 }
+    SUBMIT@{ icon: "tabler:send", form: "rounded", label: "Owned email<br/>submission", h: 64 }
     OUTCOME@{ shape: "docs", label: "Reviewed<br/>outcome" }
     GMAIL@{ icon: "tabler:brand-gmail", form: "rounded", label: "Bounded Gmail<br/>evidence", h: 64 }
     SUGGEST@{ icon: "tabler:message", form: "rounded", label: "Outcome<br/>suggestion", h: 64 }
 
     REVIEW -->|approved| CLAIM
-    CLAIM -->|claimed run| INTENT
-    INTENT -->|records before submit| SUBMIT
+    CLAIM -->|exact-approved email| INTENT
+    INTENT -->|records immediately before send| SUBMIT
     SUBMIT -->|terminal evidence| OUTCOME
     GMAIL -->|bounded evidence| SUGGEST
     SUGGEST -->|user accepts or corrects| OUTCOME
@@ -62,14 +62,19 @@ the latest `approve_submit` decision inside the atomic claim transaction. A UI,
 API, or RPC caller cannot bypass that committed decision. Dry-run claims do not
 need approval because browser-layer guards block submission.
 
-Immediately before a live submit, the launcher records
-`ApplySubmitIntended`. If the run dies after that checkpoint without a terminal
-result, recovery parks it in `needs_verification` instead of retrying. A run that
-never reached submit intent can return safely to `pending`.
+Model-driven browser runs are transport-locked and final browser submit remains
+manual. For an exact-approved email candidate, the saga rechecks the active
+capability and records `ApplySubmitIntended` immediately before invoking the
+owned Gmail sender. If the run dies after that checkpoint without a terminal
+result, or the provider raises with an ambiguous outcome, JobCtrl parks it in
+`needs_verification` instead of retrying. A run that never reached submit intent
+can return safely to `pending`.
 
 ::: warning Live submission is an explicit trust boundary
-Turning off `applyApprovalRequired` allows a claimed live run to submit without
-per-job approval. The Preferences UI keeps that state visibly warned.
+Turning off `applyApprovalRequired` removes the claim-time review gate, but it
+does not grant browser-submit authority or bypass the owned email sender's exact
+recipient/attachment approval. The Preferences UI keeps that state visibly
+warned.
 :::
 
 ### Resume Review Drafts

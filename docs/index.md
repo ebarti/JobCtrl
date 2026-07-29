@@ -45,7 +45,7 @@ features:
     linkText: Understand the audit trail
   - icon: ✅
     title: Supervised Apply
-    details: Rehearse with dry runs, require explicit approval for live submissions by default, a browser-level guard blocks dry-run submits, and no application is ever submitted twice.
+    details: Rehearse with dry runs, keep final browser submission manual, and allow only exact-approved email applications through an owned at-most-once sender.
     link: /user/apply
     linkText: Understand apply controls
   - icon: ⚙️

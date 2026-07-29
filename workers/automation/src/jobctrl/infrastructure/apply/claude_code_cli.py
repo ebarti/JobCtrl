@@ -204,6 +204,26 @@ class ClaudeCodeCliAdapter:
         dry_run: bool = False,
         timeout_seconds: int | None = None,
     ) -> AgentResult:
+        if not dry_run:
+            return AgentResult(
+                submission_result=Manual(
+                    reason="trusted_final_submit_required",
+                ),
+                duration_ms=0,
+                events=(
+                    {
+                        "event_type": "ApplySubmissionBlocked",
+                        "occurred_at": _utc_now(),
+                        "level": "warn",
+                        "message": "unlocked autonomous browser submission is disabled",
+                        "payload": {
+                            "reason": "trusted_final_submit_required",
+                            "submission_channel": "browser",
+                        },
+                    },
+                ),
+            )
+
         worker_id = browser.worker_id
         worker_dir = browser.worker_dir or str(config.APPLY_WORKER_DIR / f"worker-{worker_id}")
         Path(worker_dir).mkdir(parents=True, exist_ok=True)

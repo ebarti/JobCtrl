@@ -238,27 +238,27 @@ describe("<DiscoveryAutomationSettingsForm>", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Auto apply is off. Manually started live apply runs may submit without Apply Review approval.",
+      "Auto apply is off. Manually started live claims skip the Apply Review gate, but browser final submit stays manual and email sends still require exact approval.",
     );
   });
 
-  it("describes supervised and autonomous auto-apply combinations", async () => {
+  it("describes supervised and approval-disabled auto-apply combinations", async () => {
     renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleDiscoverySettingsResponse} />);
 
     expect(screen.getByRole("status", { name: "Automation policy summary" })).toHaveTextContent(
-      "Default supervised mode: no standing apply loop runs, and live submit requires Apply Review approval.",
+      "Default supervised mode: no standing apply loop runs, live claims require Apply Review approval, and browser final submit stays manual.",
     );
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Auto apply" }));
     expect(screen.getByRole("status", { name: "Automation policy summary" })).toHaveTextContent(
-      "Auto apply is supervised: the standing loop polls eligible jobs, and live submit waits for Apply Review approval.",
+      "Auto apply is supervised: the standing loop polls eligible jobs, browser forms stop for manual completion, and exact-approved email applications may use the owned sender.",
     );
 
     fireEvent.click(
       screen.getByRole("checkbox", { name: /Require approval before live submit/i }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Autonomous submit mode: the standing loop may submit eligible jobs without human review",
+      "Approval gate is off: the standing loop may claim eligible jobs without review, but browser final submit stays manual and the owned email sender still requires exact approval.",
     );
   });
 

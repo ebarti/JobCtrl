@@ -64,16 +64,17 @@ wrap below their binding explanation; no decision or audit section is removed.
 
 ## Approval And Automation Modes
 
-Apply automation can submit applications. Use dry runs and narrow targets before
-approving real submission. Persistence follows the editing surface: every value
+Apply can rehearse browser forms and send an exact approved email application.
+Use dry runs and narrow targets before employer-facing work. Persistence follows
+the editing surface: every value
 shown on `/discovery` is stored in SQLite, while every non-secret desired value
 under `/settings/**` is stored in
 [`config.json`](../api/profile-and-settings.md#config-json-field-reference).
 
 | Setting | Where to edit it | Storage | Default | What it does |
 | --- | --- | --- | --- | --- |
-| `autoApply` | **Discovery → Automation settings** | SQLite `jobctrl.db` | `false` | When `true`, a running worker keeps exactly one continuous Apply workflow active for eligible prepared jobs only while `auto-apply-browser` is explicitly ready. The loop appears in Runs as the standing apply loop. Turning it back off cancels that loop. |
-| `applyApprovalRequired` | **Discovery → Automation settings** | SQLite `jobctrl.db` | `true` | When `true`, live submit waits for Apply Review approval; the standing loop parks unapproved jobs as awaiting approval. When `false`, manually started live runs and the standing loop may submit eligible jobs without review. |
+| `autoApply` | **Discovery → Automation settings** | SQLite `jobctrl.db` | `false` | When `true`, a running worker keeps exactly one continuous Apply workflow active for eligible prepared jobs only while `auto-apply-browser` is explicitly ready. The loop appears in Runs as the standing apply loop. It can run transport-locked rehearsals and exact-approved email sends; browser forms still require manual final submit. Turning it back off cancels that loop. |
+| `applyApprovalRequired` | **Discovery → Automation settings** | SQLite `jobctrl.db` | `true` | When `true`, live claims wait for Apply Review approval and the standing loop parks unapproved jobs. Turning it off removes that claim-time gate, but does not grant browser-submit authority or bypass the owned email sender's exact recipient/attachment approval. |
 | `minFitScore` | **Discovery → Automation settings** | SQLite `jobctrl.db` | `7` | Minimum score for jobs claimed by apply automation, including the standing loop. |
 | `applyConcurrency` | **Settings → General** | `config.json` | `1` | Number of concurrent apply workers used by apply automation. The standing loop re-reads this setting when it polls. |
 | `applyMaxBudgetUsd` | **Settings → General → Application runtime** | `config.json` | `5` | Per-application AI-agent budget cap in USD. |
@@ -82,14 +83,14 @@ under `/settings/**` is stored in
 Combinations matter:
 
 - `autoApply: false`, `applyApprovalRequired: true` is the default supervised
-  mode: no standing loop exists and live submit requires Apply Review approval.
+  mode: no standing loop exists, and approved browser forms still end at manual
+  final submit.
 - `autoApply: true`, `applyApprovalRequired: true` is a supervised standing
-  loop: eligible approved jobs can submit, and unapproved jobs are parked for
-  Apply Review.
-- `autoApply: true`, `applyApprovalRequired: false` is autonomous live submit:
-  the standing loop may submit eligible prepared jobs without human review,
-  while the minimum score, daily spend ceiling, at-most-once submit intent,
-  CAPTCHA fail-closed behavior, and dry-run guard still apply.
+  loop: unapproved jobs are parked; approved email candidates can use the owned
+  sender, while browser forms stop for manual completion.
+- `autoApply: true`, `applyApprovalRequired: false` removes the claim-time
+  approval wait. It does not create autonomous browser submit authority, and
+  the owned email sender still requires an exact recipient/attachment approval.
 
 The daily LLM ceiling and shared setting precedence remain in
 [Configuration](configuration.md#llm-spend-budget). Approval is bound to the
@@ -102,6 +103,22 @@ Replays, `HEAD`, path/query changes, redirects, and later document navigation
 are blocked. A multi-page application therefore needs another reviewed target
 or a supervised live/manual path; dry-run does not learn navigation authority
 from the page or model.
+
+### Final Browser Submission Is Manual
+
+The page-reading model never owns the final browser commit. Every model-driven
+browser session is transport-locked. A live browser-form claim stops with
+`trusted_final_submit_required` before the prompt is rendered, Chrome launches,
+or the agent starts; direct saga and adapter calls enforce the same boundary.
+Review the rehearsal and complete the employer form yourself.
+
+This conservative boundary remains in place until JobCtrl has a trusted,
+canonical final-form manifest that a human can review and a one-shot mediator
+below the model can submit without giving page content generic click authority.
+The separate Gmail path does not use browser click authority: JobCtrl's owned
+sender rechecks its capability, records submit intent immediately before the
+send, and accepts only the exact recipient and attachment approved in Apply
+Review.
 
 ## Repeat-Application Protection
 
@@ -156,6 +173,9 @@ application URL. Unexpected public redirects, popups, or ATS handoffs to a
 different origin are blocked rather than silently inheriting the approval.
 Review the new application destination and start a fresh run when a legitimate
 provider transition requires another origin.
+
+Origin confinement limits rehearsal navigation; it does not authorize final
+browser submission. The final browser action remains manual as described above.
 
 A source profile path is cleared after the copy request and is never returned,
 logged, or persisted. Profile copying retains its separate affirmative consent;

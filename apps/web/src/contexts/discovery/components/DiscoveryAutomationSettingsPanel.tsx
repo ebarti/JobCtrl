@@ -263,24 +263,24 @@ function applyAutomationSummary(values: {
 }): { text: string; warning: boolean } {
   if (values.autoApply && values.applyApprovalRequired) {
     return {
-      text: "Auto apply is supervised: the standing loop polls eligible jobs, and live submit waits for Apply Review approval.",
+      text: "Auto apply is supervised: the standing loop polls eligible jobs, browser forms stop for manual completion, and exact-approved email applications may use the owned sender.",
       warning: false,
     };
   }
   if (values.autoApply && !values.applyApprovalRequired) {
     return {
-      text: "Autonomous submit mode: the standing loop may submit eligible jobs without human review, while score, budget, at-most-once, dry-run, and CAPTCHA safeguards remain enforced.",
+      text: "Approval gate is off: the standing loop may claim eligible jobs without review, but browser final submit stays manual and the owned email sender still requires exact approval.",
       warning: true,
     };
   }
   if (!values.autoApply && !values.applyApprovalRequired) {
     return {
-      text: "Auto apply is off. Manually started live apply runs may submit without Apply Review approval.",
+      text: "Auto apply is off. Manually started live claims skip the Apply Review gate, but browser final submit stays manual and email sends still require exact approval.",
       warning: true,
     };
   }
   return {
-    text: "Default supervised mode: no standing apply loop runs, and live submit requires Apply Review approval.",
+    text: "Default supervised mode: no standing apply loop runs, live claims require Apply Review approval, and browser final submit stays manual.",
     warning: false,
   };
 }
