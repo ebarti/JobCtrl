@@ -77,24 +77,42 @@ PINNED_PLAYWRIGHT_MCP_TOOLS = frozenset(
 PLAYWRIGHT_TOOL_EXCLUSIONS = frozenset(
     {
         "browser_console_messages",
+        "browser_drag",
         "browser_drop",
         "browser_evaluate",
         "browser_file_upload",
+        "browser_fill_form",
+        "browser_handle_dialog",
         "browser_network_request",
         "browser_network_requests",
+        "browser_press_key",
         "browser_resize",
         "browser_run_code_unsafe",
+        "browser_select_option",
+        "browser_type",
     }
 )
 PLAYWRIGHT_APPLY_TOOLS = frozenset(
     f"mcp__playwright__{tool}"
     for tool in sorted(PINNED_PLAYWRIGHT_MCP_TOOLS - PLAYWRIGHT_TOOL_EXCLUSIONS)
 )
-GMAIL_APPLY_TOOLS = frozenset({"mcp__gmail__get_verification_code"})
+GMAIL_APPLY_TOOLS = frozenset()
 BASE_OWNED_APPLY_TOOLS = frozenset()
 CREDENTIAL_APPLY_TOOL = "mcp__apply_tools__type_credential"
 CAPTCHA_APPLY_TOOL = "mcp__apply_tools__solve_captcha"
 UPLOAD_ARTIFACT_TOOL = "mcp__apply_tools__upload_artifact"
+GMAIL_VERIFICATION_TOOL = "mcp__gmail__get_verification_code"
+PLAYWRIGHT_WRITE_TOOLS = frozenset(
+    f"mcp__playwright__{tool}"
+    for tool in (
+        "browser_drag",
+        "browser_fill_form",
+        "browser_handle_dialog",
+        "browser_press_key",
+        "browser_select_option",
+        "browser_type",
+    )
+)
 DISALLOWED_CLAUDE_TOOLS = (
     "Bash",
     "Edit",
@@ -102,7 +120,10 @@ DISALLOWED_CLAUDE_TOOLS = (
     "NotebookEdit",
     "WebFetch",
     "WebSearch",
+    CREDENTIAL_APPLY_TOOL,
+    GMAIL_VERIFICATION_TOOL,
     UPLOAD_ARTIFACT_TOOL,
+    *sorted(PLAYWRIGHT_WRITE_TOOLS),
 )
 _ALLOWED_TOOLS = ",".join(
     sorted(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS)
@@ -569,10 +590,6 @@ def _allowed_tools_for_mcp_config(mcp_config: Mapping[str, Any]) -> str:
     if isinstance(env, Mapping):
         if str(env.get("CAPSOLVER_API_KEY") or "").strip():
             tools.add(CAPTCHA_APPLY_TOOL)
-        if str(
-            env.get("JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS") or ""
-        ).strip():
-            tools.add(CREDENTIAL_APPLY_TOOL)
     return ",".join(sorted(tools))
 
 

@@ -403,8 +403,10 @@ MCP** for transport-locked rehearsal. Its prompt contains only the reviewed
 application URL; profile, job-description, resume, cover-letter, other generated
 prose, local artifact paths, and artifact-upload authority remain outside the
 model instruction plane. Reviewed materials stay local for manual completion.
-It never receives final browser-submit authority. Live browser-form claims stop
-before prompt/browser work with
+Its tool surface is inspection-only: generic form entry, keypresses, credential
+typing, Gmail verification values, and artifact upload are excluded and
+explicitly denied. It never receives final browser-submit authority. Live
+browser-form claims stop before prompt/browser work with
 `trusted_final_submit_required`; the user performs the final browser action.
 The separate owned Gmail sender may commit only an exact-approved
 recipient/attachment candidate. Terminal apply outcomes are

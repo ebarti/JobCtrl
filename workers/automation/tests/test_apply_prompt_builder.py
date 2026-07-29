@@ -59,6 +59,12 @@ class _FakeSnapshot:
         }
 
 
+class _PrivateSnapshotMustStayUnread:
+    @property
+    def personal(self):
+        raise AssertionError("inspection MCP config must not read profile data")
+
+
 @pytest.fixture()
 def builder():
     return ApplyPromptBuilder(mcp_config_factory=lambda port: {"playwright": {"port": port}})
@@ -332,7 +338,7 @@ def test_attestation_lines_render_full_partial_and_empty_sets() -> None:
     assert prompt_mod._build_profile_attestation_lines(empty) == []
 
 
-def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> None:
+def test_default_mcp_config_includes_only_inspection_connectors(monkeypatch) -> None:
     monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "source")
     monkeypatch.setenv(
         "JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS",
@@ -345,29 +351,22 @@ def test_default_mcp_config_includes_scoped_owned_connectors(monkeypatch) -> Non
             "url": "https://jobs.example.com/role",
             "application_url": "https://apply.example.com/job",
         },
-        snapshot=_FakeSnapshot(),
+        snapshot=_PrivateSnapshotMustStayUnread(),
         upload_dir="/tmp/worker-0",
     )
 
+    assert set(config["mcpServers"]) == {"playwright", "apply_tools"}
     playwright = config["mcpServers"]["playwright"]
     assert playwright["command"] == "npx"
     assert playwright["args"][0] == "@playwright/mcp@0.0.77"
-    gmail = config["mcpServers"]["gmail"]
-    assert gmail["command"] == sys.executable
-    assert gmail["args"] == ["-m", "jobctrl.infrastructure.gmail.mcp_server"]
-    assert gmail["env"]["JOBCTRL_GMAIL_ALLOWED_DOMAINS"] == "example.com"
-    assert gmail["env"]["JOBCTRL_GMAIL_TO_EMAIL"] == "test@example.com"
     apply_tools = config["mcpServers"]["apply_tools"]
     assert apply_tools["command"] == sys.executable
     assert apply_tools["args"] == ["-m", "jobctrl.infrastructure.apply_tools.mcp_server"]
     assert apply_tools["env"]["JOBCTRL_APPLY_CDP_ENDPOINT"] == "http://localhost:9222"
     assert apply_tools["env"]["JOBCTRL_APPLY_APPROVED_APPLICATION_URL"] == "https://apply.example.com/job"
-    assert (
-        apply_tools["env"]["JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS"]
-        == "https://apply.example.com"
-    )
     assert apply_tools["env"]["JOBCTRL_APPLY_UPLOAD_DIR"] == "/tmp/worker-0"
-    assert "JOBCTRL_APPLY_PROFILE_DB_PATH" in apply_tools["env"]
+    assert "JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS" not in apply_tools["env"]
+    assert "JOBCTRL_APPLY_PROFILE_DB_PATH" not in apply_tools["env"]
     assert "CAPSOLVER_API_KEY" not in apply_tools["env"]
     assert "mcp__apply_tools__solve_captcha" not in claude_code_cli._allowed_tools_for_mcp_config(config)
     assert "DistinctivePasswordShouldNeverRender" not in json.dumps(apply_tools["env"])
@@ -390,14 +389,15 @@ def test_default_mcp_config_does_not_derive_credential_authority_from_applicatio
     )
 
     apply_tools = config["mcpServers"]["apply_tools"]
-    assert apply_tools["env"]["JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS"] == ""
+    assert "JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS" not in apply_tools["env"]
+    assert "JOBCTRL_APPLY_PROFILE_DB_PATH" not in apply_tools["env"]
     assert (
         "mcp__apply_tools__type_credential"
         not in claude_code_cli._allowed_tools_for_mcp_config(config)
     )
 
 
-def test_default_mcp_config_intersects_application_origin_with_independent_enrollment(
+def test_default_mcp_config_never_restores_credential_authority_for_enrolled_origin(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("JOBCTRL_RUNTIME_MODE", "source")
@@ -419,21 +419,14 @@ def test_default_mcp_config_intersects_application_origin_with_independent_enrol
         upload_dir="/tmp/worker-1",
     )
 
-    trusted_env = trusted["mcpServers"]["apply_tools"]["env"]
-    hostile_env = hostile["mcpServers"]["apply_tools"]["env"]
-    assert (
-        trusted_env["JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS"]
-        == "https://apply.example.com"
-    )
-    assert (
-        "mcp__apply_tools__type_credential"
-        in claude_code_cli._allowed_tools_for_mcp_config(trusted)
-    )
-    assert hostile_env["JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS"] == ""
-    assert (
-        "mcp__apply_tools__type_credential"
-        not in claude_code_cli._allowed_tools_for_mcp_config(hostile)
-    )
+    for config in (trusted, hostile):
+        apply_env = config["mcpServers"]["apply_tools"]["env"]
+        assert "JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS" not in apply_env
+        assert "JOBCTRL_APPLY_PROFILE_DB_PATH" not in apply_env
+        assert (
+            claude_code_cli.CREDENTIAL_APPLY_TOOL
+            not in claude_code_cli._allowed_tools_for_mcp_config(config)
+        )
 
 
 @pytest.mark.parametrize(
@@ -505,7 +498,6 @@ def test_bundled_mcp_config_uses_only_signed_payload_commands(
         f"--viewport-size={jobctrl_config.DEFAULTS['viewport']}",
     ]
     for name, module in (
-        ("gmail", "jobctrl.infrastructure.gmail.mcp_server"),
         ("apply_tools", "jobctrl.infrastructure.apply_tools.mcp_server"),
     ):
         server = config["mcpServers"][name]
@@ -535,7 +527,7 @@ def test_verification_sender_domains_use_registrable_domain(
     assert _verification_sender_domains(application_url) == expected
 
 
-def test_default_mcp_config_uses_public_suffix_aware_gmail_sender_scope(monkeypatch) -> None:
+def test_default_mcp_config_omits_gmail_connector(monkeypatch) -> None:
     monkeypatch.delenv("CAPSOLVER_API_KEY", raising=False)
     config = _default_mcp_config(
         9222,
@@ -547,8 +539,7 @@ def test_default_mcp_config_uses_public_suffix_aware_gmail_sender_scope(monkeypa
         upload_dir="/tmp/worker-0",
     )
 
-    gmail = config["mcpServers"]["gmail"]
-    assert gmail["env"]["JOBCTRL_GMAIL_ALLOWED_DOMAINS"] == "example.co.uk"
+    assert "gmail" not in config["mcpServers"]
 
 
 def test_default_mcp_config_scopes_capsolver_key_to_apply_tools(monkeypatch) -> None:

@@ -161,16 +161,18 @@ browser over an employer form and the owned Gmail adapter can submit a real
 application. The current apply agent runs as a local Claude subprocess with
 `--no-session-persistence`, explicit
 `--allowedTools`, explicit `--disallowedTools`, a filtered environment, and an
-owned MCP config. The allowlist covers the safe Playwright apply subset,
-read-only Gmail verification-code lookup, and owned tools such as
-`type_credential`, `upload_artifact`, and optional `solve_captcha`; it does not
-expose shell/file tools, raw Gmail send tools, broad mailbox access, raw
-page-script evaluation, or broad permission bypass. Model-driven browser
-sessions are transport-locked and cannot perform final browser submission.
-Job-site passwords and CAPTCHA provider keys are not placed in the model prompt:
-owned local tools read them locally and fail closed. Gmail email applications
-are sent by JobCtrl's owned sender only after exact Apply Review approval, not
-by an agent mailbox tool.
+owned MCP config. The allowlist covers inspection navigation, page
+snapshots/screenshots, and optional `solve_captcha`. Generic text/form/key/
+select/drag/dialog writes, Gmail verification lookup, `type_credential`, and
+`upload_artifact` are excluded and explicitly denied alongside shell/file
+tools, raw Gmail send tools, broad mailbox access, raw page-script evaluation,
+and broad permission bypass. The default inspection MCP configuration also
+omits Gmail, profile-database, and credential-policy access. Model-driven
+browser sessions are transport-locked and cannot perform final browser
+submission. Job-site passwords and CAPTCHA provider keys are not placed in the
+model prompt; only the owned CAPTCHA tool receives its configured provider key.
+Gmail email applications are sent by JobCtrl's owned sender only after exact
+Apply Review approval, not by an agent mailbox tool.
 The detailed containment rules are below in
 [Apply-Path Containment](#apply-path-containment).
 
@@ -179,8 +181,9 @@ environment variables first, with a process-start macOS Keychain fallback for
 three supported settings. The fallback never overrides a non-empty environment
 value and never exposes the stored value through HTTP, logs, or diagnostics.
 Native Windows and Linux credential-store adapters are planned. The CapSolver
-key is an env var scoped to the owned solver tool; Gmail token files are local; job-site
-passwords, if saved, remain local profile data consumed by `type_credential`.
+key is an env var scoped to the owned solver tool; Gmail token files are local;
+job-site passwords, if saved, remain local profile data and are not exposed to
+the page-reading agent.
 SQLite, generated artifacts, browser profiles, logs, prompts, completions, and
 worker directories are sensitive. Langfuse/OTel export is opt-in and
 metadata-only; LLM prompts and completions are excluded. Enrichment spans
@@ -301,13 +304,13 @@ is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
   trusted.
   The subprocess runs with `--no-session-persistence`, an explicit
   `--allowedTools` surface, explicit `--disallowedTools`, and a filtered
-  environment. The allowlist is limited to the safe Playwright apply subset,
-  read-only Gmail verification-code lookup, and owned apply tools. Job-site
-  passwords and CAPTCHA provider keys stay out of the model prompt. The local
-  `type_credential` tool is omitted unless the current application origin
-  intersects the independently configured exact-origin enrollment, then
-  rechecks that origin and the focused password field before typing. The local
-  `solve_captcha` tool owns provider-key use when configured.
+  environment. The allowlist is limited to inspection navigation,
+  snapshots/screenshots, and optional CAPTCHA solving. Generic browser writes,
+  Gmail verification lookup, credential typing, and artifact upload are
+  explicitly denied and cannot be restored by a caller-supplied MCP
+  configuration. Job-site passwords and CAPTCHA provider keys stay out of the
+  model prompt. The local `solve_captcha` tool owns provider-key use when
+  configured.
   Gmail send is not exposed as an agent tool; email-only applications are
   recorded as review candidates and sent only by the owned email sender after a
   matching Apply Review approval.
@@ -366,11 +369,10 @@ restart after a web edit. Windows and Linux use environment configuration until
 their planned native adapters ship. The
 CapSolver key is an env var scoped to the
 owned CAPTCHA tool. A job-site login password, if the user provides one,
-remains local profile data consumed by the owned `type_credential` tool; it is
-not interpolated into the apply prompt. The application URL is untrusted input
-and therefore cannot authorize credential use: the tool is exposed only when
-its canonical origin exactly matches an entry in
-`JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS`.
+remains local profile data; it is neither interpolated into the Apply prompt nor
+passed to the inspection MCP configuration. The page-reading model has no
+credential-typing authority, even when
+`JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS` is configured.
 
 **Keep detection separate from browser adoption.** The browser-capability list
 may inspect known installation locations, but the RPC/API response exposes only
