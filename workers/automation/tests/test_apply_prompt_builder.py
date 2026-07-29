@@ -161,8 +161,29 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(monkeypatch, t
     assert "Do not open Gmail in the browser" in rendered
     assert 'type_credential(kind="job_site_password")' in rendered
     assert "RESULT:LOGIN_ISSUE" in rendered
+    assert "\nRESULT:APPLIED\n" in rendered
+    assert "RESULT:APPLIED --" not in rendered
+    assert "terminal record must contain no explanation" in rendered
     assert "Do not upload into hidden controls" not in rendered
     assert "Never call upload_artifact on any page that is not the approved application destination" in rendered
+
+    dry_run_rendered = prompt_mod.build_prompt(
+        job={
+            "url": "https://example.com/job",
+            "application_url": "https://example.com/apply",
+            "title": "Engineering Manager",
+            "site": "ExampleCo",
+            "fit_score": 9,
+            "tailored_resume_path": str(resume_txt),
+        },
+        tailored_resume="Tailored resume text",
+        snapshot=_FakeSnapshot(),
+        search_config={"location": {"accept_patterns": ["Barcelona"]}},
+        upload_dir=worker_dir,
+        dry_run=True,
+    )
+    assert "\nRESULT:DRY_RUN\n" in dry_run_rendered
+    assert "RESULT:DRY_RUN with a note" not in dry_run_rendered
 
 
 def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_context(monkeypatch, tmp_path):

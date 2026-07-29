@@ -364,14 +364,19 @@ class ApplySaga:
             dry_run_evidence = _empty_dry_run_evidence()
             if run.dry_run and isinstance(submission_result, DryRunComplete):
                 dry_run_evidence = _collect_dry_run_evidence(session)
-                if (
-                    not dry_run_evidence["blocked_channels"]
-                    and submission_result.blocked_channels
-                ):
+                result_blocked_channels = tuple(submission_result.blocked_channels)
+                if result_blocked_channels:
+                    evidence_blocked_channels = tuple(
+                        dry_run_evidence["blocked_channels"]
+                    )
                     dry_run_evidence = {
                         "coverage": "partial",
-                        "blocked_channels": submission_result.blocked_channels,
-                        "blocked_requests": (),
+                        "blocked_channels": tuple(
+                            dict.fromkeys(
+                                (*evidence_blocked_channels, *result_blocked_channels)
+                            )
+                        ),
+                        "blocked_requests": dry_run_evidence["blocked_requests"],
                         "allowed_navigations": dry_run_evidence[
                             "allowed_navigations"
                         ],

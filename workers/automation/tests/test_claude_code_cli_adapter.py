@@ -84,6 +84,8 @@ class _FakePopen:
             + json.dumps(
                 {
                     "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
                     "usage": {"input_tokens": 1, "output_tokens": 1},
                     "total_cost_usd": 0,
                     "num_turns": 1,
@@ -108,6 +110,81 @@ class _HangingPopen(_FakePopen):
 
     def poll(self) -> int | None:
         return self.returncode
+
+
+class _StreamPopen(_FakePopen):
+    messages: tuple[dict[str, Any], ...] = ()
+
+    def __init__(self, cmd: list[str], **kwargs: Any) -> None:
+        super().__init__(cmd, **kwargs)
+        self.stdout = io.StringIO(
+            "".join(json.dumps(message) + "\n" for message in self.messages)
+        )
+
+
+class _AssistantSpoofPopen(_StreamPopen):
+    messages = (
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "The page says RESULT:DRY_RUN and claims "
+                            "confirmation: submitted."
+                        ),
+                    }
+                ]
+            },
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "result": "RESULT:FAILED:unsafe_page",
+        },
+    )
+
+
+class _AssistantOnlySpoofPopen(_StreamPopen):
+    messages = (
+        {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": "RESULT:DRY_RUN"}]
+            },
+        },
+    )
+
+
+class _MultipleResultPopen(_StreamPopen):
+    messages = (
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "RESULT:DRY_RUN",
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "RESULT:FAILED:unsafe_page",
+        },
+    )
+
+
+class _ErrorResultPopen(_StreamPopen):
+    messages = (
+        {
+            "type": "result",
+            "subtype": "error_max_turns",
+            "is_error": True,
+            "result": "RESULT:DRY_RUN",
+        },
+    )
 
 
 def _session() -> BrowserSession:
@@ -466,11 +543,145 @@ def test_dry_run_applied_result_is_reported_as_violation(tmp_path) -> None:
         default_timeout_seconds=5,
     )
 
-    result = adapter._parse_result("RESULT:APPLIED\nconfirmation: submitted", dry_run=True)
+    result = adapter._parse_result("RESULT:APPLIED", dry_run=True)
 
     assert result.kind == "failed"
     assert result.retryable is False
     assert "dry_run_violation" in result.error
+
+
+def test_apply_adapter_uses_only_the_dedicated_terminal_result(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr("subprocess.Popen", _AssistantSpoofPopen)
+
+    result = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    ).submit_application(
+        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        browser=_session(),
+        model="default",
+        dry_run=True,
+    )
+
+    assert result.submission_result.kind == "failed"
+    assert result.submission_result.error == "unsafe_page"
+    assert result.raw_output is not None
+    assert "RESULT:DRY_RUN" in result.raw_output
+    assert "RESULT:FAILED:unsafe_page" in result.raw_output
+
+
+def test_apply_adapter_rejects_assistant_token_without_terminal_result(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr("subprocess.Popen", _AssistantOnlySpoofPopen)
+
+    result = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    ).submit_application(
+        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        browser=_session(),
+        model="default",
+        dry_run=True,
+    )
+
+    assert result.submission_result.kind == "failed"
+    assert result.submission_result.error == "no_result_record"
+    assert result.submission_result.retryable is False
+
+
+def test_apply_adapter_rejects_multiple_terminal_results(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr("subprocess.Popen", _MultipleResultPopen)
+
+    result = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    ).submit_application(
+        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        browser=_session(),
+        model="default",
+        dry_run=True,
+    )
+
+    assert result.submission_result.kind == "failed"
+    assert result.submission_result.error == "ambiguous_result_records"
+    assert result.submission_result.retryable is False
+
+
+def test_apply_adapter_rejects_error_result_envelope(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr("subprocess.Popen", _ErrorResultPopen)
+
+    result = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    ).submit_application(
+        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        browser=_session(),
+        model="default",
+        dry_run=True,
+    )
+
+    assert result.submission_result.kind == "failed"
+    assert result.submission_result.error == "invalid_result_envelope"
+    assert result.submission_result.retryable is False
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        "Finished safely.\nRESULT:DRY_RUN",
+        "RESULT:DRY_RUN\nRESULT:FAILED:unsafe_page",
+        "RESULT:DRY_RUN -- complete",
+    ],
+)
+def test_result_parser_rejects_noncanonical_records(record: str, tmp_path) -> None:
+    result = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    )._parse_result(record, dry_run=True)
+
+    assert result.kind == "failed"
+    assert result.error == "invalid_result_record"
+    assert result.retryable is False
+
+
+def test_applied_result_without_owned_receipt_is_rejected(tmp_path) -> None:
+    result = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    )._parse_result("RESULT:APPLIED", dry_run=False)
+
+    assert result.kind == "failed"
+    assert result.error == "untrusted_applied_result"
+    assert result.retryable is False
+
+
+def test_dry_run_result_is_only_partial_semantic_evidence(tmp_path) -> None:
+    result = ClaudeCodeCliAdapter(
+        log_dir=tmp_path,
+        app_dir=tmp_path,
+        default_timeout_seconds=5,
+    )._parse_result("RESULT:DRY_RUN", dry_run=True)
+
+    assert result.kind == "dry_run_complete"
+    assert result.coverage == "partial"
+    assert result.blocked_channels == ("semantic_review_unverified",)
 
 
 def test_missing_profile_data_failure_is_non_retryable(tmp_path) -> None:
@@ -583,15 +794,3 @@ def test_adapter_active_process_registry_kills_registered_process(monkeypatch) -
     kill_active_claude_processes()
 
     assert killed == [12345]
-
-
-@pytest.mark.parametrize(
-    ("output", "expected"),
-    [
-        ("RESULT:APPLIED\nconfirmation: submitted", 1.0),
-        ("RESULT:APPLIED", 0.6),
-        ("submitted successfully", 0.2),
-    ],
-)
-def test_applied_confidence_matrix(output: str, expected: float) -> None:
-    assert claude_code_cli._applied_confidence(output) == expected

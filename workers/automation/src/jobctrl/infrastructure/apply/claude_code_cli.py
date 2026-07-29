@@ -26,7 +26,6 @@ from typing import Any, Mapping
 
 from jobctrl import config
 from jobctrl.domain.apply.value_objects import (
-    Applied,
     ApplyPrompt,
     Captcha,
     DryRunComplete,
@@ -120,9 +119,15 @@ _ENV_ALLOWLIST = {
     "TMPDIR",
 }
 
-# Result codes the agent emits as ``RESULT:CODE`` lines.
-_RESULT_CODES = ("APPLIED", "DRY_RUN", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE")
-_EMAIL_ONLY_RE = re.compile(r"RESULT:EMAIL_ONLY:([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+# The dedicated terminal result field accepts one exact record. Assistant
+# narration is retained for audit, but never enters these parsers.
+_RESULT_RECORD_RE = re.compile(
+    r"RESULT:(APPLIED|DRY_RUN|EXPIRED|CAPTCHA|LOGIN_ISSUE)\Z"
+)
+_EMAIL_ONLY_RE = re.compile(
+    r"RESULT:EMAIL_ONLY:([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\Z"
+)
+_FAILED_RE = re.compile(r"RESULT:FAILED(?::([^\r\n]{1,500}))?\Z")
 
 # Reasons that get promoted from ``RESULT:FAILED:reason`` to a
 # dedicated SubmissionResult variant.
@@ -266,6 +271,8 @@ class ClaudeCodeCliAdapter:
 
         events: list[dict[str, Any]] = []
         text_parts: list[str] = []
+        result_records: list[str] = []
+        result_envelopes_valid: list[bool] = []
         stats: dict[str, Any] = {}
         proc: subprocess.Popen | None = None
         start = time.time()
@@ -383,7 +390,17 @@ class ClaudeCodeCliAdapter:
                             "cost_usd": float(msg.get("total_cost_usd", 0) or 0),
                             "turns": int(msg.get("num_turns", 0) or 0),
                         }
-                        result_text = msg.get("result", "") or ""
+                        raw_result = msg.get("result", "")
+                        result_text = (
+                            raw_result
+                            if isinstance(raw_result, str)
+                            else json.dumps(raw_result, sort_keys=True, default=str)
+                        )
+                        result_records.append(result_text)
+                        result_envelopes_valid.append(
+                            msg.get("subtype") == "success"
+                            and msg.get("is_error") is False
+                        )
                         text_parts.append(result_text)
 
             proc.wait(timeout=5)
@@ -428,7 +445,26 @@ class ClaudeCodeCliAdapter:
                     raw_output=output,
                 )
 
-            submission = self._parse_result(output, dry_run=dry_run)
+            if not result_records:
+                submission: SubmissionResult = Failed(
+                    error="no_result_record",
+                    retryable=False,
+                )
+            elif len(result_records) != 1:
+                submission = Failed(
+                    error="ambiguous_result_records",
+                    retryable=False,
+                )
+            elif not result_envelopes_valid[0]:
+                submission = Failed(
+                    error="invalid_result_envelope",
+                    retryable=False,
+                )
+            else:
+                submission = self._parse_result(
+                    result_records[0],
+                    dry_run=dry_run,
+                )
             return AgentResult(
                 submission_result=submission,
                 token_usage=token_usage,
@@ -459,60 +495,73 @@ class ClaudeCodeCliAdapter:
     # ------------------------------------------------------------------
 
     def _parse_result(self, output: str, *, dry_run: bool) -> SubmissionResult:
-        """Translate the agent's ``RESULT:CODE[:reason]`` line into a variant.
+        """Translate one exact dedicated terminal result record.
 
-        Mirrors the legacy launcher's ``run_job`` parser: scan the
-        output for the first ``RESULT:CODE`` token, with explicit
-        promotion of failed-reasons to dedicated variants for
-        captcha / expired / login_issue.
+        Streamed assistant text and raw non-JSON output are audit material only.
+        Extra prose, newlines, multiple tokens, and conflicting records fail
+        closed instead of being searched for a privileged substring.
         """
-        email_only = _EMAIL_ONLY_RE.search(output)
+        if (
+            not isinstance(output, str)
+            or not output
+            or output != output.strip()
+            or output.count("RESULT:") != 1
+        ):
+            return Failed(error="invalid_result_record", retryable=False)
+
+        email_only = _EMAIL_ONLY_RE.fullmatch(output)
         if email_only:
             return EmailOnlyApplication(recipient_email=email_only.group(1))
 
-        for code in _RESULT_CODES:
-            if f"RESULT:{code}" in output:
-                if code == "APPLIED":
-                    if dry_run:
-                        return Failed(
-                            error="dry_run_violation: agent reported applied during dry-run",
-                            retryable=False,
-                        )
-                    return Applied(
-                        applied_at=_utc_now(),
-                        verification_confidence=_applied_confidence(output),
+        result_record = _RESULT_RECORD_RE.fullmatch(output)
+        if result_record:
+            code = result_record.group(1)
+            if code == "APPLIED":
+                if dry_run:
+                    return Failed(
+                        error="dry_run_violation: agent reported applied during dry-run",
+                        retryable=False,
                     )
-                if code == "DRY_RUN":
-                    return DryRunComplete(navigated_to="")
-                if code == "EXPIRED":
-                    return Expired()
-                if code == "CAPTCHA":
+                return Failed(
+                    error="untrusted_applied_result",
+                    retryable=False,
+                )
+            if code == "DRY_RUN":
+                if not dry_run:
+                    return Failed(
+                        error="unexpected_dry_run_result",
+                        retryable=False,
+                    )
+                return DryRunComplete(
+                    navigated_to="",
+                    coverage="partial",
+                    blocked_channels=("semantic_review_unverified",),
+                )
+            if code == "EXPIRED":
+                return Expired()
+            if code == "CAPTCHA":
+                return Captcha(details="agent reported CAPTCHA")
+            return LoginIssue(details="agent reported login issue")
+
+        failed = _FAILED_RE.fullmatch(output)
+        if failed:
+            raw_reason = failed.group(1)
+            reason = _clean_reason(raw_reason or "unknown")
+            if raw_reason is not None and not reason:
+                return Failed(error="invalid_result_record", retryable=False)
+            if reason in _PROMOTED_FAILED_REASONS:
+                if reason == "captcha":
                     return Captcha(details="agent reported CAPTCHA")
-                if code == "LOGIN_ISSUE":
-                    return LoginIssue(details="agent reported login issue")
+                if reason == "expired":
+                    return Expired()
+                return LoginIssue(details="agent reported login issue")
+            if reason == "manual" or reason.startswith("manual"):
+                return Manual(reason=reason)
+            if reason.startswith("missing_profile_data:"):
+                return Failed(error=reason, retryable=False)
+            return Failed(error=reason or "unknown", retryable=True)
 
-        if "RESULT:FAILED" in output:
-            for line in output.split("\n"):
-                if "RESULT:FAILED" not in line:
-                    continue
-                tail = line.split("RESULT:FAILED", 1)[1].strip()
-                if tail.startswith(":"):
-                    tail = tail[1:].strip()
-                reason = _clean_reason(tail or "unknown")
-                if reason in _PROMOTED_FAILED_REASONS:
-                    if reason == "captcha":
-                        return Captcha(details="agent reported CAPTCHA")
-                    if reason == "expired":
-                        return Expired()
-                    return LoginIssue(details="agent reported login issue")
-                if reason == "manual" or reason.startswith("manual"):
-                    return Manual(reason=reason)
-                if reason.startswith("missing_profile_data:"):
-                    return Failed(error=reason, retryable=False)
-                return Failed(error=reason or "unknown", retryable=True)
-            return Failed(error="unknown", retryable=True)
-
-        return Failed(error="no_result_line", retryable=True)
+        return Failed(error="invalid_result_record", retryable=False)
 
 
 def _allowed_tools_for_mcp_config(mcp_config: Mapping[str, Any]) -> str:
@@ -574,28 +623,6 @@ def _claude_supports_budget_flag(claude_bin: str, *, bare: bool = False) -> bool
     except Exception:
         return False
     return "--max-budget-usd" in (result.stdout or "") or "--max-budget-usd" in (result.stderr or "")
-
-
-def _applied_confidence(output: str) -> float:
-    if not output:
-        return 0.2
-    if _has_confirmation_evidence(output):
-        return 1.0
-    if "RESULT:APPLIED" in output:
-        return 0.6
-    return 0.2
-
-
-def _has_confirmation_evidence(output: str) -> bool:
-    lowered = output.lower()
-    markers = (
-        "confirmation:",
-        "confirmation artifact",
-        "application submitted",
-        "thank you for applying",
-        "your application has been submitted",
-    )
-    return any(marker in lowered for marker in markers)
 
 
 def _preview(text: str, limit: int = 220) -> str:
