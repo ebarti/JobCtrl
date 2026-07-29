@@ -396,7 +396,7 @@ MCP** and performs any form interaction. Terminal apply outcomes are
 `ApplicationSubmitted` (live submit), `DryRunCompleted` (dry-run),
 `ApplicationFailed`, or `ApplyManualSkip` (manual-ATS skip).
 
-**Four safety invariants, and the mechanisms that enforce them:**
+**Five safety invariants, and the mechanisms that enforce them:**
 
 1. **At-most-once submission.** The launcher takes a `BEGIN IMMEDIATE` stage
    lock, guards on stage state, and writes an `ApplySubmitIntended` checkpoint
@@ -422,6 +422,13 @@ MCP** and performs any form interaction. Terminal apply outcomes are
    non-local `POST`/`PUT`/`PATCH` requests. So dry-run safety does not rely on
    the agent choosing not to click submit — even a misbehaving agent cannot
    submit through the browser.
+5. **Approval-origin confinement.** The reviewed application URL is carried
+   through `BrowserWorkerConfig` into the browser-level CDP guard. Every page,
+   popup, redirect, subresource, and form request must remain on that canonical
+   HTTP(S) origin in addition to passing the public-destination check. Worker
+   targets are closed before execution because they lack Chrome's required
+   interception domain. Cross-origin ATS transitions stop and require a new
+   reviewed destination.
 
 **Timeouts and retries.** The apply activity runs with a 2-hour window for a
 normal batch and a 1-hour window per batch in continuous mode; heartbeat timeout

@@ -63,6 +63,7 @@ class BrowserWorkerConfig:
     headless: bool = False
     user_data_dir: str | None = None
     dry_run: bool = False
+    approved_application_url: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.worker_id, int) or self.worker_id < 0:
@@ -77,6 +78,10 @@ class BrowserWorkerConfig:
             raise ValueError("BrowserWorkerConfig.headless must be a bool")
         if not isinstance(self.dry_run, bool):
             raise ValueError("BrowserWorkerConfig.dry_run must be a bool")
+        if not isinstance(self.approved_application_url, str):
+            raise ValueError(
+                "BrowserWorkerConfig.approved_application_url must be a string"
+            )
 
 
 # ---------------------------------------------------------------------------

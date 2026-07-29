@@ -129,7 +129,17 @@ LinkedIn resolution, contact research, and apply launch validate their relevant
 initial, redirect, final-page, popup, or subrequest boundaries instead of
 trusting the first URL once.
 
-The two most sensitive browser tools have an additional destination binding:
+Apply adds a stricter browser capability: every intercepted HTTP(S) request
+from its owned Chrome page targets must remain on the canonical origin of the
+approved application URL. The check is enforced in the browser-level CDP guard
+for the initial page, redirects, popups, tabs, form submissions, and
+subresources. Dedicated, shared, and service-worker targets are closed before
+their code runs because Chrome does not expose the required request-interception
+domain on those targets. A page or model cannot grant itself a second public
+origin; an unexpected cross-origin ATS transition stops the run and needs a
+newly reviewed application destination.
+
+The two most sensitive browser tools also have a destination binding:
 
 - `type_credential` reads the password locally, verifies that the active page
   origin is one derived from the approved application URL, confirms the focused

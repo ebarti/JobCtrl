@@ -189,7 +189,11 @@ def test_chrome_launch_checks_capability_before_creating_a_profile(
     monkeypatch.setattr(chrome, "setup_worker_profile", lambda worker_id: accessed.append(worker_id))
 
     with pytest.raises(BrowserCapabilityDisabledError):
-        chrome.launch_chrome(worker_id=1, port=9922)
+        chrome.launch_chrome(
+            worker_id=1,
+            port=9922,
+            approved_application_url="https://apply.example.com/job",
+        )
 
     assert accessed == []
 
@@ -228,7 +232,11 @@ def test_enabled_auto_apply_launch_uses_a_clean_owned_profile_without_host_copy(
         lambda _port, **_ownership: None,
     )
 
-    chrome.launch_chrome(worker_id=4, port=9994)
+    chrome.launch_chrome(
+        worker_id=4,
+        port=9994,
+        approved_application_url="https://apply.example.com/job",
+    )
 
     profile = worker_root / "worker-4"
     assert (profile / "Default").is_dir()

@@ -263,6 +263,16 @@ is in the [stage walkthrough](../architecture/pipeline/stages.md#apply).
   request with `BlockedByClient`, plus a `Page.addScriptToEvaluateOnNewDocument`
   form-submit guard. Dry-run safety therefore does not rely on the agent choosing
   not to click submit — the transport itself refuses the write.
+- **Approval-origin browser capability.** `BrowserWorkerConfig` carries the
+  reviewed application URL into `chrome.py`. The browser-level CDP guard
+  canonicalizes its HTTP(S) origin and fails every intercepted page-target
+  request to another origin, including public redirects, popups, tabs,
+  subresources, and live form submissions. Chrome worker targets do not expose
+  `Fetch.enable`, so dedicated, shared, and service workers are closed while
+  `waitForDebuggerOnStart` still prevents their code from running. Public
+  routability remains a separate prerequisite; a public destination is not
+  automatically authorized. Cross-origin ATS transitions require a newly
+  reviewed destination rather than learning authority from the page or model.
 - **Spend ceiling as a blast-radius control.** The `check_spend_budget` preflight
   runs before the apply activity, so a runaway or injected loop cannot spend past
   the daily ceiling.

