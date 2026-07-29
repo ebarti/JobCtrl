@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 # CDP port base — each worker uses BASE_CDP_PORT + worker_id
 BASE_CDP_PORT = 9222
+_CDP_READY_TIMEOUT_SECONDS = 10.0
+_CDP_READY_POLL_SECONDS = 0.1
+_CDP_READY_STABLE_PROBES = 10
 
 # Track Chrome processes per worker for cleanup
 _chrome_procs: dict[int, subprocess.Popen] = {}
@@ -233,11 +236,12 @@ def launch_chrome(
     with _chrome_lock:
         _chrome_procs[worker_id] = proc
 
-    # Give Chrome time to start and open the debug port. The synchronous guard
-    # startup below does not return until every initial page acknowledges
-    # Fetch.enable and browser-level paused auto-attach protects future pages.
-    time.sleep(3)
     try:
+        # Readiness is condition-based because a cold browser can take longer
+        # than a fixed delay. The synchronous guard startup below does not
+        # return until every initial page acknowledges Fetch.enable and
+        # browser-level paused auto-attach protects future pages.
+        _wait_for_browser_cdp_endpoint(port, proc)
         if dry_run:
             install_dry_run_cdp_guard(
                 port,
@@ -258,6 +262,46 @@ def launch_chrome(
     logger.info("[worker-%d] Chrome started on port %d (pid %d)",
                 worker_id, port, proc.pid)
     return proc
+
+
+def _wait_for_browser_cdp_endpoint(
+    port: int,
+    process: subprocess.Popen,
+    *,
+    timeout_seconds: float = _CDP_READY_TIMEOUT_SECONDS,
+    poll_seconds: float = _CDP_READY_POLL_SECONDS,
+    stable_probes: int = _CDP_READY_STABLE_PROBES,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    ready_url = ""
+    ready_count = 0
+    while True:
+        version = _cdp_json(port, "/json/version")
+        candidate_url = (
+            str(version.get("webSocketDebuggerUrl") or "")
+            if isinstance(version, dict)
+            else ""
+        )
+        if candidate_url and candidate_url == ready_url:
+            ready_count += 1
+        elif candidate_url:
+            ready_url = candidate_url
+            ready_count = 1
+        else:
+            ready_url = ""
+            ready_count = 0
+        if ready_count >= stable_probes:
+            return
+        if process.poll() is not None:
+            raise BrowserCapabilityError(
+                "Chrome exited before its browser-level CDP endpoint became ready"
+            )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BrowserCapabilityError(
+                "Chrome browser-level CDP endpoint did not become ready"
+            )
+        time.sleep(min(poll_seconds, remaining))
 
 
 _FORM_SUBMIT_GUARD_SOURCE = """

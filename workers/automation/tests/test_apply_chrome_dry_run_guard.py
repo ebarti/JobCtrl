@@ -512,6 +512,11 @@ def test_launch_chrome_installs_public_destination_guard_for_live_runs(tmp_path,
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
     monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
     monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
+    monkeypatch.setattr(
+        chrome,
+        "_cdp_json",
+        lambda _port, _path: {"webSocketDebuggerUrl": "ws://ready"},
+    )
     monkeypatch.setattr(chrome.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         chrome,
@@ -535,6 +540,118 @@ def test_launch_chrome_installs_public_destination_guard_for_live_runs(tmp_path,
     assert calls == [("public", 9555)]
 
 
+def test_launch_chrome_waits_for_browser_cdp_endpoint(tmp_path, monkeypatch):
+    probes: list[tuple[int, str]] = []
+    sleeps: list[float] = []
+    installs: list[int] = []
+    versions = iter(
+        [
+            [],
+            [],
+            *[
+                {"webSocketDebuggerUrl": "ws://127.0.0.1/devtools/browser/ready"}
+                for _ in range(chrome._CDP_READY_STABLE_PROBES)
+            ],
+        ]
+    )
+
+    class _FakeProcess:
+        pid = 4243
+
+        def poll(self) -> None:
+            return None
+
+    def setup_profile(worker_id: int) -> Path:
+        profile = tmp_path / f"profile-{worker_id}"
+        (profile / "Default").mkdir(parents=True, exist_ok=True)
+        return profile
+
+    def cdp_json(port: int, path: str):
+        probes.append((port, path))
+        return next(versions)
+
+    monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
+    monkeypatch.setattr(chrome, "_kill_on_port", lambda _port: None)
+    monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
+    monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
+    monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
+    monkeypatch.setattr(chrome, "_cdp_json", cdp_json)
+    monkeypatch.setattr(chrome.time, "sleep", sleeps.append)
+    monkeypatch.setattr(
+        chrome,
+        "install_public_destination_cdp_guard",
+        lambda port, **_ownership: installs.append(port),
+    )
+
+    chrome.launch_chrome(
+        worker_id=906,
+        port=9777,
+        headless=True,
+        dry_run=False,
+        approved_application_url="https://apply.example.com/job",
+    )
+
+    assert probes == [
+        (9777, "/json/version")
+        for _ in range(2 + chrome._CDP_READY_STABLE_PROBES)
+    ]
+    assert sleeps == [
+        chrome._CDP_READY_POLL_SECONDS
+        for _ in range(1 + chrome._CDP_READY_STABLE_PROBES)
+    ]
+    assert installs == [9777]
+
+
+def test_launch_chrome_cleans_up_when_cdp_process_exits(tmp_path, monkeypatch):
+    cleaned: list[tuple[int, int]] = []
+    installs: list[int] = []
+
+    class _ExitedProcess:
+        pid = 4244
+
+        def poll(self) -> int:
+            return 1
+
+    process = _ExitedProcess()
+
+    def setup_profile(worker_id: int) -> Path:
+        profile = tmp_path / f"profile-{worker_id}"
+        (profile / "Default").mkdir(parents=True, exist_ok=True)
+        return profile
+
+    monkeypatch.setattr(chrome, "setup_worker_profile", setup_profile)
+    monkeypatch.setattr(chrome, "_kill_on_port", lambda _port: None)
+    monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
+    monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
+    monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(chrome, "_cdp_json", lambda _port, _path: [])
+    monkeypatch.setattr(
+        chrome,
+        "install_public_destination_cdp_guard",
+        lambda port, **_ownership: installs.append(port),
+    )
+    monkeypatch.setattr(
+        chrome,
+        "cleanup_worker",
+        lambda worker_id, proc: cleaned.append((worker_id, proc.pid)),
+    )
+
+    with pytest.raises(
+        chrome.BrowserCapabilityError,
+        match="exited before its browser-level CDP endpoint became ready",
+    ):
+        chrome.launch_chrome(
+            worker_id=907,
+            port=9888,
+            headless=True,
+            dry_run=False,
+            approved_application_url="https://apply.example.com/job",
+        )
+
+    assert installs == []
+    assert cleaned == [(907, 4244)]
+
+
 def test_launch_chrome_uses_combined_dry_run_guard_for_dry_runs(tmp_path, monkeypatch):
     calls: list[tuple[str, int]] = []
 
@@ -554,6 +671,11 @@ def test_launch_chrome_uses_combined_dry_run_guard_for_dry_runs(tmp_path, monkey
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
     monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "/bin/echo")
     monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
+    monkeypatch.setattr(
+        chrome,
+        "_cdp_json",
+        lambda _port, _path: {"webSocketDebuggerUrl": "ws://ready"},
+    )
     monkeypatch.setattr(chrome.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         chrome,

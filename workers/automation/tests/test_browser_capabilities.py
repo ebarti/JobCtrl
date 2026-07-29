@@ -206,8 +206,8 @@ def test_enabled_auto_apply_launch_uses_a_clean_owned_profile_without_host_copy(
     class _FakeProcess:
         pid = 4242
 
-        def poll(self) -> int:
-            return 0
+        def poll(self) -> None:
+            return None
 
     enable_system_browser_capability("auto-apply-browser", browser_executable, app_dir=tmp_path)
     worker_root = tmp_path / "apply-workers"
@@ -225,6 +225,11 @@ def test_enabled_auto_apply_launch_uses_a_clean_owned_profile_without_host_copy(
     monkeypatch.setattr(chrome, "_kill_on_port", lambda _port: None)
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
     monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: _FakeProcess())
+    monkeypatch.setattr(
+        chrome,
+        "_cdp_json",
+        lambda _port, _path: {"webSocketDebuggerUrl": "ws://ready"},
+    )
     monkeypatch.setattr(chrome.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         chrome,
