@@ -18,10 +18,11 @@ JobCtrl launched its first stable public macOS release,
 
 ## Remaining Distribution Follow-Up
 
-- [ ] Publish and verify the supported `2.0.7` Python package through the
-  protected PyPI recovery path. The current `0.0.1` package is an identity
-  marker and is not a JobCtrl application install path.
+- [x] Publish and verify the supported `2.0.7` Python package through the
+  protected PyPI recovery path.
+- [ ] Complete the published-artifact, lifecycle, clean-machine, and real-path
+  TTFV acceptance matrix recorded in `docs/publish-checklist.md`.
 
 Public users should install JobCtrl with the bundled installer or Homebrew.
-Do not advertise `pip install jobctrl` until the supported package publication
-and verification are complete.
+The PyPI package is a verified component distribution, not the complete bundled
+application install path.

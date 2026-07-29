@@ -1,6 +1,6 @@
 {
   "name": "jobctrl",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "private": true,
   "description": "AI-powered end-to-end job application pipeline",
   "type": "module",

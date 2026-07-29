@@ -302,10 +302,10 @@ especially §§11–14. This is a release precondition, not permission to publis
   lifecycle proof, and verified Homebrew formula were published from audited
   commit `db257efe1087ec00ac2ec49b846a95d2423aecc2`. The initial PyPI upload
   stopped before publication because the publisher action referenced the
-  annotated `v1.14.0` tag object rather than its peeled executable commit.
-  This is a publication-pipeline defect, not a product change: preserve
-  `v2.0.7` and do not create another product version to recover the missing
-  PyPI channel.
+  annotated `v1.14.0` tag object rather than its peeled executable commit. The
+  protected recovery completed in workflow run `30115379507`; the verified
+  `2.0.7` wheel and source distribution are public on PyPI. Preserve `v2.0.7`
+  and its immutable evidence.
 - **Original release inputs.** The exact `v2.0.7` tag-triggered run used these
   first-release defaults:
 
@@ -326,7 +326,8 @@ especially §§11–14. This is a release precondition, not permission to publis
   before the single clean PyPI builder produces checksum-bound distributions.
   The `pypi` job then publishes only those unchanged bytes through OIDC. Verify
   the PyPI package and immutable GitHub Release after the workflow succeeds.
-- **PyPI-only recovery.** Dispatch `Release distribution` from `main` with the
+- **Completed PyPI-only recovery path.** The recovery used
+  `Release distribution` from `main` with the
   original stable inputs, `release_tag=v2.0.7`, and
   `pypi_recovery_only=true`. The resolver must require that exact tag and
   stable channel, prove the tag remains in `main`, and verify the existing
@@ -345,6 +346,25 @@ especially §§11–14. This is a release precondition, not permission to publis
   Remove those two temporary branch policies immediately after the run reaches
   a terminal state and verify both environments again admit only `v*` tags.
   Do not change the policies of `release-signing` or `release-publication`.
+- **Approved `v2.0.8` security patch.** Publish the merged release-preparation
+  commit as annotated tag `v2.0.8`, then manually dispatch this workflow at the
+  tag ref. The release advances the signed safety floor and explicitly revokes
+  the vulnerable `v2.0.7` build so a client that accepts `v2.0.8` cannot roll
+  back below the security fixes. Use these exact promotion inputs:
+
+  ```text
+  release_tag=v2.0.8
+  channel=stable
+  pypi_recovery_only=false
+  sequence=2
+  minimum_safe_sequence=2
+  revoked_build_ids=["2.0.7-db257efe1087ec00ac2ec49b846a95d2423aecc2-darwin-arm64"]
+  expected_channel_pointer_sha256=071df066a27b937ba7194b663698564c862565a8588753070b65de074ad5241d
+  ```
+
+  Re-read the public stable pointer immediately before dispatch. If its digest
+  changed, stop and reconcile the intervening signed release instead of
+  weakening the compare-and-swap guard.
 - **Rollback.** Preserve the immutable Release and tag as audit evidence. Yank
   a bad PyPI file/version when necessary, then publish a new higher-sequence
   signed release that explicitly revokes or supersedes the affected build.
@@ -659,7 +679,7 @@ rollback evidence, and publish corrections where a public claim proved wrong.
 | 9.1 Visibility flip | Owner | Run the exact-tree local gate, make the repository public, then rerun every standard hosted gate with real executed steps. |
 | 9.2 Docs-site verification | Owner | Docs are already public and deploy is enabled; dispatch at the gated `main` SHA and record the public deployment proof. |
 | 9.3 Rename redirect | Owner | Verify old-URL redirects after the flip and repair any stale repository links. |
-| 9.4 Release and PyPI | Owner | Keep the published `v2.0.7` GitHub/R2/Homebrew release unchanged; merge the peeled PyPI action pin and isolated recovery path, then run the `v2.0.7` PyPI-only recovery and verify the public wheel and source distribution. |
+| 9.4 Release and PyPI | Owner | `v2.0.7` is live on GitHub, R2, Homebrew, and PyPI. Publish approved security patch `v2.0.8` as signed sequence 2 with the recorded compare-and-swap and rollback-revocation inputs, then verify every public channel. |
 | 9.5 Homebrew tap | Signed workflow | Completed for `v2.0.7`; retain the verified formula and land the protected top-level deploy-key publication fix for future releases. |
 | 9.6 Installer and artifact acceptance | Owner | Verify immutable `install.sh` from R, land matching `scripts/get` and `docs/public/install.sh` in a separate post-release PR, validate/deploy D, then run public curl/Homebrew smoke. |
 | 9.7 Public live demo | Owner | The demo is already public and deploy is enabled; verify the audited deployment externally and record its release evidence. |
