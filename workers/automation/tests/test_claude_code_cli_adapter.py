@@ -362,7 +362,8 @@ def test_apply_adapter_uses_tool_allowlist_and_filtered_env(monkeypatch, tmp_pat
     assert "mcp__gmail__get_verification_code" in allowed_tools
     assert "mcp__apply_tools__solve_captcha" in allowed_tools
     assert "mcp__apply_tools__type_credential" not in allowed_tools
-    assert "mcp__apply_tools__upload_artifact" in allowed_tools
+    assert claude_code_cli.UPLOAD_ARTIFACT_TOOL not in allowed_tools
+    assert claude_code_cli.UPLOAD_ARTIFACT_TOOL in disallowed_tools
     assert "browser_evaluate" not in allowed_tools
     assert "browser_file_upload" not in allowed_tools
     assert "mcp__gmail__search_emails" not in allowed_tools
@@ -397,7 +398,7 @@ def test_apply_adapter_omits_captcha_tool_when_solver_key_absent(monkeypatch, tm
     assert result.submission_result.kind == "dry_run_complete"
     assert "mcp__apply_tools__solve_captcha" not in allowed_tools
     assert "mcp__apply_tools__type_credential" not in allowed_tools
-    assert "mcp__apply_tools__upload_artifact" in allowed_tools
+    assert claude_code_cli.UPLOAD_ARTIFACT_TOOL not in allowed_tools
 
 
 def test_apply_adapter_minimal_env_is_exact(monkeypatch) -> None:
@@ -466,6 +467,10 @@ def test_apply_allowlist_matches_pinned_tool_surface() -> None:
 
     assert set(claude_code_cli._ALLOWED_TOOLS.split(",")) == expected
     assert set(claude_code_cli._allowed_tools_for_mcp_config({}).split(",")) == expected
+    assert claude_code_cli.UPLOAD_ARTIFACT_TOOL not in expected
+    assert claude_code_cli.UPLOAD_ARTIFACT_TOOL in set(
+        claude_code_cli._DISALLOWED_TOOLS.split(",")
+    )
     with_captcha = {
         "mcpServers": {
             "apply_tools": {"env": {"CAPSOLVER_API_KEY": "capsolver-secret"}}
@@ -474,6 +479,28 @@ def test_apply_allowlist_matches_pinned_tool_surface() -> None:
     assert set(claude_code_cli._allowed_tools_for_mcp_config(with_captcha).split(",")) == (
         expected | {claude_code_cli.CAPTCHA_APPLY_TOOL}
     )
+
+
+def test_hostile_same_origin_page_cannot_obtain_artifact_upload_authority() -> None:
+    reflected_upload_request = {
+        "mcpServers": {
+            "apply_tools": {
+                "env": {
+                    "JOBCTRL_APPLY_UPLOAD_DIR": "/tmp/hostile-reflection-fixture",
+                }
+            }
+        }
+    }
+
+    allowed = set(
+        claude_code_cli._allowed_tools_for_mcp_config(
+            reflected_upload_request
+        ).split(",")
+    )
+    disallowed = set(claude_code_cli._DISALLOWED_TOOLS.split(","))
+
+    assert claude_code_cli.UPLOAD_ARTIFACT_TOOL not in allowed
+    assert claude_code_cli.UPLOAD_ARTIFACT_TOOL in disallowed
 
 
 def test_credential_tool_requires_a_nonempty_origin_policy() -> None:

@@ -53,15 +53,16 @@ identity, and privacy contact, read the canonical
 | Outbound call | When | What can be sent |
 | --- | --- | --- |
 | LLM providers | Scoring, analysis, tailoring, cover letters, contact extraction | Posting text, relevant profile evidence, generated text, or opted-in page text. Employer analysis uses Claude, Codex, and Gemini legs. |
-| Apply model | Apply/dry-run or an enabled standing loop | Profile application fields plus tailored resume/cover-letter text. Passwords and solver keys are excluded from the prompt. |
+| Apply model | Apply/dry-run or an enabled standing loop | The reviewed application URL and page content observed during the transport-locked inspection. Stored profile fields, job-description prose, tailored resume text, cover-letter text, local artifact paths, and artifact-upload authority are excluded. |
 | Job/ATS/public pages | Discovery, enrichment, supervised contact research | Search terms and network/page requests. |
 | Gmail | Authenticated verification/outcome flows or approved email applications | Bounded queries/evidence, or the exact reviewed send. |
 | Google Maps | Configured profile autocomplete | Address text typed in the field. |
 | CAPTCHA provider | Supported widget during an apply run you explicitly start or a standing loop you enable, with a configured solver | Site key and page URL through the local solver tool. |
 | Langfuse/OpenTelemetry | Explicit telemetry configuration | Metadata-only provider/model, operation/stage, outcome, token-count, and safe-size span attributes. |
 
-The apply prompt is the largest single transfer of personal data. Review a
-dry-run and keep targets narrow before live submission.
+The Apply model receives no applicant profile or generated-material prose.
+Reviewed resume and cover-letter files remain local for the user to handle
+manually; the page-reading model cannot upload or access them.
 
 ## What Stays On Your Machine
 
@@ -139,20 +140,20 @@ domain on those targets. A page or model cannot grant itself a second public
 origin; an unexpected cross-origin ATS transition stops the run and needs a
 newly reviewed application destination.
 
-The two most sensitive browser tools also have a destination binding:
+The saved-credential browser tool also has a destination binding:
 
 - `type_credential` is exposed only when the approved application origin
   exactly matches an origin independently enrolled through
   `JOBCTRL_TRUSTED_JOB_SITE_CREDENTIAL_ORIGINS`. It then reads the password
   locally, rechecks the active page origin, confirms the focused element is a
   password field, and types the secret without returning it to the model. The
-  application URL cannot enroll its own origin;
-- `upload_artifact` resolves only the reviewed resume or cover letter, requires
-  a live file input on the current page, and rejects and records an upload when
-  the page origin differs from the approved application origin.
+  application URL cannot enroll its own origin.
 
-These checks limit the impact of a malicious page or prompt injection that
-tries to navigate elsewhere before requesting a password or file upload.
+This check limits the impact of a malicious page or prompt injection that tries
+to navigate elsewhere before requesting a password. Reviewed artifacts are not
+staged in the browser worker and `upload_artifact` is explicitly denied to the
+page-reading model, preventing a same-origin page from reflecting their contents
+back through model-visible DOM.
 
 ## Approval And Control Gates
 
@@ -237,8 +238,12 @@ stale ID fails closed rather than silently selecting another installation.
 
 ### Browser Final Submit Is Not Delegated
 
-The page-reading model can inspect a transport-locked rehearsal, but it cannot
-perform the final browser submit. A live browser-form run stops with
+The page-reading model receives an inspection-only prompt containing the
+reviewed application URL. It never receives profile, resume, cover-letter,
+job-description, generated-material prose, local artifact paths, or
+artifact-upload authority.
+It can inspect a transport-locked rehearsal, but it cannot perform the final
+browser submit. A live browser-form run stops with
 `trusted_final_submit_required` before prompt rendering, browser launch, or
 agent execution. The same fail-closed rule is enforced by the use case, saga,
 and agent adapter, so a direct internal call cannot recover generic browser

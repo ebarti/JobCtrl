@@ -107,11 +107,13 @@ def test_build_passes_dry_run_through_to_legacy_builder(monkeypatch, builder):
         upload_dir="/tmp/worker-0",
     )
     assert seen["dry_run"] is True
-    assert seen["tailored_resume"] == "rt"
+    assert "tailored_resume" not in seen
+    assert "cover_letter" not in seen
+    assert "search_config" not in seen
     assert seen["upload_dir"] == "/tmp/worker-0"
 
 
-def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(monkeypatch, tmp_path):
+def test_legacy_prompt_keeps_reviewed_files_outside_worker_and_model(monkeypatch, tmp_path):
     worker_dir = tmp_path / "worker-0"
     materials_dir = tmp_path / "materials"
     materials_dir.mkdir()
@@ -143,29 +145,30 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(monkeypatch, t
     )
 
     expected_upload = worker_dir / "Test_Applicant_Resume.pdf"
-    assert expected_upload.exists()
+    assert not expected_upload.exists()
     assert str(expected_upload) not in rendered
-    assert 'upload_artifact(kind="resume")' in rendered
+    assert "upload_artifact" not in rendered
+    assert "Reviewed materials remain local for the user to handle manually" in rendered
     assert "browser_file_upload" not in rendered
     assert "Do not solve CAPTCHAs manually" in rendered
     assert "call solve_captcha(kind, sitekey, page_url) exactly once" in rendered
     assert "solve_captcha failure -> output RESULT:CAPTCHA and stop" in rendered
-    assert "missing_profile_data:<field>" in rendered
+    assert "missing_profile_data:<field>" not in rendered
     assert "missing_attestation" not in rendered
-    assert "answer YES only when" in rendered
+    assert "answer YES only when" not in rendered
     assert "Don't sell short" not in rendered
-    assert "== EMAIL VERIFICATION ==" in rendered
-    assert "get_verification_code" in rendered
+    assert "== EMAIL VERIFICATION ==" not in rendered
+    assert "get_verification_code" not in rendered
     assert "search_emails" not in rendered
     assert "read_email" not in rendered
-    assert "Do not open Gmail in the browser" in rendered
-    assert 'type_credential(kind="job_site_password")' in rendered
+    assert "Do not open Gmail in the browser" not in rendered
+    assert 'type_credential(kind="job_site_password")' not in rendered
     assert "RESULT:LOGIN_ISSUE" in rendered
-    assert "\nRESULT:APPLIED\n" in rendered
+    assert "\nRESULT:DRY_RUN\n" in rendered
+    assert "\nRESULT:APPLIED\n" not in rendered
     assert "RESULT:APPLIED --" not in rendered
     assert "terminal record must contain no explanation" in rendered
     assert "Do not upload into hidden controls" not in rendered
-    assert "Never call upload_artifact on any page that is not the approved application destination" in rendered
 
     dry_run_rendered = prompt_mod.build_prompt(
         job={
@@ -227,7 +230,68 @@ def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_co
     assert "RESULT:EMAIL_ONLY:<address>" in rendered
     assert "Age 18+: Yes" not in rendered
     assert "Felony: No" not in rendered
-    assert "Background check consent: Yes" in rendered
+    assert "Background check consent: Yes" not in rendered
+
+
+def test_apply_prompt_keeps_reviewed_material_and_profile_prose_opaque(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    worker_dir = tmp_path / "worker-0"
+    materials_dir = tmp_path / "materials"
+    materials_dir.mkdir()
+    resume_txt = materials_dir / "resume.txt"
+    resume_txt.write_text("RESUME_CHAIN_REACHED", encoding="utf-8")
+    resume_txt.with_suffix(".pdf").write_bytes(b"%PDF-1.4\n")
+    cover_txt = materials_dir / "cover.txt"
+    cover_txt.write_text("COVER_CHAIN_REACHED", encoding="utf-8")
+    cover_txt.with_suffix(".pdf").write_bytes(b"%PDF-1.4\n")
+    monkeypatch.delenv("CAPSOLVER_API_KEY", raising=False)
+    monkeypatch.setattr(prompt_mod.config, "load_env", lambda: None)
+    monkeypatch.setattr(
+        prompt_mod.config,
+        "gmail_mcp_auth_status",
+        lambda: (False, "missing OAuth client"),
+    )
+
+    rendered = prompt_mod.build_prompt(
+        job={
+            "url": "https://example.com/job",
+            "application_url": "https://example.com/apply",
+            "title": "JOB_TITLE_CHAIN_REACHED",
+            "site": "JOB_SITE_CHAIN_REACHED",
+            "fit_score": 9,
+            "tailored_resume_path": str(resume_txt),
+            "cover_letter_path": str(cover_txt),
+        },
+        tailored_resume="RESUME_ARGUMENT_CHAIN_REACHED",
+        cover_letter="COVER_ARGUMENT_CHAIN_REACHED",
+        snapshot=_FakeSnapshot(),
+        search_config={"location": {"accept_patterns": ["Barcelona"]}},
+        upload_dir=worker_dir,
+        dry_run=True,
+    )
+
+    for untrusted_or_private_value in (
+        "RESUME_CHAIN_REACHED",
+        "RESUME_ARGUMENT_CHAIN_REACHED",
+        "COVER_CHAIN_REACHED",
+        "COVER_ARGUMENT_CHAIN_REACHED",
+        "JOB_TITLE_CHAIN_REACHED",
+        "JOB_SITE_CHAIN_REACHED",
+        "Test Applicant",
+        "test@example.com",
+        "+1 555 0100",
+        "100000",
+    ):
+        assert untrusted_or_private_value not in rendered
+    assert "https://example.com/apply" in rendered
+    assert "upload_artifact" not in rendered
+    assert not (worker_dir / "Test_Applicant_Resume.pdf").exists()
+    assert not (worker_dir / "Test_Applicant_Cover_Letter.pdf").exists()
+    assert "== RESUME TEXT" not in rendered
+    assert "== COVER LETTER TEXT" not in rendered
+    assert "== APPLICANT PROFILE" not in rendered
 
 
 def test_attestation_lines_render_full_partial_and_empty_sets() -> None:

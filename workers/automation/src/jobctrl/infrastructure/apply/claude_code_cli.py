@@ -91,13 +91,10 @@ PLAYWRIGHT_APPLY_TOOLS = frozenset(
     for tool in sorted(PINNED_PLAYWRIGHT_MCP_TOOLS - PLAYWRIGHT_TOOL_EXCLUSIONS)
 )
 GMAIL_APPLY_TOOLS = frozenset({"mcp__gmail__get_verification_code"})
-BASE_OWNED_APPLY_TOOLS = frozenset(
-    {
-        "mcp__apply_tools__upload_artifact",
-    }
-)
+BASE_OWNED_APPLY_TOOLS = frozenset()
 CREDENTIAL_APPLY_TOOL = "mcp__apply_tools__type_credential"
 CAPTCHA_APPLY_TOOL = "mcp__apply_tools__solve_captcha"
+UPLOAD_ARTIFACT_TOOL = "mcp__apply_tools__upload_artifact"
 DISALLOWED_CLAUDE_TOOLS = (
     "Bash",
     "Edit",
@@ -105,6 +102,7 @@ DISALLOWED_CLAUDE_TOOLS = (
     "NotebookEdit",
     "WebFetch",
     "WebSearch",
+    UPLOAD_ARTIFACT_TOOL,
 )
 _ALLOWED_TOOLS = ",".join(
     sorted(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS)

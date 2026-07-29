@@ -293,10 +293,8 @@ class SubmitApplicationUseCase:
         # may still discover an approval-bound email candidate, but the model
         # never receives browser submit authority.
         agent_transport_locked = True
-        tailored_resume = _read_tailored_resume_text(job)
         prompt = self._prompt_builder.build(
             job=job,
-            tailored_resume=tailored_resume,
             snapshot=snapshot,
             cdp_port=cdp_port,
             dry_run=agent_transport_locked,
@@ -559,23 +557,6 @@ def _skipped_aggregate(
         finished_at=started_at,
         duration_ms=0,
     )
-
-
-def _read_tailored_resume_text(job: Mapping[str, Any]) -> str:
-    """Read the .txt sibling of the tailored resume PDF, if present."""
-    resume_path = job.get("tailored_resume_path")
-    if not resume_path:
-        return ""
-    try:
-        txt_path = Path(str(resume_path)).with_suffix(".txt")
-    except Exception:  # noqa: BLE001
-        return ""
-    if not txt_path.exists():
-        return ""
-    try:
-        return txt_path.read_text(encoding="utf-8")
-    except OSError:
-        return ""
 
 
 def _email_application_context(

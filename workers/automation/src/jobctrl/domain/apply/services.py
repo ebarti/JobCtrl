@@ -159,7 +159,7 @@ class ApplyPromptBuilder:
         self,
         *,
         job: Mapping[str, Any],
-        tailored_resume: str,
+        tailored_resume: str = "",
         snapshot: ProfileSnapshot,
         cdp_port: int,
         dry_run: bool = False,
@@ -169,11 +169,10 @@ class ApplyPromptBuilder:
     ) -> ApplyPrompt:
         """Render the prompt + MCP config for one job.
 
-        ``tailored_resume`` is the plain-text contents of the
-        tailored resume (the .txt sibling of the .pdf). ``snapshot``
-        is the ``ProfileSnapshot`` loaded by the launcher once at
-        startup. ``cdp_port`` is the worker's CDP port — the MCP
-        config wires it into the Playwright server URL.
+        ``tailored_resume``, ``cover_letter``, and ``search_config`` remain
+        accepted for source compatibility, but are deliberately not forwarded
+        across the Apply model boundary. ``snapshot`` is loaded once by the
+        launcher and is used only by code-owned artifact/capability setup.
         """
         # Lazy import to avoid a hard dependency on the legacy module
         # at domain-import time (keeps the service unit-testable
@@ -182,11 +181,8 @@ class ApplyPromptBuilder:
 
         text = prompt_mod.build_prompt(
             job=dict(job),
-            tailored_resume=tailored_resume,
-            cover_letter=cover_letter,
             dry_run=dry_run,
             snapshot=snapshot,
-            search_config=dict(search_config) if search_config is not None else None,
             upload_dir=upload_dir,
         )
         mcp_config = self._build_mcp_config(
