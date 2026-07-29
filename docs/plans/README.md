@@ -8,14 +8,15 @@ at the top of `docs/`.
   that has landed, been superseded by canonical docs, or been closed with a
   recorded outcome.
 
-As of 2026-07-29, three plans remain active at the top level. Distribution and
-the live demo are public, with explicit recovery, published-artifact, and
-privacy follow-up gates still open. The growth sprint has shipped its
-conversion surface and campaign kit, while owner-approved publication and
-other external launch work remain open. Pipeline operations, the end-to-end
-redesign, and resumable JobStreaming discovery are delivered and archived
-under `implemented/`. Add new accepted-but-not-yet-delivered plans at the top
-level.
+As of 2026-07-29, no accepted public implementation plans remain active at the
+top level. Bundled distribution and the public live demo are delivered and
+archived under `implemented/`; their separately deferred operational and
+privacy follow-ups live in `docs/publish-checklist.md` and `docs/backlog.md`.
+Add new accepted-but-not-yet-delivered public product plans at the top level.
+
+This is a public repository. Owner-only launch/growth strategy, campaign
+sequencing, targeting, unpublished messaging, and private traffic or conversion
+analysis must not be committed, listed, summarized, or archived here.
 
 The former top-level `openspec/` corpus was consolidated here on 2026-07-12.
 Each delivered change now has one implemented-plan record containing its
@@ -30,11 +31,7 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 
 ## Active Plans
 
-| Date | Plan | Status |
-| --- | --- | --- |
-| 2026-07-10 | [Bundled JobCtrl Distribution](2026-07-10-bundled-jobctrl-distribution-plan.md) | Active — signed/notarized `v2.0.7`, curl, Homebrew, GitHub Release, and the stable R2 pointer are live; PyPI recovery and remaining published-artifact/clean-machine acceptance gates are open |
-| 2026-07-11 | [Public JobCtrl Live Demo](2026-07-11-public-live-demo-plan.md) | Active — the public demo and consent-gated analytics are live; analytics-optional access and deferred withdrawal/erasure require separately approved privacy work |
-| 2026-07-26 | [Public Launch Growth Sprint](2026-07-26-public-launch-growth-sprint.md) | Active — conversion surface and campaign kit #509 plus consent-gated docs analytics #511–#512 are live; video, clean-Mac preflight, owner decisions, and external campaign actions remain open |
+None.
 
 ## Historical Spec Ledger
 
@@ -90,12 +87,11 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-07-05 | [Product Rename to JobCtrl](implemented/2026-07-05-rename-jobctrl-plan.md) | Implemented — #261 (plan), #349; hardening #350; #351 closeout; R0.1 updates the final public spelling to JobCtrl |
 | 2026-07-05 | [Crawl Politeness Hardening](implemented/2026-07-05-crawl-politeness-plan.md) | Implemented — #272 (plan), #297-#316; pacing-test hardening #334; ADR 2026-07-06 |
 | 2026-07-08 | [Web UI/UX Revamp — Left-Rail Shell + JobCtrl Design System](implemented/2026-07-08-web-ui-revamp-plan.md) | Implemented — #356; design-system docs follow-up continues separately in #357 |
-| 2026-07-10 | [Bundled JobCtrl Distribution](2026-07-10-bundled-jobctrl-distribution-plan.md) | Active — #394, #396, and #399–#405 landed; signed/notarized `v2.0.7`, GitHub Release, R2, and Homebrew are live; PyPI recovery and remaining published-artifact acceptance are open; ADR 2026-07-10 |
-| 2026-07-11 | [Public JobCtrl Live Demo](2026-07-11-public-live-demo-plan.md) | Active — #407–#417 landed and the public synthetic demo is live; consent-gated analytics shipped in #497, while analytics-optional access and deferred withdrawal/erasure remain separate privacy decisions |
+| 2026-07-10 | [Bundled JobCtrl Distribution](implemented/2026-07-10-bundled-jobctrl-distribution-plan.md) | Implemented / closed with operational follow-ups — #394, #396, and #399–#405; signed/notarized `v2.0.7`, GitHub Release, R2, and Homebrew are live; PyPI recovery and published-artifact acceptance remain in the release checklist/backlog; ADR 2026-07-10 |
+| 2026-07-11 | [Public JobCtrl Live Demo](implemented/2026-07-11-public-live-demo-plan.md) | Implemented / public — #407–#417; consent-gated analytics #497; analytics-optional access and withdrawal/erasure remain separately scoped privacy follow-ups |
 | 2026-07-13 | [Discovery Pipeline Operations Visibility](implemented/2026-07-13-discovery-pipeline-operations-visibility-plan.md) | Implemented — cumulative integration #464 incorporated the reviewed #459–#462 stack; production follow-ups #465–#467 |
 | 2026-07-14 | [End-to-End Product Redesign](implemented/2026-07-14-end-to-end-product-redesign.md) | Implemented — cumulative integration #464 incorporated the reviewed #453–#463 stack; production follow-ups #465–#467 |
 | 2026-07-17 | [Resumable JobStreaming Discovery](implemented/2026-07-17-resumable-jobstreaming-discovery-plan.md) | Implemented — provider boundary #468, durable units #469, and Temporal resume/docs/QA #470 |
-| 2026-07-26 | [Public Launch Growth Sprint](2026-07-26-public-launch-growth-sprint.md) | Active — conversion surface and campaign kit #509 plus consent-gated docs analytics #511–#512 are live; owner-approved external launch work remains open |
 
 Two 2026-05-17 backlog specs (`…-add-react`, `…-add-brows`) were drafted on
 `origin/mestre/develop-*` branches and never merged to `main`; only `…-add-root`

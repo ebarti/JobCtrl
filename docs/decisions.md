@@ -1950,8 +1950,8 @@ The first release target is Apple-silicon macOS. Other platforms follow the same
 manifest, lifecycle, capability, and clean-machine QA contract without blocking
 that initial artifact.
 
-Cites: active plan
-`docs/plans/2026-07-10-bundled-jobctrl-distribution-plan.md`; the superseded
+Cites: implemented plan
+`docs/plans/implemented/2026-07-10-bundled-jobctrl-distribution-plan.md`; the superseded
 pending-decision record immediately above; `docs/developer/first-run-ttfv.md`.
 
 ## 2026-07-14: Pipeline Operations Use Immutable Execution Lineage And Privacy-Safe Runtime Telemetry
