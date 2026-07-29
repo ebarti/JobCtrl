@@ -1,16 +1,18 @@
 # End-to-End Product Redesign
 
-- **Status:** Active — implementation assembled in the open redesign stack; canonical documentation and cumulative Tier 3 QA are in progress.
+- **Status (2026-07-29):** Implemented — the reviewed #453–#463 stack was
+  integrated through cumulative PR #464, with production follow-ups #465–#467.
+  Canonical documentation and cumulative Tier 3 gates are complete.
 - **Date:** 2026-07-14
 - **Owner ask:** turn the approved full-application prototype and browser annotations into the production JobCtrl UI without losing any existing data, controls, states, or audit evidence.
-- **Predecessor:** [2026-07-08 Web UI/UX Revamp](implemented/2026-07-08-web-ui-revamp-plan.md), delivered by #356.
+- **Predecessor:** [2026-07-08 Web UI/UX Revamp](2026-07-08-web-ui-revamp-plan.md), delivered by #356.
 
-### Delivery status — 2026-07-15
+### Delivery status — 2026-07-29
 
-- The primitive migration is published as #453–#457, the Rhea redesign as
-  #458, pipeline-operations delivery as #459–#462, and the cumulative cohesion
-  layer as #463. These PRs are open and stacked; implementation-complete does
-  not mean merged-to-`main`.
+- The primitive migration was reviewed in #453–#457, the Rhea redesign in
+  #458, pipeline operations in #459–#462, and cumulative cohesion in #463.
+  Those review PRs were closed without individual merges after their cumulative
+  content landed through #464; production refinements followed in #465–#467.
 - The owner subsequently approved moving the primitive substrate from Radix to
   Base UI before the visual pass. The production system remains shadcn-style
   owned composition, but its accessible primitives are now Base UI rather than
@@ -49,12 +51,12 @@ The implementation uses these sources in priority order:
    contract.
 2. **The annotated redesign prototype** for hierarchy, information density,
    responsive behavior, and interaction direction.
-3. [`DESIGN.md`](../../DESIGN.md) and
+3. [`DESIGN.md`](../../../DESIGN.md) and
    `apps/web/src/styles/{tokens,globals}.css` for brand, tokens, typography,
    spacing, status semantics, and component language.
-4. The [frontend architecture](../architecture/frontend/index.md) for state,
+4. The [frontend architecture](../../architecture/frontend/index.md) for state,
    contexts, ports, routing, realtime invalidation, and test ownership.
-5. The [requirements](../requirements.md), especially TR-018 through TR-021,
+5. The [requirements](../../requirements.md), especially TR-018 through TR-021,
    TR-029, and TR-032, for product-path QA, accessibility, settings autosave,
    and accepted-artifact preservation.
 
@@ -63,11 +65,11 @@ direction remains reviewable after the local prototype is gone:
 
 | Surface | Reference |
 | --- | --- |
-| Dashboard composition | ![Dashboard redesign](assets/2026-07-14-product-redesign/dashboard.jpg) |
-| Route-level Job Detail workspace | ![Job detail redesign](assets/2026-07-14-product-redesign/job-detail.jpg) |
-| Profile with the real resume editor | ![Profile redesign](assets/2026-07-14-product-redesign/profile.jpg) |
-| Settings composition | ![Browser settings redesign](assets/2026-07-14-product-redesign/settings-browser.jpg) |
-| Mobile detail reflow | ![Mobile job detail redesign](assets/2026-07-14-product-redesign/mobile-job-detail.png) |
+| Dashboard composition | ![Dashboard redesign](../assets/2026-07-14-product-redesign/dashboard.jpg) |
+| Route-level Job Detail workspace | ![Job detail redesign](../assets/2026-07-14-product-redesign/job-detail.jpg) |
+| Profile with the real resume editor | ![Profile redesign](../assets/2026-07-14-product-redesign/profile.jpg) |
+| Settings composition | ![Browser settings redesign](../assets/2026-07-14-product-redesign/settings-browser.jpg) |
+| Mobile detail reflow | ![Mobile job detail redesign](../assets/2026-07-14-product-redesign/mobile-job-detail.png) |
 
 The browser annotations add these explicit design requirements:
 

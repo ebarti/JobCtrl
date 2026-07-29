@@ -1,8 +1,9 @@
 # Resumable JobStreaming Discovery Plan
 
 - **Date:** 2026-07-17
-- **Status:** Active — implementation is being delivered as a three-PR stack on
-  top of PR #467.
+- **Status (2026-07-29):** Implemented — provider boundary #468, durable
+  search units #469, and Temporal resume/docs/QA #470 are merged to `main`;
+  cumulative validation and independent gates passed.
 - **Provider contract:** `jobstreaming==0.0.2`
 - **Goal:** A broad-board discovery activity backed by JobStreaming that is
   interrupted after accepting a posting resumes from durable caller-owned state
@@ -24,11 +25,11 @@ typed provider failures, and explicit acknowledgement mechanics.
 
 ## Delivery stack
 
-- **Phase 1:** published as PR #468; focused verification and independent
+- **Phase 1:** merged as PR #468; focused verification and independent
   review passed.
-- **Phase 2:** published as PR #469; focused verification and independent
+- **Phase 2:** merged as PR #469; focused verification and independent
   review passed.
-- **Phase 3:** published as PR #470 on PR #469; implementation, canonical
+- **Phase 3:** merged as PR #470 on PR #469; implementation, canonical
   documentation, cumulative validation, and independent review/QA gates are
   complete.
 

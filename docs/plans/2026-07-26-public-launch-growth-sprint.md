@@ -8,6 +8,16 @@
 - **Boundary:** This plan prepares external posts but does not publish them.
   Every account action and public submission requires owner approval.
 
+### Delivery update — 2026-07-29
+
+The conversion surface and campaign kit landed in #509. Consent-gated
+documentation analytics and its release-check compatibility landed in
+#511–#512. The outcome-led site, public paths, README star prompt, product
+social card, crawl metadata, release copy, and Discussions are live. The demo
+video, clean-Mac preflight, analytics-optional owner decision, search
+submissions, directory launches, article, and external campaign publications
+remain open.
+
 ## 0. Why This Sprint Exists
 
 JobCtrl has a launchable product but almost no qualified distribution.
@@ -67,15 +77,15 @@ product signal proves it.
 
 ### P0 — Required before Show HN or Product Hunt
 
-- [ ] Land and deploy the outcome-led docs-site hero.
-- [ ] Put the signed Apple-silicon install path in the deployed hero.
-- [ ] Add explicit demo, install, tour, comparison, and repository paths above
+- [x] Land and deploy the outcome-led docs-site hero.
+- [x] Put the signed Apple-silicon install path in the deployed hero.
+- [x] Add explicit demo, install, tour, comparison, and repository paths above
   the fold.
-- [ ] Add a direct but non-coercive star request to the repository README.
-- [ ] Replace the generic logo-only social card with a product-led 1200×630
+- [x] Add a direct but non-coercive star request to the repository README.
+- [x] Replace the generic logo-only social card with a product-led 1200×630
   preview.
-- [ ] Generate `sitemap.xml` and publish a `robots.txt` sitemap pointer.
-- [ ] Replace the stale pre-launch root checklist with current public status.
+- [x] Generate `sitemap.xml` and publish a `robots.txt` sitemap pointer.
+- [x] Replace the stale pre-launch root checklist with current public status.
 - [x] Add a substantive `v2.0.7` GitHub Release body.
 - [x] Enable GitHub Discussions with **Announcements**, **Ideas**, **Q&A**, and
   **Show and tell** categories; link it from the README after it is live.

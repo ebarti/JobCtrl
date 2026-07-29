@@ -1,17 +1,19 @@
 # Bundled JobCtrl Distribution Plan
 
 - **Date:** 2026-07-10
-- **Status (2026-07-24):** Active / implementation and stable release landed;
+- **Status (2026-07-29):** Active / implementation and stable release landed;
   published-artifact acceptance remains open. The plan (#394) and P0–P7 stack
   (#396, #399–#405) are merged to `main`. The signed and notarized `v2.0.7`
   release is immutable on GitHub, its signed assets and stable pointer are
   public on R2, and its verified Homebrew formula is live. The initial PyPI
   upload stopped before publication because of a publisher-action pin defect;
   recover that missing channel against the existing `v2.0.7` release rather
-  than creating a new product version. Canonical installer/docs cutover,
-  clean-machine curl/Homebrew, update/rollback/uninstall, and real-path TTFV QA
-  against the published artifact remain open. This plan stays top-level until
-  those published-artifact gates pass.
+  than creating a new product version solely for the missing upload. A later
+  version justified by new product or security changes remains a separate
+  release decision. Canonical installer/docs cutover, clean-machine
+  curl/Homebrew, update/rollback/uninstall, and real-path TTFV QA against the
+  published artifact remain open. This plan stays top-level until those
+  published-artifact gates pass.
 - **Anchors:** Current behavior and file ownership verified against
   `main @ 771f40c0`. Re-verify all paths against the implementation base before
   starting each phase.
