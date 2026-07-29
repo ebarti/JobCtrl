@@ -101,16 +101,18 @@ Part of the [Domain Model](index.md) reference.
 
 ### Open Questions
 
-1. **JobId format.** Should `JobId` be a UUID, a content-hash of
-   `(source, employer, title, postingUrl)`, or a sequential ID? UUIDs are
-   simplest but lose deduplication-by-content. Content hashes enable
-   cross-source dedup but are brittle to title changes. *Needs product input.*
+1. **JobId format (resolved 2026-07-29).** `JobId` is an opaque,
+   system-generated UUID. Content identity and accepted duplicate observations
+   remain explicit deduplication evidence; they do not define aggregate
+   identity. See the
+   [stable identity plan](../../plans/2026-07-29-stable-job-identity-workflow-feedback-learning.md).
 
-2. **Score correction feedback loop.** The backlog mentions using score
-   corrections to "personalize scoring for remaining jobs." How should this
-   work? Options: (a) fine-tune the scoring prompt with correction examples,
-   (b) adjust scoring rubric weights, (c) use corrections as few-shot examples.
-   *Needs product input.*
+2. **Score correction feedback loop (resolved 2026-07-29).** Score corrections
+   remain explicit versioned calibration anchors. Broader reviewed feedback may
+   produce a versioned, inspectable recommendation, but it cannot mutate a
+   policy until the user accepts it; existing jobs change only through explicit
+   recomputation. See the
+   [feedback learning plan](../../plans/2026-07-29-stable-job-identity-workflow-feedback-learning.md).
 
 3. **Resume rendering rollout.** The engine decision is HTML/CSS + Playwright,
    and `HtmlResumePdfAdapter` is the renderer. Layout-map persistence and Apply

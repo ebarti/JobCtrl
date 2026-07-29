@@ -34,6 +34,11 @@ recorded in the git log and in [docs/plans/implemented/](docs/plans/implemented/
   and dashboard projections.
 - Finish data-model cleanup around URL-shaped job identifiers, projection
   fallbacks, source/employer persistence, and searchable scoring keywords.
+- Complete the auditable user-feedback learning loop: unify shipped score
+  calibration and approved role-match exclusions with structured
+  tailoring-review feedback, preserve provenance-backed signals, and require an
+  explicit user action before a versioned policy or preference changes.
+  Outcome associations remain sample-gated and non-causal.
 - Strengthen frontend tooling: linting, dependency-boundary checks, type-level
   tests, Playwright e2e in CI, and visual regression from Storybook or the docs
   screenshot flow.
