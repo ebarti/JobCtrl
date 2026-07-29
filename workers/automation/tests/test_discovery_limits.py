@@ -30,6 +30,15 @@ def _jobspy_frame(rows: list[dict]) -> pd.DataFrame:
     return pd.DataFrame([{"description": _JOBSPY_DESCRIPTION, **row} for row in rows])
 
 
+def _stable_job_id(conn, job_url: str) -> str:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+        (job_url,),
+    ).fetchone()
+    assert row is not None
+    return str(row["job_id"])
+
+
 def test_jobspy_limit_stops_after_one_new_job(monkeypatch):
     calls: list[tuple[str, str, list[str], int, int]] = []
 
@@ -526,7 +535,7 @@ def test_jobspy_dedups_against_ats_first_null_company_owner(tmp_path):
         link = conn.execute(
             "SELECT surviving_job_id FROM job_duplicate_links"
         ).fetchone()
-        assert link["surviving_job_id"] == owner_url
+        assert link["surviving_job_id"] == _stable_job_id(conn, owner_url)
     finally:
         close_connection(db_path)
 
@@ -1031,7 +1040,7 @@ def test_jobspy_learns_posting_owner_source_from_direct_ats_url(tmp_path):
             """
             SELECT source_id, observed_url, run_id
             FROM job_source_observations
-            WHERE job_url = ?
+            WHERE job_id = (SELECT job_id FROM jobs WHERE url = ?)
             """,
             ("https://www.linkedin.com/jobs/view/4416248661",),
         ).fetchone()
@@ -1043,7 +1052,7 @@ def test_jobspy_learns_posting_owner_source_from_direct_ats_url(tmp_path):
             """
             SELECT canonical_url, ats_kind, source_native_id, confidence
             FROM job_canonical_identities
-            WHERE job_url = ?
+            WHERE job_id = (SELECT job_id FROM jobs WHERE url = ?)
             """,
             ("https://www.linkedin.com/jobs/view/4416248661",),
         ).fetchone()
@@ -1227,7 +1236,7 @@ def test_jobspy_keeps_learned_workday_sources_in_review_until_runnable(tmp_path)
             """
             SELECT canonical_url, ats_kind, source_native_id
             FROM job_canonical_identities
-            WHERE job_url = ?
+            WHERE job_id = (SELECT job_id FROM jobs WHERE url = ?)
             """,
             ("https://www.linkedin.com/jobs/view/12",),
         ).fetchone()
@@ -1340,11 +1349,18 @@ def test_jobspy_rejects_same_content_location_variants(tmp_path):
             "SELECT surviving_job_id, superseded_job_or_observation_id, reason "
             "FROM job_duplicate_links"
         ).fetchone()
-        assert link["surviving_job_id"] == "https://www.linkedin.com/jobs/view/4416248661"
+        assert link["surviving_job_id"] == _stable_job_id(
+            conn,
+            "https://www.linkedin.com/jobs/view/4416248661",
+        )
         assert link["superseded_job_or_observation_id"] == "https://www.linkedin.com/jobs/view/4416235850"
         assert link["reason"] == "content_fingerprint_match"
         observation = conn.execute(
-            "SELECT source_id FROM job_source_observations WHERE job_url = ?",
+            """
+            SELECT source_id
+            FROM job_source_observations
+            WHERE job_id = (SELECT job_id FROM jobs WHERE url = ?)
+            """,
             ("https://www.linkedin.com/jobs/view/4416248661",),
         ).fetchone()
         assert observation["source_id"] == "jobspy:linkedin"
@@ -1436,11 +1452,19 @@ def test_jobspy_rejects_cross_board_markdown_description_variants(tmp_path):
         link = conn.execute(
             "SELECT surviving_job_id, superseded_job_or_observation_id, reason FROM job_duplicate_links"
         ).fetchone()
-        assert link["surviving_job_id"] == "https://es.indeed.com/viewjob?jk=6b34cd5504dac130"
+        assert link["surviving_job_id"] == _stable_job_id(
+            conn,
+            "https://es.indeed.com/viewjob?jk=6b34cd5504dac130",
+        )
         assert link["superseded_job_or_observation_id"] == "https://www.linkedin.com/jobs/view/4409381449"
         assert link["reason"] == "content_fingerprint_match"
         observations = conn.execute(
-            "SELECT source_id FROM job_source_observations WHERE job_url = ? ORDER BY source_id",
+            """
+            SELECT source_id
+            FROM job_source_observations
+            WHERE job_id = (SELECT job_id FROM jobs WHERE url = ?)
+            ORDER BY source_id
+            """,
             ("https://es.indeed.com/viewjob?jk=6b34cd5504dac130",),
         ).fetchall()
         assert [row["source_id"] for row in observations] == ["jobspy:indeed", "jobspy:linkedin"]
@@ -1567,7 +1591,7 @@ def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp
         link = conn.execute(
             "SELECT surviving_job_id, superseded_job_or_observation_id, reason FROM job_duplicate_links"
         ).fetchone()
-        assert link["surviving_job_id"] == survivor_url
+        assert link["surviving_job_id"] == _stable_job_id(conn, survivor_url)
         assert link["superseded_job_or_observation_id"] == duplicate_url
         assert link["reason"] == "content_fingerprint_match"
     finally:

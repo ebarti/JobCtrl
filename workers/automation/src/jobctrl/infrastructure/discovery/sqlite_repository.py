@@ -231,7 +231,7 @@ class SqliteJobRepository:
             SELECT j.job_id
             FROM jobs j
             JOIN job_source_observations o
-              ON o.job_url = j.url AND o.tenant_id = ?
+              ON o.job_id = j.job_id AND o.tenant_id = ?
             WHERE j.tenant_id = ?
               AND o.normalized_observed_url = ?
             LIMIT 1
@@ -667,7 +667,7 @@ class SqliteJobRepository:
                 FROM job_source_observations o
                 JOIN jobs j
                   ON j.tenant_id = o.tenant_id
-                 AND j.url = o.job_url
+                 AND j.job_id = o.job_id
                 WHERE o.tenant_id = ?
                   AND o.source_id = ?
                   AND o.source_native_id = ?
@@ -694,7 +694,7 @@ class SqliteJobRepository:
                 FROM job_canonical_identities c
                 JOIN jobs j
                   ON j.tenant_id = c.tenant_id
-                 AND j.url = c.job_url
+                 AND j.job_id = c.job_id
                 WHERE c.tenant_id = ? AND c.canonical_url = ?
                 LIMIT 1
                 """,
@@ -713,7 +713,7 @@ class SqliteJobRepository:
                     FROM job_source_observations o
                     JOIN jobs j
                       ON j.tenant_id = o.tenant_id
-                     AND j.url = o.job_url
+                     AND j.job_id = o.job_id
                     WHERE o.tenant_id = ?
                       AND o.normalized_observed_url = ?
                     LIMIT 1
@@ -829,6 +829,7 @@ class SqliteJobRepository:
         """
 
         identity = self._require_identity(tenant_id, job_id)
+        stable_job_id = str(identity.job_id)
         job_url = identity.storage_url.value
         self._fence_search_unit_write()
         normalized = normalize_observed_url(observation.observed_url)
@@ -836,7 +837,7 @@ class SqliteJobRepository:
             """
             UPDATE job_source_observations SET
                 source_observation_id = ?,
-                job_url = ?,
+                job_id = ?,
                 observed_url = ?,
                 normalized_observed_url = ?,
                 run_id = ?,
@@ -845,7 +846,7 @@ class SqliteJobRepository:
             """,
             (
                 observation.source_observation_id,
-                job_url,
+                stable_job_id,
                 observation.observed_url,
                 normalized,
                 observation.run_id,
@@ -860,7 +861,7 @@ class SqliteJobRepository:
                 """
                 UPDATE job_source_observations SET
                     source_observation_id = ?,
-                    job_url = ?,
+                    job_id = ?,
                     source_id = ?,
                     source_native_id = ?,
                     observed_url = ?,
@@ -870,7 +871,7 @@ class SqliteJobRepository:
                 """,
                 (
                     observation.source_observation_id,
-                    job_url,
+                    stable_job_id,
                     observation.source_id,
                     observation.source_native_id,
                     observation.observed_url,
@@ -884,7 +885,7 @@ class SqliteJobRepository:
             self._conn.execute(
                 """
                 INSERT INTO job_source_observations (
-                    tenant_id, source_observation_id, job_url, source_id,
+                    tenant_id, source_observation_id, job_id, source_id,
                     source_native_id, observed_url, normalized_observed_url,
                     run_id, observed_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -892,7 +893,7 @@ class SqliteJobRepository:
                 (
                     str(tenant_id),
                     observation.source_observation_id,
-                    job_url,
+                    stable_job_id,
                     observation.source_id,
                     observation.source_native_id,
                     observation.observed_url,
@@ -940,10 +941,10 @@ class SqliteJobRepository:
         self._conn.execute(
             """
             INSERT INTO job_canonical_identities (
-                tenant_id, job_url, canonical_url, ats_kind,
+                tenant_id, job_id, canonical_url, ats_kind,
                 source_native_id, confidence, resolved_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (tenant_id, job_url) DO UPDATE SET
+            ON CONFLICT (tenant_id, job_id) DO UPDATE SET
                 canonical_url = excluded.canonical_url,
                 ats_kind = excluded.ats_kind,
                 source_native_id = excluded.source_native_id,
@@ -952,7 +953,7 @@ class SqliteJobRepository:
             """,
             (
                 str(tenant_id),
-                resolved.storage_url.value,
+                str(resolved.job_id),
                 identity.canonical_url,
                 identity.ats_kind.value,
                 identity.source_native_id,
@@ -992,7 +993,7 @@ class SqliteJobRepository:
             (
                 str(tenant_id),
                 link.duplicate_link_id,
-                owner.storage_url.value,
+                str(owner.job_id),
                 link.superseded_job_or_observation_id,
                 link.reason,
                 float(link.confidence),
@@ -1025,13 +1026,13 @@ class SqliteJobRepository:
         self._conn.execute(
             """
             INSERT INTO job_rejected_duplicate_links (
-                tenant_id, owner_job_url, candidate_url, reason, rejected_at
+                tenant_id, owner_job_id, candidate_url, reason, rejected_at
             ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT (tenant_id, owner_job_url, candidate_url) DO NOTHING
+            ON CONFLICT (tenant_id, owner_job_id, candidate_url) DO NOTHING
             """,
             (
                 str(tenant_id),
-                owner.storage_url.value,
+                str(owner.job_id),
                 str(candidate_url),
                 reason,
                 rejected_at,
@@ -1055,10 +1056,10 @@ class SqliteJobRepository:
             SELECT source_observation_id, source_id, source_native_id,
                    observed_url, run_id, observed_at
             FROM job_source_observations
-            WHERE tenant_id = ? AND job_url = ?
+            WHERE tenant_id = ? AND job_id = ?
             ORDER BY observed_at ASC
             """,
-            (str(tenant_id), identity.storage_url.value),
+            (str(tenant_id), str(identity.job_id)),
         ).fetchall()
         return [
             JobSourceObservation(
@@ -1086,10 +1087,10 @@ class SqliteJobRepository:
             """
             SELECT canonical_url, ats_kind, source_native_id, confidence
             FROM job_canonical_identities
-            WHERE tenant_id = ? AND job_url = ?
+            WHERE tenant_id = ? AND job_id = ?
             LIMIT 1
             """,
-            (str(tenant_id), identity.storage_url.value),
+            (str(tenant_id), str(identity.job_id)),
         ).fetchone()
         if row is None:
             return None

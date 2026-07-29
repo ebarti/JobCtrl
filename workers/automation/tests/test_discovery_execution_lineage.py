@@ -168,7 +168,11 @@ def test_source_observation_retry_links_once_without_rewriting_first_link(
     # The source observation remains mutable metadata and is intentionally not
     # the authority for the immutable execution link above.
     source_row = conn.execute(
-        "SELECT run_id, observed_at FROM job_source_observations WHERE job_url = ?",
+        """
+        SELECT run_id, observed_at
+        FROM job_source_observations
+        WHERE job_id = (SELECT job_id FROM jobs WHERE url = ?)
+        """,
         (job_url,),
     ).fetchone()
     assert tuple(source_row) == ("source-run-retry", "2026-07-14T09:05:00+00:00")

@@ -29,6 +29,8 @@ function seedSchema(dbPath: string): void {
   db.exec(`
     CREATE TABLE jobs (
       url TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT,
       title TEXT,
       company TEXT,
       site TEXT,
@@ -148,9 +150,10 @@ function seedSchema(dbPath: string): void {
     );
   `);
   db.prepare(
-    "INSERT INTO jobs (url, title, site, fit_score, score_reasoning, application_url) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO jobs (url, job_id, title, site, fit_score, score_reasoning, application_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(
     "https://example.com/jobs/event-driven",
+    "test-job-event-driven",
     "Event-Driven Engineer",
     "ExampleCo",
     9,
@@ -2055,7 +2058,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         CREATE TABLE job_source_observations (
           tenant_id TEXT NOT NULL DEFAULT 'local',
           source_observation_id TEXT NOT NULL,
-          job_url TEXT NOT NULL,
+          job_id TEXT NOT NULL,
           source_id TEXT NOT NULL,
           source_native_id TEXT NOT NULL,
           observed_url TEXT NOT NULL,
@@ -2066,25 +2069,25 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         );
         CREATE TABLE job_canonical_identities (
           tenant_id TEXT NOT NULL DEFAULT 'local',
-          job_url TEXT NOT NULL,
+          job_id TEXT NOT NULL,
           canonical_url TEXT NOT NULL,
           ats_kind TEXT NOT NULL,
           source_native_id TEXT NOT NULL,
           confidence REAL NOT NULL,
           resolved_at TEXT NOT NULL,
-          PRIMARY KEY (tenant_id, job_url)
+          PRIMARY KEY (tenant_id, job_id)
         );
       `);
       db.prepare(
         `INSERT INTO job_source_observations (
-          tenant_id, source_observation_id, job_url, source_id,
+          tenant_id, source_observation_id, job_id, source_id,
           source_native_id, observed_url, normalized_observed_url,
           run_id, observed_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         "local",
         "obs-linkedin",
-        "https://example.com/jobs/event-driven",
+        "test-job-event-driven",
         "jobspy:linkedin",
         "https://www.linkedin.com/jobs/view/1",
         "https://www.linkedin.com/jobs/view/1",
@@ -2094,12 +2097,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       );
       db.prepare(
         `INSERT INTO job_canonical_identities (
-          tenant_id, job_url, canonical_url, ats_kind, source_native_id,
+          tenant_id, job_id, canonical_url, ats_kind, source_native_id,
           confidence, resolved_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         "local",
-        "https://example.com/jobs/event-driven",
+        "test-job-event-driven",
         "https://boards.greenhouse.io/acme/jobs/123456",
         "greenhouse",
         "123456",

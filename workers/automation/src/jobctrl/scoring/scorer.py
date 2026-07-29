@@ -1017,7 +1017,7 @@ def _preferred_direct_score_for_repost(
         FROM jobs j
         LEFT JOIN job_enrichments je ON je.job_url = j.url
         LEFT JOIN job_canonical_identities c
-          ON c.tenant_id = ? AND c.job_url = j.url
+          ON c.tenant_id = ? AND c.job_id = j.job_id
         {deleted_join}
         INNER JOIN (
             SELECT job_url, MAX(version) AS max_version
@@ -1074,8 +1074,11 @@ def _is_reference_repost_candidate(
     row = conn.execute(
         """
         SELECT ats_kind
-        FROM job_canonical_identities
-        WHERE tenant_id = ? AND job_url = ?
+        FROM job_canonical_identities c
+        JOIN jobs j
+          ON j.tenant_id = c.tenant_id
+         AND j.job_id = c.job_id
+        WHERE c.tenant_id = ? AND j.url = ?
         ORDER BY confidence DESC
         LIMIT 1
         """,

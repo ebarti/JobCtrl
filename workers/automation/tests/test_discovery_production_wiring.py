@@ -55,6 +55,15 @@ def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.Co
     close_connection(db_path)
 
 
+def _stable_job_id(conn: sqlite3.Connection, job_url: str) -> str:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+        (job_url,),
+    ).fetchone()
+    assert row is not None
+    return str(row["job_id"])
+
+
 def _barcelona_registry():
     return config.load_source_registry(
         search_cfg={"boards": []},
@@ -335,10 +344,18 @@ def test_worker_seeds_api_visible_locator_and_manual_queues(
 def test_worker_auto_approves_parseable_sources_from_broad_board_observations(
     conn: sqlite3.Connection,
 ) -> None:
+    job_url = "https://boards.greenhouse.io/acme/jobs/123"
+    conn.execute(
+        """
+        INSERT INTO jobs (url, title, site, strategy, discovered_at)
+        VALUES (?, 'Engineer', 'greenhouse', 'jobspy', ?)
+        """,
+        (job_url, "2026-05-12T10:00:00+00:00"),
+    )
     conn.execute(
         """
         INSERT INTO job_source_observations (
-          tenant_id, source_observation_id, job_url, source_id,
+          tenant_id, source_observation_id, job_id, source_id,
           source_native_id, observed_url, normalized_observed_url,
           run_id, observed_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -346,11 +363,11 @@ def test_worker_auto_approves_parseable_sources_from_broad_board_observations(
         (
             "local",
             "obs-1",
-            "https://boards.greenhouse.io/acme/jobs/123",
+            _stable_job_id(conn, job_url),
             "jobspy:linkedin",
             "123",
-            "https://boards.greenhouse.io/acme/jobs/123",
-            "https://boards.greenhouse.io/acme/jobs/123",
+            job_url,
+            job_url,
             "run-1",
             "2026-05-12T10:00:00+00:00",
         ),
@@ -617,22 +634,30 @@ def test_discovery_hygiene_retires_existing_invalid_canonical_ats_rows(
         conn.execute(
             """
             INSERT INTO job_canonical_identities (
-                tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at
+                tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            ("local", url, url, "greenhouse", f"gh-{index}", 1.0, "2026-05-20T00:00:00+00:00"),
+            (
+                "local",
+                _stable_job_id(conn, url),
+                url,
+                "greenhouse",
+                f"gh-{index}",
+                1.0,
+                "2026-05-20T00:00:00+00:00",
+            ),
         )
         conn.execute(
             """
             INSERT INTO job_source_observations (
-                tenant_id, source_observation_id, job_url, source_id, source_native_id,
+                tenant_id, source_observation_id, job_id, source_id, source_native_id,
                 observed_url, normalized_observed_url, run_id, observed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "local",
                 f"obs-{index}",
-                url,
+                _stable_job_id(conn, url),
                 "greenhouse:acme",
                 f"gh-{index}",
                 url,
@@ -696,22 +721,30 @@ def test_discovery_hygiene_retires_ashby_business_travel_portugal_rows(
         conn.execute(
             """
             INSERT INTO job_canonical_identities (
-                tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at
+                tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            ("local", url, url, "ashby", native_id, 0.9, "2026-05-25T21:35:55+00:00"),
+            (
+                "local",
+                _stable_job_id(conn, url),
+                url,
+                "ashby",
+                native_id,
+                0.9,
+                "2026-05-25T21:35:55+00:00",
+            ),
         )
         conn.execute(
             """
             INSERT INTO job_source_observations (
-                tenant_id, source_observation_id, job_url, source_id, source_native_id,
+                tenant_id, source_observation_id, job_id, source_id, source_native_id,
                 observed_url, normalized_observed_url, run_id, observed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "local",
                 f"obs-{native_id}",
-                url,
+                _stable_job_id(conn, url),
                 "ashby:perk",
                 native_id,
                 url,
@@ -797,14 +830,14 @@ def test_discovery_hygiene_retires_invalid_jobspy_rows(
         conn.execute(
             """
             INSERT INTO job_source_observations (
-                tenant_id, source_observation_id, job_url, source_id, source_native_id,
+                tenant_id, source_observation_id, job_id, source_id, source_native_id,
                 observed_url, normalized_observed_url, run_id, observed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "local",
                 f"jobspy-obs-{index}",
-                url,
+                _stable_job_id(conn, url),
                 source_id,
                 f"li-{index}",
                 url,
@@ -899,14 +932,14 @@ def test_discovery_hygiene_treats_serialized_null_descriptions_as_missing(
         conn.execute(
             """
             INSERT INTO job_source_observations (
-                tenant_id, source_observation_id, job_url, source_id, source_native_id,
+                tenant_id, source_observation_id, job_id, source_id, source_native_id,
                 observed_url, normalized_observed_url, run_id, observed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "local",
                 f"jobspy-sentinel-obs-{index}",
-                url,
+                _stable_job_id(conn, url),
                 "jobspy:linkedin",
                 f"li-sentinel-{index}",
                 url,
@@ -1032,14 +1065,14 @@ def test_discovery_hygiene_applies_to_workday_and_smart_extract_rows(
         conn.execute(
             """
             INSERT INTO job_source_observations (
-                tenant_id, source_observation_id, job_url, source_id, source_native_id,
+                tenant_id, source_observation_id, job_id, source_id, source_native_id,
                 observed_url, normalized_observed_url, run_id, observed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "local",
                 f"source-family-obs-{index}",
-                url,
+                _stable_job_id(conn, url),
                 source_id,
                 f"native-{index}",
                 url,
@@ -1299,7 +1332,8 @@ def test_enrichment_snapshot_success_uses_observed_source_id(
         SELECT jobs.url, jobs.title, jobs.site, job_source_observations.source_id
         FROM jobs
         JOIN job_source_observations
-            ON job_source_observations.job_url = jobs.url
+            ON job_source_observations.tenant_id = jobs.tenant_id
+           AND job_source_observations.job_id = jobs.job_id
         WHERE job_source_observations.source_id = ?
         LIMIT 1
         """,

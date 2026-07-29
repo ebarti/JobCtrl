@@ -37,9 +37,11 @@ from jobctrl.config import DB_PATH, DEFAULTS, migrate_legacy_job_tables
 # v6 (repeat-application prevention): evidence-bound confirmations,
 # one-attempt consumption, and immutable protection audit records.
 # v7 (stable job identity foundation): additive opaque job UUIDs, the
-# tenant-scoped posting-URL alias map, and insert/update guards. URL-keyed
-# authorities remain compatibility storage until their own bounded migrations.
-SCHEMA_VERSION = 7
+# tenant-scoped posting-URL alias map, and insert/update guards.
+# v8 (discovery identity references): source observations, canonical identity,
+# and duplicate-link authorities reference ``(tenant_id, job_id)`` rather than
+# storing a posting URL as aggregate identity.
+SCHEMA_VERSION = 8
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -175,7 +177,10 @@ def _schema_migrations() -> tuple[
     ...,
 ]:
     """Return the ordered schema migrations known to this build."""
-    return ((7, ensure_stable_job_identity_v7),)
+    return (
+        (7, ensure_stable_job_identity_v7),
+        (8, ensure_discovery_identity_references_v8),
+    )
 
 
 def _assert_schema_migration_path(current_version: int) -> None:
@@ -1023,7 +1028,7 @@ def _verify_stable_job_identity_v7(
     if duplicate is not None:
         raise RuntimeError("stable JobId migration produced duplicate job IDs")
 
-    missing_alias = conn.execute(
+    missing_storage_alias = conn.execute(
         """
         SELECT j.tenant_id, j.url
         FROM jobs j
@@ -1032,13 +1037,32 @@ def _verify_stable_job_identity_v7(
          AND a.alias_kind = 'posting_url'
          AND a.alias_value = j.url
          AND a.job_id = j.job_id
+        WHERE a.job_id IS NULL
+        LIMIT 1
+        """
+    ).fetchone()
+    if missing_storage_alias is not None:
+        raise RuntimeError(
+            "stable JobId migration left a job without its storage URL alias"
+        )
+
+    missing_active_alias = conn.execute(
+        """
+        SELECT j.tenant_id, j.job_id
+        FROM jobs j
+        LEFT JOIN job_identity_aliases a
+          ON a.tenant_id = j.tenant_id
+         AND a.alias_kind = 'posting_url'
+         AND a.job_id = j.job_id
          AND a.retired_at IS NULL
         WHERE a.job_id IS NULL
         LIMIT 1
         """
     ).fetchone()
-    if missing_alias is not None:
-        raise RuntimeError("stable JobId migration left a job without its URL alias")
+    if missing_active_alias is not None:
+        raise RuntimeError(
+            "stable JobId migration left a job without an active posting URL alias"
+        )
 
     trigger_rows = conn.execute(
         """
@@ -3356,10 +3380,9 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
     See PR 2 of the Job Search Discovery RFC
     (`docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md`).
 
-    The migration is purely additive — the legacy ``jobs.url`` PRIMARY
-    KEY remains the canonical posting URL during the compatibility
-    window so ``load_by_url`` can resolve either a canonical URL or an
-    observation URL without a coordinated cutover.
+    These discovery-owned authorities use stable ``JobId`` references. The
+    legacy ``jobs.url`` primary key remains compatibility storage for table
+    families that have not yet completed their bounded migration.
 
     Backfill is idempotent: if ``job_source_observations`` is empty AND
     the ``jobs`` table has rows, every existing job seeds exactly one
@@ -3376,7 +3399,7 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
         CREATE TABLE IF NOT EXISTS job_source_observations (
             tenant_id                TEXT NOT NULL DEFAULT 'local',
             source_observation_id    TEXT NOT NULL,
-            job_url                  TEXT NOT NULL,
+            job_id                   TEXT NOT NULL,
             source_id                TEXT NOT NULL,
             source_native_id         TEXT NOT NULL,
             observed_url             TEXT NOT NULL,
@@ -3384,7 +3407,8 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
             run_id                   TEXT NOT NULL DEFAULT '',
             observed_at              TEXT NOT NULL,
             PRIMARY KEY (tenant_id, source_observation_id),
-            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
         )
         """
     )
@@ -3400,10 +3424,15 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
         ON job_source_observations(tenant_id, normalized_observed_url)
         """
     )
+    observation_reference = (
+        "job_id"
+        if "job_id" in _table_columns(conn, "job_source_observations")
+        else "job_url"
+    )
     conn.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_job_source_observations_job
-        ON job_source_observations(tenant_id, job_url)
+        ON job_source_observations(tenant_id, {observation_reference})
         """
     )
 
@@ -3411,14 +3440,15 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
         """
         CREATE TABLE IF NOT EXISTS job_canonical_identities (
             tenant_id          TEXT NOT NULL DEFAULT 'local',
-            job_url            TEXT NOT NULL,
+            job_id             TEXT NOT NULL,
             canonical_url      TEXT NOT NULL,
             ats_kind           TEXT NOT NULL,
             source_native_id   TEXT NOT NULL,
             confidence         REAL NOT NULL,
             resolved_at        TEXT NOT NULL,
-            PRIMARY KEY (tenant_id, job_url),
-            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            PRIMARY KEY (tenant_id, job_id),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
         )
         """
     )
@@ -3439,7 +3469,9 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
             reason                                 TEXT NOT NULL,
             confidence                             REAL NOT NULL,
             linked_at                              TEXT NOT NULL,
-            PRIMARY KEY (tenant_id, duplicate_link_id)
+            PRIMARY KEY (tenant_id, duplicate_link_id),
+            FOREIGN KEY (tenant_id, surviving_job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
         )
         """
     )
@@ -3454,20 +3486,55 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
         """
         CREATE TABLE IF NOT EXISTS job_rejected_duplicate_links (
             tenant_id       TEXT NOT NULL DEFAULT 'local',
-            owner_job_url   TEXT NOT NULL,
+            owner_job_id    TEXT NOT NULL,
             candidate_url   TEXT NOT NULL,
             reason          TEXT NOT NULL,
             rejected_at     TEXT NOT NULL,
-            PRIMARY KEY (tenant_id, owner_job_url, candidate_url)
+            PRIMARY KEY (tenant_id, owner_job_id, candidate_url),
+            FOREIGN KEY (tenant_id, owner_job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
         )
         """
     )
 
     # Idempotent one-shot backfill: every existing jobs row gets one
-    # observation row using its legacy URL / site / discovered_at.
+    # observation row using its stable ID plus legacy URL / site / discovered_at.
     backfilled = conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0]
-    if backfilled == 0:
-        legacy_jobs = conn.execute("SELECT url, site, strategy, discovered_at FROM jobs").fetchall()
+    current_schema_version = int(
+        conn.execute("PRAGMA user_version").fetchone()[0]
+    )
+    if (
+        backfilled == 0
+        and current_schema_version >= _DISCOVERY_IDENTITY_REFERENCE_SCHEMA_VERSION
+    ):
+        observation_columns = _table_columns(conn, "job_source_observations")
+        job_columns = _table_columns(conn, "jobs")
+        stable_schema = "job_id" in observation_columns
+        stable_jobs_ready = {"tenant_id", "job_id"}.issubset(job_columns) and (
+            int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM jobs
+                    WHERE tenant_id IS NULL OR trim(tenant_id) = ''
+                       OR job_id IS NULL OR trim(job_id) = ''
+                    """
+                ).fetchone()[0]
+            )
+            == 0
+        )
+        legacy_jobs: list[sqlite3.Row] | list[tuple[Any, ...]] = []
+        if not stable_schema:
+            legacy_jobs = conn.execute(
+                "SELECT url, site, strategy, discovered_at FROM jobs"
+            ).fetchall()
+        elif stable_jobs_ready:
+            legacy_jobs = conn.execute(
+                """
+                SELECT url, site, strategy, discovered_at, tenant_id, job_id
+                FROM jobs
+                """
+            ).fetchall()
         if legacy_jobs:
             now = datetime.now(timezone.utc).isoformat()
             for row in legacy_jobs:
@@ -3702,19 +3769,36 @@ def _backfill_one_observation_row(
     discovered_at = (row["discovered_at"] if isinstance(row, sqlite3.Row) else row[3]) or now
     if not url:
         return
+    observation_columns = _table_columns(conn, "job_source_observations")
+    reference_column = "job_id" if "job_id" in observation_columns else "job_url"
+    if reference_column == "job_id":
+        if isinstance(row, sqlite3.Row):
+            tenant_id = str(row["tenant_id"] or "").strip()
+            job_reference = str(row["job_id"] or "").strip()
+        else:
+            tenant_id = str(row[4] or "").strip()
+            job_reference = str(row[5] or "").strip()
+        if not tenant_id or not job_reference:
+            raise RuntimeError(
+                "source-observation backfill requires a stable tenant and JobId"
+            )
+    else:
+        tenant_id = "local"
+        job_reference = str(url)
     source_native_id = url  # fall back to the URL when we have nothing better
     source_observation_id = f"backfill:{url}"
     conn.execute(
-        """
+        f"""
         INSERT OR IGNORE INTO job_source_observations (
-            tenant_id, source_observation_id, job_url, source_id,
+            tenant_id, source_observation_id, {reference_column}, source_id,
             source_native_id, observed_url, normalized_observed_url,
             run_id, observed_at
-        ) VALUES ('local', ?, ?, ?, ?, ?, ?, 'backfill', ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'backfill', ?)
         """,
         (
+            tenant_id,
             source_observation_id,
-            url,
+            job_reference,
             str(site),
             str(source_native_id),
             url,
@@ -3722,6 +3806,677 @@ def _backfill_one_observation_row(
             discovered_at,
         ),
     )
+
+
+_DISCOVERY_IDENTITY_REFERENCE_SCHEMA_VERSION = 8
+_DISCOVERY_IDENTITY_REFERENCE_TABLES = (
+    "job_source_observations",
+    "job_canonical_identities",
+    "job_duplicate_links",
+    "job_rejected_duplicate_links",
+)
+
+
+def ensure_discovery_identity_references_v8(
+    conn: sqlite3.Connection | None = None,
+) -> list[str]:
+    """Move discovery-owned job references from posting URLs to stable IDs.
+
+    Every old reference is resolved through the canonical jobs row or its
+    tenant-scoped posting-URL aliases before any table is replaced. The four
+    authority tables are rebuilt and verified in one savepoint; unresolved
+    references, row-count drift, or any foreign-key error leaves schema v7
+    untouched and retryable.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    current = _assert_schema_version_supported(conn)
+    if current >= _DISCOVERY_IDENTITY_REFERENCE_SCHEMA_VERSION:
+        return []
+    if current != _STABLE_JOB_IDENTITY_SCHEMA_VERSION:
+        raise RuntimeError(
+            "discovery identity migration requires stable JobId schema v7"
+        )
+
+    conn.execute("SAVEPOINT discovery_identity_references_v8")
+    try:
+        _verify_stable_job_identity_v7(conn)
+        before_counts = {
+            table: int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+            for table in _DISCOVERY_IDENTITY_REFERENCE_TABLES
+        }
+
+        if not _has_discovery_identity_reference_schema_v8(conn):
+            source_reference = _legacy_or_stable_reference_column(
+                conn,
+                "job_source_observations",
+                stable="job_id",
+                legacy="job_url",
+            )
+            canonical_reference = _legacy_or_stable_reference_column(
+                conn,
+                "job_canonical_identities",
+                stable="job_id",
+                legacy="job_url",
+            )
+            rejected_reference = _legacy_or_stable_reference_column(
+                conn,
+                "job_rejected_duplicate_links",
+                stable="owner_job_id",
+                legacy="owner_job_url",
+            )
+            reference_columns = {
+                "job_source_observations": source_reference,
+                "job_canonical_identities": canonical_reference,
+                "job_duplicate_links": "surviving_job_id",
+                "job_rejected_duplicate_links": rejected_reference,
+            }
+            for table, reference_column in reference_columns.items():
+                unresolved = conn.execute(
+                    f"""
+                    SELECT {reference_column}
+                    FROM {table} AS source
+                    WHERE {_resolved_job_id_sql("source", reference_column)}
+                          IS NULL
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if unresolved is not None:
+                    raise RuntimeError(
+                        "discovery identity migration could not resolve "
+                        f"{table}.{reference_column}={unresolved[0]!r}"
+                    )
+
+            _create_discovery_identity_v8_rebuild_tables(conn)
+            conn.execute(
+                f"""
+                INSERT INTO job_source_observations_v8 (
+                    tenant_id, source_observation_id, job_id, source_id,
+                    source_native_id, observed_url, normalized_observed_url,
+                    run_id, observed_at
+                )
+                SELECT
+                    source.tenant_id,
+                    source.source_observation_id,
+                    {_resolved_job_id_sql("source", source_reference)},
+                    source.source_id,
+                    source.source_native_id,
+                    source.observed_url,
+                    source.normalized_observed_url,
+                    source.run_id,
+                    source.observed_at
+                FROM job_source_observations AS source
+                """
+            )
+            conn.execute(
+                f"""
+                INSERT INTO job_canonical_identities_v8 (
+                    tenant_id, job_id, canonical_url, ats_kind,
+                    source_native_id, confidence, resolved_at
+                )
+                SELECT
+                    source.tenant_id,
+                    {_resolved_job_id_sql("source", canonical_reference)},
+                    source.canonical_url,
+                    source.ats_kind,
+                    source.source_native_id,
+                    source.confidence,
+                    source.resolved_at
+                FROM job_canonical_identities AS source
+                """
+            )
+            conn.execute(
+                f"""
+                INSERT INTO job_duplicate_links_v8 (
+                    tenant_id, duplicate_link_id, surviving_job_id,
+                    superseded_job_or_observation_id, reason, confidence,
+                    linked_at
+                )
+                SELECT
+                    source.tenant_id,
+                    source.duplicate_link_id,
+                    {_resolved_job_id_sql("source", "surviving_job_id")},
+                    source.superseded_job_or_observation_id,
+                    source.reason,
+                    source.confidence,
+                    source.linked_at
+                FROM job_duplicate_links AS source
+                """
+            )
+            conn.execute(
+                f"""
+                INSERT INTO job_rejected_duplicate_links_v8 (
+                    tenant_id, owner_job_id, candidate_url, reason, rejected_at
+                )
+                SELECT
+                    source.tenant_id,
+                    {_resolved_job_id_sql("source", rejected_reference)},
+                    source.candidate_url,
+                    source.reason,
+                    source.rejected_at
+                FROM job_rejected_duplicate_links AS source
+                """
+            )
+
+            for table in _DISCOVERY_IDENTITY_REFERENCE_TABLES:
+                conn.execute(f'DROP TABLE "{table}"')
+                conn.execute(f'ALTER TABLE "{table}_v8" RENAME TO "{table}"')
+            _create_discovery_identity_v8_indexes(conn)
+
+        if before_counts["job_source_observations"] == 0:
+            now = datetime.now(timezone.utc).isoformat()
+            jobs = conn.execute(
+                """
+                SELECT url, site, strategy, discovered_at, tenant_id, job_id
+                FROM jobs
+                """
+            ).fetchall()
+            for row in jobs:
+                _backfill_one_observation_row(conn, row, now)
+
+        expected_counts = dict(before_counts)
+        if before_counts["job_source_observations"] == 0:
+            expected_counts["job_source_observations"] = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM job_source_observations"
+                ).fetchone()[0]
+            )
+        _verify_discovery_identity_references_v8(
+            conn,
+            expected_counts=expected_counts,
+        )
+        conn.execute(
+            f"PRAGMA user_version = "
+            f"{_DISCOVERY_IDENTITY_REFERENCE_SCHEMA_VERSION}"
+        )
+        conn.execute("RELEASE SAVEPOINT discovery_identity_references_v8")
+        conn.commit()
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT discovery_identity_references_v8")
+        conn.execute("RELEASE SAVEPOINT discovery_identity_references_v8")
+        raise
+
+    return list(_DISCOVERY_IDENTITY_REFERENCE_TABLES)
+
+
+def reassign_discovery_identity_references(
+    conn: sqlite3.Connection,
+    *,
+    losing_job_url: str,
+    surviving_job_url: str,
+) -> None:
+    """Re-home discovery authority rows before a legacy URL collision merge.
+
+    URL normalization still merges duplicate legacy ``jobs`` rows in place.
+    Because Python's compatibility connections do not yet enforce SQLite
+    foreign-key actions globally, the merge must explicitly preserve the
+    losing aggregate's discovery evidence under the surviving stable JobId
+    before deleting the losing row.
+    """
+    if losing_job_url == surviving_job_url:
+        return
+    identities = conn.execute(
+        """
+        SELECT url, tenant_id, job_id
+        FROM jobs
+        WHERE url IN (?, ?)
+        """,
+        (losing_job_url, surviving_job_url),
+    ).fetchall()
+    by_url = {
+        str(row["url"] if isinstance(row, sqlite3.Row) else row[0]): (
+            str(row["tenant_id"] if isinstance(row, sqlite3.Row) else row[1]),
+            str(row["job_id"] if isinstance(row, sqlite3.Row) else row[2]),
+        )
+        for row in identities
+    }
+    losing_identity = by_url.get(losing_job_url)
+    surviving_identity = by_url.get(surviving_job_url)
+    if losing_identity is None or surviving_identity is None:
+        raise RuntimeError(
+            "URL collision merge requires both losing and surviving jobs"
+        )
+    losing_tenant, losing_job_id = losing_identity
+    surviving_tenant, surviving_job_id = surviving_identity
+    if losing_tenant != surviving_tenant:
+        raise RuntimeError(
+            "URL collision merge cannot cross tenant boundaries"
+        )
+    if not losing_job_id or not surviving_job_id:
+        raise RuntimeError(
+            "URL collision merge requires stable JobIds"
+        )
+
+    tenant_id = losing_tenant
+    conn.execute(
+        """
+        UPDATE job_source_observations
+        SET job_id = ?
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (surviving_job_id, tenant_id, losing_job_id),
+    )
+
+    losing_canonical = conn.execute(
+        """
+        SELECT 1
+        FROM job_canonical_identities
+        WHERE tenant_id = ? AND job_id = ?
+        """,
+        (tenant_id, losing_job_id),
+    ).fetchone()
+    if losing_canonical is not None:
+        surviving_canonical = conn.execute(
+            """
+            SELECT 1
+            FROM job_canonical_identities
+            WHERE tenant_id = ? AND job_id = ?
+            """,
+            (tenant_id, surviving_job_id),
+        ).fetchone()
+        if surviving_canonical is None:
+            conn.execute(
+                """
+                UPDATE job_canonical_identities
+                SET job_id = ?
+                WHERE tenant_id = ? AND job_id = ?
+                """,
+                (surviving_job_id, tenant_id, losing_job_id),
+            )
+        else:
+            conn.execute(
+                """
+                DELETE FROM job_canonical_identities
+                WHERE tenant_id = ? AND job_id = ?
+                """,
+                (tenant_id, losing_job_id),
+            )
+
+    conn.execute(
+        """
+        UPDATE job_duplicate_links
+        SET surviving_job_id = ?
+        WHERE tenant_id = ? AND surviving_job_id = ?
+        """,
+        (surviving_job_id, tenant_id, losing_job_id),
+    )
+    conn.execute(
+        """
+        DELETE FROM job_rejected_duplicate_links AS losing
+        WHERE losing.tenant_id = ?
+          AND losing.owner_job_id = ?
+          AND EXISTS (
+              SELECT 1
+              FROM job_rejected_duplicate_links AS surviving
+              WHERE surviving.tenant_id = losing.tenant_id
+                AND surviving.owner_job_id = ?
+                AND surviving.candidate_url = losing.candidate_url
+          )
+        """,
+        (tenant_id, losing_job_id, surviving_job_id),
+    )
+    conn.execute(
+        """
+        UPDATE job_rejected_duplicate_links
+        SET owner_job_id = ?
+        WHERE tenant_id = ? AND owner_job_id = ?
+        """,
+        (surviving_job_id, tenant_id, losing_job_id),
+    )
+
+
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    return {
+        str(row[1])
+        for row in conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+    }
+
+
+def _legacy_or_stable_reference_column(
+    conn: sqlite3.Connection,
+    table: str,
+    *,
+    stable: str,
+    legacy: str,
+) -> str:
+    columns = _table_columns(conn, table)
+    if stable in columns:
+        return stable
+    if legacy in columns:
+        return legacy
+    raise RuntimeError(
+        f"discovery identity migration found no job reference in {table}"
+    )
+
+
+def _resolved_job_id_sql(table_alias: str, reference_column: str) -> str:
+    """Return a correlated SQL expression resolving a legacy or stable key."""
+
+    reference = f"{table_alias}.{reference_column}"
+    tenant = f"{table_alias}.tenant_id"
+    return f"""
+        COALESCE(
+            (
+                SELECT j.job_id
+                FROM jobs j
+                WHERE j.tenant_id = {tenant}
+                  AND j.job_id = {reference}
+                LIMIT 1
+            ),
+            (
+                SELECT j.job_id
+                FROM jobs j
+                WHERE j.tenant_id = {tenant}
+                  AND j.url = {reference}
+                LIMIT 1
+            ),
+            (
+                SELECT a.job_id
+                FROM job_identity_aliases a
+                JOIN jobs j
+                  ON j.tenant_id = a.tenant_id
+                 AND j.job_id = a.job_id
+                WHERE a.tenant_id = {tenant}
+                  AND a.alias_kind = 'posting_url'
+                  AND a.alias_value = {reference}
+                LIMIT 1
+            )
+        )
+    """
+
+
+def _create_discovery_identity_v8_rebuild_tables(
+    conn: sqlite3.Connection,
+) -> None:
+    for table in _DISCOVERY_IDENTITY_REFERENCE_TABLES:
+        conn.execute(f'DROP TABLE IF EXISTS "{table}_v8"')
+    conn.execute(
+        """
+        CREATE TABLE job_source_observations_v8 (
+            tenant_id                TEXT NOT NULL DEFAULT 'local',
+            source_observation_id    TEXT NOT NULL,
+            job_id                   TEXT NOT NULL,
+            source_id                TEXT NOT NULL,
+            source_native_id         TEXT NOT NULL,
+            observed_url             TEXT NOT NULL,
+            normalized_observed_url  TEXT NOT NULL,
+            run_id                   TEXT NOT NULL DEFAULT '',
+            observed_at              TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, source_observation_id),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE job_canonical_identities_v8 (
+            tenant_id          TEXT NOT NULL DEFAULT 'local',
+            job_id             TEXT NOT NULL,
+            canonical_url      TEXT NOT NULL,
+            ats_kind           TEXT NOT NULL,
+            source_native_id   TEXT NOT NULL,
+            confidence         REAL NOT NULL,
+            resolved_at        TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, job_id),
+            FOREIGN KEY (tenant_id, job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE job_duplicate_links_v8 (
+            tenant_id                              TEXT NOT NULL DEFAULT 'local',
+            duplicate_link_id                      TEXT NOT NULL,
+            surviving_job_id                       TEXT NOT NULL,
+            superseded_job_or_observation_id       TEXT NOT NULL,
+            reason                                 TEXT NOT NULL,
+            confidence                             REAL NOT NULL,
+            linked_at                              TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, duplicate_link_id),
+            FOREIGN KEY (tenant_id, surviving_job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE job_rejected_duplicate_links_v8 (
+            tenant_id       TEXT NOT NULL DEFAULT 'local',
+            owner_job_id    TEXT NOT NULL,
+            candidate_url   TEXT NOT NULL,
+            reason          TEXT NOT NULL,
+            rejected_at     TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, owner_job_id, candidate_url),
+            FOREIGN KEY (tenant_id, owner_job_id)
+                REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _create_discovery_identity_v8_indexes(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_job_source_observations_native
+        ON job_source_observations(tenant_id, source_id, source_native_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_job_source_observations_normalized_url
+        ON job_source_observations(tenant_id, normalized_observed_url)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_source_observations_job
+        ON job_source_observations(tenant_id, job_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_canonical_identities_canonical_url
+        ON job_canonical_identities(tenant_id, canonical_url)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_duplicate_links_surviving
+        ON job_duplicate_links(tenant_id, surviving_job_id)
+        """
+    )
+
+
+def _has_composite_job_id_foreign_key(
+    conn: sqlite3.Connection,
+    table: str,
+    reference_column: str,
+) -> bool:
+    groups: dict[int, set[tuple[str, str]]] = {}
+    cascades: dict[int, bool] = {}
+    for row in conn.execute(f'PRAGMA foreign_key_list("{table}")').fetchall():
+        if str(row[2]) != "jobs":
+            continue
+        foreign_key_id = int(row[0])
+        groups.setdefault(foreign_key_id, set()).add(
+            (str(row[3]), str(row[4]))
+        )
+        cascades[foreign_key_id] = str(row[6]).upper() == "CASCADE"
+    expected = {("tenant_id", "tenant_id"), (reference_column, "job_id")}
+    return any(
+        columns == expected and cascades.get(foreign_key_id, False)
+        for foreign_key_id, columns in groups.items()
+    )
+
+
+def _primary_key_columns(
+    conn: sqlite3.Connection,
+    table: str,
+) -> tuple[str, ...]:
+    keyed = [
+        (int(row[5]), str(row[1]))
+        for row in conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+        if int(row[5]) > 0
+    ]
+    return tuple(column for _position, column in sorted(keyed))
+
+
+def _has_index(
+    conn: sqlite3.Connection,
+    table: str,
+    name: str,
+    columns: tuple[str, ...],
+    *,
+    unique: bool,
+) -> bool:
+    index_row = next(
+        (
+            row
+            for row in conn.execute(
+                f'PRAGMA index_list("{table}")'
+            ).fetchall()
+            if str(row[1]) == name
+        ),
+        None,
+    )
+    if index_row is None or bool(index_row[2]) is not unique:
+        return False
+    actual_columns = tuple(
+        str(row[2])
+        for row in conn.execute(f'PRAGMA index_info("{name}")').fetchall()
+    )
+    return actual_columns == columns
+
+
+def _has_discovery_identity_reference_schema_v8(
+    conn: sqlite3.Connection,
+) -> bool:
+    return (
+        "job_id" in _table_columns(conn, "job_source_observations")
+        and "job_url" not in _table_columns(conn, "job_source_observations")
+        and _primary_key_columns(conn, "job_source_observations")
+        == ("tenant_id", "source_observation_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "job_source_observations",
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            "job_source_observations",
+            "idx_job_source_observations_native",
+            ("tenant_id", "source_id", "source_native_id"),
+            unique=True,
+        )
+        and _has_index(
+            conn,
+            "job_source_observations",
+            "idx_job_source_observations_normalized_url",
+            ("tenant_id", "normalized_observed_url"),
+            unique=True,
+        )
+        and _has_index(
+            conn,
+            "job_source_observations",
+            "idx_job_source_observations_job",
+            ("tenant_id", "job_id"),
+            unique=False,
+        )
+        and "job_id" in _table_columns(conn, "job_canonical_identities")
+        and "job_url" not in _table_columns(conn, "job_canonical_identities")
+        and _primary_key_columns(conn, "job_canonical_identities")
+        == ("tenant_id", "job_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "job_canonical_identities",
+            "job_id",
+        )
+        and _has_index(
+            conn,
+            "job_canonical_identities",
+            "idx_job_canonical_identities_canonical_url",
+            ("tenant_id", "canonical_url"),
+            unique=False,
+        )
+        and _primary_key_columns(conn, "job_duplicate_links")
+        == ("tenant_id", "duplicate_link_id")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "job_duplicate_links",
+            "surviving_job_id",
+        )
+        and _has_index(
+            conn,
+            "job_duplicate_links",
+            "idx_job_duplicate_links_surviving",
+            ("tenant_id", "surviving_job_id"),
+            unique=False,
+        )
+        and "owner_job_id"
+        in _table_columns(conn, "job_rejected_duplicate_links")
+        and "owner_job_url"
+        not in _table_columns(conn, "job_rejected_duplicate_links")
+        and _primary_key_columns(conn, "job_rejected_duplicate_links")
+        == ("tenant_id", "owner_job_id", "candidate_url")
+        and _has_composite_job_id_foreign_key(
+            conn,
+            "job_rejected_duplicate_links",
+            "owner_job_id",
+        )
+    )
+
+
+def _verify_discovery_identity_references_v8(
+    conn: sqlite3.Connection,
+    *,
+    expected_counts: dict[str, int],
+) -> None:
+    if not _has_discovery_identity_reference_schema_v8(conn):
+        raise RuntimeError(
+            "discovery identity migration did not create the stable reference schema"
+        )
+    for table, expected_count in expected_counts.items():
+        observed_count = int(
+            conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        )
+        if observed_count != expected_count:
+            raise RuntimeError(
+                "discovery identity migration changed row count for "
+                f"{table}: expected {expected_count}, found {observed_count}"
+            )
+
+    references = (
+        ("job_source_observations", "job_id"),
+        ("job_canonical_identities", "job_id"),
+        ("job_duplicate_links", "surviving_job_id"),
+        ("job_rejected_duplicate_links", "owner_job_id"),
+    )
+    for table, column in references:
+        orphan = conn.execute(
+            f"""
+            SELECT source.{column}
+            FROM {table} source
+            LEFT JOIN jobs j
+              ON j.tenant_id = source.tenant_id
+             AND j.job_id = source.{column}
+            WHERE j.job_id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if orphan is not None:
+            raise RuntimeError(
+                "discovery identity migration left an unresolved reference in "
+                f"{table}.{column}"
+            )
+
+    foreign_key_error = conn.execute("PRAGMA foreign_key_check").fetchone()
+    if foreign_key_error is not None:
+        raise RuntimeError(
+            "discovery identity migration found a foreign-key violation"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -908,6 +908,19 @@ def _record_content_duplicate_link(
     _apply_write_fence(write_fence)
     duplicate_link_id = "content:" + link_key[:32]
     normalized_url = normalize_observed_url(duplicate_url)
+    owner = conn.execute(
+        """
+        SELECT job_id
+        FROM jobs
+        WHERE tenant_id = 'local' AND url = ?
+        """,
+        (surviving_url,),
+    ).fetchone()
+    if owner is None or not str(owner[0] or "").strip():
+        raise RuntimeError(
+            "content duplicate owner is missing its stable JobId"
+        )
+    surviving_job_id = str(owner[0])
     conn.execute(
         """
         INSERT OR IGNORE INTO job_duplicate_links (
@@ -915,19 +928,19 @@ def _record_content_duplicate_link(
             superseded_job_or_observation_id, reason, confidence, linked_at
         ) VALUES ('local', ?, ?, ?, 'content_fingerprint_match', 0.95, ?)
         """,
-        (duplicate_link_id, surviving_url, duplicate_url, observed_at),
+        (duplicate_link_id, surviving_job_id, duplicate_url, observed_at),
     )
     conn.execute(
         """
         INSERT OR IGNORE INTO job_source_observations (
-            tenant_id, source_observation_id, job_url, source_id,
+            tenant_id, source_observation_id, job_id, source_id,
             source_native_id, observed_url, normalized_observed_url,
             run_id, observed_at
         ) VALUES ('local', ?, ?, ?, ?, ?, ?, 'jobspy', ?)
         """,
         (
             f"content-duplicate:{duplicate_link_id}",
-            surviving_url,
+            surviving_job_id,
             source,
             duplicate_url,
             duplicate_url,

@@ -783,6 +783,14 @@ function uniqueJobKeys(jobKeys: string[]): string[] {
 }
 
 function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
+  const identity = getRow<{ job_id: string }>(
+    db,
+    `SELECT job_id
+       FROM jobs
+      WHERE tenant_id = 'local' AND url = ?`,
+    [jobUrl],
+  );
+  const jobId = identity?.job_id;
   deleteWhere(db, "jobctrl_deleted_jobs", "job_url = ?", [jobUrl]);
   deleteWhere(db, "jobctrl_hidden_jobs", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_stage_states", "job_url = ?", [jobUrl]);
@@ -793,12 +801,17 @@ function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
   deleteWhere(db, "job_materials_artifacts", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_materials", "job_url = ?", [jobUrl]);
   deleteWhere(db, "job_enrichments", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_source_observations", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_canonical_identities", "job_url = ?", [jobUrl]);
-  deleteWhere(db, "job_duplicate_links", "surviving_job_id = ? OR superseded_job_or_observation_id = ?", [
-    jobUrl,
-    jobUrl,
-  ]);
+  if (jobId) {
+    deleteWhere(db, "job_source_observations", "job_id = ?", [jobId]);
+    deleteWhere(db, "job_canonical_identities", "job_id = ?", [jobId]);
+    deleteWhere(db, "job_rejected_duplicate_links", "owner_job_id = ?", [jobId]);
+    deleteWhere(
+      db,
+      "job_duplicate_links",
+      "surviving_job_id = ? OR superseded_job_or_observation_id IN (?, ?)",
+      [jobId, jobId, jobUrl],
+    );
+  }
   deleteWhere(db, "apply_run_projections", "job_id = ?", [jobUrl]);
   deleteWhere(db, "artifact_list_projections", "job_id = ?", [jobUrl]);
   deleteWhere(db, "job_detail_projections", "job_id = ?", [jobUrl]);

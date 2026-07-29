@@ -36,7 +36,11 @@ from urllib.parse import urljoin, urlparse
 from playwright.sync_api import sync_playwright
 
 from jobctrl import database as db_module
-from jobctrl.database import ensure_discovery_control_tables, init_db
+from jobctrl.database import (
+    ensure_discovery_control_tables,
+    init_db,
+    reassign_discovery_identity_references,
+)
 from jobctrl.domain.enrichment import (
     ActiveState,
     DetailPage,
@@ -260,6 +264,11 @@ def resolve_all_urls(conn: sqlite3.Connection) -> dict:
                 conn.execute("UPDATE jobs SET url = ? WHERE url = ?", (new_url, url))
                 resolved += 1
             except sqlite3.IntegrityError:
+                reassign_discovery_identity_references(
+                    conn,
+                    losing_job_url=url,
+                    surviving_job_url=new_url,
+                )
                 conn.execute("DELETE FROM jobs WHERE url = ?", (url,))
                 resolved += 1
         else:
@@ -350,6 +359,11 @@ def resolve_wttj_urls(conn: sqlite3.Connection) -> int:
                 )
                 updated += 1
             except sqlite3.IntegrityError:
+                reassign_discovery_identity_references(
+                    conn,
+                    losing_job_url=old_url,
+                    surviving_job_url=match["url"],
+                )
                 conn.execute("DELETE FROM jobs WHERE url = ?", (old_url,))
                 updated += 1
         else:
@@ -362,6 +376,11 @@ def resolve_wttj_urls(conn: sqlite3.Connection) -> int:
                         )
                         updated += 1
                     except sqlite3.IntegrityError:
+                        reassign_discovery_identity_references(
+                            conn,
+                            losing_job_url=old_url,
+                            surviving_job_url=data["url"],
+                        )
                         conn.execute("DELETE FROM jobs WHERE url = ?", (old_url,))
                         updated += 1
                     break
@@ -1761,9 +1780,12 @@ def _source_id_for_enriched_job(
     try:
         row = conn.execute(
             """
-            SELECT source_id
-            FROM job_source_observations
-            WHERE tenant_id = ? AND job_url = ?
+            SELECT o.source_id
+            FROM job_source_observations o
+            JOIN jobs j
+              ON j.tenant_id = o.tenant_id
+             AND j.job_id = o.job_id
+            WHERE o.tenant_id = ? AND j.url = ?
             ORDER BY observed_at DESC, source_observation_id DESC
             LIMIT 1
             """,

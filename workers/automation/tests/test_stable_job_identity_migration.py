@@ -1,4 +1,4 @@
-"""Schema-v7 stable JobId foundation and recovery contracts."""
+"""Stable JobId foundation and previous-release recovery contracts."""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ REFERENCE_TABLES = (
     "job_events",
     "job_scores",
     "job_artifacts",
-    "job_source_observations",
     "discovery_execution_jobs",
     "workflow_run_projections",
     "application_outcomes",
@@ -207,6 +206,81 @@ def _create_representative_v6_pair(
 
     raw = sqlite3.connect(db_path)
     try:
+        source_rows = raw.execute(
+            """
+            SELECT
+                o.tenant_id, o.source_observation_id, j.url,
+                o.source_id, o.source_native_id, o.observed_url,
+                o.normalized_observed_url, o.run_id, o.observed_at
+            FROM job_source_observations o
+            JOIN jobs j
+              ON j.tenant_id = o.tenant_id
+             AND j.job_id = o.job_id
+            """
+        ).fetchall()
+        for table in (
+            "job_rejected_duplicate_links",
+            "job_duplicate_links",
+            "job_canonical_identities",
+            "job_source_observations",
+        ):
+            raw.execute(f'DROP TABLE "{table}"')
+        raw.executescript(
+            """
+            CREATE TABLE job_source_observations (
+                tenant_id                TEXT NOT NULL DEFAULT 'local',
+                source_observation_id    TEXT NOT NULL,
+                job_url                  TEXT NOT NULL,
+                source_id                TEXT NOT NULL,
+                source_native_id         TEXT NOT NULL,
+                observed_url             TEXT NOT NULL,
+                normalized_observed_url  TEXT NOT NULL,
+                run_id                   TEXT NOT NULL DEFAULT '',
+                observed_at              TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, source_observation_id),
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            );
+            CREATE TABLE job_canonical_identities (
+                tenant_id          TEXT NOT NULL DEFAULT 'local',
+                job_url            TEXT NOT NULL,
+                canonical_url      TEXT NOT NULL,
+                ats_kind           TEXT NOT NULL,
+                source_native_id   TEXT NOT NULL,
+                confidence         REAL NOT NULL,
+                resolved_at        TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, job_url),
+                FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+            );
+            CREATE TABLE job_duplicate_links (
+                tenant_id                        TEXT NOT NULL DEFAULT 'local',
+                duplicate_link_id                TEXT NOT NULL,
+                surviving_job_id                 TEXT NOT NULL,
+                superseded_job_or_observation_id TEXT NOT NULL,
+                reason                           TEXT NOT NULL,
+                confidence                       REAL NOT NULL,
+                linked_at                        TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, duplicate_link_id)
+            );
+            CREATE TABLE job_rejected_duplicate_links (
+                tenant_id     TEXT NOT NULL DEFAULT 'local',
+                owner_job_url TEXT NOT NULL,
+                candidate_url TEXT NOT NULL,
+                reason        TEXT NOT NULL,
+                rejected_at   TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, owner_job_url, candidate_url)
+            );
+            """
+        )
+        raw.executemany(
+            """
+            INSERT INTO job_source_observations (
+                tenant_id, source_observation_id, job_url, source_id,
+                source_native_id, observed_url, normalized_observed_url,
+                run_id, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            source_rows,
+        )
         for trigger_name in database_module._STABLE_JOB_IDENTITY_TRIGGER_NAMES:
             raw.execute(f'DROP TRIGGER IF EXISTS "{trigger_name}"')
         raw.execute("DROP INDEX IF EXISTS idx_jobs_tenant_job_id")
@@ -294,7 +368,7 @@ def test_v6_jobs_gain_stable_uuid_and_posting_url_alias_once(
     init_db(db_path)
     close_connection(db_path)
 
-    assert _user_version(db_path) == SCHEMA_VERSION == 7
+    assert _user_version(db_path) == SCHEMA_VERSION == 8
     first_ids = _identity_rows(db_path)
     assert [row[0] for row in first_ids] == ["local", "local"]
     for _tenant_id, job_id, _url in first_ids:
@@ -481,6 +555,75 @@ def test_production_url_collision_cleans_aliases_and_allows_rediscovery(
             (relative_url, "Relative duplicate", "Synthetic"),
         ),
     )
+    job_ids = {
+        str(row["url"]): str(row["job_id"])
+        for row in conn.execute(
+            "SELECT url, job_id FROM jobs WHERE url IN (?, ?)",
+            (canonical_url, relative_url),
+        ).fetchall()
+    }
+    surviving_job_id = job_ids[canonical_url]
+    losing_job_id = job_ids[relative_url]
+    conn.execute(
+        """
+        INSERT INTO job_source_observations (
+            tenant_id, source_observation_id, job_id, source_id,
+            source_native_id, observed_url, normalized_observed_url,
+            run_id, observed_at
+        ) VALUES (
+            'local', 'obs-relative', ?, 'synthetic', 'relative',
+            ?, ?, 'discover-run', '2026-07-29T10:00:00+00:00'
+        )
+        """,
+        (losing_job_id, relative_url, relative_url),
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_canonical_identities (
+            tenant_id, job_id, canonical_url, ats_kind, source_native_id,
+            confidence, resolved_at
+        ) VALUES ('local', ?, ?, 'synthetic', ?, ?, ?)
+        """,
+        (
+            (
+                surviving_job_id,
+                canonical_url,
+                "canonical",
+                1.0,
+                "2026-07-29T10:00:00+00:00",
+            ),
+            (
+                losing_job_id,
+                relative_url,
+                "relative",
+                0.5,
+                "2026-07-29T09:00:00+00:00",
+            ),
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_duplicate_links (
+            tenant_id, duplicate_link_id, surviving_job_id,
+            superseded_job_or_observation_id, reason, confidence, linked_at
+        ) VALUES (
+            'local', 'dup-relative', ?, 'obs-superseded',
+            'canonical_url_match', 0.9, '2026-07-29T10:00:00+00:00'
+        )
+        """,
+        (losing_job_id,),
+    )
+    conn.executemany(
+        """
+        INSERT INTO job_rejected_duplicate_links (
+            tenant_id, owner_job_id, candidate_url, reason, rejected_at
+        ) VALUES (
+            'local', ?, 'https://example.com/jobs/candidate',
+            'employer_mismatch', '2026-07-29T10:00:00+00:00'
+        )
+        """,
+        ((surviving_job_id,), (losing_job_id,)),
+    )
     conn.commit()
     monkeypatch.setattr(
         detail,
@@ -495,6 +638,39 @@ def test_production_url_collision_cleans_aliases_and_allows_rediscovery(
         "app_resolved": 0,
     }
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+    assert conn.execute(
+        """
+        SELECT job_id
+        FROM job_source_observations
+        WHERE source_observation_id = 'obs-relative'
+        """
+    ).fetchone()[0] == surviving_job_id
+    assert [
+        tuple(row)
+        for row in conn.execute(
+            """
+            SELECT job_id, canonical_url
+            FROM job_canonical_identities
+            """
+        ).fetchall()
+    ] == [(surviving_job_id, canonical_url)]
+    assert conn.execute(
+        """
+        SELECT surviving_job_id
+        FROM job_duplicate_links
+        WHERE duplicate_link_id = 'dup-relative'
+        """
+    ).fetchone()[0] == surviving_job_id
+    assert [
+        tuple(row)
+        for row in conn.execute(
+            """
+            SELECT owner_job_id
+            FROM job_rejected_duplicate_links
+            """
+        ).fetchall()
+    ] == [(surviving_job_id,)]
+    assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
     active_orphans = conn.execute(
         """
         SELECT COUNT(*)

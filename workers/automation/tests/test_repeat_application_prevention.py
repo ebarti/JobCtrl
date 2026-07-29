@@ -179,10 +179,17 @@ def test_exact_canonical_and_accepted_duplicate_identities_block(tmp_path: Path)
         conn.execute(
             """
             INSERT INTO job_canonical_identities (
-              tenant_id, job_url, canonical_url, ats_kind, source_native_id,
+              tenant_id, job_id, canonical_url, ats_kind, source_native_id,
               confidence, resolved_at
-            ) VALUES ('local', ?, 'https://boards.example.test/jobs/123',
-                      'greenhouse', 'gh-123', 1, ?)
+            ) VALUES (
+              'local',
+              (SELECT job_id FROM jobs WHERE url = ?),
+              'https://boards.example.test/jobs/123',
+              'greenhouse',
+              'gh-123',
+              1,
+              ?
+            )
             """,
             (job_key, NOW),
         )
@@ -198,7 +205,15 @@ def test_exact_canonical_and_accepted_duplicate_identities_block(tmp_path: Path)
         INSERT INTO job_duplicate_links (
           tenant_id, duplicate_link_id, surviving_job_id,
           superseded_job_or_observation_id, reason, confidence, linked_at
-        ) VALUES ('local', 'accepted-link', ?, ?, 'accepted_content_identity', 0.99, ?)
+        ) VALUES (
+          'local',
+          'accepted-link',
+          (SELECT job_id FROM jobs WHERE url = ?),
+          ?,
+          'accepted_content_identity',
+          0.99,
+          ?
+        )
         """,
         (TARGET, PRIOR, NOW),
     )
@@ -735,7 +750,7 @@ def test_schema_v5_migrates_additively_without_changing_application_facts(
         (PRIOR,),
     ).fetchall()
 
-    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 7
+    assert int(migrated.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION == 8
     assert [tuple(row) for row in after] == [tuple(row) for row in before]
     assert "metadata_json" in {
         str(row[1]) for row in migrated.execute("PRAGMA table_info(job_stage_states)").fetchall()

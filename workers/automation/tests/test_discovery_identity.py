@@ -121,20 +121,21 @@ def _long_description(marker: str, tokens: int = 90) -> str:
 
 def test_source_observation_backfill_seeds_legacy_jobs(conn: sqlite3.Connection) -> None:
     repo = SqliteJobRepository(conn)
-    repo.save(_job())
+    stable_job_id = repo.save(_job())
 
     ensure_source_observation_tables(conn)
 
     row = conn.execute(
         """
-        SELECT source_observation_id, job_url, source_id, source_native_id,
+        SELECT source_observation_id, job_id, source_id, source_native_id,
                observed_url, normalized_observed_url, run_id, observed_at
         FROM job_source_observations
-        WHERE job_url = ?
+        WHERE job_id = ?
         """,
-        ("https://boards.greenhouse.io/acme/jobs/123",),
+        (str(stable_job_id),),
     ).fetchone()
     assert row is not None
+    assert row["job_id"] == str(stable_job_id)
     assert row["source_observation_id"] == "backfill:https://boards.greenhouse.io/acme/jobs/123"
     assert row["source_id"] == "greenhouse"
     assert row["source_native_id"] == "https://boards.greenhouse.io/acme/jobs/123"
@@ -352,9 +353,7 @@ def test_duplicate_links_are_persisted(conn: sqlite3.Connection) -> None:
         """
     ).fetchone()
     assert row is not None
-    # The domain call above carries the stable id; the adapter alone translates
-    # it to the compatibility-era URL column.
-    assert row["surviving_job_id"] == str(job.job_id)
+    assert row["surviving_job_id"] == str(stable_job_id)
     assert row["superseded_job_or_observation_id"] == "obs-2"
     assert row["reason"] == "canonical_url_match"
     assert row["confidence"] == 0.91
@@ -934,7 +933,9 @@ def test_discover_jobs_use_case_collapses_jobspy_job_rediscovered_by_canonical_s
         "workday:acme",
     ]
     link = conn.execute("SELECT surviving_job_id, reason, confidence FROM job_duplicate_links").fetchone()
-    assert link["surviving_job_id"] == survivor
+    surviving_job = repo.load(LOCAL_TENANT, JobId(survivor))
+    assert surviving_job is not None
+    assert link["surviving_job_id"] == str(surviving_job.job_id)
     assert link["reason"] == "content_fingerprint_match"
     assert link["confidence"] == 0.95
     assert [event.event_type for event in publisher.events] == [
@@ -1009,7 +1010,7 @@ def test_discover_jobs_use_case_collapses_reworded_cross_source_description(
     assert duplicate_lookup is not None
     assert duplicate_lookup.job_id == surviving_job.job_id
     link = conn.execute("SELECT surviving_job_id, reason, confidence FROM job_duplicate_links").fetchone()
-    assert link["surviving_job_id"] == survivor
+    assert link["surviving_job_id"] == str(surviving_job.job_id)
     assert link["reason"] == "content_shingle_match"
     assert link["confidence"] == 0.85
 
@@ -1092,8 +1093,10 @@ def test_discover_jobs_use_case_matches_fresh_listing_against_enriched_owner(
     assert summary.observed == 1
     assert summary.duplicates_linked == 1
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+    surviving_job = repo.load(LOCAL_TENANT, JobId(survivor))
+    assert surviving_job is not None
     link = conn.execute("SELECT surviving_job_id, reason, confidence FROM job_duplicate_links").fetchone()
-    assert link["surviving_job_id"] == survivor
+    assert link["surviving_job_id"] == str(surviving_job.job_id)
     assert link["reason"] == "content_shingle_match"
     assert link["confidence"] == 0.85
 

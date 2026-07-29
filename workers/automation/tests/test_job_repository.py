@@ -158,7 +158,7 @@ def test_identity_resolver_keeps_job_id_stable_across_url_aliases(
     ).fetchall()
     observation_row = conn.execute(
         """
-        SELECT job_url
+        SELECT job_id
         FROM job_source_observations
         WHERE source_observation_id = 'obs-original'
         """
@@ -174,7 +174,7 @@ def test_identity_resolver_keeps_job_id_stable_across_url_aliases(
         original_url.value: False,
         replacement_url.value: True,
     }
-    assert observation_row["job_url"] == original_url.value
+    assert observation_row["job_id"] == str(stable_id)
     loaded_by_original_url = repo.load(
         LOCAL_TENANT,
         JobId(original_url.value),

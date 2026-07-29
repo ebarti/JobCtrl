@@ -1290,10 +1290,12 @@ export function previewDiscoverySource(
 
   const rows = allRows<PreviewObservationRow>(
     db,
-    `SELECT o.job_url, o.observed_url, o.observed_at,
+    `SELECT j.url AS job_url, o.observed_url, o.observed_at,
             j.title, j.site, j.location
      FROM job_source_observations o
-     LEFT JOIN jobs j ON j.url = o.job_url
+     JOIN jobs j
+       ON j.tenant_id = o.tenant_id
+      AND j.job_id = o.job_id
      WHERE o.tenant_id = ? AND o.source_id = ?
      ORDER BY o.observed_at DESC, o.source_observation_id DESC
      LIMIT 10`,
@@ -1515,11 +1517,14 @@ function latestSourceIdsByJobKey(db: SqliteDatabase): Map<string, string> {
   }
   const rows = allRows<{ job_url: string; source_id: string }>(
     db,
-    `SELECT job_url, source_id
-     FROM job_source_observations
-     WHERE tenant_id = ?
-       AND source_id != ''
-     ORDER BY observed_at DESC, source_observation_id DESC`,
+    `SELECT j.url AS job_url, o.source_id
+     FROM job_source_observations o
+     JOIN jobs j
+       ON j.tenant_id = o.tenant_id
+      AND j.job_id = o.job_id
+     WHERE o.tenant_id = ?
+       AND o.source_id != ''
+     ORDER BY o.observed_at DESC, o.source_observation_id DESC`,
     [DEFAULT_TENANT],
   );
   const result = new Map<string, string>();

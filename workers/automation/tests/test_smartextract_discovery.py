@@ -25,6 +25,15 @@ from jobctrl.infrastructure.discovery import SqliteJobRepository
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 
 
+def _stable_job_id(conn, job_url: str) -> str:
+    row = conn.execute(
+        "SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?",
+        (job_url,),
+    ).fetchone()
+    assert row is not None
+    return str(row["job_id"])
+
+
 def test_short_headless_html_never_retries_headful_in_the_bundled_core(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -544,16 +553,16 @@ def test_smart_extract_current_alias_refreshes_and_restores_storage_owner(
         }
         assert event_urls == {storage_url}
         observation_urls = {
-            row["job_url"]
+            row["job_id"]
             for row in conn.execute(
                 """
-                SELECT job_url
+                SELECT job_id
                 FROM job_source_observations
                 WHERE source_id = 'smartextract:Acme Careers'
                 """
             ).fetchall()
         }
-        assert observation_urls == {storage_url}
+        assert observation_urls == {str(stable_job_id)}
     finally:
         close_connection(db_path)
 
@@ -773,7 +782,7 @@ def test_smart_extract_dedups_against_ats_first_content_owner(
         assert domain_links[0].surviving_job_id == str(owner_identity.job_id)
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
         link = conn.execute("SELECT surviving_job_id, reason, confidence FROM job_duplicate_links").fetchone()
-        assert link["surviving_job_id"] == owner_url
+        assert link["surviving_job_id"] == str(owner_identity.job_id)
         assert link["reason"] == "content_fingerprint_match"
         assert link["confidence"] == 0.95
         linked_events = conn.execute(
@@ -839,7 +848,7 @@ def test_ats_dedups_against_smart_extract_first_content_owner(
         assert summary.duplicates_linked == 1
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
         link = conn.execute("SELECT surviving_job_id, reason FROM job_duplicate_links").fetchone()
-        assert link["surviving_job_id"] == smart_url
+        assert link["surviving_job_id"] == _stable_job_id(conn, smart_url)
         assert link["reason"] == "content_fingerprint_match"
     finally:
         close_connection(db_path)

@@ -629,7 +629,11 @@ def test_mid_event_supersession_is_fenced_and_retry_repairs_audit_rows(
     )
     assert (
         search_db.execute(
-            "SELECT COUNT(*) FROM job_canonical_identities WHERE job_url = ?",
+            """
+            SELECT COUNT(*)
+            FROM job_canonical_identities
+            WHERE job_id = (SELECT job_id FROM jobs WHERE url = ?)
+            """,
             ("https://example.test/jobs/mid-event",),
         ).fetchone()[0]
         == 0
@@ -649,14 +653,22 @@ def test_mid_event_supersession_is_fenced_and_retry_repairs_audit_rows(
     assert resumed == (0, 1)
     assert (
         search_db.execute(
-            "SELECT COUNT(*) FROM job_canonical_identities WHERE job_url = ?",
+            """
+            SELECT COUNT(*)
+            FROM job_canonical_identities
+            WHERE job_id = (SELECT job_id FROM jobs WHERE url = ?)
+            """,
             ("https://example.test/jobs/mid-event",),
         ).fetchone()[0]
         == 1
     )
     assert (
         search_db.execute(
-            "SELECT COUNT(*) FROM job_source_observations WHERE job_url = ?",
+            """
+            SELECT COUNT(*)
+            FROM job_source_observations
+            WHERE job_id = (SELECT job_id FROM jobs WHERE url = ?)
+            """,
             ("https://example.test/jobs/mid-event",),
         ).fetchone()[0]
         == 1

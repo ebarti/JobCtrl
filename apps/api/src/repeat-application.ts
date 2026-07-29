@@ -452,9 +452,13 @@ function canonicalIdentityRelationship(
   if (!tableExists(db, "job_canonical_identities")) return null;
   const rows = allRows<CanonicalIdentityRow>(
     db,
-    `SELECT job_url, canonical_url, ats_kind, source_native_id
-       FROM job_canonical_identities
-      WHERE tenant_id = ? AND job_url IN (?, ?)`,
+    `SELECT j.url AS job_url, c.canonical_url, c.ats_kind,
+            c.source_native_id
+       FROM job_canonical_identities c
+       JOIN jobs j
+         ON j.tenant_id = c.tenant_id
+        AND j.job_id = c.job_id
+      WHERE c.tenant_id = ? AND j.url IN (?, ?)`,
     [DEFAULT_TENANT, targetJobKey, priorJobKey],
   );
   const target = rows.find((row) => row.job_url === targetJobKey);
@@ -506,12 +510,31 @@ function acceptedDuplicateRelationship(
 
 function jobAliases(db: SqliteDatabase, jobKey: string): Set<string> {
   const aliases = new Set([jobKey]);
+  const job = getRow<{ job_id: string }>(
+    db,
+    `SELECT job_id
+       FROM jobs
+      WHERE tenant_id = ? AND url = ?`,
+    [DEFAULT_TENANT, jobKey],
+  );
+  if (!job) return aliases;
+  aliases.add(job.job_id);
+  if (tableExists(db, "job_identity_aliases")) {
+    const postingAliases = allRows<{ alias_value: string }>(
+      db,
+      `SELECT alias_value
+         FROM job_identity_aliases
+        WHERE tenant_id = ? AND job_id = ?`,
+      [DEFAULT_TENANT, job.job_id],
+    );
+    for (const alias of postingAliases) aliases.add(alias.alias_value);
+  }
   if (!tableExists(db, "job_source_observations")) return aliases;
   const rows = allRows<Record<string, unknown>>(
     db,
     `SELECT source_observation_id, observed_url, normalized_observed_url
-       FROM job_source_observations WHERE tenant_id = ? AND job_url = ?`,
-    [DEFAULT_TENANT, jobKey],
+       FROM job_source_observations WHERE tenant_id = ? AND job_id = ?`,
+    [DEFAULT_TENANT, job.job_id],
   );
   for (const row of rows) {
     for (const value of [row.source_observation_id, row.observed_url, row.normalized_observed_url]) {

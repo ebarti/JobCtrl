@@ -473,8 +473,16 @@ def test_score_job_by_url_reuses_direct_score_for_reference_repost(
     conn.execute(
         """
         INSERT INTO job_canonical_identities (
-            tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at
-        ) VALUES ('local', ?, ?, 'workday', 'AI-Security-Director_R53680', 0.82, ?)
+            tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at
+        ) VALUES (
+            'local',
+            (SELECT job_id FROM jobs WHERE url = ?),
+            ?,
+            'workday',
+            'AI-Security-Director_R53680',
+            0.82,
+            ?
+        )
         """,
         (
             direct_url,
@@ -995,8 +1003,16 @@ def test_run_scoring_reuses_direct_score_for_reference_repost_without_llm(
     conn.execute(
         """
         INSERT INTO job_canonical_identities (
-            tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at
-        ) VALUES ('local', ?, ?, 'workday', 'AI-Security-Director_R53680', 0.82, ?)
+            tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at
+        ) VALUES (
+            'local',
+            (SELECT job_id FROM jobs WHERE url = ?),
+            ?,
+            'workday',
+            'AI-Security-Director_R53680',
+            0.82,
+            ?
+        )
         """,
         (
             direct_url,

@@ -449,9 +449,13 @@ def _canonical_identity_relationship(conn, target_job_key: str, prior_job_key: s
         return None
     rows = conn.execute(
         """
-        SELECT job_url, canonical_url, ats_kind, source_native_id
-          FROM job_canonical_identities
-         WHERE tenant_id = ? AND job_url IN (?, ?)
+        SELECT j.url AS job_url, c.canonical_url, c.ats_kind,
+               c.source_native_id
+          FROM job_canonical_identities c
+          JOIN jobs j
+            ON j.tenant_id = c.tenant_id
+           AND j.job_id = c.job_id
+         WHERE c.tenant_id = ? AND j.url IN (?, ?)
         """,
         (LOCAL_TENANT, target_job_key, prior_job_key),
     ).fetchall()
@@ -500,14 +504,38 @@ def _accepted_duplicate_relationship(conn, target_job_key: str, prior_job_key: s
 
 def _job_aliases(conn, job_key: str) -> set[str]:
     aliases = {job_key}
+    job = conn.execute(
+        """
+        SELECT job_id
+        FROM jobs
+        WHERE tenant_id = ? AND url = ?
+        """,
+        (LOCAL_TENANT, job_key),
+    ).fetchone()
+    if job is None:
+        return aliases
+    job_id = str(job["job_id"])
+    aliases.add(job_id)
+    if _table_exists(conn, "job_identity_aliases"):
+        aliases.update(
+            str(row["alias_value"])
+            for row in conn.execute(
+                """
+                SELECT alias_value
+                FROM job_identity_aliases
+                WHERE tenant_id = ? AND job_id = ?
+                """,
+                (LOCAL_TENANT, job_id),
+            ).fetchall()
+        )
     if not _table_exists(conn, "job_source_observations"):
         return aliases
     rows = conn.execute(
         """
         SELECT source_observation_id, observed_url, normalized_observed_url
-          FROM job_source_observations WHERE tenant_id = ? AND job_url = ?
+          FROM job_source_observations WHERE tenant_id = ? AND job_id = ?
         """,
-        (LOCAL_TENANT, job_key),
+        (LOCAL_TENANT, job_id),
     ).fetchall()
     for row in rows:
         aliases.update(str(value) for value in row if value)

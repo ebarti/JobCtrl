@@ -21,6 +21,8 @@ function withTempDb(): { dbPath: string; dir: string; cleanup: () => void } {
   db.exec(`
     CREATE TABLE jobs (
       url TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL UNIQUE,
       title TEXT,
       site TEXT,
       strategy TEXT,
@@ -58,7 +60,7 @@ function withTempDb(): { dbPath: string; dir: string; cleanup: () => void } {
     CREATE TABLE job_source_observations (
       tenant_id TEXT NOT NULL DEFAULT 'local',
       source_observation_id TEXT NOT NULL,
-      job_url TEXT NOT NULL,
+      job_id TEXT NOT NULL,
       source_id TEXT NOT NULL,
       source_native_id TEXT NOT NULL,
       observed_url TEXT NOT NULL,
@@ -704,9 +706,10 @@ describe("discovery product controls API", () => {
       await app.inject({ method: "GET", url: "/v1/discovery/sources" });
       const db = new Database(dbPath);
       db.prepare(
-        "INSERT INTO jobs (url, title, site, location, discovered_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO jobs (url, job_id, title, site, location, discovered_at) VALUES (?, ?, ?, ?, ?, ?)",
       ).run(
         "https://example.com/jobs/1",
+        "test-job-1",
         "Product Engineer",
         "ExampleCo",
         "Remote",
@@ -714,13 +717,13 @@ describe("discovery product controls API", () => {
       );
       db.prepare(
         `INSERT INTO job_source_observations (
-           tenant_id, source_observation_id, job_url, source_id, source_native_id,
+           tenant_id, source_observation_id, job_id, source_id, source_native_id,
            observed_url, normalized_observed_url, run_id, observed_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         "local",
         "observation-1",
-        "https://example.com/jobs/1",
+        "test-job-1",
         "greenhouse:example-com",
         "native-1",
         "https://example.com/jobs/1",

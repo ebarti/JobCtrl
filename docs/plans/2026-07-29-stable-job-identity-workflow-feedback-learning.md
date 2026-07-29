@@ -148,8 +148,9 @@ caused an outcome.
 
 - Migrate references as separate stacked PRs with before/after count and reopen
   fixtures:
-  1. discovery observations, dedup identity, search-unit receipts, and
-     preparation/orchestration state;
+  1. discovery foundations, split into three independently reviewable
+     migrations: source observations plus dedup identity; execution plus
+     search-unit receipts; then preparation/orchestration state;
   2. enrichment, scoring, materials, artifacts, and stage state;
   3. Apply review, outcomes, repeat-application evidence, contacts, outreach,
      tombstones, and remaining job-owned authorities.

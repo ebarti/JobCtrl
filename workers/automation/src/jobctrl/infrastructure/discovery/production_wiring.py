@@ -784,9 +784,9 @@ def retire_invalid_source_jobs(
         LEFT JOIN job_enrichments e
           ON e.tenant_id = ? AND e.job_url = j.url
         LEFT JOIN job_canonical_identities c
-          ON c.tenant_id = ? AND c.job_url = j.url
+          ON c.tenant_id = ? AND c.job_id = j.job_id
         LEFT JOIN job_source_observations o
-          ON o.tenant_id = ? AND o.job_url = j.url
+          ON o.tenant_id = ? AND o.job_id = j.job_id
         LEFT JOIN jobctrl_deleted_jobs d
           ON d.job_url = j.url
          AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
@@ -1150,7 +1150,7 @@ def build_discovery_acceptance_report(
     lead_yield = _scalar_int(
         conn,
         """
-        SELECT COUNT(DISTINCT job_url)
+        SELECT COUNT(DISTINCT job_id)
         FROM job_source_observations
         WHERE tenant_id = ? AND run_id != 'backfill'
         """,
@@ -1177,7 +1177,7 @@ def build_discovery_acceptance_report(
     )
     canonical_jobs = _scalar_int(
         conn,
-        "SELECT COUNT(DISTINCT job_url) FROM job_canonical_identities WHERE tenant_id = ?",
+        "SELECT COUNT(DISTINCT job_id) FROM job_canonical_identities WHERE tenant_id = ?",
         (tenant,),
     )
     canonical_verification_rate = round(canonical_jobs / lead_yield, 4) if lead_yield else 0.0

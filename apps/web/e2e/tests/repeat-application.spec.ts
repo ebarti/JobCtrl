@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { expect, test } from "@playwright/test";
@@ -63,20 +64,26 @@ test("repeat application block and reasoned override reach only the simulated su
   db.exec(`
     CREATE TABLE IF NOT EXISTS job_canonical_identities (
       tenant_id TEXT NOT NULL DEFAULT 'local',
-      job_url TEXT NOT NULL,
+      job_id TEXT NOT NULL,
       canonical_url TEXT NOT NULL,
       ats_kind TEXT NOT NULL,
       source_native_id TEXT NOT NULL,
       confidence REAL NOT NULL,
       resolved_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, job_url),
-      FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+      PRIMARY KEY (tenant_id, job_id),
+      FOREIGN KEY (tenant_id, job_id)
+        REFERENCES jobs(tenant_id, job_id) ON DELETE CASCADE
     )
   `);
   const originalIdentity = hadCanonicalIdentityTable
     ? (db
         .prepare(
-          "SELECT * FROM job_canonical_identities WHERE tenant_id = 'local' AND job_url = ?",
+          `SELECT c.*
+             FROM job_canonical_identities c
+             JOIN jobs j
+               ON j.tenant_id = c.tenant_id
+              AND j.job_id = c.job_id
+            WHERE c.tenant_id = 'local' AND j.url = ?`,
         )
         .get(TARGET) as Record<string, unknown> | undefined)
     : undefined;
@@ -110,6 +117,8 @@ test("repeat application block and reasoned override reach only the simulated su
         .all(TARGET) as Array<Record<string, unknown>>)
     : [];
   let originalTargetApplication: Record<string, unknown> | undefined;
+  let targetJobId = "";
+  let priorJobId = "";
 
   try {
     if (hasRepeatApplicationTables) clearRepeatApplicationState(db);
@@ -118,6 +127,7 @@ test("repeat application block and reasoned override reach only the simulated su
       unknown
     >;
     if (!target) throw new Error("QA target job is missing");
+    targetJobId = String(target.job_id);
     originalTargetApplication = {
       apply_status: target.apply_status,
       applied_at: target.applied_at,
@@ -129,6 +139,7 @@ test("repeat application block and reasoned override reach only the simulated su
     const prior: Record<string, unknown> = {
       ...target,
       url: PRIOR,
+      job_id: randomUUID(),
       application_url: `${PRIOR}/apply`,
       apply_status: "applied",
       applied_at: CONFIRMED_AT,
@@ -138,6 +149,7 @@ test("repeat application block and reasoned override reach only the simulated su
       `INSERT OR REPLACE INTO jobs (${columns.map((column) => `"${column}"`).join(", ")})
        VALUES (${columns.map(() => "?").join(", ")})`,
     ).run(...columns.map((column) => prior[column]));
+    priorJobId = String(prior.job_id);
     db.prepare(
       `INSERT INTO job_events
        (job_url, stage, event_type, level, message, occurred_at, payload_json)
@@ -161,11 +173,11 @@ test("repeat application block and reasoned override reach only the simulated su
     }
     const identity = db.prepare(
       `INSERT OR REPLACE INTO job_canonical_identities
-       (tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at)
+       (tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at)
        VALUES ('local', ?, ?, 'greenhouse', 'qa-platform-director', 1, ?)`,
     );
-    identity.run(TARGET, CANONICAL, CONFIRMED_AT);
-    identity.run(PRIOR, CANONICAL, CONFIRMED_AT);
+    identity.run(targetJobId, CANONICAL, CONFIRMED_AT);
+    identity.run(priorJobId, CANONICAL, CONFIRMED_AT);
 
     await page.goto(`/apply-review?jobKey=${encodeURIComponent(TARGET)}`);
     await expect(page.getByText("Repeat application blocked", { exact: true })).toBeVisible();
@@ -371,8 +383,8 @@ print(job["url"])
       restoreRows(db, "application_repeat_audit", originalRepeatAudit);
     }
     db.prepare(
-      "DELETE FROM job_canonical_identities WHERE tenant_id = 'local' AND job_url IN (?, ?)",
-    ).run(TARGET, PRIOR);
+      "DELETE FROM job_canonical_identities WHERE tenant_id = 'local' AND job_id IN (?, ?)",
+    ).run(targetJobId, priorJobId);
     if (originalIdentity) {
       const columns = Object.keys(originalIdentity);
       db.prepare(

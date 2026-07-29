@@ -4795,8 +4795,11 @@ function discoverySourceSqlExpression(db: SqliteDatabase): string {
 function latestSourceObservationSql(): string {
   return `(SELECT o.source_id
              FROM job_source_observations o
+             JOIN jobs j
+               ON j.tenant_id = o.tenant_id
+              AND j.job_id = o.job_id
             WHERE o.tenant_id = job_list_projections.tenant_id
-              AND o.job_url = job_list_projections.job_id
+              AND j.url = job_list_projections.job_id
             ORDER BY o.observed_at DESC, o.source_observation_id DESC
             LIMIT 1)`;
 }
@@ -4805,8 +4808,11 @@ function postingSourceUrlSqlExpression(db: SqliteDatabase): string {
   if (!tableExists(db, "job_canonical_identities")) return "NULL";
   return `(SELECT c.canonical_url
              FROM job_canonical_identities c
+             JOIN jobs j
+               ON j.tenant_id = c.tenant_id
+              AND j.job_id = c.job_id
             WHERE c.tenant_id = job_list_projections.tenant_id
-              AND c.job_url = job_list_projections.job_id
+              AND j.url = job_list_projections.job_id
             LIMIT 1)`;
 }
 
@@ -4814,8 +4820,11 @@ function postingSourceAtsKindSqlExpression(db: SqliteDatabase): string {
   if (!tableExists(db, "job_canonical_identities")) return "NULL";
   return `(SELECT c.ats_kind
              FROM job_canonical_identities c
+             JOIN jobs j
+               ON j.tenant_id = c.tenant_id
+              AND j.job_id = c.job_id
             WHERE c.tenant_id = job_list_projections.tenant_id
-              AND c.job_url = job_list_projections.job_id
+              AND j.url = job_list_projections.job_id
             LIMIT 1)`;
 }
 

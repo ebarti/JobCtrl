@@ -9743,6 +9743,8 @@ function seedDatabase(dbPath: string): void {
   db.exec(`
     CREATE TABLE jobs (
       url TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL UNIQUE,
       title TEXT,
       site TEXT,
       strategy TEXT,
@@ -10095,12 +10097,13 @@ function insertJob(
 ): void {
   db.prepare(
     `INSERT INTO jobs (
-      url, title, site, strategy, location, salary, discovered_at, application_url,
+      url, tenant_id, job_id, title, site, strategy, location, salary, discovered_at, application_url,
       description, full_description, detail_scraped_at, fit_score, score_reasoning,
       scored_at, tailored_resume_path, tailored_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     job.url,
+    `test-job:${job.url}`,
     job.title,
     job.site,
     "test",

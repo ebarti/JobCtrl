@@ -24,6 +24,8 @@ beforeEach(() => {
   db.exec(`
     CREATE TABLE jobs (
       url TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL UNIQUE,
       title TEXT,
       company TEXT,
       application_url TEXT,
@@ -65,7 +67,7 @@ beforeEach(() => {
     );
     CREATE TABLE job_canonical_identities (
       tenant_id TEXT NOT NULL,
-      job_url TEXT NOT NULL,
+      job_id TEXT NOT NULL,
       canonical_url TEXT NOT NULL,
       ats_kind TEXT NOT NULL,
       source_native_id TEXT NOT NULL
@@ -73,7 +75,7 @@ beforeEach(() => {
     CREATE TABLE job_source_observations (
       tenant_id TEXT NOT NULL,
       source_observation_id TEXT NOT NULL,
-      job_url TEXT NOT NULL,
+      job_id TEXT NOT NULL,
       observed_url TEXT NOT NULL,
       normalized_observed_url TEXT NOT NULL
     );
@@ -97,9 +99,14 @@ afterEach(() => {
 
 function insertJob(url: string, title: string, company: string): void {
   db.prepare(
-    `INSERT INTO jobs (url, title, company, application_url, discovered_at)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(url, title, company, `${url}/apply`, NOW);
+    `INSERT INTO jobs (
+       url, tenant_id, job_id, title, company, application_url, discovered_at
+     ) VALUES (?, 'local', ?, ?, ?, ?, ?)`,
+  ).run(url, testJobId(url), title, company, `${url}/apply`, NOW);
+}
+
+function testJobId(url: string): string {
+  return `test-job:${url}`;
 }
 
 function confirmPrior(kind: "ApplicationSubmitted" | "ApplicationManuallyMarked" = "ApplicationSubmitted"): void {
@@ -138,11 +145,11 @@ describe("repeat application evidence", () => {
     confirmPrior();
     const identity = db.prepare(
       `INSERT INTO job_canonical_identities
-       (tenant_id, job_url, canonical_url, ats_kind, source_native_id)
+       (tenant_id, job_id, canonical_url, ats_kind, source_native_id)
        VALUES ('local', ?, ?, 'greenhouse', 'gh-123')`,
     );
-    identity.run(PRIOR, "https://boards.example.test/jobs/123");
-    identity.run(TARGET, "https://boards.example.test/jobs/123");
+    identity.run(testJobId(PRIOR), "https://boards.example.test/jobs/123");
+    identity.run(testJobId(TARGET), "https://boards.example.test/jobs/123");
 
     const assessment = evaluateRepeatApplication(db, TARGET);
 
@@ -163,15 +170,15 @@ describe("repeat application evidence", () => {
     confirmPrior("ApplicationManuallyMarked");
     db.prepare(
       `INSERT INTO job_source_observations
-       (tenant_id, source_observation_id, job_url, observed_url, normalized_observed_url)
+       (tenant_id, source_observation_id, job_id, observed_url, normalized_observed_url)
        VALUES ('local', 'prior-observation', ?, ?, ?)`,
-    ).run(PRIOR, `${PRIOR}?source=board`, PRIOR);
+    ).run(testJobId(PRIOR), `${PRIOR}?source=board`, PRIOR);
     db.prepare(
       `INSERT INTO job_duplicate_links
        (tenant_id, duplicate_link_id, surviving_job_id,
         superseded_job_or_observation_id, reason, confidence, linked_at)
        VALUES ('local', 'link-1', ?, 'prior-observation', 'accepted_content_identity', 0.99, ?)`,
-    ).run(TARGET, NOW);
+    ).run(testJobId(TARGET), NOW);
 
     expect(evaluateRepeatApplication(db, TARGET)).toMatchObject({
       status: "blocked",
